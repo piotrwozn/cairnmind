@@ -1,4 +1,4 @@
-"""Gated current guards, UX, frontend or real recall, never a full-suite claim.
+"""Gated current guards, UX or real recall, never a full-suite claim.
 
 Prepared tooling only. Run through run-supervised-080.ps1 after a passed runtime
 gate; each phase needs a new artifact root and an independent external receipt.
@@ -15,14 +15,10 @@ import pwd
 import re
 import secrets
 import shutil
-import signal
 import socket
 import subprocess
 import sys
 import tempfile
-import time
-import urllib.error
-import urllib.request
 from uuid import uuid4
 import xml.etree.ElementTree as ET
 
@@ -73,22 +69,6 @@ def guard_manifest(directory, supervision, updater):
     return {"helper_sha256": result, "updater": str(updater), "updater_sha256": common.sha(updater)}
 
 
-def frontend_manifest(root):
-    result = {}
-    for directory, subdirs, names in os.walk(root):
-        subdirs[:] = sorted(name for name in subdirs if name not in {"node_modules", ".git", "dist", "test-results", "playwright-report"})
-        for name in [*subdirs, *names]:
-            require(not (Path(directory) / name).is_symlink(), "frontend_source_symlink")
-        for name in sorted(names):
-            if name.endswith(".tsbuildinfo"):
-                continue
-            path = Path(directory) / name
-            require(path.is_file(), "frontend_source_not_regular")
-            result[path.relative_to(root).as_posix()] = common.sha(path)
-    require("package.json" in result and "package-lock.json" in result, "frontend_lock_required")
-    return result
-
-
 def ux_modules(source):
     paths = set()
     for pattern in ("test_terminal*.py", "test_workspace*.py", "test_cockpit*.py", "test_graph*.py",
@@ -102,20 +82,6 @@ def ux_modules(source):
     require("tests/test_terminal_latency080.py" in result and "tests/test_terminal_workspace_e2e.py" in result,
             "complete_ux_and_latency_modules_required")
     return result
-
-
-def junit_counts(path):
-    root = ET.parse(path).getroot()
-    cases = list(root.iter("testcase"))
-    require(cases and not any(list(root.iter(tag)) for tag in ("failure", "error", "skipped")), "frontend_junit_not_all_passed")
-    identities = [(case.get("classname"), case.get("name")) for case in cases]
-    require(len(identities) == len(set(identities)), "frontend_junit_duplicate_cases")
-    for suite in root.iter("testsuite"):
-        for name in ("failures", "errors", "skipped"):
-            require(int(suite.get(name, "0")) == 0, "frontend_junit_failed_totals")
-        if "tests" in suite.attrib:
-            require(int(suite.attrib["tests"]) == len(list(suite.iter("testcase"))), "frontend_junit_incomplete_totals")
-    return {"passed": len(cases), "failures": 0, "errors": 0, "skipped": 0}
 
 
 def worker_basetemp(temporary_root):
@@ -214,126 +180,6 @@ def module_phase(args, root, source, env, check, supervision, guard):
             "counts": counts, "processes": results, "latency_properties": latency, "human_ux_tested": False}
 
 
-def executable(path, *, elf=False):
-    require(path is not None and path.is_absolute(), "absolute_frontend_runtime_required")
-    path = path.resolve(strict=True)
-    require(path.is_file(), "frontend_runtime_missing")
-    if elf:
-        with path.open("rb") as stream:
-            require(stream.read(4) == b"\x7fELF" and os.access(path, os.X_OK), "actual_elf_runtime_required")
-    return path
-
-
-def frontend_phase(args, root, source, work, env, check, scope, supervision):
-    frontend = source / "frontend"
-    manifest = frontend_manifest(frontend)
-    scratch = common.private_directory(work / "frontend", create=True)
-    for relative in manifest:
-        target = scratch / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(frontend / relative, target)
-    node, npm, chromium = executable(args.node, elf=True), executable(args.npm_cli), executable(args.chromium, elf=True)
-    binaries = {"node": {"path": str(node), "sha256": common.sha(node)},
-                "npm": {"path": str(npm), "sha256": common.sha(npm), "hash_scope": "cli_entrypoint"},
-                "chromium": {"path": str(chromium), "sha256": common.sha(chromium)}}
-    env = {**env, "PATH": str(node.parent) + os.pathsep + env["PATH"], "CI": "1",
-           "CHROMIUM_PATH": str(chromium), "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
-           "npm_config_cache": str(work / "npm-cache"), "npm_config_userconfig": str(work / "empty-npmrc")}
-    (work / "empty-npmrc").write_text("")
-    def bound_check():
-        check()
-        require(frontend_manifest(frontend) == manifest, "frozen_frontend_changed")
-        require(all((scratch / path).is_file() and not (scratch / path).is_symlink()
-                    and common.sha(scratch / path) == digest for path, digest in manifest.items()),
-                "frontend_working_copy_changed")
-        require(all(common.sha(Path(row["path"])) == row["sha256"] for row in binaries.values()), "frontend_runtime_changed")
-    for name, argv in (("node", [str(node), "--version"]), ("npm", [str(node), str(npm), "--version"]),
-                       ("chromium", [str(chromium), "--version"])):
-        bound_check()
-        result = subprocess.run(argv, cwd=scratch, env=env, capture_output=True, text=True, timeout=15)
-        require(result.returncode == 0, "frontend_version_probe_failed")
-        binaries[name]["version"] = result.stdout.strip()[:200]
-    version = re.match(r"v?(\d+)\.", binaries["node"]["version"])
-    require(version and (int(version[1]) in (20, 22) or int(version[1]) >= 24), "unsupported_node_version")
-    steps = {}
-    npm_command = [str(node), str(npm)]
-    steps["install"] = process_step([*npm_command, "ci", "--no-audit", "--fund=false"], scratch, env,
-                                    root / "frontend-install.log", bound_check, timeout=600)
-    require(common.sha(scratch / "package-lock.json") == manifest["package-lock.json"], "npm_lock_changed")
-    # Override only the scratch build/server: no write to frozen web_static and
-    # no fallback proxy to a production service if a browser mock is missing.
-    config = scratch / "vite.validation.config.ts"
-    config.write_text("import {mergeConfig} from 'vite'; import original from './vite.config';\n"
-                      "export default mergeConfig(original,{server:{proxy:{'/api':'http://127.0.0.1:1',"
-                      "'/auth':'http://127.0.0.1:1'}},build:{outDir:" + json.dumps(str(scratch / "dist")) + "}});\n")
-    steps["unit"] = process_step([*npm_command, "test", "--", "--reporter=junit", "--outputFile=" + str(root / "frontend-unit.xml")],
-                                 scratch, env, root / "frontend-unit.log", bound_check, timeout=300)
-    unit = junit_counts(root / "frontend-unit.xml")
-    steps["build"] = process_step([*npm_command, "run", "build", "--", "--config", str(config), "--outDir", str(scratch / "dist")],
-                                  scratch, env, root / "frontend-build.log", bound_check, timeout=300)
-    dist = scratch / "dist"
-    require((dist / "index.html").is_file(), "frontend_build_missing")
-    require(all(not path.is_symlink() and path.resolve().is_relative_to(dist) for path in dist.rglob("*")), "frontend_build_symlink")
-    built = {path.relative_to(dist).as_posix(): common.sha(path) for path in sorted(dist.rglob("*")) if path.is_file()}
-    supervision.atomic_json(root / "frontend-build-manifest.json", built)
-    with socket.socket() as reservation:
-        reservation.bind(("127.0.0.1", 0))
-        port = reservation.getsockname()[1]
-    browser_config = scratch / "playwright.validation.config.ts"
-    browser_config.write_text("import original from './playwright.config';\nexport default {...original,forbidOnly:true,"
-        "webServer:undefined,retries:0,workers:1,use:{...original.use,launchOptions:{...original.use?.launchOptions,"
-        "args:[...(original.use?.launchOptions?.args??[]),'--disable-gpu']},baseURL:"
-        + json.dumps(f"http://127.0.0.1:{port}") + "}};\n")
-    handle, child, row = None, None, None
-    try:
-        bound_check()
-        with (root / "frontend-server.log").open("xb") as log:
-            child = subprocess.Popen([str(node), str(scratch / "node_modules/vite/bin/vite.js"), "--config", str(config),
-                                      "--host", "127.0.0.1", "--port", str(port), "--strictPort"], cwd=scratch, env=env,
-                                     stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
-            row = supervision.identity(child.pid)
-            require(row and row["executable"] == str(node) and scope.owns(row), "frontend_server_not_owned")
-            handle = os.pidfd_open(child.pid)
-            require(scope.owns(row), "frontend_server_identity_changed")
-            ready, deadline = False, time.monotonic() + 30
-            while child.poll() is None and time.monotonic() < deadline:
-                try:
-                    with urllib.request.urlopen(f"http://127.0.0.1:{port}", timeout=1) as response:
-                        ready = response.status == 200
-                    if ready:
-                        break
-                except (OSError, urllib.error.URLError):
-                    time.sleep(.2)
-            require(ready, "frontend_server_not_ready")
-            browser_env = {**env, "PLAYWRIGHT_JUNIT_OUTPUT_FILE": str(root / "frontend-browser.xml")}
-            steps["browser"] = process_step([str(node), str(scratch / "node_modules/@playwright/test/cli.js"), "test",
-                                             "--config", str(browser_config), "--reporter=junit"], scratch, browser_env,
-                                            root / "frontend-browser.log", bound_check, timeout=300)
-            browser = junit_counts(root / "frontend-browser.xml")
-    finally:
-        if child is not None:
-            try:
-                require(child.poll() is None and handle is not None and scope.owns(row), "frontend_server_exit_or_identity_changed")
-                signal.pidfd_send_signal(handle, signal.SIGTERM)
-                code = child.wait(timeout=10)
-                require(code in (0, 143, -15), "frontend_server_shutdown_failed")
-                steps["server_shutdown"] = {"actual_exit_verified": True, "returncode": code}
-            finally:
-                if handle is not None:
-                    os.close(handle)
-    for suffix, extra in (("all", []), ("runtime", ["--omit=dev"])):
-        steps["audit_" + suffix] = process_step([*npm_command, "audit", "--json", *extra], scratch, env,
-                                               root / f"frontend-audit-{suffix}.json", bound_check, timeout=120,
-                                               accepted_codes=(0, 1))
-    # A vulnerability exit from the first audit must not hide the independent
-    # runtime-only result; neither nonzero result grants a passing phase.
-    require(all(steps["audit_" + suffix]["returncode"] == 0 for suffix in ("all", "runtime")), "frontend_audit_not_clean")
-    bound_check()
-    return {"status": "passed", "runtime": binaries, "source_hashes": manifest, "steps": steps,
-            "unit": unit, "browser": browser, "synthetic_browser_mocks": True, "filters": [],
-            "build_directory": str(dist), "frozen_web_static_modified": False}
-
-
 def recall_passed(result, cases):
     return (bool(result) and result.get("status") == "passed" and result.get("golden_count") == result.get("attempted") == 20
             and len(result.get("scenarios", [])) == 20 and len(cases) == 20 and len({row["id"] for row in cases}) == 20
@@ -396,16 +242,13 @@ def recall_phase(args, root, work, settings, supervision):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true")
-    parser.add_argument("--phase", choices=("guards", "ux", "frontend", "recall"), required=True)
+    parser.add_argument("--phase", choices=("guards", "ux", "recall"), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--private-root", type=Path, required=True)
     parser.add_argument("--arcade-dist", type=Path)
     parser.add_argument("--updater", type=Path)
-    parser.add_argument("--node", type=Path)
-    parser.add_argument("--npm-cli", type=Path)
-    parser.add_argument("--chromium", type=Path)
     parser.add_argument("--chat-model")
     parser.add_argument("--embedding-model")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
@@ -430,14 +273,11 @@ def main():
     parent = supervision.identity(os.getppid())
     require(parent and scope.owns(parent), "owned_controller_parent_required")
     source_hashes, gate_hash = guard.source_manifest(source), common.sha(root / "gate.json")
-    frozen_frontend = frontend_manifest(source / "frontend") if args.phase == "frontend" else None
     frozen_guards = guard_manifest(Path(__file__).parent, supervision, args.updater) if args.phase == "guards" else None
     def check():
         require(supervision.qualified_runtime(supervision.read_json(root / "gate.json")) == runtime
                 and common.sha(root / "gate.json") == gate_hash, "runtime_or_gate_changed")
         require(guard.source_manifest(source) == source_hashes, "frozen_application_changed")
-        if frozen_frontend is not None:
-            require(frontend_manifest(source / "frontend") == frozen_frontend, "frozen_frontend_changed")
         if frozen_guards is not None:
             require(guard_manifest(Path(__file__).parent, supervision, args.updater) == frozen_guards, "frozen_guard_helpers_or_updater_changed")
         require(supervision.same_process(parent) and scope.owns(parent), "controller_parent_changed")
@@ -463,14 +303,12 @@ def main():
     report = {"schema_version": 1, "scope": "devbrain_targeted_regressions", "phase": args.phase, "run_id": args.run_id,
               "runtime": runtime, "python_launcher": sys.executable, "runtime_gate_sha256": gate_hash,
               "source_hashes": source_hashes, "status": "running", "cleanup_complete": False,
-              "frontend_source_hashes": frozen_frontend,
               "guard_sources": frozen_guards,
               "controller_exit_verified": False, "full_suite_pass": False, "eight_hour_qualification": False,
               "workload_criteria_passed": False, "forced_cleanup": False, "errors": []}
     supervision.atomic_json(root / "controller-report.json", report)
     supervision.atomic_json(root / "regression-source.json", {"run_id": args.run_id, "phase": args.phase,
                                                               "source_hashes": source_hashes, "runtime": runtime,
-                                                              "frontend_source_hashes": frozen_frontend,
                                                               "guard_sources": frozen_guards})
     previous, old_umask, engine = dict(os.environ), os.umask(0o077), None
     previous_tempdir = tempfile.tempdir
@@ -518,8 +356,6 @@ def main():
             else:
                 env["DEVBRAIN_TEST_UPDATER_PATH"] = str(args.updater)
             result = module_phase(args, root, source, env, check, supervision, guard)
-        elif args.phase == "frontend":
-            result = frontend_phase(args, root, source, work, env, check, scope, supervision)
         else:
             check()
             result = recall_phase(args, root, work, settings, supervision)

@@ -1,36 +1,40 @@
-Wykonaj pierwszy etap rzeczywistego pilotażu DevBrain w projekcie devbrain-pilot.
-Pracuj wyłącznie w worktree wskazanym przez pakiet tej sesji. Używaj natywnych
-uprawnień; nie zmieniaj innych projektów ani konfiguracji logowania.
+Perform the first stage of the real DevBrain pilot in the devbrain-pilot project.
+Work only in the worktree named by this session's packet. Use native
+permissions; do not change other projects or the sign-in configuration.
 
-1. Wywołaj MCP resume_context. Przeczytaj cały gotowy pakiet i wywołaj ack_resume
-   z jego rzeczywistymi packet_id, packet_hash oraz dokładnym readback:
+1. Call MCP resume_context. Read the whole ready packet and call ack_resume
+   with its real packet_id, packet_hash and the exact readback:
    {"plan":{"id":...,"version":...}|null,"task":{"id":...,"version":...}|null}.
-   Null oznacza faktyczny brak aktywnego planu/zadania. Nie zgaduj identyfikatorów.
-   Jeżeli pakiet nie jest ready, zgłoś blokadę zamiast zapisywać stan.
-2. Przeczytaj pilot-plan.json i README.md w tym repozytorium. Jeżeli nie ma jeszcze
-   aktywnego planu pilotażu, zapisz dokładnie jego plan i steps przez MCP save_plan,
-   idempotency_key="token-pilot-v1", activate=true. Nie twórz drugiego planu przy
-   ponowieniu. Gdy plan już istnieje, odczytaj go zamiast nadpisywać definicję.
-3. Po zapisie planu ponownie odczytaj resume_context i wykonaj właściwy ACK.
-   Odczytaj next_task. Zaimplementuj token_auth.py i tests/test_token_auth.py według
-   zapisanych kryteriów, z co najmniej 12 metodami testowymi unittest. Nie uruchamiaj
-   jeszcze testów: następny klient ma rzeczywiście przejąć etap needs_test.
-4. Zindeksuj zmienione pliki istniejącym poleceniem devbrain index devbrain-pilot.
-   Przed kolejnym zapisem odśwież resume_context i ACK: zmienił się odcisk kodu.
-   Zapisz MCP checkpoint zawierający cel, zmienione pliki, wynik implementacji,
-   jawne tests_not_run=true, next_step="Claude: profil unit i oddzielne review",
-   oraz wszystkie zauważone braki. Zachowaj faktyczne source_ids zwrócone przez
-   checkpoint. To jest relacja klienta, a nie maszynowy wynik testów.
-5. Odśwież pakiet i ACK ponownie po checkpoint. Odczytaj next_task i bieżącą wersję
-   planu. MCP remember ma zaktualizować istniejące zadanie, z jego id,
-   expected_version i expected_plan_version, metadata={"state":"needs_test"}.
-   sources zawiera źródła zadania i zapisany checkpoint. Nie twórz check_runs,
-   nie ustawiaj test_passed/review_passed/acceptance_passed i nie oznaczaj done.
-6. Odczytaj next_task i sprawdź zapis needs_test. Zakończ krótkim podaniem ID
-   planu/zadania, faktycznego stanu, źródeł i pozostałej pracy. Nie polegaj na tym,
-   że następny klient dostanie tę rozmowę.
+   Null means there really is no active plan/task. Do not guess identifiers.
+   If the packet is not ready, report a blocker instead of saving state.
+2. Read pilot-plan.json and README.md in this repository. If there is no active
+   pilot plan yet, save exactly its plan and steps through MCP save_plan,
+   idempotency_key="token-pilot-v1", activate=true. Do not create a second plan
+   on a retry. If the plan already exists, read it instead of overwriting the
+   definition.
+3. After saving the plan, read resume_context again and perform the proper ACK.
+   Read next_task. Implement token_auth.py and tests/test_token_auth.py according
+   to the saved criteria, with at least 12 unittest test methods. Do not run the
+   tests yet: the next client must genuinely take over the needs_test stage.
+4. Index the changed files with the existing command devbrain index devbrain-pilot.
+   Before the next write, refresh resume_context and the ACK: the code
+   fingerprint has changed. Save an MCP checkpoint containing the goal, the
+   changed files, the implementation result, an explicit tests_not_run=true,
+   next_step="Claude: unit profile and separate review", and every gap you noticed.
+   Keep the actual source_ids returned by the checkpoint. This is the client's
+   report, not a machine test result.
+5. Refresh the packet and ACK again after the checkpoint. Read next_task and the
+   current plan version. MCP remember must update the existing task, with its id,
+   expected_version and expected_plan_version, metadata={"state":"needs_test"}.
+   sources contains the task's sources and the saved checkpoint. Do not create
+   check_runs, do not set test_passed/review_passed/acceptance_passed and do not
+   mark it done.
+6. Read next_task and verify the needs_test write. Finish by briefly stating the
+   plan/task IDs, the actual state, the sources and the remaining work. Do not
+   rely on the next client receiving this conversation.
 
-Przy resume_required odczytaj nowy pakiet i wykonaj ACK. Przy konflikcie wersji
-odczytaj bieżący stan; nie nadpisuj nowszej pracy. Jeżeli etap implementacji jest
-już wykonany w wznowionym pilotażu, nie przepisuj kodu tylko po to, aby powtórzyć
-instrukcje. Zgłoś aktualny stan i rzeczywistą pozostałą pracę.
+On resume_required, read the new packet and perform an ACK. On a version
+conflict, read the current state; do not overwrite newer work. If the
+implementation stage is already done in a resumed pilot, do not rewrite the code
+just to repeat the instructions. Report the current state and the real remaining
+work.

@@ -56,3 +56,28 @@ async def test_join_defaults_to_observer_and_requires_explicit_takeover(tmp_path
         await pilot.press("tab", "enter")
     assert app.return_value == "takeover"
     assert not settings.data_dir.exists()
+
+
+def test_palette_offers_ask_memory_and_routes_it_by_name():
+    calls = []
+    manager = SimpleNamespace(request_command=lambda value: calls.append(value))
+    command = next(row for row in COMMANDS if row[3] == "ask")
+    assert command[0] == "Ask memory" and command[2] == "command"
+    dispatch_command(manager, command)
+    assert calls == ["ask"]
+
+
+def test_ask_summary_shows_answer_quotes_missing_evidence_and_coverage():
+    from devbrain.terminal_commands import ask_summary
+    text = ask_summary({
+        "status": "partial", "answer": "Sessions last one hour.",
+        "sources": [{"uri": "file://src/auth.py", "line_start": 3, "line_end": 4,
+                     "quote": "SESSION_TTL =\n  3600"}],
+        "unknowns": ["No decision explains the refresh window."],
+        "coverage": {"answer_terms": 3, "terms_in_quotes": 1, "ratio": 0.333},
+    }, lambda value: value)
+    assert "Status: partial" in text and "Sessions last one hour." in text
+    assert '- file://src/auth.py (3-4): "SESSION_TTL = 3600"' in text
+    assert "Missing evidence:\n- No decision explains the refresh window." in text
+    assert "Answer words found in quotes: 1/3" in text
+    assert ask_summary(None, lambda value: value) == "The memory service returned no answer."

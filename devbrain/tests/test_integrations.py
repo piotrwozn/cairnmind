@@ -1146,3 +1146,40 @@ def test_invalid_json_is_not_replaced(settings, project, installed):
     result = integrations.install_integrations(settings, project, ("claude",))
     assert path.read_text() == "not JSON"
     assert result["warnings"]
+
+
+CLIENT_FIXTURES = Path(__file__).parent / "fixtures" / "clients"
+
+
+@pytest.mark.parametrize("fixture", sorted(path.name for path in CLIENT_FIXTURES.iterdir()))
+def test_golden_client_outputs_satisfy_every_capability_check(monkeypatch, fixture):
+    """Real outputs of `<client> --version`, `--help` and `codex features list`.
+
+    Add a directory per new client version (see `devbrain doctor --contract`). A failure
+    names the exact capability check that a client update broke.
+    """
+    folder = CLIENT_FIXTURES / fixture
+    client = fixture.split("-")[0]
+    files = {"--version": "version.txt", "--help": "help.txt", "list": "features.txt"}
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, (folder / files[command[-1]]).read_text(encoding="utf-8"), "")
+
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(integrations.subprocess, "run", fake_run)
+    info = integrations._probe_cli(client)
+    failed = {name: check for name, check in info["checks"].items() if not check["ok"]}
+    assert not failed and info["verified_resume"]
+    expected = {"version", "mcp", "prompt", "hooks"} | ({"isolated_process"} if client == "codex" else set())
+    assert all(info["checks"][name]["evidence"] for name in expected)
+
+
+@pytest.mark.parametrize("help_text,expected", [
+    ("Commands: exec mcp features", True),
+    ("  mcp        Manage MCP servers", True),
+    ("Options: --mcp-config <file>", False),
+    ("Options: --debug=hooks,mcp", False),
+])
+def test_mcp_capability_requires_the_command_word_not_a_flag(help_text, expected):
+    import re
+    assert bool(re.search(integrations.MCP_COMMAND, help_text)) is expected

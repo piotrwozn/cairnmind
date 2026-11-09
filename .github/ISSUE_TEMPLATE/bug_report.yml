@@ -1,0 +1,38 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. devbrain project add ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: DevBrain version
+      description: Output of `devbrain version`.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS or WSL distribution, Java, tmux and Ollama versions, and the coding clients involved. `devbrain doctor --contract` output helps for client issues.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or diagnostics
+      description: Remove API keys, tokens and private conversation text before pasting.
+      render: text

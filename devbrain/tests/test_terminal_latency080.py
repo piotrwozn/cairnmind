@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import threading
 import time
 
@@ -17,6 +18,10 @@ from textual.widgets import DataTable, Input
 from devbrain.terminal_panels import SidebarApp
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
+
+# Budgets target the developer workstation. Shared CI runners set a larger scale; it stays
+# below the 3 s controlled backend delay, so a UI blocked on the backend still fails.
+SCALE = float(os.environ.get("DEVBRAIN_LATENCY_SCALE", "1"))
 
 
 @pytest.mark.asyncio
@@ -104,7 +109,7 @@ async def test_local_input_remains_responsive_during_three_second_backend_delay(
                     app.sent_at = time.perf_counter()
                     # Use the same App → focused widget route as received keys.
                     app.post_message(events.Key(key, character))
-                    await asyncio.wait_for(acknowledged.wait(), timeout=.5)
+                    await asyncio.wait_for(acknowledged.wait(), timeout=.5 * SCALE)
                     assert search.value == app.expected_value
                     # Both the Unicode query and its removal retain the long
                     # rows, rather than benchmarking an empty search result.
@@ -128,7 +133,9 @@ async def test_local_input_remains_responsive_during_three_second_backend_delay(
     record_property("keyboard_to_refresh_p95_ms", round(p95 * 1000, 3))
     record_property("maximum_ui_loop_interval_ms", round(maximum_loop_interval * 1000, 3))
     record_property("controlled_backend_delay_seconds", 3)
-    assert p95 <= .150, f"Keyboard-to-refresh P95 {p95 * 1000:.1f} ms exceeds 150 ms"
-    assert maximum_loop_interval <= .500, (
-        f"UI loop stalled for {maximum_loop_interval * 1000:.1f} ms, exceeding 500 ms"
+    assert p95 <= .150 * SCALE, (
+        f"Keyboard-to-refresh P95 {p95 * 1000:.1f} ms exceeds {150 * SCALE:.0f} ms"
+    )
+    assert maximum_loop_interval <= .500 * SCALE, (
+        f"UI loop stalled for {maximum_loop_interval * 1000:.1f} ms, exceeding {500 * SCALE:.0f} ms"
     )

@@ -230,11 +230,10 @@ if ($controllerName -ceq 'run-regressions-080.py') {
     $phaseArtifacts=@{
         guards=@('guards-collection.json','guards.xml')
         ux=@('ux-collection.json','ux.xml')
-        frontend=@('frontend-unit.xml','frontend-browser.xml','frontend-build-manifest.json','frontend-audit-all.json','frontend-audit-runtime.json')
         recall=@('recall-results.json','recall/checkpoint.json','recall/cases.jsonl','recall/resources.jsonl')
     }
     $regressionPhase=$spec['argv'][$positions[0]+1]
-    if($regressionPhase -cnotin @('guards','ux','frontend','recall')){throw 'Unknown regression phase.'}
+    if($regressionPhase -cnotin @('guards','ux','recall')){throw 'Unknown regression phase.'}
     $controllerArtifacts[$controllerName]+=$phaseArtifacts[$regressionPhase]
 }
 foreach($relative in @($controllerArtifacts[$controllerName])) {

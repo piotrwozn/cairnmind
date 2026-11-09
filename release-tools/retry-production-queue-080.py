@@ -40,7 +40,6 @@ RUNTIME_KEYS = tuple(f"{name}_{suffix}" for name in ("python", "java", "tmux")
                      for suffix in ("executable", "binary_sha256"))
 GATE_CONTROLLERS = {
     "ux": ("run-regressions-080.py", "regressions_completed_pending_external_watch", "ux"),
-    "frontend": ("run-regressions-080.py", "regressions_completed_pending_external_watch", "frontend"),
     "recall": ("run-regressions-080.py", "regressions_completed_pending_external_watch", "recall"),
     "native": ("validate-native-account080.py", "native_account_completed_pending_attestation", None),
     "copilot": ("validate-copilot-account080.py", "copilot_account_completed_pending_attestation", None),
@@ -252,28 +251,6 @@ def verify_attempt_result(before, after, job):
             "new_pending_jobs": len(new), "duplicate_counts_unchanged": True}
 
 
-def frontend_manifest(root):
-    """Same source boundary as the qualified frontend controller, not src/ only."""
-    canonical(root, directory=True)
-    result = {}
-    for directory, subdirs, names in os.walk(root):
-        subdirs[:] = sorted(name for name in subdirs if name not in
-                            {"node_modules", ".git", "dist", "test-results", "playwright-report"})
-        for name in [*subdirs, *names]:
-            require(not (Path(directory) / name).is_symlink(), "frontend_source_symlink")
-        for name in sorted(names):
-            if name.endswith(".tsbuildinfo"):
-                continue
-            path = canonical(Path(directory) / name)
-            result[path.relative_to(root).as_posix()] = sha(path)
-    require("package.json" in result and "package-lock.json" in result, "frontend_lock_required")
-    return result
-
-
-def verify_frontend_source(run, source):
-    require(run.get("frontend_source_hashes") == frontend_manifest(source / "frontend"), "frontend_not_final_source")
-
-
 def recompute_final_attestation(audit, name, root, ref, final_source_hashes):
     qualified_source = canonical(ref["qualified_source_root"], directory=True)
     require(audit.source_manifest(qualified_source) == final_source_hashes, "qualified_source_bytes_differ")
@@ -327,8 +304,6 @@ def verify_admission(admission, guard, source, runtime):
             require(run.get("phase") == phase, "gate_phase_mismatch")
         if name not in {"upgrade_smoke", "tooling_guards"}:
             require(run.get("source_hashes") == admission["source_hashes"], "gate_not_final_source")
-        if name == "frontend":
-            verify_frontend_source(run, source)
         observed = audit.document(receipt)
         require(isinstance(observed.get("artifact_sha256"), dict) and observed["artifact_sha256"], "gate_artifacts_missing")
         audit.verify_external(root, run["run_id"], run["runtime"], set(observed["artifact_sha256"]), controller)

@@ -1,85 +1,71 @@
 # DevBrain
 
-[Kierunki rozwoju i propozycje do omówienia](docs/ROADMAP.md).
+DevBrain is a local development environment for **Codex CLI, Claude Code, Ollama, the OpenAI/Anthropic APIs and GitHub Copilot**, with a separate knowledge agent. A single `devbrain` command opens the project list in the current terminal. You pick a project and an assistant, then explicitly start work. Shared project memory answers `ask` questions: what was decided, where the code lives, what it depends on and what needs to happen next. Project state is stored outside model conversations, so it survives across sessions and clients.
 
-Lokalne środowisko programistyczne dla **Codex CLI, Claude Code, Ollamy, API OpenAI/Anthropic i GitHub Copilota** z osobnym agentem wiedzy. Jedna komenda `devbrain` otwiera listę projektów w bieżącym terminalu. Wybierasz projekt, asystenta i jawnie rozpoczynasz pracę. Wspólna pamięć odpowiada na `ask`: co ustalono, gdzie znajduje się kod, od czego zależy i co trzeba zrobić dalej. Inspektor pamięci, sesje oraz graf 3D są dostępne z menu.
+## Highlights
 
-Wersja **0.8.0** domyślnie pokazuje jeden widok na całej szerokości terminala (**Focus**) i używa języka angielskiego. **More → Settings → Language → Polski** zmienia język interfejsu. `Ctrl+B`, a następnie `Spacja`, otwiera wyszukiwalne menu poleceń; `Ctrl+B`, a następnie `?`, pokazuje skróty. `Enter` na projekcie otwiera jego podgląd. Dopiero **Start work / Rozpocznij pracę** uruchamia jednego wskazanego asystenta. **Connections / Połączenia** skupia konta, modele i klucze, a **More / Więcej** zawiera sesje, snapshoty i ustawienia. Wielopanelowy układ **Cockpit** pozostaje opcją. [Instrukcja terminala](docs/TERMINAL.md).
+- **Focus view by default.** Version 0.8.0 shows one full-width view (**Focus**) and uses English by default. **More → Settings → Language → Polski** switches the interface to Polish. The multi-pane **Cockpit** layout remains available as an option.
+- **Command palette.** `Ctrl+B`, then `Space`, opens a searchable command menu; `Ctrl+B`, then `?`, shows keyboard shortcuts.
+- **Explicit start.** `Enter` on a project opens its overview. Only **Start work** launches the one assistant you selected.
+- **Connections in one place.** **Connections** groups accounts, models and keys; **More** contains sessions, snapshots and settings.
+- **Ask memory.** Ask the project memory a question from the command palette and get cited sources, missing evidence and citation coverage, without writing anything.
+- **Hybrid RAG and GraphRAG.** Full-text search, vector search and a source-derived dependency graph, combined with a bounded agent loop.
+- **Verified session resume.** Launchers wait for a complete resume package, and writes from a linked session require a real model ACK.
+- **Atomic plans and named checks.** Plans are saved in one transaction; named test profiles bind results to the task and to a fingerprint of the current code.
+- **Portable memory.** A full project snapshot in `.memory/devbrain/` travels with the repository and can be imported on another machine.
 
-DevBrain korzysta z Hybrid RAG, źródłowego grafu zależności i ograniczonej pętli agentowej. Stan projektów jest zapisany poza rozmowami modeli. Wersja 0.3 dodaje sprawdzane wznowienie sesji, atomowe plany, wykonanie nazwanych profili testowych i pomiar przypominania na izolowanych danych.
-
-Wersja 0.3.2 rozwija ograniczoną korektę odpowiedzi z 0.3.1 o opcjonalny kontrakt `answer_schema`: wymagane klucze i typy danych są sprawdzane przed zaakceptowaniem wyniku. Raport ewaluacji zawiera diagnostykę odpowiedzi modelu i błędów Ollama. Próg zaliczenia oraz wymagania dotyczące źródeł pozostają takie same.
-
-Wersja 0.3.3 naprawia przekazywanie identyfikatorów sesji z launchera do MCP, poprawia uprawnienia czterech narzędzi tymczasowego serwera testowego Codexa i dodaje jawne pominięcie Claude’a przy niedostępnym limicie konta. Pominięty etap pozostaje `not_run`.
-
-Wersja 0.3.4 rozpoznaje techniczne wpisy `world_state` i `token_usage_record` z historii Codexa 0.166. Weryfikowane wznowienie oraz importer potrafią ponownie rozpoznać takie wpisy zapisane przez starszy parser, zachowując ich oryginalną treść, identyfikatory i skróty. Nieznane lub uszkodzone wpisy nadal oznaczają niepełny zakres historii.
-
-Wersja 0.3.5 utrwala zakres historii dla danego wznowienia. Ponawianie odczytu pakietu nie przesuwa tego zakresu za bieżącymi wywołaniami narzędzi. Startowy hook odczytuje dokładny pakiet launchera bez zastępowania go innym, a zmiana kodu nadal wymaga odświeżenia i nowego ACK.
-
-Wersja 0.3.6 zachowuje zapisane przez natywnego klienta zgody narzędzi MCP oraz uprawnienia istniejących plików konfiguracji. Ponowny start aktualizuje wyłącznie zarządzane pola połączenia DevBrain. Zapis nowej trwałej zgody przez Codexa nadal zmienia konfigurację i może wymagać odświeżenia pakietu oraz ACK.
-
-Wersja 0.3.7 rozpoznaje 11 dodatkowych typów wpisów pomocniczych Claude Code 2.1.318, w tym tryb sesji, metadane załączników i żądań API. Archiwizuje ich pełną surową treść i naprawia klasyfikację wcześniej zapisanych wpisów bez zmiany identyfikatorów oraz skrótów. Niepoprawne schematy i konflikty pochodzenia nadal blokują gotowość.
-
-Wersja 0.3.8 rozlicza nieudaną pierwszą próbę odczytu rozmiaru historii, gdy późniejsze zdarzenie tej samej sesji dostarcza poprawny zakres i przechodzi on pełną weryfikację archiwum. Zachowuje ślad pierwotnego błędu; zmierzone, sprzeczne lub niezweryfikowane zakresy nadal blokują wznowienie.
-
-Wersja 0.3.9 ogranicza kontekst pojedynczej poprawy odpowiedzi `ask`, dodaje schemat i jedną próbę poprawy ekstrakcji oraz atomowy zapis jej propozycji. Diagnostyka zachowuje przyczyny błędów i rozróżnia historię nieudanych prób od potwierdzonego zakresu archiwum. Zadania można odczytać i ponowić pojedynczo w obrębie projektu, z kontrolą wersji próby i zachowaniem audytu.
-
-Wersja 0.3.10 ogranicza generowanie ekstrakcji do badanego źródła, bez treści wcześniejszych rekordów w danych wejściowych modelu. Schemat generowania ogranicza cytaty do dosłownych fragmentów tego źródła; niezależna walidacja nadal odrzuca nieistniejące cytaty. Raport rozdziela przyczyny pominięcia propozycji. Jawna flaga `jobs retry --include-omissions` pozwala ponowić zakończoną ekstrakcję, jeśli wszystkie propozycje odrzucono i niczego nie zapisano.
-
-Wersja **0.5** wprowadziła zarządzane sesje klientów, profile, wyszukiwanie projektów, inspektor i lokalny kokpit przeglądarkowy. Ten interfejs pozostaje dostępny jawnie przez `devbrain cockpit open`; [jego instrukcja jest archiwalna](docs/COCKPIT.md).
-
-Wersja **0.6** udostępnia te podstawy bezpośrednio w terminalu. `devbrain` i `devbrain tui` otwierają ten sam układ tmux/Textual: panel projektów i ustawień, do dwóch widocznych klientów, inspektor i prawdziwą projekcję XYZ grafu. Codex i Claude zachowują własne interfejsy, logowanie i zgody. [Instrukcja środowiska terminalowego](docs/TERMINAL.md).
-
-Wersja **0.7** dodaje własnego agenta programistycznego dla OpenAI Responses, Anthropic Messages, API zgodnych z OpenAI i lokalnej Ollamy oraz osobny adapter oficjalnego SDK GitHub Copilot. Wybierasz profile i panele w terminalu. Nowe silniki używają wspólnej pamięci, rzeczywistego ACK modelu, dziennika działań i jednorazowych zgód na polecenia. [Konfiguracja połączeń i uprawnień](docs/API.md).
-
-Poprawka **0.7.1** naprawia błąd wyświetlania grafu i wprowadza oświetlone węzły ASCII 3D z perspektywą i zasłanianiem powierzchni. Obraca się rzeczywisty graf pamięci, podobnie jak klasyczny terminalowy donut; nie są to dane demonstracyjne. [Aktualizacja z 0.7.0](docs/README.md#aktualizacja-070-do-071).
-
-Poprawka **0.7.2** naprawia logowanie GitHub Copilot kontem w WSL: zgoda na lokalny zapis poświadczeń jest przekazywana w formacie wymaganym przez runtime. Profil Copilota ignoruje odziedziczone ustawienia BYOK i trybu offline, a integralność runtime jest sprawdzana według zawartości plików. Narzędzie potwierdzania pamięci ma dokładny schemat pól planu i zadania, aby model nie musiał zgadywać formatu ACK. Poprawiono także konfigurację testu natywnego Codexa, diagnostykę błędów zapisu ekstrakcji i zależności narzędzi budowania opcjonalnego kokpitu WWW. [Aktualizacja z 0.7.1](docs/README.md#aktualizacja-071-do-072).
-
-## Architektura
+## Architecture
 
 ```text
-Terminal: tmux + Textual ──► Codex CLI / Claude Code / agent API / Copilot SDK
-                           │ MCP: resume / ACK / ask / plany
+Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot SDK
+                           │ MCP: resume / ACK / ask / plans
                            ▼
-                 Lokalna usługa DevBrain
+                 Local DevBrain service
                   │                   │
-          agent wiedzy Ollama     niezależna archiwizacja
+       Ollama knowledge agent    independent archiving
                   │                   │
           Hybrid RAG + GraphRAG ◄─────┘
                   │
-       ArcadeDB: źródła, wektory, graf, decyzje, zadania
+       ArcadeDB: sources, vectors, graph, decisions, tasks
 ```
 
-- **Agent wiedzy:** `qwen3.5:9b` przez Ollama, kontekst roboczy 16 tys. tokenów. Model kodujący nowego profilu jest wybierany niezależnie.
-- **Embeddingi:** `qwen3-embedding:0.6b`.
-- **Wyszukiwanie:** natywny indeks pełnotekstowy ArcadeDB + `LSM_VECTOR`/HNSW + przejścia po grafie.
-- **Pamięć:** wersjonowane rekordy i niezależne snapshoty źródeł, także niezacommitowanego kodu.
-- **Kolejka:** wspólna dla klientów; pytania mają pierwszeństwo przed oczekującą ekstrakcją i embeddingami.
-- **Plany:** cały plan i zależności zapisane atomowo, stabilne identyfikatory kroków i deterministyczny następny krok dla projektu/worktree.
-- **Sesje:** launcher czeka na gotowy pakiet wznowienia; zapis z powiązanej sesji wymaga rzeczywistego ACK modelu z odczytanymi identyfikatorami i wersjami.
-- **Weryfikacja:** nazwane profile testowe wiążą wynik z definicją zadania, profilem i odciskiem bieżącego kodu. Postęp `done` i świeżość dowodu są osobne.
+- **Knowledge agent:** `qwen3.5:9b` via Ollama, with a 16k-token working context. The coding model of each new profile is chosen independently.
+- **Embeddings:** `qwen3-embedding:0.6b`.
+- **Search:** ArcadeDB's native full-text index + `LSM_VECTOR`/HNSW + graph traversal.
+- **Memory:** versioned records and independent source snapshots, including uncommitted code.
+- **Queue:** shared across clients; questions take priority over pending extraction and embedding work.
+- **Plans:** the whole plan and its dependencies are saved atomically, with stable step identifiers and a deterministic next step per project/worktree.
+- **Sessions:** the launcher waits for a ready resume package; writes from a linked session require a real model ACK that names the identifiers and versions it read.
+- **Verification:** named test profiles bind a result to the task definition, the profile and a fingerprint of the current code. Progress (`done`) and evidence freshness are tracked separately.
 
-Inspiracją jest sposób organizacji pamięci i agentów w SynapCores. To własna implementacja warstwy wiedzy; nie kopia całego produktu ani jego silnika bazodanowego.
+The way memory and agents are organized is inspired by SynapCores. DevBrain is an independent implementation of the knowledge layer; it is not a copy of that product or of its database engine.
 
-Jedynym silnikiem danych jest **[ArcadeDB](https://github.com/ArcadeData/arcadedb), Apache 2.0**. DevBrain zarządza przypiętą wersją `26.11.1` jako lokalnym procesem Java. Dokumenty, graf, FTS i indeks wektorowy znajdują się w tym samym silniku.
+The only data engine is **[ArcadeDB](https://github.com/ArcadeData/arcadedb), Apache 2.0**. DevBrain manages the pinned version `26.11.1` as a local Java process. Documents, the graph, full-text search and the vector index all live in the same engine.
 
-## Instalacja na Windowsie
+## Requirements
 
-Docelowy układ: Windows + WSL2 Ubuntu, **Java 21+, tmux 3.4+**, Ollama i wybrane klienty w tej samej dystrybucji WSL. Codex i Claude Code są wymagane tylko dla ich natywnych profili. RTX 4080 Super ma 16 GB VRAM; rzeczywiste wykorzystanie pamięci i opóźnienia sprawdzisz po instalacji. Docker nie jest potrzebny.
+- Windows with WSL2 Ubuntu.
+- **Java 21+** and **tmux 3.4+** inside WSL.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Ollama](https://docs.ollama.com/linux) in the same WSL distribution.
+- The clients you plan to use, in the same WSL distribution. [Codex CLI](https://developers.openai.com/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup) are required only for their native profiles.
+- Docker is not needed. The terminal package does not require Node.js or a frontend build.
 
-1. W Windowsie zainstaluj aktualny sterownik NVIDIA i WSL2. W Ubuntu sprawdź `nvidia-smi`.
-2. W WSL zainstaluj Java 21 (`sudo apt install openjdk-21-jre-headless tmux`), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Ollama](https://docs.ollama.com/linux), [Codex CLI](https://developers.openai.com/codex/cli) i [Claude Code](https://code.claude.com/docs/en/setup). Zaloguj oba CLI ich własnymi mechanizmami.
-3. Skopiuj katalog projektu do WSL, np. `~/src/devbrain`, i uruchom:
+The reference setup uses an RTX 4080 Super with 16 GB of VRAM; check actual memory use and latency on your own machine after installation.
+
+## Installation
+
+1. On Windows, install a current NVIDIA driver and WSL2. In Ubuntu, check `nvidia-smi`.
+2. In WSL, install Java 21 and tmux (`sudo apt install openjdk-21-jre-headless tmux`), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Ollama](https://docs.ollama.com/linux), [Codex CLI](https://developers.openai.com/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup). Log in to both CLIs using their own mechanisms.
+3. Copy the project directory into WSL, for example `~/src/devbrain`, and run:
 
 ```bash
 cd ~/src/devbrain
 bash scripts/install-wsl.sh
 ```
 
-Instalator tworzy izolowaną instalację narzędzia przez `uv tool`, pobiera przypięty ArcadeDB (około 86 MB, z weryfikacją SHA-256), uruchamia silnik i inicjalizuje bazę. Nie pobiera modeli ani runtime Copilota i nie zmienia konfiguracji Codexa/Claude’a. Runtime Copilota przygotowujesz osobną akcją w TUI. Jeśli polecenie `devbrain` nie jest jeszcze w `PATH`, dodaj katalog pokazany przez instalator.
+The installer creates an isolated tool installation via `uv tool`, downloads the pinned ArcadeDB (about 86 MB, verified with SHA-256), starts the engine and initializes the database. It does not download models or the Copilot runtime, and it does not change Codex or Claude configuration. The Copilot runtime is prepared by a separate action in the terminal UI. If the `devbrain` command is not yet on your `PATH`, add the directory the installer prints.
 
-Przy instalacji ręcznej po `uv tool install --python 3.12 ~/src/devbrain` wykonaj:
+For a manual installation, after `uv tool install --python 3.12 ~/src/devbrain` run:
 
 ```bash
 devbrain engine install
@@ -87,34 +73,36 @@ devbrain init
 devbrain engine status
 ```
 
-Uruchom Ollama w osobnym terminalu, jeśli nie działa jako usługa:
+Start Ollama in a separate terminal if it is not running as a service:
 
 ```bash
 ollama serve
 ```
 
-Następnie pobierz modele — to jawny krok pobierający kilka GB:
+Then pull the models. This is an explicit step that downloads several GB:
 
 ```bash
 devbrain models pull
 devbrain doctor
 ```
 
-Instrukcja pracy: **[docs/TERMINAL.md](docs/TERMINAL.md)**. Pełna instalacja, pamięć i diagnostyka: **[docs/README.md](docs/README.md)**. Gotowy pakiet terminalowy nie wymaga Node.js ani budowania frontendu.
-
-## Pierwszy projekt
+## First project
 
 ```bash
-devbrain project add moja-aplikacja ~/src/moja-aplikacja
-devbrain install moja-aplikacja
+devbrain project add my-app ~/src/my-app
+devbrain install my-app
 devbrain
 ```
 
-Polecenie `devbrain` działa z dowolnego katalogu i korzysta z jednego rejestru projektów w lokalnym magazynie DevBrain. Projekt możesz też dodać przez **Add folder / Dodaj folder**: wpisz ścieżkę Linux lub Windows albo wybierz katalog klawiaturą. Nazwa jest opcjonalna. `Enter` na liście otwiera projekt do inspekcji. Na ekranie projektu wybierz nazwanego asystenta i użyj **Start work / Rozpocznij pracę**. **Add assistant / Dodaj asystenta** dodaje kolejne połączenie do projektu, zachowując istniejące przydziały.
+`devbrain` works from any directory and uses a single project registry in the local DevBrain store. You can also add a project with **Add folder**: type a Linux or Windows path, or pick a directory with the keyboard. The name is optional. `Enter` on the list opens the project for inspection. On the project screen, choose a named assistant and use **Start work**. **Add assistant** adds another connection to the project and keeps existing assignments.
 
-W **Connections / Połączenia** dodaj połączenie, zaloguj konto albo ustaw klucz, wybierz model i opcjonalnie wykonaj jawny test. Copilot korzysta z konta GitHub bez własnego klucza API. Limity i odwołania do poświadczeń są w **Advanced limits and credentials / Zaawansowane limity i poświadczenia**. Sam zapis połączenia nie generuje odpowiedzi. Otwarcie środowiska dołącza istniejące procesy; nie uruchamia wszystkich przypisanych asystentów. [Pełna instrukcja API](docs/API.md).
+In **Connections**, add a connection, log in to an account or set a key, choose a model and optionally run an explicit test. Copilot uses your GitHub account and needs no API key of its own. Limits and credential references are under **Advanced limits and credentials**. Saving a connection does not generate a response. Opening the environment attaches to existing processes; it does not start every assigned assistant. See [docs/API.md](docs/API.md) for the full API guide.
 
-Pełny układ wymaga co najmniej **140 kolumn × 42 wierszy**; zalecane jest **180 × 55**. W mniejszym terminalu aktywny panel jest powiększany, a ukryte procesy nadal działają. `Ctrl+B`, potem `p`, `1`, `2`, `i` lub `g` wybiera projekty, klientów, inspektor lub graf; `z` powiększa panel, a `d` odłącza środowisko. Podwójne `Ctrl+B` przekazuje ten skrót do natywnego klienta. Brak interaktywnego terminala daje komunikat z instrukcją, bez otwierania przeglądarki i inicjalizowania usług.
+## Everyday use
+
+### Workspace
+
+The full Cockpit layout needs at least **140 columns × 42 rows**; **180 × 55** is recommended. In a smaller terminal the active pane is enlarged and hidden processes keep running. `Ctrl+B`, then `p`, `1`, `2`, `i` or `g`, selects projects, clients, the inspector or the graph; `z` zooms the pane and `d` detaches the environment. Pressing `Ctrl+B` twice passes the shortcut through to the native client. Without an interactive terminal, DevBrain prints instructions instead of opening a browser or initializing services.
 
 ```bash
 devbrain workspace status
@@ -124,114 +112,125 @@ devbrain workspace stop
 devbrain workspace stop --clients
 ```
 
-Odłączenie zachowuje środowisko i procesy. `workspace stop` zamyka zewnętrzny układ; opcja `--clients` jawnie zatrzymuje również klientów przejętych przez ten workspace. Pozostałe uruchomienia pozostają niezależne. Wyłączenie WSL kończy procesy, a zapisana pamięć pozostaje dostępna do jawnego wznowienia.
+Detaching keeps the environment and its processes. `workspace stop` closes the outer layout; `--clients` also explicitly stops the clients adopted by this workspace. Other launches stay independent. Shutting down WSL ends the processes, but saved memory remains available for an explicit resume.
 
-Jeden terminal steruje workspace. Drugi terminal otwiera podgląd; `devbrain workspace takeover` jawnie przejmuje sterowanie i przełącza poprzedni terminal w podgląd, bez uruchamiania nowych klientów.
+One terminal controls the workspace. A second terminal opens a read-only view; `devbrain workspace takeover` explicitly takes control and switches the previous terminal to view mode, without starting new clients.
 
-Launcher i `devbrain run` odmawiają startu, jeśli klient nie ma zweryfikowanej obsługi MCP, hooków, przekazania pakietu i powiązania sesji. Wynik wykrycia pokazuje `devbrain doctor`. Projekt z istniejącym kodem wymaga repozytorium Git i pierwszego commita; wyjątek dla pustego projektu jawnie oznacza brak zweryfikowanego kodu.
+The launcher and `devbrain run` refuse to start a client that lacks verified support for MCP, hooks, package handoff and session binding. `devbrain doctor` shows the detection result. A project with existing code needs a Git repository and a first commit; the exception for an empty project explicitly marks that no code has been verified.
 
-Można pracować również bez launchera:
+### Without the launcher
 
 ```bash
-devbrain run moja-aplikacja codex
-devbrain run moja-aplikacja claude
-devbrain ask moja-aplikacja "Dlaczego zmieniliśmy logowanie i co od niego zależy?"
-devbrain context moja-aplikacja
-devbrain status --project moja-aplikacja
+devbrain run my-app codex
+devbrain run my-app claude
+devbrain ask my-app "Why did we change login, and what depends on it?"
+devbrain context my-app
+devbrain status --project my-app
 ```
 
-`ask` zwraca odpowiedź, źródła, braki wiedzy i aktualność. Przy niedostępnym modelu pokazuje `unavailable`; nie udaje, że samo wyszukiwanie jest odpowiedzią agenta.
+`ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer.
 
-## Plany, zadania i dowody
+## Plans, tasks and evidence
 
-Zapis planu obejmuje nagłówek, kroki i finalny graf zależności w jednej transakcji. Codex i Claude widzą te same wersje. Aktywny plan jest przypisany do konkretnego zarejestrowanego worktree. Launcher pokazuje plany, następny krok, blokady, świeżość dowodów i gotowość pakietu sesji.
+Saving a plan writes the header, the steps and the final dependency graph in a single transaction. Codex and Claude see the same versions. An active plan is bound to a specific registered worktree. The launcher shows plans, the next step, blockers, evidence freshness and session package readiness.
 
 ```bash
-devbrain plan save moja-aplikacja ./plan.json --idempotency-key login-plan-1 --activate
-devbrain plan next moja-aplikacja
-devbrain plan list moja-aplikacja
-devbrain task list moja-aplikacja
+devbrain plan save my-app ./plan.json --idempotency-key login-plan-1 --activate
+devbrain plan next my-app
+devbrain plan list my-app
+devbrain task list my-app
 ```
 
-Stany postępu to `todo`, `in_progress`, `needs_test`, `needs_review`, `done`, `blocked`. Osobny status `proposed`/`confirmed` opisuje pewność ustalenia. Wynik `done` pozostaje historią wykonania; późniejsza zmiana kodu może zmienić jego weryfikację na `stale`.
+Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` and `blocked`. A separate `proposed`/`confirmed` status describes how certain a finding is. A `done` result remains part of the execution history; a later code change can turn its verification to `stale`. The plan format, check profiles and MCP calls are described in [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
-Profile deklarujesz w `.devbrain/checks.toml`, np. `[checks.unit]` z `argv = ["uv", "run", "pytest"]`. Uruchomienie jest jawną operacją CLI:
+Declare check profiles in `.devbrain/checks.toml`, for example `[checks.unit]` with `argv = ["uv", "run", "pytest"]`. Running a check is an explicit CLI operation:
 
 ```bash
-devbrain check run moja-aplikacja unit --task ID_ZADANIA
-devbrain check list moja-aplikacja --task ID_ZADANIA
+devbrain check run my-app unit --task TASK_ID
+devbrain check list my-app --task TASK_ID
 devbrain eval run
 devbrain eval run --clients
 devbrain eval run --clients --skip-claude
 ```
 
-Test działa w bieżącym worktree. Kod wyjścia 0 potwierdza wykonanie wskazanego polecenia; review i akceptacja nadal wymagają oddzielnego sprawdzenia. Dawne flagi testów są deklaracjami `reported`, nigdy automatycznie utworzonymi wynikami uruchomienia. [Format planu, profile, MCP i ograniczenia](docs/README.md#zadania-plany-i-ukończenie).
+A check runs in the current worktree. Exit code 0 confirms that the given command ran successfully; review and acceptance still require a separate check. Legacy test flags are `reported` declarations, never automatically created run results.
 
-`acceptance_passed` opisuje udokumentowaną ocenę kryteriów zadania; samo pole nie dowodzi akceptacji człowieka. W pilotażu ten sam checkpoint może zawierać review i ocenę wszystkich kryteriów. Wersja planu rośnie również przy zmianie postępu zadania, więc review zapisane przed przejściem do `done` może odnosić się do wcześniejszej wersji planu; aktualność testów sprawdza `check_status`.
+`acceptance_passed` records a documented assessment of the task's criteria; the field alone does not prove human acceptance. In the pilot, the same checkpoint may contain the review and the assessment of all criteria. The plan version also increases when task progress changes, so a review saved before the move to `done` may refer to an earlier plan version; test freshness is checked by `check_status`.
 
-Odcisk obejmuje także nieignorowane pliki nieśledzone. Umieść generowane cache i wyniki testów w `.gitignore`, aby ich powstanie podczas sprawdzenia nie oznaczało zmiany wejściowego kodu; [szczegóły konfiguracji](docs/README.md#nazwane-profile-sprawdzeń).
+The fingerprint also covers untracked files that are not ignored. Put generated caches and test output in `.gitignore` so that creating them during a check does not count as a change to the input code.
 
-`eval run` sprawdza 20 scenariuszy z rzeczywistą Ollama w tymczasowym repozytorium i osobnej bazie ArcadeDB. Opcjonalne `--clients` uruchamia świeżego Codexa, Claude’a i ponownie Codexa z istniejącymi logowaniami i zużywa ich limity. Brak modelu, klienta lub logowania daje `not_run`. Raport podaje trafność, błędy stanu, opóźnienia, rozmiar kontekstu lokalnego modelu i tokeny tylko wtedy, gdy dostawca rzeczywiście je raportuje.
+`eval run` exercises 20 scenarios against a real Ollama in a temporary repository and a separate ArcadeDB database. The optional `--clients` flag starts a fresh Codex, then Claude, then Codex again, using existing logins and consuming their quotas. A missing model, client or login yields `not_run`. The report gives accuracy, state errors, latency, the local model's context size, and token counts only when the provider actually reports them.
 
-`--clients --skip-claude` sprawdza wyłącznie dwie świeże sesje Codexa; nie uruchamia procesu Claude’a. Raport opisuje to jako test częściowy i nie zalicza pełnego przekazania między klientami. Zgody narzędzi Codexa dotyczą wyłącznie czterech operacji serwera `devbrain_eval` w tymczasowej bazie; sandbox pozostaje `read-only`.
+`--clients --skip-claude` checks only two fresh Codex sessions and does not start a Claude process. The report labels this as a partial test and does not count it as a full cross-client handoff. Codex tool approvals cover only the four operations of the `devbrain_eval` server against the temporary database; the sandbox stays `read-only`.
 
-## Przenośna pamięć projektu
+## Portable project memory
 
-Pełny snapshot w `.memory/devbrain/` przenosi pamięć jednego projektu razem z repozytorium: rozmowy i dokładną treść źródeł, ustalenia, plany, zadania, checkpointy, rewizje i powiązania. Zapis i import nie wymagają Ollama. Panel pamięci udostępnia podgląd, zapis, sprawdzenie importu, import i ustawienia automatu. Te same operacje są dostępne przez CLI. Samo wykrycie plików niczego nie wczytuje.
-
-```bash
-devbrain memory snapshot moja-aplikacja --preview
-devbrain memory snapshot moja-aplikacja
-devbrain memory auto moja-aplikacja --enable --interval-minutes 15
-devbrain memory status moja-aplikacja
-devbrain memory auto moja-aplikacja --disable
-```
-
-Automat jest domyślnie wyłączony. Po włączeniu zapisuje zmienioną pamięć podczas pracy usługi, także po zamknięciu TUI. Zachowuje pięć ostatnich snapshotów, współdzieląc identyczne obiekty. Nie uruchamia modeli, nie wykonuje commitów i niczego nie wysyła na GitHub. Pełne rozmowy mogą zawierać prywatne informacje: sprawdź zakres eksportu przed dodaniem `.memory/devbrain/` do repozytorium. Konfiguracja komputera, pliki uwierzytelnienia i klucze z konfiguracji nie są eksportowane; treść zapisanych rozmów nie jest automatycznie anonimizowana.
-
-Na drugim komputerze, po zainstalowaniu DevBrain i sklonowaniu repozytorium:
+A full snapshot in `.memory/devbrain/` carries one project's memory together with the repository: conversations and the exact source content, findings, plans, tasks, checkpoints, revisions and links. Saving and importing do not require Ollama. The memory panel offers preview, save, import check, import and auto-save settings; the same operations are available from the CLI. Merely detecting the files loads nothing.
 
 ```bash
-devbrain memory inspect ~/src/moja-aplikacja/.memory/devbrain
-devbrain memory import ~/src/moja-aplikacja/.memory/devbrain --root ~/src/moja-aplikacja --dry-run
-devbrain memory import ~/src/moja-aplikacja/.memory/devbrain --root ~/src/moja-aplikacja
+devbrain memory snapshot my-app --preview
+devbrain memory snapshot my-app
+devbrain memory auto my-app --enable --interval-minutes 15
+devbrain memory status my-app
+devbrain memory auto my-app --disable
 ```
 
-Import zachowuje tożsamość projektu i nie zastępuje innych projektów w bazie. Ponowne wczytanie tego samego stanu niczego nie powiela; rozbieżne zmiany wymagają rozwiązania konfliktu. Indeksy wyszukiwania odbudowują się lokalnie. Historyczne `done` pozostaje zachowane, ale testy przeniesione z innego komputera nie są lokalnym dowodem `fresh`. Logowania, konfigurację klientów i nowe sesje przygotowujesz lokalnie. [Pełna instrukcja przenoszenia](docs/README.md#przenośna-pamięć-projektu). [Kontrakt formatu, limity i zasady odtwarzania](docs/MEMORY_CONTRACTS.md).
+Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/devbrain/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
+
+On a second machine, after installing DevBrain and cloning the repository:
+
+```bash
+devbrain memory inspect ~/src/my-app/.memory/devbrain
+devbrain memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
+devbrain memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app
+```
+
+Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
 
 ```bash
 devbrain eval memory
 ```
 
-To jawny test z rzeczywistą Ollama: ekstrakcja faktu, decyzji i zadania, przeniesienie między dwiema izolowanymi bazami oraz odtworzenie odpowiedzi ze źródłami. Wymaga wszystkich oczekiwanych ustaleń; pusty wynik ekstrakcji nie zalicza scenariusza. Nie uruchamia Codexa ani Claude’a. Kody wyjścia: `0` — sukces, `1` — niepowodzenie, `3` — brak wymaganych modeli.
+This is an explicit test against a real Ollama: extraction of a fact, a decision and a task, transfer between two isolated databases, and reconstruction of a sourced answer. It requires all expected findings; an empty extraction result fails the scenario. It does not start Codex or Claude. Exit codes: `0` success, `1` failure, `3` required models missing.
 
-## Dane i działanie
+## Data and backups
 
-Domyślny katalog to `~/.local/share/devbrain`; można go zmienić przez `DEVBRAIN_HOME` albo globalne `--data-dir`. Dane ArcadeDB są w `arcade/databases`. Usługa wiedzy i silnik działają w tle tak długo, jak działa WSL. `devbrain stop` zatrzymuje usługę wiedzy; po zamknięciu klientów `devbrain engine stop` zatrzymuje bazę bez kasowania danych.
+The default data directory is `~/.local/share/devbrain`; change it with `DEVBRAIN_HOME` or the global `--data-dir` option. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `devbrain stop` stops the knowledge service; once clients are closed, `devbrain engine stop` stops the database without deleting data.
 
 ```bash
-devbrain export ~/pamiec.json --project moja-aplikacja
-devbrain export ~/pamiec.md --project moja-aplikacja --markdown
+devbrain export ~/memory.json --project my-app
+devbrain export ~/memory.md --project my-app --markdown
 devbrain backup ~/devbrain-backup.devbrain.json.gz
 ```
 
-Aktualizator **0.7.0 → 0.7.1** sprawdza zmieniane pliki, wykonuje kopię źródeł i bazy oraz zachowuje dane, modele, klucze API, poświadczenia i natywne uprawnienia. Nie wykonuje płatnych zapytań i nie pobiera modeli ani runtime Copilota. [Instrukcja aktualizacji](docs/README.md#aktualizacja-070-do-071) zawiera także drogę ze starszych wersji. Schemat ArcadeDB pozostaje 4, format profili 2, a administracyjny backup 5 z obsługą wcześniejszych formatów 2–4. Stare grupy planów można jawnie przejąć przez `plan adopt`. Do przeniesienia pojedynczego projektu używaj `memory import`; `restore` zastępuje cały magazyn.
+The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`. To move a single project, use `memory import`; `restore` replaces the entire store.
 
-Archiwum nie czeka na GPU. Status pokazuje osobno archiwizację, indeksowanie, opracowanie przez model i kolejkę. Przenośny backup zawiera spójny eksport źródeł i stanu bazy; nie zawiera poświadczeń ani wag modeli. Automatyczny backup działa podczas pracy usługi; zachowywane jest siedem ostatnich kopii.
+Archiving does not wait for the GPU. Status shows archiving, indexing, model processing and the queue separately. The portable backup contains a consistent export of sources and database state; it does not contain credentials or model weights. Automatic backup runs while the service is running and keeps the seven most recent copies.
 
-## Sprawdzenie i ograniczenia
+## Verification and limits
 
 ```bash
 uv sync --locked --extra dev
 uv run pytest
 uv run ruff check src tests
-devbrain benchmark moja-aplikacja "Gdzie obsługujemy błędy logowania?"
+devbrain benchmark my-app "Where do we handle login errors?"
 ```
 
-Testy magazynu, pełnotekstowego wyszukiwania, grafu i indeksu wektorowego używają rzeczywistego silnika ArcadeDB. Wymagają Java 21; domyślna sesja testowa przygotowuje izolowany silnik. Automatyczne testy odpowiedzi Ollama i sesji klientów korzystają z kontrolowanych adapterów; rzeczywiste przekazanie pracy między klientami wymaga pomiaru na docelowym środowisku.
+Tests for storage, full-text search, the graph and the vector index use a real ArcadeDB engine. They require Java 21; the default test session prepares an isolated engine. Automated tests of Ollama answers and client sessions use controlled adapters; a real handoff of work between clients has to be measured in the target environment.
 
-Pierwsza wersja analizuje składnię Python, JavaScript i TypeScript. Inne języki pozostają przeszukiwalne tekstowo. Analiza statyczna nie gwarantuje pełnego grafu dynamicznych wywołań. Skaner indeksuje pliki tekstowe UTF-8 do 2 MiB, respektuje `.gitignore` i pomija m.in. katalogi zależności oraz pliki `.env`/kluczy. Import historii zachowuje jej źródłową treść.
+Syntax analysis covers Python, JavaScript and TypeScript. Other languages remain searchable as text. Static analysis does not guarantee a complete graph of dynamic calls. The scanner indexes UTF-8 text files up to 2 MiB, respects `.gitignore` and skips, among others, dependency directories and `.env`/key files. History import preserves the original source content.
 
-Odpowiedź `ask` i kontekst startowy nadal zajmują tokeny Codexa lub Claude’a. Lokalna pamięć zmniejsza potrzebę przenoszenia całej historii; nie usuwa limitów kontekstu ani kosztu pracy modeli. Połączenia API i Copilot korzystają z własnych rozliczeń i uprawnień kont.
+`ask` answers and the startup context still consume Codex or Claude tokens. Local memory reduces the need to carry the whole history along; it does not remove context limits or the cost of model work. API and Copilot connections use their own account billing and permissions.
 
-Launcher blokuje start klienta, gdy pakiet wznowienia jest częściowy lub niedostępny. ACK potwierdza odbiór i odczyt konkretnych wersji, a nie rozumienie przez model. Kontrole zapisu DevBrain nie zastępują natywnych uprawnień narzędzi Codexa i Claude’a.
+The launcher blocks a client from starting when the resume package is partial or unavailable. An ACK confirms receipt and reading of specific versions, not the model's understanding. DevBrain's write controls do not replace the native tool permissions of Codex and Claude.
+
+## Documentation
+
+- [docs/TERMINAL.md](docs/TERMINAL.md): the terminal environment, layout, navigation and diagnostics.
+- [docs/API.md](docs/API.md): API, Ollama and Copilot connections and permissions.
+- [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.
+- [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, evidence states and MCP calls.
+- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations and the 0.8.0 results.
+- [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing 0.7.2 installation.
+- [CONTRACTS.md](CONTRACTS.md): implementation contracts (ArcadeDB backend, components, data access).
+- [CHANGELOG.md](CHANGELOG.md): release history.

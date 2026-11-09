@@ -1,173 +1,173 @@
-# DevBrain 0.8.0 — środowisko w terminalu
+# DevBrain 0.8.0 terminal workspace
 
-`devbrain` uruchamia środowisko w bieżącym terminalu. `devbrain tui` jest aliasem tego samego interfejsu. tmux zarządza panelami i odłączaniem, a Textual wyświetla projekty, ustawienia, inspektor i graf. Panele Codexa i Claude’a zawierają rzeczywiste natywne CLI, z ich własnym ekranem, klawiaturą, logowaniem i zgodami. Profile Ollamy i API używają własnego agenta DevBrain, a Copilot osobnego adaptera oficjalnego SDK.
+`devbrain` starts the workspace in the current terminal. `devbrain tui` is an alias for the same interface. tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. The Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use DevBrain's own agent, and Copilot uses a separate adapter built on the official SDK.
 
-Domyślny język to angielski. Zmień go przez **More → Settings → Language → Polski**. Poniższe instrukcje podają najważniejsze nazwy angielskie i polskie. Język dotyczy interfejsu DevBrain; treści projektów i natywne interfejsy klientów pozostają własnymi treściami.
+The default language is English. To switch the DevBrain interface to Polish, choose **More → Settings → Language → Polski**. The language setting applies to the DevBrain interface only; project content and the native client interfaces keep their own language.
 
-## Uruchomienie
+## Getting started
 
-Wymagane są Linux lub Ubuntu WSL2, Java 21+, tmux 3.4+, zainstalowany DevBrain i interaktywny terminal Unicode/UTF-8. Klienty kodujące instaluj w tej samej dystrybucji WSL. Do używania gotowego pakietu nie potrzebujesz Node.js, npm ani budowania frontendu.
+You need Linux or Ubuntu on WSL2, Java 21+, tmux 3.4+, an installed DevBrain and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
 
-W Windows Terminal otwórz Ubuntu albo wejdź do niego z PowerShella:
+In Windows Terminal, open Ubuntu, or enter it from PowerShell:
 
 ```powershell
 wsl -d Ubuntu
 ```
 
-Następnie w Ubuntu:
+Then, in Ubuntu:
 
 ```bash
 devbrain
 ```
 
-Polecenie działa z dowolnego katalogu. Lista projektów pochodzi ze wspólnego lokalnego rejestru DevBrain, a nie z katalogu, w którym otwarto terminal. Osobne `--data-dir` lub `DEVBRAIN_HOME` oznacza osobny magazyn i rejestr.
+The command works from any directory. The project list comes from DevBrain's shared local registry, not from the directory in which the terminal was opened. A separate `--data-dir` or `DEVBRAIN_HOME` means a separate store and registry.
 
-Przy pierwszej konfiguracji wybierz **Add folder / Dodaj folder**. Wpisz ścieżkę Linux lub Windows, np. `/home/piotr/src/app` albo `C:\Users\piotr\src\app`. **Browse folders / Przeglądaj foldery** otwiera wybór katalogu bez poleceń powłoki: `Enter` otwiera podfolder, `Alt+Up` przechodzi wyżej, a `Ctrl+S` wybiera wyświetlony katalog. Nazwa projektu może pozostać pusta; wtedy pochodzi z nazwy folderu. W formularzu `Ctrl+S` zapisuje, a `Esc` wraca. Możesz też użyć CLI:
+On first setup, choose **Add folder**. Enter a Linux or Windows path, for example `/home/piotr/src/app` or `C:\Users\piotr\src\app`. **Browse folders** opens a directory picker without shell commands: `Enter` opens a subfolder, `Alt+Up` goes up one level, and `Ctrl+S` selects the displayed directory. The project name can be left empty; it is then taken from the folder name. In the form, `Ctrl+S` saves and `Esc` goes back. You can also use the CLI:
 
 ```bash
-devbrain project add moja-aplikacja ~/src/moja-aplikacja
-devbrain install moja-aplikacja
+devbrain project add my-app ~/src/my-app
+devbrain install my-app
 devbrain
 ```
 
-Dla sklonowanego projektu zawierającego `.memory/devbrain/` zacznij od podglądu i importu pamięci, aby zachować jego istniejącą tożsamość. Samo znalezienie snapshotu nie importuje danych i nie uruchamia zapisanych w nim poleceń.
+For a cloned project that contains `.memory/devbrain/`, start by previewing and importing its memory so that its existing identity is preserved. Merely detecting a snapshot does not import any data and does not run any commands stored in it.
 
-Uruchomienie bez interaktywnego TTY kończy się komunikatem i kodem `2`, przed utworzeniem konfiguracji albo uruchomieniem usług. Nie przełącza się automatycznie na przeglądarkę. Wersję pakietu można odczytać bez TTY i bez inicjalizacji:
+Starting without an interactive TTY exits with a message and code `2`, before any configuration is created or any service is started. It does not fall back to a browser. The package version can be read without a TTY and without initialization:
 
 ```bash
 devbrain version
 ```
 
-## Układ i rozmiar
+## Layout and size
 
-Domyślny **Focus** pokazuje jeden widok na całej szerokości. Zacznij od **Projects / Projekty**, otwórz projekt i wybierz **Start work / Rozpocznij pracę**. Menu `Ctrl+B`, potem `Spacja`, przełącza między projektami, asystentem, pamięcią i grafem. Interfejs jest obsługiwany klawiaturą również przy **80 × 24**.
+The default **Focus** layout shows a single view across the full width. Start with **Projects**, open a project and choose **Start work**. The menu opened with `Ctrl+B` followed by `Space` switches between projects, the assistant, memory and the graph. **Ask memory** in that menu sends a question to the selected project's memory and shows the answer with cited sources and missing evidence; it writes nothing. The interface is fully keyboard-operable even at **80 × 24**.
 
-**More → Settings → Layout → Cockpit** włącza wielopanelowy układ na większym terminalu. To samo ustawienie jest dostępne przez polecenia **Focus view / Cockpit view** w menu. Pełny układ może pokazać pięć paneli:
+**More → Settings → Layout → Cockpit** enables the multi-pane layout on a larger terminal. The same setting is available through the **Focus view** and **Cockpit view** commands in the menu. The full layout can show five panes:
 
 ```text
 ┌────────────────┬──────────────────────┬──────────────────────┐
-│ Projekty       │ Codex CLI            │ Claude Code          │
+│ Projects       │ Codex CLI            │ Claude Code          │
 │ Worktree       │                      │                      │
-│ Połączenia     ├─────────────────────────────┬───────────────┤
-│ Więcej         │ Inspektor pamięci           │ Graf 3D       │
+│ Connections    ├─────────────────────────────┬───────────────┤
+│ More           │ Memory inspector            │ 3D graph      │
 │                │                             │ ASCII XYZ     │
 └────────────────┴─────────────────────────────┴───────────────┘
 ```
 
-Panel boczny zajmuje 24 kolumny. Po prawej górna część mieści wybranych klientów i agentów, a dolna inspektor i graf. Jeden wybrany klient wykorzystuje całą górną część; przy dwóch panel jest dzielony. Jeżeli skonfigurujesz więcej slotów, jawnie wybierasz do dwóch widocznych jednocześnie. Ukrycie slotu nie kończy jego procesu.
+The sidebar is 24 columns wide. On the right, the upper area holds the selected clients and agents, and the lower area holds the inspector and the graph. A single selected client uses the whole upper area; with two, the area is split. If you configure more slots, you explicitly choose up to two to show at once. Hiding a slot does not end its process.
 
-Minimalny pełny rozmiar układu Cockpit to **140 kolumn × 42 wiersze**. Zalecany jest **180 × 55** lub większy. Poniżej minimum aktywny panel jest powiększany; skróty nadal przełączają między widokami, a ukryte procesy pracują dalej. Samo powiększenie okna nie wyłącza wybranego trybu Focus.
+The minimum size for the full Cockpit layout is **140 columns × 42 rows**. **180 × 55** or larger is recommended. Below the minimum, the active pane is zoomed; shortcuts still switch between views and hidden processes keep running. Enlarging the window alone does not turn off a selected Focus layout.
 
-Windows Terminal powinien używać czcionki zawierającej polskie znaki i znaki obramowań Unicode. W Ubuntu `locale charmap` powinno wskazywać `UTF-8`. Rozmiar oznacza liczbę znaków terminala, a nie pikseli ekranu.
+Windows Terminal should use a font that includes Polish characters and Unicode box-drawing characters. In Ubuntu, `locale charmap` should report `UTF-8`. Sizes are measured in terminal character cells, not screen pixels.
 
-## Nawigacja
+## Navigation
 
-Najpierw naciśnij prefiks `Ctrl+B`, następnie wskazany klawisz:
+Press the `Ctrl+B` prefix first, then the listed key:
 
-| Klawisz po `Ctrl+B` | Działanie |
+| Key after `Ctrl+B` | Action |
 |---|---|
-| `Spacja` | Wyszukiwalne menu wszystkich poleceń |
-| `?` | Pomoc klawiatury |
-| `p` | Panel projektów, profili i ustawień |
-| `1` | Pierwszy widoczny klient |
-| `2` | Drugi widoczny klient |
-| `i` | Inspektor pamięci |
-| `g` | Graf pamięci |
-| `Tab` | Następny widok |
-| `z` | Powiększenie aktywnego panelu / powrót do układu |
-| `[` | Przewijanie i kopiowanie historii terminala; `q` wraca |
-| `d` | Odłączenie workspace i powrót do powłoki |
-| `Ctrl+B` | Przekazanie `Ctrl+B` do natywnego klienta |
+| `Space` | Searchable menu of all commands |
+| `?` | Keyboard help |
+| `p` | Projects, profiles and settings pane |
+| `1` | First visible client |
+| `2` | Second visible client |
+| `i` | Memory inspector |
+| `g` | Memory graph |
+| `Tab` | Next view |
+| `z` | Zoom the active pane / return to the layout |
+| `[` | Scroll and copy terminal history; `q` returns |
+| `d` | Detach the workspace and return to the shell |
+| `Ctrl+B` | Send `Ctrl+B` through to the native client |
 
-Podwójne `Ctrl+B` jest potrzebne, gdy sam Codex, Claude albo program w ich terminalu używa tego skrótu. Pozostałe wejście, wklejanie, `Ctrl+C` i dialogi zgód w aktywnym panelu klienta trafiają do jego rzeczywistego CLI. Przyciski i pola DevBrain obsługujesz przez `Tab`, `Shift+Tab`, strzałki i `Enter`; `Esc` zamyka dialog lub wraca. Formularze zapisujesz przez `Ctrl+S`. Błąd pola lub zapisu pozostawia wpisane wartości i pokazuje problem; ponowienie wymaga świadomego zapisu.
+A double `Ctrl+B` is needed when Codex, Claude or a program running in their terminal uses that shortcut itself. All other input, pasting, `Ctrl+C` and approval dialogs in the active client pane go to its real CLI. Use `Tab`, `Shift+Tab`, the arrow keys and `Enter` for DevBrain buttons and fields; `Esc` closes a dialog or goes back. Save forms with `Ctrl+S`. A field or save error keeps the values you entered and shows the problem; retrying requires a deliberate save.
 
-Na liście projektów `Enter` otwiera ekran projektu do inspekcji. Nie rozpoczyna pracy asystenta. Na tym ekranie **Start work / Rozpocznij pracę** uruchamia tylko wskazanego asystenta. Poza polami tekstowymi `w` wybiera tę akcję, `p` otwiera podgląd, `r` odświeża, a `m` otwiera pamięć. Na liście `w` najpierw otwiera ekran projektu. Puste wyniki wyszukiwania pozostają puste; akcje nie używają wcześniej aktywnego projektu. W inspektorze `h` otwiera historię, `m` pamięć, `r` odświeża, a `Esc` wraca do listy. Skróty literowe działają tylko we wskazanym panelu DevBrain.
+In the project list, `Enter` opens the project screen for inspection. It does not start an assistant. On that screen, **Start work** starts only the indicated assistant. Outside text fields, `w` selects that action, `p` opens the preview, `r` refreshes and `m` opens memory. In the list, `w` first opens the project screen. Empty search results stay empty; actions never fall back to a previously active project. In the inspector, `h` opens history, `m` opens memory, `r` refreshes and `Esc` returns to the list. Letter shortcuts work only in the focused DevBrain pane.
 
-**Start work** w globalnym menu najpierw pokazuje projekt i ustawia fokus na przycisku uruchomienia. Sprawdź widoczną nazwę asystenta i naciśnij `Enter`, aby rozpocząć. Dzięki temu opóźnione polecenie menu nie uruchamia asystenta po zmianie projektu.
+**Start work** in the global menu first shows the project and moves focus to the start button. Check the visible assistant name and press `Enter` to begin. This prevents a delayed menu command from starting an assistant after the project has changed.
 
-Jeśli TUI uruchamia usługę pamięci, jej kolejka embeddingu i ekstrakcji czeka na jawną akcję. Udane **Start work** włącza przetwarzanie pamięci tylko wybranego projektu. Możesz też wybrać **More → Queue → Process memory / Więcej → Kolejka → Przetwórz pamięć**, aby przetworzyć oczekujące zadania bez uruchamiania asystenta. Samo otwarcie projektu, odczyt pamięci i przełączenie widoku nie włączają tej kolejki. Skanowanie plików i skonfigurowane snapshoty nadal działają. Jeśli uruchomienie asystenta się powiedzie, ale włączenie kolejki nie, komunikat prowadzi do **Process memory**; ponowny start asystenta nie jest potrzebny.
+If the TUI starts the memory service, its embedding and extraction queue waits for an explicit action. A successful **Start work** enables memory processing for the selected project only. You can also choose **More → Queue → Process memory** to process pending jobs without starting an assistant. Opening a project, reading memory or switching views does not enable the queue. File scanning and configured snapshots still run. If the assistant starts but enabling the queue fails, the message points you to **Process memory**; you do not need to restart the assistant.
 
-Już działające usługi i sesje kontynuują swoją pracę. Ręczne `devbrain serve` zachowuje automatyczne przetwarzanie kolejki; `devbrain serve --defer-background-inference` pozwala je odroczyć. Jawne zapytanie do modelu pozostaje osobną akcją użytkownika.
+Services and sessions that are already running continue their work. A manually started `devbrain serve` keeps automatic queue processing; `devbrain serve --defer-background-inference` lets you defer it. An explicit model query remains a separate user action.
 
-Szersze formularze tymczasowo powiększają panel, aby mieścił ścieżki i ustawienia. Po zamknięciu wracają do poprzedniego układu, jeżeli w międzyczasie nie zmieniono ręcznie panelu lub powiększenia.
+Wider forms temporarily zoom the pane so that paths and settings fit. When closed, they restore the previous layout, unless the pane or zoom was changed manually in the meantime.
 
-## Projekt, asystent i połączenie
+## Project, assistant and connection
 
-Panel boczny pokazuje wszystkie zarejestrowane projekty. Możesz wybrać ich zarejestrowany worktree oraz skanować jawnie wskazane katalogi Ubuntu lub dysków Windows dostępnych przez WSL. Skanowanie nie oznacza zgody na uruchamianie klientów ani automatyczny import pamięci.
+The sidebar lists all registered projects. You can choose a project's registered worktree and scan explicitly specified directories in Ubuntu or on Windows drives reachable through WSL. Scanning does not grant permission to start clients and does not import memory automatically.
 
-1. **Projects / Projekty**: wyszukaj projekt i naciśnij `Enter`.
-2. **Project / Projekt**: sprawdź folder i widoczną nazwę asystenta. Możesz wybrać innego przypisanego asystenta albo użyć **Add assistant / Dodaj asystenta**.
-3. **Connections / Połączenia**: dodaj nazwane połączenie, zaloguj konto lub ustaw klucz i wybierz model. Limity oraz odwołania do poświadczeń są w ustawieniach zaawansowanych połączenia.
-4. Wróć do projektu i wybierz **Start work / Rozpocznij pracę**. Rozpocznie pracę tylko jeden wskazany asystent.
+1. **Projects**: search for the project and press `Enter`.
+2. **Project**: check the folder and the visible assistant name. You can pick another assigned assistant or use **Add assistant**.
+3. **Connections**: add a named connection, sign in to an account or set a key, and choose a model. Limits and credential references are in the connection's advanced settings.
+4. Go back to the project and choose **Start work**. Only the one indicated assistant starts working.
 
-Połączenia obejmują natywnego Codexa, Claude Code, agenta OpenAI/Anthropic, API zgodne z OpenAI, lokalną Ollamę i GitHub Copilot. **More → Manage assistants / Więcej → Zarządzaj asystentami** pozwala zmieniać kolejność i przydziały. Dodanie asystenta zachowuje istniejące przydziały. Wszystkie klienty pracują we wskazanym katalogu; DevBrain nie tworzy sam osobnych worktree ani nie przydziela automatycznie wspólnego zadania. [Konfiguracja kont, kluczy i ograniczeń](API.md).
+Connections cover native Codex, Claude Code, the OpenAI/Anthropic agent, OpenAI-compatible APIs, local Ollama and GitHub Copilot. **More → Manage assistants** lets you change order and assignments. Adding an assistant keeps existing assignments. All clients work in the indicated directory; DevBrain does not create separate worktrees on its own and does not automatically assign a shared task. See [account, key and limit configuration](API.md).
 
-Otwarcie workspace albo przywrócenie jego układu dołącza istniejące procesy. Nową pracę uruchamiasz jawnie z panelu bocznego. Wybór danych do inspekcji, także przejście z globalnego grafu do projektu, nie uruchamia klienta. Zmiana profilu obowiązuje przy następnym uruchomieniu procesu.
+Opening a workspace or restoring its layout attaches existing processes. You start new work explicitly from the sidebar. Selecting data for inspection, including moving from the global graph to a project, does not start a client. A profile change takes effect the next time the process starts.
 
-Stan klienta rozdziela brak programu, konfigurację, deklarowane logowanie, łączność i zaobserwowany limit. Zalogowany klient może mieć wyczerpany limit; błąd sieci nie oznacza wylogowania. Sprawdzenie stanu nie wykonuje płatnego zapytania do modelu.
+Client status distinguishes a missing program, configuration, declared sign-in, connectivity and an observed limit. A signed-in client can have an exhausted limit; a network error does not mean it was signed out. Checking status does not make a paid model request.
 
-**More / Więcej** zawiera sesje, zarządzanie asystentami, wyszukiwanie folderów, snapshoty, import pamięci i ustawienia. Podstawowe widoki pokazują czytelne podsumowania; pełne dane diagnostyczne otwiera **Technical details / Szczegóły techniczne**. Stan pamięci, aktywność sesji i prawo sterowania terminalem są oddzielnymi informacjami.
+**More** contains sessions, assistant management, folder search, snapshots, memory import and settings. The main views show readable summaries; **Technical details** opens the full diagnostic data. Memory state, session activity and terminal control rights are reported separately.
 
-Logowanie uruchamia oryginalną procedurę wybranego klienta w osobnym terminalu operacyjnym. Kody urządzenia i wynik tego terminala nie stają się pamięcią projektu ani węzłami grafu. Po zakończeniu odśwież stan. Projekt, MCP, hooki i narzędzia natywnych klientów zatwierdzasz w mechanizmach Codexa lub Claude’a. Własny agent i adapter Copilota pokazują jednorazową zgodę na dokładne polecenie. Klucze API ustawiasz w maskowanym polu; zapis lokalny jest opcjonalny i nie jest szyfrowany.
+Signing in runs the selected client's own procedure in a separate operational terminal. Device codes and the output of that terminal do not become project memory or graph nodes. Refresh the status when it finishes. Projects, MCP, hooks and tools of the native clients are approved through the Codex or Claude mechanisms. DevBrain's own agent and the Copilot adapter show a one-time approval for the exact command. API keys are entered in a masked field; saving them locally is optional and the stored value is not encrypted.
 
-## Panel własnego agenta i Copilota
+## Own agent and Copilot pane
 
-Po uruchomieniu wybranego profilu panel odtwarza historię bez zapytania do modelu. Wiadomość wysyłasz przez **Wyślij** lub `Ctrl+Enter`. Odpowiedzi, wywołania i wyniki narzędzi są wyświetlane dosłownie; sekwencje sterujące ze źródeł nie sterują terminalem. Tokeny i wykorzystanie są oznaczane jako obserwowane, a ceny jako szacunek według stawek profilu lub **brak danych**.
+After the selected profile starts, the pane replays history without querying the model. Send a message with **Send** or `Ctrl+Enter`. Replies, tool calls and tool results are displayed verbatim; control sequences from sources do not control the terminal. Tokens and usage are labeled as observed, and prices as an estimate based on the profile's rates or as **no data**.
 
-`Ctrl+C` lub **Interrupt / Przerwij** zatrzymuje bieżącą operację. Działanie bez potwierdzonego wyniku wymaga **Resolve / Rozstrzygnij** (`Ctrl+R`) i notatki po własnym sprawdzeniu. Zapisz notatkę przez `Ctrl+S`. Ta akcja nie wykonuje ponownie polecenia. Nowa wiadomość jest osobną kontynuacją. Model musi odczytać aktualną pamięć i wykonać dokładny ACK przed działaniami wymagającymi jej odtworzenia.
+`Ctrl+C` or **Interrupt** stops the current operation. An action without a confirmed result requires **Resolve** (`Ctrl+R`) and a note after you have checked it yourself. Save the note with `Ctrl+S`. This action does not re-run the command. A new message is a separate continuation. The model must read the current memory and perform an exact ACK before any action that requires restoring it.
 
-Szczegóły limitów, dostępu do plików, logowania Copilota i pamięci: [API.md](API.md).
+For details on limits, file access, Copilot sign-in and memory, see [API.md](API.md).
 
-## Inspektor i przenośna pamięć
+## Inspector and portable memory
 
-Inspektor pokazuje rekordy, pełne źródła, surowe i znormalizowane rozmowy, metadane, historię wersji, plany, zadania, wyniki testów i kolejkę. Duże listy oraz źródła mają kolejne strony lub fragmenty. Samo przeglądanie nie wywołuje modelu, nie uruchamia testów i nie ponawia zadań.
+The inspector shows records, full sources, raw and normalized conversations, metadata, version history, plans, tasks, test results and the queue. Large lists and sources are split into pages or chunks. Browsing alone does not call a model, run tests or retry jobs.
 
-**Potwierdź** i **Zakwestionuj** zapisują jawną ocenę z audytem oraz kontrolą wersji rekordu. Zakwestionowanie wymaga uzasadnienia; zarządzane zadanie wymaga też aktualnej wersji planu. Konflikt oznacza konieczność ponownego odczytu przed kolejną świadomą oceną. Pewność ustalenia, postęp zadania i świeżość testów są pokazywane oddzielnie: potwierdzenie ustalenia nie ustawia `done` ani nie tworzy dowodu testów.
+**Confirm** and **Dispute** record an explicit assessment with an audit entry and a record version check. Disputing requires a justification; a managed task also requires the current plan version. A conflict means you must re-read the record before making another deliberate assessment. Finding confidence, task progress and test freshness are shown separately: confirming a finding does not set `done` and does not create test evidence.
 
-Globalna skrzynka nieprzypisanych wpisów zachowuje źródła bez pewnego projektu. Odczyt ani wybór w grafie nie przypisuje ich do aktualnego projektu.
+The global inbox of unassigned entries keeps sources that have no certain project. Reading them or selecting them in the graph does not assign them to the current project.
 
-**Memory / Pamięć** otwiera przegląd rekordów. **More → Snapshots and export / Więcej → Snapshoty i eksport** otwiera podgląd snapshotu, zapis, sprawdzenie importu, import i ustawienia automatu. Działają także istniejące polecenia:
+**Memory** opens the record overview. **More → Snapshots and export** opens snapshot preview, saving, import check, import and automation settings. The existing commands also work:
 
 ```bash
-devbrain memory snapshot moja-aplikacja --preview
-devbrain memory snapshot moja-aplikacja
-devbrain memory auto moja-aplikacja --enable --interval-minutes 15
-devbrain memory status moja-aplikacja
-devbrain memory inspect ~/src/moja-aplikacja/.memory/devbrain
-devbrain memory import ~/src/moja-aplikacja/.memory/devbrain --root ~/src/moja-aplikacja --dry-run
+devbrain memory snapshot my-app --preview
+devbrain memory snapshot my-app
+devbrain memory auto my-app --enable --interval-minutes 15
+devbrain memory status my-app
+devbrain memory inspect ~/src/my-app/.memory/devbrain
+devbrain memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
 ```
 
-Automat pozostaje opt-in dla projektu. Snapshot zawiera jego zapisaną pamięć i historię, z pominięciem operacyjnych poświadczeń i wag modeli. Surowe rozmowy mogą zawierać dane prywatne. Import nie nadpisuje innych projektów, a przeniesione testy pozostają historyczne do czasu lokalnego sprawdzenia. [Pełne zasady pamięci przenośnej](README.md#przenośna-pamięć-projektu).
+Automatic snapshots remain opt-in per project. A snapshot contains the project's stored memory and history, excluding operational credentials and model weights. Raw conversations may contain private data. Import does not overwrite other projects, and transferred tests remain historical until they are checked locally. See the [memory contracts](MEMORY_CONTRACTS.md) for the full portable-memory format, limits and restore rules.
 
-## Graf 3D w terminalu
+## 3D graph in the terminal
 
-Graf używa współrzędnych **X/Y/Z**, obrotu w przestrzeni i projekcji perspektywicznej. Wersja **0.7.1** rysuje węzły jako oświetlone bryły znakami ASCII: jasność pokazuje kształt, a bliższe powierzchnie zasłaniają dalsze. Bufor głębokości oraz korekta proporcji komórki terminala zachowują czytelność podczas obrotu, podobnie jak w klasycznej animacji terminalowego donuta. Scena przedstawia rzeczywiste węzły i połączenia pamięci; nie zastępuje ich donatem ani danymi demonstracyjnymi. Limit sceny wynosi **300 węzłów i 800 krawędzi**, a limit odświeżania **10 klatek na sekundę**. To ograniczenie sceny, nie rozmiaru pamięci.
+The graph uses **X/Y/Z** coordinates, rotation in space and perspective projection. Version **0.7.1** renders nodes as lit solids drawn with ASCII characters: brightness conveys shape, and nearer surfaces occlude farther ones. A depth buffer and correction for the terminal cell aspect ratio keep the image readable while rotating, much like the classic terminal donut animation. The scene shows real memory nodes and links; it does not replace them with a donut or demo data. The scene limit is **300 nodes and 800 edges**, and the refresh limit is **10 frames per second**. This limits the scene, not the size of memory.
 
-Grupy obejmują projekty, sesje i typy danych. Można przejść do grupy, obejrzeć dalsze strony i wybrać konkretny wpis albo rewizję. Wszystkie zapisane wiadomości i historia pozostają dostępne przez grupy oraz inspektor. Surowe źródło, techniczny wpis klienta, propozycja modelu i potwierdzone ustalenie mają różne znaczenia. Strukturalne grupowanie projektów nie tworzy domniemanych relacji semantycznych między ich pamięcią.
+Groups cover projects, sessions and data types. You can enter a group, page through it and select a specific entry or revision. All stored messages and history remain available through groups and the inspector. A raw source, a technical client entry, a model proposal and a confirmed finding have different meanings. Structural grouping of projects does not create implied semantic relations between their memories.
 
-Aktualizacje korzystają z zatwierdzonych zmian bazy; identyfikatory i kamera są zachowywane podczas odświeżania. Pobieranie danych i model wiedzy nie obsługują klawiatury natywnych klientów. Wybór węzła otwiera jego dane w inspektorze. Gdy usługa pamięci jest niedostępna, widoki danych pokazują problem, a natywne procesy mogą nadal działać.
+Updates use committed database changes; identifiers and the camera are preserved during refresh. Data fetching and the knowledge model do not handle native client keyboard input. Selecting a node opens its data in the inspector. When the memory service is unavailable, data views show the problem, while native processes may keep running.
 
-Po przejściu do grafu przez `Ctrl+B g`:
+After switching to the graph with `Ctrl+B g`:
 
-| Klawisz w grafie | Działanie |
+| Key in the graph | Action |
 |---|---|
-| Strzałki | Obrót widoku XYZ |
-| `+` / `-` | Przybliżenie / oddalenie |
-| `Spacja` | Pauza / wznowienie ruchu |
-| `r` | Reset kamery |
-| `]` / `[` | Wybór kolejnego / poprzedniego węzła |
-| `Tab` / `Shift+Tab` | Przejście między elementami interfejsu |
-| `Enter` | Inspekcja wpisu lub rozwinięcie grupy |
-| `g` | Lista grup; w niej `n`/`p` przełącza strony, `Esc` zamyka |
-| `n` / `p` | Kolejna / poprzednia strona sceny |
-| `a` | Przełączenie widoku globalnego i projektowego |
-| `Backspace` | Powrót do nadrzędnego zakresu |
+| Arrow keys | Rotate the XYZ view |
+| `+` / `-` | Zoom in / zoom out |
+| `Space` | Pause / resume motion |
+| `r` | Reset the camera |
+| `]` / `[` | Select the next / previous node |
+| `Tab` / `Shift+Tab` | Move between interface elements |
+| `Enter` | Inspect an entry or expand a group |
+| `g` | Group list; inside it `n`/`p` switches pages and `Esc` closes |
+| `n` / `p` | Next / previous scene page |
+| `a` | Toggle between global and project view |
+| `Backspace` | Return to the parent scope |
 
-Ruch jest wstrzymywany, gdy tmux jest odłączony albo graf jest ukryty przez powiększenie innego panelu lub widok kompaktowy. Po powrocie kamera i wybrany zakres pozostają zachowane.
+Motion pauses when tmux is detached or when the graph is hidden by zooming another pane or by the compact view. When you return, the camera and the selected scope are preserved.
 
-**More → Settings → Reduce motion / Więcej → Ustawienia → Ogranicz ruch** wyłącza automatyczny obrót grafu. Możesz nadal ręcznie obracać widok i wybierać węzły.
+**More → Settings → Reduce motion** turns off automatic graph rotation. You can still rotate the view manually and select nodes.
 
-## Odłączanie, zatrzymywanie i wznowienie
+## Detaching, stopping and resuming
 
 ```bash
 devbrain workspace status
@@ -177,17 +177,17 @@ devbrain workspace stop
 devbrain workspace stop --clients
 ```
 
-`detach` lub `Ctrl+B d` odłącza terminal, zachowując workspace i działające procesy. Kolejne `devbrain` dołącza do istniejącego środowiska. `workspace stop` kończy zewnętrzny układ terminalowy; `--clients` dodatkowo zatrzymuje tylko identyfikatory klientów przejęte przez ten workspace. Nie zatrzymuje wszystkich klientów w komputerze ani dowolnych sesji spoza jego rejestru.
+`detach` or `Ctrl+B d` detaches the terminal while keeping the workspace and running processes. The next `devbrain` attaches to the existing workspace. `workspace stop` ends the outer terminal layout; `--clients` additionally stops only the client identifiers adopted by this workspace. It does not stop every client on the machine or arbitrary sessions outside its registry.
 
-Jednocześnie pisze jeden terminal. Gdy środowisko jest już otwarte w innym terminalu, `devbrain` pokazuje wybór: **Observe (read only) / Obserwuj (tylko odczyt)**, **Take control / Przejmij sterowanie** albo **Return to shell / Wróć do powłoki**. Domyślne `Enter` wybiera obserwowanie. Przejęcie sterowania jawnie przekazuje klawiaturę nowemu terminalowi, a dotychczasowy przełącza w podgląd. Nie uruchamia to drugiej kopii klientów ani nowej sesji kodowania. Z podglądu możesz też odłączyć się przez `Ctrl+B d` i wykonać `devbrain workspace takeover`.
+Only one terminal can type at a time. When the workspace is already open in another terminal, `devbrain` offers a choice: **Observe (read only)**, **Take control** or **Return to shell**. The default `Enter` chooses observing. Taking control explicitly hands the keyboard to the new terminal and switches the previous one to view-only mode. It does not start a second copy of the clients or a new coding session. From view-only mode you can also detach with `Ctrl+B d` and run `devbrain workspace takeover`.
 
-Usługa wiedzy i baza mają własne polecenia `devbrain stop` oraz `devbrain engine stop`. Zatrzymanie UI nie usuwa danych. Wyłączenie całej dystrybucji WSL kończy procesy, w tym tmux i klientów. Po ponownym uruchomieniu wybierasz w panelu bocznym pracę, wznowienie zapisanej sesji lub nową sesję. Wznowienie natywnego klienta wymaga jego zweryfikowanego identyfikatora; brak identyfikatora jest pokazywany jawnie. Własne sesje API i Copilota korzystają z dziennika i normalnego protokołu odtworzenia pamięci, bez ponownego przyznawania dawnych zgód.
+The knowledge service and the database have their own commands, `devbrain stop` and `devbrain engine stop`. Stopping the UI does not delete data. Shutting down the whole WSL distribution ends all processes, including tmux and the clients. After restarting, you choose in the sidebar whether to start work, resume a saved session or begin a new one. Resuming a native client requires its verified identifier; a missing identifier is shown explicitly. DevBrain's own API and Copilot sessions use their journal and the normal memory restore protocol, without re-granting earlier approvals.
 
-Dołączenie terminala i wyświetlenie pamięci nie są ACK. Nowa lub wznowiona sesja zachowuje normalne przygotowanie pakietu, `resume_context`, sprawdzenie gotowości i dokładny `ack_resume`. `partial` lub `unavailable` blokuje zapis wspólnej pamięci. Zmiana kodu przez drugi panel może wymagać nowego pakietu i ACK. Żadna z tych operacji nie zastępuje natywnych zgód narzędzi.
+Attaching a terminal and displaying memory are not an ACK. A new or resumed session still goes through the normal bundle preparation, `resume_context`, readiness check and exact `ack_resume`. `partial` or `unavailable` blocks writes to shared memory. A code change made from a second pane may require a new bundle and ACK. None of these operations replaces the native tools' own approvals.
 
-## Aktualizacja i diagnostyka
+## Upgrading and diagnostics
 
-Wersja **0.8.0** upraszcza nawigację i oddziela otwarcie projektu od uruchomienia asystenta. Zmiana interfejsu nie przyznaje dawnych zgód na narzędzia i nie zastępuje protokołu pamięci. [Instalacja, aktualizacja i diagnostyka](README.md).
+Version **0.8.0** simplifies navigation and separates opening a project from starting an assistant. The interface change does not grant earlier tool approvals and does not replace the memory protocol. For installation, upgrade and diagnostics, see the [DevBrain README](../README.md).
 
 ```bash
 devbrain version
@@ -197,10 +197,10 @@ tmux -V
 locale charmap
 ```
 
-Jeżeli brakuje tmux, zainstaluj go w Ubuntu przez `sudo apt install tmux`. Jeżeli ekran jest zbyt mały lub graf ma nieczytelne znaki, sprawdź rozmiar okna, czcionkę i UTF-8. Błędy pamięci, modeli, zakresów archiwum oraz logowania odczytuj oddzielnie; sam komunikat o wyczerpanym limicie klienta nie oznacza utraty pamięci.
+If tmux is missing, install it in Ubuntu with `sudo apt install tmux`. If the screen is too small or the graph shows unreadable characters, check the window size, the font and UTF-8. Read memory, model, archive-scope and sign-in errors separately; a message about an exhausted client limit does not by itself mean memory was lost.
 
-Testy deweloperskie mogą korzystać z prawdziwego tmux i ArcadeDB oraz kontrolowanych odpowiedników CLI. Nie są pomiarem płatnych API ani kont Codexa/Claude’a/Copilota i nie potwierdzają działania na fizycznym komputerze WSL użytkownika. Takie wyniki wymagają osobnego uruchomienia w docelowym środowisku.
+Developer tests may use real tmux and ArcadeDB together with controlled CLI stand-ins. They do not measure paid APIs or Codex/Claude/Copilot accounts and do not confirm behavior on the user's physical WSL machine. Such results require a separate run in the target environment.
 
-Warstwa tłumaczenia skrótów jest dopasowana do przypiętego Textual 8. Textual udostępnia odświeżenie stopki, ale nie publiczny setter opisów istniejących bindingów; [dokumentacja opisuje ograniczenia dynamicznych bindingów](https://textual.textualize.io/guide/input/#dynamic-bindings). Mały adapter `localize_bindings` zmienia tylko ich opisy, zachowując klawisze, akcje, priorytety i identyfikatory. Przy aktualizacji Textual uruchom regresję języka i routingu klawiatury.
+The shortcut translation layer is matched to the pinned Textual 8. Textual provides a footer refresh, but no public setter for the descriptions of existing bindings; [its documentation describes the limits of dynamic bindings](https://textual.textualize.io/guide/input/#dynamic-bindings). A small `localize_bindings` adapter changes only their descriptions and keeps keys, actions, priorities and identifiers. When upgrading Textual, run the language and keyboard-routing regression tests.
 
-Przeglądarkowy interfejs 0.5 pozostaje opcją zgodności przez `devbrain cockpit open`; jego [instrukcja archiwalna](COCKPIT.md) dotyczy wyłącznie tego jawnego polecenia.
+The 0.5 browser interface and the `devbrain cockpit open` command were removed in 0.8.0. The terminal workspace described here replaces them.

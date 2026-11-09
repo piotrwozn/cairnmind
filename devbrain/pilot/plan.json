@@ -1,30 +1,30 @@
 {
   "plan": {
-    "title": "Pilotaż wspólnej pamięci: walidacja tokenu",
-    "goal": "Przekazać jedno rzeczywiste zadanie Codex → Claude → świeży Codex, zachowując cel, stan, źródła i dowody poza historią rozmowy.",
+    "title": "Shared memory pilot: token validation",
+    "goal": "Hand over one real task Codex → Claude → fresh Codex, preserving the goal, state, sources and evidence outside the conversation history.",
     "constraints": [
-      "Pracuj wyłącznie w zarejestrowanym repozytorium devbrain-pilot.",
-      "Python 3 i biblioteka standardowa; bez zależności zewnętrznych i usług sieciowych w implementacji zadania.",
-      "Funkcja token_auth.validate_token(token) ma zwracać bool: True wyłącznie dla napisu 'valid', False dla pozostałych danych; dla danych innego typu nie zgłasza wyjątku.",
-      "Codex pozostawia needs_test; Claude wykonuje nazwany profil unit i oddzielne review; świeży Codex odtwarza wynik ze wspólnej pamięci.",
-      "Raporty i logi pilotażu zapisuj poza worktree w katalogu wskazanym przez DEVBRAIN_PILOT_REPORT_DIR."
+      "Work only in the registered devbrain-pilot repository.",
+      "Python 3 and the standard library; no external dependencies or network services in the task implementation.",
+      "The function token_auth.validate_token(token) must return a bool: True only for the string 'valid', False for any other input; it does not raise an exception for values of other types.",
+      "Codex leaves needs_test; Claude runs the named unit profile and a separate review; a fresh Codex restores the result from the shared memory.",
+      "Save pilot reports and logs outside the worktree, in the directory given by DEVBRAIN_PILOT_REPORT_DIR."
     ]
   },
   "steps": [
     {
       "key": "token-validation",
-      "content": "Zaimplementuj token_auth.validate_token(token), napisz testy unittest, następnie wykonaj profil unit i review z odnotowaniem każdego kryterium. Przekaż stan przez DevBrain między świeżymi klientami.",
+      "content": "Implement token_auth.validate_token(token), write unittest tests, then run the unit profile and a review that records each criterion. Hand over the state through DevBrain between fresh clients.",
       "depends_on": [],
       "metadata": {
         "requires_test": true,
         "requires_review": true,
         "required_profiles": ["unit"],
         "acceptance_criteria": [
-          "token_auth.py udostępnia validate_token(token); dla napisu 'valid' wynikiem jest dokładnie True.",
-          "Inne napisy, w tym pusty, 'invalid', 'VALID', ' valid' i 'valid ', zwracają dokładnie False.",
-          "None, liczby całkowite, wartości bool, bytes, listy i słowniki zwracają dokładnie False bez wyjątku.",
-          "tests/test_token_auth.py zawiera co najmniej 12 metod test_* unittest pokrywających powyższe przypadki; reviewer sprawdza rzeczywiste asercje i dodatnią liczbę wykonanych testów w logach stdout/stderr.",
-          "Bieżąca definicja zadania i kod mają świeży, udany wynik rzeczywistego profilu unit; oddzielny zapis review wymienia ocenę każdego kryterium."
+          "token_auth.py exposes validate_token(token); for the string 'valid' the result is exactly True.",
+          "Other strings, including the empty string, 'invalid', 'VALID', ' valid' and 'valid ', return exactly False.",
+          "None, integers, bool values, bytes, lists and dicts return exactly False without raising an exception.",
+          "tests/test_token_auth.py contains at least 12 unittest test_* methods covering the cases above; the reviewer checks the actual assertions and a positive number of executed tests in the stdout/stderr logs.",
+          "The current task definition and code have a fresh, successful result from a real unit profile run; a separate review record lists the assessment of each criterion."
         ]
       }
     }

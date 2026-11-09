@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose an improvement or a new capability.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should DevBrain do instead?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance scenario
+      description: One concrete scenario that shows the feature works.
+  - type: textarea
+    id: trust
+    attributes:
+      label: Effect on trust
+      description: Does this change what counts as evidence, what gets written to memory, or what an agent may do without consent?

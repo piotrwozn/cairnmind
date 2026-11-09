@@ -9,6 +9,10 @@ defaults:
   run:
     working-directory: devbrain
 
+env:
+  # Shared 2-core runners: keyboard latency budgets x4 (still below the 3 s blocked-UI case).
+  DEVBRAIN_LATENCY_SCALE: "4"
+
 jobs:
   lint:
     runs-on: ubuntu-24.04

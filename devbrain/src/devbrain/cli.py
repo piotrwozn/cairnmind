@@ -250,14 +250,6 @@ def terminal_workspace_stop(ctx: typer.Context, clients: bool = False):
     output(stop_workspace(ctx.obj, stop_clients=clients))
 
 
-@cockpit_app.command("open")
-@initialized
-def cockpit_open(ctx: typer.Context, no_browser: bool = False):
-    """Uruchom lub przyłącz kokpit; --no-browser wypisuje adres do ręcznego otwarcia."""
-    from devbrain.cockpit import open_cockpit
-    output(open_cockpit(ctx.obj, open_browser=not no_browser))
-
-
 @cockpit_app.command("serve")
 @initialized
 def cockpit_serve(ctx: typer.Context, port: int | None = None):
@@ -322,7 +314,16 @@ def engine_stop(ctx: typer.Context):
 
 @app.command()
 @initialized
-def doctor(ctx: typer.Context):
+def doctor(ctx: typer.Context, contract: bool = typer.Option(
+        False, "--contract", help="Pokaż tylko kontrakt klientów: każdą kontrolę z linią dowodu.")):
+    if contract:
+        from devbrain.integrations import CLIENTS, _probe_cli
+        probes = {name: _probe_cli(name) for name in CLIENTS}
+        output({name: {key: probe[key] for key in ("installed", "version", "verified_resume", "checks", "notes")}
+                for name, probe in probes.items()})
+        if any(probe["installed"] and not probe["verified_resume"] for probe in probes.values()):
+            raise typer.Exit(1)
+        return
     from devbrain.integrations import doctor as inspect
     result = inspect(ctx.obj)
     result["service_running"] = service_alive(ctx.obj)

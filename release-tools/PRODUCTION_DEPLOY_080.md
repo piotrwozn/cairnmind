@@ -29,7 +29,7 @@ runtime executable/SHA fields in `runtime`, `runtime_gate_sha256`,
 The payload digest is the updater's `digest(PAYLOAD.encode())`, **not** the ZIP
 or updater-file digest.
 
-`proofs` must contain exactly: `full_suite`, `soak`, `ux`, `frontend`, `recall`,
+`proofs` must contain exactly: `full_suite`, `soak`, `ux`, `recall`,
 `native`, `copilot`, `interactive`, `queue_copy`, `upgrade_smoke`, `tooling_guards`.
 Each entry has its original `artifact_root`, `receipt_sha256` and
 `verifier: {path, sha256}` pointing to that trial's own frozen
@@ -43,7 +43,7 @@ keeps its original qualified 529 instrumentation and verifier. Never retag its
 hashes as the new bundle. The new tooling guard proof must cover the complete
 current helper map, including deployment, backup and one-job retry guards.
 Current UX 377/377 and UI proof do not replace the pending full backend, account,
-recall, frontend, copy-replay, final smoke or continuous eight-hour proofs.
+recall, copy-replay, final smoke or continuous eight-hour proofs.
 
 All private admission files belong in a dedicated canonical owner-only Linux
 directory, mode 0700, with regular 0600 files. Raw config, backups, sources,

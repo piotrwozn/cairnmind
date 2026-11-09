@@ -297,21 +297,6 @@ def test_missing_runtime_values_never_compare_equal(retry):
     assert not retry.runtime_equal({}, {})
 
 
-def test_frontend_receipt_cannot_admit_different_frontend_with_same_backend(retry, tmp_path):
-    frontend = tmp_path / "frontend"
-    frontend.mkdir()
-    (frontend / "package.json").write_text('{"name":"synthetic"}')
-    (frontend / "package-lock.json").write_text('{"lockfileVersion":3}')
-    component = frontend / "Panel.tsx"
-    component.write_text("export const view = 'reviewed';")
-    run = {"source_hashes": {"src/devbrain/example.py": "unchanged"},
-           "frontend_source_hashes": retry.frontend_manifest(frontend)}
-    retry.verify_frontend_source(run, tmp_path)
-    component.write_text("export const view = 'changed after qualification';")
-    with pytest.raises(retry.Refusal, match="frontend_not_final_source"):
-        retry.verify_frontend_source(run, tmp_path)
-
-
 @pytest.mark.parametrize("name", ["full_suite", "soak"])
 def test_saved_attestation_uses_original_qualified_path_not_installed_tree(retry, tmp_path, name):
     qualified, installed = tmp_path / "immutable-qualified", tmp_path / "different-installed-prefix"

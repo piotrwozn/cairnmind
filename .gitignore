@@ -16,3 +16,12 @@ node_modules/
 *.CAP
 evidence/080-firmware-preparation/
 evidence/runtime-080-software-temurin-c2-0-compilation.xml
+
+# Personal notes kept out of the repository (Polish working notes and session handoffs)
+START_HERE*.txt
+TRANSFER_MANIFEST.json
+devbrain/docs/README.md
+devbrain/docs/ROADMAP.md
+
+# Local release qualification reports (machine-specific, kept on disk only)
+evidence/

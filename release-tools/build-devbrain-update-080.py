@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import tempfile
 import tomllib
 import zipfile
@@ -69,11 +70,18 @@ def main():
     with zipfile.ZipFile(BASELINE) as archive:
         before = {name.removeprefix('devbrain/'): archive.read(name)
                   for name in archive.namelist() if not name.endswith('/')}
-    paths = set(before)
-    for directory in ('src', 'tests', 'docs', 'scripts', 'pilot', 'frontend'):
-        paths.update(path.relative_to(ROOT).as_posix() for path in (ROOT / directory).rglob('*')
-                     if path.is_file() and not any(part in SKIP for part in path.relative_to(ROOT).parts)
-                     and path.suffix not in {'.pyc', '.tsbuildinfo'})
+    # Ship exactly the committed release sources: untracked or ignored files (private
+    # notes, caches) never enter a package, and uncommitted edits stop the build.
+    dirty = subprocess.run(['git', '-c', 'core.fileMode=false', '-C', str(ROOT), 'status', '--porcelain', '--untracked-files=no', '--', '.'],
+                           capture_output=True, text=True, check=True).stdout
+    if dirty.strip():
+        raise ValueError('Commit the release sources before building:\n' + dirty)
+    tracked = {name for name in subprocess.run(['git', '-c', 'core.fileMode=false', '-C', str(ROOT), 'ls-files', '-z', '--', '.'],
+                                               capture_output=True, text=True, check=True).stdout.split('\0')
+               if name and not any(part in SKIP for part in Path(name).parts)}
+    # Baseline files that are no longer tracked are deletions, not missing sources.
+    removed = sorted(set(before) - tracked)
+    paths = tracked
     current = {}
     for relative in sorted(paths):
         path = ROOT / relative
@@ -97,6 +105,10 @@ def main():
         original_hash = digest(original) if original is not None else None
         changes.append({'path': relative, 'before': [original_hash], 'before_by_version': {SUPPORTED: original_hash},
                         'after': digest(raw), 'encoding': encoding, 'content': content})
+    for relative in removed:
+        original_hash = digest(before[relative])
+        changes.append({'path': relative, 'before': [original_hash], 'before_by_version': {SUPPORTED: original_hash},
+                        'after': None, 'encoding': 'delete', 'content': ''})
     package = {'version': VERSION, 'supported_versions': [SUPPORTED], 'files': changes,
                'backup_baseline_sha256': BASELINE_SHA256, 'backup_version': SUPPORTED,
                'backup_package_sha256': package_manifest(before), 'backup_dependency_pins': dependency_pins(before['uv.lock'], before['pyproject.toml']),
