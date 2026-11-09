@@ -1,4 +1,4 @@
-# DevBrain implementation contracts
+# Cairnmind implementation contracts
 
 The active backend is **ArcadeDB 26.11.1**, using native document types, graph
 vertices/edges, FULL_TEXT/BM25 and LSM_VECTOR indexes. See

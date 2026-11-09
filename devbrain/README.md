@@ -1,6 +1,6 @@
-# DevBrain
+# Cairnmind
 
-DevBrain is a local development environment for **Codex CLI, Claude Code, Ollama, the OpenAI/Anthropic APIs and GitHub Copilot**, with a separate knowledge agent. A single `devbrain` command opens the project list in the current terminal. You pick a project and an assistant, then explicitly start work. Shared project memory answers `ask` questions: what was decided, where the code lives, what it depends on and what needs to happen next. Project state is stored outside model conversations, so it survives across sessions and clients.
+Cairnmind is a local development environment for **Codex CLI, Claude Code, Ollama, the OpenAI/Anthropic APIs and GitHub Copilot**, with a separate knowledge agent. A single `cairnmind` command opens the project list in the current terminal. You pick a project and an assistant, then explicitly start work. Shared project memory answers `ask` questions: what was decided, where the code lives, what it depends on and what needs to happen next. Project state is stored outside model conversations, so it survives across sessions and clients.
 
 ## Highlights
 
@@ -20,7 +20,7 @@ DevBrain is a local development environment for **Codex CLI, Claude Code, Ollama
 Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot SDK
                            │ MCP: resume / ACK / ask / plans
                            ▼
-                 Local DevBrain service
+                 Local Cairnmind service
                   │                   │
        Ollama knowledge agent    independent archiving
                   │                   │
@@ -38,9 +38,9 @@ Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot
 - **Sessions:** the launcher waits for a ready resume package; writes from a linked session require a real model ACK that names the identifiers and versions it read.
 - **Verification:** named test profiles bind a result to the task definition, the profile and a fingerprint of the current code. Progress (`done`) and evidence freshness are tracked separately.
 
-The way memory and agents are organized is inspired by SynapCores. DevBrain is an independent implementation of the knowledge layer; it is not a copy of that product or of its database engine.
+The way memory and agents are organized is inspired by SynapCores. Cairnmind is an independent implementation of the knowledge layer; it is not a copy of that product or of its database engine.
 
-The only data engine is **[ArcadeDB](https://github.com/ArcadeData/arcadedb), Apache 2.0**. DevBrain manages the pinned version `26.11.1` as a local Java process. Documents, the graph, full-text search and the vector index all live in the same engine.
+The only data engine is **[ArcadeDB](https://github.com/ArcadeData/arcadedb), Apache 2.0**. Cairnmind manages the pinned version `26.11.1` as a local Java process. Documents, the graph, full-text search and the vector index all live in the same engine.
 
 ## Requirements
 
@@ -65,14 +65,14 @@ cd ~/src/devbrain
 bash scripts/install-wsl.sh
 ```
 
-The installer creates an isolated tool installation via `uv tool`, downloads the pinned ArcadeDB (about 86 MB, verified with SHA-256), starts the engine and initializes the database. It does not download models or the Copilot runtime, and it does not change Codex or Claude configuration. The Copilot runtime is prepared by a separate action in the terminal UI. If the `devbrain` command is not yet on your `PATH`, add the directory the installer prints.
+The installer creates an isolated tool installation via `uv tool`, downloads the pinned ArcadeDB (about 86 MB, verified with SHA-256), starts the engine and initializes the database. It does not download models or the Copilot runtime, and it does not change Codex or Claude configuration. The Copilot runtime is prepared by a separate action in the terminal UI. If the `cairnmind` command is not yet on your `PATH`, add the directory the installer prints.
 
 For a manual installation, after `uv tool install --python 3.12 ~/src/devbrain` run:
 
 ```bash
-devbrain engine install
-devbrain init
-devbrain engine status
+cairnmind engine install
+cairnmind init
+cairnmind engine status
 ```
 
 Start Ollama in a separate terminal if it is not running as a service:
@@ -84,19 +84,19 @@ ollama serve
 Then pull the models. This is an explicit step that downloads several GB:
 
 ```bash
-devbrain models pull
-devbrain doctor
+cairnmind models pull
+cairnmind doctor
 ```
 
 ## First project
 
 ```bash
-devbrain project add my-app ~/src/my-app
-devbrain install my-app
-devbrain
+cairnmind project add my-app ~/src/my-app
+cairnmind install my-app
+cairnmind
 ```
 
-`devbrain` works from any directory and uses a single project registry in the local DevBrain store. You can also add a project with **Add folder**: type a Linux or Windows path, or pick a directory with the keyboard. The name is optional. `Enter` on the list opens the project for inspection. On the project screen, choose a named assistant and use **Start work**. **Add assistant** adds another connection to the project and keeps existing assignments.
+`cairnmind` works from any directory and uses a single project registry in the local Cairnmind store. You can also add a project with **Add folder**: type a Linux or Windows path, or pick a directory with the keyboard. The name is optional. `Enter` on the list opens the project for inspection. On the project screen, choose a named assistant and use **Start work**. **Add assistant** adds another connection to the project and keeps existing assignments.
 
 In **Connections**, add a connection, log in to an account or set a key, choose a model and optionally run an explicit test. Copilot uses your GitHub account and needs no API key of its own. Limits and credential references are under **Advanced limits and credentials**. Saving a connection does not generate a response. Opening the environment attaches to existing processes; it does not start every assigned assistant. See [docs/API.md](docs/API.md) for the full API guide.
 
@@ -104,30 +104,30 @@ In **Connections**, add a connection, log in to an account or set a key, choose 
 
 ### Workspace
 
-The full Cockpit layout needs at least **140 columns × 42 rows**; **180 × 55** is recommended. In a smaller terminal the active pane is enlarged and hidden processes keep running. `Ctrl+B`, then `p`, `1`, `2`, `i` or `g`, selects projects, clients, the inspector or the graph; `z` zooms the pane and `d` detaches the environment. Pressing `Ctrl+B` twice passes the shortcut through to the native client. Without an interactive terminal, DevBrain prints instructions instead of opening a browser or initializing services.
+The full Cockpit layout needs at least **140 columns × 42 rows**; **180 × 55** is recommended. In a smaller terminal the active pane is enlarged and hidden processes keep running. `Ctrl+B`, then `p`, `1`, `2`, `i` or `g`, selects projects, clients, the inspector or the graph; `z` zooms the pane and `d` detaches the environment. Pressing `Ctrl+B` twice passes the shortcut through to the native client. Without an interactive terminal, Cairnmind prints instructions instead of opening a browser or initializing services.
 
 ```bash
-devbrain workspace status
-devbrain workspace detach
-devbrain workspace takeover
-devbrain workspace stop
-devbrain workspace stop --clients
+cairnmind workspace status
+cairnmind workspace detach
+cairnmind workspace takeover
+cairnmind workspace stop
+cairnmind workspace stop --clients
 ```
 
 Detaching keeps the environment and its processes. `workspace stop` closes the outer layout; `--clients` also explicitly stops the clients adopted by this workspace. Other launches stay independent. Shutting down WSL ends the processes, but saved memory remains available for an explicit resume.
 
-One terminal controls the workspace. A second terminal opens a read-only view; `devbrain workspace takeover` explicitly takes control and switches the previous terminal to view mode, without starting new clients.
+One terminal controls the workspace. A second terminal opens a read-only view; `cairnmind workspace takeover` explicitly takes control and switches the previous terminal to view mode, without starting new clients.
 
-The launcher and `devbrain run` refuse to start a client that lacks verified support for MCP, hooks, package handoff and session binding. `devbrain doctor` shows the detection result. A project with existing code needs a Git repository and a first commit; the exception for an empty project explicitly marks that no code has been verified.
+The launcher and `cairnmind run` refuse to start a client that lacks verified support for MCP, hooks, package handoff and session binding. `cairnmind doctor` shows the detection result. A project with existing code needs a Git repository and a first commit; the exception for an empty project explicitly marks that no code has been verified.
 
 ### Without the launcher
 
 ```bash
-devbrain run my-app codex
-devbrain run my-app claude
-devbrain ask my-app "Why did we change login, and what depends on it?"
-devbrain context my-app
-devbrain status --project my-app
+cairnmind run my-app codex
+cairnmind run my-app claude
+cairnmind ask my-app "Why did we change login, and what depends on it?"
+cairnmind context my-app
+cairnmind status --project my-app
 ```
 
 `ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer.
@@ -137,10 +137,10 @@ devbrain status --project my-app
 Saving a plan writes the header, the steps and the final dependency graph in a single transaction. Codex and Claude see the same versions. An active plan is bound to a specific registered worktree. The launcher shows plans, the next step, blockers, evidence freshness and session package readiness.
 
 ```bash
-devbrain plan save my-app ./plan.json --idempotency-key login-plan-1 --activate
-devbrain plan next my-app
-devbrain plan list my-app
-devbrain task list my-app
+cairnmind plan save my-app ./plan.json --idempotency-key login-plan-1 --activate
+cairnmind plan next my-app
+cairnmind plan list my-app
+cairnmind task list my-app
 ```
 
 Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` and `blocked`. A separate `proposed`/`confirmed` status describes how certain a finding is. A `done` result remains part of the execution history; a later code change can turn its verification to `stale`. The plan format, check profiles and MCP calls are described in [docs/WORKFLOW.md](docs/WORKFLOW.md).
@@ -148,11 +148,11 @@ Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` 
 Declare check profiles in `.devbrain/checks.toml`, for example `[checks.unit]` with `argv = ["uv", "run", "pytest"]`. Running a check is an explicit CLI operation:
 
 ```bash
-devbrain check run my-app unit --task TASK_ID
-devbrain check list my-app --task TASK_ID
-devbrain eval run
-devbrain eval run --clients
-devbrain eval run --clients --skip-claude
+cairnmind check run my-app unit --task TASK_ID
+cairnmind check list my-app --task TASK_ID
+cairnmind eval run
+cairnmind eval run --clients
+cairnmind eval run --clients --skip-claude
 ```
 
 A check runs in the current worktree. Exit code 0 confirms that the given command ran successfully; review and acceptance still require a separate check. Legacy test flags are `reported` declarations, never automatically created run results.
@@ -170,39 +170,39 @@ The fingerprint also covers untracked files that are not ignored. Put generated 
 A full snapshot in `.memory/devbrain/` carries one project's memory together with the repository: conversations and the exact source content, findings, plans, tasks, checkpoints, revisions and links. Saving and importing do not require Ollama. The memory panel offers preview, save, import check, import and auto-save settings; the same operations are available from the CLI. Merely detecting the files loads nothing.
 
 ```bash
-devbrain memory snapshot my-app --preview
-devbrain memory snapshot my-app
-devbrain memory auto my-app --enable --interval-minutes 15
-devbrain memory status my-app
-devbrain memory auto my-app --disable
+cairnmind memory snapshot my-app --preview
+cairnmind memory snapshot my-app
+cairnmind memory auto my-app --enable --interval-minutes 15
+cairnmind memory status my-app
+cairnmind memory auto my-app --disable
 ```
 
 Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/devbrain/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
 
-On a second machine, after installing DevBrain and cloning the repository:
+On a second machine, after installing Cairnmind and cloning the repository:
 
 ```bash
-devbrain memory inspect ~/src/my-app/.memory/devbrain
-devbrain memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
-devbrain memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app
+cairnmind memory inspect ~/src/my-app/.memory/devbrain
+cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
+cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app
 ```
 
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
 
 ```bash
-devbrain eval memory
+cairnmind eval memory
 ```
 
 This is an explicit test against a real Ollama: extraction of a fact, a decision and a task, transfer between two isolated databases, and reconstruction of a sourced answer. It requires all expected findings; an empty extraction result fails the scenario. It does not start Codex or Claude. Exit codes: `0` success, `1` failure, `3` required models missing.
 
 ## Data and backups
 
-The default data directory is `~/.local/share/devbrain`; change it with `DEVBRAIN_HOME` or the global `--data-dir` option. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `devbrain stop` stops the knowledge service; once clients are closed, `devbrain engine stop` stops the database without deleting data.
+The default data directory is `~/.local/share/devbrain`; change it with `DEVBRAIN_HOME` or the global `--data-dir` option. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `cairnmind stop` stops the knowledge service; once clients are closed, `cairnmind engine stop` stops the database without deleting data.
 
 ```bash
-devbrain export ~/memory.json --project my-app
-devbrain export ~/memory.md --project my-app --markdown
-devbrain backup ~/devbrain-backup.devbrain.json.gz
+cairnmind export ~/memory.json --project my-app
+cairnmind export ~/memory.md --project my-app --markdown
+cairnmind backup ~/devbrain-backup.devbrain.json.gz
 ```
 
 The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`. To move a single project, use `memory import`; `restore` replaces the entire store.
@@ -215,7 +215,7 @@ Archiving does not wait for the GPU. Status shows archiving, indexing, model pro
 uv sync --locked --extra dev
 uv run pytest
 uv run ruff check src tests
-devbrain benchmark my-app "Where do we handle login errors?"
+cairnmind benchmark my-app "Where do we handle login errors?"
 ```
 
 Tests for storage, full-text search, the graph and the vector index use a real ArcadeDB engine. They require Java 21; the default test session prepares an isolated engine. Automated tests of Ollama answers and client sessions use controlled adapters; a real handoff of work between clients has to be measured in the target environment.
@@ -224,7 +224,7 @@ Syntax analysis covers Python, JavaScript and TypeScript. Other languages remain
 
 `ask` answers and the startup context still consume Codex or Claude tokens. Local memory reduces the need to carry the whole history along; it does not remove context limits or the cost of model work. API and Copilot connections use their own account billing and permissions.
 
-The launcher blocks a client from starting when the resume package is partial or unavailable. An ACK confirms receipt and reading of specific versions, not the model's understanding. DevBrain's write controls do not replace the native tool permissions of Codex and Claude.
+The launcher blocks a client from starting when the resume package is partial or unavailable. An ACK confirms receipt and reading of specific versions, not the model's understanding. Cairnmind's write controls do not replace the native tool permissions of Codex and Claude.
 
 ## Documentation
 

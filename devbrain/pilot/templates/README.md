@@ -1,4 +1,4 @@
-# DevBrain pilot repository
+# Cairnmind pilot repository
 
 A single task handed over between fresh sessions: Codex implements, Claude tests
 and reviews, and another Codex restores the result from the shared memory.

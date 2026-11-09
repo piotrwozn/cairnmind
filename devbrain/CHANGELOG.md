@@ -1,6 +1,11 @@
 # Changelog
 
-All notable changes to DevBrain are listed here, newest first.
+All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
+
+## Unreleased
+
+- **Renamed to Cairnmind.** The repository moved to `piotrwozn/cairnmind`, the package is `cairnmind` and the command is `cairnmind`; `devbrain` remains an alias for a transition period. The installer removes an earlier `devbrain` uv tool, keeps your memory, and lists the `cairnmind install <project>` commands that reconnect existing projects. Data paths, environment variables and the portable memory format keep their `devbrain` names until a compatible migration (#40).
+- Search ranks records by status: at similar relevance a confirmed finding comes before proposed and disputed ones (#5).
 
 ## 0.8.0
 

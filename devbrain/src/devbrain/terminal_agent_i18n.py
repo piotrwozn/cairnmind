@@ -37,8 +37,8 @@ CATALOG = {
     "This saves your finding. It does not repeat the command or edit.": "Ta operacja zapisuje Twoje ustalenie. Nie ponawia polecenia ani edycji.",
     "Save finding": "Zapisz ustalenie",
     "Your finding was saved. Send a separate message to continue work.": "Zapisano ustalenie człowieka. Dalszą pracę uruchomisz osobną wiadomością.",
-    "A terminal is required. Start devbrain.": "Agent wymaga interaktywnego terminala. Uruchom devbrain.",
-    "Cannot restore this run. Check the profile status in DevBrain.": "Nie można odtworzyć tego uruchomienia. Sprawdź stan profilu w DevBrain.",
+    "A terminal is required. Start cairnmind.": "Agent wymaga interaktywnego terminala. Uruchom cairnmind.",
+    "Cannot restore this run. Check the profile status in Cairnmind.": "Nie można odtworzyć tego uruchomienia. Sprawdź stan profilu w Cairnmind.",
     "Working": "Praca w toku", "Interrupted": "Przerwano", "Failed": "Niepowodzenie",
     "Blocked": "Zablokowano", "Ready": "Gotowy", "Awaiting approval": "Oczekuje na zgodę",
 }

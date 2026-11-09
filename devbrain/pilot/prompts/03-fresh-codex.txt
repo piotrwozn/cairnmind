@@ -10,8 +10,8 @@ make them match the expected result.
 2. Restore from the shared memory the goal, the constraints, the plan and task
    IDs and versions, the saved state, the checks actually performed and the
    remaining work. Use next_task, ask, check_status and source references; if
-   needed, use the existing commands devbrain plan list/show, devbrain task list
-   and devbrain source.
+   needed, use the existing commands cairnmind plan list/show, cairnmind task list
+   and cairnmind source.
 3. For the unit profile, give the real run ID and its freshness. Distinguish the
    machine test result from the client's report on the review and the criteria
    assessment. Do not equate a historical done with currently fresh tests. If
@@ -27,5 +27,5 @@ make them match the expected result.
    Base every significant claim on sources.
 
 If the user then triggers the client's native conversation compaction, read the
-new packet and perform a new ACK before any further DevBrain write. Do not claim
+new packet and perform a new ACK before any further Cairnmind write. Do not claim
 that the old ACK is current. Restore the summary above again from memory.

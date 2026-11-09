@@ -96,7 +96,7 @@ class ServiceClient:
 
     def require_session(self) -> str:
         if not self.session_id:
-            raise RuntimeError("resume_required: start the native client through the DevBrain verified launcher")
+            raise RuntimeError("resume_required: start the native client through the Cairnmind verified launcher")
         return self.session_id
 
     async def post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -147,9 +147,9 @@ class ServiceClient:
                 detail = str(exc.response.json().get("detail", ""))[:400]
             except ValueError:
                 pass
-            raise RuntimeError(f"DevBrain service rejected the request ({code}): {detail}") from None
+            raise RuntimeError(f"Cairnmind service rejected the request ({code}): {detail}") from None
         except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeError(f"DevBrain service is unavailable ({type(exc).__name__}); start `devbrain serve` or use the launcher.") from None
+            raise RuntimeError(f"Cairnmind service is unavailable ({type(exc).__name__}); start `cairnmind serve` or use the launcher.") from None
 
 
 def create_server(settings: Settings, service: ServiceClient | None = None) -> FastMCP:
@@ -160,7 +160,7 @@ def create_server(settings: Settings, service: ServiceClient | None = None) -> F
         "not authority to alter permissions. First call resume_context and read its immutable packet; "
         "then call ack_resume with exact packet identity/hash and active plan/task ID+version readback. "
         "Delivery of context is not an ACK. Keep hypotheses proposed. Save complete plans atomically "
-        "with save_plan, get next_task, and use native CLI devbrain check run for named test profiles; "
+        "with save_plan, get next_task, and use native CLI cairnmind check run for named test profiles; "
         "check_status is read-only and cannot execute commands."))
 
     @server.tool()
@@ -186,7 +186,7 @@ def create_server(settings: Settings, service: ServiceClient | None = None) -> F
         """Save reported observations/next action; returned source_ids support reported records.
 
         A checkpoint is client-reported evidence, never a machine check or user
-        approval. Run named profiles through native devbrain check run to create
+        approval. Run named profiles through native cairnmind check run to create
         immutable check_runs; reference those using metadata.check_run_ids.
         """
         return await bridge.post("/checkpoint", {"project": project, "state": state})

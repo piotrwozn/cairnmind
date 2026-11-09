@@ -364,7 +364,7 @@ def capture_workspace(manager, target, label):
         (target / f"{label}-{role}.ansi").write_text(raw)
         console = Console(record=True, width=int(size[0]), file=io.StringIO(), force_terminal=True)
         console.print(Text.from_ansi(raw), end="")
-        console.save_svg(str(target / f"{label}-{role}.svg"), title=f"DevBrain preview · {role}")
+        console.save_svg(str(target / f"{label}-{role}.svg"), title=f"Cairnmind preview · {role}")
     (target / f"{label}.json").write_text(json.dumps(frames, indent=2))
     return frames
 

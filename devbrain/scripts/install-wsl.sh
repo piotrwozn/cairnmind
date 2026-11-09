@@ -6,7 +6,7 @@ usage() {
     cat <<'USAGE'
 Usage: bash scripts/install-wsl.sh [--pull-models]
 
-Installs DevBrain as a uv tool together with ArcadeDB 26.11.1 (about 86 MB,
+Installs Cairnmind as a uv tool together with ArcadeDB 26.11.1 (about 86 MB,
 archive verified with SHA-256), starts the engine and initialises local memory.
 Requires Java 21+ and tmux 3.4+. Does not change Codex or Claude Code configuration.
 Does not download models or the Copilot runtime by default; prepare Copilot in the terminal UI.
@@ -93,11 +93,21 @@ printf 'Preparing dependencies from uv.lock...\n'
 uv export --directory "$package_dir" --locked --no-dev --no-emit-project \
     --format requirements-txt --output-file "$constraints_file" >/dev/null
 
-printf 'Installing DevBrain from %s...\n' "$package_dir"
+# An earlier release was installed as the uv tool "devbrain", which owns the devbrain
+# executable that this package also provides as an alias. Remove the tool, not the data.
+upgraded_from_devbrain=false
+if uv tool list 2>/dev/null | grep -q '^devbrain '; then
+    printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
+        "${DEVBRAIN_HOME:-$HOME/.local/share/devbrain}"
+    uv tool uninstall devbrain >/dev/null
+    upgraded_from_devbrain=true
+fi
+
+printf 'Installing Cairnmind from %s...\n' "$package_dir"
 uv tool install --python "${DEVBRAIN_INSTALL_PYTHON:-3.12}" --reinstall --constraints "$constraints_file" "$package_dir"
 
 tool_bin_dir="$(uv tool dir --bin)"
-devbrain_bin="$tool_bin_dir/devbrain"
+devbrain_bin="$tool_bin_dir/cairnmind"
 if [[ ! -x "$devbrain_bin" ]]; then
     printf 'Installation did not provide the executable: %s\n' "$devbrain_bin" >&2
     exit 1
@@ -113,22 +123,35 @@ fi
 "$devbrain_bin" engine status
 "$devbrain_bin" doctor
 
+if [[ "$upgraded_from_devbrain" == true ]]; then
+    # Hooks and MCP entries in existing projects name the removed interpreter.
+    printf '\nProjects set up by DevBrain still point at its removed Python. Reconnect each one:\n'
+    "$devbrain_bin" project list | "$(uv tool dir)/cairnmind/bin/python" -I -c '
+import json, shlex, sys
+projects = json.load(sys.stdin)
+for project in projects:
+    print("  cairnmind install " + shlex.quote(project["name"]))
+if not projects:
+    print("  (no registered projects)")
+'
+fi
+
 if [[ "$pull_models" == true ]]; then
     if ! "$devbrain_bin" models list >/dev/null; then
-        printf 'Cannot reach Ollama. Start ollama serve, then run devbrain models pull.\n' >&2
+        printf 'Cannot reach Ollama. Start ollama serve, then run cairnmind models pull.\n' >&2
         exit 1
     fi
     "$devbrain_bin" models pull
 else
-    printf '\nModels were not downloaded. With Ollama running, run: devbrain models pull\n'
+    printf '\nModels were not downloaded. With Ollama running, run: cairnmind models pull\n'
 fi
 
-printf '\nDevBrain installed: %s\n' "$devbrain_bin"
+printf '\nCairnmind installed: %s\n' "$devbrain_bin"
 case ":$PATH:" in
     *":$tool_bin_dir:"*) ;;
     *) printf 'Add this directory to PATH: %s\n' "$tool_bin_dir" ;;
 esac
-printf 'Open the terminal workspace: devbrain\n'
+printf 'Open the terminal workspace: cairnmind\n'
 printf 'Projects, API/Ollama/Copilot profiles, client panes, memory and the graph are chosen in the terminal.\n'
 printf 'Copilot: Connections -> Connect GitHub account; the installer did not download its runtime.\n'
-printf 'Status without opening the workspace: devbrain workspace status\n'
+printf 'Status without opening the workspace: cairnmind workspace status\n'

@@ -1,4 +1,4 @@
-"""Bounded, stateless protocol adapters for DevBrain's own coding agent.
+"""Bounded, stateless protocol adapters for Cairnmind's own coding agent.
 
 Only explicit ``complete`` and ``probe`` calls generate model output.  Adapters
 never retry a generation: a lost transport does not prove the request was not
