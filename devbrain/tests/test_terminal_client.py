@@ -144,7 +144,7 @@ def test_ensure_broker_does_not_mint_display_ticket_or_open_browser(tmp_path, mo
     starts = []
     monkeypatch.setattr("devbrain.cli.ensure_service", lambda settings, **kwargs: starts.append(kwargs))
     monkeypatch.setattr(cockpit, "cockpit_status", lambda settings: status)
-    monkeypatch.setattr(cockpit, "_open_browser", lambda *args: pytest.fail("Headless startup opened a browser"))
+    assert not hasattr(cockpit, "_open_browser"), "The browser launcher was removed in 0.8.0"
     monkeypatch.setattr(cockpit.httpx, "Client", lambda **kwargs: pytest.fail("Headless startup minted a ticket"))
     assert cockpit.ensure_cockpit(settings) == status
     assert starts == [{"background_inference": False}]

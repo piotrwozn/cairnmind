@@ -12,17 +12,15 @@ import os
 from pathlib import Path
 import re
 import secrets
-import shutil
 import socket
 import subprocess
 import sys
 import time
 from urllib.parse import urlparse
 from uuid import uuid4
-import webbrowser
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
 from . import __version__
@@ -790,6 +788,18 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         session_for(request)
         return forward(await upstream("GET", "/status", params=request.query_params))
 
+    @app.post("/api/ask")
+    async def ask_memory(request: Request):
+        session_for(request)
+        value = await body(request)
+        fields(value, {"project", "question", "worktree"}, ("project", "question"))
+        question = value["question"]
+        if not isinstance(question, str) or not question.strip() or len(question) > 4000:
+            raise HTTPException(422, "Pytanie musi mieć od 1 do 4000 znaków.")
+        if not isinstance(value["project"], str) or not isinstance(value.get("worktree", ""), str):
+            raise HTTPException(422, "Niepoprawne pola żądania.")
+        return forward(await upstream("POST", "/ask", data=value))
+
     @app.get("/api/plans")
     async def list_plans(request: Request):
         session_for(request)
@@ -825,22 +835,6 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                 yield 'event: unavailable\ndata: {"reason":"memory_service"}\n\n'
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
-    static = Path(__file__).parent / "web_static"
-
-    @app.get("/{path:path}")
-    async def frontend(path: str):
-        if path.startswith(("api/", "auth/", "_control/")):
-            raise HTTPException(404)
-        candidate = static / path
-        if path and (".." in Path(path).parts or not candidate.resolve().is_relative_to(static.resolve())):
-            raise HTTPException(404)
-        if path and candidate.is_file() and not candidate.is_symlink():
-            cache = "public, max-age=31536000, immutable" if path.startswith("assets/") else "no-store"
-            return FileResponse(candidate, headers={"Cache-Control": cache})
-        index = static / "index.html"
-        if not index.is_file():
-            return JSONResponse({"detail": "Brak dołączonego interfejsu kokpitu; przebuduj pakiet DevBrain."}, status_code=503)
-        return FileResponse(index, headers={"Cache-Control": "no-store"})
     return app
 
 
@@ -873,23 +867,6 @@ def cockpit_status(settings):
     return result
 
 
-def _open_browser(url):
-    try:
-        if shutil.which("wslview"):
-            subprocess.run(["wslview", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=True)
-            return True
-        if shutil.which("powershell.exe"):
-            # URL is generated from a validated loopback endpoint and urlsafe ticket.
-            script = "Start-Process -FilePath '" + url.replace("'", "''") + "'"
-            encoded = base64.b64encode(script.encode("utf-16-le")).decode()
-            subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=True)
-            return True
-        return bool(webbrowser.open(url))
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
 def ensure_cockpit(settings):
     """Start/reuse the private broker without opening a browser or minting a ticket."""
     from .cli import ensure_service
@@ -920,18 +897,6 @@ def ensure_cockpit(settings):
         if not status.get("version_matches", True):
             raise ValueError("Uruchomiony kokpit ma inną wersję. Zatrzymaj go i otwórz ponownie.")
         return status
-
-
-def open_cockpit(settings, open_browser=True):
-    """Explicit legacy browser entrypoint; terminal startup uses ensure_cockpit."""
-    status = ensure_cockpit(settings)
-    with httpx.Client(trust_env=False, timeout=3) as client:
-        response = client.post(status["url"] + "/_control/ticket", headers={"Authorization": f"Bearer {settings.token}"})
-        response.raise_for_status()
-        ticket = response.json()["ticket"]
-    url = status["url"] + "/#ticket=" + ticket
-    opened = _open_browser(url) if open_browser else False
-    return {"available": True, "url": url, "browser_opened": opened, "version": __version__}
 
 
 def stop_cockpit(settings, stop_clients=False):
