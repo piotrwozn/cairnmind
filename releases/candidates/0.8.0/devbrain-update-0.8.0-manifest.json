@@ -1,0 +1,656 @@
+{
+  "version": "0.8.0",
+  "supported_versions": [
+    "0.7.2"
+  ],
+  "stage": "candidate",
+  "qualified": false,
+  "baselines": {
+    "0.7.2": {
+      "file": "devbrain-0.7.2.zip",
+      "sha256": "6b65e7315895b8c44b84bafc9146dfcdae732c3890f959d0e5e58cbf4fd9aa2c"
+    }
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "before": [
+        "e5be090bfbff5a599396464160e4dfc1ea689b897eb5e682625bc2622c6d2c4b"
+      ],
+      "before_by_version": {
+        "0.7.2": "e5be090bfbff5a599396464160e4dfc1ea689b897eb5e682625bc2622c6d2c4b"
+      },
+      "after": "3c8e206e4a62424a300b53acdf51e1ccfd1c8c7ec8f0e4e1825a81b623bd2dce",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/API.md",
+      "before": [
+        "4a273e6542a4a377d0817f41840ebea71e51f47b8f76159c41ffe2e1dc042973"
+      ],
+      "before_by_version": {
+        "0.7.2": "4a273e6542a4a377d0817f41840ebea71e51f47b8f76159c41ffe2e1dc042973"
+      },
+      "after": "ab64da5528720ad0198c913ecd33ec38c56f59e3e77171faf12139ac27b3b925",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/README.md",
+      "before": [
+        "d4d6854d227a371226ebf78c5394bed0899749941535734f7c8f7eaf22b35a95"
+      ],
+      "before_by_version": {
+        "0.7.2": "d4d6854d227a371226ebf78c5394bed0899749941535734f7c8f7eaf22b35a95"
+      },
+      "after": "dec0732890a63918c9257682a50f3423ecba074806b10c66bd97401c83bc6764",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/TERMINAL.md",
+      "before": [
+        "712508a15cf1c88c7b50903968094ebca0bdb50667f86a2c29ecbca6d27643ac"
+      ],
+      "before_by_version": {
+        "0.7.2": "712508a15cf1c88c7b50903968094ebca0bdb50667f86a2c29ecbca6d27643ac"
+      },
+      "after": "d0f2cdb5456863f4942d3099c164f42b3ed0dacd3db06c2c1f263a4812cb0847",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "pyproject.toml",
+      "before": [
+        "1aedc0000e9d8ab46fb0a4e094e5fcd736f395ba27733a569633e54955e083cd"
+      ],
+      "before_by_version": {
+        "0.7.2": "1aedc0000e9d8ab46fb0a4e094e5fcd736f395ba27733a569633e54955e083cd"
+      },
+      "after": "e3b8ffd0bb7f69a902b0b551a95b559abb00f9143282c99197055d9b2b893813",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "scripts/install-wsl.sh",
+      "before": [
+        "dd30326186269f4ff45a5ae2924ca932565386543bfcd319fba6768e68fd86c3"
+      ],
+      "before_by_version": {
+        "0.7.2": "dd30326186269f4ff45a5ae2924ca932565386543bfcd319fba6768e68fd86c3"
+      },
+      "after": "b48ace4634b0ce2d6b44f9a2bb1ebe0fc502a2044f2121afd5f97a4a49fc5617",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/__init__.py",
+      "before": [
+        "56d231ac75f4497b87d08417dd1b505c138a7c58c88d5be048b9e1b6d4e22810"
+      ],
+      "before_by_version": {
+        "0.7.2": "56d231ac75f4497b87d08417dd1b505c138a7c58c88d5be048b9e1b6d4e22810"
+      },
+      "after": "3f8784b13272cdedcd63d499cf1892fd9f932c76618cb1944ad992944d46c387",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/api_worker.py",
+      "before": [
+        "d80635997ac4590efa9ca49255a3ae866377703dbe24b272740c591b35ec8360"
+      ],
+      "before_by_version": {
+        "0.7.2": "d80635997ac4590efa9ca49255a3ae866377703dbe24b272740c591b35ec8360"
+      },
+      "after": "21c65b876eee6f3fd8b85b45d7c97b53672ca2fc6225b48f3075951df3a7ec7b",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/arcade.py",
+      "before": [
+        "2ba6faafd4c1ade9fd1970a2fde694ca6aeadf9398851501fffa147ecd9081e7"
+      ],
+      "before_by_version": {
+        "0.7.2": "2ba6faafd4c1ade9fd1970a2fde694ca6aeadf9398851501fffa147ecd9081e7"
+      },
+      "after": "4731946609b83625b1497156f4f88c14bb1a38d21440377b557e067d85deb03a",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/client_runtime.py",
+      "before": [
+        "58062de4971e5d3d3b17aed70c0813517a28acb7f6de662b7e17cfc192a088dd"
+      ],
+      "before_by_version": {
+        "0.7.2": "58062de4971e5d3d3b17aed70c0813517a28acb7f6de662b7e17cfc192a088dd"
+      },
+      "after": "a2c47be8da468f4af949aae1a53f2da797419f546a8bee2cf7edcd858db22d89",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/cockpit_state.py",
+      "before": [
+        "44977a43c18539d644199f5250da961f3a58dc615516f290a16b2e6d8f70d8aa"
+      ],
+      "before_by_version": {
+        "0.7.2": "44977a43c18539d644199f5250da961f3a58dc615516f290a16b2e6d8f70d8aa"
+      },
+      "after": "56f2faf9104a94f63c83b701e79b14e528e84449c19cf4b2c779195c44cbaead",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/config.py",
+      "before": [
+        "d810a54d84ed6db3d5714ca06406d370d42aca2d71676b844a16f284b6843bf4"
+      ],
+      "before_by_version": {
+        "0.7.2": "d810a54d84ed6db3d5714ca06406d370d42aca2d71676b844a16f284b6843bf4"
+      },
+      "after": "1dbdcf998e0e188c7d609706d5446f6f3d753dbf19006c2b945f465437afcc42",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/engine.py",
+      "before": [
+        "b8386bd7cb184e6f0b3d9351b303a9f928cc9b6f6f3a99458f184349a5a19568"
+      ],
+      "before_by_version": {
+        "0.7.2": "b8386bd7cb184e6f0b3d9351b303a9f928cc9b6f6f3a99458f184349a5a19568"
+      },
+      "after": "112ac5832113fa1125020e898d97572ece5932e890e41b4a151c311ef9f08407",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/integrations.py",
+      "before": [
+        "61b5fc275a8082964570e56aa257efb7466f67a9820a2b0e21ffa79cd0e26ea5"
+      ],
+      "before_by_version": {
+        "0.7.2": "61b5fc275a8082964570e56aa257efb7466f67a9820a2b0e21ffa79cd0e26ea5"
+      },
+      "after": "ad9a8b7d309f77d7ea70560be8c1acb916eb2082eff35e715d08d211b53d2941",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/native_worker.py",
+      "before": [
+        "3a2ac384d7b6b4b4c09edce68dfc8999dff26d1d96621ead4a73945df1bb7329"
+      ],
+      "before_by_version": {
+        "0.7.2": "3a2ac384d7b6b4b4c09edce68dfc8999dff26d1d96621ead4a73945df1bb7329"
+      },
+      "after": "5c80a68c6ed3ec1a7c10aeaa99a1de66bc4645af2e4c23bfeb9706834b508b52",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/runtime_selection.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "f92688cc74babcdf99e3ec5e6bce31d905d7daedab0f1cf27092a25bf9024538",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_agent_i18n.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "347711ec5b350d32860fcf7e88e7b41b5e1749343f4ac30e7c9c8c34b6b80599",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_commands.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "c6709c34365202bb9aefa812cafec6578f63cfc9a17a1809f792c7b830cca70d",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_graph.py",
+      "before": [
+        "5e61557d406080814c6a1771a02cfb158bf3b4400f097e8fdd6c4b415383daa7"
+      ],
+      "before_by_version": {
+        "0.7.2": "5e61557d406080814c6a1771a02cfb158bf3b4400f097e8fdd6c4b415383daa7"
+      },
+      "after": "1c23badf36feca8f61798c0fb4f113b0c43ff237053489399b7ce853ba26f759",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_i18n.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "f0f7da71354e92a36dd5fb150983399d3fc93dc980aa5e0b84d8be25a58ccb5d",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_inspector.py",
+      "before": [
+        "84ad26d0e61beff0fd54c080a60fbf963791be3a4609a3d82497f0263754759b"
+      ],
+      "before_by_version": {
+        "0.7.2": "84ad26d0e61beff0fd54c080a60fbf963791be3a4609a3d82497f0263754759b"
+      },
+      "after": "69ee25bc54ae1699e5b60d10fe3ef95681dbfe448ce9925e545dc235ecee5965",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_panels.py",
+      "before": [
+        "dc64939a508f50d939724dcec3c35bf4aaa75b0f96b41fb426667bc0b3011ad5"
+      ],
+      "before_by_version": {
+        "0.7.2": "dc64939a508f50d939724dcec3c35bf4aaa75b0f96b41fb426667bc0b3011ad5"
+      },
+      "after": "efbf7fbceecb260046ac2c86274c408c156f4a5bfb828e71f4204c7a65ead4b9",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_preview.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "02c4a9ef98aa3380f1eda0bd9136b909cfe5f6a53ecaca322cd28c0b9d69f644",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_ui.py",
+      "before": [
+        "89f2a632987e22bdb9952ee6417d6427f9d0289ec6783d7ce58f161b9ff77ec2"
+      ],
+      "before_by_version": {
+        "0.7.2": "89f2a632987e22bdb9952ee6417d6427f9d0289ec6783d7ce58f161b9ff77ec2"
+      },
+      "after": "1b438a20575c3630112c30c933f0a6aec4d67c47b11b083fbef7ec90dae81150",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/workspace.py",
+      "before": [
+        "1e67dc435c2c5e65f4b5db7f07ee89420dc5203f0796e3b6eff26b4704db5cd6"
+      ],
+      "before_by_version": {
+        "0.7.2": "1e67dc435c2c5e65f4b5db7f07ee89420dc5203f0796e3b6eff26b4704db5cd6"
+      },
+      "after": "876e26d89bf788c3ceb63d04e951ac815888d562d9ffa4443dfac5b0f7f155d3",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/workspace_state.py",
+      "before": [
+        "d2afa432b612454889e41f134ca8f68aa6d2c59b23c392d4134920b942121526"
+      ],
+      "before_by_version": {
+        "0.7.2": "d2afa432b612454889e41f134ca8f68aa6d2c59b23c392d4134920b942121526"
+      },
+      "after": "831464ed6f0035fcd7599c3c6e44a43e069f8e60375b5e02111f6538e26cff2f",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_api_worker.py",
+      "before": [
+        "49ec57e2ecf27b72f54c7355d498401218cd3f4fc8a5ae7b57c850e4602fe4be"
+      ],
+      "before_by_version": {
+        "0.7.2": "49ec57e2ecf27b72f54c7355d498401218cd3f4fc8a5ae7b57c850e4602fe4be"
+      },
+      "after": "ac066575863115488fa0a94af668e81119b472f55552c1e4bedc348919188e90",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_arcade_transport.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "abc02c660f951294f4eb8c3960d80bd5e14f9faea721b475f6348354aa8d95ee",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_graph_widget_rendering.py",
+      "before": [
+        "e770a7042a12420c85bf544b7c76f5b13f221beaa8cec0bc84ab23186c227011"
+      ],
+      "before_by_version": {
+        "0.7.2": "e770a7042a12420c85bf544b7c76f5b13f221beaa8cec0bc84ab23186c227011"
+      },
+      "after": "ae2aa3e8b9393f9796265cd492b5200998cc71af5d53dda12cb29057df590f6b",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_runtime_selection.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "51b3719e4ac24c6d116fc3912337ad3eaf8ba491e13783259e64935826a13ddc",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_terminal_commands.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "04020a2d21ae6d65bc6f93f04283639af125c3ca182e474ebb4f8c311eb2ab73",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_terminal_graph.py",
+      "before": [
+        "40d12f568f2d68c79fccc318c6f9070e17bf80ff283d244dd8e290e4076dcc03"
+      ],
+      "before_by_version": {
+        "0.7.2": "40d12f568f2d68c79fccc318c6f9070e17bf80ff283d244dd8e290e4076dcc03"
+      },
+      "after": "3742a1b7f50986d8ab50758b808b9c63b97a61132dc6d6956d354e259effefd5",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_terminal_panels.py",
+      "before": [
+        "b27576c7f80fe5698d46ad0ca4a85e8d54445b0056a3784658ac9f86b0e5a955"
+      ],
+      "before_by_version": {
+        "0.7.2": "b27576c7f80fe5698d46ad0ca4a85e8d54445b0056a3784658ac9f86b0e5a955"
+      },
+      "after": "b3675bff777c4f2b5ca026cb5073cf48280219f021ac12fbbe290e407765faf3",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_terminal_preview.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "334beb67bb8f6c74f1ec1aad79b2d799617a4ed1417cac90b5336cd1052a9ce7",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_terminal_ux080.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "941455735d7bf4aee00d042fa4fd47156d2a71e6fca706a106a8599590c6923d",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_terminal_workspace_e2e.py",
+      "before": [
+        "a2966a8bb5122c31706767619681ccf93db5b48bc71179a3f7ce8653fd08d5e8"
+      ],
+      "before_by_version": {
+        "0.7.2": "a2966a8bb5122c31706767619681ccf93db5b48bc71179a3f7ce8653fd08d5e8"
+      },
+      "after": "3fde5881ee4ff69a435b91e0200c9e4e9c65a75277d83599f12647aa087f5c23",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_workspace.py",
+      "before": [
+        "51b838bfa1447d9d71d4ff637a527c243ca9ea7ba426f2b5a755bb33b089d185"
+      ],
+      "before_by_version": {
+        "0.7.2": "51b838bfa1447d9d71d4ff637a527c243ca9ea7ba426f2b5a755bb33b089d185"
+      },
+      "after": "9297003b38e9a5992b3af5aad043c3a94b5a8e6c4dd2001aed15fa92a86e2b9f",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_workspace_state.py",
+      "before": [
+        "842951e3091d94c1ce2131408700cb7f6202948360bbdb73feb07ed63f86568e"
+      ],
+      "before_by_version": {
+        "0.7.2": "842951e3091d94c1ce2131408700cb7f6202948360bbdb73feb07ed63f86568e"
+      },
+      "after": "94807743c44beba1780fead62b161a83c1e4771e63fe60839688e28a4cf1290b",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_workspace_ux080.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "2f54613304f9c846bfc3b8554f639f60158c4827c85722d6934c6c761043ebc4",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "uv.lock",
+      "before": [
+        "81ad645e89c48efcc019995fedb1d1d445b179abf93eaa756d62e50c527d8edb"
+      ],
+      "before_by_version": {
+        "0.7.2": "81ad645e89c48efcc019995fedb1d1d445b179abf93eaa756d62e50c527d8edb"
+      },
+      "after": "1b91f3b4ed497c3b52e48ca57bdcb88a3759855f90a48c7ae5a0f56e720842c5",
+      "encoding": "utf-8"
+    }
+  ],
+  "source_files": 193,
+  "source_sha256": {
+    ".gitignore": "b76d917809d037e67f4ada81d0521a5d13517529a02f01e92fe41c5ffd6463f8",
+    "ARCADE_CONTRACTS.md": "bc819fb42895f7606f4350d5d0c66cd9c5b4c591f1b6a0130f21ce0beb603ccc",
+    "CONTRACTS.md": "7299ebf8fb95e5b57d38fc349f890f358fe0e68eac314173c1ee00856d820044",
+    "README.md": "3c8e206e4a62424a300b53acdf51e1ccfd1c8c7ec8f0e4e1825a81b623bd2dce",
+    "V03_CONTRACTS.md": "554889bf0a6208ba7d5312f982cabfc61ccd1ce4b1d36ad5db83eb8debee9760",
+    "docs/API.md": "ab64da5528720ad0198c913ecd33ec38c56f59e3e77171faf12139ac27b3b925",
+    "docs/COCKPIT.md": "cabda477db2690d47fe6e758a21439f1fbe09b68059e54c01009c22fc81cbac0",
+    "docs/MEMORY_CONTRACTS.md": "ca2af84f1b25e4f53a6b5ecb2e53ad4d768196b9f2b5ddbd74ab8c85a1b24735",
+    "docs/README.md": "dec0732890a63918c9257682a50f3423ecba074806b10c66bd97401c83bc6764",
+    "docs/TERMINAL.md": "d0f2cdb5456863f4942d3099c164f42b3ed0dacd3db06c2c1f263a4812cb0847",
+    "frontend/.gitignore": "e064f420438b98fb06387bd265683e725fbdae58d5871f1db52b24365df25264",
+    "frontend/.prettierrc.json": "031f20b09bd70372c1d243ad9d691b23d09e2c60764c734c6ca2552839ff7c27",
+    "frontend/README.md": "eb6a35c47e086c9148322ad6b0bd280ede3a06379de2c684dcbdafd843ba968f",
+    "frontend/index.html": "64eb85b6dea233354f02b618d8b7e77307fb60ac289b912d3f55947639b8f874",
+    "frontend/package-lock.json": "c1be0f6c76c54433c488b2a141b5a48eeedce20034ae1ba47812dbbf4c1c9b68",
+    "frontend/package.json": "fcef3a3e2e0dbde07c38377eae57f0bb9af393950498149c1561df44e1611653",
+    "frontend/playwright.config.ts": "58731e7bc098fb855caaf318e6ee078f4d614a6c61c5310543567b7a4ae9c05a",
+    "frontend/src/App.tsx": "c9fdc7fd7cd8553627f2698b41218c33881398a1c94d2640d96c7fb19ac3f71d",
+    "frontend/src/BrainGraph.tsx": "82026401f5c5dd13adee7309c06ff5483b0af5013bcd353ac65f6773608a3519",
+    "frontend/src/InboxBrowser.tsx": "28e257fd08ad47233382288e7658e09bad18bf1317543ab60835a12ba36b870a",
+    "frontend/src/Inspector.tsx": "7ea2902b0f3af5b9ff91929da04c10b72c5b01bc790a7f3e69e4517b37fe6ca5",
+    "frontend/src/TerminalPanel.tsx": "690170b07dae4888bcfc956068a42dad431d8a17036f8dda93581df390203172",
+    "frontend/src/api.ts": "987a9cddcbb6f36ee5084ca0701a0f8f89e5e65773119495506d3987092e0edf",
+    "frontend/src/components.tsx": "ddde6f632f0861f413aa7974adbe13ea681126ec1880e673de408d016ddbd908",
+    "frontend/src/graph.worker.ts": "a5bc146b92cda9eeb22cd79d6047b6e1954cd5f1b6a3ad5f02d401437474adbf",
+    "frontend/src/main.tsx": "bcc0c23bda4bc91ee797afe8f10619908505bbf5a4669b6629386b7b9c0bde63",
+    "frontend/src/run_state.ts": "fbd5f962860cf6ce9d7395df53833a8026da5e4f2c6d7f49bb5914d6386dbce4",
+    "frontend/src/style.css": "9ee2192524d72dcdc43d1570d72330c6289ad9b9b8b6d0339417c355abf1b644",
+    "frontend/src/types.ts": "b3d925ced4d42b0316f2fce6b5f564862d37b7d012362520bdd668123e937f68",
+    "frontend/tests/api.test.ts": "f8d25aaef468bc50f91ccb5bef6ad814c7aa94c34e5f6d657c6d275b32caf48a",
+    "frontend/tests/browser/cockpit.spec.ts": "fd9940554194c0ab0dda53ea2b596b11596d674c852363db9a9f0f8903278171",
+    "frontend/tests/inspector.test.tsx": "50a9a8ea58bb8c41f562a62b11f8f0d5bebf09fbf6043c2d6081b4cd3a50d0b5",
+    "frontend/tests/terminal.test.ts": "c68595cb3d0c4861e96a5815aefa8742db6d6e1b76784de05fafac67f55eb118",
+    "frontend/tsconfig.json": "b49d4ce303fb387f3ff00f6125d5193e2125043f64daf1549270997f3cb16abd",
+    "frontend/vite.config.ts": "a3a59d0ed4089fd91f59502c9b96b2abc9881ae3d310d544ba20aca33d800632",
+    "pilot/README.md": "adb829a5be6288a96fb13ab27fed9ecc843dbccb67590923a74df616d6e00bc1",
+    "pilot/plan.json": "2b70a5be586c6fdf7be86f9ab6ad142fd8970b81a87e1dd3382924b5052ecb34",
+    "pilot/prompts/01-codex.txt": "045be41677949a3634d9bf74cdecfc3551c119e6958f958b0f64ebf5e80c238a",
+    "pilot/prompts/02-claude.txt": "2247f7d8535a3b81fe4939f223f02b52b25eddd1b1bb33e6de986047d890af6e",
+    "pilot/prompts/03-fresh-codex.txt": "39e3745453f1bc32fe806697330720b61ae7bca1a83c1bb103167ae0cd958392",
+    "pilot/templates/.gitignore": "c0032eb8d295d13240bb29bb7ac3c5203b7fa766084478b320055adaefebea9c",
+    "pilot/templates/README.md": "0244277e9ca50942882557c22b69ac155c5503d0f5aba448df9d4236ed751dde",
+    "pilot/templates/checks.toml": "94e3e3cd659b56ad923dd199b68695525f3cb790bb602325ef9ab2e20ebd9913",
+    "pyproject.toml": "e3b8ffd0bb7f69a902b0b551a95b559abb00f9143282c99197055d9b2b893813",
+    "scripts/install-wsl.sh": "b48ace4634b0ce2d6b44f9a2bb1ebe0fc502a2044f2121afd5f97a4a49fc5617",
+    "src/devbrain/__init__.py": "3f8784b13272cdedcd63d499cf1892fd9f932c76618cb1944ad992944d46c387",
+    "src/devbrain/__main__.py": "a459811163da6af78c89a7fddb26969052c04b19300980dc456a297aed044b85",
+    "src/devbrain/agent.py": "9b6097317eb4182af5ec1792f70d22400e6fd2d71911520f34f45997a29d3430",
+    "src/devbrain/agent_journal.py": "d99955bc44fbaa987c8e6f7685cd6f373dd93f4eef0fa9ef80afb79ad7227ff7",
+    "src/devbrain/agent_memory.py": "702a8dcc7741d1ad2d64f07d3219b8b0f13ea74f440afa932468d890be6b8685",
+    "src/devbrain/agent_tools.py": "de16238c3fd439561e2b3610e1705ebcc085f054ec3d24269b3a5f066d8b7dd8",
+    "src/devbrain/answer_contract.py": "6d3dbb9bd5cc6af458617490033ac074cfae0bbb921ece6b73c2988dd71c1113",
+    "src/devbrain/api_agent.py": "05b60d3e7e156d8075398e8115ebfd7cac9a29585ae4df13c7c081dac5718295",
+    "src/devbrain/api_credentials.py": "67c5e0f6ec3b564c8033c8b6c75a7f480d4076025aabe2db5155a2a5e6acba60",
+    "src/devbrain/api_profiles.py": "c34dcb06fb09c7085374597be82c0d87be88e2c727da2bb87daf4c29e998e06b",
+    "src/devbrain/api_providers.py": "66347cb604667c2e95c5b411cdff054ee320be65eaf09fd3e17e9f226c01010c",
+    "src/devbrain/api_runtime.py": "5c58afad5d0072b8fed5eb37eb7c86a2d872bc3fa385fe2f91b659f2972a7b7a",
+    "src/devbrain/api_worker.py": "21c65b876eee6f3fd8b85b45d7c97b53672ca2fc6225b48f3075951df3a7ec7b",
+    "src/devbrain/arcade.py": "4731946609b83625b1497156f4f88c14bb1a38d21440377b557e067d85deb03a",
+    "src/devbrain/cli.py": "0073bf23f072fd066b727966b0bd048c1b2a168d5392abf28781b33752ba16db",
+    "src/devbrain/client_adapters.py": "fdb87e50d8d7da4431bb471aeb8cfa5d95bb6c3e50c38a14ca3369938b17907e",
+    "src/devbrain/client_auth.py": "7ec400526ee6ac6f76f0d3a0cfd2767ca85f772e6112cfe6340f2476d31ed6dd",
+    "src/devbrain/client_runtime.py": "a2c47be8da468f4af949aae1a53f2da797419f546a8bee2cf7edcd858db22d89",
+    "src/devbrain/cockpit.py": "8d9e5213692df8318004415cef269452c74b4093057c3f7c3852ea7c4a9f4928",
+    "src/devbrain/cockpit_state.py": "56f2faf9104a94f63c83b701e79b14e528e84449c19cf4b2c779195c44cbaead",
+    "src/devbrain/config.py": "1dbdcf998e0e188c7d609706d5446f6f3d753dbf19006c2b945f465437afcc42",
+    "src/devbrain/copilot_adapter.py": "f1237bededc66a0fd9e2a7b1c8de71e3ff694a4597adac4ba4eba83a94ce4aab",
+    "src/devbrain/engine.py": "112ac5832113fa1125020e898d97572ece5932e890e41b4a151c311ef9f08407",
+    "src/devbrain/evaluation.py": "86b59d31cb326c97af11b5d584759124c0bde450e94a41d45226b50a5f57bb1a",
+    "src/devbrain/graph_raster.py": "505697700036b7e9b24389d571e8442a37c62a8542146ec82ba6bd76d866d736",
+    "src/devbrain/ingest.py": "0f3925f62607d9ba38bf733de9e16071e96553e0c0a34e1a087ac0a9de715251",
+    "src/devbrain/inspector.py": "e31f3e16de76193fa926d3c61aa3a9e053044398624550395c8fc37c7cc00b9f",
+    "src/devbrain/inspector_api.py": "78635829b692f9c13f4e1378d3d7876fd1b835a6184ce6fa719d0d46578b0c2a",
+    "src/devbrain/integrations.py": "ad9a8b7d309f77d7ea70560be8c1acb916eb2082eff35e715d08d211b53d2941",
+    "src/devbrain/journal.py": "4e3ec77075f1ee8dd974ff026e59f64c18e85bf98d0c598cdd47ec46bce1fd21",
+    "src/devbrain/mcp_server.py": "97c6544a015195f05f17a985dac5c4d51b4cc56bfdf962e2f6b7d27b42f3b585",
+    "src/devbrain/memory.py": "075795b3ee1cde835d2fe027251f7fedbbef8048dca26f25a311fbac2a586f91",
+    "src/devbrain/memory_evaluation.py": "43379a29e277aefed8cf9896bfe80e361e9a7a0b574df78af2e1829281dbf4a7",
+    "src/devbrain/memory_paths.py": "2508ffd8a1859b40700a527df44071267d1da32a13e2dedc3232d6d08aff2aac",
+    "src/devbrain/native_worker.py": "5c80a68c6ed3ec1a7c10aeaa99a1de66bc4645af2e4c23bfeb9706834b508b52",
+    "src/devbrain/ollama.py": "de51a4818389c720760615021de253e9b6fb02c5b28e4c9542a705ca48576369",
+    "src/devbrain/parsing.py": "6510235061affe480931da3064fa750f4a7b16d7ae36722820f20a7daa5607e3",
+    "src/devbrain/plans.py": "f17e6f9de9b0eab348f2ba4c932bfb5495d4983d3ee03d31621a73bc70fe7d03",
+    "src/devbrain/retrieval.py": "303c3346da5cfc3368cee9d50ac487ac163069f5ef4e62337109d4bb3a3a74a6",
+    "src/devbrain/runtime_selection.py": "f92688cc74babcdf99e3ec5e6bce31d905d7daedab0f1cf27092a25bf9024538",
+    "src/devbrain/service.py": "eb769b4d5229259fb2ce2c613b4c3042e7009c0b90a78403462fbcc02150e806",
+    "src/devbrain/sessions.py": "1a7dd4ca0ba4c759c8766f22a9b908a3a10f9c6c3633434c1e7b2ad7d65ebc19",
+    "src/devbrain/store.py": "7da2f8765462f0963d83a1f76f1a58e304395d5da9d662ea2e890e1adffd0912",
+    "src/devbrain/terminal_agent_i18n.py": "347711ec5b350d32860fcf7e88e7b41b5e1749343f4ac30e7c9c8c34b6b80599",
+    "src/devbrain/terminal_bridge.py": "e5fd740590cb7c32ff877fa89079c92a921bd230193e7c1869d16d58091a4330",
+    "src/devbrain/terminal_client.py": "47d7f86377b9058243ca7403edf9c889135776fab39d0aded71dc205d8acaa1c",
+    "src/devbrain/terminal_commands.py": "c6709c34365202bb9aefa812cafec6578f63cfc9a17a1809f792c7b830cca70d",
+    "src/devbrain/terminal_graph.py": "1c23badf36feca8f61798c0fb4f113b0c43ff237053489399b7ce853ba26f759",
+    "src/devbrain/terminal_i18n.py": "f0f7da71354e92a36dd5fb150983399d3fc93dc980aa5e0b84d8be25a58ccb5d",
+    "src/devbrain/terminal_inspector.py": "69ee25bc54ae1699e5b60d10fe3ef95681dbfe448ce9925e545dc235ecee5965",
+    "src/devbrain/terminal_panels.py": "efbf7fbceecb260046ac2c86274c408c156f4a5bfb828e71f4204c7a65ead4b9",
+    "src/devbrain/terminal_preview.py": "02c4a9ef98aa3380f1eda0bd9136b909cfe5f6a53ecaca322cd28c0b9d69f644",
+    "src/devbrain/terminal_safe.py": "b0b7e4d32eba18cd34d6b0c08395940a28e40fa1cf814d3cf0f4b5ba8f189378",
+    "src/devbrain/terminal_ui.py": "1b438a20575c3630112c30c933f0a6aec4d67c47b11b083fbef7ec90dae81150",
+    "src/devbrain/tui.py": "d72740d13fafa1adae57774bec2c6ff9ffd53f71837b0a9f9618a71d6b966be8",
+    "src/devbrain/verification.py": "816281443ab5369c43f685d68ab449276ba7c87c2587e3e2ee4b7d05e0899487",
+    "src/devbrain/web_static/assets/graph-NaefBrnO.js": "d2db8348b52c7c11a082d7840de52c7339dbf62e1458f7fccad42b53cda8344a",
+    "src/devbrain/web_static/assets/graph-mXQgwRjf.js": "f83e929895194d07b08b14d82742f7040b7150e62be228b925f57a8f2ba8bdcf",
+    "src/devbrain/web_static/assets/graph.worker-C64HhWFK.js": "55342916bfafe816259579f9b191fa865aefb0f54f1b66c4182bbfd4d5e120f3",
+    "src/devbrain/web_static/assets/index-BRWYG2kS.css": "2666cf4d437c85b38079dcda59d4ccdf1e2aa5c6c9a37d9e67be9f5e14737c35",
+    "src/devbrain/web_static/assets/index-CTnGswiq.js": "6129311a509980ef4deeccbdfec648e7c0b6edcaebc82f18aa3009b972a1c259",
+    "src/devbrain/web_static/assets/index-CizT4zAx.css": "9cde32fd662ea7b9401c4992a9973b5b85f2495ee5ee6e3e64d5ca14d00cb552",
+    "src/devbrain/web_static/assets/index-DLbTmMZ8.js": "7af9ece27d9d84165edb8e338c480ea158ff4b8469302977c901091b010ce0b4",
+    "src/devbrain/web_static/assets/react-DPx9Otuh.js": "c76a049fa0c00dfecebb592289c3ca3b815b2c26b49c00f5a319f3f2dd019ea7",
+    "src/devbrain/web_static/assets/terminal-BkZtEzRC.js": "6a0c8d7e303a91a571430ec0bbc7b18fe526d9140a0b8509bf2749c7073182df",
+    "src/devbrain/web_static/assets/terminal-ChHEYabQ.js": "34e6da101ff29811fd33d7590e767f1501e30c2302eef291cfe986dca544ddd0",
+    "src/devbrain/web_static/index.html": "a0e12b0d3b369f4c27f5a4cfbaeb7873025211ef05efa53e0b8725110217f0ba",
+    "src/devbrain/workspace.py": "876e26d89bf788c3ceb63d04e951ac815888d562d9ffa4443dfac5b0f7f155d3",
+    "src/devbrain/workspace_state.py": "831464ed6f0035fcd7599c3c6e44a43e069f8e60375b5e02111f6538e26cff2f",
+    "tests/conftest.py": "7e71eff4dfa73b5d7bd03ae670b421f11c9cdf3c3e70adf79a9c6f4d0c7fb367",
+    "tests/test_agent_journal.py": "bf74cf79783d254b61d3258305a07f38bfd46cb0073840775ff8691a0a8df2c8",
+    "tests/test_agent_memory.py": "aa1d2697d130090d3a6a5409ecc2873616371e2ba7585e512db1183f44a73b87",
+    "tests/test_agent_tools.py": "6c84351d48fd8e85553f768e5e456ace4bdbd0a3dd79cdb9b950762d6ac2e426",
+    "tests/test_answer_contract.py": "2466cbdcd6a2b5ed7f28f4cfc294620317bb10d76fa35fb7f3f1f538e4035118",
+    "tests/test_api_agent.py": "dfab69e411ab2f34533b075b5a2f3a1a1d7f142bd5146a4e20cf22f6ea6e081c",
+    "tests/test_api_broker.py": "a8bdb9083424f712d636615f32ce9ae4d8f84770c05b9aa81022a81e43666394",
+    "tests/test_api_credentials.py": "de9f220d7b197355cc387e71dbbce76aad6e08ebc359fdb4993507aecc27a5d6",
+    "tests/test_api_memory_integration.py": "6fc8ee2b64831dcdd3672853f8513bf4196c4e591784e66d778716f82439ba6b",
+    "tests/test_api_panels.py": "68ee20e4f836ee9268bce6ec2806020c0b42cc7991293b860c9f9031eb89a253",
+    "tests/test_api_profiles.py": "8e9c146fdee83c641ce79a1e4263aaaf8bf8070dcd6220d9ade43ea425e8705d",
+    "tests/test_api_providers.py": "7f42f921a1558224ea5efb65599939b7b67a565a0e2916ad9cd41c84b6b5a667",
+    "tests/test_api_runtime.py": "7a3ca78f34d0bab0e262612686ef07a45f91bef0e2b4e26cc542b0b52bfd11af",
+    "tests/test_api_storage_scope.py": "038798f215e311900bf2b3f1e28dc4f7f651d2034b6b3300a35f2ea681229a72",
+    "tests/test_api_worker.py": "ac066575863115488fa0a94af668e81119b472f55552c1e4bedc348919188e90",
+    "tests/test_api_workspace_e2e.py": "d7c65f0d49b2cd7cb7a5b369ddee4033b24889afe996137aecfdcbc59891a319",
+    "tests/test_arcade.py": "33e4204f6806906baed3ad5328c5c4f762d3b825d05237203c7fb03e5a744cee",
+    "tests/test_arcade_transport.py": "abc02c660f951294f4eb8c3960d80bd5e14f9faea721b475f6348354aa8d95ee",
+    "tests/test_capture_recovery.py": "aa6876954575363cf5d6d6cc6eb38232d39fcd6d2f38130585ea8b0016d9008e",
+    "tests/test_claude_transcript_compatibility.py": "4d4dd0dfb5f9b844bbec22a862199cde2903f391a3924bd81e980e80f8ee2f2a",
+    "tests/test_cli.py": "2d7967dc6528326d198666e3b2edfae0248d9fbaca84bc00cd4864bd349cbf41",
+    "tests/test_client_auth.py": "3d48875f790968d23404eb098004a2aa72e9c14159fe15afaccfee0a52aa05b8",
+    "tests/test_client_runtime.py": "66ba3273e15d304b1a7250e5dad9fc975799551c21ffcc076841c6344bdda51f",
+    "tests/test_cockpit_cli.py": "01324d128b3d1a5ee2e57a09165b5993b329579d25a309c1a9109d6c1ea74a7a",
+    "tests/test_cockpit_migration.py": "1be6c79103efee3954d48d471d50543ee336f306f35938cef2385d5ea3e12dc8",
+    "tests/test_cockpit_server.py": "fe34ee956109a7d112a8c3aa0598b5b0d7aba94ac29d59f0117b83495dbdb3d2",
+    "tests/test_cockpit_state.py": "f6e553c926a10815e1e6fe0a585349aca54e7960d649bca68e0afb6e85df1412",
+    "tests/test_copilot_adapter.py": "aea2af1a841fcf9229d1ec5cee60a3906907c898d97535b9251823b3326164aa",
+    "tests/test_diagnostic_cli.py": "2707730926e40a0fefec7e275433f9d57b79ec3fc40b9c1fed2ee43912307b26",
+    "tests/test_evaluation.py": "8b668f5cc3497293d7c4a864e769c6809f6b92086993aba4cad28599fcf71ae7",
+    "tests/test_extraction_grounding.py": "cbf0600ba5a8d0bfbcde20b449c3097173436084f9391ec973a4b7f1a58d4dcd",
+    "tests/test_extraction_safety.py": "9f1c58636f0502f625e6e76e5a467328f7c9e17a57f6ae31474d3cbdb9b42cbf",
+    "tests/test_graph_raster.py": "8a9840b8ff1820febf552747e3dc686ad5df342ee827d71d1ceb726f35f1fd96",
+    "tests/test_graph_widget_rendering.py": "ae2aa3e8b9393f9796265cd492b5200998cc71af5d53dda12cb29057df590f6b",
+    "tests/test_ingest.py": "868a173571e35ea4302bf1e63064009ada4e15785009be449ea7d7a022a09891",
+    "tests/test_inspector.py": "c593c3d81517a0bccb367045a068646b6dc5bf9a8cf97d76663bb9edd9816c5a",
+    "tests/test_integrations.py": "e2485e4f86c83ac7506ad5883046338f69da6bc10f1dbef94a0a80620c10b199",
+    "tests/test_job_diagnostics.py": "f36e8abdcee0515dde1c6a97a869d6dc949f2ebeb8892d88401172f1cb4807c8",
+    "tests/test_journal.py": "5a759d8c884c76981d0ae3d2310f31ab8878817447c90c8445a7982af8b9be34",
+    "tests/test_knowledge.py": "cc87d6d115b82eb7fde1463a4416785d1e3efaeefb77af59a7a1b4f2e36ea176",
+    "tests/test_memory_adversarial.py": "6c20160856dd84690d201b79b2193aef003d0f9cdd35937964a34267f01afbf2",
+    "tests/test_memory_bindings.py": "563be02580761e1e89678cfbaed7d19a81c651fe5e99c1c0170772449691c928",
+    "tests/test_memory_cli_service.py": "6c3bbcf8f602db80f616924fce4f80dfe1563fe3cbc4fc0da69684e7559aaaa2",
+    "tests/test_memory_evaluation.py": "39d874c88ef46f069931b454e7e4d3b5177c3596dda2042d14214f59cb7592a5",
+    "tests/test_memory_migration.py": "3521182001c57437c16952c508e6ee19f5e623e3a57ab5ab7230a2da086540a2",
+    "tests/test_memory_session_resume.py": "43f2634cb036ded611f6f33b64823dd4417e7bfd164d4ba0671e0923a0024ec9",
+    "tests/test_memory_stabilization.py": "bc07f6fecf82b8eff4a14b08a8421d5962c7a35fa415a5f896b7c38d76b3de30",
+    "tests/test_memory_tui.py": "646fe2db0895aa075cc64f7bd0d2eef0cea622627220656b5d781fb8a0503eb4",
+    "tests/test_migrations.py": "4ccb941fe42eb3b17e2feb4bafaf1c3373dd8de223a79344b359cd1ba26230c7",
+    "tests/test_native_evaluation.py": "c1a1d9d58b0f9d4bb78f25dd91bdd05b871c57b02bb78a4d82a737111c334916",
+    "tests/test_native_session_environment.py": "7c4f4b578c6849bc4dfc0f3dfb6f093f0684792f97153f76bce619e1648ad184",
+    "tests/test_ollama.py": "122294fc3b9b5f087c9bb2edebf322a29e525d2961f69309d935eef362284ba5",
+    "tests/test_omitted_job_reprocess.py": "64e9487b797ed8e53f2e22cba19e93e5513f59fa35b47cc11db0d0ff1a4ac596",
+    "tests/test_parsing.py": "52fb87a752ff14183a38c4501a9cc052a704322a8abe5cbe48c57a40b35169af",
+    "tests/test_plans.py": "f3bfac21d1c9457e05f1fa4d7993f6d3d38532f4e08e29b56c4f3c20cbac7e06",
+    "tests/test_portable_memory.py": "82900e4aecbbf86bf3594aaf81b17a58fb1d0ae218919365d947dc633f246d2b",
+    "tests/test_resume_mcp_protocol.py": "43d135406978328d6a607abb0c9fcb73a228b7cac50a937db86b2250bf90b60f",
+    "tests/test_runtime_selection.py": "51b3719e4ac24c6d116fc3912337ad3eaf8ba491e13783259e64935826a13ddc",
+    "tests/test_service.py": "9d8adc4ae42797e19dbf7f720a9ed6e74b16331fe85aa7f2d22910008c6de9dc",
+    "tests/test_session_lifecycle.py": "105ab8226daf530b031424ff5edf06c115af20dd7d2e92031d3a0bfb5a5d4d5d",
+    "tests/test_sessions.py": "9c3fe675d504b726bb6761b03905c9f9c6a416a8b3f3aad91288132832d76b2b",
+    "tests/test_store.py": "fcb9d4ae2cfb312af2ded3445c476d4c89a8e84f5ec484de538f9fd0f422f8da",
+    "tests/test_terminal_bridge.py": "e165b8e100135ae63be814d3cf177bbf2a7b77ef1a476d1ec5714a2049e79dc5",
+    "tests/test_terminal_client.py": "dae386d032355443c9084b6f017b4e0869f2b914e59f6686a43992b62b76c01f",
+    "tests/test_terminal_commands.py": "04020a2d21ae6d65bc6f93f04283639af125c3ca182e474ebb4f8c311eb2ab73",
+    "tests/test_terminal_graph.py": "3742a1b7f50986d8ab50758b808b9c63b97a61132dc6d6956d354e259effefd5",
+    "tests/test_terminal_panels.py": "b3675bff777c4f2b5ca026cb5073cf48280219f021ac12fbbe290e407765faf3",
+    "tests/test_terminal_preview.py": "334beb67bb8f6c74f1ec1aad79b2d799617a4ed1417cac90b5336cd1052a9ce7",
+    "tests/test_terminal_ux080.py": "941455735d7bf4aee00d042fa4fd47156d2a71e6fca706a106a8599590c6923d",
+    "tests/test_terminal_workspace_e2e.py": "3fde5881ee4ff69a435b91e0200c9e4e9c65a75277d83599f12647aa087f5c23",
+    "tests/test_transcript_compatibility.py": "91ce6f94e5d14556fc0ec8e14ce7c31eb8fdef8c6cd0ec62d15e750b7697dc1e",
+    "tests/test_tui.py": "2702e59a4b175ff88f19a7523cca97d9082c3de4cec6cacfcd4e033eff75944a",
+    "tests/test_verification.py": "9ab1a028a74e440ef18e51bb92f8d16f0cbcad8d1a40b1bea2d19e4f409f398f",
+    "tests/test_workflow.py": "9bbb878d9f085346ff30cb6403530b9a788c5fea78775f45f9bd3a2888ed54aa",
+    "tests/test_workspace.py": "9297003b38e9a5992b3af5aad043c3a94b5a8e6c4dd2001aed15fa92a86e2b9f",
+    "tests/test_workspace_cli.py": "144ba6ca831d70e5d047cf110778cb1f931abf9b0b0a9d51d5acb38f08b8ed0b",
+    "tests/test_workspace_state.py": "94807743c44beba1780fead62b161a83c1e4771e63fe60839688e28a4cf1290b",
+    "tests/test_workspace_ux080.py": "2f54613304f9c846bfc3b8554f639f60158c4827c85722d6934c6c761043ebc4",
+    "uv.lock": "1b91f3b4ed497c3b52e48ca57bdcb88a3759855f90a48c7ae5a0f56e720842c5"
+  },
+  "updater_bytes": 338113,
+  "updater_sha256": "86830acbf91ad329447d0f6d5bf9a50c47e1e3fdc91564cd4e60b2441ce76504",
+  "zip_bytes": 1446243,
+  "zip_sha256": "0b5a72669653aabc527d9b45d79e9e45f3154073db4cf4f0f5dce2f2cd9858a3"
+}

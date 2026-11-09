@@ -1,0 +1,140 @@
+{
+  "version": "0.7.1",
+  "supported_versions": [
+    "0.7.0"
+  ],
+  "baselines": {
+    "0.7.0": {
+      "file": "devbrain-0.7.0.zip",
+      "sha256": "e02ca74807b74942e718d91272659563c4cb17f8dc812df4e7bd63ad1dc0c8e5"
+    }
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "before": [
+        "26691e870324eda634d1420f730e0b7d09dbc33ae9c9354422da27a0430fb436"
+      ],
+      "before_by_version": {
+        "0.7.0": "26691e870324eda634d1420f730e0b7d09dbc33ae9c9354422da27a0430fb436"
+      },
+      "after": "eb77cd1c153470e526ca25673c3cdc324dc76da3cbbfed6c7ac54204192ecf90",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/README.md",
+      "before": [
+        "d301cb234c2882574b8551a2ef089690c172d5d0711f76cabe61fec0d23f0cde"
+      ],
+      "before_by_version": {
+        "0.7.0": "d301cb234c2882574b8551a2ef089690c172d5d0711f76cabe61fec0d23f0cde"
+      },
+      "after": "1d72e6e1744c441057cef3e42fafa83a4714c801900f3b32eb9ad3e3b8859e3e",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "docs/TERMINAL.md",
+      "before": [
+        "4a21d894f27ff7d644d3be418ea772279041993b8227f60751aa63e6f162fce4"
+      ],
+      "before_by_version": {
+        "0.7.0": "4a21d894f27ff7d644d3be418ea772279041993b8227f60751aa63e6f162fce4"
+      },
+      "after": "712508a15cf1c88c7b50903968094ebca0bdb50667f86a2c29ecbca6d27643ac",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "pyproject.toml",
+      "before": [
+        "cd74311bb622ffc7649d4f9bf14db5efc27ab0caa02e898d2269d21fd2ddc8a9"
+      ],
+      "before_by_version": {
+        "0.7.0": "cd74311bb622ffc7649d4f9bf14db5efc27ab0caa02e898d2269d21fd2ddc8a9"
+      },
+      "after": "499ef92de75e605f66737dd885f766500513cca348bd9e93b02caac5bc676051",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/__init__.py",
+      "before": [
+        "8d2d2875cbd80c2e3e4591e67d50a6e4aac04bf0d1172294a6d89ae12914bd63"
+      ],
+      "before_by_version": {
+        "0.7.0": "8d2d2875cbd80c2e3e4591e67d50a6e4aac04bf0d1172294a6d89ae12914bd63"
+      },
+      "after": "bf711bb5f4c8e71d39cb727c9ddc9d88fe8885bbbd275f6b76ae31f88a863f69",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/graph_raster.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.0": null
+      },
+      "after": "505697700036b7e9b24389d571e8442a37c62a8542146ec82ba6bd76d866d736",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "src/devbrain/terminal_graph.py",
+      "before": [
+        "8ef66e8b5961fd4075cb2356d535309775b8e48f95c78e9743322384d3a74211"
+      ],
+      "before_by_version": {
+        "0.7.0": "8ef66e8b5961fd4075cb2356d535309775b8e48f95c78e9743322384d3a74211"
+      },
+      "after": "5e61557d406080814c6a1771a02cfb158bf3b4400f097e8fdd6c4b415383daa7",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_graph_raster.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.0": null
+      },
+      "after": "8a9840b8ff1820febf552747e3dc686ad5df342ee827d71d1ceb726f35f1fd96",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_graph_widget_rendering.py",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.0": null
+      },
+      "after": "e770a7042a12420c85bf544b7c76f5b13f221beaa8cec0bc84ab23186c227011",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "tests/test_terminal_graph.py",
+      "before": [
+        "1a10f6f0adf6a71c586f7d7cd3149da386ef52bb87d0838b4f32de852ebd9adb"
+      ],
+      "before_by_version": {
+        "0.7.0": "1a10f6f0adf6a71c586f7d7cd3149da386ef52bb87d0838b4f32de852ebd9adb"
+      },
+      "after": "40d12f568f2d68c79fccc318c6f9070e17bf80ff283d244dd8e290e4076dcc03",
+      "encoding": "utf-8"
+    },
+    {
+      "path": "uv.lock",
+      "before": [
+        "1c6b043f23e6d7913aa54b6a3cdccb65a63ace4ae8190f15e3574817e03b5cfd"
+      ],
+      "before_by_version": {
+        "0.7.0": "1c6b043f23e6d7913aa54b6a3cdccb65a63ace4ae8190f15e3574817e03b5cfd"
+      },
+      "after": "871f6d490d901256b5473fea41e903df00a7e6d6ffd19aa17203b712af7d963c",
+      "encoding": "utf-8"
+    }
+  ],
+  "source_files": 178,
+  "updater_bytes": 154617,
+  "updater_sha256": "0f4136e1970902c94bfb77ac8faef2cb0794aa0ff347cb27eca5f70d8abc9638",
+  "zip_bytes": 1111170,
+  "zip_sha256": "5ff61d85173aaed1fbb3de0a1db3619c6d0a7a2b4a59812cdb2eba75a7cb69f6"
+}

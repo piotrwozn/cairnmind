@@ -1,0 +1,6 @@
+[checks.unit]
+argv = ["python3", "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]
+cwd = "."
+timeout_seconds = 60
+output_limit_bytes = 1048576
+extra_inputs = []

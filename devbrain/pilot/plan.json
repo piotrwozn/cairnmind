@@ -1,0 +1,32 @@
+{
+  "plan": {
+    "title": "Pilotaż wspólnej pamięci: walidacja tokenu",
+    "goal": "Przekazać jedno rzeczywiste zadanie Codex → Claude → świeży Codex, zachowując cel, stan, źródła i dowody poza historią rozmowy.",
+    "constraints": [
+      "Pracuj wyłącznie w zarejestrowanym repozytorium devbrain-pilot.",
+      "Python 3 i biblioteka standardowa; bez zależności zewnętrznych i usług sieciowych w implementacji zadania.",
+      "Funkcja token_auth.validate_token(token) ma zwracać bool: True wyłącznie dla napisu 'valid', False dla pozostałych danych; dla danych innego typu nie zgłasza wyjątku.",
+      "Codex pozostawia needs_test; Claude wykonuje nazwany profil unit i oddzielne review; świeży Codex odtwarza wynik ze wspólnej pamięci.",
+      "Raporty i logi pilotażu zapisuj poza worktree w katalogu wskazanym przez DEVBRAIN_PILOT_REPORT_DIR."
+    ]
+  },
+  "steps": [
+    {
+      "key": "token-validation",
+      "content": "Zaimplementuj token_auth.validate_token(token), napisz testy unittest, następnie wykonaj profil unit i review z odnotowaniem każdego kryterium. Przekaż stan przez DevBrain między świeżymi klientami.",
+      "depends_on": [],
+      "metadata": {
+        "requires_test": true,
+        "requires_review": true,
+        "required_profiles": ["unit"],
+        "acceptance_criteria": [
+          "token_auth.py udostępnia validate_token(token); dla napisu 'valid' wynikiem jest dokładnie True.",
+          "Inne napisy, w tym pusty, 'invalid', 'VALID', ' valid' i 'valid ', zwracają dokładnie False.",
+          "None, liczby całkowite, wartości bool, bytes, listy i słowniki zwracają dokładnie False bez wyjątku.",
+          "tests/test_token_auth.py zawiera co najmniej 12 metod test_* unittest pokrywających powyższe przypadki; reviewer sprawdza rzeczywiste asercje i dodatnią liczbę wykonanych testów w logach stdout/stderr.",
+          "Bieżąca definicja zadania i kod mają świeży, udany wynik rzeczywistego profilu unit; oddzielny zapis review wymienia ocenę każdego kryterium."
+        ]
+      }
+    }
+  ]
+}

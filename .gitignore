@@ -1,0 +1,18 @@
+# Python and tool caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+node_modules/
+
+# Local agent tooling state
+.claude-flow/
+.claude/worktrees/
+.claude/settings.local.json
+
+# Large binary artifacts stay outside git (release zips, session transfers, firmware)
+*.zip
+*.CAP
+evidence/080-firmware-preparation/
+evidence/runtime-080-software-temurin-c2-0-compilation.xml

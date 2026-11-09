@@ -1,0 +1,36 @@
+Wykonaj pierwszy etap rzeczywistego pilotażu DevBrain w projekcie devbrain-pilot.
+Pracuj wyłącznie w worktree wskazanym przez pakiet tej sesji. Używaj natywnych
+uprawnień; nie zmieniaj innych projektów ani konfiguracji logowania.
+
+1. Wywołaj MCP resume_context. Przeczytaj cały gotowy pakiet i wywołaj ack_resume
+   z jego rzeczywistymi packet_id, packet_hash oraz dokładnym readback:
+   {"plan":{"id":...,"version":...}|null,"task":{"id":...,"version":...}|null}.
+   Null oznacza faktyczny brak aktywnego planu/zadania. Nie zgaduj identyfikatorów.
+   Jeżeli pakiet nie jest ready, zgłoś blokadę zamiast zapisywać stan.
+2. Przeczytaj pilot-plan.json i README.md w tym repozytorium. Jeżeli nie ma jeszcze
+   aktywnego planu pilotażu, zapisz dokładnie jego plan i steps przez MCP save_plan,
+   idempotency_key="token-pilot-v1", activate=true. Nie twórz drugiego planu przy
+   ponowieniu. Gdy plan już istnieje, odczytaj go zamiast nadpisywać definicję.
+3. Po zapisie planu ponownie odczytaj resume_context i wykonaj właściwy ACK.
+   Odczytaj next_task. Zaimplementuj token_auth.py i tests/test_token_auth.py według
+   zapisanych kryteriów, z co najmniej 12 metodami testowymi unittest. Nie uruchamiaj
+   jeszcze testów: następny klient ma rzeczywiście przejąć etap needs_test.
+4. Zindeksuj zmienione pliki istniejącym poleceniem devbrain index devbrain-pilot.
+   Przed kolejnym zapisem odśwież resume_context i ACK: zmienił się odcisk kodu.
+   Zapisz MCP checkpoint zawierający cel, zmienione pliki, wynik implementacji,
+   jawne tests_not_run=true, next_step="Claude: profil unit i oddzielne review",
+   oraz wszystkie zauważone braki. Zachowaj faktyczne source_ids zwrócone przez
+   checkpoint. To jest relacja klienta, a nie maszynowy wynik testów.
+5. Odśwież pakiet i ACK ponownie po checkpoint. Odczytaj next_task i bieżącą wersję
+   planu. MCP remember ma zaktualizować istniejące zadanie, z jego id,
+   expected_version i expected_plan_version, metadata={"state":"needs_test"}.
+   sources zawiera źródła zadania i zapisany checkpoint. Nie twórz check_runs,
+   nie ustawiaj test_passed/review_passed/acceptance_passed i nie oznaczaj done.
+6. Odczytaj next_task i sprawdź zapis needs_test. Zakończ krótkim podaniem ID
+   planu/zadania, faktycznego stanu, źródeł i pozostałej pracy. Nie polegaj na tym,
+   że następny klient dostanie tę rozmowę.
+
+Przy resume_required odczytaj nowy pakiet i wykonaj ACK. Przy konflikcie wersji
+odczytaj bieżący stan; nie nadpisuj nowszej pracy. Jeżeli etap implementacji jest
+już wykonany w wznowionym pilotażu, nie przepisuj kodu tylko po to, aby powtórzyć
+instrukcje. Zgłoś aktualny stan i rzeczywistą pozostałą pracę.

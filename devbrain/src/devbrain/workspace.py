@@ -1,0 +1,895 @@
+"""Private outer terminal workspace. Native agents remain in the existing broker."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import unicodedata
+from uuid import uuid4
+
+from rich.cells import cell_len
+
+from .cockpit_state import CockpitState, _atomic, _private_directory, _private_lock
+from .config import Settings
+from .native_worker import process_start
+from .runtime_selection import resolve_tmux
+from .workspace_state import WorkspaceState
+
+SESSION = "devbrain-ui"
+MINIMUM = (140, 42)
+DEFAULT_SIZE = (180, 55)
+_ROLES = ("sidebar", "client1", "client2", "inspector", "graph")
+
+
+def reusable_native_run(runs, project_id, worktree, client, slot_id):
+    """The live identity used by NativeRuntime.start, independent of model edits."""
+    return next((r for r in reversed(runs)
+        if (r.get("project_id"), r.get("worktree"), r.get("client"), r.get("slot_id"), r.get("purpose"))
+        == (project_id, worktree, client, slot_id, "coding")
+        and r.get("lifecycle") in {"starting", "running", "stopping"}), None)
+
+
+def _status_text(value, columns):
+    """Literal, cell-bounded text: user data is never a tmux format/program."""
+    text = "".join(c for c in str(value or "") if not unicodedata.category(c).startswith("C"))
+    text = text.replace("#", "＃")
+    if cell_len(text) <= columns:
+        return text
+    result = ""
+    for character in text:
+        if cell_len(result + character) > columns - 1:
+            break
+        result += character
+    return result + "…"
+
+
+def workspace_status_lines(selected, cached, slot, control, language="en"):
+    """Two persistent rows fit 80 columns, including Polish and wide names.
+
+    Connection describes cached local readiness, never an inferred provider
+    connection. Only allowlisted scalars enter the display, not raw diagnostics.
+    """
+    from .terminal_i18n import tr
+
+    def chip(label, value, color):
+        return f"#[fg=colour{color}]" + tr(label, language) + ":" + value + "#[default]"
+
+    project = _status_text(selected.get("project_name") or tr("None", language), 20)
+    run_id = slot.get("run_id")
+    lifecycle = slot.get("lifecycle")
+    states = {"running": "Running", "starting": "Starting", "stopping": "Stopping",
+              "exited": "Ended", "failed": "Failed", "interrupted": "Interrupted"}
+    session = tr(states.get(lifecycle, "Unknown") if run_id else "None", language)
+    if run_id:
+        session = " ".join((_status_text(slot.get("client"), 7), _status_text(run_id, 8), session))
+    session_color = 114 if lifecycle == "running" else 203 if lifecycle in {"failed", "interrupted"} else 222
+    first = " " + chip("Project", project, 117) + " | " + chip("Session", session, session_color)
+
+    memory = slot.get("memory") or {}
+    if selected.get("broker_available") is False or cached.get("memory_available") is False:
+        memory_text, memory_color = "Unavailable", 203
+    elif memory.get("stale"):
+        memory_text, memory_color = "Stale", 222
+    elif memory.get("status") in {"partial", "unavailable"}:
+        memory_text, memory_color = ("Partial", 222) if memory["status"] == "partial" else ("Unavailable", 203)
+    elif memory.get("acknowledged") is True:
+        memory_text, memory_color = "ACK ready", 114
+    else:
+        memory_text, memory_color = ("ACK needed", 222) if run_id else ("Not loaded", 222)
+
+    profile = next((p for p in cached.get("profiles", []) if p.get("id") == slot.get("profile_id")), {})
+    auth = cached.get("auth", {}).get(slot.get("client") or profile.get("client"), {})
+    connection, connection_color = ("Configured", 222) if profile else ("Unknown", 222)
+    if selected.get("broker_available") is False:
+        connection, connection_color = "Offline", 203
+    elif auth.get("installation") in {"missing", "unsupported"}:
+        connection, connection_color = "Unavailable", 203
+    elif auth.get("connectivity") == "unavailable":
+        connection, connection_color = "Offline", 203
+    elif auth.get("auth") == "expired_or_rejected" or auth.get("login_required") is True:
+        connection, connection_color = "Login needed", 203
+    elif auth.get("usage") in {"quota_exhausted", "rate_limited"}:
+        connection, connection_color = "Limited", 203
+    elif auth.get("error_code"):
+        connection, connection_color = "Unknown", 222
+    elif auth.get("auth") == "reported_signed_in" and auth.get("ready_to_launch") is True:
+        connection, connection_color = "Ready(local)", 114
+
+    ownership, ownership_color = {"controller": ("You", 114), "readonly": ("Other", 222),
+        "offline": ("Offline", 203)}.get(control, ("Unknown", 222) if run_id else ("UI", 117))
+    # Evaluated by tmux for EACH attached terminal, even when a pane is zoomed.
+    ownership_format = "#{?client_readonly," + chip("Control", tr("Read only", language), 222) + "," + chip("Control", tr(ownership, language), ownership_color) + "}"
+    second = " " + chip("Memory", tr(memory_text, language), memory_color) + " | " + chip("Connection", tr(connection, language), connection_color) + " | " + ownership_format
+    return first, second
+
+
+def _clean_env():
+    result = dict(os.environ)
+    for key in ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID", "DEVBRAIN_PROJECT", "DEVBRAIN_CLIENT",
+                "DEVBRAIN_CONTEXT_FILE", "TMUX", "TMUX_PANE", "CLAUDECODE", "CODEX_THREAD_ID"):
+        result.pop(key, None)
+    return result
+
+
+class WorkspaceManager:
+    def __init__(self, settings, workspace_id="default", tmux_binary=None, broker=None):
+        self.settings, self.workspace_id = settings, workspace_id
+        self.state = WorkspaceState(settings, workspace_id)
+        self.directory = self.state.directory
+        namespace = hashlib.sha256((str(settings.data_dir.resolve()) + ":" + workspace_id).encode()).hexdigest()[:16]
+        self.socket_directory = Path(tempfile.gettempdir()) / f"devbrain-ui-{os.getuid()}-{namespace}"
+        self.socket = self.socket_directory / "tmux.sock"
+        self.config = self.directory / "tmux.conf"
+        self.binary = resolve_tmux(settings, override=tmux_binary)
+        self._broker_instance = broker
+        self._last_fetch = 0
+        self._broker_state = None
+        self._last_layout = None
+        self._last_focus = None
+        self._last_status = None
+
+    @property
+    def broker(self):
+        if self._broker_instance is None:
+            from .terminal_client import BrokerClient
+            self._broker_instance = BrokerClient(self.settings, ensure=False)
+        return self._broker_instance
+
+    def diagnostics(self):
+        if not self.binary:
+            return {"available": False, "code": "tmux_missing", "minimum_version": "3.4"}
+        try:
+            probe = subprocess.run([self.binary, "-V"], capture_output=True, text=True, timeout=3)
+            version = re.search(r"tmux (\d+)\.(\d+)", probe.stdout)
+            valid = probe.returncode == 0 and version and tuple(map(int, version.groups())) >= (3, 4)
+            return {"available": bool(valid), "version": probe.stdout.strip()[:80],
+                    "code": "ready" if valid else "tmux_unsupported", "minimum_version": "3.4"}
+        except (OSError, subprocess.SubprocessError):
+            return {"available": False, "code": "tmux_unavailable", "minimum_version": "3.4"}
+
+    def _initialize(self):
+        if not self.diagnostics()["available"]:
+            raise ValueError("Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co DevBrain.")
+        _private_directory(self.directory.parent)
+        _private_directory(self.directory)
+        _private_directory(self.socket_directory)
+        if len(os.fsencode(self.socket)) > 100:
+            raise ValueError("Ścieżka gniazda środowiska jest zbyt długa.")
+        if self.config.is_symlink():
+            raise ValueError("Konfiguracja środowiska nie może być dowiązaniem.")
+        if not self.config.exists():
+            fd = os.open(self.config, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as handle:
+                handle.write("set -g prefix C-b\nunbind-key -a\nset -g mouse off\n"
+                             "set -g default-terminal tmux-256color\nset -g status on\n"
+                             "set -g status-left ' DevBrain '\nset -g status-right ' C-b p/1/2/i/g · z powiększ · d odłącz '\n"
+                             "set -g status-style 'bg=colour234,fg=colour151'\n"
+                             "set -g pane-border-status top\nset -g pane-border-style 'fg=colour238'\n"
+                             "set -g pane-active-border-style 'fg=colour151'\n"
+                             "set -g pane-border-format ' #{@devbrain_role} #{@devbrain_control} #{@devbrain_memory} '\n"
+                             "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
+                             "set -g allow-passthrough off\nset -g history-limit 5000\n")
+        info = self.config.stat()
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            raise ValueError("Konfiguracja środowiska musi być prywatnym plikiem użytkownika.")
+
+    def tmux(self, *args, check=True, timeout=8):
+        if not self.binary:
+            raise ValueError("tmux jest niedostępny.")
+        # Machine-readable formats require literal tabs and Unicode even when
+        # the user's terminal locale is C or unset.
+        return subprocess.run([self.binary, "-u", "-S", str(self.socket), "-f", str(self.config), *map(str, args)],
+                              capture_output=True, text=True, timeout=timeout, check=check, env=_clean_env())
+
+    def exists(self):
+        if not self.binary or not self.socket.exists():
+            return False
+        try:
+            result = self.tmux("show-options", "-v", "-t", SESSION, "@devbrain_workspace", check=False)
+            return result.returncode == 0 and result.stdout.strip() == self.workspace_id
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return False
+
+    def panes(self):
+        if not self.exists():
+            return {}
+        result = self.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@devbrain_workspace}\t#{@devbrain_role}\t#{window_name}")
+        found = {}
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 4 and parts[1] == self.workspace_id and parts[2] in _ROLES:
+                found[parts[2]] = parts[0]
+        return found
+
+    def clients(self):
+        """Inspect only clients of this positively identified private session."""
+        if not self.exists():
+            return []
+        result = self.tmux("list-clients", "-t", SESSION, "-F",
+                           "#{client_pid}\t#{client_tty}\t#{client_flags}\t#{client_readonly}")
+        clients = []
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 4 or not parts[0].isdigit() or not parts[1].startswith("/dev/"):
+                continue
+            flags = parts[2].split(",") if parts[2] else []
+            clients.append({"pid": int(parts[0]), "tty": parts[1], "flags": flags,
+                            "readonly": "read-only" in flags or parts[3] == "1", "ignore_size": "ignore-size" in flags})
+        return clients
+
+    def _claim_attached(self, pid, terminal, *, takeover=False):
+        clients = self.clients()
+        own = next((row for row in clients if row["pid"] == pid and row["tty"] == terminal), None)
+        if own is None:
+            return None
+        writers = [row for row in clients if row is not own and not row["readonly"]]
+        if takeover:
+            for client in writers:
+                self.tmux("refresh-client", "-t", client["tty"], "-f", "read-only,ignore-size")
+        if not writers or takeover:
+            # tmux3.4 deliberately refuses to clear READONLY through
+            # refresh-client flags. switch-client -r is its supported toggle
+            # and clears ignore-size together with read-only.
+            if own["readonly"]:
+                self.tmux("switch-client", "-r", "-c", own["tty"], "-t", SESSION)
+            self.tmux("refresh-client", "-t", own["tty"], "-f", "!ignore-size")
+            return True
+        if not own["readonly"]:
+            self.tmux("refresh-client", "-t", own["tty"], "-f", "read-only,ignore-size")
+        self.tmux("display-message", "-c", own["tty"], "-d", "8000",
+                  "READ ONLY: C-b d, potem devbrain workspace takeover", check=False)
+        return False
+
+    def attach(self, *, takeover=False):
+        """Attach without a writable interval before obtaining the UI lease.
+
+        Every new client is read-only and ignored for sizing until its exact
+        process/TTY identity is observed under the private attach lock. The
+        broker still independently enforces control between this UI and web.
+        """
+        if type(takeover) is not bool or not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise ValueError("Dołączenie wymaga interaktywnego terminala.")
+        terminal = os.ttyname(sys.stdin.fileno())
+        process = None
+        try:
+            with _private_lock(self.directory / "attach.lock"):
+                if not self.exists():
+                    raise ValueError("Środowisko terminalowe nie działa.")
+                process = subprocess.Popen([self.binary, "-S", str(self.socket), "attach-session", "-r",
+                                            "-f", "ignore-size", "-t", SESSION], env=_clean_env())
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline and process.poll() is None:
+                    claimed = self._claim_attached(process.pid, terminal, takeover=takeover)
+                    if claimed is not None:
+                        break
+                    time.sleep(.025)
+                else:
+                    if process.poll() is None:
+                        raise ValueError("Nie potwierdzono tożsamości dołączanego terminala.")
+            # No lock is held while the interactive client is attached.
+            return process.wait()
+        finally:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
+
+    def _command(self, *arguments):
+        return shlex.join([sys.executable, "-I", "-m", "devbrain.workspace", "--data-dir", str(self.settings.data_dir),
+                           "--workspace-id", self.workspace_id, *map(str, arguments)])
+
+    def _panel(self, role):
+        if role.startswith("client"):
+            return self._command("--placeholder", role)
+        return shlex.join([sys.executable, "-I", "-m", "devbrain.terminal_panels", "--kind", role,
+                           "--workspace-id", self.workspace_id, "--data-dir", str(self.settings.data_dir)])
+
+    def _tag(self, pane, role, run_id=None):
+        self.tmux("set-option", "-p", "-t", pane, "@devbrain_workspace", self.workspace_id)
+        self.tmux("set-option", "-p", "-t", pane, "@devbrain_role", role)
+        self.tmux("set-option", "-p", "-t", pane, "@devbrain_run_id", run_id or "")
+
+    def _split(self, target, role, direction, percentage):
+        pane = self.tmux("split-window", "-d", direction, "-t", target, "-l", str(percentage) + "%", "-P", "-F", "#{pane_id}", self._panel(role)).stdout.strip()
+        self._tag(pane, role)
+        return pane
+
+    def create(self, *, start_supervisor=True):
+        self._initialize()
+        with _private_lock(self.directory / "ui.lock"):
+            if not self.exists():
+                sidebar = self.tmux("new-session", "-d", "-s", SESSION, "-n", "workspace", "-x", "180", "-y", "55",
+                                    "-P", "-F", "#{pane_id}", self._panel("sidebar")).stdout.strip()
+                self.tmux("set-option", "-t", SESSION, "@devbrain_workspace", self.workspace_id)
+                self._tag(sidebar, "sidebar")
+                first = self._split(sidebar, "client1", "-h", 86)
+                inspector = self._split(first, "inspector", "-v", 42)
+                self._split(first, "client2", "-h", 50)
+                self._split(inspector, "graph", "-h", 40)
+                current = self.state.read()
+                self.state.update({"pane_ids": self.panes(), "handled_work_request": current["work_request"],
+                                   "intent": "inspect", "focus": "sidebar", "zoom": False})
+                self._bindings()
+                self._layout()
+            self._recover_ui_panels()
+            self._bindings()
+            self.tmux("set-option", "-g", "pane-border-format", " #{@devbrain_role} #{@devbrain_control} #{@devbrain_memory} ")
+            self.tmux("set-option", "-g", "status-right-length", "90")
+            self.tmux("set-option", "-g", "status-right",
+                      "#{?client_readonly, READ ONLY · C-b d: detach , C-b Space: commands · C-b ?: help · C-b Tab: next · C-b d: detach }")
+            self.tmux("set-option", "-g", "status", "2")
+            self.tmux("set-option", "-g", "status-interval", "1")
+            self._update_status(self.state.read())
+            if start_supervisor:
+                self._start_supervisor()
+        return self.status()
+
+    def _recover_ui_panels(self):
+        # Only an explicit launch/create retries crashed views. Reconciliation
+        # never loops on a failing UI, and client/native panes are untouched.
+        for role, pane in self.panes().items():
+            if role not in {"sidebar", "inspector", "graph"}:
+                continue
+            identity = self.tmux("display-message", "-p", "-t", pane,
+                                 "#{@devbrain_workspace}\t#{@devbrain_role}\t#{pane_dead}").stdout.strip()
+            if identity == f"{self.workspace_id}\t{role}\t1":
+                self.tmux("respawn-pane", "-k", "-t", pane, self._panel(role))
+                self._tag(pane, role)
+
+    def _bindings(self):
+        for key, role in (("p", "sidebar"), ("1", "client1"), ("2", "client2"), ("i", "inspector"), ("g", "graph")):
+            arguments = ("--ui-command", "search") if role == "sidebar" else ("--focus", role)
+            self.tmux("bind-key", key, "run-shell", self._command(*arguments))
+        self.tmux("bind-key", "z", "run-shell", self._command("--toggle-zoom"))
+        self.tmux("bind-key", "d", "detach-client")
+        self.tmux("bind-key", "C-b", "send-prefix")
+        client = ("--client-pid", "#{client_pid}", "--client-tty", "#{client_tty}")
+        self.tmux("bind-key", "Space", "run-shell", self._command("--palette", *client))
+        self.tmux("bind-key", "?", "run-shell", self._command("--help-popup", *client))
+        self.tmux("bind-key", "Tab", "run-shell", self._command("--next-view"))
+        self.tmux("bind-key", "[", "copy-mode")
+
+    def _supervisor_info(self):
+        path = self.directory / "supervisor.json"
+        try:
+            if path.is_symlink():
+                return None
+            info = json.loads(path.read_text())
+            if (info.get("workspace_id") == self.workspace_id and info.get("birth")
+                    and process_start(info["pid"]) == info["birth"]):
+                return info
+        except (OSError, ValueError, KeyError):
+            pass
+        return None
+
+    def _start_supervisor(self):
+        if self._supervisor_info():
+            return
+        current = self.state.read()
+        if current["work_request"] != current["handled_work_request"]:
+            # A durable UI selection is not durable authorization to start a
+            # model after restarting the coordinator.
+            self.state.update({"handled_work_request": current["work_request"], "intent": "inspect",
+                               "last_error": "Ponów jawne rozpoczęcie pracy po wznowieniu środowiska."})
+        command = [sys.executable, "-I", "-m", "devbrain.workspace", "--supervise", "--data-dir", str(self.settings.data_dir),
+                   "--workspace-id", self.workspace_id, "--tmux-bin", self.binary]
+        fd = os.open(self.directory / "supervisor.log", os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "ab") as output:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=output,
+                                       env=_clean_env(), start_new_session=True)
+        _atomic(self.directory / "supervisor.json", {"pid": process.pid, "birth": process_start(process.pid),
+                                                    "workspace_id": self.workspace_id})
+
+    def _fetch(self, *, force=False):
+        if self._broker_state is not None and not force and time.monotonic() - self._last_fetch < 2:
+            return self._broker_state
+        value = self.broker.request("GET", "/api/state")
+        self._last_fetch, self._broker_state = time.monotonic(), value
+        return value
+
+    def _save_if_current(self, selected, changes):
+        for _ in range(5):
+            current = self.state.read()
+            if (current["project_id"], current["worktree"]) != (selected["project_id"], selected["worktree"]):
+                return current
+            try:
+                return self.state.update(changes, expected_revision=current["revision"])
+            except ValueError as error:
+                if "stale_workspace_revision" not in str(error):
+                    raise
+        return self.state.read()
+
+    def _adopt(self, identifiers):
+        return self.state.merge_ids("run_ids", identifiers)
+
+    def refresh(self):
+        if not self.exists():
+            return self.status()
+        with _private_lock(self.directory / "reconcile.lock"):
+            selected = self.state.read()
+            try:
+                broker_state = self._fetch()
+                projects = broker_state.get("projects", [])
+                runs = broker_state.get("runs", [])
+                profiles = {row["id"]: row for row in broker_state.get("profiles", [])}
+                config = broker_state.get("settings", {})
+                configured = config.get("project_slots", {}).get(selected["project_id"], config.get("default_slots", []))
+                requested_now = []
+                if (selected["intent"] == "work" and selected["work_request"] != selected["handled_work_request"]
+                        and self.state.claim_work_request(selected)):
+                    # Claim the user action before network work, so a daemon
+                    # crash/retry cannot silently repeat a start request.
+                    requested = selected.get("requested_slot_ids", [])
+                    wanted = [slot for slot in configured if slot["id"] in requested]
+                    if not requested or len(wanted) != len(requested):
+                        raise ValueError("Choose a configured assistant before starting work")
+                    result = self.broker.request("POST", "/api/client-runs", json={
+                        "project": selected["project_id"], "worktree": selected["worktree"], "slots": wanted,
+                        "idempotency_key": "workspace:" + hashlib.sha256((self.workspace_id + str(selected["work_request"])).encode()).hexdigest()})
+                    runs = [*runs, *result.get("runs", [])]
+                    self._adopt([run["id"] for run in result.get("runs", [])])
+                    self._save_if_current(selected, {"launch_errors": result.get("errors", [])})
+                    self._last_fetch = 0
+                    requested_now = requested
+                slots = []
+                adopted = []
+                for slot in configured:
+                    profile = profiles.get(slot["profile_id"], {})
+                    matching = [run for run in runs if run.get("project_id") == selected["project_id"]
+                                and run.get("worktree") == selected["worktree"] and run.get("slot_id") == slot["id"]
+                                and run.get("purpose") == "coding"
+                                and run.get("client") == profile.get("client")
+                                and run.get("profile_id", run.get("client")) == slot["profile_id"]]
+                    # Profile/model edits apply only to a future launch. The
+                    # already-running process remains the native slot's owner.
+                    run = reusable_native_run(runs, selected["project_id"], selected["worktree"],
+                                              profile.get("client"), slot["id"])
+                    if run is None:
+                        run = max(matching, key=lambda row: row.get("generation", 0), default=None)
+                    item = dict(slot)
+                    if run:
+                        memory = run.get("memory") or {}
+                        item.update(run_id=run["id"], generation=run["generation"], client=run.get("client"),
+                                    lifecycle=run.get("lifecycle"),
+                                    exit_code=run["exit_code"] if type(run.get("exit_code")) is int
+                                    and 0 <= run["exit_code"] <= 255 else None,
+                                    memory={key: memory.get(key) for key in ("status", "acknowledged", "stale")})
+                        adopted.append(run["id"])
+                    slots.append(item)
+                self._adopt(adopted)
+                visible = [identifier for identifier in selected["visible_slot_ids"] if any(slot["id"] == identifier for slot in slots)]
+                if not visible:
+                    visible = [slot["id"] for slot in slots[:2]]
+                if requested_now:
+                    visible = list(dict.fromkeys([*requested_now, *visible]))[:2]
+                selected = self._save_if_current(selected, {"cached_projects": projects, "slots": slots,
+                    "visible_slot_ids": visible, "broker_available": True, "last_error": None})
+            except Exception:
+                # Keep every existing bridge and native child alive when the
+                # memory service/broker is unavailable. Never dump credentials.
+                selected = self._save_if_current(selected, {"broker_available": False,
+                    "last_error": "Usługa klientów jest niedostępna; działające sesje pozostają zachowane."})
+                reconnect = getattr(self.broker, "reconnect", None)
+                if reconnect is not None:
+                    try:
+                        reconnect()
+                    except Exception:
+                        pass
+            self._reconcile_views(selected)
+            self._layout()
+            self._update_status(self.state.read())
+        return self.status()
+
+    def _update_status(self, selected):
+        panes = self.panes()
+        previous = self.tmux("show-options", "-gv", "@devbrain_status_role", check=False).stdout.strip()
+        role = selected.get("focus") if selected.get("focus") in {"client1", "client2"} else previous
+        role = role if role in panes and role in {"client1", "client2"} else "client1"
+        if previous != role:
+            self.tmux("set-option", "-g", "@devbrain_status_role", role)
+        visible = selected.get("visible_slot_ids", [])
+        index = 1 if role == "client2" else 0
+        identifier = visible[index] if index < len(visible) else None
+        slot = next((s for s in selected.get("slots", []) if s["id"] == identifier), {})
+        control = None
+        if role in panes and slot.get("run_id"):
+            fields = self.tmux("display-message", "-p", "-t", panes[role],
+                "#{@devbrain_binding}\t#{@devbrain_control}").stdout.rstrip("\n").split("\t")
+            if len(fields) == 2 and fields[0] == f"{slot['run_id']}:{slot.get('generation')}":
+                control = fields[1]
+        language = CockpitState(self.settings).load().get("language", "en")
+        formats = workspace_status_lines(selected, self._broker_state or {}, slot, control, language)
+        if formats != self._last_status:
+            for index, value in enumerate(formats):
+                self.tmux("set-option", "-g", f"status-format[{index}]", value)
+            self._last_status = formats
+
+    def _bridge_command(self, run_id, generation):
+        return shlex.join([sys.executable, "-I", "-m", "devbrain.terminal_bridge", "--data-dir", str(self.settings.data_dir),
+                           "--run-id", run_id, "--generation", str(generation), "--workspace-id", self.workspace_id])
+
+    def _reconcile_views(self, selected):
+        panes = self.panes()
+        visible = [next(row for row in selected["slots"] if row["id"] == identifier) for identifier in selected["visible_slot_ids"]]
+        wanted = max(1, len(visible))
+        if wanted == 1 and "client2" in panes:
+            self.tmux("kill-pane", "-t", panes["client2"])
+            panes.pop("client2")
+            self._last_layout = None
+        elif wanted == 2 and "client2" not in panes and "client1" in panes:
+            panes["client2"] = self._split(panes["client1"], "client2", "-h", 50)
+            self._last_layout = None
+        for index, role in enumerate(("client1", "client2")):
+            if role not in panes:
+                continue
+            slot = visible[index] if index < len(visible) else {}
+            run_id, generation = slot.get("run_id"), slot.get("generation")
+            binding = (run_id or "") + ":" + str(generation or "")
+            memory = slot.get("memory") or {}
+            badge = ("stale" if memory.get("stale") else memory["status"] if memory.get("status") in {"partial", "unavailable"}
+                     else "ack" if memory.get("acknowledged") is True else "ACK required" if run_id else "")
+            if run_id and selected["broker_available"] is False:
+                badge = "unavailable"
+            self.tmux("set-option", "-p", "-t", panes[role], "@devbrain_memory", badge)
+            current = self.tmux("show-options", "-pv", "-t", panes[role], "@devbrain_binding", check=False).stdout.strip()
+            if current == binding:
+                continue
+            self.tmux("set-option", "-p", "-t", panes[role], "@devbrain_control", "")
+            command = self._bridge_command(run_id, generation) if run_id else self._panel(role)
+            self.tmux("respawn-pane", "-k", "-t", panes[role], command)
+            self._tag(panes[role], role, run_id)
+            self.tmux("set-option", "-p", "-t", panes[role], "@devbrain_binding", binding)
+        self._save_if_current(selected, {"pane_ids": panes})
+
+    def _layout(self):
+        panes = self.panes()
+        if not panes:
+            return
+        selected = self.state.read()
+        dimensions = self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_width} #{window_height} #{window_zoomed_flag}").stdout.split()
+        width, height, zoomed = map(int, dimensions)
+        preference = CockpitState(self.settings).load().get("view", "focus")
+        # window_height excludes the two persistent status rows; MINIMUM is
+        # the user's complete terminal geometry, not just the pane area.
+        compact = preference == "focus" or width < MINIMUM[0] or height + 2 < MINIMUM[1]
+        layout = (width, height, len(panes), compact)
+        focus = panes.get(selected["focus"], panes.get("client1", panes["sidebar"]))
+        changed_focus = selected["focus"] != self._last_focus
+        if compact:
+            if changed_focus and zoomed:
+                self.tmux("resize-pane", "-Z", "-t", focus)
+                zoomed = False
+            if changed_focus or not zoomed:
+                self.tmux("select-pane", "-t", focus)
+            if not zoomed:
+                self.tmux("resize-pane", "-Z", "-t", focus)
+        elif layout != self._last_layout:
+            if zoomed:
+                self.tmux("resize-pane", "-Z", "-t", focus)
+            # Rebuild a deterministic layout in-place, moving only the UI
+            # views within their own window; native panes are on another socket.
+            self.tmux("select-layout", "-t", panes["sidebar"], "main-vertical")
+            self.tmux("set-option", "-w", "-t", panes["sidebar"], "main-pane-width", "24")
+            self._apply_layout(panes, width, height)
+            self.tmux("select-pane", "-t", focus)
+            if selected["zoom"]:
+                self.tmux("resize-pane", "-Z", "-t", focus)
+        elif bool(zoomed) != selected["zoom"]:
+            self.tmux("resize-pane", "-Z", "-t", focus)
+        elif changed_focus:
+            self.tmux("select-pane", "-t", focus)
+        self._last_layout = layout
+        self._last_focus = selected["focus"]
+        if selected["layout"] != ("compact" if compact else "wide"):
+            self._save_if_current(selected, {"layout": "compact" if compact else "wide"})
+
+    def _apply_layout(self, panes, width, height):
+        # tmux custom layout grammar: checksum, WxH,X,Y{horizontal children} or
+        # [vertical children]. Pane IDs are server-assigned and never shell text.
+        available = height
+        left = 24
+        right = width - left - 1
+        top = max(5, round((available - 1) * .58))
+        bottom = available - top - 1
+        first_width = (right - 1) // 2 if "client2" in panes else right
+        inspector_width = round((right - 1) * .6)
+        def leaf(role, w, h, x, y):
+            return f"{w}x{h},{x},{y},{panes[role][1:]}"
+        upper = leaf("client1", right, top, left + 1, 0)
+        if "client2" in panes:
+            upper = (f"{right}x{top},{left + 1},0{{" + leaf("client1", first_width, top, left + 1, 0) + "," +
+                     leaf("client2", right - first_width - 1, top, left + first_width + 2, 0) + "}")
+        lower = (f"{right}x{bottom},{left + 1},{top + 1}{{" + leaf("inspector", inspector_width, bottom, left + 1, top + 1) + "," +
+                 leaf("graph", right - inspector_width - 1, bottom, left + inspector_width + 2, top + 1) + "}")
+        description = (f"{width}x{available},0,0{{" + leaf("sidebar", left, available, 0, 0) + "," +
+                       f"{right}x{available},{left + 1},0[" + upper + "," + lower + "]}")
+        checksum = 0
+        for byte in description.encode():
+            checksum = (checksum >> 1) + ((checksum & 1) << 15)
+            checksum = (checksum + byte) & 0xffff
+        self.tmux("select-layout", "-t", panes["sidebar"], f"{checksum:04x}," + description)
+
+    def focus(self, role):
+        if role not in _ROLES:
+            raise ValueError("Niepoprawny panel środowiska.")
+        panes = self.panes()
+        target = panes.get(role, panes.get("client1"))
+        if target:
+            self.state.update({"focus": role})
+            self._layout()
+        return self.status()
+
+    def toggle_zoom(self):
+        preferences = CockpitState(self.settings)
+        current_view = preferences.load().get("view", "focus")
+        if current_view == "focus":
+            preferences.update({"view": "cockpit"})
+            self._last_layout = None
+            self._layout()
+            return self.status()
+        current = self.state.read()
+        self.state.update({"zoom": not current["zoom"]})
+        self._last_layout = None
+        self._layout()
+        return self.status()
+
+    def next_view(self):
+        current = self.state.read()["focus"]
+        roles = [role for role in _ROLES if role in self.panes()]
+        if roles:
+            return self.focus(roles[(roles.index(current) + 1) % len(roles)] if current in roles else roles[0])
+        return self.status()
+
+    def request_command(self, action, target_role="sidebar"):
+        self.state.update({"command_request": {"id": str(uuid4()), "action": action, "target_role": target_role},
+                           "focus": target_role})
+        self._layout()
+
+    def open_palette(self, *, help_only=False, client_pid=None, client_tty=None):
+        if not self.exists():
+            raise ValueError("Open DevBrain before using commands")
+        owner = next((client for client in self.clients()
+                      if client["pid"] == client_pid and client["tty"] == client_tty and not client["readonly"]), None)
+        if owner is None:
+            raise ValueError("The command menu requires the initiating writable terminal")
+        arguments = ["--palette-ui"] + (["--help-only"] if help_only else [])
+        # An interactive popup ends when the user closes it, not after the
+        # bounded timeout used for ordinary tmux queries.
+        self.tmux("display-popup", "-c", owner["tty"], "-E", "-w", "90%", "-h", "85%",
+                  self._command(*arguments), timeout=None)
+
+    def take_control(self, run_id):
+        for pane in self.panes().values():
+            bound = self.tmux("show-options", "-pv", "-t", pane, "@devbrain_run_id", check=False).stdout.strip()
+            if bound == run_id:
+                self.tmux("set-option", "-p", "-t", pane, "@devbrain_takeover", str(uuid4()))
+                return {"requested": True, "run_id": run_id}
+        return {"requested": False, "run_id": run_id}
+
+    def open_auth(self, client):
+        if client not in {"codex", "claude", "copilot"} or not self.exists():
+            raise ValueError("Wybierz obsługiwanego klienta w otwartym środowisku.")
+        run = (self.broker.request("POST", "/api/copilot/login", json={}) if client == "copilot"
+               else self.broker.request("POST", "/api/auth/login", json={"client": client}))["run"]
+        return self.show_auth_run(run)
+
+    def show_auth_run(self, run):
+        client = run.get("client")
+        if client not in {"codex", "claude", "copilot"} or run.get("purpose") != "auth" or not self.exists():
+            raise ValueError("Niepoprawny terminal logowania.")
+        pane = self.tmux("new-window", "-t", SESSION, "-n", "login-" + client, "-P", "-F", "#{pane_id}",
+                         self._bridge_command(run["id"], run["generation"])).stdout.strip()
+        self._tag(pane, "auth", run["id"])
+        self.tmux("set-option", "-w", "-t", pane, "history-limit", "0")
+        self.state.merge_ids("auth_runs", [run["id"]])
+        return {"run": run, "pane_id": pane}
+
+    def auth_finished(self, run_id):
+        if not self.exists():
+            return {"closed": False}
+        rows = self.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@devbrain_workspace}\t#{@devbrain_role}\t#{@devbrain_run_id}").stdout.splitlines()
+        # The callback can run inside the bridge being closed. Commit local
+        # bookkeeping before kill-pane sends SIGHUP to that very process.
+        self.state.merge_ids("auth_runs", remove=[run_id])
+        closed = False
+        own_pane = os.environ.get("TMUX_PANE")
+        rows.sort(key=lambda row: row.split("\t")[0] == own_pane)
+        for row in rows:
+            parts = row.split("\t")
+            if len(parts) == 4 and parts[1:] == [self.workspace_id, "auth", run_id]:
+                self.tmux("clear-history", "-t", parts[0])
+                self.tmux("kill-pane", "-t", parts[0])
+                closed = True
+        return {"closed": closed}
+
+    def status(self):
+        return {"available": self.exists(), "workspace_id": self.workspace_id, "socket": str(self.socket),
+                "state": self.state.read()}
+
+    def close(self):
+        close = getattr(self._broker_instance, "close", None)
+        if close is not None:
+            close()
+
+    def supervise(self):
+        try:
+            with _private_lock(self.directory / "supervisor.lock", blocking=False):
+                while self.exists():
+                    try:
+                        self.refresh()
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        pass
+                    time.sleep(.5)
+        finally:
+            self.close()
+
+
+def workspace_status(settings):
+    return WorkspaceManager(settings).status()
+
+
+def launch_workspace(settings, takeover=False):
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise ValueError("DevBrain wymaga interaktywnego terminala. Użyj `devbrain workspace status` do diagnostyki.")
+    manager = WorkspaceManager(settings)
+    if not manager.diagnostics()["available"]:
+        raise ValueError("Zainstaluj tmux >= 3.4 w Ubuntu: sudo apt install tmux")
+    manager.broker.ensure()
+    manager.create()
+    inherited = os.environ.get("TMUX", "").split(",", 1)[0]
+    if inherited == str(manager.socket) and os.environ.get("TMUX_PANE") in manager.panes().values():
+        if takeover:
+            raise ValueError("Odłącz widok C-b d i uruchom `devbrain workspace takeover` w osobnym terminalu.")
+        return 0
+    # A different user's tmux server/config is neither modified nor adopted.
+    if not takeover and any(not client["readonly"] for client in manager.clients()):
+        from .terminal_commands import JoinWorkspaceApp
+        choice = JoinWorkspaceApp(settings).run()
+        if choice is None:
+            manager.close()
+            return 0
+        takeover = choice == "takeover"
+    return manager.attach(takeover=takeover)
+
+
+def refresh_workspace(settings, workspace_id="default"):
+    manager = WorkspaceManager(settings, workspace_id)
+    try:
+        return manager.refresh()
+    finally:
+        manager.close()
+
+
+def detach_workspace(settings):
+    manager = WorkspaceManager(settings)
+    if not manager.exists():
+        return {"detached": False, "available": False}
+    manager.tmux("detach-client", "-s", SESSION, check=False)
+    return {"detached": True, "available": True}
+
+
+def stop_workspace(settings, stop_clients=False):
+    manager = WorkspaceManager(settings)
+    current = manager.state.read()
+    stopped, errors = [], []
+    if stop_clients:
+        for run_id in current["run_ids"]:
+            try:
+                run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+                manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop", json={"generation": run["generation"]})
+                stopped.append(run_id)
+            except Exception:
+                errors.append({"run_id": run_id, "code": "client_stop_unavailable"})
+    running = manager.exists()
+    if running:
+        manager.tmux("kill-server")
+    info = manager._supervisor_info()
+    if info:
+        try:
+            os.kill(info["pid"], signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    manager.close()
+    return {"stopped": running, "clients_stopped": stopped, "errors": errors}
+
+
+def show_auth(settings, client, workspace_id="default"):
+    manager = WorkspaceManager(settings, workspace_id)
+    try:
+        return manager.open_auth(client)
+    finally:
+        manager.close()
+
+
+def take_control(settings, run_id, workspace_id="default"):
+    return WorkspaceManager(settings, workspace_id).take_control(run_id)
+
+
+def select_run(settings, run_id, workspace_id="default"):
+    manager = WorkspaceManager(settings, workspace_id)
+    run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+    if run.get("purpose") == "auth":
+        try:
+            return manager.show_auth_run(run)
+        finally:
+            manager.close()
+    state = manager._fetch(force=True)
+    project = next(item for item in state["projects"] if item["id"] == run["project_id"])
+    manager.state.select_project(project, run["worktree"], intent="inspect")
+    return manager.refresh()
+
+
+def resume_run(settings, run_id, workspace_id="default"):
+    manager = WorkspaceManager(settings, workspace_id)
+    run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+    result = manager.broker.request("POST", "/api/client-runs", json={"project": run["project_id"], "worktree": run["worktree"],
+        "profile_id": run.get("profile_id", run["client"]), "slot_id": run["slot_id"], "resume": True, "idempotency_key": str(uuid4())})
+    manager.refresh()
+    return result
+
+
+def stop_run(settings, run_id, generation, workspace_id="default"):
+    manager = WorkspaceManager(settings, workspace_id)
+    result = manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop", json={"generation": generation})
+    manager.refresh()
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--workspace-id", default="default")
+    parser.add_argument("--tmux-bin")
+    parser.add_argument("--supervise", action="store_true")
+    parser.add_argument("--focus", choices=_ROLES)
+    parser.add_argument("--toggle-zoom", action="store_true")
+    parser.add_argument("--placeholder")
+    parser.add_argument("--palette", action="store_true")
+    parser.add_argument("--help-popup", action="store_true")
+    parser.add_argument("--palette-ui", action="store_true")
+    parser.add_argument("--help-only", action="store_true")
+    parser.add_argument("--next-view", action="store_true")
+    parser.add_argument("--ui-command", choices=("search", "add_project", "start_work", "connections", "sessions", "memory", "more", "settings"))
+    parser.add_argument("--client-pid", type=int)
+    parser.add_argument("--client-tty")
+    args = parser.parse_args()
+    settings = Settings.load(args.data_dir)
+    manager = WorkspaceManager(settings, args.workspace_id, tmux_binary=args.tmux_bin)
+    if args.palette_ui:
+        from .terminal_commands import CommandPaletteApp, dispatch_command
+        dispatch_command(manager, CommandPaletteApp(manager, help_only=args.help_only).run())
+    elif args.palette or args.help_popup:
+        manager.open_palette(help_only=args.help_popup, client_pid=args.client_pid, client_tty=args.client_tty)
+    elif args.next_view:
+        manager.next_view()
+    elif args.ui_command:
+        manager.request_command(args.ui_command)
+    elif args.supervise:
+        manager.supervise()
+    elif args.focus:
+        manager.focus(args.focus)
+    elif args.toggle_zoom:
+        manager.toggle_zoom()
+    elif args.placeholder:
+        print("\033[2J\033[H\033[1;32mDevBrain · Workspace\033[0m\n")
+        print("Open a project, choose your assistant, then select Start work.\n")
+        print("Browsing memory never starts a model.\nC-b Space: commands · C-b p: projects · C-b ?: help · C-b d: detach")
+        while True:
+            time.sleep(3600)
+
+
+if __name__ == "__main__":
+    main()

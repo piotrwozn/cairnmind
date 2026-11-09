@@ -1,0 +1,51 @@
+To świeża sesja drugiego klienta w pilotażu DevBrain, projekt devbrain-pilot.
+Nie otrzymasz poprzedniej rozmowy. Odtwórz cel i aktualny stan ze wspólnej pamięci.
+Pracuj wyłącznie w worktree wskazanym przez pakiet, z natywnymi uprawnieniami.
+
+1. MCP resume_context -> przeczytaj cały gotowy pakiet -> ack_resume z jego
+   rzeczywistym packet_id, packet_hash i dokładnym readback aktywnego planu oraz
+   zadania {id,version} lub null. Odczytaj next_task, źródła i checkpoint pierwszego
+   klienta. Podaj odczytany etap i sprawdź, czy zadanie jest gotowe do testów i
+   review. Nie wymuszaj stanu ani nie odtwarzaj planu z domysłów.
+2. Znajdź implementację i testy na podstawie pamięci oraz źródeł. Odczytaj kryteria
+   zapisanej definicji zadania; sprawdź wymaganą tam liczbę metod unittest,
+   pokrywane przypadki i rzeczywiste asercje. Sam pusty zestaw testów z kodem
+   wyjścia 0 nie zalicza kryteriów.
+3. Uruchom nazwany profil przez natywne narzędzie klienta:
+   devbrain check run devbrain-pilot unit --task RZECZYWISTE_ID_ZADANIA
+   Polecenie wykonuje kod i podlega Twoim natywnym uprawnieniom. Nie zastępuj go
+   zwykłym subprocess/unittest i nie twórz maszynowego wyniku przez remember.
+   Odczytaj pełny zapis runa przez devbrain check list devbrain-pilot --task ID_ZADANIA
+   i źródła stdout oraz stderr
+   przez devbrain source ID_ZRODLA. unittest zwykle pisze nazwy testów i podsumowanie
+   do stderr. Sprawdź wymaganą kryteriami dodatnią liczbę testów, OK, passed=true, poprawny task_id,
+   worktree i świeży status check_status. Zapamiętaj prawdziwe ID uruchomienia.
+4. Wykonaj oddzielne review implementacji i asercji. Oceń każde kryterium planu;
+   nie utożsamiaj wyjścia 0 z review ani akceptacją. Jeżeli trzeba zmienić kod,
+   najpierw wprowadź poprawkę, odśwież pakiet/ACK i wykonaj profil ponownie dla
+   nowego odcisku. Nie wykorzystuj starszego wyniku do zmienionego kodu.
+5. Zapisz faktyczny wynik review i ocenę każdego kryterium w pliku
+   "$DEVBRAIN_PILOT_REPORT_DIR/review.txt" poza worktree. Zapisz MCP checkpoint
+   z tą oceną, ID udanego runa, źródłami stdout/stderr, zakresem sprawdzenia i
+   brakami. Checkpoint jest relacją klienta, nie akceptacją człowieka i nie
+   zastępuje wyniku runnera. Zachowaj zwrócone source_ids.
+6. Tylko jeśli wszystkie kryteria rzeczywiście spełniono: odśwież resume_context
+   i ACK po checkpoint, odczytaj next_task i bieżące wersje. Wywołaj MCP remember
+   dla istniejącego zadania z id, expected_version, expected_plan_version oraz:
+   metadata={"state":"done","check_run_ids":[ID_RUNA],"review_passed":true,
+             "review_source_ids":[ID_ZRODLA_REVIEW],"acceptance_passed":true,
+             "acceptance_source_ids":[ID_ZRODLA_OCENY_KRYTERIOW]}.
+   Oba ostatnie ID mogą wskazywać ten sam faktyczny source_id checkpointu, jeśli
+   zawiera i review, i ocenę wszystkich kryteriów. sources musi zawierać źródła
+   dotychczasowego zadania oraz wszystkie wskazane źródła review/akceptacji.
+   acceptance_passed oznacza tutaj ocenę kryteriów; nie przypisuj użytkownikowi
+   akceptacji człowieka. Przejście do done może zwiększyć wersję planu bez zmiany
+   definicji zadania ani unieważnienia świeżego wyniku testów.
+   Nie wysyłaj zmyślonych verified/test_passed ani identyfikatorów uruchomień.
+7. Jeżeli test lub review nie przejdą, zapisz rzeczywistą przyczynę i pozostaw
+   needs_test/needs_review/blocked odpowiednio do brakującej pracy, bez done.
+   Odczytaj końcowy stan i przekaż ID planu/zadania, źródła i pozostałe braki.
+
+Każde resume_required wymaga nowego odczytu pakietu i ACK. Konflikt wersji wymaga
+ponownego odczytu, nie nadpisania. Po ostatnim zapisie statusu nie modyfikuj już
+kodu, testów ani profilu. Do kolejnego klienta trafi tylko wspólna pamięć.

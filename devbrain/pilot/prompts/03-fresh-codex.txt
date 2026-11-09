@@ -1,0 +1,26 @@
+To świeża sesja trzeciego klienta w projekcie devbrain-pilot. Nie korzystaj z
+historii dwóch poprzednich rozmów i nie proś o jej wklejenie. Ten etap odczytuje
+stan; nie zmieniaj kodu, planu ani zadań, aby dopasować je do oczekiwanego wyniku.
+
+1. Wywołaj MCP resume_context, przeczytaj cały gotowy pakiet i wykonaj ack_resume
+   z jego rzeczywistym packet_id, packet_hash i dokładnym readback:
+   {"plan":{"id":...,"version":...}|null,"task":{"id":...,"version":...}|null}.
+   Po ukończeniu wszystkich kroków active_task może być null: nie wymyślaj ID.
+2. Odtwórz ze wspólnej pamięci cel, ograniczenia, ID i wersję planu oraz zadania,
+   zapisany stan, faktycznie wykonane sprawdzenia i pozostałą pracę. Użyj next_task,
+   ask, check_status i odnośników do źródeł; w razie potrzeby istniejących poleceń
+   devbrain plan list/show, devbrain task list i devbrain source.
+3. Dla profilu unit podaj prawdziwe ID runa i świeżość. Odróżnij maszynowy wynik
+   testów od relacji klienta z review i oceną kryteriów. Nie utożsamiaj historycznego
+   done z aktualnie świeżymi testami. Przy brakujących źródłach zgłoś brak wiedzy.
+   acceptance_passed oznacza ocenę kryteriów zadania i nie jest dowodem akceptacji
+   człowieka. Jeden checkpoint może zawierać review i ocenę wszystkich kryteriów.
+   Zmiana wersji planu przy ukończeniu kroku jest oczekiwana; sprawdź definicję
+   zadania i świeżość runa, zanim uznasz wcześniejszą wersję w review za konflikt.
+4. Zwróć krótkie zestawienie: cel, plan ID/version, task ID/version/state, dowód
+   unit i jego fresh/stale/reported/unknown, review/akceptacja ze źródłami oraz
+   następny krok lub brak pozostałej pracy. Każdą istotną tezę oprzyj na źródłach.
+
+Jeżeli użytkownik następnie wywoła natywną kompresję rozmowy, odczytaj nowy pakiet
+i wykonaj nowy ACK przed dalszym zapisem DevBrain. Nie twierdź, że stary ACK jest
+aktualny. Odtwórz powyższe zestawienie ponownie z pamięci.
