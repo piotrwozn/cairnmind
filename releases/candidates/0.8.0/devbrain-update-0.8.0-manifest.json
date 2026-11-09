@@ -85,6 +85,17 @@
   },
   "files": [
     {
+      "path": "CHANGELOG.md",
+      "before": [
+        null
+      ],
+      "before_by_version": {
+        "0.7.2": null
+      },
+      "after": "1a28e09c319c1cfe3754018b1ae4d70e2268be9609ee4d75d79866dc54aff4b3",
+      "encoding": "utf-8"
+    },
+    {
       "path": "README.md",
       "before": [
         "e5be090bfbff5a599396464160e4dfc1ea689b897eb5e682625bc2622c6d2c4b"
@@ -126,28 +137,6 @@
         "0.7.2": null
       },
       "after": "c6e78a1d92fe854fd6ef0cef8c4582579bbc2f363731468336a64c983115c72a",
-      "encoding": "utf-8"
-    },
-    {
-      "path": "docs/README.md",
-      "before": [
-        "d4d6854d227a371226ebf78c5394bed0899749941535734f7c8f7eaf22b35a95"
-      ],
-      "before_by_version": {
-        "0.7.2": "d4d6854d227a371226ebf78c5394bed0899749941535734f7c8f7eaf22b35a95"
-      },
-      "after": "dab108b1d112dfbe42cc5405c051faa0f45dd57ae56642dac8ad770e5d1893d8",
-      "encoding": "utf-8"
-    },
-    {
-      "path": "docs/ROADMAP.md",
-      "before": [
-        null
-      ],
-      "before_by_version": {
-        "0.7.2": null
-      },
-      "after": "149c50de460f690bd15fb49fe8e61d4c603718be10d717db01d8ca638c62cd8a",
       "encoding": "utf-8"
     },
     {
@@ -943,6 +932,17 @@
       "encoding": "delete"
     },
     {
+      "path": "docs/README.md",
+      "before": [
+        "d4d6854d227a371226ebf78c5394bed0899749941535734f7c8f7eaf22b35a95"
+      ],
+      "before_by_version": {
+        "0.7.2": "d4d6854d227a371226ebf78c5394bed0899749941535734f7c8f7eaf22b35a95"
+      },
+      "after": null,
+      "encoding": "delete"
+    },
+    {
       "path": "frontend/.gitignore",
       "before": [
         "e064f420438b98fb06387bd265683e725fbdae58d5871f1db52b24365df25264"
@@ -1372,18 +1372,17 @@
       "encoding": "delete"
     }
   ],
-  "source_files": 166,
+  "source_files": 165,
   "source_sha256": {
     ".gitignore": "b76d917809d037e67f4ada81d0521a5d13517529a02f01e92fe41c5ffd6463f8",
     "ARCADE_CONTRACTS.md": "bc819fb42895f7606f4350d5d0c66cd9c5b4c591f1b6a0130f21ce0beb603ccc",
+    "CHANGELOG.md": "1a28e09c319c1cfe3754018b1ae4d70e2268be9609ee4d75d79866dc54aff4b3",
     "CONTRACTS.md": "7299ebf8fb95e5b57d38fc349f890f358fe0e68eac314173c1ee00856d820044",
     "README.md": "8bac6e34bbae5c853c0fbadf3081e02d3a43b2e7e4df56cdadb49e0aa06185bc",
     "V03_CONTRACTS.md": "7e82d846d7413662708dfb167deb37cded05cd22720c74e20ce631c0c4e4b889",
     "docs/API.md": "b52c8fc353ea882745f2f92e72bf168e95622080f1f3bd9d39dbfdf91ae82a70",
     "docs/EVALUATION.md": "c6e78a1d92fe854fd6ef0cef8c4582579bbc2f363731468336a64c983115c72a",
     "docs/MEMORY_CONTRACTS.md": "ca2af84f1b25e4f53a6b5ecb2e53ad4d768196b9f2b5ddbd74ab8c85a1b24735",
-    "docs/README.md": "dab108b1d112dfbe42cc5405c051faa0f45dd57ae56642dac8ad770e5d1893d8",
-    "docs/ROADMAP.md": "149c50de460f690bd15fb49fe8e61d4c603718be10d717db01d8ca638c62cd8a",
     "docs/TERMINAL.md": "1cfa1fec5df705f32ff73bd771de5183ea0f3bf696228581d41492a577e5f56d",
     "docs/UPGRADING.md": "59b0f83eb37bd5f16f27ee85106b1c1151c4f7f092207f0b53dce34a39898303",
     "docs/WORKFLOW.md": "9fc405ed9c0b280eb0f247a1cfb03b04b2d71f528d22d22c0cf1d4808ba2cca9",
@@ -1541,8 +1540,8 @@
     "tests/test_workspace_ux080.py": "1ed4aa9e5d33c4bb3ae57cc24d142f007f4eedc5ff9db5c97a9261993589302d",
     "uv.lock": "1b91f3b4ed497c3b52e48ca57bdcb88a3759855f90a48c7ae5a0f56e720842c5"
   },
-  "updater_bytes": 618156,
-  "updater_sha256": "d6dd206ea5398ab0013b4900b944c57f0ed19ef56b874e13c955512cef8768c2",
-  "zip_bytes": 852550,
-  "zip_sha256": "37824300bc186ec861503a9f68ba6e7fd75649f353ec6f79c83c81339fca7754"
+  "updater_bytes": 578816,
+  "updater_sha256": "b1c19dc97e36b39f42ae71bad5e4d76262dbbf3bb56acbe27b06bea2f6eb5647",
+  "zip_bytes": 823371,
+  "zip_sha256": "b24a077f66ee9ad07dd6f7cb3d86fad788b917025b541ae4e6ee4df9e5898b9a"
 }
