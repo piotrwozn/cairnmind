@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "title": "DevBrain",
+  "duration": 38,
+  "scenes": [
+    {
+      "id": "intro",
+      "title": "Requirements",
+      "subtitle": "",
+      "command": "cat DESIGN.md",
+      "lines": [
+        "# Checkout requirements",
+        "",
+        "All prices and totals must use integer cents. Floating-point money is forbidden.",
+        "",
+        "The checkout must add all item prices exactly, return zero for an empty cart,",
+        "and reject negative values, floats and booleans.",
+        "",
+        "Before considering the checkout verified, run the `unit` check profile against",
+        "the current code. A passing result for an earlier revision is not current proof."
+      ],
+      "duration": 3,
+      "agent": null,
+      "focus_line": 0,
+      "chapter": "01 / OVERVIEW"
+    },
+    {
+      "id": "codex",
+      "title": "Make the decision once.",
+      "subtitle": "Actual Codex session · source-backed memory",
+      "command": "Codex / remember_decision",
+      "lines": [
+        "Represent all checkout prices and totals as integer cents; forbid floating-point money.",
+        {
+          "text": "Saved in DevBrain",
+          "tone": "green"
+        },
+        "Task: Verify checkout correctness and run the unit check profile against current code",
+        "Source: sample://DESIGN.md"
+      ],
+      "duration": 6,
+      "agent": "Codex",
+      "focus_line": 3,
+      "chapter": "02 / DECIDE"
+    },
+    {
+      "id": "handoff",
+      "title": "End the session. Keep the context.",
+      "subtitle": "Codex process exited · a new Claude Code process starts",
+      "command": "Claude Code / resume_context → ack_resume",
+      "lines": [
+        "Active task: Verify checkout correctness and run the unit check profile against current code",
+        "Task version: 1",
+        {
+          "text": "Exact packet and task version acknowledged",
+          "tone": "green"
+        }
+      ],
+      "duration": 5,
+      "agent": "Claude Code",
+      "focus_line": 2,
+      "chapter": "03 / HAND OFF"
+    },
+    {
+      "id": "recall",
+      "title": "The next agent can cite it.",
+      "subtitle": "Actual Claude Code reply · no answer in the prompt",
+      "command": "Claude Code / memory → read_source",
+      "lines": [
+        "Represent all checkout prices and totals as integer cents; forbid floating-point money.",
+        "\"All prices and totals must use integer cents. Floating-point money is forbidden.\"",
+        "Source: sample://DESIGN.md",
+        "Task: 2a83e9d0-375c-46cf-9b74-e6ad2960a00f"
+      ],
+      "duration": 7,
+      "agent": "Claude Code",
+      "focus_line": 2,
+      "chapter": "04 / RECALL"
+    },
+    {
+      "id": "fresh",
+      "title": "Passing, and current.",
+      "subtitle": "DevBrain ran the unit profile against this code",
+      "command": "DevBrain / run_check(profile='unit')",
+      "lines": [
+        "test_empty_cart (test_checkout.CheckoutTests.test_empty_cart) ... ok",
+        "test_exact_total (test_checkout.CheckoutTests.test_exact_total) ... ok",
+        "test_invalid_prices (test_checkout.CheckoutTests.test_invalid_prices) ... ok",
+        "----------------------------------------------------------------------",
+        "Ran 3 tests in 0.000s",
+        "OK",
+        {
+          "text": "verification: fresh",
+          "tone": "green"
+        }
+      ],
+      "duration": 6,
+      "agent": null,
+      "focus_line": 6,
+      "chapter": "05 / FRESH"
+    },
+    {
+      "id": "change",
+      "title": "One line changes.",
+      "subtitle": "An intentional regression in the sample checkout",
+      "command": "git diff -- checkout.py",
+      "lines": [
+        {
+          "text": "-    return sum(prices)",
+          "tone": "plain"
+        },
+        {
+          "text": "+    return sum(prices) + 1",
+          "tone": "amber"
+        }
+      ],
+      "duration": 4,
+      "agent": null,
+      "focus_line": 1,
+      "chapter": "06 / CHANGE"
+    },
+    {
+      "id": "stale",
+      "title": "Yesterday's green is not today's proof.",
+      "subtitle": "The old passing run remains in history",
+      "command": "DevBrain / verification_status(task)",
+      "lines": [
+        {
+          "text": "verification: stale",
+          "tone": "amber"
+        },
+        "no successful matching run for current code, profile and task definition",
+        "Run the check again before trusting this revision."
+      ],
+      "duration": 7,
+      "agent": null,
+      "focus_line": 0,
+      "chapter": "07 / STALE"
+    }
+  ],
+  "provenance": {
+    "mode": "real_native_clients",
+    "captured_at": "2026-11-09T20:52:37.268641+00:00",
+    "codex": {
+      "status": "passed",
+      "elapsed_seconds": 28.332
+    },
+    "claude": {
+      "status": "passed",
+      "elapsed_seconds": 15.795
+    },
+    "gateway": "Demo-scoped MCP adapter over shipped DevBrain Store, SessionManager and PlanManager.",
+    "sample_source_sha256": "aa3ee057b21eabb47ad233ba0df7ca2e45aedab8be91b0b7b8ac6f734cf8be12",
+    "check_run_id": "810acca8-a9dd-413a-95c9-1447f1e99d88",
+    "check_returncode": 0,
+    "fresh_fingerprint": "3f5c99ceedc7dc5a9ccc2fba48e343cb29dfcc79f5a1733f17d4e67a6c1f7dc2",
+    "changed_fingerprint": "f2c48a044a5976aff240d5290f87b4ec55e1662ac69b359f5adfb49cc7b1779a"
+  }
+}

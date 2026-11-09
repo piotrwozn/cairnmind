@@ -4,6 +4,21 @@
 
 **Evidence-grounded project memory for coding agents, in your terminal.**
 
+https://github.com/user-attachments/assets/7b3c43c2-365a-42e4-aa65-268515aea448
+
+**One decision. Two agents. Proof that expires.** Watch Codex save a project decision, Claude Code recover its source and task, and a real check go from `fresh` to `stale` after a code change.
+
+[Watch in 1080p](devbrain/demo/assets/devbrain-demo.mp4) · [Terminal cast](devbrain/demo/assets/demo.cast) · [Run it yourself](devbrain/demo/README.md)
+
+*38 seconds · Codex → Claude Code · fresh → stale · no audio.*
+
+<details>
+<summary>Animated preview</summary>
+
+[![DevBrain demo: Codex hands a decision to Claude Code, then a code change makes passing test evidence stale.](devbrain/demo/assets/devbrain-demo.gif)](devbrain/demo/assets/devbrain-demo.mp4)
+
+</details>
+
 DevBrain is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped.
 
 What sets it apart from a `CLAUDE.md` file or a generic memory layer is that DevBrain treats memory as evidence, not as notes:
