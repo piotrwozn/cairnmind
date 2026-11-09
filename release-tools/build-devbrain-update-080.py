@@ -69,8 +69,11 @@ def main():
     with zipfile.ZipFile(BASELINE) as archive:
         before = {name.removeprefix('devbrain/'): archive.read(name)
                   for name in archive.namelist() if not name.endswith('/')}
-    paths = set(before)
-    for directory in ('src', 'tests', 'docs', 'scripts', 'pilot', 'frontend'):
+    # Baseline files absent from the target are deletions, not missing sources.
+    removed = sorted(relative for relative in before
+                     if not (ROOT / relative).exists() and not (ROOT / relative).is_symlink())
+    paths = set(before) - set(removed)
+    for directory in ('src', 'tests', 'docs', 'scripts', 'pilot'):
         paths.update(path.relative_to(ROOT).as_posix() for path in (ROOT / directory).rglob('*')
                      if path.is_file() and not any(part in SKIP for part in path.relative_to(ROOT).parts)
                      and path.suffix not in {'.pyc', '.tsbuildinfo'})
@@ -97,6 +100,10 @@ def main():
         original_hash = digest(original) if original is not None else None
         changes.append({'path': relative, 'before': [original_hash], 'before_by_version': {SUPPORTED: original_hash},
                         'after': digest(raw), 'encoding': encoding, 'content': content})
+    for relative in removed:
+        original_hash = digest(before[relative])
+        changes.append({'path': relative, 'before': [original_hash], 'before_by_version': {SUPPORTED: original_hash},
+                        'after': None, 'encoding': 'delete', 'content': ''})
     package = {'version': VERSION, 'supported_versions': [SUPPORTED], 'files': changes,
                'backup_baseline_sha256': BASELINE_SHA256, 'backup_version': SUPPORTED,
                'backup_package_sha256': package_manifest(before), 'backup_dependency_pins': dependency_pins(before['uv.lock'], before['pyproject.toml']),

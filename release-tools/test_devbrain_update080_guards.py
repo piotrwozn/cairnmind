@@ -201,6 +201,32 @@ def test_known_version_file_deletion_is_not_mistaken_for_an_older_baseline(updat
     assert (root / "optional.js").read_bytes() == old
 
 
+def test_removed_target_file_is_deleted_only_when_it_matches_the_baseline(updater, tmp_path, monkeypatch):
+    import base64
+    import zlib
+
+    root = tmp_path / "source"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts/install-wsl.sh").write_text("exit 0\n")
+    (root / "pyproject.toml").write_text('[project]\nversion="0.7.2"\n')
+    old = b"retired module from 0.7.2"
+    row = {"path": "src/devbrain/tui.py", "before": [updater.digest(old)],
+           "before_by_version": {"0.7.2": updater.digest(old)}, "after": None, "encoding": "delete", "content": ""}
+    package = {"version": "0.8.0", "supported_versions": ["0.7.2"], "files": [row]}
+    monkeypatch.setattr(
+        updater, "PAYLOAD", base64.b64encode(zlib.compress(json.dumps(package).encode())).decode()
+    )
+    assert updater.apply(root, check_only=True) == 0  # already absent: nothing to delete
+    target = root / "src/devbrain/tui.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"locally edited")
+    with pytest.raises(ValueError, match="nie usunieto"):
+        updater.apply(root, check_only=True)
+    target.write_bytes(old)
+    assert updater.apply(root, check_only=True) == 0
+    assert target.read_bytes() == old  # check-only never deletes
+
+
 def test_check_only_with_explicit_python_never_runs_install_or_services(updater, tmp_path, monkeypatch):
     import base64
     import zlib

@@ -1,33 +1,33 @@
-# Kontrolowane regresje 0.8
+# Controlled regressions for 0.8
 
-Stan: **prepared / not_run**. Zapisane helpery ani AST nie stanowią wyniku testów. Nie uruchamiaj ich przed zakończoną bramką runtime `pass`. Każda faza wymaga osobnego świeżego katalogu dowodów i uruchomienia przez `run-supervised-080.ps1`; `python_launcher` to literalny interpreter venv0.8, którego base/SHA odpowiadają gate. Ostateczny wynik wymaga zewnętrznego `receipt.json` po rzeczywistym wyjściu procesów i obserwacji pustego scope.
+Status: **prepared / not_run**. The saved helpers and AST checks are not test results. Do not run them before the runtime gate has completed with `pass`. Each phase requires its own fresh evidence directory and must be launched through `run-supervised-080.ps1`; `python_launcher` is the literal venv 0.8 interpreter whose base/SHA match the gate. A final result requires an external `receipt.json` written after the processes have actually exited and an empty scope has been observed.
 
-Kontroler: `run-regressions-080.py`. Wspólne argumenty:
+Controller: `run-regressions-080.py`. Common arguments:
 
 ```text
---execute --phase guards|ux|frontend|recall --run-id ID
+--execute --phase guards|ux|recall --run-id ID
 --artifact-root /mnt/c/.../ID --source-root /home/piotr/.../frozen-devbrain
 --private-root /home/piotr/.cache/devbrain-regressions-080
 ```
 
-`--private-root` musi wcześniej istnieć jako własny katalog Linux0700. Kontroler tworzy w nim nowy katalog losowy i prywatny HOME. Krótki własny katalog `/tmp/r8-<uuid>`0700 jest wspólnym TMPDIR rodzica/dzieci oraz cache `tempfile`, aby sockety tmux mieściły się w limicie100bajtów. Nie otwiera produkcyjnej bazy, profili ani OAuth.
+`--private-root` must already exist as an owned Linux directory with mode 0700. The controller creates a new random directory and a private HOME inside it. A short owned directory `/tmp/r8-<uuid>` (mode 0700) serves as the shared TMPDIR for the parent and child processes and as the `tempfile` cache, so that tmux sockets fit within the 100-byte limit. It does not open the production database, profiles or OAuth.
 
-| Faza | Dodatkowe argumenty | Zakres i warunek |
+| Phase | Additional arguments | Scope and condition |
 |---|---|---|
-| `guards` | `--updater /.../preflight-candidate/devbrain-update-0.8.0.py` | Wszystkie8 bieżących modułów guardów0.8, collect+execution przez literalny venv `-I`, `pytest --noconftest`, JUnit i zero pominięć. Bez silnika/modeli; testy własności updatera mogą tworzyć krótkie nieszkodliwe procesy Python. Manifest wiąże testy, zależne helpery i SHA jawnego kandydata. Archiwalne071/072, smoke i interaktywny fixture nadzoru nie są uruchamiane. Kandydat preflight nie jest publikacją ani kwalifikacją wydania. |
-| `ux` | `--arcade-dist /.../przypięta-dystrybucja` | Pełne moduły `test_terminal*`, `test_workspace*`, `test_cockpit*`, `test_graph*`, `test_api_workspace_e2e.py`, `test_api_worker.py`, `test_client_runtime.py`, `test_runtime_pane.py`. Normalny conftest, kwalifikowane Java/tmux, własny silnik. Osobne collection i execution muszą mieć identyczne nodeids, bez pominięć/błędów. Obejmuje obie wielkości testu latency; nie zastępuje zadań UX z człowiekiem. |
-| `frontend` | `--node /.../bin/node --npm-cli /.../npm/bin/npm-cli.js --chromium /.../rzeczywisty-binarny-chromium` | Świeża kopia źródeł, `npm ci` z lockfile, pełne unit/build/Playwright oraz audyty all/runtime. CI=1, jeden worker, Chromium `--disable-gpu`, osobny Vite na losowym porcie, mocki HTTP/WebSocket, brak proxy do produkcyjnego backendu. Build trafia tylko do własnego scratch/dist. Node i Chromium muszą być rzeczywistymi plikami ELF; wersje i SHA są raportowane. Hash npm dotyczy wejściowego pliku CLI. Oba audyty są zbierane także przy wykrytych podatnościach; nonzero daje FAIL. |
-| `recall` | `--arcade-dist /.../przypięta-dystrybucja --chat-model qwen3.5:9b --embedding-model qwen3-embedding:0.6b` | Rzeczywiste `evaluation.run_evaluation(clients=False)` i Ollama. Wymaga20 prób, minimum90% trafności, wszystkich krytycznych faktów i deterministycznej izolacji. Oryginalny scorer jest wywoływany dokładnie raz; Progress zapisuje wyniki poszczególnych przypadków. RAM/GPU monitorowane co5s do zakończenia. Nie startuje ani nie zatrzymuje usługi Ollama. |
+| `guards` | `--updater /.../preflight-candidate/devbrain-update-0.8.0.py` | All 8 current 0.8 guard modules, collection and execution through the literal venv with `-I`, `pytest --noconftest`, JUnit and zero skips. No engine or models; the updater ownership tests may spawn short-lived, harmless Python processes. The manifest binds the tests, dependent helpers and the SHA of the explicit candidate. The archived 071/072 tests, smoke tests and the interactive supervision fixture are not run. The preflight candidate is neither a publication nor a release qualification. |
+| `ux` | `--arcade-dist /.../pinned-distribution` | Full modules `test_terminal*`, `test_workspace*`, `test_cockpit*`, `test_graph*`, `test_api_workspace_e2e.py`, `test_api_worker.py`, `test_client_runtime.py`, `test_runtime_pane.py`. Normal conftest, qualified Java/tmux, owned engine. Separate collection and execution runs must have identical node IDs, with no skips or errors. Covers both sizes of the latency test; does not replace the human-run UX tasks. |
+| `recall` | `--arcade-dist /.../pinned-distribution --chat-model qwen3.5:9b --embedding-model qwen3-embedding:0.6b` | Real `evaluation.run_evaluation(clients=False)` and Ollama. Requires 20 trials, at least 90% accuracy, all critical facts and deterministic isolation. The original scorer is called exactly once; Progress records the result of each individual case. RAM/GPU are monitored every 5 s until completion. Does not start or stop the Ollama service. |
 
-Recall może otrzymać jawne `--ollama-url http://127.0.0.1:11434` i `--num-ctx 16384`. Są to parametry testu; nie zmieniają ustawień produkcji. Źródła, gate i runtime są sprawdzane przed/po etapach. JVM i serwer frontendowy są kończone wyłącznie przez zachowany pidfd z ponownym sprawdzeniem właściciela/cgroup. Kontroler obserwuje30s bez pozostawionych własnych dzieci; zewnętrzny launcher osobno obserwuje jego finalizację. Wymuszony cleanup albo utrata dowodu daje FAIL.
+The `frontend` phase was removed together with the browser cockpit (`devbrain/frontend/`, `web_static/`); it is no longer release evidence.
 
-W `required_artifacts` wrappera zawsze podaj `gate.json`, `regression-source.json`, `regressions-results.json`, `controller-report.json`, `supervisor-report.json`, a dodatkowo:
+Recall may receive an explicit `--ollama-url http://127.0.0.1:11434` and `--num-ctx 16384`. These are test parameters; they do not change production settings. Sources, gate and runtime are checked before and after each stage. The JVM is terminated only through the retained pidfd, with the owner/cgroup re-checked. The controller observes 30 s with no remaining owned child processes; the external launcher separately observes its finalization. A forced cleanup or loss of evidence results in FAIL.
+
+In the wrapper's `required_artifacts`, always list `gate.json`, `regression-source.json`, `regressions-results.json`, `controller-report.json`, `supervisor-report.json`, plus:
 
 - Guards: `guards-collection.json`, `guards.xml`.
 - UX: `ux-collection.json`, `ux.xml`.
-- Frontend: `frontend-unit.xml`, `frontend-browser.xml`, `frontend-build-manifest.json`, `frontend-audit-all.json`, `frontend-audit-runtime.json`.
 - Recall: `recall-results.json`, `recall/checkpoint.json`, `recall/cases.jsonl`, `recall/resources.jsonl`.
 
-Końcowy status kontrolera to `regressions_completed_pending_external_watch`. Raport ma scope `devbrain_targeted_regressions`, jawne `phase`, `full_suite_pass=false` i `eight_hour_qualification=false`. Zaliczenie jednej fazy nie oznacza zaliczenia pozostałych, pełnego zestawu backendowego ani ośmiu godzin stabilności. Raporty i JUnit pozostają w katalogu dowodów; prywatne katalogi testowe są zachowywane do kontroli operatora.
+The controller's final status is `regressions_completed_pending_external_watch`. The report has scope `devbrain_targeted_regressions`, an explicit `phase`, `full_suite_pass=false` and `eight_hour_qualification=false`. Passing one phase does not mean passing the others, the full backend suite or eight hours of stability. Reports and JUnit files remain in the evidence directory; private test directories are kept for operator inspection.
 
-Jawny zestaw guards: `test_account080_guards.py`, `test_devbrain_update080_guards.py`, `test_full_suite_080_guards.py`, `test_interactive_ux080_guards.py`, `test_queue_replay080_guards.py`, `test_regressions080_guards.py`, `test_scope_080_guards.py`, `test_stability_080_guards.py`. Dodany nowy moduł wymaga aktualizacji tej listy w kontrolerze; nie zostanie po cichu pominięty. Historyczne testy i ich ścieżki nie są modyfikowane ani aliasowane.
+Explicit guards set: `test_account080_guards.py`, `test_devbrain_update080_guards.py`, `test_full_suite_080_guards.py`, `test_interactive_ux080_guards.py`, `test_queue_replay080_guards.py`, `test_regressions080_guards.py`, `test_scope_080_guards.py`, `test_stability_080_guards.py`. Adding a new module requires updating this list in the controller; it will not be silently skipped. Historical tests and their paths are neither modified nor aliased.

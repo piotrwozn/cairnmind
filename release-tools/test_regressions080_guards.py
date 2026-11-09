@@ -135,27 +135,6 @@ def test_unreviewed_extra_guard_is_not_silently_omitted(runner, tmp_path):
         runner.guard_modules(tmp_path)
 
 
-@pytest.mark.parametrize("body", [
-    '<testsuite tests="0"/>',
-    '<testsuite tests="1"><testcase name="a"><failure/></testcase></testsuite>',
-    '<testsuite tests="1"><testcase name="a"><error/></testcase></testsuite>',
-    '<testsuite tests="1"><testcase name="a"><skipped/></testcase></testsuite>',
-    '<testsuite tests="2"><testcase name="a"/></testsuite>',
-    '<testsuite tests="2"><testcase name="a"/><testcase name="a"/></testsuite>',
-])
-def test_empty_partial_or_failed_frontend_junit_never_qualifies(runner, tmp_path, body):
-    path = tmp_path / "junit.xml"
-    path.write_text(body)
-    with pytest.raises(runner.common.ValidationError):
-        runner.junit_counts(path)
-
-
-def test_complete_frontend_junit_counts_real_cases(runner, tmp_path):
-    path = tmp_path / "junit.xml"
-    path.write_text('<testsuites><testsuite tests="2"><testcase name="a"/><testcase name="b"/></testsuite></testsuites>')
-    assert runner.junit_counts(path) == {"passed": 2, "failures": 0, "errors": 0, "skipped": 0}
-
-
 @pytest.mark.parametrize("problem", ["unavailable", "nineteen", "low_accuracy", "weaker_threshold", "critical_failure", "isolation_failure", "duplicate_case", "unavailable_answer", "unscored_case"])
 def test_recall_requires_all_real_cases_and_original_threshold(runner, problem):
     result = {"status": "passed", "golden_count": 20, "attempted": 20, "factual_accuracy": .9,
@@ -185,13 +164,3 @@ def test_recall_requires_all_real_cases_and_original_threshold(runner, problem):
     else:
         cases[-1]["id"] = cases[0]["id"]
     assert not runner.recall_passed(result, cases)
-
-
-def test_frontend_manifest_refuses_symlink_to_other_checkout(runner, tmp_path):
-    (tmp_path / "package.json").write_text("{}")
-    (tmp_path / "package-lock.json").write_text("{}")
-    other = tmp_path.parent / "unrelated-synthetic-source"
-    other.write_text("synthetic")
-    (tmp_path / "main.ts").symlink_to(other)
-    with pytest.raises(runner.common.ValidationError, match="symlink"):
-        runner.frontend_manifest(tmp_path)

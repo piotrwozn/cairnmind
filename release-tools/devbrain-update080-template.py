@@ -262,16 +262,24 @@ def apply(source, check_only=False, open_terminal=False, python_executable=None,
             raise ValueError(f"Sciezka prowadzi poza projekt: {relative}")
         if path.exists() and not path.is_file():
             raise ValueError(f"Sciezka nie jest plikiem: {relative}")
+        current = path.read_bytes() if path.is_file() else None
+        current_hash = digest(current) if current is not None else None
+        allowed = ([item["before_by_version"][version]] if version in package["supported_versions"]
+                   else item["before"])
+        if item["after"] is None:
+            # Removed in the target version: delete only the exact baseline file.
+            if current is None:
+                continue
+            if item.get("encoding") != "delete" or current_hash not in allowed:
+                raise ValueError(f"Plik zmieniony lokalnie; nie usunieto danych: {relative}")
+            staged.append((relative, path, None, current))
+            continue
         raw = (base64.b64decode(item["content"], validate=True)
                if item["encoding"] == "base64" else item["content"].encode("utf-8"))
         if digest(raw) != item["after"]:
             raise ValueError(f"Uszkodzona poprawka: {relative}")
-        current = path.read_bytes() if path.is_file() else None
-        current_hash = digest(current) if current is not None else None
         if current_hash == item["after"]:
             continue
-        allowed = ([item["before_by_version"][version]] if version in package["supported_versions"]
-                   else item["before"])
         if current_hash not in allowed:
             raise ValueError(f"Plik zmieniony lokalnie; nie nadpisano danych: {relative}")
         if relative.suffix == ".py":
@@ -356,6 +364,10 @@ def apply(source, check_only=False, open_terminal=False, python_executable=None,
     backup_runtime.write_text(json.dumps(receipt, indent=2))
     backup_runtime.chmod(0o600)
     for relative, path, raw, current in staged:
+        if raw is None:
+            # The baseline copy is already in the backup directory above.
+            path.unlink()
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix=".devbrain-update-", dir=path.parent)
         temporary = Path(name)

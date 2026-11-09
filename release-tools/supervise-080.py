@@ -78,8 +78,6 @@ def controller_artifacts(name, argv):
         phases = {
             "guards": {"guards-collection.json", "guards.xml"},
             "ux": {"ux-collection.json", "ux.xml"},
-            "frontend": {"frontend-unit.xml", "frontend-browser.xml", "frontend-build-manifest.json",
-                         "frontend-audit-all.json", "frontend-audit-runtime.json"},
             "recall": {"recall-results.json", "recall/checkpoint.json", "recall/cases.jsonl", "recall/resources.jsonl"},
         }
         if phase not in phases:
