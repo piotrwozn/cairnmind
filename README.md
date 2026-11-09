@@ -50,25 +50,25 @@ The method, the problems the measurement uncovered and the limits of these numbe
 | Path | Contents |
 |---|---|
 | [`devbrain/`](devbrain/) | The Python package, tests, documentation and pilot material. Start with its [README](devbrain/README.md). |
-| [`release-tools/`](release-tools/) | Update builders, guarded updaters and release qualification tooling. |
-| [`releases/`](releases/) | Update manifests and update scripts per version. Release archives are attached to [GitHub releases](https://github.com/piotrwozn/devbrain/releases). |
 | [`.github/`](.github/) | Continuous integration, issue and pull request templates. |
 
 ## Quick start
 
-DevBrain targets Linux or Windows with WSL2 Ubuntu, Python 3.12, Java 21+, tmux 3.4+ and Ollama. Inside Ubuntu:
+DevBrain runs on Linux, or on Windows inside WSL2 Ubuntu, with Java 21+, tmux 3.4+, uv and Ollama. With those in place:
 
 ```bash
 git clone https://github.com/piotrwozn/devbrain.git ~/src/devbrain
 cd ~/src/devbrain/devbrain
-bash scripts/install-wsl.sh
-devbrain models pull
+bash scripts/install-wsl.sh     # installs DevBrain and ArcadeDB, initialises local memory
+devbrain models pull            # downloads the local models (about 7 GB)
 devbrain project add my-app ~/src/my-app
-devbrain install my-app
-devbrain
+devbrain install my-app         # connects Codex / Claude Code to this project
+devbrain                        # opens the terminal workspace
 ```
 
-The full installation guide, everyday commands and limits are in [devbrain/README.md](devbrain/README.md). Terminal usage is in [docs/TERMINAL.md](devbrain/docs/TERMINAL.md), connections and permissions in [docs/API.md](devbrain/docs/API.md).
+**[Step-by-step installation guide](devbrain/docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, connecting assistants, verifying, upgrading, uninstalling and troubleshooting.
+
+Everyday commands and limits are in [devbrain/README.md](devbrain/README.md). Terminal usage is in [docs/TERMINAL.md](devbrain/docs/TERMINAL.md), connections and permissions in [docs/API.md](devbrain/docs/API.md).
 
 ## Development
 

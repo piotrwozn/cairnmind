@@ -1,8 +1,8 @@
 # Upgrading from 0.7.2 to 0.8.0
 
-New installations follow the [README](../README.md). This guide is for an existing 0.7.2 installation with data you want to keep.
+New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing 0.7.2 installation with data you want to keep. The runtime qualification it requires is produced with maintainer tooling that is not part of this repository.
 
-The guarded updater `devbrain-update-0.8.0.py` is attached to the [0.8.0 release](https://github.com/piotrwozn/devbrain/releases/tag/v0.8.0) and kept in `releases/candidates/0.8.0/`. It supports **0.7.2** sources that match the archived 0.7.2 package, and it refuses to overwrite or delete any file you changed locally.
+The guarded updater `devbrain-update-0.8.0.py` is attached to the [0.8.0 release](https://github.com/piotrwozn/devbrain/releases/tag/v0.8.0). It supports **0.7.2** sources that match the archived 0.7.2 package, and it refuses to overwrite or delete any file you changed locally.
 
 ## 1. Check the files only
 
