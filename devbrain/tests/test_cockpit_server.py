@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from copy import deepcopy
+import json
 from pathlib import Path
 import time
 
@@ -354,3 +355,23 @@ def test_existing_terminal_expires_before_native_input_resize_or_takeover(cockpi
     assert runtime.attachment.written == []
     assert runtime.attachment.size is None
     assert runtime.attachment.controller is (frame["type"] != "takeover")
+
+
+def test_ask_proxy_forwards_only_bounded_question_fields(cockpit):
+    settings, app, client, runtime, project, requests, _ = cockpit
+    headers = login(app, client)
+    answered = client.post("/api/ask", json={"project": project["id"], "question": "Why ArcadeDB?"},
+                           headers=headers)
+    assert answered.status_code == 200 and settings.token not in answered.text
+    method, path, content = requests[-1]
+    assert (method, path) == ("POST", "/ask")
+    assert json.loads(content) == {"project": project["id"], "question": "Why ArcadeDB?"}
+    sent = len(requests)
+    for body in ({"project": project["id"], "question": "  "},
+                 {"project": project["id"], "question": "x" * 4001},
+                 {"project": project["id"], "question": "Why?", "session_id": "forged"},
+                 {"question": "Why?"}):
+        assert client.post("/api/ask", json=body, headers=headers).status_code == 422
+    assert len(requests) == sent
+    assert client.post("/api/ask", json={"project": project["id"], "question": "Why?"},
+                       headers={"Origin": ORIGIN}).status_code in {401, 403}

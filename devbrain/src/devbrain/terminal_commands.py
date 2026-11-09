@@ -14,6 +14,7 @@ COMMANDS = (
     ("Workspace", "Return to your assistant", "focus", "client1"),
     ("Second assistant", "Show the second visible assistant", "focus", "client2"),
     ("Memory", "Facts, tasks, plans and sources", "focus", "inspector"),
+    ("Ask memory", "Question answered from project memory with sources", "command", "ask"),
     ("Graph", "Explore relationships in memory", "focus", "graph"),
     ("Search projects", "Find a registered project", "command", "search"),
     ("Add folder", "Register a project folder", "command", "add_project"),
@@ -107,6 +108,31 @@ class CommandPaletteApp(App):
 
     def action_cancel(self):
         self.exit(None)
+
+
+def ask_summary(result, translate) -> str:
+    """Readable view of an /ask result: answer, cited quotes, unknowns and coverage."""
+    if not isinstance(result, dict):
+        return translate("The memory service returned no answer.")
+    lines = [translate("Status") + ": " + str(result.get("status", "unknown")), "",
+             str(result.get("answer") or translate("No verified answer.")).strip()]
+    sources = [source for source in result.get("sources", []) if isinstance(source, dict)][:8]
+    if sources:
+        lines += ["", translate("Sources") + ":"]
+        for source in sources:
+            where = str(source.get("uri", source.get("id", "")))
+            if source.get("line_start"):
+                where += f" ({source['line_start']}-{source.get('line_end', source['line_start'])})"
+            quote = " ".join(str(source.get("quote", "")).split())
+            lines.append(f"- {where}" + (f': "{quote[:240]}"' if quote else ""))
+    unknowns = [str(item) for item in result.get("unknowns", [])][:8]
+    if unknowns:
+        lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]
+    coverage = result.get("coverage")
+    if isinstance(coverage, dict) and coverage.get("answer_terms"):
+        lines += ["", translate("Answer words found in quotes")
+                  + f": {coverage.get('terms_in_quotes')}/{coverage.get('answer_terms')}"]
+    return "\n".join(lines)
 
 
 def dispatch_command(manager, row):

@@ -865,3 +865,47 @@ async def test_keyboard_start_feedback_tracks_fresh_selected_slot_without_overwr
                 tr("Connection saved. You can connect it or choose it for your project.", language) in notice)
         assert len(workspace.selections) == 2
         assert not any(method == "POST" and path == "/api/client-runs" for method, path, _, _ in broker.calls)
+
+
+@pytest.mark.asyncio
+async def test_ask_memory_from_sidebar_shows_cited_answer(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    asked = []
+    original = broker.request
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        if path == "/api/ask":
+            asked.append((method, deepcopy(json), timeout))
+            quote = "ArcadeDB keeps documents, graph and vectors in one engine."
+            return {"status": "complete", "answer": "ArcadeDB keeps graph and vectors together.",
+                    "sources": [{"uri": "file://README.md", "line_start": 1, "line_end": 1, "quote": quote}],
+                    "unknowns": [], "coverage": {"answer_terms": 5, "terms_in_quotes": 4, "ratio": .8}}
+        return original(method, path, params=params, json=json, timeout=timeout)
+
+    broker.request = request
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        assert app.open_command("ask") is True
+        # The ask worker stays busy while its form is open, so wait for the screen.
+        for _ in range(100):
+            await pilot.pause(.02)
+            if isinstance(app.screen, FormModal):
+                break
+        assert isinstance(app.screen, FormModal)
+        await pilot.press(*"WhyArcadeDB", "ctrl+s")
+        for _ in range(100):
+            await pilot.pause(.02)
+            if isinstance(app.screen, MessageModal):
+                break
+        assert isinstance(app.screen, MessageModal)
+        await pilot.pause()
+        text = screen_text(app)
+        assert "ArcadeDB keeps graph and vectors together." in text
+        assert "file://README.md" in text
+        await pilot.press("escape")
+        await settle(app, pilot)
+    assert len(asked) == 1
+    method, payload, timeout = asked[0]
+    assert method == "POST" and payload["project"] == "project-keyboard"
+    assert payload["question"] == "WhyArcadeDB" and timeout == settings.ask_timeout + 150

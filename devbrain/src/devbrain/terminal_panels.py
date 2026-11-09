@@ -711,6 +711,38 @@ class SidebarApp(BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
+    @work(group="sidebar-ask", exclusive=True, exit_on_error=False)
+    async def action_ask(self):
+        """Ask the chosen project's memory; read-only, nothing is saved."""
+        from .terminal_commands import ask_summary
+        try:
+            project = self.chosen_project()
+            values = await self.push_screen_wait(FormModal(
+                "Ask memory", [Field("question", "Question", required=True, multiline=True)],
+                note="Answers come only from this project's memory, with cited sources. Nothing is saved.",
+                submit="Ask"))
+            if not values:
+                return
+            payload = {"project": project["id"], "question": values["question"]}
+            if self.workspace_data.get("project_id") == project["id"] and self.workspace_data.get("worktree"):
+                payload["worktree"] = self.workspace_data["worktree"]
+            self.notice("Asking memory…")
+            from .terminal_client import BrokerClient
+            if isinstance(self.broker, BrokerClient):
+                # A slow answer must not hold the shared client's lock and stall refreshes.
+                def ask_once():
+                    with BrokerClient(self.settings, ensure=False) as client:
+                        return client.request("POST", "/api/ask", json=payload,
+                                              timeout=self.settings.ask_timeout + 150)
+                result = await asyncio.to_thread(ask_once)
+            else:
+                result = await asyncio.to_thread(self.broker.request, "POST", "/api/ask", json=payload,
+                                                 timeout=self.settings.ask_timeout + 150)
+            self.notice("")
+            await self.push_screen_wait(MessageModal("Memory answer", ask_summary(result, self.t)))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
     @work(group="sidebar-profiles", exclusive=True, exit_on_error=False)
     async def edit_profiles(self, identifier=None, *, advanced=False):
         try:
