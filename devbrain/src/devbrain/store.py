@@ -97,6 +97,43 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+# Record metadata derived by the store; values supplied by a client are never kept.
+DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
+                           "supersede_warning", "supersede_replaced_evidence_latest")
+
+
+def _utc(value):
+    """Timezone-aware ISO 8601 text as UTC; naive or invalid values are unusable."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+
+
+def _evidence_time(tx, source_ids):
+    """When the record's evidence existed, from its immutable sources.
+
+    A transcript's own timestamp is when the statement was made (`stated`). Any other
+    source existed no later than the moment DevBrain stored its snapshot (`observed`).
+    """
+    times, bases = [], set()
+    for source_id in dict.fromkeys(source_ids):
+        row = _one(tx, "SELECT created_at, metadata.source_timestamp AS stated FROM sources WHERE id=:id",
+                   {"id": source_id}, False) or {}
+        stated = _utc(row.get("stated"))
+        when, basis = (stated, "stated") if stated else (_utc(row.get("created_at")), "observed")
+        if when is not None:
+            times.append(when)
+            bases.add(basis)
+    if not times:
+        return {"earliest": None, "latest": None, "basis": "unknown"}
+    return {"earliest": min(times).isoformat(), "latest": max(times).isoformat(),
+            "basis": bases.pop() if len(bases) == 1 else "mixed"}
+
+
 def _json(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False)
 
@@ -508,7 +545,10 @@ class Store:
         metadata, updates = dict(old.get("metadata", {})) if old else {}, record.get("metadata", {})
         if not isinstance(updates, dict):
             raise ValueError("Record metadata must be an object")
-        metadata.update(updates)
+        metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
+        evidence = _evidence_time(tx, sources)
+        metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
+                        evidence_basis=evidence["basis"])
         explicit_completion = kind == "task" and metadata.get("state") == "done" and (not old or updates.get("state") == "done")
         if managed_batch and old and old.get("metadata", {}).get("state") == "done" and metadata.get("state") == "done":
             explicit_completion = False  # Internal plan batches preserve progress; they do not assert a new check.
@@ -548,6 +588,24 @@ class Store:
             previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=_now())
             _set(tx, "records", previous, "id=:id", {"id": supersedes})
             self._revision(tx, previous)
+        # Recomputed on every write of a replacement, so a later source change never
+        # leaves a stale warning behind. Warn, never block.
+        metadata.pop("supersede_warning", None)
+        metadata.pop("supersede_replaced_evidence_latest", None)
+        if supersedes:
+            replaced = _one(tx, "SELECT source_ids FROM records WHERE id=:id AND project_id=:project",
+                            {"id": supersedes, "project": project_id}, False) or {}
+            replaced_sources = replaced.get("source_ids") or []
+            if isinstance(replaced_sources, str):
+                replaced_sources = json.loads(replaced_sources)
+            replaced_time = _evidence_time(tx, replaced_sources)
+            # Only a stated time is a real evidence time; an observed time is only an
+            # upper bound, so comparing against it would flag snapshot order, not age.
+            replaced_latest = _utc(replaced_time["latest"]) if replaced_time["basis"] == "stated" else None
+            latest = _utc(metadata["evidence_latest"])
+            if replaced_latest and latest and latest < replaced_latest:
+                metadata["supersede_warning"] = "anachronistic_supersede"
+                metadata["supersede_replaced_evidence_latest"] = replaced_time["latest"]
         active_key = _json([project_id, kind, key]) if status != "superseded" else None
         collision = _one(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
         if collision and collision["id"] != record_id:
