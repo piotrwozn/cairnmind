@@ -55,12 +55,26 @@ def _version_tuple(value: str) -> tuple[int, int, int] | None:
     return tuple(map(int, match.groups())) if match else None
 
 
+# The `mcp` command word, not a flag or value such as --mcp-config or --debug=hooks,mcp.
+MCP_COMMAND = r"(?<![-\w,=])mcp(?![-\w,=])"
+
+
+def _evidence_line(pattern: str, text: str, flags: int = 0) -> str | None:
+    """The full output line that satisfied a capability pattern, for diagnostics."""
+    match = re.search(pattern, text, flags)
+    if not match:
+        return None
+    start = text.rfind(chr(10), 0, match.start()) + 1
+    end = text.find(chr(10), match.end())
+    return text[start:len(text) if end < 0 else end].strip()[:160]
+
+
 def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | None = None) -> dict[str, Any]:
     binary = shutil.which(client, path=env.get("PATH", os.defpath)) if env is not None else shutil.which(client)
     info: dict[str, Any] = {"installed": bool(binary), "path": binary, "version": None,
                             "mcp": False, "hooks": False, "packet_passing": False,
                             "session_binding": False, "isolated_process": False,
-                            "verified_resume": False, "notes": []}
+                            "verified_resume": False, "checks": {}, "notes": []}
     if not binary:
         info["notes"].append(f"Install {client} in the same WSL distribution as DevBrain.")
         return info
@@ -71,7 +85,7 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
         semver = _version_tuple(info["version"] or "")
         help_result = subprocess.run([binary, "--help"], capture_output=True, text=True,
                                      timeout=4, cwd=cwd, check=False, **({"env": env} if env is not None else {}))
-        info["mcp"] = help_result.returncode == 0 and bool(re.search(r"\bmcp\b", help_result.stdout))
+        info["mcp"] = help_result.returncode == 0 and bool(re.search(MCP_COMMAND, help_result.stdout))
         info["packet_passing"] = help_result.returncode == 0 and bool(re.search(r"\bprompt\b", help_result.stdout, re.I))
         minimum = (0, 166, 0) if client == "codex" else (1, 0, 112)
         supported = semver is not None and semver >= minimum
@@ -88,6 +102,23 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
             # official changelog by 1.0.112. Unknown/older versions get no hooks.
             info["hooks"] = semver is not None and semver >= (1, 0, 112)
             info["notes"].append("Approve the project MCP server using Claude Code's native consent flow.")
+        help_text = help_result.stdout if help_result.returncode == 0 else ""
+        info["checks"] = {
+            "version": {"ok": supported, "required": ">= " + ".".join(map(str, minimum)),
+                        "evidence": info["version"] or None},
+            "mcp": {"ok": info["mcp"], "required": "--help mentions the mcp command",
+                    "evidence": _evidence_line(MCP_COMMAND, help_text)},
+            "prompt": {"ok": info["packet_passing"], "required": "--help accepts a prompt argument",
+                       "evidence": _evidence_line(r"\bprompt\b", help_text, re.I)},
+            "isolated_process": {"ok": info["isolated_process"],
+                                 "required": "always" if client == "claude" else "--help offers --no-daemon",
+                                 "evidence": None if client == "claude" else _evidence_line(r"--no-daemon", help_text)},
+            "hooks": {"ok": info["hooks"],
+                      "required": ("`features list` reports hooks ... true" if client == "codex"
+                                   else "version >= 1.0.112"),
+                      "evidence": (_evidence_line(r"^hooks\s+\S+\s+true\s*$", features.stdout, re.M)
+                                   if client == "codex" else info["version"] or None)},
+        }
         info["verified_resume"] = all(info[key] for key in ("mcp", "hooks", "packet_passing", "session_binding"))
         if not info["verified_resume"]:
             baseline = ".".join(map(str, minimum))
