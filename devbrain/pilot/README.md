@@ -1,14 +1,14 @@
-# Rzeczywisty pilotaż DevBrain 0.3
+# Real-world DevBrain 0.3 pilot
 
-Ten zestaw przygotowuje mały projekt do pracy Codex → Claude → świeży Codex.
-Nie zawiera gotowej implementacji ani zaliczonych wyników modeli. Do wykonania
-potrzebne są Twój WSL2, GPU, Ollama i zalogowane oba klienty. Instalację i modele
-przygotuj według [instrukcji DevBrain](../docs/README.md).
+This kit prepares a small project for a Codex → Claude → fresh Codex handoff.
+It contains no ready-made implementation and no pre-passed model results. To run
+it you need your own WSL2, a GPU, Ollama and both clients signed in. Install
+DevBrain and its models as described in the [DevBrain README](../README.md).
 
-## Diagnostyka i ewaluacja
+## Diagnostics and evaluation
 
-W WSL sprawdź `nvidia-smi`, `codex --version`, `claude --version`, następnie zapisz
-diagnostykę i wykonaj pomiar lokalnego modelu:
+In WSL, check `nvidia-smi`, `codex --version` and `claude --version`, then save
+the diagnostics and measure the local model:
 
 ```bash
 export DEVBRAIN_PILOT_REPORT_DIR="$HOME/devbrain-pilot-reports/$(date -u +%Y%m%dT%H%M%SZ)"
@@ -19,16 +19,15 @@ devbrain doctor > "$DEVBRAIN_PILOT_REPORT_DIR/doctor.json"
 devbrain eval run --report-dir "$DEVBRAIN_PILOT_REPORT_DIR" > "$DEVBRAIN_PILOT_REPORT_DIR/recall-local.json"
 ```
 
-`models pull` pobiera modele. Ewaluacja używa własnego tymczasowego repozytorium i
-bazy. Kod wyjścia ewaluacji to `0` = zaliczona, `1` = niezaliczona, `3` = `not_run`.
-Zaliczenie wymaga 20 wykonanych
-scenariuszy, >=90% trafności, braku błędów krytycznych oraz zaliczenia etapów obu
-klientów. `not_run` oznacza niewykonany pomiar, nie sukces.
+`models pull` downloads the models. The evaluation uses its own temporary
+repository and database. The evaluation exit code is `0` = passed, `1` = failed,
+`3` = `not_run`. A pass requires 20 executed scenarios, >=90% accuracy, no
+critical errors and passing stages for both clients. `not_run` means the
+measurement was not performed; it is not a success.
 
-Dopiero po zaliczeniu lokalnej ewaluacji sprawdź obu klientów i ich zapisane
-logowania. Poniższy blok uruchomi `--clients` tylko po przejściu tych kontroli;
-wykorzysta istniejące limity kont. Nie wykonuje logowania ani nie wyświetla
-poświadczeń.
+Only after the local evaluation has passed, check both clients and their saved
+sign-ins. The block below runs `--clients` only if those checks pass; it uses
+the existing account limits. It does not sign in and does not print credentials.
 
 ```bash
 if python3 - "$DEVBRAIN_PILOT_REPORT_DIR" <<'PY'
@@ -36,27 +35,28 @@ import json, pathlib, subprocess, sys
 folder = pathlib.Path(sys.argv[1])
 recall = json.loads((folder / 'recall-local.json').read_text())
 doctor = json.loads((folder / 'doctor.json').read_text())
-assert recall['status'] == 'passed' and recall['attempted'] == 20, 'Najpierw zalicz lokalną ewaluację.'
-assert all(doctor['clients'][name]['verified_resume'] for name in ('codex', 'claude')), 'Sprawdź możliwości CLI w doctor.json.'
+assert recall['status'] == 'passed' and recall['attempted'] == 20, 'Pass the local evaluation first.'
+assert all(doctor['clients'][name]['verified_resume'] for name in ('codex', 'claude')), 'Check the CLI capabilities in doctor.json.'
 codex = subprocess.run(['codex', 'login', 'status'], capture_output=True, text=True, timeout=20)
-assert codex.returncode == 0 and 'chatgpt' in (codex.stdout + codex.stderr).lower(), 'Brak logowania Codex ChatGPT.'
+assert codex.returncode == 0 and 'chatgpt' in (codex.stdout + codex.stderr).lower(), 'Codex is not signed in with ChatGPT.'
 claude = subprocess.run(['claude', 'auth', 'status', '--json'], capture_output=True, text=True, timeout=20)
 auth = json.loads(claude.stdout) if claude.returncode == 0 else {}
-assert auth.get('loggedIn') is True and auth.get('authMethod') in ('claude.ai', 'oauth'), 'Brak logowania Claude.'
+assert auth.get('loggedIn') is True and auth.get('authMethod') in ('claude.ai', 'oauth'), 'Claude is not signed in.'
 PY
 then
   devbrain eval run --clients --report-dir "$DEVBRAIN_PILOT_REPORT_DIR" > "$DEVBRAIN_PILOT_REPORT_DIR/recall-clients.json"
 else
-  printf 'Etap klientów nie został uruchomiony. Rozwiąż wskazaną przyczynę i ponów kontrolę.\n' >&2
+  printf 'The client stage was not run. Resolve the reported cause and repeat the check.\n' >&2
 fi
 ```
 
-## Utworzenie jednego świeżego repozytorium
+## Create a single fresh repository
 
-Wykonaj z katalogu rozpakowanego pakietu DevBrain. Blok odmawia użycia istniejącego
-`~/src/devbrain-pilot`; nie usuwa go ani nie inicjalizuje ponownie. Przy kolejnym
-podejściu kontynuuj istniejący pilotaż lub wybierz nową nazwę katalogu i projektu
-oraz zmień ją konsekwentnie w promptach. Projekt w pamięci ma nazwę `devbrain-pilot`.
+Run this from the directory of the unpacked DevBrain package. The block refuses
+to use an existing `~/src/devbrain-pilot`; it neither deletes nor
+re-initializes it. On a later attempt, continue the existing pilot or choose a
+new directory and project name and change it consistently in the prompts. The
+project is named `devbrain-pilot` in memory.
 
 ```bash
 (
@@ -64,7 +64,7 @@ oraz zmień ją konsekwentnie w promptach. Projekt w pamięci ma nazwę `devbrai
   kit_dir="$(pwd)/pilot"
   pilot_root="$HOME/src/devbrain-pilot"
   if [ -e "$pilot_root" ]; then
-    printf 'Katalog już istnieje: %s. Kontynuuj poprzedni pilotaż.\n' "$pilot_root" >&2
+    printf 'Directory already exists: %s. Continue the previous pilot.\n' "$pilot_root" >&2
     exit 1
   fi
   test -f "$kit_dir/plan.json"
@@ -83,68 +83,76 @@ oraz zmień ją konsekwentnie w promptach. Projekt w pamięci ma nazwę `devbrai
 )
 ```
 
-Jeżeli nazwa projektu jest już zajęta, nie nadpisuj jego rejestracji. Sprawdź
-`devbrain project list` i kontynuuj właściwe repozytorium. Kopie plików, pomiary
-i raporty zapisuj w `DEVBRAIN_PILOT_REPORT_DIR`, aby nie zmieniały odcisku kodu.
+If the project name is already taken, do not overwrite its registration. Check
+`devbrain project list` and continue in the correct repository. Save file
+copies, measurements and reports in `DEVBRAIN_PILOT_REPORT_DIR` so they do not
+change the code fingerprint.
 
-## Trzy rzeczywiste sesje
+## Three real sessions
 
-Uruchamiaj klienty kolejno z tego samego terminala WSL, aby odziedziczyły katalog
-raportów. Nie używaj `resume` i nie przenoś historii rozmowy między klientami.
-Wklej jedynie odpowiedni krótki prompt z katalogu `pilot/prompts` pakietu:
+Start the clients one after another from the same WSL terminal so they inherit
+the report directory. Do not use `resume` and do not carry conversation history
+between clients. Paste only the matching short prompt from the package's
+`pilot/prompts` directory:
 
 1. `devbrain run devbrain-pilot codex` — [01-codex.txt](prompts/01-codex.txt).
-   Model zapisuje plan przez MCP, tworzy kod i testy, zapisuje checkpoint i
-   pozostawia `needs_test`. Zakończ natywnego klienta.
+   The model saves the plan through MCP, writes the code and tests, saves a
+   checkpoint and leaves the task in `needs_test`. Exit the native client.
 2. `devbrain run devbrain-pilot claude` — [02-claude.txt](prompts/02-claude.txt).
-   Nowa sesja odtwarza stan, uruchamia profil `unit` i odczytuje rzeczywiste logi
-   stdout/stderr. Wykonuje review i aktualizuje zadanie przez MCP. Zakończ klienta.
+   The new session restores the state, runs the `unit` profile and reads the
+   real stdout/stderr logs. It performs a review and updates the task through
+   MCP. Exit the client.
 3. `devbrain run devbrain-pilot codex` — [03-fresh-codex.txt](prompts/03-fresh-codex.txt).
-   Trzecia sesja odtwarza stan, źródła, testy i pozostałą pracę.
+   The third session restores the state, sources, tests and remaining work.
 
-Przy `partial`/`unavailable` launcher zatrzymuje start: sprawdź
-`devbrain status --project devbrain-pilot`, przyczynę archiwizacji i `devbrain doctor`, a
-następnie ponów po rozwiązaniu przyczyny. Nie omijaj ACK ani wymagań profilu.
-Odtworzenie identyfikatorów jest odczytem stanu; ACK nie dowodzi rozumienia modelu.
+On `partial`/`unavailable` the launcher stops the start: check
+`devbrain status --project devbrain-pilot`, the archiving reason and
+`devbrain doctor`, then retry once the cause is resolved. Do not bypass the ACK
+or the profile requirements. Reproducing identifiers is a read of the state; an
+ACK does not prove that the model understood it.
 
-## Kompresja, restart i nieaktualny wynik
+## Compaction, restart and stale results
 
-- W trzeciej sesji wywołaj natywną kompresję rozmowy. Poproś o ponowne odtworzenie
-  celu, wersji i źródeł. Model ma ponownie odczytać pakiet i wykonać ACK.
-- Zakończ klienta, wykonaj `devbrain stop`, potem `devbrain context devbrain-pilot`.
-  To ponownie uruchomi usługę. Uruchom jeszcze jedną świeżą sesję Codexa i użyj
-  promptu odczytowego; stan powinien być zachowany.
-- Dopiero po uzyskaniu `done` i `fresh` zmień kod funkcji w pilotażowym
-  `token_auth.py` tak, aby odrzucał poprawny token. Nie zmieniaj zadania ani jego
-  dowodów. `devbrain task list devbrain-pilot` i
-  `devbrain check list devbrain-pilot --task RZECZYWISTE_ID_ZADANIA`
-  mają pokazać historyczne `done`, ale `stale` dla jego weryfikacji. Odczytaj stan
-  także w świeżej sesji; model ma wskazać rozbieżność. Nie kasuj tego wyniku z raportu.
-- Jeżeli przywracasz poprawny kod, wykonaj nowy profil `unit` i zanotuj nowe ID
-  runa. Raport musi rozróżniać poszczególne obserwacje zamiast uznawać całą próbę
-  za zaliczoną wyłącznie na podstawie ostatniego wyniku.
+- In the third session, trigger the client's native conversation compaction.
+  Ask it to restore the goal, versions and sources again. The model must re-read
+  the packet and perform an ACK.
+- Exit the client, run `devbrain stop`, then `devbrain context devbrain-pilot`.
+  This restarts the service. Start one more fresh Codex session and use the
+  read-only prompt; the state should be preserved.
+- Only after reaching `done` and `fresh`, change the function code in the
+  pilot's `token_auth.py` so that it rejects a valid token. Do not change the
+  task or its evidence. `devbrain task list devbrain-pilot` and
+  `devbrain check list devbrain-pilot --task REAL_TASK_ID`
+  should show the historical `done` but `stale` for its verification. Read the
+  state in a fresh session too; the model must point out the mismatch. Do not
+  remove this result from the report.
+- If you restore the correct code, run the `unit` profile again and note the new
+  run ID. The report must distinguish the individual observations instead of
+  declaring the whole attempt passed based only on the last result.
 
-## Pomiary i warunki zaliczenia
+## Measurements and pass criteria
 
-Zapisz `devbrain doctor`, wersje klientów i listę modeli, oba raporty ewaluacji,
-ID planu/zadania/runów, review i źródła oraz obserwacje przed/po kompresji,
-restarcie i zmianie kodu. Raporty mogą zawierać treść rozmów — przekazuj tylko
-potrzebne dane diagnostyczne, bez konfiguracji poświadczeń.
+Record `devbrain doctor`, the client versions and the model list, both
+evaluation reports, the plan/task/run IDs, the review and sources, and the
+observations before and after compaction, restart and the code change. Reports
+may contain conversation content — share only the diagnostic data that is
+needed, without credential configuration.
 
-Dla trzech pytań użyj istniejącego `devbrain benchmark devbrain-pilot "PYTANIE"`:
+For three questions, use the existing `devbrain benchmark devbrain-pilot "QUESTION"`:
 
-- „Jaki jest cel i ograniczenia pilotażu?”
-- „Jaki stan ma zadanie walidacji tokenu i jakie ma dowody?”
-- „Gdzie znajduje się walidacja tokenu i jakie przypadki sprawdzają testy?”
+- "What is the goal of the pilot and what are its constraints?"
+- "What is the state of the token validation task and what evidence does it have?"
+- "Where is the token validation located and which cases do the tests cover?"
 
-Zapisz wyniki w katalogu raportów. Benchmark porównuje pierwsze żądanie z
-powtórzeniem przez cache; nie oznacza zimnego startu modelu. Podczas pracy
-obserwuj GPU przez `nvidia-smi --query-gpu=timestamp,memory.used,memory.total --format=csv -l 1`
-w drugim terminalu i zapisz obserwowane zużycie VRAM poza repozytorium.
+Save the results in the report directory. The benchmark compares the first
+request with a cached repeat; it does not measure a cold model start. While
+working, watch the GPU with
+`nvidia-smi --query-gpu=timestamp,memory.used,memory.total --format=csv -l 1`
+in a second terminal and record the observed VRAM usage outside the repository.
 
-Pilotaż zalicza się dopiero, gdy rzeczywiste modele przejdą ewaluację i trzy sesje
-odtworzą zgodne stany ze źródłami, prawdziwe testy oraz review zostaną zapisane,
-a sprawdzenia kompresji, restartu i `stale` dadzą oczekiwane wyniki. Braki,
-przekroczenia czasu i błędne odpowiedzi zapisuj jako takie. Rzeczywistą latencję
-i VRAM raportujemy jako pomiar; testy techniczne ani gotowy zestaw plików ich nie
-zastępują.
+The pilot passes only when the real models pass the evaluation, the three
+sessions restore consistent states backed by sources, real tests and the review
+are recorded, and the compaction, restart and `stale` checks give the expected
+results. Record gaps, timeouts and wrong answers as such. Real latency and VRAM
+are reported as measurements; technical tests or a ready-made set of files do
+not replace them.

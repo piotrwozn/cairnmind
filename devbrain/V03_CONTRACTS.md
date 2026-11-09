@@ -1,3 +1,5 @@
+> Historical: these are the 0.3 implementation contracts. Module names such as `tui.py` refer to that release; current behaviour is described in [CONTRACTS.md](CONTRACTS.md) and [docs/](docs/).
+
 # DevBrain 0.3 implementation contracts
 
 The accepted scope: atomic first-class plans, strict launcher resume preflight+actual
