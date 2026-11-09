@@ -54,6 +54,8 @@ The reference setup uses an RTX 4080 Super with 16 GB of VRAM; check actual memo
 
 ## Installation
 
+The complete walkthrough, from a clean Windows machine to the first project, is in **[docs/INSTALL.md](docs/INSTALL.md)**. In short:
+
 1. On Windows, install a current NVIDIA driver and WSL2. In Ubuntu, check `nvidia-smi`.
 2. In WSL, install Java 21 and tmux (`sudo apt install openjdk-21-jre-headless tmux`), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Ollama](https://docs.ollama.com/linux), [Codex CLI](https://developers.openai.com/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup). Log in to both CLIs using their own mechanisms.
 3. Copy the project directory into WSL, for example `~/src/devbrain`, and run:
@@ -226,6 +228,7 @@ The launcher blocks a client from starting when the resume package is partial or
 
 ## Documentation
 
+- [docs/INSTALL.md](docs/INSTALL.md): step-by-step installation, verification, uninstalling and troubleshooting.
 - [docs/TERMINAL.md](docs/TERMINAL.md): the terminal environment, layout, navigation and diagnostics.
 - [docs/API.md](docs/API.md): API, Ollama and Copilot connections and permissions.
 - [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.

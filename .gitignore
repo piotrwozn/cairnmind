@@ -25,3 +25,7 @@ devbrain/docs/ROADMAP.md
 
 # Local release qualification reports (machine-specific, kept on disk only)
 evidence/
+
+# Maintainer-only release and qualification tooling, kept on disk only
+release-tools/
+releases/
