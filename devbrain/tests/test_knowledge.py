@@ -1214,3 +1214,65 @@ async def test_current_worktree_filters_native_fts_ann_graph_and_direct_source_r
     assert "alpha-current" in historical["content"]
     with pytest.raises(ValueError, match="registered"):
         retriever.search(project["id"], "shared_function", worktree=tmp_path / "unregistered")
+
+
+def _record(store, project, key, status, content):
+    source = store.snapshot(project["id"], f"notes://{key}", f"Note for {key}", "document")
+    return store.remember(project["id"], {"kind": "decision", "key": key, "status": status,
+                                          "content": content}, [source["id"]])
+
+
+def _record_ids(retriever, project, query, limit=8):
+    return [hit["record_id"] for hit in retriever.search(project["id"], query, limit=limit) if hit.get("record_id")]
+
+
+def test_disputed_record_never_outranks_confirmed_record(workspace, monkeypatch):
+    import devbrain.retrieval as retrieval_module
+    store, project, settings = workspace
+    # The disputed finding repeats the query terms, so full-text search ranks it first.
+    disputed = _record(store, project, "session-a", "disputed",
+                       "Session timeout: the session timeout is one hour; session timeout applies everywhere.")
+    confirmed = _record(store, project, "session-b", "confirmed", "Session timeout is one day.")
+    retriever = Retriever(store, settings, FakeOllama())
+    monkeypatch.setattr(retrieval_module, "RECORD_STATUS_PENALTY", {"confirmed": 0, "proposed": 0, "disputed": 0})
+    assert _record_ids(retriever, project, "session timeout")[:2] == [disputed["id"], confirmed["id"]]
+    monkeypatch.undo()
+    assert _record_ids(retriever, project, "session timeout")[:2] == [confirmed["id"], disputed["id"]]
+
+
+def test_status_order_never_hides_records_behind_many_matching_chunks(workspace):
+    store, project, settings = workspace
+    for index in range(10):
+        document(store, project, f"Retry budget notes, part {index}: retry budget review.", uri=f"notes://chunk-{index}")
+    proposed = _record(store, project, "retry-proposed", "proposed", "The retry budget is five attempts.")
+    disputed = _record(store, project, "retry-disputed", "disputed", "The retry budget is unlimited.")
+    found = _record_ids(Retriever(store, settings, FakeOllama()), project, "retry budget", limit=5)
+    assert found == [proposed["id"], disputed["id"]]
+
+
+
+
+def test_strong_disputed_record_is_not_buried_under_weak_confirmed_matches(workspace):
+    store, project, settings = workspace
+    for index in range(8):
+        _record(store, project, f"cookie-{index}", "confirmed", f"The login page uses session cookie {index}.")
+    disputed = _record(store, project, "timeout", "disputed",
+                       "Session timeout: the session timeout is one hour; session timeout applies everywhere.")
+    found = _record_ids(Retriever(store, settings, FakeOllama()), project, "session timeout", limit=6)
+    assert disputed["id"] in found[:4]
+
+
+def test_confirmed_record_beats_slightly_more_relevant_disputed_records(workspace, monkeypatch):
+    import devbrain.retrieval as retrieval_module
+    store, project, settings = workspace
+    crowd = [_record(store, project, f"evict-{index}", "disputed",
+                     "Cache eviction: cache eviction runs hourly; cache eviction is aggressive.")
+             for index in range(2)]
+    confirmed = _record(store, project, "evict-policy", "confirmed", "The cache eviction policy is LRU.")
+    retriever = Retriever(store, settings, FakeOllama())
+    monkeypatch.setattr(retrieval_module, "RECORD_STATUS_PENALTY", {"confirmed": 0, "proposed": 0, "disputed": 0})
+    assert _record_ids(retriever, project, "cache eviction")[-1] == confirmed["id"]  # least relevant on its own
+    monkeypatch.undo()
+    found = _record_ids(retriever, project, "cache eviction")
+    assert found[0] == confirmed["id"] and set(found[1:]) == {record["id"] for record in crowd}
+

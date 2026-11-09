@@ -45,6 +45,12 @@ RECORD_METADATA_KEYS = (
     "review_source_ids", "acceptance_source_ids", "possible_conflicts", "unresolved_dependencies",
     "evidence", "goal", "next_step", "summary", "next_steps", "blockers", "origin", "extracted_by",
 )
+# Positions a record moves down within the record ranking, by status. At similar
+# relevance a confirmed finding comes first and a disputed one later, while a strongly
+# relevant disputed or proposed record is not buried under many weak confirmed matches.
+# Like any lower-ranked hit, a demoted record can still fall outside a very small limit.
+# Superseded records never reach fusion. Unknown statuses count as proposed.
+RECORD_STATUS_PENALTY = {"confirmed": 0, "proposed": 1, "disputed": 3}
 
 
 def public_metadata(value: Any, keys: tuple[str, ...], budget: int = 900) -> dict:
@@ -350,11 +356,14 @@ class Retriever:
             else:
                 self.warnings.append("Native vector index for the current embedding model is not ready")
         if words:
+            # Fetch enough extra rows that a status penalty cannot pull in a record
+            # that was cut off before ranking.
+            margin = max(RECORD_STATUS_PENALTY.values())
             records = self.store.query(
                 "SELECT *, $score AS search_score FROM records "
                 "WHERE SEARCH_INDEX('records[content]', :query)=true AND project_id=:project AND status<>'superseded' "
                 "AND id IN :eligible_records "
-                f"ORDER BY $score DESC LIMIT {limit * 2}",
+                f"ORDER BY $score DESC LIMIT {limit * 2 + margin}",
                 {"query": " OR ".join(words), "project": project_id, "eligible_records": eligible_records},
             )
             # Exact keys remain useful even when a short task key is absent from its body.
@@ -381,6 +390,10 @@ class Retriever:
                     "source_created_at": source["created_at"],
                 })
             if record_hits:
+                penalty = RECORD_STATUS_PENALTY
+                order = {id(hit): position + penalty.get(hit["status"], penalty["proposed"])
+                         for position, hit in enumerate(record_hits)}
+                record_hits.sort(key=lambda hit: order[id(hit)])  # stable: relevance breaks ties
                 ranks.append(record_hits)
         fused: dict[str, dict] = {}
         for ranking in ranks:
