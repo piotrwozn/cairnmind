@@ -362,7 +362,7 @@ async def test_final_repair_refuses_contract_that_cannot_fit_total_context_budge
     source, _ = document(store, project, "Budgeted source evidence.")
     settings.num_ctx = 1
     contract = {"type": "object", "properties": {
-        f"field{i}": {"type": "string", "description": "x" * 512} for i in range(10)}}
+        f"field{i}": {"type": "string", "description": "x" * 512} for i in range(9)}}
     model = FakeOllama([{"content": "not JSON"}])
     result = await KnowledgeAgent(store, settings, model).ask(
         project["id"], "Budgeted source evidence", answer_schema=contract)

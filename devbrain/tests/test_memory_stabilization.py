@@ -552,3 +552,100 @@ async def test_extraction_enforces_the_six_record_schema_before_writing(workspac
     assert store.list_records(project["id"]) == []
     assert len(model.calls) == 2
     assert job_row(store, job)["diagnostics"]["repair_attempted"] is True
+
+
+async def test_extraction_links_records_to_named_symbols_and_nested_files(workspace):
+    store, project, settings = workspace
+    quote = "refresh_token() in src/auth/session.py keeps sessions for one hour."
+    item = source(store, project, quote)
+    nodes = {
+        "symbol-refresh": ("symbol", "refresh_token"),
+        "file-session": ("file", "src/auth/session.py"),
+        "symbol-unrelated": ("symbol", "logout_user"),
+        "file-unrelated": ("file", "src/billing/invoice.py"),
+    }
+    for node_id, (kind, label) in nodes.items():
+        store.upsert_node({"id": node_id, "project_id": project["id"], "kind": kind, "label": label,
+                           "source_id": item["id"], "is_current": True, "metadata": {}})
+    job = extraction_job(store, project, item)
+    model = ScriptedOllama([extraction(candidate(quote, key="session-ttl", content="Sessions last one hour."))])
+    await KnowledgeAgent(store, settings, model).extract(job)
+    linked = {edge["to_id"] for edge in store.query(
+        "SELECT FROM edges WHERE project_id=:project AND kind='relates_to'", {"project": project["id"]})}
+    assert linked == {"symbol-refresh", "file-session"}
+
+
+async def test_single_character_quote_is_not_accepted_as_evidence(workspace):
+    store, project, settings = workspace
+    text = "Authentication requires a literal source-backed policy."
+    item = source(store, project, text, searchable=True)
+    invented = "Sessions never expire."
+    model = ScriptedOllama([final(item["id"], "A", answer=invented), final(item["id"], "A", answer=invented)])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "Authentication literal policy")
+    assert result["status"] == "partial"
+    assert not any(source.get("quote") == "A" for source in result["sources"])
+
+
+async def test_complete_answer_reports_quote_coverage(workspace):
+    store, project, settings = workspace
+    quote = "Authentication requires a literal source-backed policy."
+    item = source(store, project, quote, searchable=True)
+    model = ScriptedOllama([final(item["id"], quote, answer="Authentication requires a literal policy.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "Authentication literal policy")
+    assert result["status"] == "complete"
+    assert result["coverage"] == {"answer_terms": 4, "terms_in_quotes": 4, "ratio": 1.0}
+
+
+async def test_format_repair_keeps_verified_draft_citations(workspace):
+    store, project, settings = workspace
+    card = "Provenance card: the session port fact comes from the canonical note."
+    canonical = "Canonical note: the session service listens on TCP port 28267."
+    first = source(store, project, card, searchable=True)
+    second = source(store, project, canonical, searchable=True)
+    draft = {"content": json.dumps({"answer": "port 28267", "unknowns": [], "citations": [
+        {"source_id": first["id"], "quote": card}, {"source_id": second["id"], "quote": canonical}]})}
+    repaired = {"content": json.dumps({"answer": {"port": 28267}, "unknowns": [], "citations": [
+        {"source_id": second["id"], "quote": canonical}]})}
+    model = ScriptedOllama([draft, repaired])
+    schema = {"type": "object", "properties": {"port": {"type": "integer"}}, "required": ["port"],
+              "additionalProperties": False}
+    result = await KnowledgeAgent(store, settings, model).ask(
+        project["id"], "Which TCP port does the session service use? Provenance card canonical note",
+        answer_schema=schema)
+    assert result["status"] == "complete" and json.loads(result["answer"]) == {"port": 28267}
+    assert {source["id"] for source in result["sources"]} == {first["id"], second["id"]}
+    assert result["diagnostics"]["repair_attempted"] is True
+
+
+async def test_repair_ignores_malformed_draft_citations_and_measures_typed_values(workspace):
+    store, project, settings = workspace
+    canonical = "Canonical note: the session service listens on TCP port 28267."
+    item = source(store, project, canonical, searchable=True)
+    draft = {"content": json.dumps({"answer": "port 28267", "unknowns": [], "citations": [
+        {"source_id": item["id"], "quote": ["not", "a", "string"]},
+        {"source_id": ["not", "an", "id"], "quote": canonical}]})}
+    repaired = {"content": json.dumps({"answer": {"port": 28267}, "unknowns": [], "citations": [
+        {"source_id": item["id"], "quote": canonical}]})}
+    schema = {"type": "object", "properties": {"port": {"type": "integer"}}, "required": ["port"],
+              "additionalProperties": False}
+    result = await KnowledgeAgent(store, settings, ScriptedOllama([draft, repaired])).ask(
+        project["id"], "Which TCP port does the session service use? Canonical note", answer_schema=schema)
+    assert result["status"] == "complete" and [s["id"] for s in result["sources"]] == [item["id"]]
+    assert result["coverage"] == {"answer_terms": 1, "terms_in_quotes": 1, "ratio": 1.0}
+
+
+async def test_file_links_match_absolute_labels_by_exact_file_name(workspace):
+    store, project, settings = workspace
+    quote = "token_store.py and session.py hold the refresh logic."
+    item = source(store, project, quote)
+    for node_id, label in {"posix": "/home/dev/proj/src/auth/token_store.py",
+                           "windows": "C:\proj\src\session.py",
+                           "wildcard-decoy": "/home/dev/proj/src/tokenXstore.py"}.items():
+        store.upsert_node({"id": node_id, "project_id": project["id"], "kind": "file", "label": label,
+                           "source_id": item["id"], "is_current": True, "metadata": {}})
+    job = extraction_job(store, project, item)
+    model = ScriptedOllama([extraction(candidate(quote, key="refresh", content="Refresh logic lives in two files."))])
+    await KnowledgeAgent(store, settings, model).extract(job)
+    linked = {edge["to_id"] for edge in store.query(
+        "SELECT FROM edges WHERE project_id=:project AND kind='relates_to'", {"project": project["id"]})}
+    assert linked == {"posix", "windows"}
