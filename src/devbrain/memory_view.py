@@ -31,16 +31,22 @@ def _indented(value, prefix):
     return [prefix + line for line in _block(value).strip("\n").split("\n")]
 
 
+def _first_line(value):
+    return _line(str(value).strip().split("\n", 1)[0])
+
+
 def _plural(count, noun):
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def _check_run(run):
-    if run.get("passed") is True:
+    code = run.get("returncode")
+    # The same condition as the verifier: a bare "passed" flag is not enough.
+    if run.get("passed") is True and run.get("outcome") == "completed" and type(code) is int and code == 0:
         result = "passed"
     else:
-        code = run.get("returncode")
-        result = f"not passed ({_line(run.get('outcome', 'unknown'))}" + (f", exit {code})" if code is not None else ")")
+        result = (f"not passed ({_line(run.get('outcome', 'unknown'))}"
+                  + (f", exit {_line(code)})" if code is not None else ")"))
     return (f"      {_line(run.get('profile_id', '?'))}: {result}, ended {_line(run.get('ended_at', 'unknown'))}, "
             f"recorded by {_line(run.get('origin', 'unknown'))}, run {_line(run['id'])}")
 
@@ -76,7 +82,7 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
     shown_plans = [] if kind not in (None, "plan") or status is not None else [
         row for row in sorted(payload["plans"], key=lambda row: (row["title"], row["id"]))
         if found(row["title"], row["goal"], *row["constraints"],
-                 *(records[step]["content"] for step in row["step_ids"]), *uris(row["source_ids"]))]
+                 *(_first_line(records[step]["content"]) for step in row["step_ids"]), *uris(row["source_ids"]))]
 
     project, counts = manifest["project"], manifest["counts"]
     out = ["Portable memory snapshot (read-only view; nothing is imported or written)",
@@ -113,7 +119,7 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
         if claims:
             out.append("  reported by an agent, not verified by this view: " + ", ".join(claims))
         if runs.get(row["id"]):
-            out.append("  historical check runs (recorded at the snapshot's origin; not fresh evidence for your checkout):")
+            out.append("  historical check runs (carried in this snapshot; not fresh evidence for your checkout):")
             out += [_check_run(run) for run in sorted(runs[row["id"]], key=lambda r: str(r.get("ended_at") or ""),
                                                       reverse=True)]
 
@@ -125,12 +131,19 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
         if row["goal"].strip():
             out += ["  goal:", *_indented(row["goal"], "  | ")]
         out += [f"  constraint: {_line(item)}" for item in row["constraints"]]
+        if uris(row["source_ids"]):
+            out.append("  sources: " + ", ".join(_line(uri) for uri in uris(row["source_ids"])))
         for number, step in enumerate(row["step_ids"], 1):
             task = records[step]
-            title = _line(task["content"].strip().split("\n", 1)[0])
-            out.append(f"  {number}. [{_line(task['metadata'].get('state', 'todo'))}] {title} ({_line(step)})")
+            out.append(f"  {number}. [{_line(task['metadata'].get('state', 'todo'))}] "
+                       f"{_first_line(task['content'])} ({_line(step)})")
     if not shown_records and not shown_plans:
-        out += ["", "Nothing in this snapshot matches the filters." if filters else "This snapshot is empty."]
+        if filters:
+            out += ["", "Nothing in this snapshot matches the filters."]
+        elif payload["sources"]:
+            out += ["", f"This snapshot has no records or plans yet ({_plural(len(payload['sources']), 'source')})."]
+        else:
+            out += ["", "This snapshot is empty."]
     return "\n".join(out)
 
 

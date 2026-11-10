@@ -791,7 +791,7 @@ def memory_show(ctx: typer.Context, path: Path,
                 kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
                 status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None,
                 grep: Annotated[str | None, typer.Option("--grep", help="Case-insensitive text to look for.")] = None):
-    """Read a snapshot's records, plans and sources as text; needs no engine, model or service and writes nothing."""
+    """Read a snapshot's records and plans as text. Writes nothing; outside a coding session needs no engine or service."""
     from devbrain.memory_view import show_snapshot
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
