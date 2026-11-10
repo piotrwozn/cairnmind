@@ -11,7 +11,7 @@
 
 ## Contracts
 
-<!-- Does this change a safety contract in CONTRACTS.md or docs/MEMORY_CONTRACTS.md? If so, explain. -->
+<!-- Does this change a safety contract in docs/CONTRACTS.md or docs/MEMORY_CONTRACTS.md? If so, explain. -->
 
 ## Not verified
 

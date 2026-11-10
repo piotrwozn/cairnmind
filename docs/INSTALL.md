@@ -78,7 +78,7 @@ cd devbrain-0.8.0
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
-cd ~/src/cairnmind/devbrain
+cd ~/src/cairnmind
 ```
 
 ## 4. Run the installer
@@ -99,6 +99,19 @@ The installer:
 4. runs `cairnmind doctor` and prints anything that still needs attention.
 
 If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal.
+
+### Manual installation
+
+The same steps can be run by hand, for example on a system where you do not want to run the script:
+
+```bash
+uv tool install --python 3.12 ~/src/cairnmind
+cairnmind engine install
+cairnmind init
+cairnmind engine status
+```
+
+This simpler form lets `uv` resolve dependency versions itself; the installer additionally pins them to `uv.lock`.
 
 ## 5. Download the models
 

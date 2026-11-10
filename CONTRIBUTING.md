@@ -7,7 +7,7 @@ Thank you for your interest in Cairnmind. This guide explains how to set up a de
 Cairnmind is built around one promise: memory that coding agents can trust. Changes are reviewed against that promise first.
 
 - A model answer never becomes independent evidence. Quotes must stay literal and verifiable.
-- Safety contracts are deliberate. If a test asserts that something blocks, such as an unknown transcript record blocking a verified resume, change it only together with the contract in [devbrain/CONTRACTS.md](devbrain/CONTRACTS.md) or [docs/MEMORY_CONTRACTS.md](devbrain/docs/MEMORY_CONTRACTS.md), and explain why in the pull request.
+- Safety contracts are deliberate. If a test asserts that something blocks, such as an unknown transcript record blocking a verified resume, change it only together with the contract in [docs/CONTRACTS.md](docs/CONTRACTS.md) or [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md), and explain why in the pull request.
 - Prefer removing code to adding a new layer. Every feature has to be maintained by a small team.
 
 ## Development environment
@@ -16,7 +16,7 @@ Cairnmind runs on Linux or WSL2 Ubuntu. You need Python 3.12, [uv](https://docs.
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git
-cd cairnmind/devbrain
+cd cairnmind
 uv sync --locked --extra dev
 ```
 
@@ -40,7 +40,7 @@ Looking for a first task? Issues labelled [`good first issue`](https://github.co
 
 ### Code map
 
-All modules are in `devbrain/src/devbrain/`, all tests in `devbrain/tests/`. **Fast** tests run with `uv run pytest -m "not arcade and not tmux"` and need only Python; **engine** tests start the real ArcadeDB and need Java 21.
+All modules are in `src/devbrain/`, all tests in `tests/`. **Fast** tests run with `uv run pytest -m "not arcade and not tmux"` and need only Python; **engine** tests start the real ArcadeDB and need Java 21.
 
 | You want to change | Start in | Run | Tier |
 |---|---|---|---|
@@ -65,7 +65,7 @@ All modules are in `devbrain/src/devbrain/`, all tests in `devbrain/tests/`. **F
 
 Run a single file with, for example, `uv run pytest tests/test_terminal_commands.py`.
 
-Internal names still say `devbrain` (the package directory, the Python module, `DEVBRAIN_*` variables). That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40).
+Internal names still say `devbrain` (the Python module, `DEVBRAIN_*` variables, data paths). That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40).
 
 ## Evaluations
 
