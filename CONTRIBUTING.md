@@ -16,7 +16,7 @@ Cairnmind runs on Linux or WSL2 Ubuntu. You need Python 3.12, [uv](https://docs.
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git
-cd devbrain/devbrain
+cd cairnmind/devbrain
 uv sync --locked --extra dev
 ```
 

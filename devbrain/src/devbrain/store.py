@@ -117,7 +117,7 @@ def _evidence_time(tx, source_ids):
     """When the record's evidence existed, from its immutable sources.
 
     A transcript's own timestamp is when the statement was made (`stated`). Any other
-    source existed no later than the moment DevBrain stored its snapshot (`observed`).
+    source existed no later than the moment Cairnmind stored its snapshot (`observed`).
     """
     times, bases = [], set()
     for source_id in dict.fromkeys(source_ids):
