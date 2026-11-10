@@ -15,6 +15,7 @@ COMMANDS = (
     ("Second assistant", "Show the second visible assistant", "focus", "client2"),
     ("Memory", "Facts, tasks, plans and sources", "focus", "inspector"),
     ("Ask memory", "Question answered from project memory with sources", "command", "ask"),
+    ("Brief", "Where work stopped: checkpoint, next task, checks and commits", "command", "brief"),
     ("Graph", "Explore relationships in memory", "focus", "graph"),
     ("Search projects", "Find a registered project", "command", "search"),
     ("Add folder", "Register a project folder", "command", "add_project"),

@@ -161,7 +161,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             payload = dict(kwargs.get("json") or {})
             payload["session_id"] = session_id
             kwargs["json"] = payload
-    elif method.upper() == "GET" and (path in {"/context", "/checks", "/jobs", "/memory/status"}
+    elif method.upper() == "GET" and (path in {"/context", "/brief", "/checks", "/jobs", "/memory/status"}
                                       or path.startswith("/jobs/")):
         session_id = os.environ.get("DEVBRAIN_SESSION_ID")
         if session_id:
@@ -426,6 +426,19 @@ def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None =
 def context(ctx: typer.Context, project: str, worktree: Path | None = None):
     output(request(ctx.obj, "GET", "/context", params={"project": project,
                    **({"worktree": str(worktree.resolve())} if worktree else {})}))
+
+
+@app.command()
+@initialized
+def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
+          as_json: Annotated[bool, typer.Option("--json", help="Print the marked lines as JSON.")] = False):
+    """Show where work stopped: checkpoint, next task, check evidence, commits and proposals. Asks no model."""
+    result = request(ctx.obj, "GET", "/brief", params={"project": project,
+                     **({"worktree": str(worktree.expanduser().resolve())} if worktree else {})})
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
 
 
 @app.command()

@@ -868,6 +868,40 @@ async def test_keyboard_start_feedback_tracks_fresh_selected_slot_without_overwr
 
 
 @pytest.mark.asyncio
+async def test_brief_from_sidebar_shows_marked_lines_without_asking_a_model(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    asked = []
+    original = broker.request
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        if path == "/api/ask":
+            pytest.fail("The brief asked the knowledge agent")
+        if path == "/api/brief":
+            asked.append((method, deepcopy(params)))
+            return {"text": "Brief for Keyboard project in /repo\n[machine]  Latest checkpoint saved 2 hours ago.\n"
+                            "[reported] Checkpoint summary: half done", "lines": []}
+        return original(method, path, params=params, json=json, timeout=timeout)
+
+    broker.request = request
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        assert app.open_command("brief") is True
+        for _ in range(100):
+            await pilot.pause(.02)
+            if isinstance(app.screen, MessageModal):
+                break
+        assert isinstance(app.screen, MessageModal)
+        await pilot.pause()
+        text = screen_text(app)
+        assert "[machine]  Latest checkpoint saved 2 hours ago." in text
+        assert "[reported] Checkpoint summary: half done" in text
+        await pilot.press("escape")
+        await settle(app, pilot)
+    assert len(asked) == 1 and asked[0][0] == "GET" and asked[0][1]["project"] == "project-keyboard"
+
+
+@pytest.mark.asyncio
 async def test_ask_memory_from_sidebar_shows_cited_answer(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     asked = []

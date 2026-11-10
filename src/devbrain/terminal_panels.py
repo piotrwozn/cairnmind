@@ -743,6 +743,20 @@ class SidebarApp(BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
+    @work(group="sidebar-brief", exclusive=True, exit_on_error=False)
+    async def action_brief(self):
+        """Show where work stopped in the chosen project; read-only and without a model."""
+        try:
+            project = self.chosen_project()
+            params = {"project": project["id"]}
+            if self.workspace_data.get("project_id") == project["id"] and self.workspace_data.get("worktree"):
+                params["worktree"] = self.workspace_data["worktree"]
+            result = await self.request("GET", "/api/brief", params=params)
+            text = result.get("text") if isinstance(result, dict) else None
+            await self.push_screen_wait(MessageModal("Brief", text or self.t("The memory service returned no brief.")))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
     @work(group="sidebar-profiles", exclusive=True, exit_on_error=False)
     async def edit_profiles(self, identifier=None, *, advanced=False):
         try:

@@ -637,6 +637,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         result = await asyncio.to_thread(retriever.context, pid, scope)
         return result
 
+    @app.get("/brief", dependencies=auth)
+    async def brief(project: str, worktree: str | None = None, session_id: str | None = None):
+        # Built from stored rows and Git only; this route never reaches the model queue.
+        from devbrain.brief import build_brief
+        pid = store.resolve_project(project)["id"]
+        scope = await asyncio.to_thread(read_scope, pid, worktree, session_id)
+        return await asyncio.to_thread(build_brief, store, pid, scope)
+
     @app.get("/plans", dependencies=auth)
     async def list_plans(project: str):
         return {"plans": await asyncio.to_thread(plans.list, store.resolve_project(project)["id"])}

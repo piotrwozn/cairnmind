@@ -800,6 +800,14 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             raise HTTPException(422, "Niepoprawne pola żądania.")
         return forward(await upstream("POST", "/ask", data=value))
 
+    @app.get("/api/brief")
+    async def brief(request: Request):
+        session_for(request)
+        unknown = set(request.query_params) - {"project", "worktree"}
+        if unknown or "project" not in request.query_params:
+            raise HTTPException(422, "Niepoprawne pola żądania.")
+        return forward(await upstream("GET", "/brief", params=request.query_params))
+
     @app.get("/api/plans")
     async def list_plans(request: Request):
         session_for(request)
