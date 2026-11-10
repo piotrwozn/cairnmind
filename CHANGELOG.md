@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- The help pages and messages of the command line are in English (#37).
 - `cairnmind doctor --contract --format text` prints one aligned line per client and check: `ok` or `failed`, with the evidence line or with what was needed and found, and a `verified_resume` line per client. A failed check now also records what it found (the line that says otherwise, or the exit code of the command), in JSON as well. JSON stays the default (#38).
 - The `mcp` capability check no longer accepts the flag example `--debug='!hooks,!mcp'` in a client's help text as the `mcp` command.
 - The memory inspector shows when a record's evidence was stated or observed, and warns when a record replaced a finding with newer evidence (#39).

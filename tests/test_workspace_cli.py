@@ -1,6 +1,7 @@
 """Terminal entry points and lifecycle diagnostics share one global workspace."""
 from __future__ import annotations
 
+import re
 import json
 import sys
 from types import ModuleType
@@ -66,8 +67,50 @@ def test_no_tty_is_actionable_and_does_not_initialize(tmp_path, monkeypatch, arg
     data = tmp_path / "absent"
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), *arguments])
     assert result.exit_code == 2
-    assert "interaktywnym terminalu" in result.output
+    assert "interactive terminal" in " ".join(result.output.split())
     assert not calls and not data.exists()
+
+
+POLISH = set("\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c\u0104\u0106\u0118\u0141\u0143\u00d3\u015a\u0179\u017b")
+
+
+POLISH_WORDS = {"nie", "jest", "oraz", "lub", "albo", "przez", "dla", "bez", "tylko", "lokalne", "lokalny", "modele",
+                "silnik", "natywny", "pakiety", "zakres", "historii", "wznowienia", "odbioru", "potwierdzenia",
+                "projektu", "projekt", "katalog", "plik", "zadania", "zadanie", "stan", "jawnie", "uruchom", "wymaga",
+                "brak", "magazyn", "magazynu", "kokpit", "kokpitu", "sesji", "sesja", "dowody", "pobierz", "odczytaj",
+                "zapisz", "zatrzymaj", "sprawdzenia"}
+
+
+def _command_paths(group, prefix=()):
+    for name, command in group.commands.items():
+        yield (*prefix, name)
+        if hasattr(command, "commands"):
+            yield from _command_paths(command, (*prefix, name))
+
+
+def test_every_help_page_of_the_command_line_is_english(tmp_path):
+    import typer
+    root = typer.main.get_command(cli.app)
+    paths = [(), *_command_paths(root)]
+    assert len(paths) > 40
+    runner = CliRunner()
+    for path in paths:
+        result = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "absent"), *path, "--help"])
+        assert result.exit_code == 0, (path, result.output)
+        assert not POLISH & set(result.output), (path, sorted(POLISH & set(result.output)))
+        # Polish without diacritics would pass the check above, so common Polish words are checked too.
+        words = set(re.findall(r"[a-z]+", result.output.lower()))
+        assert not words & POLISH_WORDS, (path, sorted(words & POLISH_WORDS))
+    assert not (tmp_path / "absent").exists()
+
+
+def test_no_message_in_the_command_line_module_is_polish():
+    import ast
+    from pathlib import Path
+    tree = ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))
+    polish = [(node.lineno, node.value) for node in ast.walk(tree)
+              if isinstance(node, ast.Constant) and isinstance(node.value, str) and POLISH & set(node.value)]
+    assert polish == []
 
 
 @pytest.mark.parametrize("arguments,expected", [
