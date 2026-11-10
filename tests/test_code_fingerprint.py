@@ -1,14 +1,17 @@
-"""The code fingerprint reads a file again only when it may have changed (issue #24).
+"""The code fingerprint got cheaper without reading less (issue #24).
 
-The guarantee must stay what it was: any edit changes the fingerprint and invalidates an ACK.
+Any edit must still change the fingerprint and invalidate an ACK, including an edit that
+leaves every size and time of the file as it was. That is why file content is always read.
 """
 from __future__ import annotations
 
 import builtins
 import io
+import mmap
 import os
 from pathlib import Path
 import subprocess
+import time
 
 import pytest
 
@@ -24,7 +27,7 @@ def git(root, *args):
 
 
 @pytest.fixture
-def workspace(tmp_path, monkeypatch):
+def workspace(tmp_path):
     root = tmp_path / "repo"
     (root / "pkg").mkdir(parents=True)
     (root / "app.py").write_text("VALUE = 1\n")
@@ -37,9 +40,6 @@ def workspace(tmp_path, monkeypatch):
     git(root, "commit", "-m", "initial")
     store = Store(tmp_path / "memory")
     project = store.add_project("fingerprint", root)
-    verification._HASHES.clear()
-    # The files were written a moment ago; the racy-clean rule has its own test below.
-    monkeypatch.setattr(verification, "RACY_WINDOW_NS", -10**12)
     return store, project, root
 
 
@@ -57,19 +57,34 @@ def opened_under(root, monkeypatch):
     return opened
 
 
-def test_an_unchanged_worktree_is_fingerprinted_without_opening_a_file(workspace, monkeypatch):
+def test_every_capture_reads_every_file_twice(workspace, monkeypatch):
     store, project, root = workspace
+    capture_code_state(store, project["id"])
+    time.sleep(2.2)  # files this old would be skipped by any cache keyed by size and times
     opened = opened_under(root, monkeypatch)
-    first = capture_code_state(store, project["id"])
-    assert first["status"] == "fresh" and sorted(set(opened)) == ["app.py", "pkg/util.py", "untracked.txt"]
-    del opened[:]
-    second = capture_code_state(store, project["id"])
-    assert opened == [] and second["fingerprint"] == first["fingerprint"]
-    verification._HASHES.clear()
-    assert capture_code_state(store, project["id"])["fingerprint"] == first["fingerprint"]  # cached or read: the same
+    state = capture_code_state(store, project["id"])
+    assert state["status"] == "fresh"
+    assert sorted(opened) == ["app.py", "app.py", "pkg/util.py", "pkg/util.py", "untracked.txt", "untracked.txt"]
 
 
-def test_every_kind_of_edit_changes_the_fingerprint(workspace, monkeypatch):
+def test_an_edit_through_a_shared_mapping_changes_the_fingerprint(workspace):
+    store, project, root = workspace
+    target = root / "app.py"
+    with target.open("r+b") as handle, mmap.mmap(handle.fileno(), 0) as mapping:
+        mapping[0:1] = b"W"  # the first store faults and moves the file times
+        time.sleep(2.2)
+        before = capture_code_state(store, project["id"])
+        identity = [getattr(target.stat(), name) for name in ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino")]
+        mapping[1:2] = b"X"  # a later store to the same dirty page moves none of them
+        after_identity = [getattr(target.stat(), name) for name in ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino")]
+        after = capture_code_state(store, project["id"])
+    assert before["status"] == after["status"] == "fresh"
+    assert after["fingerprint"] != before["fingerprint"]
+    if after_identity != identity:
+        pytest.skip("this filesystem updated the file times for the second store; the edit was still detected")
+
+
+def test_every_kind_of_edit_changes_the_fingerprint(workspace):
     store, project, root = workspace
     seen = {capture_code_state(store, project["id"])["fingerprint"]}
 
@@ -102,49 +117,19 @@ def test_every_kind_of_edit_changes_the_fingerprint(workspace, monkeypatch):
     changed()
 
 
-def test_a_file_touched_just_before_it_was_read_is_read_again(workspace, monkeypatch):
+def test_the_fingerprint_is_the_one_computed_by_resolving_every_file(workspace, monkeypatch):
     store, project, root = workspace
-    monkeypatch.setattr(verification, "RACY_WINDOW_NS", 2_000_000_000)
-    for name in ("app.py", "pkg/util.py", "untracked.txt"):
-        os.utime(root / name)  # touched now, well inside the window
-    opened = opened_under(root, monkeypatch)
-    first = capture_code_state(store, project["id"])
-    # On a filesystem with coarse timestamps a second write inside the same tick would look
-    # identical, so nothing written within the window is remembered.
-    assert verification._HASHES == {}
-    del opened[:]
-    assert capture_code_state(store, project["id"])["fingerprint"] == first["fingerprint"]
-    assert sorted(set(opened)) == ["app.py", "pkg/util.py", "untracked.txt"]
-    monkeypatch.setattr(verification.time, "time_ns", lambda: 10**19)  # long after every file time
-    capture_code_state(store, project["id"])
-    assert len(verification._HASHES) == 3
-    del opened[:]
-    capture_code_state(store, project["id"])
-    assert opened == []
+    (root / "inner").mkdir()
+    (root / "inner" / "deep.py").write_text("DEEP = 1\n")
+    (root / "link.py").symlink_to(root / "app.py")
+    current = capture_code_state(store, project["id"])
+    # The per-directory check is an optimisation of the per-file check it replaced.
+    monkeypatch.setattr(verification, "_inside", lambda root: None)
+    assert capture_code_state(store, project["id"]) == current
+    assert current["status"] == "fresh"
 
 
-def test_a_file_that_changes_while_it_is_read_is_not_remembered(workspace, monkeypatch):
-    store, project, root = workspace
-    target = root / "app.py"
-    capture_code_state(store, project["id"])
-    assert str(target) in verification._HASHES
-    target.write_text("VALUE = 20\n")
-    original = Path.open
-
-    def racing_open(path, *args, **kwargs):
-        stream = original(path, *args, **kwargs)
-        if path == target:
-            with original(target, "a") as writer:
-                writer.write("# changed during the read\n")
-        return stream
-
-    monkeypatch.setattr(Path, "open", racing_open)
-    state = capture_code_state(store, project["id"])
-    assert state["status"] == "unknown" and any("app.py" in text for text in state["unknowns"])
-    assert str(target) not in verification._HASHES
-
-
-def test_a_directory_that_leads_outside_the_worktree_is_still_reported_on_every_capture(workspace, tmp_path):
+def test_a_directory_that_leads_outside_the_worktree_is_reported_on_every_capture(workspace, tmp_path):
     store, project, root = workspace
     assert capture_code_state(store, project["id"])["status"] == "fresh"
     outside = tmp_path / "outside"
@@ -161,15 +146,20 @@ def test_a_directory_that_leads_outside_the_worktree_is_still_reported_on_every_
     assert capture_code_state(store, project["id"])["status"] == "fresh"
 
 
-def test_the_cache_is_bounded(workspace, monkeypatch):
+def test_directories_are_resolved_once_per_manifest_not_once_per_file(workspace, monkeypatch):
     store, project, root = workspace
-    monkeypatch.setattr(verification, "_HASH_LIMIT", 2)
-    first = capture_code_state(store, project["id"])
-    assert len(verification._HASHES) <= 2
-    assert capture_code_state(store, project["id"])["fingerprint"] == first["fingerprint"]
+    for index in range(40):
+        (root / "pkg" / f"module_{index}.py").write_text(f"VALUE = {index}\n")
+    resolved = []
+    original = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: resolved.append(str(self)) or original(self, *a, **k))
+    assert capture_code_state(store, project["id"])["status"] == "fresh"
+    below = [path for path in resolved if path.startswith(str(root) + os.sep) and path.endswith(".py")]
+    assert below == []  # no file is resolved; only the root and its directories are
+    assert len([path for path in resolved if path == str(root / "pkg")]) == 2  # once for each of the two manifests
 
 
-def test_editing_a_remembered_file_still_invalidates_an_acknowledged_packet(workspace):
+def test_editing_a_file_invalidates_an_acknowledged_packet(workspace):
     store, project, root = workspace
     manager = SessionManager(store, store.settings)
     ready = manager.prepare(project["id"], "codex", timeout=0)
@@ -177,7 +167,6 @@ def test_editing_a_remembered_file_still_invalidates_an_acknowledged_packet(work
     assert ready["status"] == "ready", ready["unknowns"]
     manager.ack(ready["session_id"], packet["id"], packet["hash"], {"plan": None, "task": None})
     manager.require_ack(ready["session_id"])
-    assert str(root / "app.py") in verification._HASHES
     target = root / "app.py"
     before = target.stat()
     target.write_text("VALUE = 9\n")
