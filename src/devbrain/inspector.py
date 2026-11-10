@@ -149,6 +149,11 @@ class Inspector:
                     item = {key: row.get(key) for key in ("id", "project_id", "version", "title", "goal", "step_ids",
                                                         "created_at", "updated_at")}
                 items.append(item)
+            if collection == "records":
+                from .evidence import evidence_states
+                states = evidence_states(self.store, pid, rows)
+                for item in items:
+                    item["evidence_state"] = states[item["id"]]["evidence_state"]
             return {"items": items, "total": len(ids), "next_cursor": _encode_cursor({"query": query_key,
                 "after": selected[-1]}) if len(available) > limit else None, "cursor": _cursor(reader, self.store)}
 
@@ -194,6 +199,9 @@ class Inspector:
             if not row or not self._matches(scope, row):
                 raise InspectorNotFound("Unknown record in requested scope")
             result = {"record": row, "cursor": _cursor(reader, self.store)}
+        # Derived on every read: a source can change without any write to the record.
+        from .evidence import evidence_states
+        result["evidence"] = evidence_states(self.store, scope[0]["id"], [row])[row["id"]]
         if row["kind"] == "task":
             # A read projection, not the /checks recovery operation. Filesystem
             # capture never holds the shared database writer lock.

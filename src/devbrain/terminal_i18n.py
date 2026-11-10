@@ -40,6 +40,13 @@ CATALOG = {
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
+    "Evidence": "Dowody",
+    "the supporting source is current": "źródło jest aktualne",
+    "the source changed; the quoted passage is still there": "źródło się zmieniło; cytowany fragment nadal w nim jest",
+    "the source changed; the quoted passage is gone": "źródło się zmieniło; cytowanego fragmentu już w nim nie ma",
+    "the source changed; no quoted passage was recorded": "źródło się zmieniło; nie zapisano cytowanego fragmentu",
+    "orphaned: no supporting source has a current version":
+        "osierocone: żadne źródło nie ma aktualnej wersji",
     "Brief": "Skrót",
     "Where work stopped: checkpoint, next task, checks and commits":
         "Gdzie przerwano pracę: punkt kontrolny, następne zadanie, testy i commity",

@@ -12,6 +12,15 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Select, St
 from .terminal_safe import plain, safe_text
 from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, summary_text
 
+# (evidence_state, quote_survives) as returned by the inspector for one record.
+EVIDENCE_LABELS = {
+    ("anchored", None): "the supporting source is current",
+    ("evidence_replaced", True): "the source changed; the quoted passage is still there",
+    ("evidence_replaced", False): "the source changed; the quoted passage is gone",
+    ("evidence_replaced", None): "the source changed; no quoted passage was recorded",
+    ("orphaned", None): "orphaned: no supporting source has a current version",
+}
+
 _VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),
           ("Zadania", "tasks"), ("Testy", "checks"), ("Kolejka", "jobs"),
           ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
@@ -288,6 +297,10 @@ class InspectorApp(BasePanel):
             lines.append(self.t("Version") + ": " + str(item["version"]))
         if item.get("source_ids"):
             lines.append(self.t("Sources") + ": " + str(len(item["source_ids"])))
+        evidence = value.get("evidence") if isinstance(value.get("evidence"), dict) else {}
+        label = EVIDENCE_LABELS.get((evidence.get("evidence_state"), evidence.get("quote_survives")))
+        if label:
+            lines.append(self.t("Evidence") + ": " + self.t(label))
         if not lines:
             return summary_text(value, self.language)
         return "\n\n".join(lines)

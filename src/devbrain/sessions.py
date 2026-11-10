@@ -230,6 +230,11 @@ class SessionManager:
                            if sources_by_id.get(source_id, {}).get("project_id") != project_id]
         state_unknowns = [f"A current plan/task/memory reference has no scoped durable source: {value}"
                           for value in missing_sources]
+        from .evidence import evidence_states
+        # Advisory only: it is not an unknown and not part of the state identity, so a
+        # deleted or edited file neither blocks a resume nor invalidates an acknowledged one.
+        evidence = {record_id: value["evidence_state"] for record_id, value in
+                    evidence_states(self.store, project_id, relevant).items() if value["evidence_state"] != "anchored"}
         code = capture_code_state(self.store, project_id, worktree=root)
         initial_baseline = False
         if code.get("status") != "fresh":
@@ -252,7 +257,7 @@ class SessionManager:
                     "code": _code_identity(code)}
         return {"plan": plan, "task": task, "reason": following.get("reason"),
                 "blocked": following.get("blocked", []), "records": relevant,
-                "code": code, "state_hash": _hash(identity), "unknowns": state_unknowns,
+                "code": code, "state_hash": _hash(identity), "unknowns": state_unknowns, "evidence": evidence,
                 "initial_baseline_eligible": initial_baseline}
 
     @staticmethod
@@ -714,6 +719,7 @@ class SessionManager:
 
     def _build(self, session: dict, state: dict, archives: list[dict], unknowns: list[str]) -> dict:
         plan, task = state["plan"], state["task"]
+        evidence = state.get("evidence") or {}
         plan_view = ({key: plan.get(key) for key in
                       ("id", "version", "title", "goal", "constraints", "source_ids")} if plan else None)
         task_view = ({"id": task["id"], "version": task["version"], "content": task["content"],
@@ -740,7 +746,9 @@ class SessionManager:
                   "records": [{"id": row["id"], "version": row["version"], "kind": row["kind"],
                                "status": row["status"], "content": row["content"][:600],
                                "content_truncated": len(row["content"]) > 600,
-                               "source_ids": row.get("source_ids", [])[:8]} for row in previews],
+                               "source_ids": row.get("source_ids", [])[:8],
+                               **({"evidence_state": evidence[row["id"]]} if row["id"] in evidence else {})}
+                              for row in previews],
                   "omitted_records": max(0, len(state["records"]) - len(previews)),
                   "code": state["code"], "state_hash": state["state_hash"],
                   "archive_watermarks": packet_archives, "no_history": not archives and not archived_agent_history,
@@ -750,12 +758,18 @@ class SessionManager:
                   "extraction": self._pending_status(session["project_id"], "extract"),
                   "unknowns": [value[:500] for value in list(dict.fromkeys(unknowns))[:20]],
                   "omitted_unknowns": max(0, len(set(unknowns)) - 20)}
+        if evidence:
+            orphaned = sum(value == "orphaned" for value in evidence.values())
+            packet["warnings"] = [
+                f"{len(evidence)} memory records in this scope no longer rest on a current source "
+                f"({orphaned} orphaned, {len(evidence) - orphaned} with a changed source). Treat them as unverified; "
+                "list them with `cairnmind memory orphans`."]
         baseline = state.get("initial_baseline_eligible", False) and not archives
         if baseline:
             packet["baseline_unverified"] = True
             packet["warnings"] = ["New empty project: no code/history baseline is verified. "
                                   "Initialize Git and commit before relying on code-bound check completion.",
-                                  *state["code"].get("unknowns", [])]
+                                  *state["code"].get("unknowns", []), *packet.get("warnings", [])]
         if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Essential goal/constraints are never silently truncated to a ready packet.
             packet["unknowns"].append("Essential resume packet exceeds the bounded context budget")
