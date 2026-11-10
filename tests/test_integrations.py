@@ -4,6 +4,7 @@ import json
 import copy
 import hashlib
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -1270,7 +1271,9 @@ def test_doctor_contract_prints_text_on_request_and_json_by_default(tmp_path, mo
     absent = runner.invoke(cli.app, [*base, "--format", "text"])
     assert absent.exit_code == 0 and "failed" not in absent.output and absent.output.splitlines()[-1].split()[:3] == ["claude", "installed", "missing"]
     refused = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "doctor", "--format", "text"])
-    assert refused.exit_code != 0 and "only with --contract" in refused.output
+    # On CI the error box is coloured and wrapped, so compare the plain words.
+    plain = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", refused.output).split())
+    assert refused.exit_code != 0 and "only with --contract" in plain
 
 
 @pytest.mark.parametrize("help_text,expected", [
