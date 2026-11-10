@@ -357,6 +357,22 @@ def test_existing_terminal_expires_before_native_input_resize_or_takeover(cockpi
     assert runtime.attachment.controller is (frame["type"] != "takeover")
 
 
+def test_inspector_proxy_allows_only_review_and_conflict_decisions_to_write(cockpit):
+    settings, app, client, runtime, project, requests, _ = cockpit
+    headers = login(app, client)
+    body = {"project": project["id"], "record_id": "a", "other_id": "b", "action": "dismiss",
+            "expected_version": 1, "other_expected_version": 1}
+    assert client.post("/api/inspector/conflicts/resolve", json=body, headers=headers).status_code == 200
+    method, path, content = requests[-1]
+    assert (method, path) == ("POST", "/inspector/conflicts/resolve") and json.loads(content) == body
+    sent = len(requests)
+    for path in ("conflicts", "conflicts/resolve/extra", "records/a", "sources/a/resolve"):
+        assert client.post("/api/inspector/" + path, json=body, headers=headers).status_code == 405
+    assert len(requests) == sent
+    assert client.get("/api/inspector/conflicts", params={"project": project["id"]}, headers=headers).status_code == 200
+    assert requests[-1][:2] == ("GET", "/inspector/conflicts")
+
+
 def test_brief_proxy_forwards_only_project_and_worktree(cockpit):
     settings, app, client, runtime, project, requests, _ = cockpit
     headers = login(app, client)
