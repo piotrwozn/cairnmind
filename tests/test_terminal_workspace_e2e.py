@@ -100,10 +100,25 @@ def available_tmux():
     return str(Path(binary).resolve())
 
 
+_RESERVED = {}
+
+
 def free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    """Reserve a port and keep its socket open until a LiveServer serves on it.
+
+    Closing the socket and binding the port again later lets any other process take
+    the port in between, which made the server fail with "address already in use".
+    """
+    sock = socket.socket()
+    # As Uvicorn sets it on its own sockets: without it a restart on the same port fails while
+    # connections of the first server are still closing. Listening at once keeps other
+    # processes off the port in spite of the option.
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    port = sock.getsockname()[1]
+    _RESERVED[port] = sock
+    return port
 
 
 @dataclass
@@ -114,7 +129,10 @@ class LiveServer:
     def start(self):
         self.server = uvicorn.Server(uvicorn.Config(self.app, host="127.0.0.1", port=self.port,
             log_level="warning", access_log=False, proxy_headers=False, timeout_graceful_shutdown=5))
-        self.thread = threading.Thread(target=self.server.run, daemon=True)
+        reserved = _RESERVED.pop(self.port, None)
+        # The reserved socket is handed to the server, so the port is never free in between.
+        self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [reserved]} if reserved else {},
+                                       daemon=True)
         self.thread.start()
         deadline = time.monotonic() + 15
         while not self.server.started and self.thread.is_alive() and time.monotonic() < deadline:

@@ -54,6 +54,10 @@ junit_family = "xunit1"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+filterwarnings = [
+    # Raised on import by FastAPI's test client, not by this code; removing it is issue #61.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]
 
 [tool.ruff]
 target-version = "py312"
