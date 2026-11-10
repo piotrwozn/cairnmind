@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -272,7 +273,7 @@ class InspectorApp(BasePanel):
         self.query_one("#inspector-rows").display = False
         self.query_one("#inspector-details").display = True
         self._technical_details = False
-        self._detail_text = text if text is not None else self.readable_detail(value)
+        self._detail_text = text if text is not None else self.readable_detail(value, kind=kind)
         self.query_one("#entity-body", Static).update(plain(self._detail_text))
         self.query_one("#review-actions").display = kind in {"records", "plans", "sources", "inbox"}
         for selector in ("#entity-confirm", "#entity-dispute"):
@@ -281,23 +282,65 @@ class InspectorApp(BasePanel):
         self.query_one("#entity-sources", Button).label = self.t("Widok") if kind in {"sources", "inbox"} else self.t("Źródła")
         self.query_one("#entity-more", Button).disabled = not bool(self.source_next)
 
-    def readable_detail(self, value):
+    def readable_detail(self, value, *, kind=None):
         if not isinstance(value, dict):
             return summary_text(value, self.language)
+
         item = value.get("record", value.get("item", value.get("source", value)))
         if not isinstance(item, dict):
             return summary_text(value, self.language)
+
         lines = []
         for name in ("title", "content", "uri", "message"):
             if isinstance(item.get(name), str):
                 lines.append(item[name])
-        state = item.get("state", (item.get("metadata") or {}).get("state", item.get("status")))
+
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        state = item.get("state", metadata.get("state", item.get("status")))
         if state:
             lines.append(self.t("Status") + ": " + str(state))
         if item.get("version"):
             lines.append(self.t("Version") + ": " + str(item["version"]))
         if item.get("source_ids"):
             lines.append(self.t("Sources") + ": " + str(len(item["source_ids"])))
+
+        if isinstance(value.get("record"), dict):
+            # Any record detail, including a task opened from the task list.
+            def evidence_date(value):
+                if not isinstance(value, str):
+                    return None
+                try:
+                    return date.fromisoformat(value[:10]).isoformat() if len(value) >= 10 else None
+                except ValueError:
+                    return None
+
+            earliest = evidence_date(metadata.get("evidence_earliest"))
+            latest = evidence_date(metadata.get("evidence_latest"))
+            basis = metadata.get("evidence_basis")
+
+            if basis == "stated":
+                evidence_time = latest or earliest
+                if evidence_time:
+                    lines.append(self.t("Stated") + ": " + evidence_time)
+            elif basis == "observed":
+                evidence_time = latest or earliest
+                if evidence_time:
+                    lines.append(self.t("Observed no later than") + ": " + evidence_time)
+            elif basis == "mixed":
+                if earliest and latest:
+                    evidence_range = earliest if earliest == latest else f"{earliest} – {latest}"
+                    lines.append(self.t("Mixed evidence") + ": " + evidence_range)
+
+            if metadata.get("supersede_warning") == "anachronistic_supersede":
+                replaced_date = evidence_date(metadata.get("supersede_replaced_evidence_latest"))
+                warning = self.t("The superseded finding had newer evidence")
+                if replaced_date:
+                    warning += f" ({replaced_date})"
+                lines.append(self.t("Warning") + ": " + warning)
+
         evidence = value.get("evidence") if isinstance(value.get("evidence"), dict) else {}
         label = EVIDENCE_LABELS.get((evidence.get("evidence_state"), evidence.get("quote_survives")))
         if label:
