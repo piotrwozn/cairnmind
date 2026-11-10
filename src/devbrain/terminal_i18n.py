@@ -40,6 +40,10 @@ CATALOG = {
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
+    "Brief": "Skrót",
+    "Where work stopped: checkpoint, next task, checks and commits":
+        "Gdzie przerwano pracę: punkt kontrolny, następne zadanie, testy i commity",
+    "The memory service returned no brief.": "Usługa pamięci nie zwróciła skrótu.",
     "Asking memory…": "Pytam pamięć…", "Missing evidence": "Brakujące dowody",
     "No verified answer.": "Brak zweryfikowanej odpowiedzi.",
     "The memory service returned no answer.": "Usługa pamięci nie zwróciła odpowiedzi.",

@@ -147,6 +147,7 @@ cairnmind eval run
 cairnmind eval run --clients
 cairnmind eval run --clients --skip-claude
 cairnmind benchmark my-app "Where do we handle login errors?"
+cairnmind brief my-app
 ```
 
 A check runs in the current worktree. Exit code 0 confirms that the given command ran successfully; review and acceptance still require a separate check. Legacy test flags are `reported` declarations, never automatically created run results.
@@ -158,6 +159,8 @@ The fingerprint also covers untracked files that are not ignored. Put generated 
 `eval run` exercises 20 scenarios against a real Ollama in a temporary repository and a separate ArcadeDB database. The optional `--clients` flag starts a fresh Codex, then Claude, then Codex again, using existing logins and consuming their quotas. A missing model, client or login yields `not_run`. The report gives accuracy, state errors, latency, the local model's context size, and token counts only when the provider actually reports them.
 
 `--clients --skip-claude` checks only two fresh Codex sessions and does not start a Claude process. The report labels this as a partial test and does not count it as a full cross-client handoff. Codex tool approvals cover only the four operations of the `devbrain_eval` server against the temporary database; the sandbox stays `read-only`.
+
+`brief` prints where work stopped in at most 40 lines: the latest checkpoint and its age, the next task and blockers of the active plan, the check evidence of tasks in progress, commits dated after the checkpoint was saved, and proposed findings waiting for review. It is built only from stored data and Git, asks no model and does not start the service. Below a title and a one-line legend, each line is marked `[machine]` when Cairnmind measured it now, or `[reported]` when it repeats a stored claim that was not verified; a stored title on a `[machine]` line always comes last, after `|`. A checkpoint stores no commit, so commits are selected by date: commits pulled later but dated before the checkpoint are not listed. Tasks are not counted among the proposed findings. The same brief is in the command palette as **Brief**; its text is English in both interface languages. `--json` prints the brief as an object with `project`, `worktree`, `generated_at`, `lines` (each with `basis` and `text`) and `text`.
 
 `benchmark` times the first answer to a question against the cached repeat. It measures latency only and does not replace a quality evaluation.
 

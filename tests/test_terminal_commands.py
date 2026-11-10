@@ -67,6 +67,15 @@ def test_palette_offers_ask_memory_and_routes_it_by_name():
     assert calls == ["ask"]
 
 
+def test_palette_offers_brief_and_routes_it_by_name():
+    calls = []
+    manager = SimpleNamespace(request_command=lambda value: calls.append(value))
+    command = next(row for row in COMMANDS if row[3] == "brief")
+    assert command[0] == "Brief" and command[2] == "command"
+    dispatch_command(manager, command)
+    assert calls == ["brief"]
+
+
 def test_ask_summary_shows_answer_quotes_missing_evidence_and_coverage():
     from devbrain.terminal_commands import ask_summary
     text = ask_summary({

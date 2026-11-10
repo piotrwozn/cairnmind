@@ -429,6 +429,22 @@ def context(ctx: typer.Context, project: str, worktree: Path | None = None):
 
 
 @app.command()
+@initialized
+def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
+          as_json: Annotated[bool, typer.Option("--json", help="Print the marked lines as JSON.")] = False):
+    """Show where work stopped: checkpoint, next task, check evidence, commits and proposals. Asks no model."""
+    from devbrain.brief import build_brief
+    # Read the store directly, as `tasks list` does: starting the service could start model work.
+    store = store_for(ctx.obj)
+    pid = store.resolve_project(project)["id"]
+    result = build_brief(store, pid, actor_scope(store, pid, worktree))
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+
+
+@app.command()
 def status(ctx: typer.Context, project: str | None = None):
     output(request(ctx.obj, "GET", "/status", start_service=False,
                    params={"project": project} if project else {}))

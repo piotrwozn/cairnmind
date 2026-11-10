@@ -357,6 +357,24 @@ def test_existing_terminal_expires_before_native_input_resize_or_takeover(cockpi
     assert runtime.attachment.controller is (frame["type"] != "takeover")
 
 
+def test_brief_proxy_forwards_only_project_and_worktree(cockpit):
+    settings, app, client, runtime, project, requests, _ = cockpit
+    headers = login(app, client)
+    answered = client.get("/api/brief", params={"project": project["id"], "worktree": "/repo"}, headers=headers)
+    assert answered.status_code == 200 and settings.token not in answered.text
+    method, path, _ = requests[-1]
+    assert (method, path) == ("GET", "/brief")
+    sent = len(requests)
+    assert client.get("/api/brief", params={"worktree": "/repo"}, headers=headers).status_code == 422
+    assert client.get("/api/brief", params={"project": project["id"], "session_id": "forged"},
+                      headers=headers).status_code == 422
+    assert len(requests) == sent
+    client.cookies.clear()
+    assert client.get("/api/brief", params={"project": project["id"]},
+                      headers={"Origin": ORIGIN}).status_code in {401, 403}
+    assert len(requests) == sent
+
+
 def test_ask_proxy_forwards_only_bounded_question_fields(cockpit):
     settings, app, client, runtime, project, requests, _ = cockpit
     headers = login(app, client)
