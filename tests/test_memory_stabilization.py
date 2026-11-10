@@ -639,7 +639,7 @@ async def test_file_links_match_absolute_labels_by_exact_file_name(workspace):
     quote = "token_store.py and session.py hold the refresh logic."
     item = source(store, project, quote)
     for node_id, label in {"posix": "/home/dev/proj/src/auth/token_store.py",
-                           "windows": "C:\proj\src\session.py",
+                           "windows": "C:\\proj\\src\\session.py",
                            "wildcard-decoy": "/home/dev/proj/src/tokenXstore.py"}.items():
         store.upsert_node({"id": node_id, "project_id": project["id"], "kind": "file", "label": label,
                            "source_id": item["id"], "is_current": True, "metadata": {}})
