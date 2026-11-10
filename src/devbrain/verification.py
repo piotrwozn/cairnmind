@@ -67,21 +67,68 @@ def _input_patterns(extra_inputs):
     return sorted(set(extra_inputs))
 
 
+# Content hashes of files already read by this process, by path: (identity, sha256).
+_HASHES: dict[str, tuple[tuple, str]] = {}
+_HASH_LIMIT = 200_000
+# A hash is remembered only for a file last touched at least this long before it was read
+# (git's "racy clean" rule). A later write then always gets a newer change time, even on a
+# filesystem that rounds timestamps down to two-second ticks, so it can never be mistaken
+# for the remembered state. Files touched more recently are simply read again every time.
+RACY_WINDOW_NS = 2_000_000_000
+
+
 def _file_hash(path):
+    """SHA-256 of a file's content, read again only when the file may have changed.
+
+    The identity is the device, inode, size, modification time, inode change time and
+    mode. Any write changes the change time, which a process cannot set back, so an
+    unchanged identity of a file that was old enough when it was read means unchanged
+    content. The guarantee of the fingerprint is the same as when every file is read.
+    """
+    def identity(s):
+        return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_mode)
+    key = os.fspath(path)
+    started = time.time_ns()
     before = path.stat()
+    known = _HASHES.get(key)
+    if known is not None and known[0] == identity(before):
+        return known[1]
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     after = path.stat()
-    def identity(s):
-        return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_mode)
     if identity(before) != identity(after):
+        _HASHES.pop(key, None)
         raise ValueError("input changed while being read")
-    return digest.hexdigest()
+    value = digest.hexdigest()
+    if max(after.st_mtime_ns, after.st_ctime_ns) < started - RACY_WINDOW_NS:
+        if len(_HASHES) >= _HASH_LIMIT:
+            _HASHES.clear()
+        _HASHES[key] = (identity(after), value)
+    else:
+        _HASHES.pop(key, None)
+    return value
 
 
-def _entry(root, relative, index_mode, unknowns):
+def _inside(root):
+    """Whether a directory resolves to a place inside the worktree, remembered for one manifest.
+
+    A regular file is inside exactly when its parent directory is, so resolving each
+    directory once replaces resolving every file. Nothing is remembered between manifests:
+    a directory can become a symbolic link at any time.
+    """
+    known = {}
+
+    def check(directory):
+        key = os.fspath(directory)
+        if key not in known:
+            known[key] = directory.resolve().is_relative_to(root)
+        return known[key]
+    return check
+
+
+def _entry(root, relative, index_mode, unknowns, inside=None):
     path = root / relative
     entry = {"path": relative, "index_mode": index_mode}
     try:
@@ -99,7 +146,7 @@ def _entry(root, relative, index_mode, unknowns):
                 unknowns.append(f"unsupported or missing symlink target: {relative}")
         elif stat.S_ISREG(mode):
             # A parent directory can itself be a symlink outside the worktree.
-            if not path.resolve().is_relative_to(root):
+            if not (inside(path.parent) if inside else path.resolve().is_relative_to(root)):
                 unknowns.append(f"external input: {relative}")
             else:
                 entry.update(kind="file", sha256=_file_hash(path))
@@ -152,7 +199,8 @@ def _manifest(root, patterns):
                         paths.add(child.relative_to(root).as_posix())
             else:
                 paths.add(Path(match).as_posix())
-    entries = [_entry(root, p, modes.get(p), unknowns) for p in sorted(paths)]
+    inside = _inside(root)
+    entries = [_entry(root, p, modes.get(p), unknowns, inside) for p in sorted(paths)]
     return entries, sorted(set(unknowns))
 
 

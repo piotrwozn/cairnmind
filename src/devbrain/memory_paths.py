@@ -15,6 +15,10 @@ MEMORY_RELATIVE = Path(".memory/devbrain")
 
 
 def is_reserved_memory(relative: str | Path) -> bool:
+    # Called for every file of a worktree: a path that does not mention the directory
+    # cannot normalise into it.
+    if ".memory" not in os.fspath(relative):
+        return False
     path = Path(os.path.normpath(relative))
     return not path.is_absolute() and path.is_relative_to(MEMORY_RELATIVE)
 
