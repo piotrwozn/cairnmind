@@ -104,20 +104,24 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
             info["hooks"] = semver is not None and semver >= (1, 0, 112)
             info["notes"].append("Approve the project MCP server using Claude Code's native consent flow.")
         help_text = help_result.stdout if help_result.returncode == 0 else ""
+        # What a failed check found instead: the command's own failure, or the line that says otherwise.
+        help_failed = None if help_result.returncode == 0 else f"--help exited with code {help_result.returncode}"
         info["checks"] = {
             "version": {"ok": supported, "required": ">= " + ".".join(map(str, minimum)),
                         "evidence": info["version"] or None},
             "mcp": {"ok": info["mcp"], "required": "--help mentions the mcp command",
-                    "evidence": _evidence_line(MCP_COMMAND, help_text)},
+                    "evidence": _evidence_line(MCP_COMMAND, help_text) or help_failed},
             "prompt": {"ok": info["packet_passing"], "required": "--help accepts a prompt argument",
-                       "evidence": _evidence_line(r"\bprompt\b", help_text, re.I)},
+                       "evidence": _evidence_line(r"\bprompt\b", help_text, re.I) or help_failed},
             "isolated_process": {"ok": info["isolated_process"],
                                  "required": "always" if client == "claude" else "--help offers --no-daemon",
-                                 "evidence": None if client == "claude" else _evidence_line(r"--no-daemon", help_text)},
+                                 "evidence": (None if client == "claude"
+                                              else _evidence_line(r"--no-daemon", help_text) or help_failed)},
             "hooks": {"ok": info["hooks"],
                       "required": ("`features list` reports hooks ... true" if client == "codex"
                                    else "version >= 1.0.112"),
-                      "evidence": (_evidence_line(r"^hooks\s+\S+\s+true\s*$", features.stdout, re.M)
+                      "evidence": ((_evidence_line(r"^hooks\s.*$", features.stdout, re.M) if features.returncode == 0
+                                    else f"`features list` exited with code {features.returncode}")
                                    if client == "codex" else info["version"] or None)},
         }
         info["verified_resume"] = all(info[key] for key in ("mcp", "hooks", "packet_passing", "session_binding"))
@@ -130,10 +134,13 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
 
 
 def contract_text(probes: dict[str, dict[str, Any]]) -> str:
-    """The client contract as aligned lines: client, check, `ok` or `failed`, and the evidence.
+    """The client contract as aligned lines: client, check, status and the evidence.
 
-    A passed check shows the output line that confirmed it. A failed one shows, in
-    parentheses, what was needed and what was found instead.
+    The status is `ok`, `failed`, or `missing` for a client that is not installed. A
+    passed check shows the output line that confirmed it, or its requirement in
+    parentheses when it needs no output. A failed one shows, in parentheses, what was
+    needed and what was found instead. Each installed client ends with a
+    `verified_resume` line, which is what decides the command's exit code.
     """
     from .terminal_safe import safe_text
 
@@ -145,7 +152,8 @@ def contract_text(probes: dict[str, dict[str, Any]]) -> str:
     rows = []
     for client, probe in probes.items():
         if not probe.get("installed"):
-            rows.append((client, "installed", "failed", "(the command was not found on PATH)"))
+            # Not a failure: an absent client does not change the exit code.
+            rows.append((client, "installed", "missing", "(the command was not found on PATH)"))
             continue
         checks = probe.get("checks") or {}
         for name, check in checks.items():
