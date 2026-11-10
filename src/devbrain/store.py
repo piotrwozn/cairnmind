@@ -102,6 +102,12 @@ DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_bas
                            "supersede_warning", "supersede_replaced_evidence_latest")
 
 
+# Bookkeeping of conflict decisions. Only the conflict inbox, acting for a person, may
+# write these; from any other writer they are dropped, like derived metadata.
+CONFLICT_REVIEW_METADATA = ("conflicts_resolved", "conflict_decisions", "conflict_scope_note",
+                            "superseded_ids", "superseded_by")
+
+
 def _utc(value):
     """Timezone-aware ISO 8601 text as UTC; naive or invalid values are unusable."""
     if not isinstance(value, str) or not value.strip():
@@ -118,11 +124,15 @@ def _evidence_time(tx, source_ids):
 
     A transcript's own timestamp is when the statement was made (`stated`). Any other
     source existed no later than the moment Cairnmind stored its snapshot (`observed`).
+    The audit note of a review or of a conflict decision records when someone judged the
+    record, not when its evidence existed, so it is left out.
     """
     times, bases = [], set()
     for source_id in dict.fromkeys(source_ids):
-        row = _one(tx, "SELECT created_at, metadata.source_timestamp AS stated FROM sources WHERE id=:id",
-                   {"id": source_id}, False) or {}
+        row = _one(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
+                       "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
+        if row.get("origin") == "local_user_review":
+            continue
         stated = _utc(row.get("stated"))
         when, basis = (stated, "stated") if stated else (_utc(row.get("created_at")), "observed")
         if when is not None:
@@ -514,7 +524,7 @@ class Store:
                                         "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": _now()})
         self._record_graph(tx, record)
 
-    def _remember(self, tx, project_id, record, sources, *, managed_batch=False):
+    def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False):
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
         if not isinstance(record, dict):
@@ -545,6 +555,11 @@ class Store:
         metadata, updates = dict(old.get("metadata", {})) if old else {}, record.get("metadata", {})
         if not isinstance(updates, dict):
             raise ValueError("Record metadata must be an object")
+        if not conflict_review:
+            # An agent may mark a possible conflict when it creates a finding, but it can
+            # neither unmark one later nor record a decision about it.
+            updates = {key: value for key, value in updates.items() if key not in CONFLICT_REVIEW_METADATA
+                       and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
@@ -627,9 +642,9 @@ class Store:
             note_task_mutation(self, tx, result, record["expected_plan_version"])
         return result
 
-    def remember(self, project_id, record, sources):
+    def remember(self, project_id, record, sources, *, conflict_review=False):
         with self.transaction() as tx:
-            return self._remember(tx, project_id, record, sources)
+            return self._remember(tx, project_id, record, sources, conflict_review=conflict_review)
 
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):

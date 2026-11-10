@@ -4,6 +4,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- **Conflicts** view in the memory inspector: pairs of facts or decisions that extraction marked as possibly contradictory are shown side by side with evidence times, scope and sources. You resolve a pair by letting one finding supersede the other, by keeping both for different scopes, or by dismissing the alarm; every decision is saved with an audit note and no source is removed (#7).
+- The audit note of a review or of a conflict decision no longer counts as evidence time. A record gets the corrected time the next time it is written; the Conflicts view reads the times from the sources directly.
 - The memory inspector shows when a record's evidence was stated or observed, and warns when a record replaced a finding with newer evidence (#39).
 - Records have a derived evidence state: `anchored`, `evidence_replaced` (with whether a verified quoted passage survives), `orphaned`, or `unverified` for imported file evidence before local indexing. The memory inspector shows it, a newly prepared resume packet warns about orphaned and changed records without blocking the resume, and `cairnmind memory orphans PROJECT` lists them. The state is computed when read and is not stored, so snapshots and the portable state hash do not change (#6).
 - `cairnmind brief PROJECT` and **Brief** in the command palette show where work stopped in at most 40 lines: checkpoint and its age, next task and blockers, check evidence of tasks in progress, commits dated after the checkpoint and proposed findings. No model is asked and the command does not start the service; every line below the title and the legend is marked `machine` or `reported` (#3).
