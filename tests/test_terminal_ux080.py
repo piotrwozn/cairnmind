@@ -344,18 +344,70 @@ async def test_old_command_is_not_replayed_and_new_command_dispatched_once(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_inspector_primary_detail_is_readable_and_content_is_literal(tmp_path, monkeypatch):
+async def test_inspector_primary_detail_shows_evidence_and_supersede_warning(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    broker.record["metadata"].update({
+        "evidence_earliest": "2026-03-04T10:00:00+00:00",
+        "evidence_latest": "2026-03-04T10:00:00+00:00",
+        "evidence_basis": "stated",
+        "supersede_warning": "anachronistic_supersede",
+        "supersede_replaced_evidence_latest": "2026-06-01T09:00:00+00:00",
+    })
     app = InspectorApp(settings, broker=broker, workspace=workspace)
+
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
         await app.open_entity("record-a", "records")
+
         body = str(app.query_one("#entity-body", Static).render())
         assert "Validate token safely." in body
+        assert "Stated" in body
+        assert "2026-03-04" in body
+        assert "2026-06-01" in body
+        assert "anachronistic_supersede" not in body
         assert '"record"' not in body
+
         app.toggle_technical()
         assert '"record"' in str(app.query_one("#entity-body", Static).render())
 
+
+@pytest.mark.asyncio
+async def test_inspector_primary_detail_shows_observed_evidence_time(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    broker.record["metadata"].update({
+        "evidence_earliest": "2026-11-09T10:00:00+00:00",
+        "evidence_latest": "2026-11-09T10:00:00+00:00",
+        "evidence_basis": "observed",
+    })
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+        await app.open_entity("record-a", "records")
+
+        body = str(app.query_one("#entity-body", Static).render())
+        assert "Observed no later than" in body
+        assert "2026-11-09" in body
+
+
+@pytest.mark.asyncio
+async def test_inspector_primary_detail_shows_mixed_evidence_range(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    broker.record["metadata"].update({
+        "evidence_earliest": "2026-03-04T10:00:00+00:00",
+        "evidence_latest": "2026-11-09T10:00:00+00:00",
+        "evidence_basis": "mixed",
+    })
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+        await app.open_entity("record-a", "records")
+
+        body = str(app.query_one("#entity-body", Static).render())
+        assert "Mixed evidence" in body
+        assert "2026-03-04" in body
+        assert "2026-11-09" in body
 
 def test_default_locale_is_english_without_creating_preferences(tmp_path):
     settings = Settings(data_dir=tmp_path / "absent")
