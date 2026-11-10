@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked --extra dev
       - run: uv run ruff check src tests
 
@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked --extra dev
       - run: uv run pytest -m "not arcade and not tmux" -q
 
@@ -46,7 +46,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked --extra dev
       - uses: actions/cache@v6
         with:
