@@ -107,6 +107,72 @@ def test_memory_inspect_is_offline_and_does_not_initialize(memory_workspace, tmp
     assert not missing.parent.exists()
 
 
+def test_memory_show_is_offline_read_only_and_does_not_initialize(memory_workspace, tmp_path, monkeypatch):
+    store, project, root = memory_workspace
+    saved = _snapshot(store, project)
+    package = Path(saved["path"]).parent
+    before = {path: path.read_bytes() for path in package.rglob("*") if path.is_file()}
+    missing = tmp_path / "fresh" / "uninitialized"
+    _no_diagnostic_mutations(monkeypatch)
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: pytest.fail("Offline show made an HTTP call"))
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: pytest.fail("Offline show started a process"))
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(missing), "memory", "show", saved["path"],
+                                          "--kind", "fact", "--grep", "ZEPHYR"])
+    assert result.exit_code == 0, result.output or repr(result.exception)
+    assert f"snapshot:  {saved['snapshot_id']}" in result.output
+    assert "[fact] proposed, version 1, updated " in result.output
+    assert "  | The release identifier is zephyr_214." in result.output
+    assert "  sources: manual://memory" in result.output
+    assert not missing.parent.exists()
+    assert before == {path: path.read_bytes() for path in package.rglob("*") if path.is_file()}
+    nothing = CliRunner().invoke(cli.app, ["--data-dir", str(missing), "memory", "show", saved["path"],
+                                           "--grep", "no-such-text"])
+    assert nothing.exit_code == 0 and "Nothing in this snapshot matches the filters." in nothing.output
+
+
+def test_memory_show_rejects_a_tampered_package_like_inspect(memory_workspace, tmp_path, monkeypatch):
+    store, project, _ = memory_workspace
+    saved = _snapshot(store, project)
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    target = next(path for path in sorted((Path(saved["path"]).parent / "objects").glob("*.json"))
+                  if b"zephyr_214" in path.read_bytes())
+    target.write_bytes(target.read_bytes().replace(b"zephyr_214", b"zephyr_999"))
+    outcomes = [CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "none"), "memory", command, saved["path"]])
+                for command in ("inspect", "show")]
+    assert all(result.exit_code == 1 and isinstance(result.exception, ValueError) for result in outcomes)
+    assert str(outcomes[0].exception) == str(outcomes[1].exception)
+    assert "zephyr" not in outcomes[1].output
+
+
+def test_memory_show_in_a_session_is_authorized_by_the_service_first(memory_workspace, tmp_path, monkeypatch):
+    store, project, _ = memory_workspace
+    saved = _snapshot(store, project)
+    monkeypatch.setenv("DEVBRAIN_SESSION_ID", "session-1")
+    calls = []
+
+    def allowed(settings, method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"snapshot_id": saved["snapshot_id"]}
+
+    monkeypatch.setattr(cli, "request", allowed)
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "none"), "memory", "show", saved["path"]])
+    assert result.exit_code == 0, result.output or repr(result.exception)
+    assert calls == [("POST", "/memory/inspect", {"start_service": False, "json": {"path": saved["path"]}})]
+
+    def refused(settings, method, path, **kwargs):
+        raise ValueError("resume_required: command project differs from the session")
+
+    monkeypatch.setattr(cli, "request", refused)
+    denied = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "none"), "memory", "show", saved["path"]])
+    assert denied.exit_code == 1 and "zephyr" not in denied.output
+
+    monkeypatch.setattr(cli, "request", lambda *a, **k: {"snapshot_id": "0" * 64})
+    swapped = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "none"), "memory", "show", saved["path"]])
+    assert swapped.exit_code == 1 and "changed while it was being authorized" in str(swapped.exception)
+    assert "zephyr" not in swapped.output
+
+
 def test_memory_status_requires_explicit_existing_configuration(tmp_path, monkeypatch):
     missing = tmp_path / "fresh" / "data"
     _no_diagnostic_mutations(monkeypatch)

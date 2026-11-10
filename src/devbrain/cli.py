@@ -786,6 +786,23 @@ def memory_inspect(ctx: typer.Context, path: Path):
         output(inspect_snapshot(selected))
 
 
+@memory_app.command("show")
+def memory_show(ctx: typer.Context, path: Path,
+                kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
+                status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None,
+                grep: Annotated[str | None, typer.Option("--grep", help="Case-insensitive text to look for.")] = None):
+    """Read a snapshot's records, plans and sources as text; needs no engine, model or service and writes nothing."""
+    from devbrain.memory_view import show_snapshot
+    # Preserve symlink components for the package validator to reject them.
+    selected = str(path.expanduser().absolute())
+    expected = None
+    if os.environ.get("DEVBRAIN_SESSION_ID"):
+        # A coding session may read only its own project's memory; the service decides.
+        expected = request(ctx.obj, "POST", "/memory/inspect", start_service=False,
+                           json={"path": selected})["snapshot_id"]
+    typer.echo(show_snapshot(selected, kind=kind, status=status, grep=grep, expected_snapshot_id=expected))
+
+
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
