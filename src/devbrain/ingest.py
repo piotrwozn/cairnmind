@@ -298,11 +298,64 @@ def index_pending_sources(store, limit: int = 100) -> dict:
     return counts
 
 
+# The tree signature of the last complete indexing done by this process, per store and project.
+_INDEXED: dict[tuple[str, str], str] = {}
+
+
+def tree_signature(store, project_id: str) -> str:
+    """What indexing would read, described without opening the files themselves.
+
+    Every file the index would visit contributes its path, size, modification time and
+    inode change time. Writing a file changes its change time even when a tool restores
+    the modification time, so equal signatures mean an identical tree for indexing.
+    """
+    project = store.resolve_project(project_id)
+    entries: list[Any] = [parser_identity()]
+    for root in _roots(store, project):
+        if not root.is_dir():
+            entries.append([str(root), None])
+            continue
+        for path in _files(root, excluded=(store.data_dir,)):
+            try:
+                status = os.stat(path, follow_symlinks=False)
+            except OSError:
+                entries.append([str(path), None])
+                continue
+            entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
+    return hashlib.sha256(_json(entries).encode()).hexdigest()
+
+
+def forget_index_signature(store, project_id: str | None = None) -> None:
+    """Make the next `index_project_if_changed` index again, for one project or for all."""
+    for key in [key for key in _INDEXED if key[0] == str(store.data_dir) and project_id in (None, key[1])]:
+        del _INDEXED[key]
+
+
 def index_project(store, project_id: str) -> dict:
     """Snapshot changed files, update chunks, and rebuild the derived code graph."""
     project_id = store.resolve_project(project_id)["id"]
     with _ingestion_lock(store, "project", project_id):
-        return _index_project_locked(store, project_id)
+        # Taken before any file is read: a file edited during indexing then differs next time.
+        signature = tree_signature(store, project_id)
+        result = _index_project_locked(store, project_id)
+        if result.get("errors"):
+            _INDEXED.pop((str(store.data_dir), project_id), None)
+        else:
+            _INDEXED[(str(store.data_dir), project_id)] = signature
+        return result
+
+
+def index_project_if_changed(store, project_id: str) -> dict:
+    """Index only when the tree differs from the one this process last indexed completely.
+
+    An unchanged tree costs one directory walk with a `stat` per file. Apart from the
+    `.gitignore` files that steer the walk, no file is opened, no source is looked up and
+    the graph is not rebuilt.
+    """
+    project_id = store.resolve_project(project_id)["id"]
+    if _INDEXED.get((str(store.data_dir), project_id)) == tree_signature(store, project_id):
+        return {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [], "skipped": True}
+    return index_project(store, project_id)
 
 
 def _index_project_locked(store, project_id: str) -> dict:

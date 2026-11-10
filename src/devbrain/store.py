@@ -108,6 +108,10 @@ CONFLICT_REVIEW_METADATA = ("conflicts_resolved", "conflict_decisions", "conflic
                             "superseded_ids", "superseded_by")
 
 
+# Journal entity types whose changes cannot alter an answer from project memory.
+CACHE_STAMP_IGNORED = frozenset({"job", "session", "import", "inbox", "memory", "plan_request"})
+
+
 def _utc(value):
     """Timezone-aware ISO 8601 text as UTC; naive or invalid values are unusable."""
     if not isinstance(value, str) or not value.strip():
@@ -190,6 +194,8 @@ class Store:
         self.client = ArcadeClient(self.settings)
         self.client.ensure_database()
         self._local = threading.local()
+        self._stamp_lock = threading.Lock()
+        self._stamp_cursor, self._stamp_base, self._stamp_global, self._stamp_seq = None, 0, 0, {}
         self.init()
 
     @contextmanager
@@ -946,16 +952,36 @@ class Store:
         return counts
 
     def cache_stamp(self, project_id):
-        parts = [[_clean(row) for row in self.query(f"SELECT {fields} FROM {collection} WHERE project_id=:project ORDER BY id", {"project": project_id})]
-                 for collection, fields in (("sources", "id,sha256,is_current"), ("records", "id,version,status"), ("embeddings", "id,model,namespace"))]
-        parts.append([_clean(row) for row in self.query(
-            "SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project", {"project": project_id}
-        )])
-        for collection, fields in (("plans", "id,version"), ("worktree_states", "*"),
-                                   ("check_runs", "id,task_id,profile_id,passed,created_at")):
-            parts.append([_clean(row) for row in self.query(
-                f"SELECT {fields} FROM {collection} WHERE project_id=:project ORDER BY id", {"project": project_id}
-            )])
+        """A value that changes whenever a committed write could change an answer for the project.
+
+        It is a counter read from the change journal, which every mutation of the store
+        advances in its own transaction, so no collection is scanned: an unchanged store
+        costs one point read, and otherwise only the events added since the last call are
+        read. Writes that cannot affect an answer (jobs, sessions, imports, snapshots) do
+        not move it. The value is comparable only within one Store object.
+        """
+        from .journal import Journal
+        journal = Journal(self)
+        with self._stamp_lock:
+            if journal.cursor() != self._stamp_cursor:
+                while True:
+                    page = journal.read(after=self._stamp_cursor, limit=1000)
+                    if page["reset_required"]:
+                        # First call, a new journal epoch, or events pruned past our position:
+                        # nothing is known about the gap, so every project counts as changed.
+                        self._stamp_base, self._stamp_global = self._stamp_base + 1, 0
+                        self._stamp_seq.clear()
+                    for event in page["events"]:
+                        if event["entity_type"] in CACHE_STAMP_IGNORED:
+                            continue
+                        if event["project_id"] is None:
+                            self._stamp_global = event["seq"]
+                        else:
+                            self._stamp_seq[event["project_id"]] = event["seq"]
+                    self._stamp_cursor = page["cursor"]
+                    if page["reset_required"] or len(page["events"]) < 1000:
+                        break
+            parts = [self._stamp_cursor["epoch"], self._stamp_base, self._stamp_global, self._stamp_seq.get(project_id, 0)]
         return hashlib.sha256(_json(parts).encode()).hexdigest()
 
     def recent_job_errors(self, project_id=None, limit=10):

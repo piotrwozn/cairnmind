@@ -288,7 +288,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     async def scanner() -> None:
         from pathlib import Path
-        from devbrain.ingest import import_history, index_pending_sources, index_project, poll_imports
+        from devbrain.ingest import import_history, index_pending_sources, index_project_if_changed, poll_imports
 
         while True:
             try:
@@ -319,7 +319,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 polled = await asyncio.to_thread(poll_imports, store)
                 scan_errors.extend(f"history: {err}" for err in polled.get("errors", []))
                 for project in await asyncio.to_thread(store.list_projects):
-                    indexed = await asyncio.to_thread(index_project, store, project["id"])
+                    indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
                     scan_errors.extend(f"{project['name']}: {err}" for err in indexed.get("errors", []))
                 pending = await asyncio.to_thread(index_pending_sources, store)
                 scan_errors.extend(f"memory index: {err}" for err in pending.get("errors", []))
@@ -572,6 +572,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             memory_write_authorization, pid, body.root, body.session_id, body.packet_id)
         result = await asyncio.to_thread(restore, scope, authorize)
         cache.clear()
+        from devbrain.ingest import forget_index_signature
+        forget_index_signature(store, pid)
         return result
 
     @app.get("/memory/status", dependencies=auth)
@@ -746,7 +748,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.post("/ask", dependencies=auth)
     async def ask(body: AskBody):
         from devbrain.answer_contract import prepare_answer_schema
-        from devbrain.ingest import index_pending_sources, index_project
+        from devbrain.ingest import index_pending_sources, index_project_if_changed
         from devbrain.verification import capture_code_state, load_profiles
         pid = project(body.project)["id"]
         answer_schema = prepare_answer_schema(body.answer_schema)
@@ -763,7 +765,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             except (ValueError, OSError):
                 return None
         identity = await asyncio.to_thread(code_identity)
-        indexed = await asyncio.to_thread(index_project, store, pid)
+        # An unchanged tree is not read again; the cache stamp below is a counter, not a scan.
+        indexed = await asyncio.to_thread(index_project_if_changed, store, pid)
         index_errors = indexed.get("errors", [])
         pending = await asyncio.to_thread(index_pending_sources, store)
         index_errors.extend(pending.get("errors", []))
