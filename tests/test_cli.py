@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import re
 import subprocess
 import sys
 
@@ -69,7 +70,8 @@ def test_restore_requires_service_lock_even_if_health_is_down(tmp_path, monkeypa
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         result = CliRunner().invoke(app, ["--data-dir", str(settings.data_dir), "restore", str(backup)])
     assert result.exit_code != 0
-    assert "still holds the store" in " ".join(result.output.split())
+    plain = " ".join(re.sub(r"\x1b\[[0-9;]*m|[^\w\s]", "", result.output).split())
+    assert "still holds the store lock" in plain
 
 
 def test_unacked_cli_evidence_write_is_atomic(tmp_path, monkeypatch):
