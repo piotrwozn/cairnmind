@@ -1,7 +1,7 @@
 """Official Copilot SDK boundary with explicit preparation and host-owned tools.
 
 Copilot is an agent runtime, not an OpenAI-compatible inference endpoint.  Its
-only enabled tools are the exact custom tools supplied by DevBrain.  Memory
+only enabled tools are the exact custom tools supplied by Cairnmind.  Memory
 acknowledgements and command approvals are performed by their real handlers.
 """
 from __future__ import annotations
@@ -32,9 +32,9 @@ _NAME = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _SESSION = re.compile(r"^[A-Za-z0-9_-]{1,160}$")
 _MAX_TEXT = 2 * 1024 * 1024
 _MESSAGES = {
-    "copilot_sdk_missing": "Zainstaluj zależności DevBrain z obsługą Copilota.",
+    "copilot_sdk_missing": "Zainstaluj zależności Cairnmind z obsługą Copilota.",
     "copilot_sdk_unsupported": "Wymagana jest przypięta wersja SDK Copilota.",
-    "copilot_runtime_missing": "Przygotuj runtime Copilota w ustawieniach DevBrain.",
+    "copilot_runtime_missing": "Przygotuj runtime Copilota w ustawieniach Cairnmind.",
     "copilot_runtime_invalid": "Runtime Copilota zmienił się; przygotuj go ponownie.",
     "copilot_prepare_failed": "Nie udało się przygotować zweryfikowanego runtime Copilota.",
     "copilot_auth_required": "Zaloguj się do GitHub Copilot.",
@@ -287,7 +287,7 @@ async def _notify(callback, value):
 
 
 class CopilotAdapter:
-    """An isolated official SDK session whose side effects belong to DevBrain."""
+    """An isolated official SDK session whose side effects belong to Cairnmind."""
     def __init__(self, profile, key=None, *, settings=None, session_id=None, client_factory=None, sdk=None):
         self.profile = dict(profile)
         self.key, self.settings = key, settings
@@ -388,7 +388,7 @@ class CopilotAdapter:
             # This only admits a host callback; that callback still performs
             # exact memory ACK and actual one-use command approval checks.
             return self._sdk_api.Approve()
-        return self._sdk_api.Reject(feedback="Only registered DevBrain tools are permitted.")
+        return self._sdk_api.Reject(feedback="Only registered Cairnmind tools are permitted.")
 
     async def _pre_tool(self, data, invocation):
         allowed = (_get(data, "toolName") in self._allowed
@@ -396,7 +396,7 @@ class CopilotAdapter:
         return {"permissionDecision": "allow" if allowed else "deny"}
 
     async def _block_subagent(self, data, invocation):
-        return {"decision": "block", "reason": "DevBrain does not enable Copilot subagents."}
+        return {"decision": "block", "reason": "Cairnmind does not enable Copilot subagents."}
 
     def _tool(self, descriptor):
         name = descriptor["name"]
@@ -663,7 +663,7 @@ class CopilotAdapter:
                 return {"ok": True}
             return {"error": "invalid_probe"}
 
-        tools = [{"name": "devbrain_connection_probe", "description": "Confirm a DevBrain connection.",
+        tools = [{"name": "devbrain_connection_probe", "description": "Confirm a Cairnmind connection.",
                   "parameters": {"type": "object", "properties": {"nonce": {"type": "string", "enum": [nonce]}},
                                  "required": ["nonce"], "additionalProperties": False}}]
         reply = await self.run_turn(f"Call devbrain_connection_probe exactly once with nonce {nonce}.", tools, handler,

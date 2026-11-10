@@ -13,7 +13,7 @@
   "steps": [
     {
       "key": "token-validation",
-      "content": "Implement token_auth.validate_token(token), write unittest tests, then run the unit profile and a review that records each criterion. Hand over the state through DevBrain between fresh clients.",
+      "content": "Implement token_auth.validate_token(token), write unittest tests, then run the unit profile and a review that records each criterion. Hand over the state through Cairnmind between fresh clients.",
       "depends_on": [],
       "metadata": {
         "requires_test": true,

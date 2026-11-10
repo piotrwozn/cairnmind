@@ -20,7 +20,7 @@ _TYPES = {"record": "records", "source": "sources", "plan": "plans", "check": "c
 
 class InspectorApp(BasePanel):
     panel_role = "inspector"
-    TITLE = "DevBrain · Memory"
+    TITLE = "Cairnmind · Memory"
     CSS = BasePanel.CSS + """
     #inspector-main { height: 1fr; }
     #inspector-heading { height: auto; max-height: 2; padding: 0 1; }

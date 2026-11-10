@@ -135,7 +135,7 @@ async def test_uses_only_host_custom_tools_and_disables_ambient_authority(tmp_pa
     monkeypatch.setenv("OPENAI_API_KEY", "secret-openai")
     monkeypatch.setenv("COPILOT_CLI_DOWNLOAD_BASE_URL", "https://untrusted.invalid")
     subject, clients = adapter(tmp_path, key="sensitive-github-token")
-    assert await subject.run_turn("hello", [TOOL], noop, system="Exact DevBrain instructions") == {
+    assert await subject.run_turn("hello", [TOOL], noop, system="Exact Cairnmind instructions") == {
         "text": "Finished", "tool_calls": [], "usage": {}, "copilot_session_id": "devbrain-logical-123"}
     options = clients[0].options
     assert options["mode"] == "empty"
@@ -156,7 +156,7 @@ async def test_uses_only_host_custom_tools_and_disables_ambient_authority(tmp_pa
     assert conf["autopilot"] == {"continuation_enabled": False, "max_continues": 0}
     assert conf["infinite_sessions"] == {"enabled": False}
     assert conf["memory"] == {"enabled": False}
-    assert conf["system_message"] == {"mode": "replace", "content": "Exact DevBrain instructions"}
+    assert conf["system_message"] == {"mode": "replace", "content": "Exact Cairnmind instructions"}
     await subject.close()
     assert clients[0].stopped == 1
 

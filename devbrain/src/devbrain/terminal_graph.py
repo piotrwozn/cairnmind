@@ -491,7 +491,7 @@ class GroupPicker(ModalScreen[dict | None]):
 
 
 class GraphApp(BasePanel):
-    TITLE = "DevBrain · Memory graph"
+    TITLE = "Cairnmind · Memory graph"
     panel_role = "graph"
     CSS = """
     #graph-heading { height: auto; max-height: 2; color: #bddb9e; }

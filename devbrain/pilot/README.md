@@ -1,9 +1,9 @@
-# Real-world DevBrain 0.3 pilot
+# Real-world Cairnmind 0.3 pilot
 
 This kit prepares a small project for a Codex → Claude → fresh Codex handoff.
 It contains no ready-made implementation and no pre-passed model results. To run
 it you need your own WSL2, a GPU, Ollama and both clients signed in. Install
-DevBrain and its models as described in the [DevBrain README](../README.md).
+Cairnmind and its models as described in the [Cairnmind README](../README.md).
 
 ## Diagnostics and evaluation
 
@@ -13,10 +13,10 @@ the diagnostics and measure the local model:
 ```bash
 export DEVBRAIN_PILOT_REPORT_DIR="$HOME/devbrain-pilot-reports/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$DEVBRAIN_PILOT_REPORT_DIR"
-devbrain doctor > "$DEVBRAIN_PILOT_REPORT_DIR/doctor-before.json"
-devbrain models pull
-devbrain doctor > "$DEVBRAIN_PILOT_REPORT_DIR/doctor.json"
-devbrain eval run --report-dir "$DEVBRAIN_PILOT_REPORT_DIR" > "$DEVBRAIN_PILOT_REPORT_DIR/recall-local.json"
+cairnmind doctor > "$DEVBRAIN_PILOT_REPORT_DIR/doctor-before.json"
+cairnmind models pull
+cairnmind doctor > "$DEVBRAIN_PILOT_REPORT_DIR/doctor.json"
+cairnmind eval run --report-dir "$DEVBRAIN_PILOT_REPORT_DIR" > "$DEVBRAIN_PILOT_REPORT_DIR/recall-local.json"
 ```
 
 `models pull` downloads the models. The evaluation uses its own temporary
@@ -44,7 +44,7 @@ auth = json.loads(claude.stdout) if claude.returncode == 0 else {}
 assert auth.get('loggedIn') is True and auth.get('authMethod') in ('claude.ai', 'oauth'), 'Claude is not signed in.'
 PY
 then
-  devbrain eval run --clients --report-dir "$DEVBRAIN_PILOT_REPORT_DIR" > "$DEVBRAIN_PILOT_REPORT_DIR/recall-clients.json"
+  cairnmind eval run --clients --report-dir "$DEVBRAIN_PILOT_REPORT_DIR" > "$DEVBRAIN_PILOT_REPORT_DIR/recall-clients.json"
 else
   printf 'The client stage was not run. Resolve the reported cause and repeat the check.\n' >&2
 fi
@@ -52,7 +52,7 @@ fi
 
 ## Create a single fresh repository
 
-Run this from the directory of the unpacked DevBrain package. The block refuses
+Run this from the directory of the unpacked Cairnmind package. The block refuses
 to use an existing `~/src/devbrain-pilot`; it neither deletes nor
 re-initializes it. On a later attempt, continue the existing pilot or choose a
 new directory and project name and change it consistently in the prompts. The
@@ -77,14 +77,14 @@ project is named `devbrain-pilot` in memory.
   cp "$kit_dir/plan.json" "$pilot_root/pilot-plan.json"
   git -C "$pilot_root" init
   git -C "$pilot_root" add .
-  git -C "$pilot_root" -c user.name='DevBrain Pilot' -c user.email='pilot@localhost' commit -m 'Prepare pilot fixture'
-  devbrain project add devbrain-pilot "$pilot_root"
-  devbrain install devbrain-pilot
+  git -C "$pilot_root" -c user.name='Cairnmind Pilot' -c user.email='pilot@localhost' commit -m 'Prepare pilot fixture'
+  cairnmind project add devbrain-pilot "$pilot_root"
+  cairnmind install devbrain-pilot
 )
 ```
 
 If the project name is already taken, do not overwrite its registration. Check
-`devbrain project list` and continue in the correct repository. Save file
+`cairnmind project list` and continue in the correct repository. Save file
 copies, measurements and reports in `DEVBRAIN_PILOT_REPORT_DIR` so they do not
 change the code fingerprint.
 
@@ -95,19 +95,19 @@ the report directory. Do not use `resume` and do not carry conversation history
 between clients. Paste only the matching short prompt from the package's
 `pilot/prompts` directory:
 
-1. `devbrain run devbrain-pilot codex` — [01-codex.txt](prompts/01-codex.txt).
+1. `cairnmind run devbrain-pilot codex` — [01-codex.txt](prompts/01-codex.txt).
    The model saves the plan through MCP, writes the code and tests, saves a
    checkpoint and leaves the task in `needs_test`. Exit the native client.
-2. `devbrain run devbrain-pilot claude` — [02-claude.txt](prompts/02-claude.txt).
+2. `cairnmind run devbrain-pilot claude` — [02-claude.txt](prompts/02-claude.txt).
    The new session restores the state, runs the `unit` profile and reads the
    real stdout/stderr logs. It performs a review and updates the task through
    MCP. Exit the client.
-3. `devbrain run devbrain-pilot codex` — [03-fresh-codex.txt](prompts/03-fresh-codex.txt).
+3. `cairnmind run devbrain-pilot codex` — [03-fresh-codex.txt](prompts/03-fresh-codex.txt).
    The third session restores the state, sources, tests and remaining work.
 
 On `partial`/`unavailable` the launcher stops the start: check
-`devbrain status --project devbrain-pilot`, the archiving reason and
-`devbrain doctor`, then retry once the cause is resolved. Do not bypass the ACK
+`cairnmind status --project devbrain-pilot`, the archiving reason and
+`cairnmind doctor`, then retry once the cause is resolved. Do not bypass the ACK
 or the profile requirements. Reproducing identifiers is a read of the state; an
 ACK does not prove that the model understood it.
 
@@ -116,13 +116,13 @@ ACK does not prove that the model understood it.
 - In the third session, trigger the client's native conversation compaction.
   Ask it to restore the goal, versions and sources again. The model must re-read
   the packet and perform an ACK.
-- Exit the client, run `devbrain stop`, then `devbrain context devbrain-pilot`.
+- Exit the client, run `cairnmind stop`, then `cairnmind context devbrain-pilot`.
   This restarts the service. Start one more fresh Codex session and use the
   read-only prompt; the state should be preserved.
 - Only after reaching `done` and `fresh`, change the function code in the
   pilot's `token_auth.py` so that it rejects a valid token. Do not change the
-  task or its evidence. `devbrain task list devbrain-pilot` and
-  `devbrain check list devbrain-pilot --task REAL_TASK_ID`
+  task or its evidence. `cairnmind task list devbrain-pilot` and
+  `cairnmind check list devbrain-pilot --task REAL_TASK_ID`
   should show the historical `done` but `stale` for its verification. Read the
   state in a fresh session too; the model must point out the mismatch. Do not
   remove this result from the report.
@@ -132,13 +132,13 @@ ACK does not prove that the model understood it.
 
 ## Measurements and pass criteria
 
-Record `devbrain doctor`, the client versions and the model list, both
+Record `cairnmind doctor`, the client versions and the model list, both
 evaluation reports, the plan/task/run IDs, the review and sources, and the
 observations before and after compaction, restart and the code change. Reports
 may contain conversation content — share only the diagnostic data that is
 needed, without credential configuration.
 
-For three questions, use the existing `devbrain benchmark devbrain-pilot "QUESTION"`:
+For three questions, use the existing `cairnmind benchmark devbrain-pilot "QUESTION"`:
 
 - "What is the goal of the pilot and what are its constraints?"
 - "What is the state of the token validation task and what evidence does it have?"

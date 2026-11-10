@@ -29,3 +29,4 @@ evidence/
 # Maintainer-only release and qualification tooling, kept on disk only
 release-tools/
 releases/
+.ruv-swarm/

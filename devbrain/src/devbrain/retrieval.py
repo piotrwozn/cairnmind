@@ -563,7 +563,7 @@ class Retriever:
             "total_records": len(records), "omitted_records": len(records) - len(selected),
             "workflow": workflow,
             "instruction": (
-                "Use DevBrain ask(project, question) for decisions, code locations, dependencies and history. "
+                "Use Cairnmind ask(project, question) for decisions, code locations, dependencies and history. "
                 "Use remember with sources and checkpoint after meaningful work. Proposed records are not "
                 "confirmed decisions. Task metadata.state distinguishes implementation, testing and review; "
                 "test_passed and test_source_ids are reported evidence, never fresh machine proof. "

@@ -79,7 +79,7 @@ def test_diagnostics_require_existing_config_without_creating_it(tmp_path, monke
     monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: pytest.fail("No config must mean no HTTP request"))
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), *arguments])
     assert result.exit_code == 2
-    assert "devbrain init" in result.output
+    assert "cairnmind init" in result.output
     assert not data.parent.exists()
 
 
@@ -133,7 +133,7 @@ def test_unavailable_diagnostics_do_not_autostart_service(tmp_path, monkeypatch,
     transport(monkeypatch, unavailable)
     result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), *arguments])
     assert result.exit_code == 2
-    assert "devbrain serve" in result.output
+    assert "cairnmind serve" in result.output
     assert files(settings.data_dir) == before
 
 

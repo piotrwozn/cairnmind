@@ -14,22 +14,22 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. devbrain project add ...
+        1. cairnmind project add ...
         2. ...
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: DevBrain version
-      description: Output of `devbrain version`.
+      label: Cairnmind version
+      description: Output of `cairnmind version`.
     validations:
       required: true
   - type: textarea
     id: environment
     attributes:
       label: Environment
-      description: OS or WSL distribution, Java, tmux and Ollama versions, and the coding clients involved. `devbrain doctor --contract` output helps for client issues.
+      description: OS or WSL distribution, Java, tmux and Ollama versions, and the coding clients involved. `cairnmind doctor --contract` output helps for client issues.
   - type: textarea
     id: logs
     attributes:

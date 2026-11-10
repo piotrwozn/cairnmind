@@ -1,12 +1,14 @@
-# DevBrain
+# Cairnmind
 
-[![CI](https://github.com/piotrwozn/devbrain/actions/workflows/ci.yml/badge.svg)](https://github.com/piotrwozn/devbrain/actions/workflows/ci.yml)
+[![CI](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml/badge.svg)](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml)
 
 **Evidence-grounded project memory for coding agents, in your terminal.**
 
-DevBrain is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped.
+*A cairn is the pile of stones a walker leaves to mark the trail for the next one. Cairnmind is the memory one coding agent leaves for the next. Formerly DevBrain.*
 
-What sets it apart from a `CLAUDE.md` file or a generic memory layer is that DevBrain treats memory as evidence, not as notes:
+Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped.
+
+What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cairnmind treats memory as evidence, not as notes:
 
 - **Every answer cites its sources.** The local knowledge agent answers `ask` questions only with verbatim quotes from archived sources, re-checked against the current file content. When the project does not contain the answer, it says `unknown`.
 - **Resuming is verified, not assumed.** A session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
@@ -19,7 +21,7 @@ What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Dev
 Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot SDK
                            │ MCP: resume / ACK / ask / plans
                            ▼
-                 Local DevBrain service
+                 Local Cairnmind service
                   │                   │
        knowledge agent (Ollama)    independent archiving
                   │                   │
@@ -54,16 +56,16 @@ The method, the problems the measurement uncovered and the limits of these numbe
 
 ## Quick start
 
-DevBrain runs on Linux, or on Windows inside WSL2 Ubuntu, with Java 21+, tmux 3.4+, uv and Ollama. With those in place:
+Cairnmind runs on Linux, or on Windows inside WSL2 Ubuntu, with Java 21+, tmux 3.4+, uv and Ollama. With those in place:
 
 ```bash
-git clone https://github.com/piotrwozn/devbrain.git ~/src/devbrain
-cd ~/src/devbrain/devbrain
-bash scripts/install-wsl.sh     # installs DevBrain and ArcadeDB, initialises local memory
-devbrain models pull            # downloads the local models (about 7 GB)
-devbrain project add my-app ~/src/my-app
-devbrain install my-app         # connects Codex / Claude Code to this project
-devbrain                        # opens the terminal workspace
+git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
+cd ~/src/cairnmind/devbrain
+bash scripts/install-wsl.sh     # installs Cairnmind and ArcadeDB, initialises local memory
+cairnmind models pull            # downloads the local models (about 7 GB)
+cairnmind project add my-app ~/src/my-app
+cairnmind install my-app         # connects Codex / Claude Code to this project
+cairnmind                        # opens the terminal workspace
 ```
 
 **[Step-by-step installation guide](devbrain/docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, connecting assistants, verifying, upgrading, uninstalling and troubleshooting.
@@ -86,7 +88,7 @@ Test modules that need the real ArcadeDB engine are marked `arcade`, and those t
 
 Version 0.8.0 is the current release; see the [changelog](devbrain/CHANGELOG.md). New installations use the installer directly. Upgrading an existing 0.7.2 installation goes through a guarded updater that requires a passed runtime qualification of the host before it touches existing data; see [docs/UPGRADING.md](devbrain/docs/UPGRADING.md).
 
-Planned work is tracked in [issues](https://github.com/piotrwozn/devbrain/issues?q=is%3Aissue+label%3Aroadmap).
+Planned work is tracked in [issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 
 ## Contributing
 
@@ -94,4 +96,4 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and re
 
 ## License
 
-DevBrain is licensed under the [Apache License 2.0](LICENSE). ArcadeDB, which DevBrain downloads and manages, is licensed separately under the same license; see [NOTICE](NOTICE).
+Cairnmind is licensed under the [Apache License 2.0](LICENSE). ArcadeDB, which Cairnmind downloads and manages, is licensed separately under the same license; see [NOTICE](NOTICE).

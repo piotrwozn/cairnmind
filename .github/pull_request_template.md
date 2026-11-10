@@ -7,7 +7,7 @@
 - [ ] `uv run ruff check src tests`
 - [ ] `uv run pytest -m "not arcade and not tmux"`
 - [ ] Full suite, or CI
-- [ ] Evaluations (`devbrain eval run` / `devbrain eval memory`), if the knowledge agent, retrieval or extraction changed
+- [ ] Evaluations (`cairnmind eval run` / `cairnmind eval memory`), if the knowledge agent, retrieval or extraction changed
 
 ## Contracts
 

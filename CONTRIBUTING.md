@@ -1,10 +1,10 @@
-# Contributing to DevBrain
+# Contributing to Cairnmind
 
-Thank you for your interest in DevBrain. This guide explains how to set up a development environment, run the tests and propose a change.
+Thank you for your interest in Cairnmind. This guide explains how to set up a development environment, run the tests and propose a change.
 
 ## Ground rules
 
-DevBrain is built around one promise: memory that coding agents can trust. Changes are reviewed against that promise first.
+Cairnmind is built around one promise: memory that coding agents can trust. Changes are reviewed against that promise first.
 
 - A model answer never becomes independent evidence. Quotes must stay literal and verifiable.
 - Safety contracts are deliberate. If a test asserts that something blocks, such as an unknown transcript record blocking a verified resume, change it only together with the contract in [devbrain/CONTRACTS.md](devbrain/CONTRACTS.md) or [docs/MEMORY_CONTRACTS.md](devbrain/docs/MEMORY_CONTRACTS.md), and explain why in the pull request.
@@ -12,11 +12,11 @@ DevBrain is built around one promise: memory that coding agents can trust. Chang
 
 ## Development environment
 
-DevBrain runs on Linux or WSL2 Ubuntu. You need Python 3.12, [uv](https://docs.astral.sh/uv/), Java 21+ and tmux 3.4+.
+Cairnmind runs on Linux or WSL2 Ubuntu. You need Python 3.12, [uv](https://docs.astral.sh/uv/), Java 21+ and tmux 3.4+.
 
 ```bash
-git clone https://github.com/piotrwozn/devbrain.git
-cd devbrain/devbrain
+git clone https://github.com/piotrwozn/cairnmind.git
+cd cairnmind/devbrain
 uv sync --locked --extra dev
 ```
 
@@ -39,9 +39,9 @@ uv run pytest                                # full suite with the real ArcadeDB
 These run real local models and are not part of CI:
 
 ```bash
-devbrain eval run              # 20 recall cases with the local knowledge agent
-devbrain eval memory           # extraction, portable transfer and cited recall
-devbrain eval run --clients    # adds the Codex → Claude Code → Codex hand-off; uses your client quotas
+cairnmind eval run              # 20 recall cases with the local knowledge agent
+cairnmind eval memory           # extraction, portable transfer and cited recall
+cairnmind eval run --clients    # adds the Codex → Claude Code → Codex hand-off; uses your client quotas
 ```
 
 If a change touches the knowledge agent, retrieval or extraction, include evaluation results in the pull request.

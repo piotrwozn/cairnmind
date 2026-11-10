@@ -117,7 +117,7 @@ def _evidence_time(tx, source_ids):
     """When the record's evidence existed, from its immutable sources.
 
     A transcript's own timestamp is when the statement was made (`stated`). Any other
-    source existed no later than the moment DevBrain stored its snapshot (`observed`).
+    source existed no later than the moment Cairnmind stored its snapshot (`observed`).
     """
     times, bases = [], set()
     for source_id in dict.fromkeys(source_ids):
@@ -285,7 +285,7 @@ class Store:
         path = str(Path(root).expanduser().resolve())
         if ((self.data_dir / "credentials" / "api-keys.json").exists()
                 and self.data_dir.is_relative_to(Path(path))):
-            raise ValueError("Project root cannot contain DevBrain's private credential store")
+            raise ValueError("Project root cannot contain Cairnmind's private credential store")
         return path
 
     def add_project(self, name, root):
@@ -1030,7 +1030,7 @@ class Store:
             with gzip.open(path, "rt", encoding="utf-8") as handle:
                 envelope = json.load(handle)
             if not isinstance(envelope, dict) or envelope.get("format") != "devbrain-arcadedb-backup" or envelope.get("version") != 1:
-                raise ValueError("This file is not a supported DevBrain ArcadeDB backup")
+                raise ValueError("This file is not a supported Cairnmind ArcadeDB backup")
             payload = envelope["payload"]
             if hashlib.sha256(_json(payload).encode()).hexdigest() != envelope.get("sha256"):
                 raise ValueError("Backup checksum mismatch")
@@ -1096,10 +1096,10 @@ class Store:
                 raise ValueError("Backup vector data is invalid")
             return payload
         except (OSError, EOFError, KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise ValueError("Invalid or corrupt DevBrain backup") from exc
+            raise ValueError("Invalid or corrupt Cairnmind backup") from exc
 
     def restore(self, backup):
-        """Restore validated data atomically. Stop DevBrain workers before calling."""
+        """Restore validated data atomically. Stop Cairnmind workers before calling."""
         payload = self._validated_backup(Path(backup).expanduser().resolve())
         self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}.devbrain.json.gz")
         # DDL is deliberately outside the data transaction; no live data has been removed.

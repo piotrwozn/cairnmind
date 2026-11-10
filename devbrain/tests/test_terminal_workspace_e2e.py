@@ -637,7 +637,7 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
         stdin=slave, stdout=slave, stderr=slave, env=environment, start_new_session=True)
     drain = None
     try:
-        await read_pty_until(master, "DevBrain")
+        await read_pty_until(master, "Cairnmind")
 
         async def discard_screen_output():
             while True:

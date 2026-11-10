@@ -27,7 +27,7 @@ Publication locks the reserved destination, captures a consistent database view,
 then writes immutable objects before atomically replacing the manifest. Five
 available successful manifests are retained, with shared objects deduplicated.
 Unchanged knowledge produces no new snapshot. Git history is not erased by this
-retention policy. DevBrain does not stage, commit, or push files.
+retention policy. Cairnmind does not stage, commit, or push files.
 
 The per-project scheduler is opt-in and defaults to 15 minutes. One registered
 worktree is its configured destination. The service must be running; it coalesces
@@ -72,7 +72,7 @@ complete package to 512 MiB and one million object descriptors. A package exceed
 these limits fails explicitly before replacing the current manifest; data is
 never silently truncated. Source text is not sent to a model by export or import.
 
-`devbrain eval memory` uses two disposable databases and local Ollama to exercise
+`cairnmind eval memory` uses two disposable databases and local Ollama to exercise
 positive extraction, transfer, fresh-agent cited recall, and project isolation.
 The three explicit fixture facts must all survive extraction; an empty extraction
 does not pass this fixture. This is separate from the existing pre-seeded recall

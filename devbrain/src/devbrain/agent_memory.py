@@ -314,13 +314,13 @@ class AgentMemoryClient:
                     detail = str(response.json().get("detail", "Request rejected"))[:500]
                 except ValueError:
                     detail = "Request rejected"
-                raise RuntimeError(f"DevBrain service rejected the request ({response.status_code}): {detail}")
+                raise RuntimeError(f"Cairnmind service rejected the request ({response.status_code}): {detail}")
             result = response.json()
             if not isinstance(result, dict):
                 raise ValueError("Expected object service response")
             return result
         except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeError(f"DevBrain service unavailable ({type(exc).__name__})") from None
+            raise RuntimeError(f"Cairnmind service unavailable ({type(exc).__name__})") from None
 
     async def prepare(self, reason="startup"):
         result = await self._request("POST", "/sessions/prepare", body={

@@ -1,4 +1,4 @@
-Perform the first stage of the real DevBrain pilot in the devbrain-pilot project.
+Perform the first stage of the real Cairnmind pilot in the devbrain-pilot project.
 Work only in the worktree named by this session's packet. Use native
 permissions; do not change other projects or the sign-in configuration.
 
@@ -16,7 +16,7 @@ permissions; do not change other projects or the sign-in configuration.
    Read next_task. Implement token_auth.py and tests/test_token_auth.py according
    to the saved criteria, with at least 12 unittest test methods. Do not run the
    tests yet: the next client must genuinely take over the needs_test stage.
-4. Index the changed files with the existing command devbrain index devbrain-pilot.
+4. Index the changed files with the existing command cairnmind index devbrain-pilot.
    Before the next write, refresh resume_context and the ACK: the code
    fingerprint has changed. Save an MCP checkpoint containing the goal, the
    changed files, the implementation result, an explicit tests_not_run=true,

@@ -233,7 +233,7 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
 
 class SidebarApp(BasePanel):
     panel_role = "sidebar"
-    TITLE = "DevBrain"
+    TITLE = "Cairnmind"
     CSS = BasePanel.CSS + """
     #sidebar-main { height: 1fr; padding: 0 1; overflow-y: auto; }
     #sidebar-heading { height: auto; color: #a6d8ff; text-style: bold; }
@@ -1128,7 +1128,7 @@ class SidebarApp(BasePanel):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prywatny panel terminalowego środowiska DevBrain")
+    parser = argparse.ArgumentParser(description="Prywatny panel terminalowego środowiska Cairnmind")
     parser.add_argument("--kind", choices=["sidebar", "inspector", "graph"], required=True)
     parser.add_argument("--workspace-id", default="default")
     parser.add_argument("--data-dir", type=Path)

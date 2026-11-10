@@ -27,7 +27,7 @@ def workspace(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     git(root, "init", "-q")
-    git(root, "config", "user.name", "DevBrain fixture")
+    git(root, "config", "user.name", "Cairnmind fixture")
     git(root, "config", "user.email", "fixture@example.invalid")
     (root / ".gitignore").write_text("cache/\nignored/\n__pycache__/\n")
     (root / "app.py").write_text("value = 1\n")

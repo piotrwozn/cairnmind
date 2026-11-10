@@ -1,4 +1,4 @@
-This is a fresh session of the second client in the DevBrain pilot, project
+This is a fresh session of the second client in the Cairnmind pilot, project
 devbrain-pilot. You will not receive the previous conversation. Restore the goal
 and the current state from the shared memory. Work only in the worktree named by
 the packet, with native permissions.
@@ -14,12 +14,12 @@ the packet, with native permissions.
    it requires, the cases covered and the actual assertions. An empty test suite
    with exit code 0 does not, on its own, meet the criteria.
 3. Run the named profile through the client's native tool:
-   devbrain check run devbrain-pilot unit --task REAL_TASK_ID
+   cairnmind check run devbrain-pilot unit --task REAL_TASK_ID
    The command executes code and is subject to your native permissions. Do not
    replace it with a plain subprocess/unittest call and do not create a machine
    result through remember. Read the full run record with
-   devbrain check list devbrain-pilot --task TASK_ID
-   and the stdout and stderr sources with devbrain source SOURCE_ID. unittest
+   cairnmind check list devbrain-pilot --task TASK_ID
+   and the stdout and stderr sources with cairnmind source SOURCE_ID. unittest
    usually writes the test names and the summary to stderr. Check the positive
    number of tests required by the criteria, OK, passed=true, the correct
    task_id, the worktree and a fresh check_status. Remember the real run ID.

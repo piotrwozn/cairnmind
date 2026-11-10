@@ -1,4 +1,4 @@
-"""DevBrain CLI; native coding clients retain their own terminal and permissions."""
+"""Cairnmind CLI; native coding clients retain their own terminal and permissions."""
 from __future__ import annotations
 
 import asyncio
@@ -66,7 +66,7 @@ def entrypoint() -> None:
     try:
         app()
     except (ValueError, OSError, ArcadeError, httpx.HTTPError, OllamaUnavailable) as exc:
-        typer.echo(f"DevBrain: {exc}", err=True)
+        typer.echo(f"Cairnmind: {exc}", err=True)
         raise SystemExit(1) from None
 
 
@@ -142,7 +142,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
     if start_service:
         ensure_service(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
-        raise typer.BadParameter("Brak istniejącej konfiguracji DevBrain; uruchom jawnie `devbrain init`.")
+        raise typer.BadParameter("Brak istniejącej konfiguracji Cairnmind; uruchom jawnie `cairnmind init`.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/checkpoint", "/plans/save", "/plans/activate",
@@ -173,8 +173,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         except httpx.HTTPError:
             if not start_service:
                 raise typer.BadParameter(
-                    "Istniejąca usługa DevBrain jest niedostępna; diagnostyka jej nie uruchamia. "
-                    "Uruchom jawnie `devbrain serve`.") from None
+                    "Istniejąca usługa Cairnmind jest niedostępna; diagnostyka jej nie uruchamia. "
+                    "Uruchom jawnie `cairnmind serve`.") from None
             raise
         if not response.is_success:
             try:
@@ -201,8 +201,8 @@ def _launch_terminal_workspace(ctx: typer.Context, *, takeover: bool = False) ->
     # configuration, launch a browser or silently start interactive processes.
     if not _interactive_terminal():
         raise typer.BadParameter(
-            "Uruchom `devbrain` w interaktywnym terminalu. "
-            "Dostępne polecenia: `devbrain --help`; stan: `devbrain workspace status`.")
+            "Uruchom `cairnmind` w interaktywnym terminalu. "
+            "Dostępne polecenia: `cairnmind --help`; stan: `cairnmind workspace status`.")
     from devbrain.workspace import launch_workspace
     ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     code = launch_workspace(ctx.obj, takeover=True) if takeover else launch_workspace(ctx.obj)
@@ -212,7 +212,7 @@ def _launch_terminal_workspace(ctx: typer.Context, *, takeover: bool = False) ->
 
 @app.command()
 def tui(ctx: typer.Context):
-    """Otwórz terminalowe środowisko DevBrain (tak samo jak polecenie bez argumentów)."""
+    """Otwórz terminalowe środowisko Cairnmind (tak samo jak polecenie bez argumentów)."""
     _launch_terminal_workspace(ctx)
 
 
@@ -277,7 +277,7 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 def init(ctx: typer.Context):
     """Utwórz lokalny magazyn. Nie pobiera modeli ani nie zmienia konfiguracji klientów."""
     store_for(ctx.obj)
-    output({"data_dir": str(ctx.obj.data_dir), "next": "devbrain doctor; devbrain models pull"})
+    output({"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"})
 
 
 @engine_app.command("install")
@@ -308,7 +308,7 @@ def engine_inspect(ctx: typer.Context):
 def engine_stop(ctx: typer.Context):
     from devbrain.engine import stop_engine
     if service_alive(ctx.obj):
-        raise typer.BadParameter("Najpierw devbrain stop; usługa wiedzy korzysta z ArcadeDB")
+        raise typer.BadParameter("Najpierw cairnmind stop; usługa wiedzy korzysta z ArcadeDB")
     output(stop_engine(ctx.obj))
 
 
@@ -871,7 +871,7 @@ def hook(ctx: typer.Context, client: Annotated[str, typer.Option("--client")]):
             typer.echo(json.dumps(result, ensure_ascii=False))
     except Exception as exc:
         # Never corrupt the coding client's protocol or block a turn on memory failures.
-        typer.echo(f"DevBrain hook: {exc}", err=True)
+        typer.echo(f"Cairnmind hook: {exc}", err=True)
 
 
 @models_app.command("list")
@@ -926,7 +926,7 @@ def retry_jobs(ctx: typer.Context):
     if os.environ.get("DEVBRAIN_SESSION_ID"):
         raise typer.BadParameter(
             "Sesja modelu nie może ponawiać zadań wszystkich projektów. "
-            "Użyj `devbrain jobs retry PROJEKT JOB_ID --expected-attempts N` z aktualnym ACK.")
+            "Użyj `cairnmind jobs retry PROJEKT JOB_ID --expected-attempts N` z aktualnym ACK.")
     _retry_jobs(store_for(ctx.obj))
     output({"retried": True})
 
@@ -954,7 +954,7 @@ def export(ctx: typer.Context, destination: Path, project: str | None = None, ma
     pid = store.resolve_project(project)["id"] if project else None
     data = store.export(pid)
     if markdown:
-        parts = ["# DevBrain — eksport pamięci\n"]
+        parts = ["# Cairnmind — eksport pamięci\n"]
         for record in data.get("records", []):
             parts.append(f"## {record['kind']}: {record.get('key') or record['id']}\n\n{record['content']}\n")
             parts.append("```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
@@ -980,9 +980,9 @@ def restore(ctx: typer.Context, source: Path):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise typer.BadParameter("Najpierw devbrain stop; usługa nadal posiada blokadę magazynu")
+            raise typer.BadParameter("Najpierw cairnmind stop; usługa nadal posiada blokadę magazynu")
         if service_alive(ctx.obj):
-            raise typer.BadParameter("Najpierw devbrain stop; odtwarzanie wymaga zatrzymanej usługi")
+            raise typer.BadParameter("Najpierw cairnmind stop; odtwarzanie wymaga zatrzymanej usługi")
         store_for(ctx.obj).restore(source)
     output({"restored": True})
 

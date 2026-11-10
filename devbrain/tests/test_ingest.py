@@ -116,7 +116,7 @@ def test_unassigned_history_inbox_and_explicit_assignment(workspace, tmp_path):
     store.forget_project(project["id"])
     assert not rows(store, "SELECT * FROM sources")
     assert not rows(store, "SELECT * FROM ingestion_inbox")
-    # The user's original CLI history is outside DevBrain's deletion boundary.
+    # The user's original CLI history is outside Cairnmind's deletion boundary.
     assert history.exists()
 
 

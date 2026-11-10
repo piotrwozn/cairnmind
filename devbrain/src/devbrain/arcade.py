@@ -82,7 +82,7 @@ class ArcadeClient:
             return response
         except httpx.HTTPError as exc:
             raise ArcadeError(f"Local ArcadeDB is unavailable ({type(exc).__name__}); "
-                              "run devbrain engine status or devbrain engine start") from None
+                              "run cairnmind engine status or cairnmind engine start") from None
 
     @staticmethod
     def _result(response: httpx.Response) -> list[dict]:

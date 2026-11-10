@@ -137,7 +137,7 @@ class RuntimeSupervisor(NativeRuntime):
             raise ValueError("profile_invalid: invalid agent profile")
         root = str(Path(project["root"]).resolve())
         if self.settings.data_dir.resolve().is_relative_to(Path(root)):
-            raise ValueError("agent_storage_in_project: move the DevBrain data directory outside the worktree")
+            raise ValueError("agent_storage_in_project: move the Cairnmind data directory outside the worktree")
         with self._locked():
             rows = self._read()
             matches = [r for r in rows if (r.get("project_id"), r.get("worktree"), r.get("client"),
@@ -241,7 +241,7 @@ def api_worker_config(settings: Settings, run_id: str, generation: int) -> dict:
                 raise ValueError("agent_credential_invalid")
             return {**value, "key": key}
     except (httpx.HTTPError, ValueError):
-        raise ValueError("Nie można odtworzyć prywatnej konfiguracji agenta. Uruchom go ponownie z DevBrain.") from None
+        raise ValueError("Nie można odtworzyć prywatnej konfiguracji agenta. Uruchom go ponownie z Cairnmind.") from None
 
 
 def coding_profiles_status(settings: Settings) -> dict:

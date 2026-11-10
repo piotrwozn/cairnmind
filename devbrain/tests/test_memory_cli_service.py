@@ -112,7 +112,7 @@ def test_memory_status_requires_explicit_existing_configuration(tmp_path, monkey
     _no_diagnostic_mutations(monkeypatch)
     result = CliRunner().invoke(cli.app, ["--data-dir", str(missing), "memory", "status", "demo"])
     assert result.exit_code == 2
-    assert "devbrain init" in result.output
+    assert "cairnmind init" in result.output
     assert not missing.parent.exists()
 
 
