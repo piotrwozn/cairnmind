@@ -330,7 +330,7 @@ def _merge_json_mcp(path: Path, settings: Settings) -> bool:
 def _is_ours(server: dict[str, Any]) -> bool:
     args = server.get("args", []) if isinstance(server, dict) else []
     # Entries written before the module was renamed start `-m devbrain`; they are ours too.
-    return isinstance(args, list) and any(args[i:i + 2] in (["-m", "cairnmind"], ["-m", "devbrain"])
+    return isinstance(args, list) and any(args[i:i + 2] in (["-m", "cairnmind"], ["-m", "cairnmind"])
                                           for i in range(len(args)))
 
 
