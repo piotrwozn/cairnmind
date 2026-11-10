@@ -243,9 +243,10 @@ async def test_global_project_and_exact_revision_selection_never_start_clients(p
         await eventually(pilot, lambda: app.model.scope.project is None and len(app.model.nodes) == 2)
         app.model.selected_id = "project:beta"
         await pilot.press("enter")
-        await eventually(pilot, lambda: workspace.read()["project_id"] == "beta")
+        # The scope is the last thing the open-node worker sets, after the workspace write.
+        await eventually(pilot, lambda: app.model.scope.project == "beta")
+        assert workspace.read()["project_id"] == "beta"
         assert workspace.read()["intent"] == "inspect" and workspace.read()["work_request"] is None
-        assert app.model.scope.project == "beta"
         node = {"id": "revision:record:beta-task:7", "entity_type": "revision", "kind": "revision", "project_id": "beta",
                 "owner_type": "record", "owner_id": "beta-task", "revision_id": "beta-task:7", "version": 7}
         app.open_node(node)
@@ -304,3 +305,13 @@ async def test_late_old_scope_response_cannot_replace_new_project(panel):
         await broker.queue.put({"event": "change", "data": {"project_id": "beta"}})
         await pilot.pause(.5)
         assert len(broker.calls) == calls
+
+
+
+def test_graph_is_not_visible_once_the_app_stopped(panel):
+    settings, workspace, broker = panel
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    app._active = True
+    # During shutdown the screen stack is emptied while timers and workers can still run.
+    assert app.is_running is False
+    assert app._visible() is False

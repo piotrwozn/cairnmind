@@ -107,6 +107,39 @@ async def wait_for(predicate, timeout=4):
         await asyncio.sleep(.01)
 
 
+async def read_terminal(master, *expected, timeout=4):
+    """Everything the bridge wrote, read from the pty master.
+
+    The kernel moves bytes from the slave side to the master side asynchronously, so one
+    os.read() right after the writer finished can return only the first part of the
+    output. Read until every expected text arrived, then until the output stays quiet.
+    """
+    loop = asyncio.get_running_loop()
+    needles = [item.encode("utf-8") if isinstance(item, str) else item for item in expected]
+    data, end, quiet_since = b"", loop.time() + timeout, None
+    blocking = os.get_blocking(master)
+    os.set_blocking(master, False)
+    try:
+        while True:
+            try:
+                chunk = os.read(master, 65536)
+            except BlockingIOError:
+                chunk = b""
+            now = loop.time()
+            if chunk:
+                data, quiet_since = data + chunk, None
+                continue
+            if all(needle in data for needle in needles):
+                quiet_since = quiet_since or now
+                if now - quiet_since >= .2:
+                    return data
+            if now >= end:
+                return data  # the caller's assertions report what is missing
+            await asyncio.sleep(.01)
+    finally:
+        os.set_blocking(master, blocking)
+
+
 def input_bytes(socket):
     return b"".join(base64.b64decode(frame["data"]) for frame in socket.sent if frame["type"] == "input")
 
@@ -145,7 +178,7 @@ async def test_raw_binary_keyboard_output_and_native_exit_restore_terminal(pty_p
         raw = "żółć".encode() + b"\x03\x1b[200~paste\x1b[201~\x00"
         os.write(master, raw)
         await wait_for(lambda: raw in input_bytes(client.sockets[0]))
-        rendered = os.read(master, 65536)
+        rendered = await read_terminal(master, b"\x1b[31mNATIVE_SCREEN\x1b[0m")
         assert b"\x1b[31mNATIVE_SCREEN\x1b[0m" in rendered
         await wait_for(lambda: any(f["type"] == "resize" for f in client.sockets[0].sent))
         assert {"type": "resize", "cols": 101, "rows": 31} in client.sockets[0].sent
@@ -353,8 +386,8 @@ async def test_terminal_failure_feedback_survives_each_exit_path_after_restore(p
             else:
                 client.lifecycle = state
         await asyncio.wait_for(task, 4)
-        rendered = os.read(master, 65536).decode("utf-8")
         expected = native_failure_notice({"client": "codex", "lifecycle": state, "exit_code": 1}, language)
+        rendered = (await read_terminal(master, expected)).decode("utf-8")
         assert expected and expected in rendered
         assert len(final_writes) == 1 and final_writes[0][1] == original
         assert "PRIVATE_NATIVE_TEXT_MUST_NOT_BE_REFLECTED" not in rendered
@@ -401,8 +434,9 @@ async def test_auth_failure_keeps_connections_guidance_and_existing_post_restore
             else:
                 client.lifecycle = "failed"
         await asyncio.wait_for(task, 4)
-        rendered = os.read(master, 65536).decode("utf-8")
-        assert tr("Open Connections from the menu (Ctrl+B Space) to review account sign-in.", language) in rendered
+        guidance = tr("Open Connections from the menu (Ctrl+B Space) to review account sign-in.", language)
+        rendered = (await read_terminal(master, guidance)).decode("utf-8")
+        assert guidance in rendered
         assert tr("Start work", language) not in rendered
         assert "PRIVATE_DEVICE_CODE_MUST_NOT_BE_REFLECTED" not in rendered
         assert pane.auth_closed and pane.states[-1] == "failed"
@@ -426,7 +460,9 @@ async def test_stale_broker_rejection_shows_fixed_feedback_without_reattach(pty_
     client.reconnect = rejected
     bridge = RawTerminalBridge(client, "run-fixture", 7, input_fd=slave, output_fd=slave, language=language)
     assert await asyncio.wait_for(bridge.run(), 2) == 1
-    rendered = os.read(master, 65536).decode("utf-8")
+    rendered = (await read_terminal(
+        master, tr("The session changed.", language),
+        tr("Open the menu with Ctrl+B Space to review the current session.", language))).decode("utf-8")
     assert tr("The session changed.", language) in rendered
     assert tr("Open the menu with Ctrl+B Space to review the current session.", language) in rendered
     assert "PRIVATE_BROKER_DETAIL" not in rendered and not client.connections
