@@ -137,10 +137,15 @@ def _roots(store, project: dict) -> list[Path]:
     return list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(r["path"]).resolve() for r in rows]]))
 
 
-def _files(root: Path, excluded: tuple[Path, ...] = ()):
-    """Walk with nested gitignore rules. Symlinks are deliberately not followed."""
+def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None):
+    """Walk with nested gitignore rules. Symlinks are deliberately not followed.
+
+    A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
+    and its caller must not treat the files it did not see as deleted.
+    """
     rules: dict[Path, pathspec.GitIgnoreSpec] = {}
-    for directory, dirs, names in os.walk(root, followlinks=False):
+    for directory, dirs, names in os.walk(root, followlinks=False,
+                                          onerror=errors.append if errors is not None else None):
         folder = Path(directory)
         if is_memory_path(folder, root) or any(folder.is_relative_to(base) for base in excluded):
             dirs[:] = []
@@ -300,6 +305,32 @@ def index_pending_sources(store, limit: int = 100) -> dict:
 
 # The tree signature of the last complete indexing done by this process, per store and project.
 _INDEXED: dict[tuple[str, str], str] = {}
+# Bumped whenever the index of a store is changed outside `index_project`.
+_INVALIDATIONS: dict[str, int] = {}
+# A signature is trusted only when every file was last touched at least this long before
+# it was taken (git's "racy clean" rule): on a filesystem with coarse timestamps a second
+# write of the same size inside one tick would otherwise look like no change.
+RACY_WINDOW_NS = 2_000_000_000
+
+
+def _tree_state(store, project_id: str) -> tuple[str, int, bool]:
+    """The signature, the newest file time seen, and whether every directory could be listed."""
+    project = store.resolve_project(project_id)
+    entries: list[Any] = [parser_identity()]
+    newest, errors = 0, []
+    for root in _roots(store, project):
+        if not root.is_dir():
+            entries.append([str(root), None])
+            continue
+        for path in _files(root, excluded=(store.data_dir,), errors=errors):
+            try:
+                status = os.stat(path, follow_symlinks=False)
+            except OSError:
+                entries.append([str(path), None])
+                continue
+            entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
+            newest = max(newest, status.st_mtime_ns, status.st_ctime_ns)
+    return hashlib.sha256(_json(entries).encode()).hexdigest(), newest, not errors
 
 
 def tree_signature(store, project_id: str) -> str:
@@ -307,26 +338,19 @@ def tree_signature(store, project_id: str) -> str:
 
     Every file the index would visit contributes its path, size, modification time and
     inode change time. Writing a file changes its change time even when a tool restores
-    the modification time, so equal signatures mean an identical tree for indexing.
+    the modification time. `index_project` records a signature only when it can be trusted;
+    see `RACY_WINDOW_NS`.
     """
-    project = store.resolve_project(project_id)
-    entries: list[Any] = [parser_identity()]
-    for root in _roots(store, project):
-        if not root.is_dir():
-            entries.append([str(root), None])
-            continue
-        for path in _files(root, excluded=(store.data_dir,)):
-            try:
-                status = os.stat(path, follow_symlinks=False)
-            except OSError:
-                entries.append([str(path), None])
-                continue
-            entries.append([str(path), status.st_size, status.st_mtime_ns, status.st_ctime_ns])
-    return hashlib.sha256(_json(entries).encode()).hexdigest()
+    return _tree_state(store, project_id)[0]
 
 
 def forget_index_signature(store, project_id: str | None = None) -> None:
-    """Make the next `index_project_if_changed` index again, for one project or for all."""
+    """Make the next `index_project_if_changed` index again, for one project or for all.
+
+    Call it after changing code or document sources outside `index_project`. An indexing
+    already in flight does not record its signature either.
+    """
+    _INVALIDATIONS[str(store.data_dir)] = _INVALIDATIONS.get(str(store.data_dir), 0) + 1
     for key in [key for key in _INDEXED if key[0] == str(store.data_dir) and project_id in (None, key[1])]:
         del _INDEXED[key]
 
@@ -334,14 +358,19 @@ def forget_index_signature(store, project_id: str | None = None) -> None:
 def index_project(store, project_id: str) -> dict:
     """Snapshot changed files, update chunks, and rebuild the derived code graph."""
     project_id = store.resolve_project(project_id)["id"]
+    key = (str(store.data_dir), project_id)
     with _ingestion_lock(store, "project", project_id):
+        # No signature while indexing runs or after it raises: a concurrent or later caller
+        # then waits for the lock and indexes, instead of trusting a half-written index.
+        _INDEXED.pop(key, None)
+        invalidations = _INVALIDATIONS.get(key[0], 0)
         # Taken before any file is read: a file edited during indexing then differs next time.
-        signature = tree_signature(store, project_id)
+        started = time.time_ns()
+        signature, newest, complete = _tree_state(store, project_id)
         result = _index_project_locked(store, project_id)
-        if result.get("errors"):
-            _INDEXED.pop((str(store.data_dir), project_id), None)
-        else:
-            _INDEXED[(str(store.data_dir), project_id)] = signature
+        if (not result.get("errors") and complete and newest < started - RACY_WINDOW_NS
+                and _INVALIDATIONS.get(key[0], 0) == invalidations):
+            _INDEXED[key] = signature
         return result
 
 
@@ -350,11 +379,15 @@ def index_project_if_changed(store, project_id: str) -> dict:
 
     An unchanged tree costs one directory walk with a `stat` per file. Apart from the
     `.gitignore` files that steer the walk, no file is opened, no source is looked up and
-    the graph is not rebuilt.
+    the graph is not rebuilt. Files touched within `RACY_WINDOW_NS` of an indexing are
+    indexed once more, because their timestamps cannot yet prove that nothing changed.
     """
     project_id = store.resolve_project(project_id)["id"]
-    if _INDEXED.get((str(store.data_dir), project_id)) == tree_signature(store, project_id):
-        return {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [], "skipped": True}
+    recorded = _INDEXED.get((str(store.data_dir), project_id))
+    if recorded is not None:
+        signature, _, complete = _tree_state(store, project_id)
+        if complete and signature == recorded:
+            return {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [], "skipped": True}
     return index_project(store, project_id)
 
 
@@ -363,13 +396,14 @@ def _index_project_locked(store, project_id: str) -> dict:
     project_id = project["id"]
     counts: dict[str, Any] = {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": []}
     indexed: dict[Path, dict] = {}
+    walk_errors: list[OSError] = []
     registered_roots = _roots(store, project)
     for root in registered_roots:
         if not root.is_dir():
             counts["errors"].append(f"Project root unavailable: {root}")
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
-        for path in _files(root, excluded=(store.data_dir,)):
+        for path in _files(root, excluded=(store.data_dir,), errors=walk_errors):
             try:
                 if path.stat().st_size > MAX_FILE_BYTES or not path.is_file():
                     continue
@@ -415,12 +449,14 @@ def _index_project_locked(store, project_id: str) -> dict:
             if path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"}:
                 store.enqueue("extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
 
+    counts["errors"].extend(f"Cannot list {error.filename}: {error.strerror or error}" for error in walk_errors)
     seen = {str(p) for p in indexed}
     rows = store.query(
         "SELECT id,uri,metadata FROM sources WHERE project_id=:project AND is_current=true AND kind IN ['code','document']",
         {"project": project_id},
     )
-    for row in rows:
+    # A directory that could not be listed says nothing about its files: do not deactivate anything.
+    for row in rows if not walk_errors else []:
         metadata = _metadata(row["metadata"])
         path = metadata.get("path")
         if path and path not in seen:
@@ -1104,6 +1140,9 @@ def current_source(store, source_id: str) -> dict:
         )
         for row in active:
             _deactivate_source(store, row["id"])
+        # The index changed although no file's size or times did: if the file comes back
+        # untouched (a parent directory renamed away and back), it must be indexed again.
+        forget_index_signature(store, project["id"])
         return {**source, "is_current": False, "deleted": True}
     if path.stat().st_size > MAX_FILE_BYTES:
         return {**source, "freshness_warning": "Current file exceeds indexing size limit"}

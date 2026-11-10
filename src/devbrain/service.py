@@ -765,7 +765,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             except (ValueError, OSError):
                 return None
         identity = await asyncio.to_thread(code_identity)
-        # An unchanged tree is not read again; the cache stamp below is a counter, not a scan.
+        # An unchanged tree is not indexed again (the code identity above still hashes the
+        # worktree); the cache stamp below is a counter, not a scan.
         indexed = await asyncio.to_thread(index_project_if_changed, store, pid)
         index_errors = indexed.get("errors", [])
         pending = await asyncio.to_thread(index_pending_sources, store)

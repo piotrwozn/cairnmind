@@ -108,8 +108,12 @@ CONFLICT_REVIEW_METADATA = ("conflicts_resolved", "conflict_decisions", "conflic
                             "superseded_ids", "superseded_by")
 
 
-# Journal entity types whose changes cannot alter an answer from project memory.
-CACHE_STAMP_IGNORED = frozenset({"job", "session", "import", "inbox", "memory", "plan_request"})
+# Journal entity types that do not move the answer cache stamp. Jobs, sessions, imports and
+# snapshots cannot alter an answer. The derived graph is rebuilt, and reported as reset, on
+# every indexing even when it comes out identical; a real change of it is seen through the
+# project row, whose graph fingerprint changes, and through the sources and records behind it.
+CACHE_STAMP_IGNORED = frozenset({"job", "session", "import", "inbox", "memory", "plan_request",
+                                 "graph", "node", "edge"})
 
 
 def _utc(value):
