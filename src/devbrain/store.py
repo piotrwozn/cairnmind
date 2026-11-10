@@ -118,11 +118,15 @@ def _evidence_time(tx, source_ids):
 
     A transcript's own timestamp is when the statement was made (`stated`). Any other
     source existed no later than the moment Cairnmind stored its snapshot (`observed`).
+    The audit note of a review or of a conflict decision records when someone judged the
+    record, not when its evidence existed, so it is left out.
     """
     times, bases = [], set()
     for source_id in dict.fromkeys(source_ids):
-        row = _one(tx, "SELECT created_at, metadata.source_timestamp AS stated FROM sources WHERE id=:id",
-                   {"id": source_id}, False) or {}
+        row = _one(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
+                       "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
+        if row.get("origin") == "local_user_review":
+            continue
         stated = _utc(row.get("stated"))
         when, basis = (stated, "stated") if stated else (_utc(row.get("created_at")), "observed")
         if when is not None:

@@ -40,6 +40,26 @@ CATALOG = {
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
+    "Conflicts": "Sprzeczności", "Resolve": "Rozstrzygnij", "Resolve conflict": "Rozstrzygnij sprzeczność",
+    "Possible conflict": "Możliwa sprzeczność", "new finding": "nowe ustalenie",
+    "existing finding": "dotychczasowe ustalenie", "Scope": "Zakres", "whole project": "cały projekt",
+    "Keep A: it replaces B": "Zostaw A: zastępuje B", "Keep B: it replaces A": "Zostaw B: zastępuje A",
+    "Both are valid in different scopes": "Oba są ważne w różnych zakresach",
+    "False alarm: they do not contradict": "Fałszywy alarm: nie są sprzeczne",
+    "Describe the two scopes": "Opisz oba zakresy", "Save decision": "Zapisz decyzję",
+    "Open a conflict first.": "Najpierw otwórz sprzeczność.",
+    "Decision saved with an audit note.": "Decyzja zapisana z notatką audytową.",
+    "The decision was not saved. The current list was reloaded.":
+        "Decyzja nie została zapisana. Wczytano aktualną listę.",
+    "The decision is saved with an audit note; every source is kept.":
+        "Decyzja jest zapisywana z notatką audytową; wszystkie źródła zostają.",
+    "Resolve records your decision with an audit note. No source is removed.":
+        "Rozstrzygnięcie zapisuje Twoją decyzję z notatką audytową. Żadne źródło nie jest usuwane.",
+    "{letter} has the newer evidence; both times were stated by their sources.":
+        "{letter} ma nowsze dowody; oba czasy pochodzą ze źródeł.",
+    "{letter} was recorded later, but its evidence time is only an upper bound.":
+        "{letter} zapisano później, ale czas jego dowodów to tylko górna granica.",
+    "The order of the evidence cannot be compared.": "Kolejności dowodów nie da się porównać.",
     "Evidence": "Dowody",
     "at least one supporting source still stands": "co najmniej jedno źródło nadal obowiązuje",
     "imported file evidence has not been compared with local files yet":

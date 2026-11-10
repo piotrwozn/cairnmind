@@ -443,6 +443,90 @@ async def test_inspector_detail_names_the_evidence_state(tmp_path, monkeypatch, 
         assert expected in app._detail_text
 
 
+CONFLICT = {
+    "id": "new-1:old-1", "kind": "conflict", "status": "pending",
+    "content": "Sessions expire after one hour.  <>  Sessions last 24 hours.",
+    "newer_evidence": "new-1", "newer_evidence_basis": "stated",
+    "candidate": {"id": "new-1", "kind": "decision", "status": "proposed", "version": 3,
+                  "content": "Sessions expire after one hour.\x1b[31m", "evidence_latest": "2026-06-01T10:00:00+00:00",
+                  "evidence_basis": "stated", "scope": "/repo/api", "sources": ["transcript://new"], "sources_total": 3,
+                  "evidence_state": "anchored"},
+    "existing": {"id": "old-1", "kind": "decision", "status": "confirmed", "version": 5,
+                 "content": "Sessions last 24 hours.", "evidence_latest": "2026-03-01T10:00:00+00:00",
+                 "evidence_basis": "observed", "scope": None, "sources": ["file:///repo/auth.py"], "sources_total": 1,
+                 "evidence_state": "orphaned"},
+}
+
+
+def test_conflict_text_shows_both_findings_with_dates_scope_sources_and_order():
+    from devbrain.terminal_i18n import tr
+    from devbrain.terminal_inspector import conflict_text
+    text = conflict_text(CONFLICT, lambda value, **values: tr(value, "en", **values))
+    assert text.split("\n\n")[0] == "Possible conflict"
+    assert "A (new finding)  [decision] proposed, version 3" in text
+    assert "Stated: 2026-06-01" in text and "Scope: /repo/api" in text
+    assert "Sources: transcript://new (+2)" in text
+    assert "B (existing finding)  [decision] confirmed, version 5" in text
+    assert "Observed no later than: 2026-03-01" in text and "Scope: whole project" in text
+    assert "Evidence: orphaned: no supporting source has a current version" in text
+    assert text.endswith("A has the newer evidence; both times were stated by their sources.")
+    observed = conflict_text({**CONFLICT, "newer_evidence": "old-1", "newer_evidence_basis": "observed"},
+                             lambda value, **values: tr(value, "pl", **values))
+    assert observed.endswith("B zapisano p\u00f3\u017aniej, ale czas jego dowod\u00f3w to tylko g\u00f3rna granica.")
+    assert "Mo\u017cliwa sprzeczno\u015b\u0107" in observed and "Zakres: ca\u0142y projekt" in observed
+    unknown = conflict_text({**CONFLICT, "newer_evidence": None}, lambda value, **values: tr(value, "en", **values))
+    assert unknown.endswith("The order of the evidence cannot be compared.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choice, reason, expected", [
+    ("keep-first", "Policy changed", {"action": "supersede", "keep": "new-1", "reason": "Policy changed"}),
+    ("keep-second", "", {"action": "supersede", "keep": "old-1", "reason": ""}),
+    ("different_scopes", "API versus web", {"action": "different_scopes", "reason": "API versus web"}),
+    ("dismiss", "", {"action": "dismiss", "reason": ""}),
+])
+async def test_inspector_lists_a_conflict_and_sends_the_chosen_decision(tmp_path, monkeypatch, choice, reason, expected):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    original, posted, pending = broker.request, [], [deepcopy(CONFLICT)]
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        if path == "/api/inspector/conflicts":
+            assert params == {"project": "project-keyboard", "worktree": workspace.value["worktree"]}
+            return {"items": deepcopy(pending), "total": len(pending), "next_cursor": None}
+        if path == "/api/inspector/conflicts/resolve":
+            posted.append(deepcopy(json))
+            pending.clear()
+            return {"decision": json["action"]}
+        return original(method, path, params=params, json=json, timeout=timeout)
+
+    broker.request = request
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await settle(app, pilot)
+        app.set_view("conflicts")
+        await app.load_page()
+        assert list(app.rows) == ["new-1:old-1"]
+        await app.open_entity("new-1:old-1", "conflicts")
+        body = str(app.query_one("#entity-body", Static).render())
+        assert "A (new finding)" in body and "B (existing finding)" in body and "\x1b" not in body
+        assert app.query_one("#conflict-actions").display and not app.query_one("#review-actions").display
+        answers = iter([choice, {"reason": reason}])
+
+        async def scripted(screen):
+            return next(answers)
+
+        monkeypatch.setattr(app, "push_screen_wait", scripted)
+        app.resolve_conflict()
+        for _ in range(100):
+            await pilot.pause(.02)
+            if posted:
+                break
+        await settle(app, pilot)
+    assert posted == [{"project": "project-keyboard", "record_id": "new-1", "other_id": "old-1",
+                       "expected_version": 3, "other_expected_version": 5, **expected}]
+    assert app.rows == {}
+
+
 def test_every_evidence_label_has_a_polish_translation():
     from devbrain.terminal_i18n import tr
     from devbrain.terminal_inspector import EVIDENCE_LABELS

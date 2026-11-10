@@ -23,9 +23,41 @@ EVIDENCE_LABELS = {
     ("unverified", None): "imported file evidence has not been compared with local files yet",
 }
 
+def _finding_text(letter, role, item, translate):
+    lines = [f"{letter} ({translate(role)})  [{item.get('kind')}] {item.get('status')}, "
+             f"{translate('Version').lower()} {item.get('version')}", str(item.get("content", ""))]
+    latest, basis = str(item.get("evidence_latest") or "")[:10], item.get("evidence_basis")
+    if latest and basis in _EVIDENCE_TIME:
+        lines.append(translate(_EVIDENCE_TIME[basis]) + ": " + latest)
+    lines.append(translate("Scope") + ": " + str(item.get("scope") or translate("whole project")))
+    if item.get("sources"):
+        more = item.get("sources_total", 0) - len(item["sources"])
+        lines.append(translate("Sources") + ": " + ", ".join(map(str, item["sources"])) + (f" (+{more})" if more > 0 else ""))
+    label = EVIDENCE_LABELS.get((item.get("evidence_state"), None))
+    if label:
+        lines.append(translate("Evidence") + ": " + translate(label))
+    return "\n".join(lines)
+
+
+def conflict_text(pair, translate):
+    """Both findings of a possible conflict, one after the other, with what is known about their order."""
+    first, second = pair.get("candidate") or {}, pair.get("existing") or {}
+    newer = pair.get("newer_evidence")
+    letter = "A" if newer == first.get("id") else "B" if newer == second.get("id") else None
+    if letter and pair.get("newer_evidence_basis") == "stated":
+        order = translate("{letter} has the newer evidence; both times were stated by their sources.", letter=letter)
+    elif letter:
+        order = translate("{letter} was recorded later, but its evidence time is only an upper bound.", letter=letter)
+    else:
+        order = translate("The order of the evidence cannot be compared.")
+    return "\n\n".join([translate("Possible conflict"), _finding_text("A", "new finding", first, translate),
+                         _finding_text("B", "existing finding", second, translate), order])
+
+
+_EVIDENCE_TIME = {"stated": "Stated", "observed": "Observed no later than", "mixed": "Mixed evidence"}
 _VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),
           ("Zadania", "tasks"), ("Testy", "checks"), ("Kolejka", "jobs"),
-          ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
+          ("Conflicts", "conflicts"), ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
 _TYPES = {"record": "records", "source": "sources", "plan": "plans", "check": "checks", "job": "jobs"}
 
 
@@ -40,9 +72,10 @@ class InspectorApp(BasePanel):
     #inspector-rows { height: 1fr; min-height: 3; }
     #inspector-details { height: 1fr; min-height: 3; padding: 0 1; }
     #entity-body { height: auto; }
-    #entity-actions, #review-actions, #memory-actions { height: 3; }
+    #entity-actions, #review-actions, #memory-actions, #conflict-actions { height: 3; }
     #memory-extra { height: 3; }
-    #entity-actions Button, #review-actions Button, #memory-actions Button, #memory-extra Button { min-width: 8; }
+    #entity-actions Button, #review-actions Button, #memory-actions Button, #memory-extra Button,
+    #conflict-actions Button { min-width: 8; }
     """
     BINDINGS = [("r", "refresh", "Refresh"), ("escape", "back", "List"),
                 ("h", "history", "History"), ("m", "memory", "Memory")]
@@ -90,6 +123,8 @@ class InspectorApp(BasePanel):
                 yield Button(self.t("Zakwestionuj"), id="entity-dispute")
                 yield Button(self.t("Historia"), id="entity-history")
                 yield Button(self.t("Źródła"), id="entity-sources")
+            with Horizontal(id="conflict-actions"):
+                yield Button(self.t("Resolve"), id="conflict-resolve")
             with Horizontal(id="memory-actions"):
                 yield Button(self.t("Podgląd"), id="memory-preview")
                 yield Button(self.t("Zapisz"), id="memory-save", disabled=True)
@@ -105,6 +140,7 @@ class InspectorApp(BasePanel):
         self.query_one("#inspector-rows", DataTable).add_columns(self.t("Typ / stan"), self.t("Treść / źródło"), self.t("Wersja / próba"))
         self.query_one("#inspector-details").display = False
         self.query_one("#review-actions").display = False
+        self.query_one("#conflict-actions").display = False
         self.query_one("#memory-actions").display = False
         self.query_one("#memory-extra").display = False
         self.set_interval(.3, self._poll_workspace)
@@ -124,7 +160,7 @@ class InspectorApp(BasePanel):
                   "entity-technical": "Details", "entity-confirm": "Confirm", "entity-dispute": "Dispute",
                   "entity-history": "History", "entity-sources": "Sources", "memory-preview": "Preview",
                   "memory-save": "Save", "memory-auto": "Automatic", "memory-import": self.t("Import"),
-                  "memory-apply": "Apply", "memory-refresh": "Status"}
+                  "memory-apply": "Apply", "memory-refresh": "Status", "conflict-resolve": "Resolve"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
 
@@ -206,7 +242,7 @@ class InspectorApp(BasePanel):
             return
         scope, view = self._scope_version, self.view
         collection = "records" if view == "tasks" else view
-        params = {"cursor": cursor, "limit": 100}
+        params = {} if collection == "conflicts" else {"cursor": cursor, "limit": 100}
         if collection != "inbox":
             params.update(self.params())
             if view == "tasks":
@@ -238,6 +274,7 @@ class InspectorApp(BasePanel):
         table.display = True
         self.query_one("#inspector-details").display = False
         self.query_one("#review-actions").display = False
+        self.query_one("#conflict-actions").display = False
         self.query_one("#entity-more", Button).disabled = not bool(self.next_cursor)
 
     @on(Input.Changed, "#inspector-filter")
@@ -276,6 +313,7 @@ class InspectorApp(BasePanel):
         self._detail_text = text if text is not None else self.readable_detail(value, kind=kind)
         self.query_one("#entity-body", Static).update(plain(self._detail_text))
         self.query_one("#review-actions").display = kind in {"records", "plans", "sources", "inbox"}
+        self.query_one("#conflict-actions").display = kind == "conflicts"
         for selector in ("#entity-confirm", "#entity-dispute"):
             self.query_one(selector, Button).disabled = kind != "records"
         self.query_one("#entity-history", Button).disabled = kind not in {"records", "plans"}
@@ -358,6 +396,15 @@ class InspectorApp(BasePanel):
         if not isinstance(identifier, str) or not identifier:
             return
         kind = kind or self.view
+        if kind == "conflicts":
+            # A pair has no detail route: the list already carries both findings in full.
+            pair = self.rows.get(identifier)
+            if pair:
+                self._entity_request += 1
+                self.entity_kind, self.entity, self.history_owner, self.source_next = "conflicts", pair, None, None
+                self.show_detail(pair, kind="conflicts", text=conflict_text(pair, self.t))
+                self.notice(self.t("Resolve records your decision with an audit note. No source is removed."))
+            return
         collection = "records" if kind == "tasks" else kind
         scope = self._scope_version
         self._entity_request += 1
@@ -426,6 +473,48 @@ class InspectorApp(BasePanel):
             if scope == self._scope_version:
                 await self.open_entity(record["id"], "records")
                 self.notice(self.t("Review was not retried. The current version was reloaded.") + " " + str(exc))
+
+    @work(group="inspector-review", exclusive=True, exit_on_error=False)
+    async def resolve_conflict(self):
+        if self.entity_kind != "conflicts" or not self.entity:
+            self.notice(self.t("Open a conflict first."))
+            return
+        pair = dict(self.entity)
+        first, second = pair["candidate"], pair["existing"]
+        scope = self._scope_version
+        project_id = self.workspace_data.get("project_id")
+        choice = await self.push_screen_wait(ChoiceModal(self.t("Resolve conflict"), [
+            (self.t("Keep A: it replaces B"), "keep-first"), (self.t("Keep B: it replaces A"), "keep-second"),
+            (self.t("Both are valid in different scopes"), "different_scopes"),
+            (self.t("False alarm: they do not contradict"), "dismiss")]))
+        if choice is None:
+            return
+        action = "supersede" if choice.startswith("keep-") else choice
+        form = await self.push_screen_wait(FormModal(self.t("Resolve conflict"),
+            [Field("reason", self.t("Describe the two scopes") if action == "different_scopes" else self.t("Uzasadnienie"),
+                   required=action == "different_scopes", multiline=True)],
+            note=f"A v{first['version']} · B v{second['version']} · "
+                 + self.t("The decision is saved with an audit note; every source is kept."),
+            submit=self.t("Save decision")))
+        if form is None:
+            return
+        if scope != self._scope_version:
+            self.notice(self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            return
+        payload = {"project": project_id, "record_id": first["id"], "other_id": second["id"], "action": action,
+                   "expected_version": first["version"], "other_expected_version": second["version"],
+                   "reason": form["reason"]}
+        if action == "supersede":
+            payload["keep"] = first["id"] if choice == "keep-first" else second["id"]
+        try:
+            await self.request("POST", "/api/inspector/conflicts/resolve", json=payload)
+            if scope == self._scope_version:
+                await self.load_page()
+                self.notice(self.t("Decision saved with an audit note."))
+        except (OSError, ValueError, RuntimeError) as exc:
+            if scope == self._scope_version:
+                await self.load_page()
+                self.notice(self.t("The decision was not saved. The current list was reloaded.") + " " + str(exc))
 
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
@@ -626,6 +715,8 @@ class InspectorApp(BasePanel):
             self.review("confirm")
         elif button == "entity-dispute":
             self.review("dispute")
+        elif button == "conflict-resolve":
+            self.resolve_conflict()
         elif button == "entity-history":
             self.action_history()
         elif button == "entity-sources":

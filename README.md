@@ -202,6 +202,8 @@ Each record also has an evidence state, derived whenever it is read and never st
 cairnmind memory orphans my-app
 ```
 
+When extraction finds a fact or a decision under a key that is already taken, it stores the new finding beside the old one and marks the pair as a possible conflict. The **Conflicts** view of the memory inspector shows each pending pair with both texts, their evidence times, scope and sources, and says which finding has the newer evidence and whether that order is reliable. You decide: one finding replaces the other, both stay because they hold in different scopes, or the alarm is dismissed. Each decision is saved with an audit note and a new revision; no source is removed, and a model never resolves a pair.
+
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
 
 ```bash
