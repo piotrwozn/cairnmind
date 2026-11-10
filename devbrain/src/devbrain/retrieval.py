@@ -44,6 +44,8 @@ RECORD_METADATA_KEYS = (
     "review_passed", "acceptance_passed", "depends_on", "acceptance_criteria", "test_source_ids",
     "review_source_ids", "acceptance_source_ids", "possible_conflicts", "unresolved_dependencies",
     "evidence", "goal", "next_step", "summary", "next_steps", "blockers", "origin", "extracted_by",
+    "evidence_earliest", "evidence_latest", "evidence_basis", "supersede_warning",
+    "supersede_replaced_evidence_latest",
 )
 # Positions a record moves down within the record ranking, by status. At similar
 # relevance a confirmed finding comes first and a disputed one later, while a strongly
