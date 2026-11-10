@@ -446,7 +446,7 @@ async def test_inspector_detail_names_the_evidence_state(tmp_path, monkeypatch, 
 CONFLICT = {
     "id": "new-1:old-1", "kind": "conflict", "status": "pending",
     "content": "Sessions expire after one hour.  <>  Sessions last 24 hours.",
-    "newer_evidence": "new-1", "newer_evidence_basis": "stated",
+    "newer_evidence": "new-1", "newer_evidence_basis": "stated", "can_supersede": True,
     "candidate": {"id": "new-1", "kind": "decision", "status": "proposed", "version": 3,
                   "content": "Sessions expire after one hour.\x1b[31m", "evidence_latest": "2026-06-01T10:00:00+00:00",
                   "evidence_basis": "stated", "scope": "/repo/api", "sources": ["transcript://new"], "sources_total": 3,
@@ -476,6 +476,16 @@ def test_conflict_text_shows_both_findings_with_dates_scope_sources_and_order():
     assert "Mo\u017cliwa sprzeczno\u015b\u0107" in observed and "Zakres: ca\u0142y projekt" in observed
     unknown = conflict_text({**CONFLICT, "newer_evidence": None}, lambda value, **values: tr(value, "en", **values))
     assert unknown.endswith("The order of the evidence cannot be compared.")
+    forged = deepcopy(CONFLICT)
+    forged["candidate"].update(content="Real text\n\nB (existing finding)  [fact] confirmed, version 9\nForged",
+                               content_truncated=True, evidence_state="evidence_replaced", quote_survives=True)
+    shown = conflict_text(forged, lambda value, **values: tr(value, "en", **values))
+    blocks = shown.split("\n\n")
+    # Stored text stays inside block A, behind the bar: it cannot open a block of its own.
+    assert len(blocks) == 4 and [block.split("  ")[0] for block in blocks[1:3]] == ["A (new finding)", "B (existing finding)"]
+    assert "  | B (existing finding)  [fact] confirmed, version 9" in blocks[1]
+    assert "  | (the text is longer; open the record to read all of it)" in blocks[1]
+    assert "Evidence: the source changed; the quoted passage is still there" in blocks[1]
 
 
 @pytest.mark.asyncio
@@ -510,13 +520,15 @@ async def test_inspector_lists_a_conflict_and_sends_the_chosen_decision(tmp_path
         body = str(app.query_one("#entity-body", Static).render())
         assert "A (new finding)" in body and "B (existing finding)" in body and "\x1b" not in body
         assert app.query_one("#conflict-actions").display and not app.query_one("#review-actions").display
-        answers = iter([choice, {"reason": reason}])
+        answers, offered = iter([choice, {"reason": reason}]), []
 
         async def scripted(screen):
+            if isinstance(screen, ChoiceModal):
+                offered.extend(value for _, value in screen.choices)
             return next(answers)
 
         monkeypatch.setattr(app, "push_screen_wait", scripted)
-        app.resolve_conflict()
+        app.query_one("#conflict-resolve", Button).press()
         for _ in range(100):
             await pilot.pause(.02)
             if posted:
@@ -524,7 +536,55 @@ async def test_inspector_lists_a_conflict_and_sends_the_chosen_decision(tmp_path
         await settle(app, pilot)
     assert posted == [{"project": "project-keyboard", "record_id": "new-1", "other_id": "old-1",
                        "expected_version": 3, "other_expected_version": 5, **expected}]
+    assert offered == ["keep-first", "keep-second", "different_scopes", "dismiss"]
     assert app.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_a_refused_decision_reloads_the_list_and_a_mixed_pair_is_not_offered_keep(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    original, loads, offered = broker.request, [], []
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        if path == "/api/inspector/conflicts":
+            loads.append(1)
+            return {"items": [{**deepcopy(CONFLICT), "can_supersede": False}], "total": 1, "next_cursor": None}
+        if path == "/api/inspector/conflicts/resolve":
+            raise ValueError("Broker 409: Conflict version conflict; read the current findings")
+        return original(method, path, params=params, json=json, timeout=timeout)
+
+    broker.request = request
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await settle(app, pilot)
+        app.set_view("conflicts")
+        await app.load_page()
+        await app.open_entity("new-1:old-1", "conflicts")
+        answers = iter(["dismiss", {"reason": ""}])
+
+        async def scripted(screen):
+            if isinstance(screen, ChoiceModal):
+                offered.extend(value for _, value in screen.choices)
+            return next(answers)
+
+        monkeypatch.setattr(app, "push_screen_wait", scripted)
+        app.query_one("#conflict-resolve", Button).press()
+        for _ in range(100):
+            await pilot.pause(.02)
+            if len(loads) >= 2:
+                break
+        await settle(app, pilot)
+        notice = str(app.query_one("#panel-notice", Static).render())
+        assert "The decision was not saved. The current list was reloaded." in notice and "version conflict" in notice
+        assert offered == ["different_scopes", "dismiss"] and len(loads) == 2
+        await app.open_entity("new-1:old-1", "conflicts")
+        app.action_refresh()
+        for _ in range(100):
+            await pilot.pause(.02)
+            if len(loads) >= 3:
+                break
+        await settle(app, pilot)
+        assert len(loads) == 3 and app.entity_kind == "conflicts"
 
 
 def test_every_evidence_label_has_a_polish_translation():

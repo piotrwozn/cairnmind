@@ -43,7 +43,11 @@ CATALOG = {
     "Conflicts": "Sprzeczności", "Resolve": "Rozstrzygnij", "Resolve conflict": "Rozstrzygnij sprzeczność",
     "Possible conflict": "Możliwa sprzeczność", "new finding": "nowe ustalenie",
     "existing finding": "dotychczasowe ustalenie", "Scope": "Zakres", "whole project": "cały projekt",
-    "Keep A: it replaces B": "Zostaw A: zastępuje B", "Keep B: it replaces A": "Zostaw B: zastępuje A",
+    "Keep A: it replaces B and becomes confirmed": "Zostaw A: zastępuje B i zostaje potwierdzone",
+    "Keep B: it replaces A and becomes confirmed": "Zostaw B: zastępuje A i zostaje potwierdzone",
+    "This conflict is no longer pending.": "Ta sprzeczność nie czeka już na decyzję.",
+    "(the text is longer; open the record to read all of it)":
+        "(tekst jest dłuższy; otwórz ustalenie, aby przeczytać całość)",
     "Both are valid in different scopes": "Oba są ważne w różnych zakresach",
     "False alarm: they do not contradict": "Fałszywy alarm: nie są sprzeczne",
     "Describe the two scopes": "Opisz oba zakresy", "Save decision": "Zapisz decyzję",

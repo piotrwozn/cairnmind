@@ -184,23 +184,25 @@ def test_stale_versions_wrong_pairs_and_bad_requests_change_nothing(workspace):
         resolve(store, project, record(store, candidate["id"]), existing, "dismiss")
 
 
-def test_only_facts_and_decisions_with_an_active_counterpart_are_listed(workspace):
+def test_only_facts_and_decisions_in_scope_are_listed(workspace):
     store, project, root = workspace
     pair(store, project, kind="constraint", key="limits", old="No limit.", new="A limit of ten.")
-    gone_candidate, gone_existing = pair(store, project, kind="fact", key="region", old="EU only.", new="EU and US.")
-    note = store.snapshot(project["id"], "manual://replacement", "EU, US and Asia.", "manual")
-    store.remember(project["id"], {"kind": "fact", "key": "region-new", "content": "EU, US and Asia.",
-                                   "supersedes": gone_existing["id"]}, [note["id"]])
     listed_candidate, listed_existing = pair(store, project, kind="fact", key="port", old="Port 80.", new="Port 8080.")
     elsewhere = tmp_other = root.parent / "other-root"
     tmp_other.mkdir()
     store.add_project_root(project["id"], elsewhere)
     pair(store, project, key="scoped", old="Old.", new="New.", worktree=str(elsewhere))
+    # The marked finding is project-wide but its counterpart belongs to the other worktree.
+    bound = store.snapshot(project["id"], "manual://bound", "Bound to the other worktree.", "manual")
+    counterpart = store.remember(project["id"], {"kind": "fact", "key": "bound", "content": "Bound to the other worktree.",
+                                                 "metadata": {"worktree": str(elsewhere)}}, [bound["id"]])
+    store.remember(project["id"], {"kind": "fact", "key": "bound~x", "content": "Project-wide claim.",
+                                   "metadata": {"possible_conflicts": [counterpart["id"]]}}, [bound["id"]])
     inspector = Inspector(store)
     here = conflicts.inbox(inspector, project["id"], root)
     assert [item["id"] for item in here["items"]] == [f"{listed_candidate['id']}:{listed_existing['id']}"]
-    assert len(conflicts.inbox(inspector, project["id"], elsewhere)["items"]) == 2
-    assert len(conflicts.inbox(inspector, project["id"])["items"]) == 2
+    assert len(conflicts.inbox(inspector, project["id"], elsewhere)["items"]) == 3
+    assert len(conflicts.inbox(inspector, project["id"])["items"]) == 3
     with pytest.raises(InspectorNotFound):
         conflicts.resolve(inspector, project["id"], listed_candidate["id"], "missing", "dismiss", 1, 1)
 
@@ -238,3 +240,126 @@ def test_a_review_note_does_not_move_the_time_of_a_finding_s_evidence(workspace)
     reviewed = Inspector(store).review(project["id"], existing["id"], "dispute", 1, reason="Needs a second look")["record"]
     assert reviewed["metadata"]["evidence_basis"] == "stated"
     assert reviewed["metadata"]["evidence_latest"].startswith("2026-03-01")
+
+
+def test_a_pair_follows_its_counterpart_to_whatever_replaced_it(workspace):
+    store, project, _ = workspace
+    first, existing = pair(store, project)
+    second_source = store.snapshot(project["id"], "transcript://session-ttl/third", "Sessions expire after two hours.",
+                                   "transcript", {"source_timestamp": "2026-07-01T10:00:00+00:00"})
+    second = store.remember(project["id"], {"kind": "decision", "key": "session-ttl~def",
+                                            "content": "Sessions expire after two hours.",
+                                            "metadata": {"possible_conflicts": [existing["id"]], "suggested_key": "session-ttl"}},
+                            [second_source["id"]])
+    assert pending(store, project)["total"] == 2
+    resolve(store, project, first, existing, "supersede", keep=first["id"])
+    # The second finding was marked against a record that is now replaced: the question
+    # stays open, against the finding that replaced it.
+    listed = pending(store, project)["items"]
+    assert [item["id"] for item in listed] == [f"{second['id']}:{first['id']}"]
+    winner = record(store, first["id"])
+    result = conflicts.resolve_conflict(store, project["id"], second["id"], first["id"], "dismiss",
+                                        second["version"], winner["version"])
+    saved = result["record"]["metadata"]
+    assert saved["possible_conflicts"] == [] and set(saved["conflicts_resolved"]) == {existing["id"], first["id"]}
+    assert json.loads(store.get_source(result["audit_source_id"])["content"])["marked_as"] == [existing["id"]]
+    assert pending(store, project)["items"] == []
+    # A replacement made by an ordinary write is followed as well.
+    third, other = pair(store, project, kind="fact", key="region", old="EU only.", new="EU and US.")
+    note = store.snapshot(project["id"], "manual://replacement", "EU, US and Asia.", "manual")
+    replacement = store.remember(project["id"], {"kind": "fact", "key": "region-new", "content": "EU, US and Asia.",
+                                                 "supersedes": other["id"]}, [note["id"]])
+    assert [item["id"] for item in pending(store, project)["items"]] == [f"{third['id']}:{replacement['id']}"]
+
+
+def test_a_winner_that_already_replaced_something_keeps_that_link(workspace):
+    store, project, _ = workspace
+    first, original = pair(store, project)
+    resolve(store, project, first, original, "supersede", keep=first["id"])
+    winner = record(store, first["id"])
+    assert winner["supersedes"] == original["id"]
+    later_source = store.snapshot(project["id"], "transcript://session-ttl/later", "Sessions never expire.", "transcript",
+                                  {"source_timestamp": "2026-08-01T10:00:00+00:00"})
+    later = store.remember(project["id"], {"kind": "decision", "key": "session-ttl~later", "content": "Sessions never expire.",
+                                           "metadata": {"possible_conflicts": [winner["id"]], "suggested_key": "session-ttl"}},
+                           [later_source["id"]])
+    result = conflicts.resolve_conflict(store, project["id"], later["id"], winner["id"], "supersede",
+                                        later["version"], winner["version"], keep=winner["id"])
+    kept, retired = record(store, winner["id"]), record(store, later["id"])
+    assert kept["supersedes"] == original["id"] and kept["metadata"]["superseded_ids"] == [later["id"]]
+    assert (retired["status"], retired["metadata"]["superseded_by"]) == ("superseded", winner["id"])
+    assert result["superseded"]["id"] == later["id"] and kept["status"] == "confirmed"
+    assert retired["source_ids"][-1] == kept["source_ids"][-1] == result["audit_source_id"]
+    assert record(store, original["id"])["status"] == "superseded"
+    assert pending(store, project)["items"] == []
+
+
+def test_a_fact_and_a_decision_can_be_kept_or_dismissed_but_not_replace_each_other(workspace):
+    store, project, _ = workspace
+    old = store.snapshot(project["id"], "manual://old", "We use bearer tokens.", "manual")
+    existing = store.remember(project["id"], {"kind": "decision", "key": "auth", "content": "We use bearer tokens."},
+                              [old["id"]])
+    new = store.snapshot(project["id"], "manual://new", "The API accepts cookies.", "manual")
+    candidate = store.remember(project["id"], {"kind": "fact", "key": "auth~x", "content": "The API accepts cookies.",
+                                               "metadata": {"possible_conflicts": [existing["id"]]}}, [new["id"]])
+    item = pending(store, project)["items"][0]
+    assert item["can_supersede"] is False
+    before = normalized_export(store)
+    for keep in (candidate["id"], existing["id"]):
+        with pytest.raises(ValueError, match="cannot replace each other"):
+            resolve(store, project, candidate, existing, "supersede", keep=keep)
+    assert normalized_export(store) == before
+    resolve(store, project, candidate, existing, "different_scopes", reason="A decision for clients, a fact about the API")
+    kept = record(store, candidate["id"])["metadata"]
+    assert kept["conflict_scope_note"] == "A decision for clients, a fact about the API"
+    assert pending(store, project)["items"] == []
+
+
+def test_no_other_writer_can_unmark_a_conflict_or_record_a_decision(workspace):
+    store, project, _ = workspace
+    candidate, existing = pair(store, project)
+    forged = store.remember(project["id"], {"id": candidate["id"], "expected_version": candidate["version"], "metadata": {
+        "possible_conflicts": [], "conflicts_resolved": [existing["id"]], "conflict_decisions": [f"{existing['id']}:dismiss"],
+        "conflict_scope_note": "forged", "superseded_ids": ["x"], "superseded_by": "y", "note": "kept"}},
+        candidate["source_ids"])
+    assert forged["metadata"]["possible_conflicts"] == [existing["id"]] and forged["metadata"]["note"] == "kept"
+    assert not {"conflicts_resolved", "conflict_decisions", "conflict_scope_note", "superseded_ids",
+                "superseded_by"} & set(forged["metadata"])
+    assert pending(store, project)["total"] == 1
+    # Marking a new finding at creation stays possible: that is what extraction does.
+    note = store.snapshot(project["id"], "manual://marked", "Another claim.", "manual")
+    created = store.remember(project["id"], {"kind": "decision", "key": "session-ttl~new", "content": "Another claim.",
+                                             "metadata": {"possible_conflicts": [existing["id"]],
+                                                          "conflicts_resolved": [existing["id"]]}}, [note["id"]])
+    assert created["metadata"]["possible_conflicts"] == [existing["id"]] and "conflicts_resolved" not in created["metadata"]
+
+
+def test_evidence_times_are_read_from_the_sources_and_audit_notes_are_not_listed_as_sources(workspace):
+    store, project, _ = workspace
+    candidate, existing = pair(store, project)
+    reviewed = Inspector(store).review(project["id"], existing["id"], "confirm", 1) if existing["status"] != "confirmed" \
+        else Inspector(store).review(project["id"], existing["id"], "dispute", 1, reason="Check again")
+    # A value stored by an older version: the time of the review instead of the evidence.
+    stale = dict(reviewed["record"]["metadata"], evidence_latest="2026-11-10T00:00:00+00:00", evidence_basis="mixed")
+    store.command("UPDATE records SET metadata=:metadata WHERE id=:id", {"metadata": stale, "id": existing["id"]})
+    item = pending(store, project)["items"][0]
+    assert item["existing"]["evidence_latest"].startswith("2026-03-01") and item["existing"]["evidence_basis"] == "stated"
+    assert item["existing"]["sources"] == ["transcript://session-ttl/old"] and item["existing"]["sources_total"] == 1
+    assert (item["newer_evidence"], item["newer_evidence_basis"]) == (candidate["id"], "stated")
+
+
+def test_the_order_is_reliable_exactly_when_the_later_time_was_stated(workspace):
+    store, project, _ = workspace
+    later_stated, _ = pair(store, project, key="a", old_time=None, new_time="2099-01-01T00:00:00+00:00")
+    _, later_observed = pair(store, project, key="b", old_time=None, new_time="2020-01-01T00:00:00+00:00")
+    found = {item["candidate"]["key"]: item for item in pending(store, project)["items"]}
+    assert (found["a~abc"]["newer_evidence"], found["a~abc"]["newer_evidence_basis"]) == (later_stated["id"], "stated")
+    assert (found["b~abc"]["newer_evidence"], found["b~abc"]["newer_evidence_basis"]) == (later_observed["id"], "observed")
+
+
+def test_a_long_finding_is_shown_whole_up_to_the_extraction_limit(workspace):
+    store, project, _ = workspace
+    long_text = "x" * 3990 + " differs at the end"
+    pair(store, project, new=long_text[:4000])
+    item = pending(store, project)["items"][0]
+    assert item["candidate"]["content"] == long_text[:4000] and item["candidate"]["content_truncated"] is False

@@ -24,8 +24,13 @@ EVIDENCE_LABELS = {
 }
 
 def _finding_text(letter, role, item, translate):
+    # Stored text is indented behind a bar and loses its blank lines, so it can neither
+    # start a line that looks like one of this view's own labels nor fake a second finding.
+    content = ["  | " + line for line in str(item.get("content", "")).splitlines() if line.strip()]
+    if item.get("content_truncated"):
+        content.append("  | " + translate("(the text is longer; open the record to read all of it)"))
     lines = [f"{letter} ({translate(role)})  [{item.get('kind')}] {item.get('status')}, "
-             f"{translate('Version').lower()} {item.get('version')}", str(item.get("content", ""))]
+             f"{translate('Version').lower()} {item.get('version')}", *content]
     latest, basis = str(item.get("evidence_latest") or "")[:10], item.get("evidence_basis")
     if latest and basis in _EVIDENCE_TIME:
         lines.append(translate(_EVIDENCE_TIME[basis]) + ": " + latest)
@@ -33,7 +38,7 @@ def _finding_text(letter, role, item, translate):
     if item.get("sources"):
         more = item.get("sources_total", 0) - len(item["sources"])
         lines.append(translate("Sources") + ": " + ", ".join(map(str, item["sources"])) + (f" (+{more})" if more > 0 else ""))
-    label = EVIDENCE_LABELS.get((item.get("evidence_state"), None))
+    label = EVIDENCE_LABELS.get((item.get("evidence_state"), item.get("quote_survives")))
     if label:
         lines.append(translate("Evidence") + ": " + translate(label))
     return "\n".join(lines)
@@ -483,9 +488,11 @@ class InspectorApp(BasePanel):
         first, second = pair["candidate"], pair["existing"]
         scope = self._scope_version
         project_id = self.workspace_data.get("project_id")
+        # A fact and a decision cannot replace each other, so that pair is not offered "Keep".
+        keep = [(self.t("Keep A: it replaces B and becomes confirmed"), "keep-first"),
+                (self.t("Keep B: it replaces A and becomes confirmed"), "keep-second")] if pair.get("can_supersede", True) else []
         choice = await self.push_screen_wait(ChoiceModal(self.t("Resolve conflict"), [
-            (self.t("Keep A: it replaces B"), "keep-first"), (self.t("Keep B: it replaces A"), "keep-second"),
-            (self.t("Both are valid in different scopes"), "different_scopes"),
+            *keep, (self.t("Both are valid in different scopes"), "different_scopes"),
             (self.t("False alarm: they do not contradict"), "dismiss")]))
         if choice is None:
             return
@@ -736,8 +743,22 @@ class InspectorApp(BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
+    @work(group="inspector-read", exclusive=True, exit_on_error=False)
+    async def reload_conflict(self, identifier):
+        """A pair has no detail route, so refreshing it means reading the list again."""
+        try:
+            await self.load_page()
+            if identifier in self.rows:
+                await self.open_entity(identifier, "conflicts")
+            else:
+                self.notice(self.t("This conflict is no longer pending."))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
     def action_refresh(self):
-        if self.entity:
+        if self.entity and self.entity_kind == "conflicts":
+            self.reload_conflict(self.entity["id"])
+        elif self.entity:
             self.open_selected(self.entity["id"], self.entity_kind)
         else:
             self.refresh_page()
