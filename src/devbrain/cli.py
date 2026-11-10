@@ -377,7 +377,7 @@ def project_add(ctx: typer.Context, name: str, root: Path):
     store = store_for(ctx.obj)
     root = root.expanduser().resolve(strict=True)
     if not root.is_dir():
-        raise typer.BadParameter("The project folder must be a directory")
+        raise typer.BadParameter("The path must be a folder, not a file")
     project = store.add_project(name, root)
     from devbrain.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
@@ -399,7 +399,7 @@ def project_root(ctx: typer.Context, project: str, path: Path):
     pid = store.resolve_project(project)["id"]
     root = path.expanduser().resolve(strict=True)
     if not root.is_dir():
-        raise typer.BadParameter("The project folder must be a directory")
+        raise typer.BadParameter("The path must be a folder, not a file")
     store.add_project_root(pid, root)
     output({"project": pid, "root": str(root)})
 
@@ -948,7 +948,7 @@ def model_pull(ctx: typer.Context):
     settings = ctx.obj
     with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900)) as client:
         for name in (settings.chat_model, settings.embedding_model):
-            typer.echo(f"Pobieranie {name}…", err=True)
+            typer.echo(f"Downloading {name}…", err=True)
             with client.stream("POST", settings.ollama_url + "/api/pull", json={"name": name, "stream": True}) as res:
                 res.raise_for_status()
                 previous = None

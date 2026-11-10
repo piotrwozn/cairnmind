@@ -78,7 +78,7 @@ POLISH_WORDS = {"nie", "jest", "oraz", "lub", "albo", "przez", "dla", "bez", "ty
                 "silnik", "natywny", "pakiety", "zakres", "historii", "wznowienia", "odbioru", "potwierdzenia",
                 "projektu", "projekt", "katalog", "plik", "zadania", "zadanie", "stan", "jawnie", "uruchom", "wymaga",
                 "brak", "magazyn", "magazynu", "kokpit", "kokpitu", "sesji", "sesja", "dowody", "pobierz", "odczytaj",
-                "zapisz", "zatrzymaj", "sprawdzenia"}
+                "zapisz", "zatrzymaj", "sprawdzenia", "pobieranie", "najpierw", "wybierz", "katalogiem"}
 
 
 def _command_paths(group, prefix=()):
@@ -109,7 +109,8 @@ def test_no_message_in_the_command_line_module_is_polish():
     from pathlib import Path
     tree = ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))
     polish = [(node.lineno, node.value) for node in ast.walk(tree)
-              if isinstance(node, ast.Constant) and isinstance(node.value, str) and POLISH & set(node.value)]
+              if isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and (POLISH & set(node.value) or POLISH_WORDS & set(re.findall(r"[a-z]+", node.value.lower())))]
     assert polish == []
 
 
