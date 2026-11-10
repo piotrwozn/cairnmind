@@ -18,9 +18,9 @@ import uuid
 
 import pytest
 
-from devbrain.arcade import ArcadeClient, ArcadeError
-from devbrain.config import Settings
-from devbrain.engine import install_engine, start_engine, stop_engine
+from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.config import Settings
+from cairnmind.engine import install_engine, start_engine, stop_engine
 
 # Verified on 2026-11-09: each passes in full with no ArcadeDB engine available.
 NO_ARCADE_MODULES = frozenset({
@@ -28,7 +28,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_api_credentials", "test_api_panels", "test_api_profiles", "test_api_providers",
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth",
     "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
-    "test_copilot_adapter", "test_graph_raster", "test_graph_widget_rendering", "test_memory_view",
+    "test_copilot_adapter", "test_graph_raster", "test_graph_widget_rendering", "test_memory_view", "test_module_alias",
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parsing",
     "test_runtime_pane", "test_runtime_selection", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",

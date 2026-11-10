@@ -21,20 +21,20 @@ The state is only as fresh as the last indexing of the project's files.
 """
 from __future__ import annotations
 
-from devbrain.memory_paths import bound_metadata, imported_source_ids, memory_bindings
+from cairnmind.memory_paths import bound_metadata, imported_source_ids, memory_bindings
 
 STATES = ("anchored", "evidence_replaced", "orphaned", "unverified")
 _FILE_KINDS = ("code", "document", "file")
 
 
 def _metadata(row):
-    from devbrain.retrieval import json_value
+    from cairnmind.retrieval import json_value
     value = json_value(row.get("metadata"), {})
     return value if isinstance(value, dict) else {}
 
 
 def _text(source):
-    from devbrain.agent import source_text
+    from cairnmind.agent import source_text
     return source_text(source)
 
 
@@ -47,7 +47,7 @@ def _is_audit(source):
 
 def _file_verdicts(store, project_id, stale):
     """Classify non-current file sources with a fixed number of queries, whatever their count."""
-    from devbrain.store import _json
+    from cairnmind.store import _json
     imported = imported_source_ids(store, project_id) & set(stale)
     bindings = memory_bindings(store, project_id) if imported else []
     addresses = {}
@@ -174,7 +174,7 @@ _QUOTE = {True: "the quoted passage is still there", False: "the quoted passage 
 
 def orphans_report(store, project, root, records):
     """The records whose evidence does not stand, as rows and as ready text for the command line."""
-    from devbrain.terminal_safe import safe_text
+    from cairnmind.terminal_safe import safe_text
 
     def clean(value, limit=100):
         text = " ".join(safe_text(value).split())

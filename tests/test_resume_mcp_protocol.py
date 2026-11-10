@@ -20,13 +20,13 @@ import httpx
 import pytest
 import uvicorn
 
-from devbrain.config import Settings
-from devbrain.ingest import import_history
-from devbrain.integrations import hook
-from devbrain.plans import PlanManager
-from devbrain.service import create_app
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
+from cairnmind.config import Settings
+from cairnmind.ingest import import_history
+from cairnmind.integrations import hook
+from cairnmind.plans import PlanManager
+from cairnmind.service import create_app
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
 
 
 class NoGeneration:
@@ -132,7 +132,7 @@ async def test_actual_stdio_resume_refresh_keeps_horizon_and_requires_new_explic
             return real_client(**kwargs)
 
         with monkeypatch.context() as startup_patch:
-            startup_patch.setattr("devbrain.integrations.httpx.Client", protocol_client)
+            startup_patch.setattr("cairnmind.integrations.httpx.Client", protocol_client)
             startup = hook(settings, {"hook_event_name": "SessionStart", "session_id": "current-native",
                                      "cwd": str(root), "transcript_path": str(current)}, "codex")
         context = startup["hookSpecificOutput"]["additionalContext"]
@@ -144,7 +144,7 @@ async def test_actual_stdio_resume_refresh_keeps_horizon_and_requires_new_explic
 
         parameters = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "devbrain", "--data-dir", str(settings.data_dir), "mcp"],
+            args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp"],
             env=dict(os.environ))
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer) as client:

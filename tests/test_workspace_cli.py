@@ -9,11 +9,11 @@ from types import ModuleType
 import pytest
 from typer.testing import CliRunner
 
-from devbrain import cli
+from cairnmind import cli
 
 
 def workspace_stub(monkeypatch, calls):
-    module = ModuleType("devbrain.workspace")
+    module = ModuleType("cairnmind.workspace")
 
     def launch(settings, takeover=False):
         assert settings.token
@@ -40,7 +40,7 @@ def workspace_stub(monkeypatch, calls):
     module.workspace_status = status
     module.detach_workspace = detach
     module.stop_workspace = stop
-    monkeypatch.setitem(sys.modules, "devbrain.workspace", module)
+    monkeypatch.setitem(sys.modules, "cairnmind.workspace", module)
 
 
 @pytest.mark.parametrize("arguments", [[], ["tui"], ["workspace", "takeover"]])
@@ -147,7 +147,7 @@ def test_terminal_help_does_not_initialize(tmp_path, monkeypatch, arguments):
 
 
 def test_version_does_not_initialize_or_launch_anything(tmp_path, monkeypatch):
-    from devbrain import __version__
+    from cairnmind import __version__
     data = tmp_path / "absent"
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: pytest.fail("Version entered terminal runtime"))
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "version"])

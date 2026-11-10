@@ -11,9 +11,9 @@ from uuid import uuid4
 
 import pytest
 
-from devbrain.config import Settings
-from devbrain.store import Store
-from devbrain.verification import (MAX_OUTPUT_BYTES, capture_code_state, load_profiles,
+from cairnmind.config import Settings
+from cairnmind.store import Store
+from cairnmind.verification import (MAX_OUTPUT_BYTES, capture_code_state, load_profiles,
                                   recover_interrupted_runs, run_check, task_definition_hash,
                                   validate_completion, verification_status)
 
@@ -100,7 +100,7 @@ def test_unknown_external_symlink_submodule_missing_and_unstable_inputs(workspac
     git(root, "update-index", "--add", "--cacheinfo", f"160000,{head},module")
     assert capture_code_state(store, project["id"])["status"] == "unknown"
     git(root, "update-index", "--force-remove", "module")
-    import devbrain.verification as verification
+    import cairnmind.verification as verification
     original = verification._manifest
     calls = 0
 
@@ -229,7 +229,7 @@ def test_required_profiles_cannot_mix_different_observed_code_horizons(workspace
     (root / "app.py").write_text("a different code horizon")
     run_check(store, settings, project["id"], "integration", record["id"])
     (root / "app.py").write_text(first_content)
-    import devbrain.verification as verification
+    import cairnmind.verification as verification
     original_capture = verification.capture_code_state
     calls = 0
 
@@ -317,7 +317,7 @@ def test_timeout_terminates_process_group(workspace, tmp_path):
     record = task(store, project)
     run = run_check(store, settings, project["id"], "unit", record["id"])
     assert run["outcome"] == "timeout"
-    from devbrain.verification import _process_identity
+    from cairnmind.verification import _process_identity
     pid = int(child_pid.read_text())
     deadline = time.monotonic() + 3
     while _process_identity(pid) and time.monotonic() < deadline:
@@ -329,7 +329,7 @@ def test_crashed_cli_spool_recovers_once_and_cannot_qualify(workspace, monkeypat
     store, project, root, settings = workspace
     profile(root)
     record = task(store, project)
-    import devbrain.verification as verification
+    import cairnmind.verification as verification
     original_insert = verification._insert_run
 
     def crash(*args):
@@ -378,7 +378,7 @@ def test_forget_after_last_output_source_cannot_resurrect_orphan_run(workspace, 
     store, project, root, settings = workspace
     profile(root)
     record = task(store, project)
-    import devbrain.verification as verification
+    import cairnmind.verification as verification
     original_insert = verification._insert_run
 
     def forget_immediately_before_insert(store, run):
@@ -419,7 +419,7 @@ def test_final_insert_rejects_foreign_task_and_source_references(workspace, tmp_
         invalid["profile_source_id"] = foreign_source["id"]
     else:
         invalid["source_ids"]["stderr"] = foreign_source["id"]
-    from devbrain.verification import _insert_run
+    from cairnmind.verification import _insert_run
     with pytest.raises(ValueError, match="Task removed|Source removed"):
         _insert_run(store, invalid)
     assert store.query("SELECT id FROM check_runs") == [{"id": run["id"]}]
@@ -431,7 +431,7 @@ def test_deleted_project_recovery_cleans_own_logs_without_killing_or_deleting_us
     store, project, root, settings = workspace
     profile(root)
     record = task(store, project)
-    import devbrain.verification as verification
+    import cairnmind.verification as verification
 
     def crash(*args):
         raise RuntimeError("simulate dead CLI after execution")

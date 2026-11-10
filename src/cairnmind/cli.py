@@ -17,9 +17,9 @@ from typing import Annotated
 import httpx
 import typer
 
-from devbrain.config import Settings
-from devbrain.ollama import OllamaUnavailable
-from devbrain.arcade import ArcadeError
+from cairnmind.config import Settings
+from cairnmind.ollama import OllamaUnavailable
+from cairnmind.arcade import ArcadeError
 
 app = typer.Typer(no_args_is_help=False, pretty_exceptions_enable=False,
                   help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot.")
@@ -71,7 +71,7 @@ def entrypoint() -> None:
 
 
 def store_for(settings: Settings):
-    from devbrain.store import Store
+    from cairnmind.store import Store
     return Store(settings.data_dir)
 
 
@@ -94,19 +94,19 @@ def actor_write(store, settings: Settings, project_id: str, worktree: Path | str
     """Native CLI commands inherit the launcher's logical session; manual repair stays possible."""
     session_id = os.environ.get("DEVBRAIN_SESSION_ID")
     if session_id:
-        from devbrain.integrations import drain_hook_spool
+        from cairnmind.integrations import drain_hook_spool
         drain_hook_spool(settings, store)
     with store.transaction():
         scope = actor_scope(store, project_id, worktree)
         if session_id:
-            from devbrain.sessions import SessionManager
+            from cairnmind.sessions import SessionManager
             manager = SessionManager(store, settings)
             manager.require_ack(session_id)
         yield scope
 
 
 def service_alive(settings: Settings) -> bool:
-    from devbrain.service import instance_id
+    from cairnmind.service import instance_id
     try:
         with httpx.Client(trust_env=False, timeout=0.7) as client:
             result = client.get(settings.url + "/health")
@@ -126,7 +126,7 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         # The service is a shared system worker, not a child actor of one coding session.
         for key in ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"):
             env.pop(key, None)
-        command = [sys.executable, "-m", "devbrain", "--data-dir", str(settings.data_dir), "serve"]
+        command = [sys.executable, "-m", "cairnmind", "--data-dir", str(settings.data_dir), "serve"]
         if not background_inference:
             command.append("--defer-background-inference")
         subprocess.Popen(command,
@@ -203,7 +203,7 @@ def _launch_terminal_workspace(ctx: typer.Context, *, takeover: bool = False) ->
         raise typer.BadParameter(
             "Run `cairnmind` in an interactive terminal. "
             "Available commands: `cairnmind --help`; status: `cairnmind workspace status`.")
-    from devbrain.workspace import launch_workspace
+    from cairnmind.workspace import launch_workspace
     ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     code = launch_workspace(ctx.obj, takeover=True) if takeover else launch_workspace(ctx.obj)
     if code:
@@ -219,21 +219,21 @@ def tui(ctx: typer.Context):
 @app.command("version")
 def version():
     """Show the version without initializing configuration or services."""
-    from devbrain import __version__
+    from cairnmind import __version__
     output({"version": __version__})
 
 
 @workspace_app.command("status")
 def terminal_workspace_status(ctx: typer.Context):
     """Read the status without starting services or initializing configuration."""
-    from devbrain.workspace import workspace_status
+    from cairnmind.workspace import workspace_status
     output(workspace_status(ctx.obj))
 
 
 @workspace_app.command("detach")
 def terminal_workspace_detach(ctx: typer.Context):
     """Detach the terminal view and keep the client sessions."""
-    from devbrain.workspace import detach_workspace
+    from cairnmind.workspace import detach_workspace
     output(detach_workspace(ctx.obj))
 
 
@@ -246,7 +246,7 @@ def terminal_workspace_takeover(ctx: typer.Context):
 @workspace_app.command("stop")
 def terminal_workspace_stop(ctx: typer.Context, clients: bool = False):
     """Close the workspace; --clients also stops the sessions that belong to it."""
-    from devbrain.workspace import stop_workspace
+    from cairnmind.workspace import stop_workspace
     output(stop_workspace(ctx.obj, stop_clients=clients))
 
 
@@ -254,21 +254,21 @@ def terminal_workspace_stop(ctx: typer.Context, clients: bool = False):
 @initialized
 def cockpit_serve(ctx: typer.Context, port: int | None = None):
     """Run the cockpit server; normally the cairnmind command manages it."""
-    from devbrain.cockpit import serve_cockpit
+    from cairnmind.cockpit import serve_cockpit
     serve_cockpit(ctx.obj, port=port)
 
 
 @cockpit_app.command("status")
 def cockpit_status(ctx: typer.Context):
     """Read the cockpit status without starting services or initializing configuration."""
-    from devbrain.cockpit import cockpit_status as inspect
+    from cairnmind.cockpit import cockpit_status as inspect
     output(inspect(ctx.obj))
 
 
 @cockpit_app.command("stop")
 def cockpit_stop(ctx: typer.Context, clients: bool = False):
     """Stop the cockpit; --clients explicitly stops the managed terminals too."""
-    from devbrain.cockpit import stop_cockpit
+    from cairnmind.cockpit import stop_cockpit
     output(stop_cockpit(ctx.obj, stop_clients=clients))
 
 
@@ -284,7 +284,7 @@ def init(ctx: typer.Context):
 @initialized
 def engine_install(ctx: typer.Context, distribution: Path | None = None):
     """Download the pinned ArcadeDB engine and verify its SHA-256 (about 87 MB)."""
-    from devbrain.engine import install_engine
+    from cairnmind.engine import install_engine
     path = install_engine(ctx.obj, distribution)
     output({"installed": str(path), "version": ctx.obj.arcade_version})
 
@@ -292,21 +292,21 @@ def engine_install(ctx: typer.Context, distribution: Path | None = None):
 @engine_app.command("start")
 @initialized
 def engine_start(ctx: typer.Context):
-    from devbrain.engine import start_engine
+    from cairnmind.engine import start_engine
     output(start_engine(ctx.obj))
 
 
 @engine_app.command("status")
 @initialized
 def engine_inspect(ctx: typer.Context):
-    from devbrain.engine import engine_status
+    from cairnmind.engine import engine_status
     output(engine_status(ctx.obj))
 
 
 @engine_app.command("stop")
 @initialized
 def engine_stop(ctx: typer.Context):
-    from devbrain.engine import stop_engine
+    from cairnmind.engine import stop_engine
     if service_alive(ctx.obj):
         raise typer.BadParameter("Run cairnmind stop first; the knowledge service is using ArcadeDB")
     output(stop_engine(ctx.obj))
@@ -323,7 +323,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     if output_format == "text" and not contract:
         raise typer.BadParameter("--format text is available only with --contract.")
     if contract:
-        from devbrain.integrations import CLIENTS, _probe_cli, contract_text
+        from cairnmind.integrations import CLIENTS, _probe_cli, contract_text
         probes = {name: _probe_cli(name) for name in CLIENTS}
         if output_format == "text":
             typer.echo(contract_text(probes))
@@ -333,12 +333,12 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         if any(probe["installed"] and not probe["verified_resume"] for probe in probes.values()):
             raise typer.Exit(1)
         return
-    from devbrain.integrations import doctor as inspect
+    from cairnmind.integrations import doctor as inspect
     result = inspect(ctx.obj)
     result["service_running"] = service_alive(ctx.obj)
     result["data_dir"] = str(ctx.obj.data_dir)
     result["models_lock_present"] = (ctx.obj.data_dir / "models.lock.json").exists()
-    from devbrain.api_runtime import coding_profiles_status
+    from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     output(result)
 
@@ -348,7 +348,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
 def serve(ctx: typer.Context, defer_background_inference: bool = False):
     """Run the local service (the single owner of the GPU and the queue)."""
     import uvicorn
-    from devbrain.service import create_app
+    from cairnmind.service import create_app
     settings = ctx.obj
     with (settings.data_dir / "service.lock").open("a") as lock:
         try:
@@ -379,7 +379,7 @@ def project_add(ctx: typer.Context, name: str, root: Path):
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
     project = store.add_project(name, root)
-    from devbrain.ingest import index_project, register_default_histories
+    from cairnmind.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
     output({"project": project, "indexed": result, "history": discovery})
@@ -425,7 +425,7 @@ def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None =
     payload = {"project": project, "question": question,
                "worktree": str(worktree.resolve()) if worktree else None}
     if answer_schema is not None:
-        from devbrain.answer_contract import prepare_answer_schema
+        from cairnmind.answer_contract import prepare_answer_schema
         payload["answer_schema"] = prepare_answer_schema(json.loads(answer_schema.read_text(encoding="utf-8")))
     output(request(ctx.obj, "POST", "/ask", json=payload))
 
@@ -442,7 +442,7 @@ def context(ctx: typer.Context, project: str, worktree: Path | None = None):
 def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
           as_json: Annotated[bool, typer.Option("--json", help="Print the marked lines as JSON.")] = False):
     """Show where work stopped: checkpoint, next task, check evidence, commits and proposals. Asks no model."""
-    from devbrain.brief import build_brief
+    from cairnmind.brief import build_brief
     # Read the store directly, as `tasks list` does: starting the service could start model work.
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
@@ -534,7 +534,7 @@ def checkpoint(ctx: typer.Context, project: str, state_file: Path):
 @tasks_app.command("list")
 @initialized
 def task_list(ctx: typer.Context, project: str, worktree: Path | None = None):
-    from devbrain.verification import verification_status
+    from cairnmind.verification import verification_status
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     scope = actor_scope(store, pid, worktree)
@@ -601,7 +601,7 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
                   "expected_version": version if version is not None else task["version"]}
         plan_ref = task.get("metadata", {}).get("plan_ref")
         if plan_ref:
-            from devbrain.plans import PlanManager
+            from cairnmind.plans import PlanManager
             current_plan = PlanManager(store).get(pid, plan_ref)["plan"]
             record["expected_plan_version"] = plan_version if plan_version is not None else current_plan["version"]
         result = store.remember(pid, record, sources)
@@ -614,7 +614,7 @@ def plan_save(ctx: typer.Context, project: str, input_json: Path,
               idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
               expected_version: int | None = None, task_versions: Path | None = None,
               worktree: Path | None = None, activate: bool = False):
-    from devbrain.plans import PlanManager
+    from cairnmind.plans import PlanManager
     document = json.loads(input_json.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise typer.BadParameter("The file must contain an object with the fields plan and steps")
@@ -632,7 +632,7 @@ def plan_save(ctx: typer.Context, project: str, input_json: Path,
 @plans_app.command("list")
 @initialized
 def plan_list(ctx: typer.Context, project: str):
-    from devbrain.plans import PlanManager
+    from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     output(PlanManager(store).list(store.resolve_project(project)["id"]))
 
@@ -640,7 +640,7 @@ def plan_list(ctx: typer.Context, project: str):
 @plans_app.command("show")
 @initialized
 def plan_show(ctx: typer.Context, project: str, plan_id: str):
-    from devbrain.plans import PlanManager
+    from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     output(PlanManager(store).get(store.resolve_project(project)["id"], plan_id))
 
@@ -648,13 +648,13 @@ def plan_show(ctx: typer.Context, project: str, plan_id: str):
 @plans_app.command("next")
 @initialized
 def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None):
-    from devbrain.plans import PlanManager
+    from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     scope = actor_scope(store, pid, worktree)
     result = PlanManager(store).next_task(pid, plan_id, scope)
     if result.get("task"):
-        from devbrain.verification import verification_status
+        from cairnmind.verification import verification_status
         result["verification"] = verification_status(store, result["task"], scope)
     output(result)
 
@@ -662,7 +662,7 @@ def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, work
 @plans_app.command("activate")
 @initialized
 def plan_activate(ctx: typer.Context, project: str, plan_id: str, worktree: Path | None = None):
-    from devbrain.plans import PlanManager
+    from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     with actor_write(store, ctx.obj, pid, worktree) as scope:
@@ -675,7 +675,7 @@ def plan_activate(ctx: typer.Context, project: str, plan_id: str, worktree: Path
 def plan_adopt(ctx: typer.Context, project: str, group: str,
                idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
                title: str | None = None, worktree: Path | None = None, activate: bool = False):
-    from devbrain.plans import PlanManager
+    from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     with actor_write(store, ctx.obj, pid, worktree) as scope:
@@ -687,7 +687,7 @@ def plan_adopt(ctx: typer.Context, project: str, group: str,
 @checks_app.command("profiles")
 @initialized
 def check_profiles(ctx: typer.Context, project: str, worktree: Path | None = None):
-    from devbrain.verification import load_profiles
+    from cairnmind.verification import load_profiles
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     output(load_profiles(store, pid, actor_scope(store, pid, worktree)))
@@ -697,7 +697,7 @@ def check_profiles(ctx: typer.Context, project: str, worktree: Path | None = Non
 @initialized
 def check_run(ctx: typer.Context, project: str, profile: str,
               task: Annotated[str, typer.Option("--task")], worktree: Path | None = None):
-    from devbrain.verification import run_check
+    from cairnmind.verification import run_check
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     with actor_write(store, ctx.obj, pid, worktree) as scope:
@@ -713,7 +713,7 @@ def check_run(ctx: typer.Context, project: str, profile: str,
 def check_list(ctx: typer.Context, project: str,
                task: Annotated[str | None, typer.Option("--task")] = None,
                worktree: Path | None = None):
-    from devbrain.verification import recover_interrupted_runs, verification_status
+    from cairnmind.verification import recover_interrupted_runs, verification_status
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     scope = actor_scope(store, pid, worktree)
@@ -769,7 +769,7 @@ def session_ack(ctx: typer.Context, session_id: str, packet_id: str, packet_hash
 @initialized
 def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None = None,
              skip_claude: bool = False):
-    from devbrain.evaluation import run_evaluation
+    from cairnmind.evaluation import run_evaluation
     if skip_claude and not clients:
         raise typer.BadParameter("--skip-claude requires --clients")
     result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
@@ -784,7 +784,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
 @initialized
 def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
     """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
-    from devbrain.memory_evaluation import run_memory_evaluation
+    from cairnmind.memory_evaluation import run_memory_evaluation
     result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
     output(result)
     if result.get("status") != "passed":
@@ -802,7 +802,7 @@ def memory_snapshot(ctx: typer.Context, project: str, worktree: Path | None = No
 @memory_app.command("inspect")
 def memory_inspect(ctx: typer.Context, path: Path):
     """Check a snapshot's files without initializing the store or starting services."""
-    from devbrain.memory import inspect_snapshot
+    from cairnmind.memory import inspect_snapshot
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
     if os.environ.get("DEVBRAIN_SESSION_ID"):
@@ -817,7 +817,7 @@ def memory_show(ctx: typer.Context, path: Path,
                 status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None,
                 grep: Annotated[str | None, typer.Option("--grep", help="Case-insensitive text to look for.")] = None):
     """Read a snapshot's records and plans as text. Writes nothing; outside a coding session needs no engine or service."""
-    from devbrain.memory_view import show_snapshot
+    from cairnmind.memory_view import show_snapshot
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
     expected = None
@@ -833,9 +833,9 @@ def memory_show(ctx: typer.Context, path: Path,
 def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = None,
                    as_json: Annotated[bool, typer.Option("--json", help="Print the records as JSON.")] = False):
     """List records whose evidence is no longer current: orphaned, or resting on a changed source. Read-only."""
-    from devbrain.brief import _scoped_records
-    from devbrain.evidence import orphans_report
-    from devbrain.verification import _root
+    from cairnmind.brief import _scoped_records
+    from cairnmind.evidence import orphans_report
+    from cairnmind.verification import _root
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
     root = _root(store, selected["id"], actor_scope(store, selected["id"], worktree))
@@ -851,7 +851,7 @@ def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
                   dry_run: bool = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
-    from devbrain.memory import inspect_snapshot
+    from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())
     inspect_snapshot(selected)  # Validate the transfer before initializing anything.
     if not dry_run:
@@ -888,7 +888,7 @@ def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None
 @initialized
 def install(ctx: typer.Context, project: str):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
-    from devbrain.integrations import install_integrations
+    from cairnmind.integrations import install_integrations
     store = store_for(ctx.obj)
     output(install_integrations(ctx.obj, store.resolve_project(project)))
 
@@ -896,7 +896,7 @@ def install(ctx: typer.Context, project: str):
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 @initialized
 def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = None):
-    from devbrain.integrations import run_client
+    from cairnmind.integrations import run_client
     ensure_service(ctx.obj)
     selected = store_for(ctx.obj).resolve_project(project)
     if worktree:
@@ -916,14 +916,14 @@ def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = N
 @initialized
 def mcp(ctx: typer.Context):
     """MCP over stdio; prints no logs or CLI messages to stdout."""
-    from devbrain.mcp_server import run
+    from cairnmind.mcp_server import run
     run(ctx.obj)
 
 
 @app.command()
 @initialized
 def hook(ctx: typer.Context, client: Annotated[str, typer.Option("--client")]):
-    from devbrain.integrations import hook as handle_hook
+    from cairnmind.integrations import hook as handle_hook
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         result = handle_hook(ctx.obj, payload, client)
@@ -937,7 +937,7 @@ def hook(ctx: typer.Context, client: Annotated[str, typer.Option("--client")]):
 @models_app.command("list")
 @initialized
 def model_list(ctx: typer.Context):
-    from devbrain.ollama import Ollama
+    from cairnmind.ollama import Ollama
     output(asyncio.run(Ollama(ctx.obj).models()))
 
 
@@ -969,7 +969,7 @@ def model_pull(ctx: typer.Context):
             "models": models.get("models", []), "locked_at": time.time()}
     (settings.data_dir / "models.lock.json").write_text(json.dumps(lock, indent=2), encoding="utf-8")
     store = store_for(settings)
-    from devbrain.service import schedule_embeddings
+    from cairnmind.service import schedule_embeddings
     for item in models.get("models", []):
         if item.get("name") == settings.embedding_model and item.get("digest"):
             schedule_embeddings(store, f"{settings.embedding_model}@{item['digest']}")
@@ -995,8 +995,8 @@ def retry_jobs(ctx: typer.Context):
 @initialized
 def rebuild_vectors(ctx: typer.Context, project: str):
     """Rebuild the project's derived vectors, keeping sources and history."""
-    from devbrain.ollama import Ollama
-    from devbrain.service import schedule_embeddings
+    from cairnmind.ollama import Ollama
+    from cairnmind.service import schedule_embeddings
     settings = ctx.obj
     store = store_for(settings)
     pid = store.resolve_project(project)["id"]

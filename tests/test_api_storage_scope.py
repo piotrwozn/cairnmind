@@ -1,9 +1,9 @@
 """Private saved credentials never become a registered source-code scope."""
 import pytest
 
-from devbrain.api_credentials import CredentialStore
-from devbrain.memory import MemoryManager
-from devbrain.store import Store
+from cairnmind.api_credentials import CredentialStore
+from cairnmind.memory import MemoryManager
+from cairnmind.store import Store
 
 
 def test_new_project_and_worktree_cannot_enclose_saved_credentials(tmp_path):
@@ -36,9 +36,9 @@ def test_portable_import_and_dry_run_reject_private_credential_scope(tmp_path):
 def test_broker_refuses_persisting_key_into_existing_project_scope(tmp_path):
     import httpx
     from fastapi.testclient import TestClient
-    from devbrain.cockpit import create_cockpit_app
-    from devbrain.cockpit_state import CockpitState
-    from devbrain.service import create_app
+    from cairnmind.cockpit import create_cockpit_app
+    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.service import create_app
     store = Store(tmp_path / 'data')
     store.add_project('legacy-wide-root', tmp_path)
     state = CockpitState(store.settings)

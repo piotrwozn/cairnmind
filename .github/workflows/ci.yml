@@ -51,14 +51,14 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.cache/devbrain-arcade
-          key: arcadedb-${{ hashFiles('src/devbrain/config.py') }}
+          key: arcadedb-${{ hashFiles('src/cairnmind/config.py') }}
       - name: Prepare pinned ArcadeDB
         run: |
           uv run python - <<'PY'
           import os
           from pathlib import Path
-          from devbrain.config import Settings
-          from devbrain.engine import install_engine
+          from cairnmind.config import Settings
+          from cairnmind.engine import install_engine
           settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
           path = install_engine(settings)
           with open(os.environ["GITHUB_ENV"], "a") as env:

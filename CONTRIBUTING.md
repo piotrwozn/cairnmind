@@ -40,7 +40,7 @@ Looking for a first task? Issues labelled [`good first issue`](https://github.co
 
 ### Code map
 
-All modules are in `src/devbrain/`, all tests in `tests/`. **Fast** tests run with `uv run pytest -m "not arcade and not tmux"` and need only Python; **engine** tests start the real ArcadeDB and need Java 21.
+All modules are in `src/cairnmind/`, all tests in `tests/`. **Fast** tests run with `uv run pytest -m "not arcade and not tmux"` and need only Python; **engine** tests start the real ArcadeDB and need Java 21.
 
 | You want to change | Start in | Run | Tier |
 |---|---|---|---|

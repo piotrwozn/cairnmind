@@ -12,9 +12,9 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from devbrain.config import Settings
-from devbrain.service import create_app, schedule_embeddings
-from devbrain.store import Store
+from cairnmind.config import Settings
+from cairnmind.service import create_app, schedule_embeddings
+from cairnmind.store import Store
 
 
 class MemoryModel:
@@ -85,7 +85,7 @@ def test_deferred_open_keeps_scanner_snapshots_and_only_processes_explicit_proje
     settings, store, (b, a), (source_b, source_a), (job_b, job_a) = memory
     model = MemoryModel()
     ticks = threading.Event()
-    monkeypatch.setattr("devbrain.memory.MemoryManager.tick", lambda self: ticks.set() or {"errors": []})
+    monkeypatch.setattr("cairnmind.memory.MemoryManager.tick", lambda self: ticks.set() or {"errors": []})
     app = create_app(settings, background_inference=False, ollama=model)
     with TestClient(app) as client:
         eventually(lambda: ticks.is_set() and client.get("/status", headers=headers(settings)).json()["background"].get("last_scan_at"))
@@ -178,7 +178,7 @@ def test_explicit_ask_and_remember_work_without_enabling_background(memory, monk
         await asyncio.sleep(0)
         return {"status": "complete", "answer": "Explicit request processed", "sources": []}
 
-    monkeypatch.setattr("devbrain.agent.KnowledgeAgent.ask", answer)
+    monkeypatch.setattr("cairnmind.agent.KnowledgeAgent.ask", answer)
     model = MemoryModel()
     with TestClient(create_app(settings, background_inference=False, ollama=model)) as client:
         response = client.post("/ask", json={"project": a["id"], "question": "Explicit question"}, headers=headers(settings))
@@ -191,7 +191,7 @@ def test_explicit_ask_and_remember_work_without_enabling_background(memory, monk
 
 
 def test_tui_service_autostart_is_deferred_and_existing_service_is_never_restarted(tmp_path, monkeypatch):
-    from devbrain import cli
+    from cairnmind import cli
     settings = Settings.load(tmp_path / "data", create=True)
     commands = []
     alive = iter([False, True])
@@ -210,7 +210,7 @@ def test_tui_service_autostart_is_deferred_and_existing_service_is_never_restart
 
 @pytest.fixture
 def broker(tmp_path, monkeypatch):
-    from devbrain.cockpit import create_cockpit_app
+    from cairnmind.cockpit import create_cockpit_app
     settings = Settings.load(tmp_path / "broker", create=True)
     project = {"id": "project-a", "name": "A", "root": str(tmp_path / "A")}
     calls, starts = [], []
@@ -235,7 +235,7 @@ def broker(tmp_path, monkeypatch):
                 "errors": [] if behavior["launch_ok"] else [{"code": "login_required"}]}
 
     runtime = SimpleNamespace(start_project=start, list_runs=lambda: [], diagnostics=lambda: {})
-    monkeypatch.setattr("devbrain.client_auth.probe_client",
+    monkeypatch.setattr("cairnmind.client_auth.probe_client",
                         lambda client, *args, **kwargs: {"client": client, "ready_to_launch": True})
     app = create_cockpit_app(settings, runtime=runtime, proxy_transport=httpx.MockTransport(upstream),
                              public_url="http://127.0.0.1:8766")
@@ -313,7 +313,7 @@ async def test_cancellation_after_launch_keeps_idempotency_and_unconfirmed_warni
 @pytest.mark.parametrize("action", ["process", "cancel", "scope_changed"])
 async def test_queue_button_is_explicit_scoped_localized_and_never_starts_an_assistant(tmp_path, monkeypatch, action):
     from textual.widgets import Button, Static
-    from devbrain.terminal_panels import SidebarApp
+    from cairnmind.terminal_panels import SidebarApp
     from test_terminal_panels import setup, settle
 
     settings, broker, workspace = setup(tmp_path, monkeypatch)

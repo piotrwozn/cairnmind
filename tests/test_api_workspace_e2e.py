@@ -23,15 +23,15 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
-from devbrain import __version__
-from devbrain.agent_journal import AgentJournal
-from devbrain.api_credentials import CredentialStore
-from devbrain.api_runtime import RuntimeSupervisor
-from devbrain.cockpit import _birth, create_cockpit_app, instance_id
-from devbrain.cockpit_state import CockpitState, _atomic
-from devbrain.config import Settings
-from devbrain.service import create_app
-from devbrain.store import Store
+from cairnmind import __version__
+from cairnmind.agent_journal import AgentJournal
+from cairnmind.api_credentials import CredentialStore
+from cairnmind.api_runtime import RuntimeSupervisor
+from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
+from cairnmind.cockpit_state import CockpitState, _atomic
+from cairnmind.config import Settings
+from cairnmind.service import create_app
+from cairnmind.store import Store
 
 
 CANARY = "E2E070_PRIVATE_PROFILE_KEY_MUST_NOT_ENTER_HISTORY"

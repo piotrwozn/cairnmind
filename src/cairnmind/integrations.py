@@ -40,8 +40,8 @@ HOOK_TAIL_SCAN_LIMIT_BYTES = 2 * 1024 * 1024
 
 def _command(settings: Settings, *args: str) -> list[str]:
     # Native clients execute hooks/MCP from arbitrary project directories.
-    # Ignore cwd/PYTHONPATH so a repository's devbrain.py cannot shadow us.
-    return [sys.executable, "-I", "-m", "devbrain", "--data-dir", str(settings.data_dir), *args]
+    # Ignore cwd/PYTHONPATH so a repository's cairnmind.py cannot shadow us.
+    return [sys.executable, "-I", "-m", "cairnmind", "--data-dir", str(settings.data_dir), *args]
 
 
 def native_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
@@ -324,7 +324,9 @@ def _merge_json_mcp(path: Path, settings: Settings) -> bool:
 
 def _is_ours(server: dict[str, Any]) -> bool:
     args = server.get("args", []) if isinstance(server, dict) else []
-    return isinstance(args, list) and any(args[i:i + 2] == ["-m", "devbrain"] for i in range(len(args)))
+    # Entries written before the module was renamed start `-m devbrain`; they are ours too.
+    return isinstance(args, list) and any(args[i:i + 2] in (["-m", "cairnmind"], ["-m", "devbrain"])
+                                          for i in range(len(args)))
 
 
 def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
@@ -364,7 +366,9 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
         # An unmarked own entry is kept; replacing an arbitrary TOML table by
         # regex could remove nested options. Explicitly report mismatched paths.
         desired_args = _command(settings, "mcp")[1:]
-        if existing.get("command") == sys.executable and existing.get("args") == desired_args:
+        # The same entry under the earlier module name still works and is left alone.
+        earlier_args = ["devbrain" if value == "cairnmind" else value for value in desired_args]
+        if existing.get("command") == sys.executable and existing.get("args") in (desired_args, earlier_args):
             env_vars = existing.get("env_vars", [])
             if (isinstance(env_vars, list) and all(name in env_vars for name in SESSION_ENV_VARS)
                     and all(isinstance(name, str) for name in env_vars)):
@@ -408,7 +412,8 @@ def _managed_hook(handler: Any, client: str) -> bool:
     if not isinstance(handler, dict):
         return False
     command = handler.get("command", "")
-    return isinstance(command, str) and "-m devbrain " in command and f"hook --client {client}" in command
+    return (isinstance(command, str) and ("-m cairnmind " in command or "-m devbrain " in command)
+            and f"hook --client {client}" in command)
 
 
 def _merge_hooks(path: Path, settings: Settings, client: str) -> bool:

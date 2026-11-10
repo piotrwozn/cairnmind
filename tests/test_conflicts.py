@@ -7,11 +7,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from devbrain import conflicts
-from devbrain.evidence import evidence_states
-from devbrain.inspector import Inspector, InspectorNotFound
-from devbrain.inspector_api import attach_inspector_routes
-from devbrain.store import Store
+from cairnmind import conflicts
+from cairnmind.evidence import evidence_states
+from cairnmind.inspector import Inspector, InspectorNotFound
+from cairnmind.inspector_api import attach_inspector_routes
+from cairnmind.store import Store
 
 
 @pytest.fixture

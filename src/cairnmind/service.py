@@ -16,8 +16,8 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from devbrain import __version__
-from devbrain.config import Settings
+from cairnmind import __version__
+from cairnmind.config import Settings
 
 log = logging.getLogger(__name__)
 
@@ -232,13 +232,13 @@ def finish_job_if_present(store, job_id: str, error: str | None = None, *, worke
 
 def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                background_inference: bool = True, ollama=None) -> FastAPI:
-    from devbrain.agent import KnowledgeAgent, extraction_outer_timeout, inference_lease_seconds
-    from devbrain.ollama import Ollama
-    from devbrain.retrieval import Retriever
-    from devbrain.store import Store
-    from devbrain.plans import PlanManager
-    from devbrain.sessions import SessionManager
-    from devbrain.memory import MemoryConflict, MemoryManager, inspect_snapshot
+    from cairnmind.agent import KnowledgeAgent, extraction_outer_timeout, inference_lease_seconds
+    from cairnmind.ollama import Ollama
+    from cairnmind.retrieval import Retriever
+    from cairnmind.store import Store
+    from cairnmind.plans import PlanManager
+    from cairnmind.sessions import SessionManager
+    from cairnmind.memory import MemoryConflict, MemoryManager, inspect_snapshot
 
     settings = settings or Settings.load(create=True)
     if settings.host not in {"127.0.0.1", "localhost", "::1"}:
@@ -288,11 +288,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     async def scanner() -> None:
         from pathlib import Path
-        from devbrain.ingest import import_history, index_pending_sources, index_project_if_changed, poll_imports
+        from cairnmind.ingest import import_history, index_pending_sources, index_project_if_changed, poll_imports
 
         while True:
             try:
-                from devbrain.integrations import drain_hook_spool
+                from cairnmind.integrations import drain_hook_spool
                 scan_errors = []
                 drained = await asyncio.to_thread(drain_hook_spool, settings, store)
                 scan_errors.extend(f"hook: {err}" for err in drained.get("errors", []))
@@ -323,7 +323,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     scan_errors.extend(f"{project['name']}: {err}" for err in indexed.get("errors", []))
                 pending = await asyncio.to_thread(index_pending_sources, store)
                 scan_errors.extend(f"memory index: {err}" for err in pending.get("errors", []))
-                from devbrain.verification import recover_interrupted_runs
+                from cairnmind.verification import recover_interrupted_runs
                 await asyncio.to_thread(recover_interrupted_runs, store, settings)
                 backup_dir = settings.data_dir / "backups"
                 backups = sorted(backup_dir.glob("*.devbrain.json.gz")) if backup_dir.exists() else []
@@ -420,7 +420,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     def write_scoped(pid: str, session_id: str | None, packet_id: str | None, operation):
         """Session validation and the resulting mutation share one writer transaction."""
         if session_id:
-            from devbrain.integrations import drain_hook_spool
+            from cairnmind.integrations import drain_hook_spool
             drain_hook_spool(settings, store)
         with store.transaction():
             scope = None
@@ -450,7 +450,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             word in str(exc).lower() for word in ("version", "conflict", "stale", "resume_required"))) else 400
         return JSONResponse(status_code=status, content={"detail": str(exc)})
 
-    from devbrain.arcade import ArcadeError
+    from cairnmind.arcade import ArcadeError
 
     @app.exception_handler(ArcadeError)
     async def backend_unavailable(request: Request, exc: ArcadeError):
@@ -520,7 +520,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         """Keep file-lock -> DB-lock ordering, rechecking the actor in core's transaction."""
         if not session_id:
             return requested, None
-        from devbrain.integrations import drain_hook_spool
+        from cairnmind.integrations import drain_hook_spool
         drain_hook_spool(settings, store)
 
         def require():
@@ -572,7 +572,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             memory_write_authorization, pid, body.root, body.session_id, body.packet_id)
         result = await asyncio.to_thread(restore, scope, authorize)
         cache.clear()
-        from devbrain.ingest import forget_index_signature
+        from cairnmind.ingest import forget_index_signature
         forget_index_signature(store, pid)
         return result
 
@@ -603,7 +603,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.get("/jobs/{job_id}", dependencies=auth)
     async def job_show(job_id: str, project: str, session_id: str | None = None):
-        from devbrain.store import JobNotFoundError
+        from cairnmind.store import JobNotFoundError
         try:
             pid = store.resolve_project(project)["id"]
         except ValueError:
@@ -616,7 +616,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.post("/jobs/{job_id}/retry", dependencies=auth)
     async def job_retry(job_id: str, body: JobRetryBody):
-        from devbrain.store import JobNotFoundError
+        from cairnmind.store import JobNotFoundError
         try:
             pid = project(body.project)["id"]
         except ValueError:
@@ -642,7 +642,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.get("/brief", dependencies=auth)
     async def brief(project: str, worktree: str | None = None, session_id: str | None = None):
         # Built from stored rows and Git only; this route never reaches the model queue.
-        from devbrain.brief import build_brief
+        from cairnmind.brief import build_brief
         pid = store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, worktree, session_id)
         return await asyncio.to_thread(build_brief, store, pid, scope)
@@ -686,14 +686,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.post("/sessions/prepare", dependencies=auth)
     async def prepare_session(body: SessionPrepareBody):
-        from devbrain.integrations import drain_hook_spool
+        from cairnmind.integrations import drain_hook_spool
         await asyncio.to_thread(drain_hook_spool, settings, store)
         return await asyncio.to_thread(sessions.prepare, project(body.project)["id"], body.client,
                                        body.worktree, body.session_id, body.reason)
 
     @app.post("/sessions/context", dependencies=auth)
     async def resume_context(body: SessionContextBody):
-        from devbrain.integrations import drain_hook_spool
+        from cairnmind.integrations import drain_hook_spool
         await asyncio.to_thread(drain_hook_spool, settings, store)
         if (body.packet_id is not None and body.expected_packet_id is not None
                 and body.packet_id != body.expected_packet_id):
@@ -705,7 +705,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.post("/sessions/ack", dependencies=auth)
     async def acknowledge_resume(body: SessionAckBody):
-        from devbrain.integrations import drain_hook_spool
+        from cairnmind.integrations import drain_hook_spool
         await asyncio.to_thread(drain_hook_spool, settings, store)
         return await asyncio.to_thread(sessions.ack, body.session_id, body.packet_id, body.packet_hash, body.readback)
 
@@ -724,7 +724,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.get("/checks", dependencies=auth)
     async def checks(project: str, task_id: str | None = None, worktree: str | None = None,
                      session_id: str | None = None):
-        from devbrain.verification import recover_interrupted_runs, verification_status
+        from cairnmind.verification import recover_interrupted_runs, verification_status
         pid = store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, worktree, session_id)
         await asyncio.to_thread(recover_interrupted_runs, store, settings)
@@ -747,9 +747,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.post("/ask", dependencies=auth)
     async def ask(body: AskBody):
-        from devbrain.answer_contract import prepare_answer_schema
-        from devbrain.ingest import index_pending_sources, index_project_if_changed
-        from devbrain.verification import capture_code_state, load_profiles
+        from cairnmind.answer_contract import prepare_answer_schema
+        from cairnmind.ingest import index_pending_sources, index_project_if_changed
+        from cairnmind.verification import capture_code_state, load_profiles
         pid = project(body.project)["id"]
         answer_schema = prepare_answer_schema(body.answer_schema)
         contract_key = json.dumps(answer_schema, sort_keys=True, separators=(",", ":"))
@@ -824,7 +824,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.post("/ingest", dependencies=auth)
     async def ingest(body: ProjectBody):
-        from devbrain.ingest import index_project
+        from cairnmind.ingest import index_project
         result = await asyncio.to_thread(index_project, store, project(body.project)["id"])
         cache.clear()
         return result
@@ -832,7 +832,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.post("/import", dependencies=auth)
     async def import_sources(body: ImportBody):
         from pathlib import Path
-        from devbrain.ingest import import_history
+        from cairnmind.ingest import import_history
         pid = project(body.project)["id"] if body.project else None
         result = await asyncio.to_thread(import_history, store, Path(body.path), pid, body.client)
         cache.clear()
@@ -845,6 +845,6 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             callback()
         return {"stopping": bool(callback)}
 
-    from devbrain.inspector_api import attach_inspector_routes
+    from cairnmind.inspector_api import attach_inspector_routes
     attach_inspector_routes(app, store, settings)
     return app

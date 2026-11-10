@@ -5,8 +5,8 @@ import math
 from statistics import median
 from time import perf_counter
 
-from devbrain.graph_raster import LUMINANCE, SELECTED_COLOR, _Raster, render_scene
-from devbrain.terminal_graph import Camera, seed_position
+from cairnmind.graph_raster import LUMINANCE, SELECTED_COLOR, _Raster, render_scene
+from cairnmind.terminal_graph import Camera, seed_position
 
 
 def _occupied(text):

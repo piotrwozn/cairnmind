@@ -7,9 +7,9 @@ import time
 
 import pytest
 
-from devbrain.agent_journal import AgentJournal, JournalError
-from devbrain.agent_tools import MAX_COMMAND_OUTPUT_BYTES, ToolExecutor
-from devbrain.config import Settings
+from cairnmind.agent_journal import AgentJournal, JournalError
+from cairnmind.agent_tools import MAX_COMMAND_OUTPUT_BYTES, ToolExecutor
+from cairnmind.config import Settings
 
 
 @pytest.fixture
@@ -222,7 +222,7 @@ async def test_shell_directory_is_scoped_and_credential_env_is_removed(executor,
 
 
 async def test_other_profile_custom_credential_env_never_reaches_shell(executor, monkeypatch):
-    from devbrain.cockpit_state import CockpitState
+    from cairnmind.cockpit_state import CockpitState
     state = CockpitState(executor.settings)
     profiles = state.load()["profiles"]
     state.update({"profiles": [*profiles, {"id": "other-vendor", "client": "api", "label": "Other vendor",

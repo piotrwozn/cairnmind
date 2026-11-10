@@ -10,9 +10,9 @@ import subprocess
 
 import pytest
 
-from devbrain.ingest import import_history
-from devbrain.sessions import SessionManager
-from devbrain.store import Store, _json
+from cairnmind.ingest import import_history
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store, _json
 
 
 NATIVE_ID = "11111111-1111-4111-8111-111111111111"

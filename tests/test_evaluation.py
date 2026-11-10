@@ -9,14 +9,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from devbrain import __version__
-from devbrain.config import Settings
-from devbrain.evaluation import (
+from cairnmind import __version__
+from cairnmind.config import Settings
+from cairnmind.evaluation import (
     GoldenCase, MeasuredOllama, _case_answer_schema, _native_client, _native_failure,
     run_evaluation, score_answer,
 )
-from devbrain.ollama import OllamaUnavailable
-from devbrain.store import Store
+from cairnmind.ollama import OllamaUnavailable
+from cairnmind.store import Store
 
 
 class FixtureOllama:
@@ -155,7 +155,7 @@ def test_explicit_client_handoff_uses_fresh_scoped_versions_and_only_temp_worktr
         assert root.name == "worktree"
         assert (root / ".git").is_file()
         assert isolated.arcade_database != settings.arcade_database
-        from devbrain.sessions import SessionManager
+        from cairnmind.sessions import SessionManager
 
         fixture_store = Store(isolated.data_dir, settings=isolated)
         manager = SessionManager(fixture_store, isolated)
@@ -267,7 +267,7 @@ def test_replay_nested_unknown_answer_repairs_shape_with_real_citation_and_no_go
 
 def test_native_clients_missing_auth_and_no_api_key_fallback(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
-    monkeypatch.setattr("devbrain.evaluation.shutil.which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr("cairnmind.evaluation.shutil.which", lambda name: "/usr/bin/" + name)
     monkeypatch.setenv("OPENAI_API_KEY", "never-forward-this")
     monkeypatch.setenv("CODEX_API_KEY", "never-forward-this")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "never-forward-this")
@@ -280,7 +280,7 @@ def test_native_clients_missing_auth_and_no_api_key_fallback(tmp_path, monkeypat
         assert "ANTHROPIC_API_KEY" not in kwargs["env"]
         return SimpleNamespace(returncode=1, stdout="", stderr="Login required")
 
-    monkeypatch.setattr("devbrain.evaluation.subprocess.run", command)
+    monkeypatch.setattr("cairnmind.evaluation.subprocess.run", command)
     assert _native_client("codex", tmp_path, settings, "project", {})["status"] == "not_run"
     assert _native_client("claude", tmp_path, settings, "project", {})["status"] == "not_run"
     assert len(calls) == 2
@@ -289,7 +289,7 @@ def test_native_clients_missing_auth_and_no_api_key_fallback(tmp_path, monkeypat
 def test_native_subprocesses_use_read_only_controls_and_report_real_usage(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
     settings.arcade_database = "devbrain_eval_fixture"
-    monkeypatch.setattr("devbrain.evaluation.shutil.which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr("cairnmind.evaluation.shutil.which", lambda name: "/usr/bin/" + name)
     expected = {"task_id": "t", "version": 2, "state": "needs_test"}
     calls = []
 
@@ -315,7 +315,7 @@ def test_native_subprocesses_use_read_only_controls_and_report_real_usage(tmp_pa
             output = json.dumps({"result": json.dumps(expected), "usage": {"input_tokens": 11}})
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
-    monkeypatch.setattr("devbrain.evaluation.subprocess.run", command)
+    monkeypatch.setattr("cairnmind.evaluation.subprocess.run", command)
     for client in ("codex", "claude"):
         result = _native_client(client, tmp_path, settings, "project", expected)
         assert result["status"] == "passed"
@@ -384,7 +384,7 @@ def test_attempted_wrong_fact_is_not_hidden_by_quota_looking_text():
 @pytest.mark.parametrize("has_fact,expected_status", [(False, "not_run"), (True, "failed")])
 def test_codex_model_reported_approval_block_is_not_a_success(tmp_path, monkeypatch, has_fact, expected_status):
     settings = Settings.load(tmp_path / "data", create=True)
-    monkeypatch.setattr("devbrain.evaluation.shutil.which", lambda name: "/usr/bin/codex")
+    monkeypatch.setattr("cairnmind.evaluation.shutil.which", lambda name: "/usr/bin/codex")
     expected = {"task_id": "actual-task", "version": 1, "state": "todo"}
     actual = {"task_id": "wrong-task" if has_fact else None, "version": None, "state": None,
               "error": "resume_context requires approval, but approval policy is never PRIVATE_DETAIL"}
@@ -396,7 +396,7 @@ def test_codex_model_reported_approval_block_is_not_a_success(tmp_path, monkeypa
             json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(actual)}}),
             json.dumps({"type": "turn.completed", "usage": {"input_tokens": 20}})]))
 
-    monkeypatch.setattr("devbrain.evaluation.subprocess.run", command)
+    monkeypatch.setattr("cairnmind.evaluation.subprocess.run", command)
     result = _native_client("codex", tmp_path, settings, "project", expected)
     assert result["status"] == expected_status
     if not has_fact:
@@ -406,7 +406,7 @@ def test_codex_model_reported_approval_block_is_not_a_success(tmp_path, monkeypa
 
 
 def _ack_native_fixture(isolated, session):
-    from devbrain.sessions import SessionManager
+    from cairnmind.sessions import SessionManager
     packet = session["packet"]
     readback = {key: {"id": packet["active_" + key]["id"], "version": packet["active_" + key]["version"]}
                 if packet.get("active_" + key) else None for key in ("plan", "task")}

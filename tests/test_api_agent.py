@@ -11,13 +11,13 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from devbrain.agent_journal import AgentJournal
-from devbrain.agent_memory import AgentMemoryClient
-from devbrain.api_agent import AgentEngine
-from devbrain.api_providers import ProviderError
-from devbrain.config import Settings
-from devbrain.service import create_app
-from devbrain.store import Store
+from cairnmind.agent_journal import AgentJournal
+from cairnmind.agent_memory import AgentMemoryClient
+from cairnmind.api_agent import AgentEngine
+from cairnmind.api_providers import ProviderError
+from cairnmind.config import Settings
+from cairnmind.service import create_app
+from cairnmind.store import Store
 
 
 def call(name, arguments=None, identifier=None):
@@ -526,7 +526,7 @@ async def test_explicit_interrupt_cancels_current_generation_without_retry(setup
 
 @pytest.mark.asyncio
 async def test_context_compaction_requires_checkpoint_then_new_model_ack(setup, monkeypatch):
-    monkeypatch.setattr("devbrain.api_agent.CONTEXT_BUDGET_CHARS", 200)
+    monkeypatch.setattr("cairnmind.api_agent.CONTEXT_BUDGET_CHARS", 200)
     memory = Memory()
     compact = {"state": {"goal": "Continue", "results": ["Read saved sources"], "next_step": "Review"}}
     provider = ScriptedProvider(

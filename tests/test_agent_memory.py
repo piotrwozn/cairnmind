@@ -11,12 +11,12 @@ import httpx
 import pytest
 from jsonschema import Draft202012Validator
 
-from devbrain.agent_journal import AgentJournal
-from devbrain.agent_memory import AgentMemoryClient, MEMORY_TOOLS, archive_agent_target, capture_agent_target
-from devbrain.memory import MemoryManager, inspect_snapshot
-from devbrain.service import create_app
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
+from cairnmind.agent_journal import AgentJournal
+from cairnmind.agent_memory import AgentMemoryClient, MEMORY_TOOLS, archive_agent_target, capture_agent_target
+from cairnmind.memory import MemoryManager, inspect_snapshot
+from cairnmind.service import create_app
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
 
 
 def git(root, *args):

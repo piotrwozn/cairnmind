@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from devbrain.answer_contract import answer_contract_errors, prepare_answer_schema
+from cairnmind.answer_contract import answer_contract_errors, prepare_answer_schema
 
 
 def closed(properties):

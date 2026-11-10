@@ -376,7 +376,7 @@ class NativeRuntime:
             _atomic(spec, {"run_id": run_id, "generation": generation, "command": launch["command"],
                            "environment": launch["env"], "cwd": launch["cwd"]})
             self._tmux("new-session", "-d", "-x", "120", "-y", "40", "-s", session, "-c", launch["cwd"],
-                       "--", sys.executable, "-I", "-m", "devbrain.native_worker", "--spec", str(spec),
+                       "--", sys.executable, "-I", "-m", "cairnmind.native_worker", "--spec", str(spec),
                        ";", "set-option", "-t", session, "@devbrain_run_id", run_id,
                        ";", "set-option", "-t", session, "@devbrain_generation", str(generation))
             self.socket.chmod(0o600)
@@ -490,7 +490,7 @@ class _Channel:
         env.pop("TMUX_PANE", None)
         env.update(TERM="xterm-256color")
         try:
-            self.process = subprocess.Popen([sys.executable, "-I", "-m", "devbrain.native_worker", "--attach",
+            self.process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.native_worker", "--attach",
                 "--tmux-bin", runtime.binary, "--socket", str(runtime.socket), "--session", row["tmux_session"]],
                 stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True)
         finally:

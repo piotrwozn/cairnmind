@@ -5,9 +5,9 @@ import subprocess
 
 import pytest
 
-from devbrain.memory import MemoryManager
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
+from cairnmind.memory import MemoryManager
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
 
 
 def git(root, *args):

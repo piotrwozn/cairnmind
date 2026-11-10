@@ -11,11 +11,11 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from devbrain.agent import KnowledgeAgent, SYSTEM
-from devbrain.config import Settings
-from devbrain.ollama import Ollama, OllamaUnavailable
-from devbrain.retrieval import Retriever, public_record
-from devbrain.store import Store
+from cairnmind.agent import KnowledgeAgent, SYSTEM
+from cairnmind.config import Settings
+from cairnmind.ollama import Ollama, OllamaUnavailable
+from cairnmind.retrieval import Retriever, public_record
+from cairnmind.store import Store
 
 
 class FakeOllama:
@@ -244,7 +244,7 @@ async def test_final_repair_does_not_import_foreign_project_source(workspace, tm
 
 
 async def test_citation_catalog_never_expands_other_worktree_record_pointers(workspace, tmp_path):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
     store, project, settings = workspace
     first = Path(project["root"])
     second = tmp_path / "second-worktree"
@@ -286,7 +286,7 @@ async def test_citation_catalog_never_expands_other_worktree_record_pointers(wor
 
 @pytest.mark.parametrize("during_repair", [False, True])
 async def test_final_repair_never_accepts_code_changed_during_generation(workspace, during_repair):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
     store, project, settings = workspace
     path = Path(project["root"]) / "policy.py"
     quote = 'POLICY = "original"'
@@ -308,7 +308,7 @@ async def test_final_repair_never_accepts_code_changed_during_generation(workspa
 
 
 async def test_current_read_clears_earlier_historical_intent_before_final_freshness_check(workspace):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
     store, project, settings = workspace
     path = Path(project["root"]) / "policy.py"
     quote = 'POLICY = "original"'
@@ -439,7 +439,7 @@ async def test_typed_answer_retains_public_string_and_uses_one_call(workspace, e
 
 @pytest.mark.parametrize("bad_quote", [False, True])
 async def test_typed_nested_unknown_repairs_contract_and_citations_together(workspace, bad_quote):
-    from devbrain.answer_contract import prepare_answer_schema
+    from cairnmind.answer_contract import prepare_answer_schema
 
     store, project, settings = workspace
     quote = '{"facts":{"answer":"unknown"},"scope":"No other-project data is available here."}'
@@ -509,7 +509,7 @@ async def test_typed_answer_keeps_foreign_source_guard(workspace, tmp_path):
 
 
 async def test_typed_contract_repair_keeps_current_source_freshness_guard(workspace):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "policy.py"
@@ -637,7 +637,7 @@ async def test_project_scope_blocks_source_read_from_other_project(workspace, tm
 
 
 async def test_current_code_is_refreshed_before_answer(workspace):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "auth.py"
@@ -818,7 +818,7 @@ async def test_model_digest_change_reembeds_but_old_sources_are_skipped(workspac
 
 
 async def test_crlf_code_quote_uses_text_view_and_preserves_raw_snapshot(workspace):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "windows.py"
@@ -835,7 +835,7 @@ async def test_crlf_code_quote_uses_text_view_and_preserves_raw_snapshot(workspa
 
 
 async def test_missing_current_code_is_not_reported_complete_but_history_is_readable(workspace):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
 
     store, project, settings = workspace
     path = Path(project["root"]) / "removed.py"
@@ -1044,7 +1044,7 @@ async def test_reported_test_flags_and_done_progress_are_never_fresh_machine_pro
 
 
 async def test_check_status_reads_real_run_sources_and_current_worktree_scope(workspace, tmp_path):
-    from devbrain.verification import run_check
+    from cairnmind.verification import run_check
 
     store, project, settings = workspace
     root = Path(project["root"])
@@ -1083,7 +1083,7 @@ async def test_check_status_reads_real_run_sources_and_current_worktree_scope(wo
 
 
 async def test_workflow_projects_managed_metadata_with_explicit_bounds(workspace):
-    from devbrain.plans import PlanManager
+    from cairnmind.plans import PlanManager
 
     store, project, settings = workspace
     saved = PlanManager(store).save(project["id"], {"title": "Large plan", "goal": "Goal " * 2000,
@@ -1114,8 +1114,8 @@ async def test_workflow_projects_managed_metadata_with_explicit_bounds(workspace
 
 
 async def test_plan_request_goals_and_constraints_are_native_fulltext_retrievable(workspace):
-    from devbrain.ingest import index_pending_sources
-    from devbrain.plans import PlanManager
+    from cairnmind.ingest import index_pending_sources
+    from cairnmind.plans import PlanManager
 
     store, project, settings = workspace
     saved = PlanManager(store).save(project["id"], {"title": "Calibration", "goal": "orbital calibrator",
@@ -1148,7 +1148,7 @@ async def test_plan_request_goals_and_constraints_are_native_fulltext_retrievabl
 
 
 async def test_current_worktree_filters_native_fts_ann_graph_and_direct_source_reads_before_limits(workspace, tmp_path):
-    from devbrain.ingest import index_project
+    from cairnmind.ingest import index_project
 
     store, project, settings = workspace
     root_a, root_b = Path(project["root"]), tmp_path / "worktree-b"
@@ -1227,7 +1227,7 @@ def _record_ids(retriever, project, query, limit=8):
 
 
 def test_disputed_record_never_outranks_confirmed_record(workspace, monkeypatch):
-    import devbrain.retrieval as retrieval_module
+    import cairnmind.retrieval as retrieval_module
     store, project, settings = workspace
     # The disputed finding repeats the query terms, so full-text search ranks it first.
     disputed = _record(store, project, "session-a", "disputed",
@@ -1263,7 +1263,7 @@ def test_strong_disputed_record_is_not_buried_under_weak_confirmed_matches(works
 
 
 def test_confirmed_record_beats_slightly_more_relevant_disputed_records(workspace, monkeypatch):
-    import devbrain.retrieval as retrieval_module
+    import cairnmind.retrieval as retrieval_module
     store, project, settings = workspace
     crowd = [_record(store, project, f"evict-{index}", "disputed",
                      "Cache eviction: cache eviction runs hourly; cache eviction is aggressive.")

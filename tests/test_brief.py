@@ -11,16 +11,16 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from devbrain import brief as brief_module
-from devbrain import cli
-from devbrain import verification
-from devbrain.brief import MAX_LINES, build_brief
-from devbrain.config import Settings
-from devbrain.plans import PlanManager
-from devbrain.service import create_app
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
-from devbrain.verification import run_check
+from cairnmind import brief as brief_module
+from cairnmind import cli
+from cairnmind import verification
+from cairnmind.brief import MAX_LINES, build_brief
+from cairnmind.config import Settings
+from cairnmind.plans import PlanManager
+from cairnmind.service import create_app
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
+from cairnmind.verification import run_check
 
 
 def git(root, *args, when=None):

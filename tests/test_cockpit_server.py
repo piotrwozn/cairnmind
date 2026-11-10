@@ -13,8 +13,8 @@ import httpx
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from devbrain.cockpit import BrowserSessions, create_cockpit_app
-from devbrain.config import Settings
+from cairnmind.cockpit import BrowserSessions, create_cockpit_app
+from cairnmind.config import Settings
 
 
 ORIGIN = "http://127.0.0.1:8766"
@@ -123,7 +123,7 @@ def cockpit(tmp_path, monkeypatch):
                                   headers={"Content-Type": "text/event-stream"})
         return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.setattr("devbrain.client_auth.probe_client", lambda client, **kwargs: {
+    monkeypatch.setattr("cairnmind.client_auth.probe_client", lambda client, **kwargs: {
         "client": client, "installation": "installed", "auth": "reported_signed_in", "ready_to_launch": True})
     app = create_cockpit_app(settings, runtime=runtime, proxy_transport=httpx.MockTransport(upstream), public_url=ORIGIN)
     with TestClient(app, base_url=ORIGIN) as client:
