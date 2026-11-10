@@ -108,6 +108,14 @@ CONFLICT_REVIEW_METADATA = ("conflicts_resolved", "conflict_decisions", "conflic
                             "superseded_ids", "superseded_by")
 
 
+# Journal entity types that do not move the answer cache stamp. Jobs, sessions, imports and
+# snapshots cannot alter an answer. The derived graph is rebuilt, and reported as reset, on
+# every indexing even when it comes out identical; a real change of it is seen through the
+# project row, whose graph fingerprint changes, and through the sources and records behind it.
+CACHE_STAMP_IGNORED = frozenset({"job", "session", "import", "inbox", "memory", "plan_request",
+                                 "graph", "node", "edge"})
+
+
 def _utc(value):
     """Timezone-aware ISO 8601 text as UTC; naive or invalid values are unusable."""
     if not isinstance(value, str) or not value.strip():
@@ -190,6 +198,8 @@ class Store:
         self.client = ArcadeClient(self.settings)
         self.client.ensure_database()
         self._local = threading.local()
+        self._stamp_lock = threading.Lock()
+        self._stamp_cursor, self._stamp_base, self._stamp_global, self._stamp_seq = None, 0, 0, {}
         self.init()
 
     @contextmanager
@@ -946,16 +956,54 @@ class Store:
         return counts
 
     def cache_stamp(self, project_id):
-        parts = [[_clean(row) for row in self.query(f"SELECT {fields} FROM {collection} WHERE project_id=:project ORDER BY id", {"project": project_id})]
-                 for collection, fields in (("sources", "id,sha256,is_current"), ("records", "id,version,status"), ("embeddings", "id,model,namespace"))]
-        parts.append([_clean(row) for row in self.query(
-            "SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project", {"project": project_id}
-        )])
-        for collection, fields in (("plans", "id,version"), ("worktree_states", "*"),
-                                   ("check_runs", "id,task_id,profile_id,passed,created_at")):
-            parts.append([_clean(row) for row in self.query(
-                f"SELECT {fields} FROM {collection} WHERE project_id=:project ORDER BY id", {"project": project_id}
-            )])
+        """A value that changes whenever a committed write could change an answer for the project.
+
+        It is a counter read from the change journal, which every mutation of the store
+        advances in its own transaction, so no collection is scanned: an unchanged store
+        costs one point read, and otherwise only the events added since the last call are
+        read. Writes that cannot affect an answer (jobs, sessions, imports, snapshots) do
+        not move it. The value is comparable only within one Store object.
+        """
+        # Plain reads, never the writer lock: a question must not wait behind a long write
+        # transaction of another project. Events are committed together with the journal
+        # state, so every event up to the head read first is visible to the queries below.
+        with self._stamp_lock:
+            state = self.query("SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'")
+            if not state:
+                raise ValueError("Journal state is unavailable")
+            head = {"epoch": state[0]["epoch"], "seq": state[0]["seq"]}
+            known = self._stamp_cursor
+            if head != known:
+                position = known["seq"] if known and known["epoch"] == head["epoch"] else None
+                if position is not None and not state[0].get("first_seq", 1) - 1 <= position <= head["seq"]:
+                    position = None
+                seq, shared, complete = dict(self._stamp_seq), self._stamp_global, position is not None
+                while complete and position < head["seq"]:
+                    rows = self.query(
+                        "SELECT project_id,entity_type,seq FROM journal_events WHERE epoch=:epoch AND seq>:position "
+                        "AND seq<=:upto ORDER BY seq LIMIT 1000",
+                        {"epoch": head["epoch"], "position": position, "upto": head["seq"]})
+                    # Sequence numbers are contiguous. A gap means the events were pruned or
+                    # the journal was reset while we read.
+                    if not rows or [row["seq"] for row in rows] != list(range(position + 1, position + 1 + len(rows))):
+                        complete = False
+                        break
+                    for event in rows:
+                        if event["entity_type"] in CACHE_STAMP_IGNORED:
+                            continue
+                        if event.get("project_id") is None:
+                            shared = event["seq"]
+                        else:
+                            seq[event["project_id"]] = event["seq"]
+                    position = rows[-1]["seq"]
+                if complete:
+                    self._stamp_seq, self._stamp_global = seq, shared
+                else:
+                    # First call, a new journal epoch, or events no longer available: nothing
+                    # is known about the gap, so every project counts as changed.
+                    self._stamp_base, self._stamp_global, self._stamp_seq = self._stamp_base + 1, 0, {}
+                self._stamp_cursor = head
+            parts = [head["epoch"], self._stamp_base, self._stamp_global, self._stamp_seq.get(project_id, 0)]
         return hashlib.sha256(_json(parts).encode()).hexdigest()
 
     def recent_job_errors(self, project_id=None, limit=10):
