@@ -124,12 +124,12 @@ def test_task_claims_are_marked_as_reported_and_dependencies_are_listed(snapshot
 
 def test_terminal_control_and_bidi_characters_never_reach_the_output(snapshot):
     manifest, payload = snapshot
-    payload["records"][0]["content"] = "safe\x1b[2J\x1b]0;title\x07 ‮gnp.exe\r\nnext"
+    payload["records"][0]["content"] = "safe\x1b[2J\x1b]0;title\x07 \u202egnp.exe\r\nnext\u2028more"
     payload["sources"][0]["uri"] = "chat://x\x1b[31m\nforged: line"
     manifest["project"]["name"] = "shop\x1b[0m\nproject:   forged"
     text = render_snapshot(manifest, payload)
-    assert not any(ch in text for ch in "\x1b\x07\r‮")
-    assert "  | safe�[2J" in text and "  | next" in text
+    assert not any(ch in text for ch in "\x1b\x07\r\u202e\u2028")
+    assert "  | safe\\x1b[2J\\x1b]0;title\\x07 \\u202egnp.exe" in text and "  | next\\u2028more" in text
     assert "\nforged: line" not in text and "\nproject:   forged" not in text
 
 

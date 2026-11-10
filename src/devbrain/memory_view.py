@@ -5,22 +5,21 @@ the same loader as ``memory inspect`` and prints what the package contains.
 """
 from __future__ import annotations
 
-import re
-
 from devbrain.memory import _load_snapshot
 from devbrain.store import STATUSES
+from devbrain.terminal_safe import safe_text
 
 RECORD_KINDS = ("decision", "constraint", "task", "fact", "question", "preference", "checkpoint")
 SHOW_KINDS = (*RECORD_KINDS, "plan")
-# A snapshot is foreign data. Control and bidirectional-override characters could
-# rewrite the terminal or disguise text, so they never reach the output.
-_UNSAFE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f  ‪-‮⁦-⁩]")
 _TASK_CLAIMS = (("test_passed", "test passed"), ("review_passed", "review passed"),
                 ("acceptance_passed", "acceptance passed"))
 
 
 def _block(value):
-    return _UNSAFE.sub("�", str(value))
+    # A snapshot is foreign data. Control and bidirectional-override characters could
+    # rewrite the terminal or disguise text, so they are printed as visible escapes.
+    text = safe_text(str(value).replace("\r\n", "\n"))
+    return text.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
 def _line(value):
