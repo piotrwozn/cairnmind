@@ -242,9 +242,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     settings = settings or Settings.load(create=True)
     if settings.host not in {"127.0.0.1", "localhost", "::1"}:
-        raise ValueError("DevBrain must bind to a loopback address")
+        raise ValueError("Cairnmind must bind to a loopback address")
     if not settings.token:
-        raise ValueError("Run devbrain init to create a local authentication token")
+        raise ValueError("Run cairnmind init to create a local authentication token")
     store = Store(settings.data_dir)
     model = ollama or Ollama(settings)
     retriever = Retriever(store, settings, ollama=model)
@@ -396,7 +396,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    app = FastAPI(title="DevBrain local knowledge agent", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Cairnmind local knowledge agent", version=__version__, lifespan=lifespan)
     app.state.store = store
     app.state.agent = agent
     app.state.plans = plans

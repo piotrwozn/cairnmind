@@ -1155,7 +1155,7 @@ CLIENT_FIXTURES = Path(__file__).parent / "fixtures" / "clients"
 def test_golden_client_outputs_satisfy_every_capability_check(monkeypatch, fixture):
     """Real outputs of `<client> --version`, `--help` and `codex features list`.
 
-    Add a directory per new client version (see `devbrain doctor --contract`). A failure
+    Add a directory per new client version (see `cairnmind doctor --contract`). A failure
     names the exact capability check that a client update broke.
     """
     folder = CLIENT_FIXTURES / fixture

@@ -1,12 +1,12 @@
-# DevBrain 0.8.0 terminal workspace
+# Cairnmind 0.8.0 terminal workspace
 
-`devbrain` starts the workspace in the current terminal. `devbrain tui` is an alias for the same interface. tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. The Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use DevBrain's own agent, and Copilot uses a separate adapter built on the official SDK.
+`cairnmind` starts the workspace in the current terminal. `cairnmind tui` is an alias for the same interface. tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. The Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use Cairnmind's own agent, and Copilot uses a separate adapter built on the official SDK.
 
-The default language is English. To switch the DevBrain interface to Polish, choose **More → Settings → Language → Polski**. The language setting applies to the DevBrain interface only; project content and the native client interfaces keep their own language.
+The default language is English. To switch the Cairnmind interface to Polish, choose **More → Settings → Language → Polski**. The language setting applies to the Cairnmind interface only; project content and the native client interfaces keep their own language.
 
 ## Getting started
 
-You need Linux or Ubuntu on WSL2, Java 21+, tmux 3.4+, an installed DevBrain and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
+You need Linux or Ubuntu on WSL2, Java 21+, tmux 3.4+, an installed Cairnmind and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
 
 In Windows Terminal, open Ubuntu, or enter it from PowerShell:
 
@@ -17,17 +17,17 @@ wsl -d Ubuntu
 Then, in Ubuntu:
 
 ```bash
-devbrain
+cairnmind
 ```
 
-The command works from any directory. The project list comes from DevBrain's shared local registry, not from the directory in which the terminal was opened. A separate `--data-dir` or `DEVBRAIN_HOME` means a separate store and registry.
+The command works from any directory. The project list comes from Cairnmind's shared local registry, not from the directory in which the terminal was opened. A separate `--data-dir` or `DEVBRAIN_HOME` means a separate store and registry.
 
 On first setup, choose **Add folder**. Enter a Linux or Windows path, for example `/home/piotr/src/app` or `C:\Users\piotr\src\app`. **Browse folders** opens a directory picker without shell commands: `Enter` opens a subfolder, `Alt+Up` goes up one level, and `Ctrl+S` selects the displayed directory. The project name can be left empty; it is then taken from the folder name. In the form, `Ctrl+S` saves and `Esc` goes back. You can also use the CLI:
 
 ```bash
-devbrain project add my-app ~/src/my-app
-devbrain install my-app
-devbrain
+cairnmind project add my-app ~/src/my-app
+cairnmind install my-app
+cairnmind
 ```
 
 For a cloned project that contains `.memory/devbrain/`, start by previewing and importing its memory so that its existing identity is preserved. Merely detecting a snapshot does not import any data and does not run any commands stored in it.
@@ -35,7 +35,7 @@ For a cloned project that contains `.memory/devbrain/`, start by previewing and 
 Starting without an interactive TTY exits with a message and code `2`, before any configuration is created or any service is started. It does not fall back to a browser. The package version can be read without a TTY and without initialization:
 
 ```bash
-devbrain version
+cairnmind version
 ```
 
 ## Layout and size
@@ -79,15 +79,15 @@ Press the `Ctrl+B` prefix first, then the listed key:
 | `d` | Detach the workspace and return to the shell |
 | `Ctrl+B` | Send `Ctrl+B` through to the native client |
 
-A double `Ctrl+B` is needed when Codex, Claude or a program running in their terminal uses that shortcut itself. All other input, pasting, `Ctrl+C` and approval dialogs in the active client pane go to its real CLI. Use `Tab`, `Shift+Tab`, the arrow keys and `Enter` for DevBrain buttons and fields; `Esc` closes a dialog or goes back. Save forms with `Ctrl+S`. A field or save error keeps the values you entered and shows the problem; retrying requires a deliberate save.
+A double `Ctrl+B` is needed when Codex, Claude or a program running in their terminal uses that shortcut itself. All other input, pasting, `Ctrl+C` and approval dialogs in the active client pane go to its real CLI. Use `Tab`, `Shift+Tab`, the arrow keys and `Enter` for Cairnmind buttons and fields; `Esc` closes a dialog or goes back. Save forms with `Ctrl+S`. A field or save error keeps the values you entered and shows the problem; retrying requires a deliberate save.
 
-In the project list, `Enter` opens the project screen for inspection. It does not start an assistant. On that screen, **Start work** starts only the indicated assistant. Outside text fields, `w` selects that action, `p` opens the preview, `r` refreshes and `m` opens memory. In the list, `w` first opens the project screen. Empty search results stay empty; actions never fall back to a previously active project. In the inspector, `h` opens history, `m` opens memory, `r` refreshes and `Esc` returns to the list. Letter shortcuts work only in the focused DevBrain pane.
+In the project list, `Enter` opens the project screen for inspection. It does not start an assistant. On that screen, **Start work** starts only the indicated assistant. Outside text fields, `w` selects that action, `p` opens the preview, `r` refreshes and `m` opens memory. In the list, `w` first opens the project screen. Empty search results stay empty; actions never fall back to a previously active project. In the inspector, `h` opens history, `m` opens memory, `r` refreshes and `Esc` returns to the list. Letter shortcuts work only in the focused Cairnmind pane.
 
 **Start work** in the global menu first shows the project and moves focus to the start button. Check the visible assistant name and press `Enter` to begin. This prevents a delayed menu command from starting an assistant after the project has changed.
 
 If the TUI starts the memory service, its embedding and extraction queue waits for an explicit action. A successful **Start work** enables memory processing for the selected project only. You can also choose **More → Queue → Process memory** to process pending jobs without starting an assistant. Opening a project, reading memory or switching views does not enable the queue. File scanning and configured snapshots still run. If the assistant starts but enabling the queue fails, the message points you to **Process memory**; you do not need to restart the assistant.
 
-Services and sessions that are already running continue their work. A manually started `devbrain serve` keeps automatic queue processing; `devbrain serve --defer-background-inference` lets you defer it. An explicit model query remains a separate user action.
+Services and sessions that are already running continue their work. A manually started `cairnmind serve` keeps automatic queue processing; `cairnmind serve --defer-background-inference` lets you defer it. An explicit model query remains a separate user action.
 
 Wider forms temporarily zoom the pane so that paths and settings fit. When closed, they restore the previous layout, unless the pane or zoom was changed manually in the meantime.
 
@@ -100,7 +100,7 @@ The sidebar lists all registered projects. You can choose a project's registered
 3. **Connections**: add a named connection, sign in to an account or set a key, and choose a model. Limits and credential references are in the connection's advanced settings.
 4. Go back to the project and choose **Start work**. Only the one indicated assistant starts working.
 
-Connections cover native Codex, Claude Code, the OpenAI/Anthropic agent, OpenAI-compatible APIs, local Ollama and GitHub Copilot. **More → Manage assistants** lets you change order and assignments. Adding an assistant keeps existing assignments. All clients work in the indicated directory; DevBrain does not create separate worktrees on its own and does not automatically assign a shared task. See [account, key and limit configuration](API.md).
+Connections cover native Codex, Claude Code, the OpenAI/Anthropic agent, OpenAI-compatible APIs, local Ollama and GitHub Copilot. **More → Manage assistants** lets you change order and assignments. Adding an assistant keeps existing assignments. All clients work in the indicated directory; Cairnmind does not create separate worktrees on its own and does not automatically assign a shared task. See [account, key and limit configuration](API.md).
 
 Opening a workspace or restoring its layout attaches existing processes. You start new work explicitly from the sidebar. Selecting data for inspection, including moving from the global graph to a project, does not start a client. A profile change takes effect the next time the process starts.
 
@@ -108,7 +108,7 @@ Client status distinguishes a missing program, configuration, declared sign-in, 
 
 **More** contains sessions, assistant management, folder search, snapshots, memory import and settings. The main views show readable summaries; **Technical details** opens the full diagnostic data. Memory state, session activity and terminal control rights are reported separately.
 
-Signing in runs the selected client's own procedure in a separate operational terminal. Device codes and the output of that terminal do not become project memory or graph nodes. Refresh the status when it finishes. Projects, MCP, hooks and tools of the native clients are approved through the Codex or Claude mechanisms. DevBrain's own agent and the Copilot adapter show a one-time approval for the exact command. API keys are entered in a masked field; saving them locally is optional and the stored value is not encrypted.
+Signing in runs the selected client's own procedure in a separate operational terminal. Device codes and the output of that terminal do not become project memory or graph nodes. Refresh the status when it finishes. Projects, MCP, hooks and tools of the native clients are approved through the Codex or Claude mechanisms. Cairnmind's own agent and the Copilot adapter show a one-time approval for the exact command. API keys are entered in a masked field; saving them locally is optional and the stored value is not encrypted.
 
 ## Own agent and Copilot pane
 
@@ -129,12 +129,12 @@ The global inbox of unassigned entries keeps sources that have no certain projec
 **Memory** opens the record overview. **More → Snapshots and export** opens snapshot preview, saving, import check, import and automation settings. The existing commands also work:
 
 ```bash
-devbrain memory snapshot my-app --preview
-devbrain memory snapshot my-app
-devbrain memory auto my-app --enable --interval-minutes 15
-devbrain memory status my-app
-devbrain memory inspect ~/src/my-app/.memory/devbrain
-devbrain memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
+cairnmind memory snapshot my-app --preview
+cairnmind memory snapshot my-app
+cairnmind memory auto my-app --enable --interval-minutes 15
+cairnmind memory status my-app
+cairnmind memory inspect ~/src/my-app/.memory/devbrain
+cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
 ```
 
 Automatic snapshots remain opt-in per project. A snapshot contains the project's stored memory and history, excluding operational credentials and model weights. Raw conversations may contain private data. Import does not overwrite other projects, and transferred tests remain historical until they are checked locally. See the [memory contracts](MEMORY_CONTRACTS.md) for the full portable-memory format, limits and restore rules.
@@ -170,29 +170,29 @@ Motion pauses when tmux is detached or when the graph is hidden by zooming anoth
 ## Detaching, stopping and resuming
 
 ```bash
-devbrain workspace status
-devbrain workspace detach
-devbrain workspace takeover
-devbrain workspace stop
-devbrain workspace stop --clients
+cairnmind workspace status
+cairnmind workspace detach
+cairnmind workspace takeover
+cairnmind workspace stop
+cairnmind workspace stop --clients
 ```
 
-`detach` or `Ctrl+B d` detaches the terminal while keeping the workspace and running processes. The next `devbrain` attaches to the existing workspace. `workspace stop` ends the outer terminal layout; `--clients` additionally stops only the client identifiers adopted by this workspace. It does not stop every client on the machine or arbitrary sessions outside its registry.
+`detach` or `Ctrl+B d` detaches the terminal while keeping the workspace and running processes. The next `cairnmind` attaches to the existing workspace. `workspace stop` ends the outer terminal layout; `--clients` additionally stops only the client identifiers adopted by this workspace. It does not stop every client on the machine or arbitrary sessions outside its registry.
 
-Only one terminal can type at a time. When the workspace is already open in another terminal, `devbrain` offers a choice: **Observe (read only)**, **Take control** or **Return to shell**. The default `Enter` chooses observing. Taking control explicitly hands the keyboard to the new terminal and switches the previous one to view-only mode. It does not start a second copy of the clients or a new coding session. From view-only mode you can also detach with `Ctrl+B d` and run `devbrain workspace takeover`.
+Only one terminal can type at a time. When the workspace is already open in another terminal, `cairnmind` offers a choice: **Observe (read only)**, **Take control** or **Return to shell**. The default `Enter` chooses observing. Taking control explicitly hands the keyboard to the new terminal and switches the previous one to view-only mode. It does not start a second copy of the clients or a new coding session. From view-only mode you can also detach with `Ctrl+B d` and run `cairnmind workspace takeover`.
 
-The knowledge service and the database have their own commands, `devbrain stop` and `devbrain engine stop`. Stopping the UI does not delete data. Shutting down the whole WSL distribution ends all processes, including tmux and the clients. After restarting, you choose in the sidebar whether to start work, resume a saved session or begin a new one. Resuming a native client requires its verified identifier; a missing identifier is shown explicitly. DevBrain's own API and Copilot sessions use their journal and the normal memory restore protocol, without re-granting earlier approvals.
+The knowledge service and the database have their own commands, `cairnmind stop` and `cairnmind engine stop`. Stopping the UI does not delete data. Shutting down the whole WSL distribution ends all processes, including tmux and the clients. After restarting, you choose in the sidebar whether to start work, resume a saved session or begin a new one. Resuming a native client requires its verified identifier; a missing identifier is shown explicitly. Cairnmind's own API and Copilot sessions use their journal and the normal memory restore protocol, without re-granting earlier approvals.
 
 Attaching a terminal and displaying memory are not an ACK. A new or resumed session still goes through the normal bundle preparation, `resume_context`, readiness check and exact `ack_resume`. `partial` or `unavailable` blocks writes to shared memory. A code change made from a second pane may require a new bundle and ACK. None of these operations replaces the native tools' own approvals.
 
 ## Upgrading and diagnostics
 
-Version **0.8.0** simplifies navigation and separates opening a project from starting an assistant. The interface change does not grant earlier tool approvals and does not replace the memory protocol. For installation, upgrade and diagnostics, see the [DevBrain README](../README.md).
+Version **0.8.0** simplifies navigation and separates opening a project from starting an assistant. The interface change does not grant earlier tool approvals and does not replace the memory protocol. For installation, upgrade and diagnostics, see the [Cairnmind README](../README.md).
 
 ```bash
-devbrain version
-devbrain workspace status
-devbrain doctor
+cairnmind version
+cairnmind workspace status
+cairnmind doctor
 tmux -V
 locale charmap
 ```
@@ -203,4 +203,4 @@ Developer tests may use real tmux and ArcadeDB together with controlled CLI stan
 
 The shortcut translation layer is matched to the pinned Textual 8. Textual provides a footer refresh, but no public setter for the descriptions of existing bindings; [its documentation describes the limits of dynamic bindings](https://textual.textualize.io/guide/input/#dynamic-bindings). A small `localize_bindings` adapter changes only their descriptions and keeps keys, actions, priorities and identifiers. When upgrading Textual, run the language and keyboard-routing regression tests.
 
-The 0.5 browser interface and the `devbrain cockpit open` command were removed in 0.8.0. The terminal workspace described here replaces them.
+The 0.5 browser interface and the `cairnmind cockpit open` command were removed in 0.8.0. The terminal workspace described here replaces them.

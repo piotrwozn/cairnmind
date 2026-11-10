@@ -159,7 +159,7 @@ class WorkspaceManager:
 
     def _initialize(self):
         if not self.diagnostics()["available"]:
-            raise ValueError("Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co DevBrain.")
+            raise ValueError("Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co Cairnmind.")
         _private_directory(self.directory.parent)
         _private_directory(self.directory)
         _private_directory(self.socket_directory)
@@ -172,7 +172,7 @@ class WorkspaceManager:
             with os.fdopen(fd, "w") as handle:
                 handle.write("set -g prefix C-b\nunbind-key -a\nset -g mouse off\n"
                              "set -g default-terminal tmux-256color\nset -g status on\n"
-                             "set -g status-left ' DevBrain '\nset -g status-right ' C-b p/1/2/i/g · z powiększ · d odłącz '\n"
+                             "set -g status-left ' Cairnmind '\nset -g status-right ' C-b p/1/2/i/g · z powiększ · d odłącz '\n"
                              "set -g status-style 'bg=colour234,fg=colour151'\n"
                              "set -g pane-border-status top\nset -g pane-border-style 'fg=colour238'\n"
                              "set -g pane-active-border-style 'fg=colour151'\n"
@@ -247,7 +247,7 @@ class WorkspaceManager:
         if not own["readonly"]:
             self.tmux("refresh-client", "-t", own["tty"], "-f", "read-only,ignore-size")
         self.tmux("display-message", "-c", own["tty"], "-d", "8000",
-                  "READ ONLY: C-b d, potem devbrain workspace takeover", check=False)
+                  "READ ONLY: C-b d, potem cairnmind workspace takeover", check=False)
         return False
 
     def attach(self, *, takeover=False):
@@ -660,7 +660,7 @@ class WorkspaceManager:
 
     def open_palette(self, *, help_only=False, client_pid=None, client_tty=None):
         if not self.exists():
-            raise ValueError("Open DevBrain before using commands")
+            raise ValueError("Open Cairnmind before using commands")
         owner = next((client for client in self.clients()
                       if client["pid"] == client_pid and client["tty"] == client_tty and not client["readonly"]), None)
         if owner is None:
@@ -743,7 +743,7 @@ def workspace_status(settings):
 
 def launch_workspace(settings, takeover=False):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise ValueError("DevBrain wymaga interaktywnego terminala. Użyj `devbrain workspace status` do diagnostyki.")
+        raise ValueError("Cairnmind wymaga interaktywnego terminala. Użyj `cairnmind workspace status` do diagnostyki.")
     manager = WorkspaceManager(settings)
     if not manager.diagnostics()["available"]:
         raise ValueError("Zainstaluj tmux >= 3.4 w Ubuntu: sudo apt install tmux")
@@ -752,7 +752,7 @@ def launch_workspace(settings, takeover=False):
     inherited = os.environ.get("TMUX", "").split(",", 1)[0]
     if inherited == str(manager.socket) and os.environ.get("TMUX_PANE") in manager.panes().values():
         if takeover:
-            raise ValueError("Odłącz widok C-b d i uruchom `devbrain workspace takeover` w osobnym terminalu.")
+            raise ValueError("Odłącz widok C-b d i uruchom `cairnmind workspace takeover` w osobnym terminalu.")
         return 0
     # A different user's tmux server/config is neither modified nor adopted.
     if not takeover and any(not client["readonly"] for client in manager.clients()):
@@ -884,7 +884,7 @@ def main():
     elif args.toggle_zoom:
         manager.toggle_zoom()
     elif args.placeholder:
-        print("\033[2J\033[H\033[1;32mDevBrain · Workspace\033[0m\n")
+        print("\033[2J\033[H\033[1;32mCairnmind · Workspace\033[0m\n")
         print("Open a project, choose your assistant, then select Start work.\n")
         print("Browsing memory never starts a model.\nC-b Space: commands · C-b p: projects · C-b ?: help · C-b d: detach")
         while True:

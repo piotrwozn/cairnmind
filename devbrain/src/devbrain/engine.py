@@ -126,7 +126,7 @@ def start_engine(settings: Settings) -> dict:
             return existing
         home = runtime_dir(settings)
         if not (home / "lib").is_dir():
-            raise ArcadeError("ArcadeDB is not installed. Run devbrain engine install first.")
+            raise ArcadeError("ArcadeDB is not installed. Run cairnmind engine install first.")
         java = resolve_java(settings)
         if not java:
             raise ArcadeError("Install Java 21 or newer in WSL (openjdk-21-jre-headless)")

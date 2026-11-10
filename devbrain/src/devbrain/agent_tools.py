@@ -1,4 +1,4 @@
-"""Scoped file tools and explicit one-use command approvals for DevBrain agents.
+"""Scoped file tools and explicit one-use command approvals for Cairnmind agents.
 
 File traversal uses directory descriptors and never follows a project symlink.
 An approved shell command runs as the user; this module is not an OS sandbox.

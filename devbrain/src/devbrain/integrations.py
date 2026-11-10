@@ -76,7 +76,7 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
                             "session_binding": False, "isolated_process": False,
                             "verified_resume": False, "checks": {}, "notes": []}
     if not binary:
-        info["notes"].append(f"Install {client} in the same WSL distribution as DevBrain.")
+        info["notes"].append(f"Install {client} in the same WSL distribution as Cairnmind.")
         return info
     try:
         version = subprocess.run([binary, "--version"], capture_output=True, text=True,
@@ -96,7 +96,7 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
                                       text=True, timeout=4, cwd=cwd, check=False, **({"env": env} if env is not None else {}))
             info["hooks"] = features.returncode == 0 and bool(
                 re.search(r"^hooks\s+\S+\s+true\s*$", features.stdout, re.M))
-            info["notes"].append("Review project/MCP trust and /hooks in Codex; DevBrain never bypasses trust.")
+            info["notes"].append("Review project/MCP trust and /hooks in Codex; Cairnmind never bypasses trust.")
         else:
             # SessionStart appeared in 1.0.62; SessionEnd is confirmed in the
             # official changelog by 1.0.112. Unknown/older versions get no hooks.
@@ -289,7 +289,7 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
         raise ValueError("Invalid mcp_servers in TOML; original file left unchanged")
     existing = servers.get("devbrain")
     if "devbrain" in servers and not isinstance(existing, dict):
-        raise ValueError("Invalid DevBrain MCP table; original file left unchanged")
+        raise ValueError("Invalid Cairnmind MCP table; original file left unchanged")
     document = tomlkit.parse(text)
 
     def markers(container):
@@ -303,16 +303,16 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
 
     owned_markers = markers(document)
     if owned_markers and owned_markers != [TOML_BEGIN, TOML_END]:
-        raise ValueError("Ambiguous DevBrain TOML markers; original file left unchanged")
+        raise ValueError("Ambiguous Cairnmind TOML markers; original file left unchanged")
     managed = bool(owned_markers)
     if managed and existing is None:
-        raise ValueError("DevBrain TOML markers have no MCP table; original file left unchanged")
+        raise ValueError("Cairnmind TOML markers have no MCP table; original file left unchanged")
     if existing is not None and not _is_ours(existing):
         raise ValueError(f"An unrelated server already owns 'devbrain' in {path}; original file left unchanged")
     if existing is not None:
         overrides = existing.get("env", {})
         if not isinstance(overrides, dict) or set(SESSION_ENV_VARS).intersection(overrides):
-            raise ValueError("DevBrain MCP config must forward the launch environment without literal session overrides; "
+            raise ValueError("Cairnmind MCP config must forward the launch environment without literal session overrides; "
                              "original file left unchanged")
     if existing is not None and not managed:
         # An unmarked own entry is kept; replacing an arbitrary TOML table by
@@ -323,14 +323,14 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
             if (isinstance(env_vars, list) and all(name in env_vars for name in SESSION_ENV_VARS)
                     and all(isinstance(name, str) for name in env_vars)):
                 return False
-            raise ValueError(f"Existing unmarked DevBrain config in {path} must forward the launch environment: "
+            raise ValueError(f"Existing unmarked Cairnmind config in {path} must forward the launch environment: "
                              f"set env_vars = {json.dumps(SESSION_ENV_VARS)} in [mcp_servers.devbrain] "
                              "and remove literal env overrides for those names; original file left unchanged")
-        raise ValueError(f"Existing unmarked DevBrain config in {path}; update it manually or remove its table")
+        raise ValueError(f"Existing unmarked Cairnmind config in {path}; update it manually or remove its table")
     if existing is not None:
         env_vars = existing.get("env_vars", [])
         if not isinstance(env_vars, list) or not all(isinstance(name, str) for name in env_vars):
-            raise ValueError("Invalid DevBrain env_vars; original file left unchanged")
+            raise ValueError("Invalid Cairnmind env_vars; original file left unchanged")
         desired = {"command": sys.executable, "args": _command(settings, "mcp")[1:],
                    "env_vars": [*env_vars, *(name for name in SESSION_ENV_VARS if name not in env_vars)],
                    "startup_timeout_sec": 15, "tool_timeout_sec": 75}
@@ -398,7 +398,7 @@ def _merge_hooks(path: Path, settings: Settings, client: str) -> bool:
 def _instructions(project: dict[str, Any], settings: Settings) -> str:
     check_command = shlex.join(_command(settings, "check", "run", project["id"]))
     return f"""{BEGIN}
-## DevBrain shared knowledge
+## Cairnmind shared knowledge
 
 Project ID: `{project['id']}`. The local MCP server is `devbrain`.
 The verified launcher supplies `DEVBRAIN_SESSION_ID`, `DEVBRAIN_PACKET_ID` and
@@ -454,7 +454,7 @@ Use `checkpoint` for client-reported observations and the next action before
 finishing or compaction. Its returned source_ids can support reported records,
 but remain client-reported evidence, not independent verification or approval.
 
-Use native client approval and sandbox controls. DevBrain does not grant write
+Use native client approval and sandbox controls. Cairnmind does not grant write
 or shell permission and its knowledge agent only reads project code.
 {END}"""
 
@@ -464,7 +464,7 @@ def _merge_instructions(path: Path, project: dict[str, Any], settings: Settings)
     block = _instructions(project, settings)
     pattern = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END), re.S)
     if BEGIN in text and not pattern.search(text):
-        raise ValueError(f"Unclosed DevBrain block in {path}; original file left unchanged")
+        raise ValueError(f"Unclosed Cairnmind block in {path}; original file left unchanged")
     updated = pattern.sub(lambda _: block, text) if pattern.search(text) else text.rstrip() + "\n\n" + block
     return _write_changed(path, updated.lstrip("\n").rstrip() + "\n")
 
@@ -589,11 +589,11 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     # native session. Capability alone does not imply config was installed.
     installation = installation or install_integrations(settings, project, clients=(client,))
     for warning in installation["warnings"]:
-        print(f"DevBrain: {warning}", file=sys.stderr)
+        print(f"Cairnmind: {warning}", file=sys.stderr)
     info = installation["clients"][client]
     if not info.get("verified_resume") or not all(info.get(key) for key in
             ("mcp_configured", "hooks_configured", "instructions_configured")):
-        raise ValueError(f"Verified {client} launch refused: native MCP, hook, packet bootstrap and session binding must be supported and configured; run devbrain doctor and review integration warnings")
+        raise ValueError(f"Verified {client} launch refused: native MCP, hook, packet bootstrap and session binding must be supported and configured; run cairnmind doctor and review integration warnings")
     prepared = _prepare_session(settings, project, client, root, args)
     if prepared.get("status") != "ready":
         unknowns = "; ".join(str(value) for value in prepared.get("unknowns", []))
@@ -608,7 +608,7 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     command.extend(args or [])
     if not args or bootstrap_when_args:
         command.append(
-            f"DevBrain verified session {prepared['session_id']}. First call devbrain.resume_context and read "
+            f"Cairnmind verified session {prepared['session_id']}. First call devbrain.resume_context and read "
             "the complete packet it returns. The returned packet is authoritative: if ready, call "
             "devbrain.ack_resume with its exact ID/hash and active plan/task ID+version readback. "
             f"The launcher prepared file is {context_path}; use it as a fallback only when its packet ID/hash "
@@ -747,14 +747,14 @@ def _hook_startup_context(settings: Settings, payload: dict[str, Any]) -> dict[s
     packet_id = os.environ.get("DEVBRAIN_PACKET_ID")
 
     def pending(reason: str) -> dict[str, Any]:
-        text = (f"DevBrain verified resume pending: {reason}. No ACK was created. "
+        text = (f"Cairnmind verified resume pending: {reason}. No ACK was created. "
                 "Call devbrain.resume_context, read its complete packet, then call devbrain.ack_resume "
                 "with its exact ID/hash and active plan/task ID+version readback before shared-memory writes. "
                 "No database engine was started or downloaded by this hook.")
         return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
 
     if not session_id or not packet_id:
-        return pending("no launcher-bound logical session and prepared packet; launch through DevBrain")
+        return pending("no launcher-bound logical session and prepared packet; launch through Cairnmind")
     reason = payload.get("source") or payload.get("resume_reason") or "startup"
     if reason in {"compact", "clear", "fork"}:
         return pending(f"{reason} receipt was durably spooled; a new packet epoch must be read")

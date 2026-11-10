@@ -95,7 +95,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("Kokpit musi używać lokalnego adresu HTTP.")
     if not settings.token:
-        raise ValueError("Najpierw zainicjalizuj DevBrain.")
+        raise ValueError("Najpierw zainicjalizuj Cairnmind.")
     from .api_credentials import CredentialStore
     credentials = getattr(runtime, "credentials", None) or CredentialStore(settings)
     if runtime is None:
@@ -123,7 +123,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             if asyncio.iscoroutine(result):
                 await result
 
-    app = FastAPI(title="DevBrain cockpit", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Cairnmind cockpit", version=__version__, lifespan=lifespan)
     app.state.runtime = runtime
     app.state.browser_sessions = browser
     app.state.preferences = state
@@ -139,7 +139,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     def session_for(request):
         session = browser.get(request.cookies.get(cookie_name))
         if session is None:
-            raise HTTPException(401, "Sesja kokpitu wygasła. Uruchom devbrain.")
+            raise HTTPException(401, "Sesja kokpitu wygasła. Uruchom cairnmind.")
         return session
 
     @app.middleware("http")

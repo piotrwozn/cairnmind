@@ -118,7 +118,7 @@ def format_packet(packet: dict) -> str:
     """Small hook/launcher bootstrap; the complete bounded packet is an MCP read."""
     plan, task = packet.get("active_plan"), packet.get("active_task")
     result = [
-        "DevBrain verified resume bootstrap (receipt is not proof of understanding).",
+        "Cairnmind verified resume bootstrap (receipt is not proof of understanding).",
         f"Logical session: {packet['session_id']}; epoch: {packet['epoch']}.",
         f"Packet: {packet['id']}; SHA-256: {packet['hash']}.",
         f"Project: {packet['project_id']}; worktree: {packet['worktree']}.",

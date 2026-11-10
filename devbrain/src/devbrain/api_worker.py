@@ -96,7 +96,7 @@ def incomplete_streams(events):
 
 
 class AgentApp(App):
-    TITLE = "DevBrain · Agent"
+    TITLE = "Cairnmind · Agent"
     ENABLE_COMMAND_PALETTE = False
     CSS = """
     Screen { background: #101816; color: #d4dfd3; }
@@ -404,13 +404,13 @@ class AgentApp(App):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prywatny terminal agenta API DevBrain")
+    parser = argparse.ArgumentParser(description="Prywatny terminal agenta API Cairnmind")
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--generation", type=int, required=True)
     args = parser.parse_args()
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise SystemExit("A terminal is required. Start devbrain.")
+        raise SystemExit("A terminal is required. Start cairnmind.")
     settings = None
     try:
         from .api_runtime import api_worker_config
@@ -422,7 +422,7 @@ def main():
         app = AgentApp(settings, run, config["profile"], key=config.get("key"))
         config.pop("key", None)
     except Exception:
-        raise SystemExit(tr("Cannot restore this run. Check the profile status in DevBrain.", language_for(settings) if settings else "en")) from None
+        raise SystemExit(tr("Cannot restore this run. Check the profile status in Cairnmind.", language_for(settings) if settings else "en")) from None
     app.run()
 
 

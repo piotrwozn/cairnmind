@@ -1,14 +1,14 @@
-# Installing DevBrain
+# Installing Cairnmind
 
-This guide takes you from a clean machine to a working DevBrain workspace. It takes about 15 minutes plus the model download.
+This guide takes you from a clean machine to a working Cairnmind workspace. It takes about 15 minutes plus the model download.
 
-DevBrain runs on Linux. On Windows it runs inside WSL2 Ubuntu, together with Ollama and the coding clients you use with it.
+Cairnmind runs on Linux. On Windows it runs inside WSL2 Ubuntu, together with Ollama and the coding clients you use with it.
 
 ## What gets installed
 
 | Component | Where it comes from | Size |
 | --- | --- | --- |
-| DevBrain | this repository, installed as an isolated `uv` tool | a few MB |
+| Cairnmind | this repository, installed as an isolated `uv` tool | a few MB |
 | ArcadeDB 26.11.1 | downloaded by the installer from the official release, verified with SHA-256 | about 86 MB |
 | `qwen3.5:9b` knowledge model | Ollama, on request | about 6.6 GB |
 | `qwen3-embedding:0.6b` embeddings | Ollama, on request | about 640 MB |
@@ -22,7 +22,7 @@ The installer never changes your Codex or Claude Code configuration, never downl
 | Linux, or Windows 11 with WSL2 Ubuntu | Ubuntu 24.04 tested | Commands below run inside Ubuntu |
 | Java | 21 or newer | Runs the ArcadeDB engine |
 | tmux | 3.4 or newer | Hosts the terminal workspace |
-| uv | current | Installs DevBrain with Python 3.12 |
+| uv | current | Installs Cairnmind with Python 3.12 |
 | Ollama | current | Runs the local knowledge agent |
 | GPU | optional | The 9B model needs roughly 7 GB of GPU memory; on CPU it works, but answers are slow |
 | Terminal | 80 × 24 or larger | The multi-pane Cockpit layout needs 140 × 42 |
@@ -61,29 +61,31 @@ uv --version
 ollama --version
 ```
 
-## 3. Get DevBrain
+## 3. Get Cairnmind
 
 Choose one option.
 
-**From a release (recommended).** Download the source archive of the [latest release](https://github.com/piotrwozn/devbrain/releases/latest) and unpack it:
+**From a release (recommended).** Download the source archive of the [latest release](https://github.com/piotrwozn/cairnmind/releases/latest) and unpack it:
 
 ```bash
 mkdir -p ~/src && cd ~/src
-curl -LO https://github.com/piotrwozn/devbrain/releases/download/v0.8.0/devbrain-0.8.0.tar.gz
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.8.0/devbrain-0.8.0.tar.gz
 tar -xzf devbrain-0.8.0.tar.gz
 cd devbrain-0.8.0
 ```
 
-While the repository is private, download the archive with the GitHub CLI instead: `gh release download v0.8.0 -R piotrwozn/devbrain -p 'devbrain-0.8.0.tar.gz'`.
+While the repository is private, download the archive with the GitHub CLI instead: `gh release download v0.8.0 -R piotrwozn/cairnmind -p 'devbrain-0.8.0.tar.gz'`.
 
 **From source.** Clone the repository to follow the latest `main`:
 
 ```bash
-git clone https://github.com/piotrwozn/devbrain.git ~/src/devbrain
-cd ~/src/devbrain/devbrain
+git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
+cd ~/src/cairnmind/devbrain
 ```
 
 ## 4. Run the installer
+
+**Upgrading from DevBrain.** The installer removes the earlier `devbrain` uv tool and keeps your memory in `~/.local/share/devbrain`. Projects set up by DevBrain still point their hooks and MCP entries at the removed Python, so the installer then lists one `cairnmind install <project>` command per registered project; run them before starting Codex or Claude Code in those projects. The new package also installs `devbrain` as an alias for `cairnmind`.
 
 From the directory that contains `pyproject.toml`:
 
@@ -94,9 +96,9 @@ bash scripts/install-wsl.sh
 The installer:
 
 1. checks Java and tmux versions;
-2. installs DevBrain as a `uv` tool, with dependency versions pinned by `uv.lock`;
+2. installs Cairnmind as a `uv` tool, with dependency versions pinned by `uv.lock`;
 3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/devbrain`;
-4. runs `devbrain doctor` and prints anything that still needs attention.
+4. runs `cairnmind doctor` and prints anything that still needs attention.
 
 If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal.
 
@@ -105,11 +107,11 @@ If the installer prints `Add this directory to PATH`, add that directory to your
 Ollama usually runs as a service after installation. If it does not, start it in a separate terminal with `ollama serve`. Then:
 
 ```bash
-devbrain models pull
-devbrain doctor
+cairnmind models pull
+cairnmind doctor
 ```
 
-`devbrain doctor` reports the Python, Java, tmux, ArcadeDB, Ollama and coding-client state. It is read-only: no logins, downloads or model sessions.
+`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB, Ollama and coding-client state. It is read-only: no logins, downloads or model sessions.
 
 ## 6. Connect your coding assistants
 
@@ -118,10 +120,10 @@ Install and sign in to the clients you want to use, in the same Ubuntu distribut
 - [Codex CLI](https://developers.openai.com/codex/cli)
 - [Claude Code](https://code.claude.com/docs/en/setup)
 
-Then check that DevBrain can drive them safely:
+Then check that Cairnmind can drive them safely:
 
 ```bash
-devbrain doctor --contract
+cairnmind doctor --contract
 ```
 
 Each check shows the line of client output that proved it. A client that fails a check is not launched, because a verified resume cannot be guaranteed.
@@ -131,20 +133,20 @@ API agents (OpenAI, Anthropic, OpenAI-compatible endpoints, Ollama) and GitHub C
 ## 7. Open your first project
 
 ```bash
-devbrain project add my-app ~/src/my-app
-devbrain install my-app
-devbrain
+cairnmind project add my-app ~/src/my-app
+cairnmind install my-app
+cairnmind
 ```
 
-`devbrain install` adds the project's MCP server entry, session hooks and agent instructions for the installed clients, keeping your existing configuration. In the project it creates or updates `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `.claude/` and `.codex/`; review them before committing. `devbrain` opens the workspace. Choose the project, check the assistant, then select **Start work**. See [TERMINAL.md](TERMINAL.md) for navigation.
+`cairnmind install` adds the project's MCP server entry, session hooks and agent instructions for the installed clients, keeping your existing configuration. In the project it creates or updates `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `.claude/` and `.codex/`; review them before committing. `cairnmind` opens the workspace. Choose the project, check the assistant, then select **Start work**. See [TERMINAL.md](TERMINAL.md) for navigation.
 
 ## Verify the installation (optional)
 
 These evaluations use your local models in isolated databases and never touch your projects:
 
 ```bash
-devbrain eval run       # 20 recall questions with the local knowledge agent
-devbrain eval memory    # extraction, portable transfer and cited recall
+cairnmind eval run       # 20 recall questions with the local knowledge agent
+cairnmind eval memory    # extraction, portable transfer and cited recall
 ```
 
 See [EVALUATION.md](EVALUATION.md) for what they measure.
@@ -157,22 +159,22 @@ See [EVALUATION.md](EVALUATION.md) for what they measure.
 ## Uninstalling
 
 ```bash
-devbrain workspace stop
-devbrain stop
-devbrain engine stop
-uv tool uninstall devbrain
+cairnmind workspace stop
+cairnmind stop
+cairnmind engine stop
+uv tool uninstall cairnmind
 ```
 
-This keeps your memory in `~/.local/share/devbrain`. To remove it too, first make a backup with `devbrain backup ~/devbrain-backup.devbrain.json.gz`, then delete the directory. Deleting it cannot be undone.
+This keeps your memory in `~/.local/share/devbrain`. To remove it too, first make a backup with `cairnmind backup ~/devbrain-backup.devbrain.json.gz`, then delete the directory. Deleting it cannot be undone.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| `devbrain: command not found` | Add the directory printed by the installer to `PATH`, or run `uv tool update-shell` and open a new terminal. |
+| `cairnmind: command not found` | Add the directory printed by the installer to `PATH`, or run `uv tool update-shell` and open a new terminal. |
 | `Java 21+ is required` | `sudo apt install openjdk-21-jre-headless`, and check that `java -version` reports 21 or newer. |
 | `Version 3.4+ is required` for tmux | Ubuntu 24.04 ships tmux 3.4. On older releases, upgrade Ubuntu or build tmux 3.4. |
-| `Cannot reach Ollama` | Start `ollama serve`, then run `devbrain models pull` again. |
-| `devbrain` exits with code 2 | It needs an interactive terminal. Run it directly in Windows Terminal or another terminal, not through a pipe. |
-| A client is not launched | Run `devbrain doctor --contract`; the failing check names the missing capability. |
+| `Cannot reach Ollama` | Start `ollama serve`, then run `cairnmind models pull` again. |
+| `cairnmind` exits with code 2 | It needs an interactive terminal. Run it directly in Windows Terminal or another terminal, not through a pipe. |
+| A client is not launched | Run `cairnmind doctor --contract`; the failing check names the missing capability. |
 | The layout looks cramped | Enlarge the terminal, or stay in the default Focus view, which works at 80 × 24. |

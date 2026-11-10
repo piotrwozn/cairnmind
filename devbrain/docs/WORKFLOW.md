@@ -1,6 +1,6 @@
 # Plans, tasks and evidence
 
-DevBrain separates three things that are easy to conflate: how sure we are about a finding, how far a task has progressed, and whether its tests are still valid for the current code.
+Cairnmind separates three things that are easy to conflate: how sure we are about a finding, how far a task has progressed, and whether its tests are still valid for the current code.
 
 | Field | Values | Meaning |
 | --- | --- | --- |
@@ -32,12 +32,12 @@ Example `plan.json`:
 ```
 
 ```bash
-devbrain plan save shop ./plan.json --idempotency-key login-plan-1 --activate
-devbrain plan list shop
-devbrain plan next shop
-devbrain plan activate shop PLAN_ID --worktree ~/src/shop-worktree
-devbrain task list shop
-devbrain task update shop TASK_ID in_progress
+cairnmind plan save shop ./plan.json --idempotency-key login-plan-1 --activate
+cairnmind plan list shop
+cairnmind plan next shop
+cairnmind plan activate shop PLAN_ID --worktree ~/src/shop-worktree
+cairnmind task list shop
+cairnmind task update shop TASK_ID in_progress
 ```
 
 Saving assigns stable identifiers, validates the complete final dependency graph and commits the header and every step atomically. Repeating a request key with the same content returns the original result; reusing the key for different content is a conflict. Editing an existing plan requires its `expected_version` and the expected versions of the changed steps in `task_versions`, either in the JSON or through `--expected-version` and `--task-versions FILE`. Removed steps stay in history. New steps cannot be declared done or verified just by saving the plan.
@@ -47,7 +47,7 @@ The active plan belongs to one project and worktree pair. The next step is chose
 Older `metadata.plan_id` values are plain group labels. New plans use `metadata.plan_ref` and `step_key`. Adopting an old group is an explicit operation:
 
 ```bash
-devbrain plan adopt shop login --idempotency-key adopt-login-1 --title "Login" --activate
+cairnmind plan adopt shop login --idempotency-key adopt-login-1 --title "Login" --activate
 ```
 
 ## Named check profiles
@@ -66,8 +66,8 @@ extra_inputs = []
 `argv` runs without a shell. `cwd` must stay inside the registered worktree. `extra_inputs` can explicitly include ignored input files or patterns relative to that directory. Time and output limits end the process as failed; logs and their snapshots are stored outside the repository.
 
 ```bash
-devbrain check run shop unit --task TASK_ID
-devbrain check list shop --task TASK_ID
+cairnmind check run shop unit --task TASK_ID
+cairnmind check list shop --task TASK_ID
 ```
 
 A check runs in the **current worktree** with the user's permissions. It does not create an isolated, immutable checkout. The terminal UI and MCP show results, but running a check always requires the explicit CLI command with a profile name. There is no MCP tool for arbitrary commands.
@@ -102,6 +102,6 @@ Connected clients get `ask`, `remember`, `checkpoint`, `save_plan`, `next_task`,
 Sources must belong to the same project. A conflict requires a fresh read, never an overwrite of newer work. A bound session must have acknowledged the current resume packet first. `save_plan` accepts the same header, steps, idempotency key and versions as the plan-saving API. `checkpoint` records state with the goal, results and next step:
 
 ```bash
-devbrain checkpoint shop ./resume-point.json
-devbrain remember shop "We use server-side sessions" --kind decision --confirmed
+cairnmind checkpoint shop ./resume-point.json
+cairnmind remember shop "We use server-side sessions" --kind decision --confirmed
 ```

@@ -1,6 +1,6 @@
 """Typed native execution boundary, independent of browser transport.
 
-Only native Codex and Claude adapters are registered in 0.5. A future DevBrain
+Only native Codex and Claude adapters are registered in 0.5. A future Cairnmind
 API engine must implement this boundary and its verification tests before it
 can be registered; a name alone never grants verified-memory capability.
 """
