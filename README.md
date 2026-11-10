@@ -196,6 +196,12 @@ cairnmind memory show ~/src/my-app/.memory/devbrain --kind plan
 
 It validates the package exactly as `memory inspect` does, then prints the snapshot header and the matching records with their status, version, time of last change and source addresses, and plans with their steps and source addresses. `--kind` takes a record kind or `plan`, `--status` a record status, and `--grep` a case-insensitive text. Check runs stored in the snapshot are printed as historical.
 
+Each record also has an evidence state, derived whenever it is read and never stored. `anchored` means that at least one supporting source still stands: a file version that is current, or whose identical content is current at the same or, after a move, another path. `evidence_replaced` means that no supporting version stands and at least one supporting file has different content now; when the record carries a quoted passage that occurs in the cited version, Cairnmind also says whether the passage still occurs in the changed file. `orphaned` means that no supporting source has a current version, for example because the only supporting file was deleted. `unverified` means that the record rests on file snapshots imported from another machine and the local files have not been indexed yet. Notes, conversations, plan snapshots and check outputs are statements made once and always stand. The state is as fresh as the last indexing of the project's files. The memory inspector shows it. When a resume packet is prepared, it warns about orphaned and changed records; the warning is advice, so it does not block the resume, and a later change of evidence alone does not invalidate an acknowledged packet. This command lists the records:
+
+```bash
+cairnmind memory orphans my-app
+```
+
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
 
 ```bash

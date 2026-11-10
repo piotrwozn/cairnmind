@@ -40,6 +40,16 @@ CATALOG = {
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
+    "Evidence": "Dowody",
+    "at least one supporting source still stands": "co najmniej jedno źródło nadal obowiązuje",
+    "imported file evidence has not been compared with local files yet":
+        "zaimportowanych dowodów z plików nie porównano jeszcze z lokalnymi plikami",
+    "the source changed; the quoted passage is still there": "źródło się zmieniło; cytowany fragment nadal w nim jest",
+    "the source changed; the quoted passage is gone": "źródło się zmieniło; cytowanego fragmentu już w nim nie ma",
+    "the source changed; there is no verified quoted passage to compare":
+        "źródło się zmieniło; brak zweryfikowanego cytatu do porównania",
+    "orphaned: no supporting source has a current version":
+        "osierocone: żadne źródło nie ma aktualnej wersji",
     "Brief": "Skrót",
     "Where work stopped: checkpoint, next task, checks and commits":
         "Gdzie przerwano pracę: punkt kontrolny, następne zadanie, testy i commity",
@@ -96,12 +106,10 @@ CATALOG = {
     "Ctrl+B then Space: menu · Tab: next · Esc: back": "Ctrl+B, potem Spacja: menu · Tab: dalej · Esc: wstecz",
     "Use named connections; no identifiers are needed.": "Wybieraj połączenia po nazwie; identyfikatory nie są potrzebne.",
     "New connection": "Nowe połączenie", "New project": "Nowy projekt", "Global memory": "Pamięć globalna",
-    "Records": "Ustalenia", "Sources": "Źródła",
-"Stated": "Podano",
-"Observed no later than": "Zaobserwowano nie później niż",
-"Mixed evidence": "Dowody mieszane",
-"Warning": "Ostrzeżenie",
-"The superseded finding had newer evidence": "Zastąpione ustalenie miało nowsze dowody", "Plans": "Plany", "Tasks": "Zadania",
+    "Records": "Ustalenia", "Sources": "Źródła", "Plans": "Plany", "Tasks": "Zadania",
+    "Stated": "Dowód z dnia", "Observed no later than": "Zaobserwowano nie później niż",
+    "Mixed evidence": "Dowody mieszane", "Warning": "Ostrzeżenie",
+    "The superseded finding had newer evidence": "Zastąpione ustalenie miało nowsze dowody",
     "Checks": "Testy", "Queue": "Kolejka", "Unassigned": "Nieprzypisane", "Snapshot": "Snapshot",
     "Filter loaded page…": "Filtruj załadowaną stronę…", "List": "Lista", "Filters": "Filtry",
     "Dispute": "Zakwestionuj", "History": "Historia", "Preview": "Podgląd", "Automatic": "Automat",
