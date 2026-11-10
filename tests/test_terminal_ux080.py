@@ -868,15 +868,14 @@ async def test_keyboard_start_feedback_tracks_fresh_selected_slot_without_overwr
 
 
 @pytest.mark.asyncio
-async def test_brief_from_sidebar_shows_marked_lines_without_asking_a_model(tmp_path, monkeypatch):
+async def test_brief_from_sidebar_shows_marked_lines_for_the_open_worktree(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     asked = []
     original = broker.request
 
     def request(method, path, *, params=None, json=None, timeout=20):
-        if path == "/api/ask":
-            pytest.fail("The brief asked the knowledge agent")
         if path == "/api/brief":
+            assert timeout == 120
             asked.append((method, deepcopy(params)))
             return {"text": "Brief for Keyboard project in /repo\n[machine]  Latest checkpoint saved 2 hours ago.\n"
                             "[reported] Checkpoint summary: half done", "lines": []}
@@ -898,7 +897,7 @@ async def test_brief_from_sidebar_shows_marked_lines_without_asking_a_model(tmp_
         assert "[reported] Checkpoint summary: half done" in text
         await pilot.press("escape")
         await settle(app, pilot)
-    assert len(asked) == 1 and asked[0][0] == "GET" and asked[0][1]["project"] == "project-keyboard"
+    assert asked == [("GET", {"project": "project-keyboard", "worktree": workspace.value["worktree"]})]
 
 
 @pytest.mark.asyncio

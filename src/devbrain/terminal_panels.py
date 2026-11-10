@@ -751,7 +751,16 @@ class SidebarApp(BasePanel):
             params = {"project": project["id"]}
             if self.workspace_data.get("project_id") == project["id"] and self.workspace_data.get("worktree"):
                 params["worktree"] = self.workspace_data["worktree"]
-            result = await self.request("GET", "/api/brief", params=params)
+            # Check evidence hashes the worktree: allow more than the default 20 s, and use a
+            # separate client so a slow brief does not hold the shared client's lock.
+            from .terminal_client import BrokerClient
+            if isinstance(self.broker, BrokerClient):
+                def brief_once():
+                    with BrokerClient(self.settings, ensure=False) as client:
+                        return client.request("GET", "/api/brief", params=params, timeout=120)
+                result = await asyncio.to_thread(brief_once)
+            else:
+                result = await asyncio.to_thread(self.broker.request, "GET", "/api/brief", params=params, timeout=120)
             text = result.get("text") if isinstance(result, dict) else None
             await self.push_screen_wait(MessageModal("Brief", text or self.t("The memory service returned no brief.")))
         except (OSError, ValueError, RuntimeError) as exc:

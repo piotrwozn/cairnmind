@@ -568,7 +568,9 @@ def _finish_run(store, root, profile, active, outcome, returncode, error, buffer
     return run
 
 
-def _verification_status(store, reader, task, worktree=None):
+def _verification_status(store, reader, task, worktree=None, capture=None):
+    # A display-only caller may pass a memoizing capture; the completion gate never does.
+    capture = capture or capture_code_state
     metadata = task.get("metadata", {})
     project_id = task["project_id"]
     root = _root(store, project_id, worktree)
@@ -594,7 +596,7 @@ def _verification_status(store, reader, task, worktree=None):
     horizon = None
     horizon_inputs = sorted({p for name in required for p in profiles[name]["extra_inputs"]})
     if len(required) > 1:
-        horizon = capture_code_state(store, project_id, root, horizon_inputs)
+        horizon = capture(store, project_id, root, horizon_inputs)
         if horizon["status"] != "fresh":
             return {"status": "unknown", "reasons": horizon["unknowns"], "run_ids": []}
     for profile_id in required or profiles:
@@ -603,7 +605,7 @@ def _verification_status(store, reader, task, worktree=None):
                       and r.get("task_definition_hash") == definition and r.get("profile_hash") == profile["hash"]]
         if not candidates:
             continue
-        current = capture_code_state(store, project_id, root, profile["extra_inputs"])
+        current = capture(store, project_id, root, profile["extra_inputs"])
         if current["status"] != "fresh":
             unknowns.extend(current["unknowns"])
             continue
@@ -620,7 +622,7 @@ def _verification_status(store, reader, task, worktree=None):
     found = {r["profile_id"] for r in eligible}
     if eligible and (not required or set(required) <= found):
         if horizon is not None:
-            after = capture_code_state(store, project_id, root, horizon_inputs)
+            after = capture(store, project_id, root, horizon_inputs)
             if after["status"] != "fresh":
                 return {"status": "unknown", "reasons": after["unknowns"], "run_ids": []}
             if after["fingerprint"] != horizon["fingerprint"]:
@@ -644,8 +646,8 @@ def _verification_status(store, reader, task, worktree=None):
     return {"status": "unknown", "reasons": ["no machine checks for this task and worktree"], "run_ids": []}
 
 
-def verification_status(store, task, worktree=None) -> dict:
-    return _verification_status(store, store, task, worktree)
+def verification_status(store, task, worktree=None, *, capture=None) -> dict:
+    return _verification_status(store, store, task, worktree, capture)
 
 
 def validate_completion(store, tx, project_id, task: dict) -> None:
