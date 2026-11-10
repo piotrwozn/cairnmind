@@ -68,6 +68,13 @@ def _input_patterns(extra_inputs):
 
 
 def _file_hash(path):
+    """SHA-256 of a file's content. Every call reads the file.
+
+    A remembered hash keyed by the file's size and times would be faster and wrong: a
+    store through a shared memory mapping changes the content without changing any time,
+    and on a Windows drive mounted in WSL a process can set the change time back. Only
+    reading the content keeps the promise that any edit changes the fingerprint.
+    """
     before = path.stat()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -81,7 +88,24 @@ def _file_hash(path):
     return digest.hexdigest()
 
 
-def _entry(root, relative, index_mode, unknowns):
+def _inside(root):
+    """Whether a directory resolves to a place inside the worktree, remembered for one manifest.
+
+    A regular file is inside exactly when its parent directory is, so resolving each
+    directory once replaces resolving every file. Nothing is remembered between manifests:
+    a directory can become a symbolic link at any time.
+    """
+    known = {}
+
+    def check(directory):
+        key = os.fspath(directory)
+        if key not in known:
+            known[key] = directory.resolve().is_relative_to(root)
+        return known[key]
+    return check
+
+
+def _entry(root, relative, index_mode, unknowns, inside=None):
     path = root / relative
     entry = {"path": relative, "index_mode": index_mode}
     try:
@@ -99,7 +123,7 @@ def _entry(root, relative, index_mode, unknowns):
                 unknowns.append(f"unsupported or missing symlink target: {relative}")
         elif stat.S_ISREG(mode):
             # A parent directory can itself be a symlink outside the worktree.
-            if not path.resolve().is_relative_to(root):
+            if not (inside(path.parent) if inside else path.resolve().is_relative_to(root)):
                 unknowns.append(f"external input: {relative}")
             else:
                 entry.update(kind="file", sha256=_file_hash(path))
@@ -152,7 +176,10 @@ def _manifest(root, patterns):
                         paths.add(child.relative_to(root).as_posix())
             else:
                 paths.add(Path(match).as_posix())
-    entries = [_entry(root, p, modes.get(p), unknowns) for p in sorted(paths)]
+    inside = _inside(root)
+    # Read one file after another: a pool of threads was measured and was ten times slower,
+    # because the work between the reads holds the interpreter lock.
+    entries = [_entry(root, p, modes.get(p), unknowns, inside) for p in sorted(paths)]
     return entries, sorted(set(unknowns))
 
 
