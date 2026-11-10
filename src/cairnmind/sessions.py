@@ -46,7 +46,7 @@ def _code_identity(code: dict) -> dict:
 
 def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> bool:
     """Recognize our complete generated files; a filename/substring is not enough."""
-    from .integrations import BEGIN, END, TOML_BEGIN, TOML_END, SESSION_ENV_VARS, _command, _instructions
+    from .integrations import BEGIN, END, _command, _earlier_command, _instructions
 
     try:
         text = raw.decode("utf-8")
@@ -54,32 +54,41 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
             # Existing user instructions surrounding our block are real prior state.
             return (text.strip() == _instructions(project, settings).strip()
                     and text.count(BEGIN) == 1 and text.count(END) == 1)
-        command = _command(settings, "mcp")
-        server = {"command": command[0], "args": command[1:]}
-        if relative == ".mcp.json":
-            return json.loads(text) == {"mcpServers": {"devbrain": {
-                **server, "env": {name: "${" + name + ":-}" for name in SESSION_ENV_VARS}}}}
-        if relative == ".codex/config.toml":
-            expected = {"mcp_servers": {"devbrain": {**server, "env_vars": list(SESSION_ENV_VARS),
-                                                    "startup_timeout_sec": 15, "tool_timeout_sec": 75}}}
-            return (tomllib.loads(text) == expected and text.strip().startswith(TOML_BEGIN)
-                    and text.strip().endswith(TOML_END)
-                    and text.count(TOML_BEGIN) == text.count(TOML_END) == 1)
-        client = "codex" if relative == ".codex/hooks.json" else "claude"
-        hooks = {}
-        for event in ("SessionStart", "PreCompact", "Stop", "SessionEnd"):
-            handler = {"type": "command", "command": shlex.join(_command(settings, "hook", "--client", client)),
-                       "timeout": 10 if event == "SessionStart" else 3}
-            if client == "codex" and event == "SessionStart":
-                handler["additionalContextLimit"] = 0
-            group = {"hooks": [handler]}
-            if event == "SessionStart":
-                group["matcher"] = ("startup|resume|clear|compact|fork" if client == "codex"
-                                    else "startup|resume|clear|compact")
-            hooks[event] = [group]
-        return json.loads(text) == {"hooks": hooks}
+        # A file generated before the module was renamed is as much ours as a new one.
+        return any(_managed_command_file(relative, text, settings, builder)
+                   for builder in (_command, _earlier_command))
     except (UnicodeDecodeError, ValueError, TypeError):
         return False
+
+
+def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
+    """Whether a generated MCP or hook file is exactly what `_command` would produce."""
+    from .integrations import TOML_BEGIN, TOML_END, SESSION_ENV_VARS
+
+    command = _command(settings, "mcp")
+    server = {"command": command[0], "args": command[1:]}
+    if relative == ".mcp.json":
+        return json.loads(text) == {"mcpServers": {"devbrain": {
+            **server, "env": {name: "${" + name + ":-}" for name in SESSION_ENV_VARS}}}}
+    if relative == ".codex/config.toml":
+        expected = {"mcp_servers": {"devbrain": {**server, "env_vars": list(SESSION_ENV_VARS),
+                                                "startup_timeout_sec": 15, "tool_timeout_sec": 75}}}
+        return (tomllib.loads(text) == expected and text.strip().startswith(TOML_BEGIN)
+                and text.strip().endswith(TOML_END)
+                and text.count(TOML_BEGIN) == text.count(TOML_END) == 1)
+    client = "codex" if relative == ".codex/hooks.json" else "claude"
+    hooks = {}
+    for event in ("SessionStart", "PreCompact", "Stop", "SessionEnd"):
+        handler = {"type": "command", "command": shlex.join(_command(settings, "hook", "--client", client)),
+                   "timeout": 10 if event == "SessionStart" else 3}
+        if client == "codex" and event == "SessionStart":
+            handler["additionalContextLimit"] = 0
+        group = {"hooks": [handler]}
+        if event == "SessionStart":
+            group["matcher"] = ("startup|resume|clear|compact|fork" if client == "codex"
+                                else "startup|resume|clear|compact")
+        hooks[event] = [group]
+    return json.loads(text) == {"hooks": hooks}
 
 
 def _empty_scope(root: str, settings, project: dict) -> tuple[bool, str, set[str]]:

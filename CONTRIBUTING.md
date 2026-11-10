@@ -65,7 +65,7 @@ All modules are in `src/cairnmind/`, all tests in `tests/`. **Fast** tests run w
 
 Run a single file with, for example, `uv run pytest tests/test_terminal_commands.py`.
 
-Internal names still say `devbrain` (the Python module, `DEVBRAIN_*` variables, data paths). That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40).
+Some internal names still say `devbrain` (`DEVBRAIN_*` variables, data paths, the MCP server name and its tools). That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40). The Python module is `cairnmind`; `src/devbrain/` is only an import alias kept for one release, so do not import from it.
 
 ## Evaluations
 

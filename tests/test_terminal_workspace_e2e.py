@@ -209,7 +209,7 @@ class TerminalStack:
         self.broker = LiveServer(app, self.settings.cockpit_port).start()
         _atomic(self.settings.data_dir / "cockpit/server.json", {"url": self.origin,
             "pid": os.getpid(), "birth": _birth(os.getpid()), "instance": instance_id(self.settings),
-            "version": __import__("devbrain").__version__})
+            "version": __import__("cairnmind").__version__})
         self.login()
 
     def login(self):

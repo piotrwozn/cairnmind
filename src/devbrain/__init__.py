@@ -7,7 +7,7 @@ so no state is ever duplicated. New code imports `cairnmind`.
 """
 from importlib import import_module
 from importlib.abc import Loader, MetaPathFinder
-from importlib.util import spec_from_loader
+from importlib.util import find_spec, spec_from_loader
 import sys
 
 from cairnmind import __version__
@@ -18,16 +18,22 @@ __all__ = ["__version__"]
 class _SameModule(Loader):
     def __init__(self, real):
         self.real = real
+        self.real_spec = None
 
     def create_module(self, spec):
-        return import_module(self.real)
+        module = import_module(self.real)
+        self.real_spec = module.__spec__
+        return module
 
     def exec_module(self, module):
-        """The module is already executed under its real name."""
+        # The module is already executed under its real name. The import machinery has
+        # just put the alias spec on it; give it back its own, or `reload` and `runpy`
+        # would be led here again instead of to the real loader.
+        module.__spec__ = self.real_spec
 
     def get_code(self, fullname):
         # `python -m devbrain.<module>` runs the real module's code as `__main__`.
-        return import_module(self.real).__spec__.loader.get_code(self.real)
+        return find_spec(self.real).loader.get_code(self.real)
 
 
 class _Redirect(MetaPathFinder):

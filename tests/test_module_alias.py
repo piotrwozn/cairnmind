@@ -29,6 +29,22 @@ def test_the_earlier_name_gives_the_very_same_module_objects():
     assert importlib.import_module("devbrain.terminal_safe") is importlib.import_module("cairnmind.terminal_safe")
     # The real module keeps its real identity; no state exists twice.
     assert cairnmind.config.__name__ == "cairnmind.config" and cairnmind.config.Settings is Settings
+    for module in (cairnmind.config, cairnmind.cli, importlib.import_module("cairnmind.terminal_safe")):
+        assert module.__spec__.name == module.__name__ and module.__spec__.origin == module.__file__
+
+
+def test_the_alias_does_not_break_reload_or_running_a_module_after_an_alias_import():
+    import devbrain.terminal_safe as aliased
+    import cairnmind.terminal_safe as real
+    assert aliased is real
+    real.marker_for_reload = "set before reload"
+    reloaded = importlib.reload(real)
+    assert reloaded is real and real.__spec__.name == "cairnmind.terminal_safe"
+    assert real.safe_text("a\x1bb") == "a\\x1bb"
+    # The loader of the alias still finds the real code after the alias import.
+    import devbrain
+    code = devbrain._Redirect().find_spec("devbrain.terminal_safe").loader.get_code("devbrain.terminal_safe")
+    assert code is not None and code.co_filename.endswith("terminal_safe.py")
 
 
 def test_an_unknown_module_under_the_earlier_name_is_still_an_import_error():
@@ -46,12 +62,14 @@ def test_python_m_with_the_earlier_name_runs_the_real_program(tmp_path):
         assert result.stderr == ""  # a hook or an MCP launch must not get extra output
     assert not (tmp_path / "absent").exists()
     # `python -m devbrain.<module>` finds the real module's code.
-    loader = importlib.util.find_spec("devbrain.workspace").loader
+    import devbrain
+    loader = devbrain._Redirect().find_spec("devbrain.workspace").loader
     assert loader.get_code("devbrain.workspace") is not None
 
 
 def test_no_source_or_test_imports_the_earlier_name():
-    pattern = re.compile(r"^\s*(from|import)\s+devbrain\b", re.M)
+    pattern = re.compile(r"^\s*(from|import)\s+devbrain\b|(__import__|import_module|find_spec)\(\s*[\"']devbrain\b",
+                         re.M)
     offenders = [str(path.relative_to(ROOT)) for folder in ("src/cairnmind", "tests")
                  for path in sorted((ROOT / folder).rglob("*.py"))
                  if path.name != "test_module_alias.py" and pattern.search(path.read_text(encoding="utf-8"))]
@@ -100,6 +118,20 @@ def test_install_rewrites_entries_written_under_the_earlier_name(settings, tmp_p
                 for handler in group["hooks"]]
     assert "echo user hook" in commands and old_hook not in commands
     assert sum("-m cairnmind " in command for command in commands) == 1
+
+
+def test_untouched_files_generated_under_the_earlier_name_still_count_as_ours(settings, tmp_path):
+    from cairnmind.sessions import _managed_empty_file
+    project = {"id": "project-a", "name": "Example", "root": str(tmp_path / "project")}
+    for builder in (integrations._command, integrations._earlier_command):
+        command = builder(settings, "mcp")
+        generated = json.dumps({"mcpServers": {"devbrain": {
+            "command": command[0], "args": command[1:],
+            "env": {name: "${" + name + ":-}" for name in integrations.SESSION_ENV_VARS}}}})
+        assert _managed_empty_file(".mcp.json", generated.encode(), settings, project) is True
+    foreign = json.dumps({"mcpServers": {"devbrain": {"command": sys.executable, "args": ["-m", "another_tool"]}}})
+    assert _managed_empty_file(".mcp.json", foreign.encode(), settings, project) is False
+    assert _managed_empty_file(".mcp.json", b"not json", settings, project) is False
 
 
 def test_an_unmarked_codex_entry_under_the_earlier_name_is_left_working(settings, tmp_path):

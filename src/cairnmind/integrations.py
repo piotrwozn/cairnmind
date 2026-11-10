@@ -44,6 +44,11 @@ def _command(settings: Settings, *args: str) -> list[str]:
     return [sys.executable, "-I", "-m", "cairnmind", "--data-dir", str(settings.data_dir), *args]
 
 
+def _earlier_command(settings: Settings, *args: str) -> list[str]:
+    """The same command as versions up to 0.8.0 wrote it, under the earlier module name."""
+    return ["devbrain" if value == "cairnmind" else value for value in _command(settings, *args)]
+
+
 def native_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
     """Start an independent native invocation without changing account configuration."""
     return {key: value for key, value in (os.environ if environment is None else environment).items()
@@ -367,7 +372,7 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
         # regex could remove nested options. Explicitly report mismatched paths.
         desired_args = _command(settings, "mcp")[1:]
         # The same entry under the earlier module name still works and is left alone.
-        earlier_args = ["devbrain" if value == "cairnmind" else value for value in desired_args]
+        earlier_args = _earlier_command(settings, "mcp")[1:]
         if existing.get("command") == sys.executable and existing.get("args") in (desired_args, earlier_args):
             env_vars = existing.get("env_vars", [])
             if (isinstance(env_vars, list) and all(name in env_vars for name in SESSION_ENV_VARS)
