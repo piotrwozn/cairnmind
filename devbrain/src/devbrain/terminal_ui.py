@@ -310,6 +310,8 @@ class BasePanel(App):
     async def _poll_workspace(self) -> None:
         try:
             language = await asyncio.to_thread(language_for, self.settings)
+            if not self.is_running:
+                return  # Shutdown began during the thread hop; widgets may already be gone.
             if language != self.language:
                 self.language = language
                 localize_bindings(self, language)
@@ -320,6 +322,8 @@ class BasePanel(App):
                 if callable(refresh):
                     refresh()
             value = await asyncio.to_thread(self.workspace.read)
+            if not self.is_running:
+                return
             revision = value.get("revision")
             if revision != self._workspace_revision:
                 old = self.workspace_data
