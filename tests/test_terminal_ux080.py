@@ -357,6 +357,37 @@ async def test_inspector_primary_detail_is_readable_and_content_is_literal(tmp_p
         assert '"record"' in str(app.query_one("#entity-body", Static).render())
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language, evidence, expected", [
+    ("en", {"evidence_state": "orphaned", "quote_survives": None},
+     "Evidence: orphaned: no supporting source has a current version"),
+    ("en", {"evidence_state": "evidence_replaced", "quote_survives": True},
+     "Evidence: the source changed; the quoted passage is still there"),
+    ("en", {"evidence_state": "evidence_replaced", "quote_survives": False},
+     "Evidence: the source changed; the quoted passage is gone"),
+    ("pl", {"evidence_state": "evidence_replaced", "quote_survives": None},
+     "Dowody: \u017ar\u00f3d\u0142o si\u0119 zmieni\u0142o; nie zapisano cytowanego fragmentu"),
+    ("pl", {"evidence_state": "anchored", "quote_survives": None}, "Dowody: \u017ar\u00f3d\u0142o jest aktualne"),
+])
+async def test_inspector_detail_names_the_evidence_state(tmp_path, monkeypatch, language, evidence, expected):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language=language)
+    monkeypatch.setattr("devbrain.terminal_ui.language_for", lambda settings: language)
+    original = broker.request
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        result = original(method, path, params=params, json=json, timeout=timeout)
+        if path == "/api/inspector/records/record-a":
+            result["evidence"] = dict(evidence)
+        return result
+
+    broker.request = request
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await settle(app, pilot)
+        await app.open_entity("record-a", "records")
+        assert expected in app._detail_text
+
+
 def test_default_locale_is_english_without_creating_preferences(tmp_path):
     settings = Settings(data_dir=tmp_path / "absent")
     assert language_for(settings) == "en"

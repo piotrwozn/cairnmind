@@ -196,6 +196,12 @@ cairnmind memory show ~/src/my-app/.memory/devbrain --kind plan
 
 It validates the package exactly as `memory inspect` does, then prints the snapshot header and the matching records with their status, version, time of last change and source addresses, and plans with their steps and source addresses. `--kind` takes a record kind or `plan`, `--status` a record status, and `--grep` a case-insensitive text. Check runs stored in the snapshot are printed as historical.
 
+Each record also has an evidence state, derived whenever it is read and never stored. `anchored` means that a supporting source version is current. `evidence_replaced` means that every supporting file was changed since; when the record was extracted with a quoted passage, Cairnmind also says whether that passage still occurs in the current file. `orphaned` means that no supporting source has a current version, for example because the only supporting file was deleted. Notes, conversations and check outputs are statements made once and are never treated as replaced. The state is as fresh as the last indexing of the project's files. The memory inspector shows it, the resume packet warns about records that are not anchored without blocking the resume, and this command lists them:
+
+```bash
+cairnmind memory orphans my-app
+```
+
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
 
 ```bash

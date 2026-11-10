@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- Records have a derived evidence state: `anchored`, `evidence_replaced` (with whether the quoted passage survives) or `orphaned`. The memory inspector shows it, the resume packet warns about records that are not anchored, and `cairnmind memory orphans PROJECT` lists them. The state is computed when read and is not stored, so snapshots and the portable state hash do not change (#6).
 - `cairnmind brief PROJECT` and **Brief** in the command palette show where work stopped in at most 40 lines: checkpoint and its age, next task and blockers, check evidence of tasks in progress, commits dated after the checkpoint and proposed findings. No model is asked and the command does not start the service; every line below the title and the legend is marked `machine` or `reported` (#3).
 - `cairnmind memory show PATH` prints a portable snapshot's records and plans with their source addresses as text, with `--kind`, `--status` and `--grep` filters. It needs no Java, engine, model or service and writes nothing; inside a coding session the running service authorizes the package first (#2).
 - The package moved to the repository root: after cloning, run the installer and the tests from the top-level directory. The contract documents are in `docs/`.
