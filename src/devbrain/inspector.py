@@ -149,13 +149,15 @@ class Inspector:
                     item = {key: row.get(key) for key in ("id", "project_id", "version", "title", "goal", "step_ids",
                                                         "created_at", "updated_at")}
                 items.append(item)
-            if collection == "records":
-                from .evidence import evidence_states
-                states = evidence_states(self.store, pid, rows)
-                for item in items:
-                    item["evidence_state"] = states[item["id"]]["evidence_state"]
-            return {"items": items, "total": len(ids), "next_cursor": _encode_cursor({"query": query_key,
+            result = {"items": items, "total": len(ids), "next_cursor": _encode_cursor({"query": query_key,
                 "after": selected[-1]}) if len(available) > limit else None, "cursor": _cursor(reader, self.store)}
+        if collection == "records":
+            # Derived outside the writer lock, like the detail view; the list needs no file bodies.
+            from .evidence import evidence_states
+            states = evidence_states(self.store, pid, rows, quotes=False)
+            for item in items:
+                item["evidence_state"] = states[item["id"]]["evidence_state"]
+        return result
 
     def entity(self, collection, project, identifier, *, worktree=None):
         if collection not in {"plans", "jobs", "check_runs"}:

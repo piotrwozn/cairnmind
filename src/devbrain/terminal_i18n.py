@@ -41,10 +41,13 @@ CATALOG = {
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
     "Evidence": "Dowody",
-    "the supporting source is current": "źródło jest aktualne",
+    "at least one supporting source still stands": "co najmniej jedno źródło nadal obowiązuje",
+    "imported file evidence has not been compared with local files yet":
+        "zaimportowanych dowodów z plików nie porównano jeszcze z lokalnymi plikami",
     "the source changed; the quoted passage is still there": "źródło się zmieniło; cytowany fragment nadal w nim jest",
     "the source changed; the quoted passage is gone": "źródło się zmieniło; cytowanego fragmentu już w nim nie ma",
-    "the source changed; no quoted passage was recorded": "źródło się zmieniło; nie zapisano cytowanego fragmentu",
+    "the source changed; there is no verified quoted passage to compare":
+        "źródło się zmieniło; brak zweryfikowanego cytatu do porównania",
     "orphaned: no supporting source has a current version":
         "osierocone: żadne źródło nie ma aktualnej wersji",
     "Brief": "Skrót",

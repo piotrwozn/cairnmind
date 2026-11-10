@@ -365,9 +365,12 @@ async def test_inspector_primary_detail_is_readable_and_content_is_literal(tmp_p
      "Evidence: the source changed; the quoted passage is still there"),
     ("en", {"evidence_state": "evidence_replaced", "quote_survives": False},
      "Evidence: the source changed; the quoted passage is gone"),
+    ("en", {"evidence_state": "unverified", "quote_survives": None},
+     "Evidence: imported file evidence has not been compared with local files yet"),
     ("pl", {"evidence_state": "evidence_replaced", "quote_survives": None},
-     "Dowody: \u017ar\u00f3d\u0142o si\u0119 zmieni\u0142o; nie zapisano cytowanego fragmentu"),
-    ("pl", {"evidence_state": "anchored", "quote_survives": None}, "Dowody: \u017ar\u00f3d\u0142o jest aktualne"),
+     "Dowody: \u017ar\u00f3d\u0142o si\u0119 zmieni\u0142o; brak zweryfikowanego cytatu do por\u00f3wnania"),
+    ("pl", {"evidence_state": "anchored", "quote_survives": None},
+     "Dowody: co najmniej jedno \u017ar\u00f3d\u0142o nadal obowi\u0105zuje"),
 ])
 async def test_inspector_detail_names_the_evidence_state(tmp_path, monkeypatch, language, evidence, expected):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language=language)
@@ -386,6 +389,14 @@ async def test_inspector_detail_names_the_evidence_state(tmp_path, monkeypatch, 
         await settle(app, pilot)
         await app.open_entity("record-a", "records")
         assert expected in app._detail_text
+
+
+def test_every_evidence_label_has_a_polish_translation():
+    from devbrain.terminal_i18n import tr
+    from devbrain.terminal_inspector import EVIDENCE_LABELS
+    assert {state for state, _ in EVIDENCE_LABELS} == {"anchored", "evidence_replaced", "orphaned", "unverified"}
+    for text in ["Evidence", *EVIDENCE_LABELS.values()]:
+        assert tr(text, "en") == text and tr(text, "pl") != text
 
 
 def test_default_locale_is_english_without_creating_preferences(tmp_path):

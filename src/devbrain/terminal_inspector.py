@@ -14,11 +14,12 @@ from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, s
 
 # (evidence_state, quote_survives) as returned by the inspector for one record.
 EVIDENCE_LABELS = {
-    ("anchored", None): "the supporting source is current",
+    ("anchored", None): "at least one supporting source still stands",
     ("evidence_replaced", True): "the source changed; the quoted passage is still there",
     ("evidence_replaced", False): "the source changed; the quoted passage is gone",
-    ("evidence_replaced", None): "the source changed; no quoted passage was recorded",
+    ("evidence_replaced", None): "the source changed; there is no verified quoted passage to compare",
     ("orphaned", None): "orphaned: no supporting source has a current version",
+    ("unverified", None): "imported file evidence has not been compared with local files yet",
 }
 
 _VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),

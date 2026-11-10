@@ -230,11 +230,6 @@ class SessionManager:
                            if sources_by_id.get(source_id, {}).get("project_id") != project_id]
         state_unknowns = [f"A current plan/task/memory reference has no scoped durable source: {value}"
                           for value in missing_sources]
-        from .evidence import evidence_states
-        # Advisory only: it is not an unknown and not part of the state identity, so a
-        # deleted or edited file neither blocks a resume nor invalidates an acknowledged one.
-        evidence = {record_id: value["evidence_state"] for record_id, value in
-                    evidence_states(self.store, project_id, relevant).items() if value["evidence_state"] != "anchored"}
         code = capture_code_state(self.store, project_id, worktree=root)
         initial_baseline = False
         if code.get("status") != "fresh":
@@ -257,7 +252,7 @@ class SessionManager:
                     "code": _code_identity(code)}
         return {"plan": plan, "task": task, "reason": following.get("reason"),
                 "blocked": following.get("blocked", []), "records": relevant,
-                "code": code, "state_hash": _hash(identity), "unknowns": state_unknowns, "evidence": evidence,
+                "code": code, "state_hash": _hash(identity), "unknowns": state_unknowns,
                 "initial_baseline_eligible": initial_baseline}
 
     @staticmethod
@@ -758,18 +753,28 @@ class SessionManager:
                   "extraction": self._pending_status(session["project_id"], "extract"),
                   "unknowns": [value[:500] for value in list(dict.fromkeys(unknowns))[:20]],
                   "omitted_unknowns": max(0, len(set(unknowns)) - 20)}
-        if evidence:
-            orphaned = sum(value == "orphaned" for value in evidence.values())
-            packet["warnings"] = [
-                f"{len(evidence)} memory records in this scope no longer rest on a current source "
-                f"({orphaned} orphaned, {len(evidence) - orphaned} with a changed source). Treat them as unverified; "
-                "list them with `cairnmind memory orphans`."]
+        orphaned = sum(value == "orphaned" for value in evidence.values())
+        changed = sum(value == "evidence_replaced" for value in evidence.values())
+        evidence_warning = (
+            f"As of the last indexing of the project's files, {orphaned + changed} memory records in this scope "
+            f"have no supporting source that still stands ({orphaned} orphaned, {changed} with a changed file). "
+            f"Treat them as unverified; list them with `cairnmind memory orphans {session['project_id']}`.")
+        if orphaned or changed:
+            packet["warnings"] = [evidence_warning]
         baseline = state.get("initial_baseline_eligible", False) and not archives
         if baseline:
             packet["baseline_unverified"] = True
             packet["warnings"] = ["New empty project: no code/history baseline is verified. "
                                   "Initialize Git and commit before relying on code-bound check completion.",
                                   *state["code"].get("unknowns", []), *packet.get("warnings", [])]
+        if evidence and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
+            # Advisory evidence data yields first: it must never be what makes a packet unready.
+            for row in packet["records"]:
+                row.pop("evidence_state", None)
+            if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES and evidence_warning in packet.get("warnings", []):
+                packet["warnings"].remove(evidence_warning)
+                if not packet["warnings"]:
+                    del packet["warnings"]
         if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Essential goal/constraints are never silently truncated to a ready packet.
             packet["unknowns"].append("Essential resume packet exceeds the bounded context budget")
@@ -877,6 +882,13 @@ class SessionManager:
         except TimeoutError as exc:
             unknowns.append(str(exc))
         state = self._state(session)
+        # Advisory only, and only when a packet is prepared: it is not an unknown and not part
+        # of the state identity, so a deleted or edited file neither blocks a resume nor
+        # invalidates an acknowledged one. Computed outside the store's writer lock.
+        from .evidence import evidence_states
+        state["evidence"] = {record_id: value["evidence_state"] for record_id, value in evidence_states(
+            self.store, session["project_id"], state["records"], quotes=False).items()
+            if value["evidence_state"] != "anchored"}
         unknowns.extend(state.get("unknowns", []))
         unknowns.extend(self._own_continuity(session))
         if not (state.get("initial_baseline_eligible") and not archives and not targets):
