@@ -1174,11 +1174,82 @@ def test_golden_client_outputs_satisfy_every_capability_check(monkeypatch, fixtu
     assert all(info["checks"][name]["evidence"] for name in expected)
 
 
+def _golden_probe(monkeypatch, fixture, *, version=None):
+    folder = CLIENT_FIXTURES / fixture
+    files = {"--version": "version.txt", "--help": "help.txt", "list": "features.txt"}
+
+    def fake_run(command, **kwargs):
+        text = (folder / files[command[-1]]).read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, version if version and command[-1] == "--version" else text, "")
+
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(integrations.subprocess, "run", fake_run)
+    return integrations._probe_cli(fixture.split("-")[0])
+
+
+def test_contract_text_renders_one_aligned_line_per_client_and_check_from_golden_outputs(monkeypatch):
+    probes = {"codex": _golden_probe(monkeypatch, "codex-0.166.0"), "claude": _golden_probe(monkeypatch, "claude-2.1.319")}
+    lines = integrations.contract_text(probes).splitlines()
+    table = [line.split(None, 3) for line in lines]
+    assert [(row[0], row[1], row[2]) for row in table] == [
+        (client, check, "ok") for client in ("codex", "claude")
+        for check in ("version", "mcp", "prompt", "isolated_process", "hooks", "verified_resume")]
+    evidence = {(row[0], row[1]): row[3] for row in table}
+    assert evidence[("codex", "version")] == probes["codex"]["version"]
+    assert evidence[("codex", "mcp")] == " ".join(probes["codex"]["checks"]["mcp"]["evidence"].split())
+    # The evidence is the line of the mcp command itself, not a flag example that mentions the word.
+    assert evidence[("codex", "mcp")].startswith("mcp ") and evidence[("claude", "mcp")].startswith("mcp ")
+    assert evidence[("codex", "hooks")].startswith("hooks ") and evidence[("codex", "hooks")].endswith("true")
+    # A check that needs no output line says what it rests on instead of showing nothing.
+    assert evidence[("claude", "isolated_process")] == "(always)"
+    assert evidence[("claude", "verified_resume")] == "(every check above passed)"
+    # Columns are aligned: every line has its status at the same offset.
+    assert len({line.index(" ok ") for line in lines}) == 1
+
+
+def test_contract_text_names_what_a_failed_check_needed_and_found(monkeypatch):
+    old = _golden_probe(monkeypatch, "claude-2.1.319", version="1.0.100 (Claude Code)\x1b[31m\nforged  line  ok")
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: None)
+    missing = integrations._probe_cli("codex")
+    broken = {"installed": True, "version": None, "verified_resume": False, "checks": {},
+              "notes": ["Capability probe failed: TimeoutExpired"]}
+    text = integrations.contract_text({"claude": old, "codex": missing, "other": broken})
+    lines = text.splitlines()
+    assert "\x1b" not in text and len(lines) == 6 + 1 + 2
+    rows = {tuple(line.split(None, 3)[:3]): line.split(None, 3)[3] for line in lines}
+    assert rows[("claude", "version", "failed")] == "(needs >= 1.0.112; found 1.0.100 (Claude Code)\\x1b[31m forged line ok)"
+    assert rows[("claude", "hooks", "failed")].startswith("(needs version >= 1.0.112; found 1.0.100")
+    assert rows[("claude", "mcp", "ok")] and rows[("claude", "verified_resume", "failed")] == "(launch is refused)"
+    assert rows[("codex", "installed", "failed")] == "(the command was not found on PATH)"
+    assert rows[("other", "probe", "failed")] == "(Capability probe failed: TimeoutExpired)"
+    assert rows[("other", "verified_resume", "failed")] == "(launch is refused)"
+
+
+def test_doctor_contract_prints_text_on_request_and_json_by_default(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from devbrain import cli
+    probes = {"codex": _golden_probe(monkeypatch, "codex-0.166.0"), "claude": _golden_probe(monkeypatch, "claude-2.1.319")}
+    monkeypatch.setattr(integrations, "_probe_cli", lambda name: probes[name])
+    runner, base = CliRunner(), ["--data-dir", str(tmp_path / "data"), "doctor", "--contract"]
+    as_json = runner.invoke(cli.app, base)
+    assert as_json.exit_code == 0 and json.loads(as_json.output)["codex"]["checks"]["mcp"]["ok"] is True
+    assert runner.invoke(cli.app, [*base, "--format", "json"]).output == as_json.output
+    as_text = runner.invoke(cli.app, [*base, "--format", "text"])
+    assert as_text.exit_code == 0 and as_text.output == integrations.contract_text(probes) + "\n"
+    probes["claude"] = {**probes["claude"], "verified_resume": False}
+    assert runner.invoke(cli.app, [*base, "--format", "text"]).exit_code == 1
+    assert runner.invoke(cli.app, [*base, "--format", "table"]).exit_code != 0
+    refused = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "doctor", "--format", "text"])
+    assert refused.exit_code != 0 and "only with --contract" in refused.output
+
+
 @pytest.mark.parametrize("help_text,expected", [
     ("Commands: exec mcp features", True),
     ("  mcp        Manage MCP servers", True),
     ("Options: --mcp-config <file>", False),
     ("Options: --debug=hooks,mcp", False),
+    ("  filtering (e.g., --debug=hooks,mcp or\n  --debug='!hooks,!mcp')", False),
+    ('  --debug="!mcp"', False),
 ])
 def test_mcp_capability_requires_the_command_word_not_a_flag(help_text, expected):
     import re

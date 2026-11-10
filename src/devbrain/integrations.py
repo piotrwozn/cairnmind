@@ -55,8 +55,9 @@ def _version_tuple(value: str) -> tuple[int, int, int] | None:
     return tuple(map(int, match.groups())) if match else None
 
 
-# The `mcp` command word, not a flag or value such as --mcp-config or --debug=hooks,mcp.
-MCP_COMMAND = r"(?<![-\w,=])mcp(?![-\w,=])"
+# The `mcp` command word, not a flag or value such as --mcp-config, --debug=hooks,mcp
+# or --debug='!hooks,!mcp'.
+MCP_COMMAND = r"(?<![-\w,=!'\"])mcp(?![-\w,=!'\")])"
 
 
 def _evidence_line(pattern: str, text: str, flags: int = 0) -> str | None:
@@ -126,6 +127,43 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
     except (OSError, subprocess.SubprocessError) as exc:
         info["notes"].append(f"Capability probe failed: {type(exc).__name__}")
     return info
+
+
+def contract_text(probes: dict[str, dict[str, Any]]) -> str:
+    """The client contract as aligned lines: client, check, `ok` or `failed`, and the evidence.
+
+    A passed check shows the output line that confirmed it. A failed one shows, in
+    parentheses, what was needed and what was found instead.
+    """
+    from .terminal_safe import safe_text
+
+    def clean(value, limit=160):
+        # Evidence is a line printed by another program; it must stay one harmless line here.
+        text = " ".join(safe_text(value).split())
+        return text if len(text) <= limit else text[:limit - 1] + "\u2026"
+
+    rows = []
+    for client, probe in probes.items():
+        if not probe.get("installed"):
+            rows.append((client, "installed", "failed", "(the command was not found on PATH)"))
+            continue
+        checks = probe.get("checks") or {}
+        for name, check in checks.items():
+            evidence = check.get("evidence")
+            if check.get("ok"):
+                detail = clean(evidence) if evidence else "(" + clean(check.get("required", "")) + ")"
+            else:
+                detail = (f"(needs {clean(check.get('required', ''))}; "
+                          f"found {clean(evidence) if evidence else 'no matching output'})")
+            rows.append((client, name, "ok" if check.get("ok") else "failed", detail))
+        if not checks:
+            notes = [note for note in probe.get("notes", []) if "probe failed" in note.lower()]
+            rows.append((client, "probe", "failed", "(" + clean(notes[0] if notes else "no checks could be run") + ")"))
+        rows.append((client, "verified_resume", "ok" if probe.get("verified_resume") else "failed",
+                     "(every check above passed)" if probe.get("verified_resume") else "(launch is refused)"))
+    widths = [max((len(row[column]) for row in rows), default=0) for column in range(3)]
+    return "\n".join("  ".join([*(row[column].ljust(widths[column]) for column in range(3)), row[3]]).rstrip()
+                     for row in rows)
 
 
 def doctor(settings: Settings) -> dict[str, Any]:

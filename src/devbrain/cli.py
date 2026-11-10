@@ -315,12 +315,21 @@ def engine_stop(ctx: typer.Context):
 @app.command()
 @initialized
 def doctor(ctx: typer.Context, contract: bool = typer.Option(
-        False, "--contract", help="Pokaż tylko kontrakt klientów: każdą kontrolę z linią dowodu.")):
+        False, "--contract", help="Pokaż tylko kontrakt klientów: każdą kontrolę z linią dowodu."),
+           output_format: Annotated[str, typer.Option(
+               "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json"):
+    if output_format not in ("json", "text"):
+        raise typer.BadParameter("--format must be json or text.")
+    if output_format == "text" and not contract:
+        raise typer.BadParameter("--format text is available only with --contract.")
     if contract:
-        from devbrain.integrations import CLIENTS, _probe_cli
+        from devbrain.integrations import CLIENTS, _probe_cli, contract_text
         probes = {name: _probe_cli(name) for name in CLIENTS}
-        output({name: {key: probe[key] for key in ("installed", "version", "verified_resume", "checks", "notes")}
-                for name, probe in probes.items()})
+        if output_format == "text":
+            typer.echo(contract_text(probes))
+        else:
+            output({name: {key: probe[key] for key in ("installed", "version", "verified_resume", "checks", "notes")}
+                    for name, probe in probes.items()})
         if any(probe["installed"] and not probe["verified_resume"] for probe in probes.values()):
             raise typer.Exit(1)
         return
