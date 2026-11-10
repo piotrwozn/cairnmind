@@ -34,6 +34,39 @@ uv run pytest                                # full suite with the real ArcadeDB
 - Tests that drive a real tmux server are listed in `TMUX_MODULES` in the same file.
 - Keyboard latency budgets target a developer workstation. On slow or shared machines, set `DEVBRAIN_LATENCY_SCALE`, as CI does.
 
+## Where to start
+
+Looking for a first task? Issues labelled [`good first issue`](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) touch a small part of the code and can be verified without models.
+
+### Code map
+
+All modules are in `devbrain/src/devbrain/`, all tests in `devbrain/tests/`. **Fast** tests run with `uv run pytest -m "not arcade and not tmux"` and need only Python; **engine** tests start the real ArcadeDB and need Java 21.
+
+| You want to change | Start in | Run | Tier |
+|---|---|---|---|
+| How `ask` answers are validated, cited or repaired | `agent.py`, `answer_contract.py` | `test_knowledge.py`, `test_memory_stabilization.py`, `test_answer_contract.py` | engine; `test_answer_contract.py` is fast |
+| What gets extracted from conversations into records | `agent.py` (extraction) | `test_extraction_grounding.py`, `test_extraction_safety.py` | engine |
+| Search ranking and the context sent to assistants | `retrieval.py` | `test_knowledge.py` | engine |
+| Records, revisions, sources, backups | `store.py` | `test_store.py`, `test_migrations.py` | engine |
+| Resume packets and ACK | `sessions.py`, `mcp_server.py` | `test_sessions.py`, `test_session_lifecycle.py`, `test_resume_mcp_protocol.py` | engine |
+| Plans and the next task | `plans.py` | `test_plans.py` | engine |
+| Check profiles and test freshness | `verification.py` | `test_verification.py` | engine |
+| Portable memory snapshots and import | `memory.py` | `test_portable_memory.py`, `test_memory_adversarial.py` | engine |
+| Indexing code and importing transcripts | `ingest.py`, `parsing.py` | `test_ingest.py`, `test_transcript_compatibility.py`, `test_parsing.py` | engine; `test_parsing.py` is fast |
+| Codex and Claude Code detection, hooks, MCP config | `integrations.py`, `client_auth.py` | `test_integrations.py`, `test_client_auth.py` | engine; `test_client_auth.py` is fast |
+| Terminal panels, forms, command palette | `terminal_panels.py`, `terminal_ui.py`, `terminal_commands.py` | `test_terminal_panels.py`, `test_terminal_ux080.py`, `test_terminal_commands.py` | fast |
+| Memory inspector and graph views | `terminal_inspector.py`, `terminal_graph.py` | `test_terminal_panels.py`, `test_terminal_graph.py` | fast |
+| tmux workspace layout | `workspace.py` | `test_workspace.py`, `test_workspace_cli.py` | fast; `test_workspace.py` needs tmux |
+| The built-in API agent and its tools | `api_agent.py`, `agent_tools.py`, `api_providers.py` | `test_api_agent.py`, `test_agent_tools.py`, `test_api_providers.py` | `test_api_agent.py` is engine; the others are fast |
+| GitHub Copilot adapter | `copilot_adapter.py` | `test_copilot_adapter.py` | fast |
+| The local broker API used by the panels | `cockpit.py` | `test_cockpit_server.py` | fast |
+| CLI commands and help | `cli.py` | `test_cli.py`, `test_diagnostic_cli.py` | engine |
+| Evaluations | `evaluation.py`, `memory_evaluation.py` | `test_evaluation.py`, `test_memory_evaluation.py` | engine |
+
+Run a single file with, for example, `uv run pytest tests/test_terminal_commands.py`.
+
+Internal names still say `devbrain` (the package directory, the Python module, `DEVBRAIN_*` variables). That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40).
+
 ## Evaluations
 
 These run real local models and are not part of CI:
