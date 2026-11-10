@@ -40,6 +40,7 @@ CATALOG = {
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
+<<<<<<< HEAD
     "Conflicts": "Sprzeczności", "Resolve": "Rozstrzygnij", "Resolve conflict": "Rozstrzygnij sprzeczność",
     "Possible conflict": "Możliwa sprzeczność", "new finding": "nowe ustalenie",
     "existing finding": "dotychczasowe ustalenie", "Scope": "Zakres", "whole project": "cały projekt",
@@ -64,6 +65,8 @@ CATALOG = {
     "{letter} was recorded later, but its evidence time is only an upper bound.":
         "{letter} zapisano później, ale czas jego dowodów to tylko górna granica.",
     "The order of the evidence cannot be compared.": "Kolejności dowodów nie da się porównać.",
+=======
+>>>>>>> origin/main
     "Evidence": "Dowody",
     "at least one supporting source still stands": "co najmniej jedno źródło nadal obowiązuje",
     "imported file evidence has not been compared with local files yet":
