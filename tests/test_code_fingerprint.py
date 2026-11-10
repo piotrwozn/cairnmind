@@ -183,3 +183,11 @@ def test_editing_a_file_invalidates_an_acknowledged_packet(workspace):
 def test_the_fast_path_of_the_reserved_memory_check_changes_no_answer(path, expected):
     assert is_reserved_memory(path) is expected
     assert is_reserved_memory(Path(path)) is expected
+
+
+@pytest.mark.parametrize("path", [".MEMORY/devbrain", ".Memory/DevBrain/x.json", "a/../.MEMORY/devbrain", ".memory/DEVBRAIN"])
+def test_the_fast_path_leaves_case_to_the_platform_s_path_comparison(path):
+    # What the check answered before the shortcut existed: true on Windows, false on Linux.
+    normalised = Path(os.path.normpath(path))
+    reference = not normalised.is_absolute() and normalised.is_relative_to(Path(".memory/devbrain"))
+    assert is_reserved_memory(path) is reference
