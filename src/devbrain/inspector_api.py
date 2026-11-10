@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import conflicts
 from .arcade import ArcadeError
 from .inspector import Inspector, InspectorNotFound
 
@@ -22,6 +23,18 @@ class ReviewBody(BaseModel):
     action: Literal["confirm", "dispute"]
     expected_version: int = Field(strict=True, ge=1)
     expected_plan_version: int | None = Field(default=None, strict=True, ge=1)
+    reason: str | None = Field(default=None, max_length=4000)
+
+
+class ConflictBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    record_id: str = Field(min_length=1, max_length=200)
+    other_id: str = Field(min_length=1, max_length=200)
+    action: Literal["supersede", "different_scopes", "dismiss"]
+    expected_version: int = Field(strict=True, ge=1)
+    other_expected_version: int = Field(strict=True, ge=1)
+    keep: str | None = Field(default=None, max_length=200)
     reason: str | None = Field(default=None, max_length=4000)
 
 
@@ -149,6 +162,15 @@ def create_inspector_router(store, settings):
     @router.get("/inspector/graph/{node_id:path}/neighbors")
     async def neighbors(node_id: str, project: str, worktree: str | None = None, cursor: str | None = None, limit: int = 100):
         return await call(inspector.neighbors, project, node_id, worktree=worktree, cursor=cursor, limit=limit)
+
+    @router.get("/inspector/conflicts")
+    async def conflict_inbox(project: str, worktree: str | None = None):
+        return await call(conflicts.inbox, inspector, project, worktree)
+
+    @router.post("/inspector/conflicts/resolve")
+    async def resolve_conflict(body: ConflictBody):
+        return await call(conflicts.resolve, inspector, body.project, body.record_id, body.other_id, body.action,
+                          body.expected_version, body.other_expected_version, keep=body.keep, reason=body.reason)
 
     @router.post("/inspector/records/{record_id}/review")
     async def review(record_id: str, body: ReviewBody):
