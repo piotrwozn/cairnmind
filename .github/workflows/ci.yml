@@ -1,9 +1,17 @@
 name: CI
 
 on:
+  # Branches are checked through their pull request; a push runs CI only on main,
+  # so a commit on a pull request branch does not run every job twice.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# A newer commit on the same pull request cancels the run of the older one.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
