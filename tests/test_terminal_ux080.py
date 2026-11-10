@@ -409,6 +409,48 @@ async def test_inspector_primary_detail_shows_mixed_evidence_range(tmp_path, mon
         assert "2026-03-04" in body
         assert "2026-11-09" in body
 
+
+@pytest.mark.parametrize("language, evidence, expected", [
+    ("en", {"evidence_state": "orphaned", "quote_survives": None},
+     "Evidence: orphaned: no supporting source has a current version"),
+    ("en", {"evidence_state": "evidence_replaced", "quote_survives": True},
+     "Evidence: the source changed; the quoted passage is still there"),
+    ("en", {"evidence_state": "evidence_replaced", "quote_survives": False},
+     "Evidence: the source changed; the quoted passage is gone"),
+    ("en", {"evidence_state": "unverified", "quote_survives": None},
+     "Evidence: imported file evidence has not been compared with local files yet"),
+    ("pl", {"evidence_state": "evidence_replaced", "quote_survives": None},
+     "Dowody: \u017ar\u00f3d\u0142o si\u0119 zmieni\u0142o; brak zweryfikowanego cytatu do por\u00f3wnania"),
+    ("pl", {"evidence_state": "anchored", "quote_survives": None},
+     "Dowody: co najmniej jedno \u017ar\u00f3d\u0142o nadal obowi\u0105zuje"),
+])
+async def test_inspector_detail_names_the_evidence_state(tmp_path, monkeypatch, language, evidence, expected):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language=language)
+    monkeypatch.setattr("devbrain.terminal_ui.language_for", lambda settings: language)
+    original = broker.request
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        result = original(method, path, params=params, json=json, timeout=timeout)
+        if path == "/api/inspector/records/record-a":
+            result["evidence"] = dict(evidence)
+        return result
+
+    broker.request = request
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await settle(app, pilot)
+        await app.open_entity("record-a", "records")
+        assert expected in app._detail_text
+
+
+def test_every_evidence_label_has_a_polish_translation():
+    from devbrain.terminal_i18n import tr
+    from devbrain.terminal_inspector import EVIDENCE_LABELS
+    assert {state for state, _ in EVIDENCE_LABELS} == {"anchored", "evidence_replaced", "orphaned", "unverified"}
+    for text in ["Evidence", *EVIDENCE_LABELS.values()]:
+        assert tr(text, "en") == text and tr(text, "pl") != text
+
+
 def test_default_locale_is_english_without_creating_preferences(tmp_path):
     settings = Settings(data_dir=tmp_path / "absent")
     assert language_for(settings) == "en"

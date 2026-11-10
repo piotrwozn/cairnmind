@@ -1042,6 +1042,9 @@ def current_source(store, source_id: str) -> dict:
             or path.resolve().is_relative_to(store.data_dir)):
         raise ValueError("Source path is outside registered roots or excluded")
     if not path.is_file():
+        if not any(root.is_dir() for root in allowed_roots):
+            # As in index_project: an unavailable root is not a deletion of its files.
+            return {**source, "freshness_warning": "Project root is unavailable; the current file cannot be checked"}
         active = store.query(
             "SELECT id FROM sources WHERE project_id=:project AND uri=:uri AND is_current=true",
             {"project": project["id"], "uri": source["uri"]},

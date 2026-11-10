@@ -819,6 +819,24 @@ def memory_show(ctx: typer.Context, path: Path,
     typer.echo(show_snapshot(selected, kind=kind, status=status, grep=grep, expected_snapshot_id=expected))
 
 
+@memory_app.command("orphans")
+@initialized
+def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = None,
+                   as_json: Annotated[bool, typer.Option("--json", help="Print the records as JSON.")] = False):
+    """List records whose evidence is no longer current: orphaned, or resting on a changed source. Read-only."""
+    from devbrain.brief import _scoped_records
+    from devbrain.evidence import orphans_report
+    from devbrain.verification import _root
+    store = store_for(ctx.obj)
+    selected = store.resolve_project(project)
+    root = _root(store, selected["id"], actor_scope(store, selected["id"], worktree))
+    report = orphans_report(store, selected, root, _scoped_records(store, selected["id"], root))
+    if as_json:
+        output(report)
+    else:
+        typer.echo(report["text"])
+
+
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,

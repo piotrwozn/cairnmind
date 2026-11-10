@@ -13,6 +13,16 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Select, St
 from .terminal_safe import plain, safe_text
 from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, summary_text
 
+# (evidence_state, quote_survives) as returned by the inspector for one record.
+EVIDENCE_LABELS = {
+    ("anchored", None): "at least one supporting source still stands",
+    ("evidence_replaced", True): "the source changed; the quoted passage is still there",
+    ("evidence_replaced", False): "the source changed; the quoted passage is gone",
+    ("evidence_replaced", None): "the source changed; there is no verified quoted passage to compare",
+    ("orphaned", None): "orphaned: no supporting source has a current version",
+    ("unverified", None): "imported file evidence has not been compared with local files yet",
+}
+
 _VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),
           ("Zadania", "tasks"), ("Testy", "checks"), ("Kolejka", "jobs"),
           ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
@@ -297,7 +307,8 @@ class InspectorApp(BasePanel):
         if item.get("source_ids"):
             lines.append(self.t("Sources") + ": " + str(len(item["source_ids"])))
 
-        if kind == "records":
+        if isinstance(value.get("record"), dict):
+            # Any record detail, including a task opened from the task list.
             def evidence_date(value):
                 if not isinstance(value, str):
                     return None
@@ -330,11 +341,13 @@ class InspectorApp(BasePanel):
                     warning += f" ({replaced_date})"
                 lines.append(self.t("Warning") + ": " + warning)
 
+        evidence = value.get("evidence") if isinstance(value.get("evidence"), dict) else {}
+        label = EVIDENCE_LABELS.get((evidence.get("evidence_state"), evidence.get("quote_survives")))
+        if label:
+            lines.append(self.t("Evidence") + ": " + self.t(label))
         if not lines:
             return summary_text(value, self.language)
         return "\n\n".join(lines)
-
-
 
     def toggle_technical(self):
         self._technical_details = not self._technical_details
