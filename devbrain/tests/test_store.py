@@ -390,3 +390,84 @@ def test_embedding_repair_uses_digest_namespace_not_configured_model_name(store,
     store.finish_job(job_id)
     store.reset_missing_embedding_job(job_id, "digest-chunk", "embedding-model@new")
     assert store.query("SELECT state FROM jobs WHERE id=:id", {"id": job_id})[0]["state"] == "pending"
+
+
+def _transcript(store, project, uri, text, stamp):
+    return store.snapshot(project["id"], uri, text, "transcript", metadata={"source_timestamp": stamp})
+
+
+def _evidence(record):
+    metadata = record["metadata"]
+    return metadata["evidence_earliest"], metadata["evidence_latest"], metadata["evidence_basis"]
+
+
+def test_evidence_time_uses_transcript_time_not_write_time(store, project):
+    march = _transcript(store, project, "transcript://march", "We chose tokens in March.", "2026-03-04T10:00:00Z")
+    record = store.remember(project["id"], {"kind": "decision", "key": "auth", "content": "Use tokens"}, [march["id"]])
+    assert _evidence(record) == ("2026-03-04T10:00:00+00:00", "2026-03-04T10:00:00+00:00", "stated")
+
+
+def test_evidence_time_falls_back_to_observation_and_mixes_bases(store, project):
+    from datetime import datetime
+    note = store.snapshot(project["id"], "manual://note", "Tokens expire hourly.", "manual")
+    march = _transcript(store, project, "transcript://march", "Tokens expire hourly, said in March.",
+                        "2026-03-04T10:00:00+02:00")
+    observed = store.remember(project["id"], {"kind": "fact", "key": "ttl", "content": "Hourly expiry"}, [note["id"]])
+    assert _evidence(observed)[2] == "observed"
+    assert datetime.fromisoformat(_evidence(observed)[1]) == datetime.fromisoformat(note["created_at"])
+    mixed = store.remember(project["id"], {"id": observed["id"], "expected_version": 1, "content": "Hourly expiry"},
+                           [note["id"], march["id"]])
+    assert _evidence(mixed)[0] == "2026-03-04T08:00:00+00:00" and _evidence(mixed)[2] == "mixed"
+
+
+def test_evidence_time_ignores_naive_timestamps_and_cannot_be_forged(store, project):
+    naive = _transcript(store, project, "transcript://naive", "No zone given.", "2026-03-04T10:00:00")
+    forged = {"evidence_latest": "2020-01-01T00:00:00+00:00", "evidence_basis": "stated",
+              "supersede_warning": "anachronistic_supersede"}
+    record = store.remember(project["id"], {"kind": "fact", "key": "zone", "content": "No zone", "metadata": forged},
+                            [naive["id"]])
+    assert _evidence(record)[2] == "observed"
+    assert "supersede_warning" not in record["metadata"]
+
+
+def test_superseding_with_older_stated_evidence_warns_and_is_recomputed_on_update(store, project):
+    june = _transcript(store, project, "transcript://june", "Sessions last one day.", "2026-06-01T09:00:00Z")
+    march = _transcript(store, project, "transcript://march", "Sessions last one hour.", "2026-03-01T09:00:00Z")
+    august = _transcript(store, project, "transcript://august", "Sessions last a week.", "2026-08-01T09:00:00Z")
+    current = store.remember(project["id"], {"kind": "decision", "key": "ttl", "content": "One day"}, [june["id"]])
+    older = store.remember(project["id"], {"kind": "decision", "key": "ttl-old", "content": "One hour",
+                                           "supersedes": current["id"]}, [march["id"]])
+    assert older["metadata"]["supersede_warning"] == "anachronistic_supersede"
+    assert older["metadata"]["supersede_replaced_evidence_latest"] == "2026-06-01T09:00:00+00:00"
+    # New, later evidence for the same replacement clears the stale warning.
+    updated = store.remember(project["id"], {"id": older["id"], "expected_version": 1, "content": "One hour"},
+                             [august["id"]])
+    assert "supersede_warning" not in updated["metadata"]
+    assert "supersede_replaced_evidence_latest" not in updated["metadata"]
+    # Moving back to older evidence raises it again.
+    again = store.remember(project["id"], {"id": older["id"], "expected_version": 2, "content": "One hour"},
+                           [march["id"]])
+    assert again["metadata"]["supersede_warning"] == "anachronistic_supersede"
+
+
+def test_observed_replaced_evidence_never_triggers_the_warning(store, project):
+    note = store.snapshot(project["id"], "manual://note", "Sessions last one day.", "manual")
+    march = _transcript(store, project, "transcript://march", "Sessions last one hour.", "2026-03-01T09:00:00Z")
+    current = store.remember(project["id"], {"kind": "decision", "key": "ttl", "content": "One day"}, [note["id"]])
+    replacement = store.remember(project["id"], {"kind": "decision", "key": "ttl-old", "content": "One hour",
+                                                 "supersedes": current["id"]}, [march["id"]])
+    assert "supersede_warning" not in replacement["metadata"]
+
+
+def test_public_record_shows_evidence_fields_without_truncation(store, project):
+    from devbrain.retrieval import public_record
+    june = _transcript(store, project, "transcript://june", "Sessions last one day.", "2026-06-01T09:00:00Z")
+    march = _transcript(store, project, "transcript://march", "Sessions last one hour.", "2026-03-01T09:00:00Z")
+    current = store.remember(project["id"], {"kind": "decision", "key": "ttl", "content": "One day",
+                                             "metadata": {"summary": "kept"}}, [june["id"]])
+    older = store.remember(project["id"], {"kind": "decision", "key": "ttl-old", "content": "One hour",
+                                           "supersedes": current["id"]}, [march["id"]])
+    shown = public_record(older)["metadata"]
+    assert shown["evidence_basis"] == "stated" and shown["supersede_warning"] == "anachronistic_supersede"
+    assert "truncated" not in shown and "omitted_fields" not in shown
+    assert public_record(current)["metadata"]["summary"] == "kept"
