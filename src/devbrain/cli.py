@@ -22,19 +22,19 @@ from devbrain.ollama import OllamaUnavailable
 from devbrain.arcade import ArcadeError
 
 app = typer.Typer(no_args_is_help=False, pretty_exceptions_enable=False,
-                  help="Terminalowe środowisko z pamięcią: Codex, Claude, Ollama, API i GitHub Copilot.")
-projects_app = typer.Typer(help="Rejestr projektów i katalogów.")
-tasks_app = typer.Typer(help="Wspólne kroki planów, statusy i dowody weryfikacji.")
-models_app = typer.Typer(help="Lokalne modele Ollama.")
-engine_app = typer.Typer(help="Natywny silnik ArcadeDB (Java 21+).")
-plans_app = typer.Typer(help="Wersjonowane plany i deterministyczny następny krok.")
-checks_app = typer.Typer(help="Nazwane sprawdzenia projektu i aktualność dowodów.")
-sessions_app = typer.Typer(help="Pakiety wznowienia, zakres historii i potwierdzenia odbioru.")
-eval_app = typer.Typer(help="Izolowana ewaluacja rzeczywistej pamięci.")
-jobs_app = typer.Typer(help="Diagnostyka i jawne ponawianie zadań jednego projektu.")
-memory_app = typer.Typer(help="Przenośna pamięć jednego projektu i lokalny harmonogram snapshotów.")
-cockpit_app = typer.Typer(help="Lokalny kokpit, trwałe terminale i podgląd pamięci.")
-workspace_app = typer.Typer(help="Terminalowe środowisko pracy: stan, odłączanie i zatrzymanie.")
+                  help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot.")
+projects_app = typer.Typer(help="The registry of projects and their folders.")
+tasks_app = typer.Typer(help="Shared plan steps, their states and verification evidence.")
+models_app = typer.Typer(help="Local Ollama models.")
+engine_app = typer.Typer(help="The native ArcadeDB engine (Java 21+).")
+plans_app = typer.Typer(help="Versioned plans and a deterministic next step.")
+checks_app = typer.Typer(help="Named project checks and how current their evidence is.")
+sessions_app = typer.Typer(help="Resume packets, the scope of history and acknowledgements.")
+eval_app = typer.Typer(help="Isolated evaluation of the real memory.")
+jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's jobs.")
+memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
+cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
+workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -135,14 +135,14 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         if service_alive(settings):
             return
         time.sleep(0.2)
-    raise typer.BadParameter(f"Usługa nie wystartowała. Sprawdź {log}; port {settings.port} może być zajęty.")
+    raise typer.BadParameter(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
 
 def request(settings: Settings, method: str, path: str, *, start_service: bool = True, **kwargs):
     if start_service:
         ensure_service(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
-        raise typer.BadParameter("Brak istniejącej konfiguracji Cairnmind; uruchom jawnie `cairnmind init`.")
+        raise typer.BadParameter("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/checkpoint", "/plans/save", "/plans/activate",
@@ -173,8 +173,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         except httpx.HTTPError:
             if not start_service:
                 raise typer.BadParameter(
-                    "Istniejąca usługa Cairnmind jest niedostępna; diagnostyka jej nie uruchamia. "
-                    "Uruchom jawnie `cairnmind serve`.") from None
+                    "The existing Cairnmind service is unavailable; diagnostics do not start it. "
+                    "Run `cairnmind serve` explicitly.") from None
             raise
         if not response.is_success:
             try:
@@ -201,8 +201,8 @@ def _launch_terminal_workspace(ctx: typer.Context, *, takeover: bool = False) ->
     # configuration, launch a browser or silently start interactive processes.
     if not _interactive_terminal():
         raise typer.BadParameter(
-            "Uruchom `cairnmind` w interaktywnym terminalu. "
-            "Dostępne polecenia: `cairnmind --help`; stan: `cairnmind workspace status`.")
+            "Run `cairnmind` in an interactive terminal. "
+            "Available commands: `cairnmind --help`; status: `cairnmind workspace status`.")
     from devbrain.workspace import launch_workspace
     ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     code = launch_workspace(ctx.obj, takeover=True) if takeover else launch_workspace(ctx.obj)
@@ -212,40 +212,40 @@ def _launch_terminal_workspace(ctx: typer.Context, *, takeover: bool = False) ->
 
 @app.command()
 def tui(ctx: typer.Context):
-    """Otwórz terminalowe środowisko Cairnmind (tak samo jak polecenie bez argumentów)."""
+    """Open the Cairnmind terminal workspace (the same as the command without arguments)."""
     _launch_terminal_workspace(ctx)
 
 
 @app.command("version")
 def version():
-    """Pokaż wersję bez inicjalizacji konfiguracji lub usług."""
+    """Show the version without initializing configuration or services."""
     from devbrain import __version__
     output({"version": __version__})
 
 
 @workspace_app.command("status")
 def terminal_workspace_status(ctx: typer.Context):
-    """Odczytaj stan bez uruchamiania usług i inicjalizacji konfiguracji."""
+    """Read the status without starting services or initializing configuration."""
     from devbrain.workspace import workspace_status
     output(workspace_status(ctx.obj))
 
 
 @workspace_app.command("detach")
 def terminal_workspace_detach(ctx: typer.Context):
-    """Odłącz widok terminalowy, zachowując sesje klientów."""
+    """Detach the terminal view and keep the client sessions."""
     from devbrain.workspace import detach_workspace
     output(detach_workspace(ctx.obj))
 
 
 @workspace_app.command("takeover")
 def terminal_workspace_takeover(ctx: typer.Context):
-    """Przejmij sterowanie w tym terminalu; poprzedni widok przejdzie w podgląd."""
+    """Take control in this terminal; the previous view becomes read-only."""
     _launch_terminal_workspace(ctx, takeover=True)
 
 
 @workspace_app.command("stop")
 def terminal_workspace_stop(ctx: typer.Context, clients: bool = False):
-    """Zamknij środowisko; --clients zatrzymuje też należące do niego sesje."""
+    """Close the workspace; --clients also stops the sessions that belong to it."""
     from devbrain.workspace import stop_workspace
     output(stop_workspace(ctx.obj, stop_clients=clients))
 
@@ -253,21 +253,21 @@ def terminal_workspace_stop(ctx: typer.Context, clients: bool = False):
 @cockpit_app.command("serve")
 @initialized
 def cockpit_serve(ctx: typer.Context, port: int | None = None):
-    """Uruchom serwer kokpitu; normalnie zarządza nim polecenie devbrain."""
+    """Run the cockpit server; normally the cairnmind command manages it."""
     from devbrain.cockpit import serve_cockpit
     serve_cockpit(ctx.obj, port=port)
 
 
 @cockpit_app.command("status")
 def cockpit_status(ctx: typer.Context):
-    """Odczytaj stan kokpitu bez uruchamiania usług i inicjalizacji konfiguracji."""
+    """Read the cockpit status without starting services or initializing configuration."""
     from devbrain.cockpit import cockpit_status as inspect
     output(inspect(ctx.obj))
 
 
 @cockpit_app.command("stop")
 def cockpit_stop(ctx: typer.Context, clients: bool = False):
-    """Zatrzymaj kokpit; --clients jawnie zatrzymuje także zarządzane terminale."""
+    """Stop the cockpit; --clients explicitly stops the managed terminals too."""
     from devbrain.cockpit import stop_cockpit
     output(stop_cockpit(ctx.obj, stop_clients=clients))
 
@@ -275,7 +275,7 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 @app.command()
 @initialized
 def init(ctx: typer.Context):
-    """Utwórz lokalny magazyn. Nie pobiera modeli ani nie zmienia konfiguracji klientów."""
+    """Create the local store. Downloads no models and changes no client configuration."""
     store_for(ctx.obj)
     output({"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"})
 
@@ -283,7 +283,7 @@ def init(ctx: typer.Context):
 @engine_app.command("install")
 @initialized
 def engine_install(ctx: typer.Context, distribution: Path | None = None):
-    """Pobierz przypięty silnik ArcadeDB i sprawdź SHA-256 (około 87 MB)."""
+    """Download the pinned ArcadeDB engine and verify its SHA-256 (about 87 MB)."""
     from devbrain.engine import install_engine
     path = install_engine(ctx.obj, distribution)
     output({"installed": str(path), "version": ctx.obj.arcade_version})
@@ -308,14 +308,14 @@ def engine_inspect(ctx: typer.Context):
 def engine_stop(ctx: typer.Context):
     from devbrain.engine import stop_engine
     if service_alive(ctx.obj):
-        raise typer.BadParameter("Najpierw cairnmind stop; usługa wiedzy korzysta z ArcadeDB")
+        raise typer.BadParameter("Run cairnmind stop first; the knowledge service is using ArcadeDB")
     output(stop_engine(ctx.obj))
 
 
 @app.command()
 @initialized
 def doctor(ctx: typer.Context, contract: bool = typer.Option(
-        False, "--contract", help="Pokaż tylko kontrakt klientów: każdą kontrolę z linią dowodu."),
+        False, "--contract", help="Show only the client contract: every check with its evidence line."),
            output_format: Annotated[str, typer.Option(
                "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json"):
     if output_format not in ("json", "text"):
@@ -346,7 +346,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
 @app.command()
 @initialized
 def serve(ctx: typer.Context, defer_background_inference: bool = False):
-    """Uruchom lokalną usługę (jeden właściciel GPU i kolejki)."""
+    """Run the local service (the single owner of the GPU and the queue)."""
     import uvicorn
     from devbrain.service import create_app
     settings = ctx.obj
@@ -354,7 +354,7 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise typer.BadParameter("Usługa już działa dla tego magazynu.")
+            raise typer.BadParameter("The service is already running for this store.")
         api = create_app(settings, background_inference=not defer_background_inference)
         server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
         api.state.shutdown = lambda: setattr(server, "should_exit", True)
@@ -364,9 +364,9 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
 @app.command()
 @initialized
 def stop(ctx: typer.Context):
-    """Zatrzymaj tylko usługę tego magazynu, bez usuwania danych."""
+    """Stop only this store's service, without deleting data."""
     if not service_alive(ctx.obj):
-        output({"stopping": False, "reason": "Usługa nie działa"})
+        output({"stopping": False, "reason": "The service is not running"})
         return
     output(request(ctx.obj, "POST", "/shutdown"))
 
@@ -377,7 +377,7 @@ def project_add(ctx: typer.Context, name: str, root: Path):
     store = store_for(ctx.obj)
     root = root.expanduser().resolve(strict=True)
     if not root.is_dir():
-        raise typer.BadParameter("Katalog projektu musi być katalogiem")
+        raise typer.BadParameter("The path must be a folder, not a file")
     project = store.add_project(name, root)
     from devbrain.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
@@ -394,12 +394,12 @@ def project_list(ctx: typer.Context):
 @projects_app.command("root")
 @initialized
 def project_root(ctx: typer.Context, project: str, path: Path):
-    """Jawnie przypisz dodatkowy katalog lub worktree do projektu."""
+    """Explicitly assign an additional folder or worktree to the project."""
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     root = path.expanduser().resolve(strict=True)
     if not root.is_dir():
-        raise typer.BadParameter("Katalog projektu musi być katalogiem")
+        raise typer.BadParameter("The path must be a folder, not a file")
     store.add_project_root(pid, root)
     output({"project": pid, "root": str(root)})
 
@@ -413,7 +413,7 @@ def index(ctx: typer.Context, project: str):
 @app.command("import")
 @initialized
 def import_command(ctx: typer.Context, path: Path, project: str | None = None, client: str = "auto"):
-    """Importuj JSONL klienta; bez projektu zachowaj historię w skrzynce importu."""
+    """Import a client's JSONL; without a project, keep the history in the import inbox."""
     output(request(ctx.obj, "POST", "/import", json={"path": str(path.expanduser().resolve()),
                                                     "project": project, "client": client}))
 
@@ -464,7 +464,7 @@ def jobs_list(ctx: typer.Context, project: str,
               state: Annotated[str | None, typer.Option("--state", "--status")] = None,
               kind: str | None = None,
               limit: Annotated[int, typer.Option(min=1, max=100)] = 50):
-    """Odczytaj ograniczoną listę zadań; nie uruchamiaj usługi ani silnika."""
+    """Read a bounded list of jobs; start neither the service nor the engine."""
     params = {"project": project, "limit": limit}
     if state is not None:
         params["state"] = state
@@ -475,7 +475,7 @@ def jobs_list(ctx: typer.Context, project: str,
 
 @jobs_app.command("show")
 def jobs_show(ctx: typer.Context, project: str, job_id: str):
-    """Odczytaj zadanie należące do wskazanego projektu."""
+    """Read a job that belongs to the given project."""
     output(request(ctx.obj, "GET", f"/jobs/{job_id}", start_service=False, params={"project": project}))
 
 
@@ -484,9 +484,9 @@ def jobs_show(ctx: typer.Context, project: str, job_id: str):
 def jobs_retry(ctx: typer.Context, project: str, job_id: str,
                expected_attempts: Annotated[int, typer.Option("--expected-attempts", min=0)],
                include_omissions: Annotated[bool, typer.Option(
-                   "--include-omissions", help="Uwzględnij zakończoną ekstrakcję z samymi odrzuconymi rekordami.")
+                   "--include-omissions", help="Include a finished extraction in which every record was rejected.")
                ] = False):
-    """Jawnie ponów wybrane zadanie, jeśli licznik prób nadal się zgadza."""
+    """Explicitly retry the chosen job if its attempt counter still matches."""
     payload = {"project": project, "expected_attempts": expected_attempts}
     if include_omissions:
         payload["include_omissions"] = True
@@ -503,7 +503,7 @@ def records(ctx: typer.Context, project: str, history: bool = False):
 @app.command()
 @initialized
 def source(ctx: typer.Context, source_id: str):
-    """Odczytaj zachowany snapshot źródła, nawet gdy oryginał już nie istnieje."""
+    """Read the stored snapshot of a source, even when the original no longer exists."""
     output(store_for(ctx.obj).get_source(source_id))
 
 
@@ -573,7 +573,7 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
     pid = store.resolve_project(project)["id"]
     task = next((r for r in store.list_records(pid) if r["id"] == task_id and r["kind"] == "task"), None)
     if task is None:
-        raise typer.BadParameter("Nie znaleziono zadania w tym projekcie")
+        raise typer.BadParameter("No such task in this project")
     sources = task["source_ids"]
     if isinstance(sources, str):
         sources = json.loads(sources)
@@ -583,10 +583,10 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
     evidence_text = None
     if test_passed or review_passed or acceptance_passed:
         if evidence is None:
-            raise typer.BadParameter("Weryfikacja wymaga --evidence PLIK z wynikiem sprawdzenia")
+            raise typer.BadParameter("Verification requires --evidence FILE with the check result")
         evidence_text = evidence.read_text(encoding="utf-8")
         if not evidence_text.strip():
-            raise typer.BadParameter("Plik dowodu musi zawierać niepusty wynik sprawdzenia")
+            raise typer.BadParameter("The evidence file must contain a non-empty check result")
     with actor_write(store, ctx.obj, pid, worktree) as scope:
         if evidence_text is not None:
             src = store.snapshot(pid, f"verification://{uuid.uuid4()}", evidence_text, "verification",
@@ -617,7 +617,7 @@ def plan_save(ctx: typer.Context, project: str, input_json: Path,
     from devbrain.plans import PlanManager
     document = json.loads(input_json.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
-        raise typer.BadParameter("Plik musi zawierać obiekt z polami plan i steps")
+        raise typer.BadParameter("The file must contain an object with the fields plan and steps")
     versions = (json.loads(task_versions.read_text(encoding="utf-8")) if task_versions
                 else document.get("task_versions"))
     store = store_for(ctx.obj)
@@ -727,7 +727,7 @@ def check_list(ctx: typer.Context, project: str,
         records = store.query("SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task'",
                               {"id": task, "project": pid})
         if not records:
-            raise typer.BadParameter("Brak zadania w tym projekcie")
+            raise typer.BadParameter("No such task in this project")
         result["verification"] = verification_status(store, records[0], scope)
     output(result)
 
@@ -759,7 +759,7 @@ def session_context(ctx: typer.Context, session_id: str):
 def session_ack(ctx: typer.Context, session_id: str, packet_id: str, packet_hash: str, readback_json: Path):
     actor = os.environ.get("DEVBRAIN_SESSION_ID")
     if actor and actor != session_id:
-        raise typer.BadParameter("Nie można potwierdzać innej sesji")
+        raise typer.BadParameter("Another session cannot be acknowledged")
     output(request(ctx.obj, "POST", "/sessions/ack", json={"session_id": session_id,
         "packet_id": packet_id, "packet_hash": packet_hash,
         "readback": json.loads(readback_json.read_text(encoding="utf-8"))}))
@@ -771,7 +771,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
              skip_claude: bool = False):
     from devbrain.evaluation import run_evaluation
     if skip_claude and not clients:
-        raise typer.BadParameter("--skip-claude wymaga --clients")
+        raise typer.BadParameter("--skip-claude requires --clients")
     result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
     output(result)
     if result.get("status") == "failed":
@@ -783,7 +783,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
 @eval_app.command("memory")
 @initialized
 def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
-    """Jawnie sprawdź ekstrakcję, przeniesienie i odtworzenie pamięci przez lokalną Ollamę."""
+    """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
     from devbrain.memory_evaluation import run_memory_evaluation
     result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
     output(result)
@@ -794,14 +794,14 @@ def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
 @memory_app.command("snapshot")
 @initialized
 def memory_snapshot(ctx: typer.Context, project: str, worktree: Path | None = None, preview: bool = False):
-    """Zapisz pełną pamięć projektu; --preview pokazuje zakres bez zapisu snapshotu."""
+    """Save the project's full memory; --preview shows the scope without writing a snapshot."""
     payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
     output(request(ctx.obj, "POST", "/memory/preview" if preview else "/memory/snapshot", json=payload))
 
 
 @memory_app.command("inspect")
 def memory_inspect(ctx: typer.Context, path: Path):
-    """Sprawdź pliki snapshotu bez inicjalizacji magazynu i uruchamiania usług."""
+    """Check a snapshot's files without initializing the store or starting services."""
     from devbrain.memory import inspect_snapshot
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
@@ -850,7 +850,7 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
 def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
                   dry_run: bool = False):
-    """Wczytaj pamięć wyłącznie tego projektu; --dry-run wymaga istniejącej usługi i niczego nie zapisuje."""
+    """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from devbrain.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())
     inspect_snapshot(selected)  # Validate the transfer before initializing anything.
@@ -866,9 +866,9 @@ def memory_import(ctx: typer.Context, path: Path,
 def memory_auto(ctx: typer.Context, project: str, enable: bool = False, disable: bool = False,
                 interval_minutes: Annotated[int, typer.Option(min=1, max=10080)] = 15,
                 worktree: Path | None = None):
-    """Włącz lub wyłącz lokalny harmonogram jednego projektu; bez commitów i wysyłania do GitHub."""
+    """Enable or disable the local schedule of one project; no commits and nothing is sent to GitHub."""
     if enable == disable:
-        raise typer.BadParameter("Wybierz dokładnie jedno: --enable albo --disable.")
+        raise typer.BadParameter("Choose exactly one: --enable or --disable.")
     ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     payload = {"project": project, "enabled": enable, "interval_minutes": interval_minutes,
                "worktree": str(worktree.expanduser().resolve()) if worktree else None}
@@ -877,7 +877,7 @@ def memory_auto(ctx: typer.Context, project: str, enable: bool = False, disable:
 
 @memory_app.command("status")
 def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None):
-    """Odczytaj ostatni snapshot i automat; nie uruchamiaj usługi ani nie twórz konfiguracji."""
+    """Read the last snapshot and the schedule; start no service and create no configuration."""
     params = {"project": project}
     if worktree is not None:
         params["worktree"] = str(worktree.expanduser().resolve())
@@ -887,7 +887,7 @@ def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None
 @app.command()
 @initialized
 def install(ctx: typer.Context, project: str):
-    """Dodaj projektowe MCP, hooki i instrukcje, zachowując obecną konfigurację."""
+    """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from devbrain.integrations import install_integrations
     store = store_for(ctx.obj)
     output(install_integrations(ctx.obj, store.resolve_project(project)))
@@ -904,7 +904,7 @@ def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = N
         root = str(worktree.expanduser().resolve())
         if not store.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
                             {"project": selected["id"], "path": root}):
-            raise typer.BadParameter("Worktree musi być zarejestrowanym katalogiem projektu")
+            raise typer.BadParameter("The worktree must be a registered folder of the project")
         selected = {**selected, "root": root}
     args = list(ctx.args)
     if args[:1] == ["--"]:
@@ -915,7 +915,7 @@ def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = N
 @app.command()
 @initialized
 def mcp(ctx: typer.Context):
-    """MCP stdio; nie wypisuje logów ani komunikatów CLI na stdout."""
+    """MCP over stdio; prints no logs or CLI messages to stdout."""
     from devbrain.mcp_server import run
     run(ctx.obj)
 
@@ -944,11 +944,11 @@ def model_list(ctx: typer.Context):
 @models_app.command("pull")
 @initialized
 def model_pull(ctx: typer.Context):
-    """Jawnie pobierz modele (kilka GB) i zapisz ich digests."""
+    """Explicitly download the models (several GB) and record their digests."""
     settings = ctx.obj
     with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900)) as client:
         for name in (settings.chat_model, settings.embedding_model):
-            typer.echo(f"Pobieranie {name}…", err=True)
+            typer.echo(f"Downloading {name}…", err=True)
             with client.stream("POST", settings.ollama_url + "/api/pull", json={"name": name, "stream": True}) as res:
                 res.raise_for_status()
                 previous = None
@@ -985,8 +985,8 @@ def _retry_jobs(store):
 def retry_jobs(ctx: typer.Context):
     if os.environ.get("DEVBRAIN_SESSION_ID"):
         raise typer.BadParameter(
-            "Sesja modelu nie może ponawiać zadań wszystkich projektów. "
-            "Użyj `cairnmind jobs retry PROJEKT JOB_ID --expected-attempts N` z aktualnym ACK.")
+            "A model session cannot retry the jobs of all projects. "
+            "Use `cairnmind jobs retry PROJECT JOB_ID --expected-attempts N` with a current ACK.")
     _retry_jobs(store_for(ctx.obj))
     output({"retried": True})
 
@@ -994,7 +994,7 @@ def retry_jobs(ctx: typer.Context):
 @app.command("rebuild-vectors")
 @initialized
 def rebuild_vectors(ctx: typer.Context, project: str):
-    """Odbuduj pochodne wektory projektu, zachowując źródła i historię."""
+    """Rebuild the project's derived vectors, keeping sources and history."""
     from devbrain.ollama import Ollama
     from devbrain.service import schedule_embeddings
     settings = ctx.obj
@@ -1014,12 +1014,12 @@ def export(ctx: typer.Context, destination: Path, project: str | None = None, ma
     pid = store.resolve_project(project)["id"] if project else None
     data = store.export(pid)
     if markdown:
-        parts = ["# Cairnmind — eksport pamięci\n"]
+        parts = ["# Cairnmind — memory export\n"]
         for record in data.get("records", []):
             parts.append(f"## {record['kind']}: {record.get('key') or record['id']}\n\n{record['content']}\n")
             parts.append("```json\n" + json.dumps(record, ensure_ascii=False, indent=2) + "\n```\n")
         for src in data.get("sources", []):
-            parts.append(f"## Źródło {src['id']}\n\nURI: {src['uri']}\n\n````text\n{src['content']}\n````\n")
+            parts.append(f"## Source {src['id']}\n\nURI: {src['uri']}\n\n````text\n{src['content']}\n````\n")
         text = "\n".join(parts)
     else:
         text = json.dumps(data, ensure_ascii=False, indent=2, default=str)
@@ -1040,9 +1040,9 @@ def restore(ctx: typer.Context, source: Path):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise typer.BadParameter("Najpierw cairnmind stop; usługa nadal posiada blokadę magazynu")
+            raise typer.BadParameter("Run cairnmind stop first; the service still holds the store lock")
         if service_alive(ctx.obj):
-            raise typer.BadParameter("Najpierw cairnmind stop; odtwarzanie wymaga zatrzymanej usługi")
+            raise typer.BadParameter("Run cairnmind stop first; restoring requires a stopped service")
         store_for(ctx.obj).restore(source)
     output({"restored": True})
 
@@ -1050,9 +1050,9 @@ def restore(ctx: typer.Context, source: Path):
 @app.command()
 @initialized
 def forget(ctx: typer.Context, project: str,
-           delete_project: Annotated[bool, typer.Option("--delete-project", help="Jawne usunięcie danych projektu")] = False):
+           delete_project: Annotated[bool, typer.Option("--delete-project", help="Explicitly delete the project's data")] = False):
     if not delete_project:
-        raise typer.BadParameter("Usunięcie wymaga --delete-project. Istniejące backupy pozostają bez zmian.")
+        raise typer.BadParameter("Deleting requires --delete-project. Existing backups stay unchanged.")
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     store.forget_project(pid)
@@ -1062,7 +1062,7 @@ def forget(ctx: typer.Context, project: str,
 @app.command()
 @initialized
 def benchmark(ctx: typer.Context, project: str, question: str):
-    """Zmierz pierwszą odpowiedź i powtórzenie z cache; nie zastępuje oceny jakości."""
+    """Time the first answer and the cached repeat; this does not replace a quality evaluation."""
     runs = []
     for label in ("first", "cached"):
         started = time.perf_counter()
