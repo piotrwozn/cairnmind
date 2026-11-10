@@ -183,6 +183,16 @@ cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-
 cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app
 ```
 
+To read a snapshot without importing it, use `memory show`. It needs no Java, engine, model or service, and writes nothing. Inside a Cairnmind coding session the running service first confirms that the package belongs to the session's project, as it does for `memory inspect`:
+
+```bash
+cairnmind memory show ~/src/my-app/.memory/devbrain
+cairnmind memory show ~/src/my-app/.memory/devbrain --kind decision --grep login
+cairnmind memory show ~/src/my-app/.memory/devbrain --kind plan
+```
+
+It validates the package exactly as `memory inspect` does, then prints the snapshot header and the matching records with their status, version, time of last change and source addresses, and plans with their steps and source addresses. `--kind` takes a record kind or `plan`, `--status` a record status, and `--grep` a case-insensitive text. Check runs stored in the snapshot are printed as historical.
+
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
 
 ```bash

@@ -134,6 +134,7 @@ cairnmind memory snapshot my-app
 cairnmind memory auto my-app --enable --interval-minutes 15
 cairnmind memory status my-app
 cairnmind memory inspect ~/src/my-app/.memory/devbrain
+cairnmind memory show ~/src/my-app/.memory/devbrain --kind decision
 cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
 ```
 
