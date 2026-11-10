@@ -213,7 +213,7 @@ def test_cache_stamp_reads_only_new_journal_events(workspace, monkeypatch):
     original = store.query
     monkeypatch.setattr(store, "query", lambda *a, **k: queries.append(a[0]) or original(*a, **k))
     store.cache_stamp(pid)
-    assert queries == ["SELECT epoch,seq FROM journal_state WHERE id='current'"]
+    assert queries == ["SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'"]
     monkeypatch.undo()
     for index in range(1203):
         store.remember(pid, {"kind": "fact", "content": f"Fact {index}"}, [source["id"]])
@@ -225,11 +225,19 @@ def test_cache_stamp_reads_only_new_journal_events(workspace, monkeypatch):
     assert store.cache_stamp(pid) != first
     assert store.cache_stamp(other["id"]) != other_stamp
     reads = []
-    journal_read = Journal.read
-    monkeypatch.setattr(Journal, "read", lambda self, **k: reads.append(k) or journal_read(self, **k))
+    plain_query = store.query
+    monkeypatch.setattr(store, "query", lambda *a, **k: reads.append(a) or plain_query(*a, **k))
+    monkeypatch.setattr(store, "transaction", lambda: pytest.fail("The stamp took the store's writer lock"))
+    monkeypatch.setattr(store, "_lock", lambda: pytest.fail("The stamp took the store's writer lock"))
+    before = store.cache_stamp(pid)
+    monkeypatch.undo()
     store.remember(pid, {"kind": "fact", "content": "One more"}, [source["id"]])
-    store.cache_stamp(pid)
-    assert len(reads) == 1  # one page for one new write, not the whole history
+    monkeypatch.setattr(store, "query", lambda *a, **k: reads.append(a) or plain_query(*a, **k))
+    monkeypatch.setattr(store, "transaction", lambda: pytest.fail("The stamp took the store's writer lock"))
+    del reads[:]
+    assert store.cache_stamp(pid) != before
+    # The journal state and one page of events for one new write, not the whole history.
+    assert len(reads) == 2 and len(plain_query(*reads[1])) < 20
     monkeypatch.undo()
     stamp = store.cache_stamp(pid)
     with store.transaction() as tx:

@@ -964,28 +964,46 @@ class Store:
         read. Writes that cannot affect an answer (jobs, sessions, imports, snapshots) do
         not move it. The value is comparable only within one Store object.
         """
-        from .journal import Journal
-        journal = Journal(self)
+        # Plain reads, never the writer lock: a question must not wait behind a long write
+        # transaction of another project. Events are committed together with the journal
+        # state, so every event up to the head read first is visible to the queries below.
         with self._stamp_lock:
-            if journal.cursor() != self._stamp_cursor:
-                while True:
-                    page = journal.read(after=self._stamp_cursor, limit=1000)
-                    if page["reset_required"]:
-                        # First call, a new journal epoch, or events pruned past our position:
-                        # nothing is known about the gap, so every project counts as changed.
-                        self._stamp_base, self._stamp_global = self._stamp_base + 1, 0
-                        self._stamp_seq.clear()
-                    for event in page["events"]:
+            state = self.query("SELECT epoch,seq,first_seq FROM journal_state WHERE id='current'")
+            if not state:
+                raise ValueError("Journal state is unavailable")
+            head = {"epoch": state[0]["epoch"], "seq": state[0]["seq"]}
+            known = self._stamp_cursor
+            if head != known:
+                position = known["seq"] if known and known["epoch"] == head["epoch"] else None
+                if position is not None and not state[0].get("first_seq", 1) - 1 <= position <= head["seq"]:
+                    position = None
+                seq, shared, complete = dict(self._stamp_seq), self._stamp_global, position is not None
+                while complete and position < head["seq"]:
+                    rows = self.query(
+                        "SELECT project_id,entity_type,seq FROM journal_events WHERE epoch=:epoch AND seq>:position "
+                        "AND seq<=:upto ORDER BY seq LIMIT 1000",
+                        {"epoch": head["epoch"], "position": position, "upto": head["seq"]})
+                    # Sequence numbers are contiguous. A gap means the events were pruned or
+                    # the journal was reset while we read.
+                    if not rows or [row["seq"] for row in rows] != list(range(position + 1, position + 1 + len(rows))):
+                        complete = False
+                        break
+                    for event in rows:
                         if event["entity_type"] in CACHE_STAMP_IGNORED:
                             continue
-                        if event["project_id"] is None:
-                            self._stamp_global = event["seq"]
+                        if event.get("project_id") is None:
+                            shared = event["seq"]
                         else:
-                            self._stamp_seq[event["project_id"]] = event["seq"]
-                    self._stamp_cursor = page["cursor"]
-                    if page["reset_required"] or len(page["events"]) < 1000:
-                        break
-            parts = [self._stamp_cursor["epoch"], self._stamp_base, self._stamp_global, self._stamp_seq.get(project_id, 0)]
+                            seq[event["project_id"]] = event["seq"]
+                    position = rows[-1]["seq"]
+                if complete:
+                    self._stamp_seq, self._stamp_global = seq, shared
+                else:
+                    # First call, a new journal epoch, or events no longer available: nothing
+                    # is known about the gap, so every project counts as changed.
+                    self._stamp_base, self._stamp_global, self._stamp_seq = self._stamp_base + 1, 0, {}
+                self._stamp_cursor = head
+            parts = [head["epoch"], self._stamp_base, self._stamp_global, self._stamp_seq.get(project_id, 0)]
         return hashlib.sha256(_json(parts).encode()).hexdigest()
 
     def recent_job_errors(self, project_id=None, limit=10):
