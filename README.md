@@ -10,10 +10,27 @@ Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and AP
 
 What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cairnmind treats memory as evidence, not as notes:
 
-- **Every answer cites its sources.** The local knowledge agent answers `ask` questions only with verbatim quotes from archived sources, re-checked against the current file content. When the project does not contain the answer, it says `unknown`.
-- **Resuming is verified, not assumed.** A session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
-- **"Done" requires fresh proof.** Named test profiles bind a passing run to the task definition and to a fingerprint of the current code. A later code change marks the evidence stale.
+- **Every answer cites its sources.** The local knowledge agent must back an `ask` answer with verbatim quotes. The service checks that each quote occurs literally in the source it read and that the source is still current; otherwise the answer is not presented as grounded. When the project does not contain the answer, the agent says `unknown`.
+- **Resuming is verified, not assumed.** A bound session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
+- **"Done" requires fresh proof.** For tasks that require tests, completion needs a passing run of each named test profile, bound to the task definition and to a fingerprint of the current code. A later code change marks that evidence stale.
 - **Memory travels with the repository.** A checksummed snapshot in `.memory/devbrain/` moves one project's knowledge, plans and history to another machine without moving credentials.
+
+## Who it is for
+
+Cairnmind 0.8 suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux or WSL2 with a local model through Ollama. It is a single-user, local tool. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
+
+## What it guarantees, and what it does not
+
+Cairnmind checks things a program can check:
+
+| It verifies | It does not verify |
+|---|---|
+| A cited quote occurs literally in the source version that was read, and that source is still current | That the model interpreted the quote correctly. Quote coverage of an answer is reported for information only |
+| A session acknowledged the exact packet, plan and task versions before writing | That the model understood what it acknowledged |
+| A test run passed for this task definition, check profile and code fingerprint, and whether it is still fresh | That passing tests mean every acceptance criterion is met, or that a review happened |
+| Where a stored finding came from, and when its evidence existed | That the finding is true |
+
+Local memory reduces how much history an assistant must carry, but it does not remove the context limits or the cost of the assistants themselves. Portable snapshots can contain full conversation text; review them before sharing.
 
 ## How it works
 
@@ -42,7 +59,7 @@ Measured on 9 November 2026 with `qwen3.5:9b` on an RTX 4080 Super, in isolated 
 | Evaluation | Result |
 |---|---|
 | Recall: 20 golden questions, pass threshold 0.9 | 1.0 in 6 of 6 runs |
-| Hand-off Codex → Claude Code → fresh Codex, real clients | passed |
+| Hand-off Codex → Claude Code → fresh Codex, real clients | passed once, before the 0.8.0 fixes; not repeated on the final code |
 | Portable memory: extraction, transfer, cited recall, project isolation | 3 of 3 runs on the final code |
 
 The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](devbrain/docs/EVALUATION.md).
@@ -56,7 +73,7 @@ The method, the problems the measurement uncovered and the limits of these numbe
 
 ## Quick start
 
-Cairnmind runs on Linux, or on Windows inside WSL2 Ubuntu, with Java 21+, tmux 3.4+, uv and Ollama. With those in place:
+Cairnmind runs on Linux, and on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform). It needs Java 21+, tmux 3.4+, uv and Ollama. With those in place:
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
@@ -82,7 +99,7 @@ uv run pytest -m "not arcade and not tmux"   # fast tier, no database or tmux
 uv run pytest                                # full suite, needs Java 21 and tmux
 ```
 
-Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier and the full suite on every push.
+The automated tests need no Ollama, no models and no signed-in coding clients; those are used only by the explicit evaluations. Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier and the full suite on every push.
 
 ## Status and roadmap
 

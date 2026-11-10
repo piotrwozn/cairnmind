@@ -74,8 +74,6 @@ tar -xzf devbrain-0.8.0.tar.gz
 cd devbrain-0.8.0
 ```
 
-While the repository is private, download the archive with the GitHub CLI instead: `gh release download v0.8.0 -R piotrwozn/cairnmind -p 'devbrain-0.8.0.tar.gz'`.
-
 **From source.** Clone the repository to follow the latest `main`:
 
 ```bash

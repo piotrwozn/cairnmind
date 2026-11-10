@@ -44,10 +44,10 @@ The only data engine is **[ArcadeDB](https://github.com/ArcadeData/arcadedb), Ap
 
 ## Requirements
 
-- Windows with WSL2 Ubuntu.
-- **Java 21+** and **tmux 3.4+** inside WSL.
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Ollama](https://docs.ollama.com/linux) in the same WSL distribution.
-- The clients you plan to use, in the same WSL distribution. [Codex CLI](https://developers.openai.com/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup) are required only for their native profiles.
+- Linux, or Windows with WSL2 Ubuntu. Ubuntu 24.04 is the tested platform.
+- **Java 21+** and **tmux 3.4+**.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Ollama](https://docs.ollama.com/linux) on the same system (on Windows, inside the same WSL distribution).
+- The clients you plan to use, on the same system. [Codex CLI](https://developers.openai.com/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup) are required only for their native profiles.
 - Docker is not needed. The terminal package does not require Node.js or a frontend build.
 
 The reference setup uses an RTX 4080 Super with 16 GB of VRAM; check actual memory use and latency on your own machine after installation.
@@ -56,18 +56,19 @@ The reference setup uses an RTX 4080 Super with 16 GB of VRAM; check actual memo
 
 The complete walkthrough, from a clean Windows machine to the first project, is in **[docs/INSTALL.md](docs/INSTALL.md)**. In short:
 
-1. On Windows, install a current NVIDIA driver and WSL2. In Ubuntu, check `nvidia-smi`.
-2. In WSL, install Java 21 and tmux (`sudo apt install openjdk-21-jre-headless tmux`), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Ollama](https://docs.ollama.com/linux), [Codex CLI](https://developers.openai.com/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup). Log in to both CLIs using their own mechanisms.
-3. Copy the project directory into WSL, for example `~/src/devbrain`, and run:
+1. On Windows only: install a current NVIDIA driver and WSL2. In Ubuntu, check `nvidia-smi`.
+2. In Linux or WSL, install Java 21 and tmux (`sudo apt install openjdk-21-jre-headless tmux`), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Ollama](https://docs.ollama.com/linux), [Codex CLI](https://developers.openai.com/codex/cli) and [Claude Code](https://code.claude.com/docs/en/setup). Log in to both CLIs using their own mechanisms.
+3. Clone the repository and run the installer from the package directory:
 
 ```bash
-cd ~/src/devbrain
+git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
+cd ~/src/cairnmind/devbrain
 bash scripts/install-wsl.sh
 ```
 
 The installer creates an isolated tool installation via `uv tool`, downloads the pinned ArcadeDB (about 86 MB, verified with SHA-256), starts the engine and initializes the database. It does not download models or the Copilot runtime, and it does not change Codex or Claude configuration. The Copilot runtime is prepared by a separate action in the terminal UI. If the `cairnmind` command is not yet on your `PATH`, add the directory the installer prints.
 
-For a manual installation, after `uv tool install --python 3.12 ~/src/devbrain` run:
+For a manual installation, after `uv tool install --python 3.12 ~/src/cairnmind/devbrain` run:
 
 ```bash
 cairnmind engine install
