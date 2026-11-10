@@ -32,7 +32,7 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]
 [project.urls]
 Homepage = "https://github.com/piotrwozn/cairnmind"
 Issues = "https://github.com/piotrwozn/cairnmind/issues"
-Changelog = "https://github.com/piotrwozn/cairnmind/blob/main/devbrain/CHANGELOG.md"
+Changelog = "https://github.com/piotrwozn/cairnmind/blob/main/CHANGELOG.md"
 
 [project.scripts]
 cairnmind = "devbrain.cli:entrypoint"

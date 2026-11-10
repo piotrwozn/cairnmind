@@ -1,13 +1,17 @@
 name: CI
 
 on:
+  # Branches are checked through their pull request; a push runs CI only on main,
+  # so a commit on a pull request branch does not run every job twice.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: devbrain
+# A newer commit on the same pull request cancels the run of the older one.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Shared 2-core runners: keyboard latency budgets x4 (still below the 3 s blocked-UI case).
@@ -47,7 +51,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/devbrain-arcade
-          key: arcadedb-${{ hashFiles('devbrain/src/devbrain/config.py') }}
+          key: arcadedb-${{ hashFiles('src/devbrain/config.py') }}
       - name: Prepare pinned ArcadeDB
         run: |
           uv run python - <<'PY'

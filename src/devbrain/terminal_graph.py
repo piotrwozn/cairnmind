@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.segment import Segment
 from rich.text import Text
 from textual import on, work
-from textual.app import ComposeResult
+from textual.app import ComposeResult, ScreenStackError
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
@@ -591,12 +591,14 @@ class GraphApp(BasePanel):
         self._frame_dirty = True
 
     def _visible(self):
-        if not self._active or isinstance(self.screen, GroupPicker):
-            return False
+        if not self._active or not self.is_running:
+            return False  # The app is shutting down; screens may be mid-teardown.
         try:
+            if isinstance(self.screen, GroupPicker):
+                return False
             widget = self.query_one(TerminalGraph)
-        except NoMatches:
-            return False  # A pending timer can run while the pane is unmounting.
+        except (NoMatches, ScreenStackError):
+            return False  # A pending timer or worker can run while the pane is unmounting.
         return self._active and terminal_visible(self.workspace_data, (widget.size.width, widget.size.height), self._tmux_visible)
 
     def set_active(self, active):
@@ -665,6 +667,8 @@ class GraphApp(BasePanel):
             now = time.monotonic()
             self.model.advance(now - self._last_frame)
             self._last_frame = now
+            if not self._visible():
+                return  # Started after shutdown began or while hidden.
             widget = self.query_one(TerminalGraph)
             camera = replace(self.model.camera, pitch=self.model.camera.pitch + .22 * math.sin(self.model.orbit_time * .35))
             text = await asyncio.to_thread(render_scene, list(self.model.nodes), list(self.model.edges), dict(self.model.positions),

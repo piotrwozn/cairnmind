@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- The package moved to the repository root: after cloning, run the installer and the tests from the top-level directory. The contract documents are in `docs/`.
 - **Renamed to Cairnmind.** The repository moved to `piotrwozn/cairnmind`, the package is `cairnmind` and the command is `cairnmind`; `devbrain` remains an alias for a transition period. The installer removes an earlier `devbrain` uv tool, keeps your memory, and lists the `cairnmind install <project>` commands that reconnect existing projects. Data paths, environment variables and the portable memory format keep their `devbrain` names until a compatible migration (#40).
 - Records carry the time of their evidence (`evidence_earliest`, `evidence_latest`, `evidence_basis`) and a warning when older stated evidence supersedes newer (#4).
 - Search ranks records by status: at similar relevance a confirmed finding comes before proposed and disputed ones (#5).

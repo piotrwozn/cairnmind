@@ -909,3 +909,18 @@ async def test_ask_memory_from_sidebar_shows_cited_answer(tmp_path, monkeypatch)
     method, payload, timeout = asked[0]
     assert method == "POST" and payload["project"] == "project-keyboard"
     assert payload["question"] == "WhyArcadeDB" and timeout == settings.ask_timeout + 150
+
+
+
+@pytest.mark.asyncio
+async def test_workspace_poll_after_shutdown_does_not_touch_removed_widgets(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+    # A poll tick that fires while the app shuts down sees a newer workspace revision.
+    workspace.update({"launch_errors": []})
+    assert app.is_running is False
+    seen = app._workspace_revision
+    await app._poll_workspace()
+    assert app._workspace_revision == seen

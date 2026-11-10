@@ -1,4 +1,4 @@
-> Historical: these are the 0.3 implementation contracts. Module names such as `tui.py` refer to that release; current behaviour is described in [CONTRACTS.md](CONTRACTS.md) and [docs/](docs/).
+> Historical: these are the 0.3 implementation contracts. Module names such as `tui.py` refer to that release; current behaviour is described in [CONTRACTS.md](CONTRACTS.md) and the other guides in this directory.
 
 # DevBrain 0.3 implementation contracts
 

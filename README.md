@@ -10,10 +10,27 @@ Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and AP
 
 What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cairnmind treats memory as evidence, not as notes:
 
-- **Every answer cites its sources.** The local knowledge agent answers `ask` questions only with verbatim quotes from archived sources, re-checked against the current file content. When the project does not contain the answer, it says `unknown`.
-- **Resuming is verified, not assumed.** A session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
-- **"Done" requires fresh proof.** Named test profiles bind a passing run to the task definition and to a fingerprint of the current code. A later code change marks the evidence stale.
+- **Every answer cites its sources.** The local knowledge agent must back an `ask` answer with verbatim quotes. The service checks that each quote occurs literally in the source it read and that the source is still current; otherwise the answer is not presented as grounded. When the project does not contain the answer, the agent says `unknown`.
+- **Resuming is verified, not assumed.** A bound session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
+- **"Done" requires fresh proof.** For tasks that require tests, completion needs a passing run of each named test profile, bound to the task definition and to a fingerprint of the current code. A later code change marks that evidence stale.
 - **Memory travels with the repository.** A checksummed snapshot in `.memory/devbrain/` moves one project's knowledge, plans and history to another machine without moving credentials.
+
+## Who it is for
+
+Cairnmind 0.8 suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux or WSL2 with a local model through Ollama. It is a single-user, local tool. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
+
+## What it guarantees, and what it does not
+
+Cairnmind checks things a program can check:
+
+| It verifies | It does not verify |
+|---|---|
+| A cited quote occurs literally in the source version that was read, and that source is still current | That the model interpreted the quote correctly. Quote coverage of an answer is reported for information only |
+| A session acknowledged the exact packet, plan and task versions before writing | That the model understood what it acknowledged |
+| A test run passed for this task definition, check profile and code fingerprint, and whether it is still fresh | That passing tests mean every acceptance criterion is met, or that a review happened |
+| Where a stored finding came from, and when its evidence existed | That the finding is true |
+
+Local memory reduces how much history an assistant must carry, but it does not remove the context limits or the cost of the assistants themselves. Portable snapshots can contain full conversation text; review them before sharing.
 
 ## How it works
 
@@ -32,8 +49,13 @@ Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot
 
 - **Storage:** a single pinned [ArcadeDB](https://github.com/ArcadeData/arcadedb) engine holds documents, the code dependency graph, full-text and vector indexes.
 - **Retrieval:** full-text search, HNSW vectors and graph traversal, fused and re-checked against source content.
-- **Knowledge agent:** `qwen3.5:9b` through Ollama, with `qwen3-embedding:0.6b` embeddings. Coding assistants are chosen independently.
+- **Knowledge agent:** `qwen3.5:9b` through Ollama with a 16k-token working context, and `qwen3-embedding:0.6b` embeddings. Coding assistants are chosen independently.
 - **Code graph:** tree-sitter analysis of Python, JavaScript and TypeScript. Other languages remain searchable as text.
+- **Memory:** versioned records and independent source snapshots, including uncommitted code.
+- **Queue:** one inference queue shared by all clients; questions take priority over pending extraction and embedding work.
+- **Plans:** a whole plan and its dependencies are saved atomically, with stable step identifiers and a deterministic next step per project and worktree.
+
+The way memory and agents are organized is inspired by SynapCores. Cairnmind is an independent implementation of the knowledge layer; it is not a copy of that product or of its database engine.
 
 ## Measured results
 
@@ -42,25 +64,18 @@ Measured on 9 November 2026 with `qwen3.5:9b` on an RTX 4080 Super, in isolated 
 | Evaluation | Result |
 |---|---|
 | Recall: 20 golden questions, pass threshold 0.9 | 1.0 in 6 of 6 runs |
-| Hand-off Codex → Claude Code → fresh Codex, real clients | passed |
+| Hand-off Codex → Claude Code → fresh Codex, real clients | passed once, before the 0.8.0 fixes; not repeated on the final code |
 | Portable memory: extraction, transfer, cited recall, project isolation | 3 of 3 runs on the final code |
 
-The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](devbrain/docs/EVALUATION.md).
-
-## Repository layout
-
-| Path | Contents |
-|---|---|
-| [`devbrain/`](devbrain/) | The Python package, tests, documentation and pilot material. Start with its [README](devbrain/README.md). |
-| [`.github/`](.github/) | Continuous integration, issue and pull request templates. |
+The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Quick start
 
-Cairnmind runs on Linux, or on Windows inside WSL2 Ubuntu, with Java 21+, tmux 3.4+, uv and Ollama. With those in place:
+Cairnmind runs on Linux, and on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform). It needs Java 21+, tmux 3.4+, uv and Ollama. With those in place:
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
-cd ~/src/cairnmind/devbrain
+cd ~/src/cairnmind
 bash scripts/install-wsl.sh     # installs Cairnmind and ArcadeDB, initialises local memory
 cairnmind models pull            # downloads the local models (about 7 GB)
 cairnmind project add my-app ~/src/my-app
@@ -68,25 +83,174 @@ cairnmind install my-app         # connects Codex / Claude Code to this project
 cairnmind                        # opens the terminal workspace
 ```
 
-**[Step-by-step installation guide](devbrain/docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, connecting assistants, verifying, upgrading, uninstalling and troubleshooting.
+**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, connecting assistants, verifying, upgrading, uninstalling and troubleshooting.
 
-Everyday commands and limits are in [devbrain/README.md](devbrain/README.md). Terminal usage is in [docs/TERMINAL.md](devbrain/docs/TERMINAL.md), connections and permissions in [docs/API.md](devbrain/docs/API.md).
+Docker, Node.js and a frontend build are not needed. The reference setup uses an RTX 4080 Super with 16 GB of VRAM; check memory use and latency on your own machine.
+
+## Your first project
+
+`cairnmind` works from any directory and uses a single project registry in the local Cairnmind store. You can also add a project with **Add folder**: type a Linux or Windows path, or pick a directory with the keyboard. The name is optional. `Enter` on the list opens the project for inspection. On the project screen, choose a named assistant and use **Start work**. **Add assistant** adds another connection to the project and keeps existing assignments.
+
+In **Connections**, add a connection, log in to an account or set a key, choose a model and optionally run an explicit test. Copilot uses your GitHub account and needs no API key of its own. Limits and credential references are under **Advanced limits and credentials**. Saving a connection does not generate a response. Opening the environment attaches to existing processes; it does not start every assigned assistant. See [docs/API.md](docs/API.md) for the full API guide.
+
+## Everyday use
+
+### Workspace
+
+The full Cockpit layout needs at least **140 columns × 42 rows**; **180 × 55** is recommended. In a smaller terminal the active pane is enlarged and hidden processes keep running. `Ctrl+B`, then `p`, `1`, `2`, `i` or `g`, selects projects, clients, the inspector or the graph; `z` zooms the pane and `d` detaches the environment. Pressing `Ctrl+B` twice passes the shortcut through to the native client. Without an interactive terminal, Cairnmind prints instructions instead of opening a browser or initializing services.
+
+```bash
+cairnmind workspace status
+cairnmind workspace detach
+cairnmind workspace takeover
+cairnmind workspace stop
+cairnmind workspace stop --clients
+```
+
+Detaching keeps the environment and its processes. `workspace stop` closes the outer layout; `--clients` also explicitly stops the clients adopted by this workspace. Other launches stay independent. Shutting down WSL ends the processes, but saved memory remains available for an explicit resume.
+
+One terminal controls the workspace. A second terminal opens a read-only view; `cairnmind workspace takeover` explicitly takes control and switches the previous terminal to view mode, without starting new clients.
+
+The launcher and `cairnmind run` refuse to start a client that lacks verified support for MCP, hooks, package handoff and session binding. `cairnmind doctor` shows the detection result. A project with existing code needs a Git repository and a first commit; the exception for an empty project explicitly marks that no code has been verified.
+
+### Without the launcher
+
+```bash
+cairnmind run my-app codex
+cairnmind run my-app claude
+cairnmind ask my-app "Why did we change login, and what depends on it?"
+cairnmind context my-app
+cairnmind status --project my-app
+```
+
+`ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer.
+
+## Plans, tasks and evidence
+
+Saving a plan writes the header, the steps and the final dependency graph in a single transaction. Codex and Claude see the same versions. An active plan is bound to a specific registered worktree. The launcher shows plans, the next step, blockers, evidence freshness and session package readiness.
+
+```bash
+cairnmind plan save my-app ./plan.json --idempotency-key login-plan-1 --activate
+cairnmind plan next my-app
+cairnmind plan list my-app
+cairnmind task list my-app
+```
+
+Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` and `blocked`. A separate `proposed`/`confirmed` status describes how certain a finding is. A `done` result remains part of the execution history; a later code change can turn its verification to `stale`. The plan format, check profiles and MCP calls are described in [docs/WORKFLOW.md](docs/WORKFLOW.md).
+
+Declare check profiles in `.devbrain/checks.toml`, for example `[checks.unit]` with `argv = ["uv", "run", "pytest"]`. Running a check is an explicit CLI operation:
+
+```bash
+cairnmind check run my-app unit --task TASK_ID
+cairnmind check list my-app --task TASK_ID
+cairnmind eval run
+cairnmind eval run --clients
+cairnmind eval run --clients --skip-claude
+cairnmind benchmark my-app "Where do we handle login errors?"
+```
+
+A check runs in the current worktree. Exit code 0 confirms that the given command ran successfully; review and acceptance still require a separate check. Legacy test flags are `reported` declarations, never automatically created run results.
+
+`acceptance_passed` records a documented assessment of the task's criteria; the field alone does not prove human acceptance. In the pilot, the same checkpoint may contain the review and the assessment of all criteria. The plan version also increases when task progress changes, so a review saved before the move to `done` may refer to an earlier plan version; test freshness is checked by `check_status`.
+
+The fingerprint also covers untracked files that are not ignored. Put generated caches and test output in `.gitignore` so that creating them during a check does not count as a change to the input code.
+
+`eval run` exercises 20 scenarios against a real Ollama in a temporary repository and a separate ArcadeDB database. The optional `--clients` flag starts a fresh Codex, then Claude, then Codex again, using existing logins and consuming their quotas. A missing model, client or login yields `not_run`. The report gives accuracy, state errors, latency, the local model's context size, and token counts only when the provider actually reports them.
+
+`--clients --skip-claude` checks only two fresh Codex sessions and does not start a Claude process. The report labels this as a partial test and does not count it as a full cross-client handoff. Codex tool approvals cover only the four operations of the `devbrain_eval` server against the temporary database; the sandbox stays `read-only`.
+
+`benchmark` times the first answer to a question against the cached repeat. It measures latency only and does not replace a quality evaluation.
+
+## Portable project memory
+
+A full snapshot in `.memory/devbrain/` carries one project's memory together with the repository: conversations and the exact source content, findings, plans, tasks, checkpoints, revisions and links. Saving and importing do not require Ollama. The memory panel offers preview, save, import check, import and auto-save settings; the same operations are available from the CLI. Merely detecting the files loads nothing.
+
+```bash
+cairnmind memory snapshot my-app --preview
+cairnmind memory snapshot my-app
+cairnmind memory auto my-app --enable --interval-minutes 15
+cairnmind memory status my-app
+cairnmind memory auto my-app --disable
+```
+
+Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/devbrain/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
+
+On a second machine, after installing Cairnmind and cloning the repository:
+
+```bash
+cairnmind memory inspect ~/src/my-app/.memory/devbrain
+cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
+cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app
+```
+
+Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
+
+```bash
+cairnmind eval memory
+```
+
+This is an explicit test against a real Ollama: extraction of a fact, a decision and a task, transfer between two isolated databases, and reconstruction of a sourced answer. It requires all expected findings; an empty extraction result fails the scenario. It does not start Codex or Claude. Exit codes: `0` success, `1` failure, `3` required models missing.
+
+## Data and backups
+
+The default data directory is `~/.local/share/devbrain`; change it with `DEVBRAIN_HOME` or the global `--data-dir` option. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `cairnmind stop` stops the knowledge service; once clients are closed, `cairnmind engine stop` stops the database without deleting data.
+
+```bash
+cairnmind export ~/memory.json --project my-app
+cairnmind export ~/memory.md --project my-app --markdown
+cairnmind backup ~/devbrain-backup.devbrain.json.gz
+```
+
+The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`. To move a single project, use `memory import`; `restore` replaces the entire store.
+
+Archiving does not wait for the GPU. Status shows archiving, indexing, model processing and the queue separately. The portable backup contains a consistent export of sources and database state; it does not contain credentials or model weights. Automatic backup runs while the service is running and keeps the seven most recent copies.
+
+## Limits
+
+Tests for storage, full-text search, the graph and the vector index use a real ArcadeDB engine. They require Java 21; the default test session prepares an isolated engine. Automated tests of Ollama answers and client sessions use controlled adapters; a real handoff of work between clients has to be measured in the target environment.
+
+Syntax analysis covers Python, JavaScript and TypeScript. Other languages remain searchable as text. Static analysis does not guarantee a complete graph of dynamic calls. The scanner indexes UTF-8 text files up to 2 MiB, respects `.gitignore` and skips, among others, dependency directories and `.env`/key files. History import preserves the original source content.
+
+`ask` answers and the startup context still consume Codex or Claude tokens. Local memory reduces the need to carry the whole history along; it does not remove context limits or the cost of model work. API and Copilot connections use their own account billing and permissions.
+
+The launcher blocks a client from starting when the resume package is partial or unavailable. An ACK confirms receipt and reading of specific versions, not the model's understanding. Cairnmind's write controls do not replace the native tool permissions of Codex and Claude.
+
+## Documentation
+
+- [docs/INSTALL.md](docs/INSTALL.md): step-by-step installation, verification, uninstalling and troubleshooting.
+- [docs/TERMINAL.md](docs/TERMINAL.md): the terminal workspace, layout, navigation and diagnostics.
+- [docs/API.md](docs/API.md): API, Ollama and Copilot connections and permissions.
+- [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, evidence states and MCP calls.
+- [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.
+- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations and the 0.8.0 results.
+- [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing 0.7.2 installation.
+- [docs/CONTRACTS.md](docs/CONTRACTS.md): implementation contracts for the backend and its components.
+- [CHANGELOG.md](CHANGELOG.md): release history.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| [`src/devbrain/`](src/devbrain/) | The Python package. The module keeps its earlier name until a compatible migration ([#40](https://github.com/piotrwozn/cairnmind/issues/40)). |
+| [`tests/`](tests/) | Automated tests; see [CONTRIBUTING.md](CONTRIBUTING.md) for the tiers and a code map. |
+| [`docs/`](docs/) | Guides and implementation contracts. |
+| [`scripts/`](scripts/) | The installer. |
+| [`pilot/`](pilot/) | Material for a hand-off pilot between coding assistants. |
 
 ## Development
 
 ```bash
-cd devbrain
 uv sync --locked --extra dev
 uv run ruff check src tests
 uv run pytest -m "not arcade and not tmux"   # fast tier, no database or tmux
 uv run pytest                                # full suite, needs Java 21 and tmux
 ```
 
-Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier and the full suite on every push.
+The automated tests need no Ollama, no models and no signed-in coding clients; those are used only by the explicit evaluations. Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier and the full suite on every pull request and on every push to `main`.
 
 ## Status and roadmap
 
-Version 0.8.0 is the current release; see the [changelog](devbrain/CHANGELOG.md). New installations use the installer directly. Upgrading an existing 0.7.2 installation goes through a guarded updater that requires a passed runtime qualification of the host before it touches existing data; see [docs/UPGRADING.md](devbrain/docs/UPGRADING.md).
+Version 0.8.0 is the current release; see the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading an existing 0.7.2 installation goes through a guarded updater that requires a passed runtime qualification of the host before it touches existing data; see [docs/UPGRADING.md](docs/UPGRADING.md).
 
 Planned work is tracked in [issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 
