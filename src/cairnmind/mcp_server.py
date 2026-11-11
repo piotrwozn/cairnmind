@@ -45,7 +45,7 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
     if isinstance(task, dict):
         metadata = task.get("metadata") or {}
         fields = ("plan_ref", "step_key", "state", "requires_test", "requires_review",
-                  "required_profiles", "depends_on", "acceptance_criteria", "worktree", "check_run_ids")
+                  "required_profiles", "depends_on", "acceptance_criteria", "scope", "worktree", "check_run_ids")
         limited = {}
         truncated = []
         for field in fields:
@@ -63,11 +63,20 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
                     value = value[:1000]
                     truncated.append(field)
                 limited[field] = value
-        for field in ("acceptance_criteria", "depends_on", "check_run_ids", "required_profiles"):
+        # The scope is advice: it gives way before anything the task cannot be done without.
+        for field in ("scope", "acceptance_criteria", "depends_on", "check_run_ids", "required_profiles"):
             while len(json.dumps(limited, ensure_ascii=False)) > 7000 and limited.get(field):
                 limited[field] = limited[field][:-1]
                 if field not in truncated:
                     truncated.append(field)
+        links = metadata.get("criterion_checks")
+        if isinstance(links, dict) and links:
+            # The check of each criterion that is shown, in the same order; None where there is none.
+            # Built after the list was bounded, so the two always agree and no text is repeated.
+            full = metadata.get("acceptance_criteria") if isinstance(metadata.get("acceptance_criteria"), list) else []
+            shown = len(limited.get("acceptance_criteria") or [])
+            limited["criterion_checks"] = [links[text][:100] if isinstance(links.get(text), str) else None
+                                           for text in full[:shown] if isinstance(text, str)]
         content = str(task.get("content", ""))
         task_view = {"id": task.get("id"), "version": task.get("version"),
                      "content": content[:4000], "content_truncated": len(content) > 4000,
@@ -77,9 +86,14 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
     blocked_view = [{**row, "dependency_ids": row.get("dependency_ids", [])[:20],
                      "omitted_dependency_ids": max(0, len(row.get("dependency_ids", [])) - 20)}
                     for row in blockers[:30]]
-    return {"plan": _plan_header(result.get("plan")), "task": task_view,
+    view = {"plan": _plan_header(result.get("plan")), "task": task_view,
             "reason": result.get("reason"), "blocked": blocked_view,
             "omitted_blockers": max(0, len(blockers) - 30)}
+    warnings = [str(item)[:600] for item in result.get("warnings") or [] if isinstance(item, str)][:5]
+    if warnings:
+        # Shown to the model as advice: a warning never blocks the task.
+        view["warnings"] = warnings
+    return view
 
 
 class ServiceClient:

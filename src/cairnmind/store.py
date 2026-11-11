@@ -42,8 +42,96 @@ V04_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, *V04_DOCUMENT_T
 EXPORT_TYPES = (*DOCUMENT_TYPES, "nodes", "edges")
 MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
     "plan_ref", "step_key", "required_profiles", "plan_context_hash", "depends_on", "acceptance_criteria",
-    "requires_test", "requires_review", "step_index", "plan_archived",
+    "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals", "scope",
 })
+# Definition fields that say nothing about whether a task was proven: changing one keeps reported evidence.
+ADVISORY_DEFINITION_FIELDS = frozenset({"check_proposals", "scope"})
+_PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def validate_scope(scope) -> None:
+    """The files a task says it will touch: path patterns as in an ignore file, relative to the worktree."""
+    if (not isinstance(scope, list) or len(scope) > 64
+            or not all(isinstance(pattern, str) and pattern.strip() and len(pattern) <= 500 for pattern in scope)):
+        raise ValueError("scope must be a list of at most 64 nonempty path patterns")
+    for pattern in scope:
+        parts = pattern.replace("\\", "/").split("/")
+        if pattern.startswith(("/", "!", "#", "./")) or "\\" in pattern or "\0" in pattern or "\n" in pattern \
+                or ".." in parts or ".git" in parts or re.match(r"^[A-Za-z]:", pattern):
+            raise ValueError("scope patterns must stay inside the worktree, cannot negate and cannot start with # or ./")
+    try:
+        import pathspec
+        pathspec.GitIgnoreSpec.from_lines(scope)
+    except Exception as exc:  # noqa: BLE001 - the library raises more than one kind of error for a bad pattern
+        raise ValueError(f"a scope pattern cannot be read: {str(exc)[:200]}") from None
+
+
+def valid_argv(argv) -> bool:
+    """A command that may be proposed for a check: a short list of non-empty strings."""
+    return (isinstance(argv, list) and 0 < len(argv) <= 64
+            and all(isinstance(part, str) and part and "\0" not in part and len(part) <= 2000 for part in argv))
+
+
+def validate_criterion_links(metadata: dict, criteria: list) -> None:
+    """The stored form of the links: every link belongs to a criterion, every proposal to a linked check."""
+    links = metadata.get("criterion_checks", {})
+    if (not isinstance(links, dict) or ("criterion_checks" in metadata and not links)
+            or not all(text in criteria and isinstance(check, str) and _PROFILE_NAME.fullmatch(check)
+                       for text, check in links.items())):
+        raise ValueError("criterion_checks must link acceptance criteria to check profile names")
+    proposals = metadata.get("check_proposals", {})
+    if (not isinstance(proposals, dict) or ("check_proposals" in metadata and not proposals)
+            or not all(name in links.values() and valid_argv(argv) for name, argv in proposals.items())):
+        raise ValueError("check_proposals must give an argument list for a linked check")
+
+
+def normalise_criteria(metadata: dict) -> None:
+    """Accept a criterion written as {text, check, argv} and store the link beside the text.
+
+    `acceptance_criteria` stays a list of strings, which every version reads. The link from a
+    criterion to the check profile that proves it lives in `criterion_checks` (text -> profile),
+    and a command proposed for a profile that is not declared yet in `check_proposals`
+    (profile -> argument list). A proposal is text for a person to review: nothing runs it.
+    """
+    criteria = metadata.get("acceptance_criteria")
+    links, proposals = metadata.get("criterion_checks", {}), metadata.get("check_proposals", {})
+    if not isinstance(criteria, list) or not isinstance(links, dict) or not isinstance(proposals, dict):
+        return  # left as it is for the validation that follows to refuse
+    links, proposals = dict(links), dict(proposals)
+    if any(isinstance(item, dict) for item in criteria):
+        texts = []
+        for item in criteria:
+            if isinstance(item, str):
+                texts.append(item)
+                continue
+            if not isinstance(item, dict) or set(item) - {"text", "check", "argv"} or not isinstance(item.get("text"), str):
+                raise ValueError("A criterion is text, or an object with text and optionally check and argv")
+            text, check, argv = item["text"], item.get("check"), item.get("argv")
+            texts.append(text)
+            if check is None:
+                if argv is not None:
+                    raise ValueError("A criterion can propose a command only for a named check")
+                continue
+            if not isinstance(check, str) or not _PROFILE_NAME.fullmatch(check):
+                raise ValueError("criterion_checks must link acceptance criteria to check profile names")
+            if links.get(text, check) != check:
+                raise ValueError("One criterion cannot be linked to two checks")
+            links[text] = check
+            if argv is not None:
+                if proposals.get(check, argv) != argv:
+                    raise ValueError("Two different commands were proposed for one check")
+                proposals[check] = argv
+        metadata["acceptance_criteria"] = texts
+    # A link or a proposal whose criterion or check is gone has nothing left to describe.
+    links = {text: check for text, check in links.items() if text in metadata["acceptance_criteria"]}
+    proposals = {name: argv for name, argv in proposals.items() if name in links.values()}
+    for key, value in (("criterion_checks", links), ("check_proposals", proposals)):
+        if value:
+            metadata[key] = value
+        else:
+            metadata.pop(key, None)
+
+
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _JOB_UNSET = object()
@@ -242,11 +330,16 @@ class Store:
         with self._lock(), self.client.transaction() as native:
             tx = JournalTransaction(native)
             self._local.transaction = tx
+            self._local.after_commit = pending = []
             try:
                 yield tx
                 tx.flush()
             finally:
                 del self._local.transaction
+                del self._local.after_commit
+        # Reached only when the transaction committed; the writer lock is no longer held.
+        for call in pending:
+            call()
 
     def init(self):
         with self._lock():
@@ -436,6 +529,7 @@ class Store:
             values = metadata.get(key, [])
             if not isinstance(values, list) or not all(isinstance(x, str) and x.strip() for x in values):
                 raise ValueError(f"{key} must be a list of nonempty strings")
+        validate_criterion_links(metadata, criteria)
         for run_id in metadata.get("check_run_ids", []):
             run = _one(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
             if not run or run.get("project_id") != project_id or run.get("task_id") != record_id:
@@ -603,6 +697,18 @@ class Store:
             updates = {key: value for key, value in updates.items() if key not in CONFLICT_REVIEW_METADATA
                        and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
+        if kind == "task":
+            if "acceptance_criteria" in updates:
+                # A criteria list that is declared again says everything about its links: what the
+                # record held before is dropped unless the caller sends the stored form as well.
+                for stored in ("criterion_checks", "check_proposals"):
+                    if stored not in updates:
+                        metadata.pop(stored, None)
+            normalise_criteria(metadata)
+            # Checked when it is set, not whenever the task is written: a task that already carries
+            # something else under this name stays writable, and is simply never compared.
+            if "scope" in updates and updates["scope"] != (old or {}).get("metadata", {}).get("scope"):
+                validate_scope(updates["scope"])
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
@@ -625,7 +731,11 @@ class Store:
                     raise ValueError("Managed task definitions and membership must be changed through PlanManager")
                 if type(record.get("expected_plan_version")) is not int or record["expected_plan_version"] < 1:
                     raise ValueError("Managed task updates require expected_plan_version")
-            if definition_changed:
+            # A proposed command is not part of what a task is: changing one keeps reported evidence.
+            proof_changed = bool(old) and (content != old["content"] or key != old["key"] or any(
+                metadata.get(k) != old.get("metadata", {}).get(k)
+                for k in MANAGED_DEFINITION_METADATA_FIELDS - ADVISORY_DEFINITION_FIELDS))
+            if proof_changed:
                 for field in ("acceptance_passed", "acceptance_source_ids", "test_passed", "test_source_ids", "review_passed", "review_source_ids"):
                     if field not in updates:
                         metadata.pop(field, None)
@@ -682,7 +792,26 @@ class Store:
         if managed and not managed_batch:
             from .plans import note_task_mutation
             note_task_mutation(self, tx, result, record["expected_plan_version"])
+        if kind == "task" and metadata.get("scope"):
+            before, after = (old.get("metadata", {}).get("state", "todo") if old else None), metadata.get("state")
+            working = after in ("in_progress", "needs_test", "needs_review", "blocked")
+            declared_now = working and not (old and old.get("metadata", {}).get("scope"))
+            # A start is entering in_progress, taking a finished task up again, or declaring a scope
+            # on a task that is already being worked on. A note that is still open is never replaced.
+            change = ("start" if (after == "in_progress" and before != "in_progress") or (before == "done" and working)
+                      or declared_now else "finish" if after == "done" and before not in (None, "done") else None)
+            if change:
+                # A scoped task starts or ends: the tree is noted for the scope-drift warning. Only after
+                # the whole write is committed and the writer lock is released, and never as part of it.
+                from .scope import note_progress
+                worktree = record.get("worktree")
+                self._after_commit(lambda: note_progress(self, result, worktree, change))
         return result
+
+    def _after_commit(self, call):
+        pending = getattr(self._local, "after_commit", None)
+        if pending is not None:
+            pending.append(call)
 
     def remember(self, project_id, record, sources, *, conflict_review=False):
         with self.transaction() as tx:

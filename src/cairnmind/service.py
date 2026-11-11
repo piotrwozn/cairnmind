@@ -690,7 +690,16 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     async def next_task(body: PlanNextBody):
         pid = project(body.project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
-        return await asyncio.to_thread(plans.next_task, pid, body.plan_id, scope)
+
+        def read():
+            result = plans.next_task(pid, body.plan_id, scope)
+            if result.get("task") and result["task"].get("metadata", {}).get("scope"):
+                from cairnmind.scope import drift_warning, scope_drift
+                warning = drift_warning(scope_drift(store, result["task"], scope))
+                if warning:
+                    result["warnings"] = [warning]
+            return result
+        return await asyncio.to_thread(read)
 
     @app.post("/plans/activate", dependencies=auth)
     async def activate_plan(body: PlanActivateBody):

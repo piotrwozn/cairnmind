@@ -41,7 +41,7 @@ SOURCE_METADATA_KEYS = (
 RECORD_METADATA_KEYS = (
     "state", "reported_state", "plan_ref", "step_key", "plan_context_hash", "required_profiles", "check_run_ids",
     "plan_id", "step_index", "requires_test", "requires_review", "test_passed",
-    "review_passed", "acceptance_passed", "depends_on", "acceptance_criteria", "test_source_ids",
+    "review_passed", "acceptance_passed", "depends_on", "acceptance_criteria", "scope", "test_source_ids",
     "review_source_ids", "acceptance_source_ids", "possible_conflicts", "unresolved_dependencies",
     "evidence", "goal", "next_step", "summary", "next_steps", "blockers", "origin", "extracted_by",
     "evidence_earliest", "evidence_latest", "evidence_basis", "supersede_warning",

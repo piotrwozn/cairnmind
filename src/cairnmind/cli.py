@@ -678,8 +678,12 @@ def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, work
     scope = actor_scope(store, pid, worktree)
     result = PlanManager(store).next_task(pid, plan_id, scope)
     if result.get("task"):
+        from cairnmind.scope import drift_warning
         from cairnmind.verification import verification_status
         result["verification"] = verification_status(store, result["task"], scope)
+        warning = drift_warning(result["verification"].get("scope_drift"))
+        if warning:
+            result["warnings"] = [warning]
     output(result)
 
 
@@ -706,6 +710,27 @@ def plan_adopt(ctx: typer.Context, project: str, group: str,
         result = PlanManager(store).adopt_legacy(pid, group, plan={"title": title} if title else None,
             idempotency_key=idempotency_key, worktree=scope, activate=activate)
     output(result)
+
+
+@plans_app.command("contract")
+@initialized
+def plan_contract(ctx: typer.Context, project: str,
+                  plan_id: Annotated[str | None, typer.Option("--plan-id", help="The plan; the active one if omitted.")] = None,
+                  worktree: Path | None = None,
+                  write: Annotated[str | None, typer.Option(
+                      "--write", metavar="CODE",
+                      help="Add the proposed check profiles; CODE is printed with the diff they were shown in.")] = None,
+                  as_json: Annotated[bool, typer.Option("--json", help="Print the contract as JSON.")] = False):
+    """Show each acceptance criterion of a plan with the check that proves it. Runs no command."""
+    from cairnmind.contract import build_contract, write_contract
+    store = store_for(ctx.obj)
+    pid = store.resolve_project(project)["id"]
+    scope = actor_scope(store, pid, worktree)
+    result = write_contract(store, pid, write, plan_id, scope) if write else build_contract(store, pid, plan_id, scope)
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
 
 
 @checks_app.command("profiles")
