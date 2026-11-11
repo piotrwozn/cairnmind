@@ -2,7 +2,9 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
-## Unreleased
+## 0.9.0
+
+The first release under the name Cairnmind.
 
 - The Python module is `cairnmind`; `devbrain` remains as an import alias for one release, so hooks and MCP entries that start `python -m devbrain` keep working wherever the Python they name is still installed. After the installer has replaced the earlier `devbrain` uv tool, run `cairnmind install <project>` for each project as the installer lists them; that also rewrites the entries to the new module name. Environment variables, the data directory and the portable memory format keep their `devbrain` names for now (#40).
 - The code fingerprint behind acknowledgements, questions and check evidence no longer resolves the path of every file: whether a directory lies inside the worktree is decided once per directory. On 5,000 files it fell from 0.45 s to 0.18 s, and from 0.91 s to 0.57 s when the files are 100 KB each. File content is still always read, so any edit changes the fingerprint; the README documents the cost for large worktrees (#24).
@@ -10,10 +12,13 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The help page of every command and the messages written in the command line module are in English. Messages raised by the workspace, cockpit and service modules are still Polish (#37).
 - `cairnmind doctor --contract --format text` prints one aligned line per client and check: `ok` or `failed`, with the evidence line or with what was needed and found, and a `verified_resume` line per client. A failed check now also records what it found (the line that says otherwise, or the exit code of the command), in JSON as well. JSON stays the default (#38).
 - The `mcp` capability check no longer accepts the flag example `--debug='!hooks,!mcp'` in a client's help text as the `mcp` command.
+- **Conflicts** view in the memory inspector: pairs of facts or decisions that extraction marked as possibly contradictory are shown side by side with evidence times, scope and sources. You resolve a pair by letting one finding supersede the other, by keeping both for different scopes, or by dismissing the alarm; every decision is saved with an audit note and no source is removed (#7).
+- The audit note of a review or of a conflict decision no longer counts as evidence time. A record gets the corrected time the next time it is written; the Conflicts view reads the times from the sources directly.
 - The memory inspector shows when a record's evidence was stated or observed, and warns when a record replaced a finding with newer evidence (#39).
 - Records have a derived evidence state: `anchored`, `evidence_replaced` (with whether a verified quoted passage survives), `orphaned`, or `unverified` for imported file evidence before local indexing. The memory inspector shows it, a newly prepared resume packet warns about orphaned and changed records without blocking the resume, and `cairnmind memory orphans PROJECT` lists them. The state is computed when read and is not stored, so snapshots and the portable state hash do not change (#6).
 - `cairnmind brief PROJECT` and **Brief** in the command palette show where work stopped in at most 40 lines: checkpoint and its age, next task and blockers, check evidence of tasks in progress, commits dated after the checkpoint and proposed findings. No model is asked and the command does not start the service; every line below the title and the legend is marked `machine` or `reported` (#3).
 - `cairnmind memory show PATH` prints a portable snapshot's records and plans with their source addresses as text, with `--kind`, `--status` and `--grep` filters. It needs no Java, engine, model or service and writes nothing; inside a coding session the running service authorizes the package first (#2).
+- A step-by-step installation guide is in [docs/INSTALL.md](docs/INSTALL.md), and the installer's messages and help are in English. When it replaces DevBrain, the installer stops the earlier knowledge service and interface broker before it removes the earlier tool.
 - The package moved to the repository root: after cloning, run the installer and the tests from the top-level directory. The contract documents are in `docs/`.
 - **Renamed to Cairnmind.** The repository moved to `piotrwozn/cairnmind`, the package is `cairnmind` and the command is `cairnmind`; `devbrain` remains an alias for a transition period. The installer removes an earlier `devbrain` uv tool, keeps your memory, and lists the `cairnmind install <project>` commands that reconnect existing projects. Data paths, environment variables and the portable memory format keep their `devbrain` names until a compatible migration (#40).
 - Records carry the time of their evidence (`evidence_earliest`, `evidence_latest`, `evidence_basis`) and a warning when older stated evidence supersedes newer (#4).

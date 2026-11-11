@@ -99,6 +99,14 @@ upgraded_from_devbrain=false
 if uv tool list 2>/dev/null | grep -q '^devbrain '; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
         "${DEVBRAIN_HOME:-$HOME/.local/share/devbrain}"
+    # Its knowledge service and interface broker run detached and outlive the workspace. Stop them
+    # while the tool that started them still exists: a broker of another version refuses the new
+    # workspace, and the earlier service would keep answering from a Python that is gone.
+    earlier_bin="$(uv tool dir --bin)/devbrain"
+    if [[ -x "$earlier_bin" ]]; then
+        "$earlier_bin" cockpit stop >/dev/null 2>&1 || true
+        "$earlier_bin" stop >/dev/null 2>&1 || true
+    fi
     uv tool uninstall devbrain >/dev/null
     upgraded_from_devbrain=true
 fi

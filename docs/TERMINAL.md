@@ -1,4 +1,4 @@
-# Cairnmind 0.8.0 terminal workspace
+# Cairnmind 0.9.0 terminal workspace
 
 `cairnmind` starts the workspace in the current terminal. `cairnmind tui` is an alias for the same interface. tmux manages panes and detaching, and Textual renders projects, settings, the inspector and the graph. The Codex and Claude panes contain the real native CLIs, with their own screens, keyboard handling, sign-in and approvals. Ollama and API profiles use Cairnmind's own agent, and Copilot uses a separate adapter built on the official SDK.
 

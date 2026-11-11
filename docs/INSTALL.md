@@ -69,9 +69,9 @@ Choose one option.
 
 ```bash
 mkdir -p ~/src && cd ~/src
-curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.8.0/devbrain-0.8.0.tar.gz
-tar -xzf devbrain-0.8.0.tar.gz
-cd devbrain-0.8.0
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.9.0/cairnmind-0.9.0.tar.gz
+tar -xzf cairnmind-0.9.0.tar.gz
+cd cairnmind-0.9.0
 ```
 
 **From source.** Clone the repository to follow the latest `main`:
@@ -102,10 +102,10 @@ If the installer prints `Add this directory to PATH`, add that directory to your
 
 ### Manual installation
 
-The same steps can be run by hand, for example on a system where you do not want to run the script:
+The same steps can be run by hand from the directory that contains `pyproject.toml`, for example on a system where you do not want to run the script:
 
 ```bash
-uv tool install --python 3.12 ~/src/cairnmind
+uv tool install --python 3.12 .
 cairnmind engine install
 cairnmind init
 cairnmind engine status
@@ -164,7 +164,7 @@ See [EVALUATION.md](EVALUATION.md) for what they measure.
 
 ## Upgrading
 
-- From 0.7.2 with existing data: follow [UPGRADING.md](UPGRADING.md).
+- From DevBrain 0.8.0, or from 0.7.2 with existing data: follow [UPGRADING.md](UPGRADING.md).
 - For later releases, read the release notes first, then run the installer from the new source directory.
 
 ## Uninstalling
