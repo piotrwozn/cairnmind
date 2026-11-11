@@ -19,6 +19,13 @@ from uuid import uuid4
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 
 SCHEMA_VERSION = 4
+# Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
+# an earlier version works with them unchanged, so adding one needs no migration and blocks no way back.
+LOOKUP_INDEXES = (("chunks", "source_id"), ("nodes", "source_id"), ("edges", "source_id"), ("edges", "from_id"),
+                  ("edges", "to_id"), ("embeddings", "source_id"), ("embeddings", "chunk_id"), ("sources", "uri"),
+                  ("record_revisions", "record_id"), ("check_runs", "task_id"), ("session_events", "session_id"),
+                  ("resume_packets", "session_id"))
+LOOKUP_INDEX_SET = 1
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}
 STATUSES = {"proposed", "confirmed", "disputed", "superseded"}
 TASK_STATES = {"todo", "in_progress", "needs_test", "needs_review", "done", "blocked"}
@@ -337,12 +344,15 @@ class Store:
     def init(self):
         with self._lock():
             self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
-            versions = self.client.query("SELECT FROM devbrain_meta WHERE name='schema_version'")
-            version = versions[0]["value"] if versions else None
+            meta = {row.get("name"): row.get("value") for row in self.client.query(
+                "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
+            version, indexed = meta.get("schema_version"), meta.get("lookup_indexes")
             if version is not None:
                 if version not in {1, 2, 3, SCHEMA_VERSION}:
                     raise ValueError("Database schema version is incompatible")
                 if version == SCHEMA_VERSION:
+                    if indexed != LOOKUP_INDEX_SET:
+                        self._lookup_indexes(indexed)
                     return
                 # Snapshot only existing types. Hold the writer lock through
                 # backup, additive DDL, and the version-last commit.
@@ -388,6 +398,28 @@ class Store:
                     _insert(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
                 else:
                     _set(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
+            if indexed != LOOKUP_INDEX_SET:
+                self._lookup_indexes(indexed)
+
+    def _lookup_indexes(self, recorded):
+        """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat.
+
+        An index only makes a lookup faster. When one cannot be built now, for example because a large
+        table takes longer than a request may, the database is opened all the same and the next start
+        tries again: nothing is recorded until every index exists.
+        """
+        from .arcade import ArcadeError
+        try:
+            for collection, field in LOOKUP_INDEXES:
+                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
+        except ArcadeError:
+            return
+        with self.client.transaction() as tx:
+            if recorded is None:
+                _insert(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})
+            else:
+                _set(tx, "devbrain_meta", {"value": LOOKUP_INDEX_SET}, "name='lookup_indexes'", {})
 
     @staticmethod
     def _require_project(tx, project_id):

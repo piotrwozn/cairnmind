@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import replace
+import os
 import re
+import threading
 from typing import Iterator
 from urllib.parse import quote
 
@@ -24,9 +26,45 @@ class ArcadeError(RuntimeError):
         self.exception_name = exception_name
 
 
+class _Connections:
+    """The HTTP connections of one database client and of its transactions, kept open between requests.
+
+    Opening a connection for every request cost more than the request itself. The pool is safe to use
+    from several threads. A process that was forked makes its own, so no socket is shared across processes.
+    """
+
+    def __init__(self, base_url: str, auth: tuple[str, str], transport: httpx.BaseTransport | None):
+        self._base_url, self._auth, self._transport = base_url, auth, transport
+        self._lock = threading.Lock()
+        self._client: httpx.Client | None = None
+        self._pid: int | None = None
+
+    def client(self) -> httpx.Client:
+        with self._lock:
+            if self._client is None or self._pid != os.getpid():
+                # HTTP is enforced by the caller; no TLS peer exists here.
+                # Skip unused CA loading, leaving provider HTTPS unchanged.
+                self._client = httpx.Client(base_url=self._base_url, auth=self._auth, verify=False,
+                                            follow_redirects=False, trust_env=False, transport=self._transport)
+                self._pid = os.getpid()
+            return self._client
+
+    def close(self) -> None:
+        with self._lock:
+            client, self._client = self._client, None
+            if client is not None and self._pid == os.getpid():
+                client.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001 - nothing useful can be done while an object is collected
+            pass
+
+
 class ArcadeClient:
     def __init__(self, settings: Settings, *, session_id: str | None = None,
-                 transport: httpx.BaseTransport | None = None):
+                 transport: httpx.BaseTransport | None = None, _connections: _Connections | None = None):
         parsed = httpx.URL(settings.arcade_url)
         if (parsed.scheme != "http" or parsed.host not in {"127.0.0.1", "localhost", "::1"}
                 or parsed.userinfo or parsed.query or parsed.fragment):
@@ -40,6 +78,12 @@ class ArcadeClient:
         self.database = settings.arcade_database
         self.session_id = session_id
         self.transport = transport
+        self._connections = _connections or _Connections(
+            self._base_url, (self.settings.arcade_user, self.settings.arcade_password), transport)
+
+    def close(self) -> None:
+        """Close the kept connections. The client stays usable: the next request opens a new one."""
+        self._connections.close()
 
     def _request(self, method: str, path: str, *, timeout: float = 30, **kwargs) -> httpx.Response:
         if (not isinstance(path, str) or not path.startswith("/") or path.startswith("//")
@@ -56,14 +100,19 @@ class ArcadeClient:
         headers = kwargs.pop("headers", {})
         if self.session_id:
             headers["arcadedb-session-id"] = self.session_id
+        # A read outside a transaction may be sent once more when a kept connection turns out to be dead,
+        # for example after the engine was restarted. A write is never repeated: it may have been applied.
+        repeatable = not self.session_id and (method == "GET" or path.startswith("/api/v1/query/"))
         try:
-            with httpx.Client(base_url=self._base_url, timeout=timeout,
-                              auth=(self.settings.arcade_user, self.settings.arcade_password),
-                              # HTTP is enforced above; no TLS peer exists here.
-                              # Skip unused CA loading, leaving provider HTTPS unchanged.
-                              verify=False, follow_redirects=False,
-                              trust_env=False, transport=self.transport) as client:
-                response = client.request(method, path, headers=headers, follow_redirects=False, **kwargs)
+            try:
+                response = self._connections.client().request(method, path, headers=headers, timeout=timeout,
+                                                              follow_redirects=False, **kwargs)
+            except (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError):
+                if not repeatable:
+                    raise
+                # The pool drops the dead connection by itself; other threads keep theirs.
+                response = self._connections.client().request(method, path, headers=headers, timeout=timeout,
+                                                              follow_redirects=False, **kwargs)
             if not response.is_success:
                 error = {}
                 try:
@@ -135,7 +184,8 @@ class ArcadeClient:
         session = response.headers.get("arcadedb-session-id")
         if not session:
             raise ArcadeError("ArcadeDB transaction returned no session ID")
-        child = ArcadeClient(self.settings, session_id=session, transport=self.transport)
+        child = ArcadeClient(self.settings, session_id=session, transport=self.transport,
+                             _connections=self._connections)
         try:
             yield child
             child._request("POST", f"/api/v1/commit/{quote(self.database)}")
