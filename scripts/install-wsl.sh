@@ -86,56 +86,107 @@ if [[ ! -f "$package_dir/pyproject.toml" || ! -f "$package_dir/uv.lock" ]]; then
     exit 1
 fi
 
-constraints_file="$(mktemp "${TMPDIR:-/tmp}/devbrain-constraints.XXXXXXXX")"
+constraints_file="$(mktemp "${TMPDIR:-/tmp}/cairnmind-constraints.XXXXXXXX")"
 trap 'rm -f -- "$constraints_file"' EXIT
 
 printf 'Preparing dependencies from uv.lock...\n'
 uv export --directory "$package_dir" --locked --no-dev --no-emit-project \
     --format requirements-txt --output-file "$constraints_file" >/dev/null
 
+# --- what an installed version left running (kept between these two lines for the tests) ---
+# Terminal servers of an installed version, whatever data directory they belong to: the workspace
+# and the coding sessions started from it, under the current and the earlier names. A later
+# version does not find what an earlier one started, so nothing of it may be left behind unseen.
+live_terminals() {
+    local socket
+    command -v tmux >/dev/null 2>&1 || return 0
+    for socket in "${TMPDIR:-/tmp}"/{cairnmind,devbrain}-{ui,native}-"$(id -u)"-*/tmux.sock; do
+        if [[ -S "$socket" && -O "$socket" ]] && tmux -S "$socket" list-sessions >/dev/null 2>&1; then
+            printf '%s\n' "$socket"
+        fi
+    done
+}
+
+# $1: the executable of the installed version, $2: the name a user types for it.
+# The workspace and coding sessions hold interactive work: the installer stops here unless it is
+# told to close them. The interface broker and the knowledge service hold none and are stopped.
+stop_installed() {
+    local installed="$1" name="$2" terminals status socket
+    [[ -x "$installed" ]] || return 0
+    terminals="$(live_terminals)"
+    # Asked as well, read whole and not through a pipe: an answer cut short must not read as "none".
+    if status="$("$installed" workspace status 2>/dev/null)"; then
+        if [[ "$status" == *'"available": true'* && -z "$terminals" ]]; then
+            terminals="the workspace reported by $name workspace status"
+        fi
+    elif [[ -z "$terminals" ]]; then
+        printf 'Note: %s workspace status failed, so a running workspace could not be ruled out.\n' "$name" >&2
+    fi
+    if [[ -n "$terminals" ]]; then
+        if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" != 1 ]]; then
+            printf '%s\n' \
+                'A workspace or coding sessions of the installed version are running:' \
+                "$terminals" \
+                "Finish there and close them with: $name workspace stop --clients" \
+                'then run this installer again. The new version would not find them.' \
+                'To let the installer close them, set CAIRNMIND_INSTALL_STOP_WORKSPACE=1.' >&2
+            exit 1
+        fi
+        printf 'Closing the running workspace and coding sessions, as CAIRNMIND_INSTALL_STOP_WORKSPACE=1 asks.\n'
+        "$installed" workspace stop --clients >/dev/null 2>&1 || true
+        "$installed" cockpit stop --clients >/dev/null 2>&1 || true
+        # Whatever belongs to another data directory, or did not answer, is closed at its terminal server.
+        while IFS= read -r socket; do
+            [[ -n "$socket" ]] && tmux -S "$socket" kill-server >/dev/null 2>&1 || true
+        done <<<"$(live_terminals)"
+    fi
+    "$installed" cockpit stop >/dev/null 2>&1 || true
+    "$installed" stop >/dev/null 2>&1 || true
+}
+# --- end ---
+
 # An earlier release was installed as the uv tool "devbrain", which owns the devbrain
 # executable that this package also provides as an alias. Remove the tool, not the data.
 upgraded_from_devbrain=false
-if uv tool list 2>/dev/null | grep -q '^devbrain '; then
+if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
         "${CAIRNMIND_HOME:-${DEVBRAIN_HOME:-$HOME/.local/share/devbrain}}"
-    # Its knowledge service and interface broker run detached and outlive the workspace. Stop them
-    # while the tool that started them still exists: a broker of another version refuses the new
-    # workspace, and the earlier service would keep answering from a Python that is gone.
-    earlier_bin="$(uv tool dir --bin)/devbrain"
-    if [[ -x "$earlier_bin" ]]; then
-        "$earlier_bin" cockpit stop >/dev/null 2>&1 || true
-        "$earlier_bin" stop >/dev/null 2>&1 || true
-    fi
+    # Stopped while the tool that started them still exists: afterwards nothing could stop them.
+    stop_installed "$(uv tool dir --bin)/devbrain" devbrain
     uv tool uninstall devbrain >/dev/null
     upgraded_from_devbrain=true
+fi
+
+# An installed Cairnmind is being replaced: the same care, with the installed version's own command.
+if uv tool list 2>/dev/null | grep '^cairnmind ' >/dev/null; then
+    stop_installed "$(uv tool dir --bin)/cairnmind" cairnmind
 fi
 
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
 uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir"
 
 tool_bin_dir="$(uv tool dir --bin)"
-devbrain_bin="$tool_bin_dir/cairnmind"
-if [[ ! -x "$devbrain_bin" ]]; then
-    printf 'Installation did not provide the executable: %s\n' "$devbrain_bin" >&2
+cairnmind_bin="$tool_bin_dir/cairnmind"
+if [[ ! -x "$cairnmind_bin" ]]; then
+    printf 'Installation did not provide the executable: %s\n' "$cairnmind_bin" >&2
     exit 1
 fi
 
 printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
 arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
 if [[ -n "$arcade_dist" ]]; then
-    "$devbrain_bin" engine install --distribution "$arcade_dist"
+    "$cairnmind_bin" engine install --distribution "$arcade_dist"
 else
-    "$devbrain_bin" engine install
+    "$cairnmind_bin" engine install
 fi
-"$devbrain_bin" init
-"$devbrain_bin" engine status
-"$devbrain_bin" doctor
+"$cairnmind_bin" init
+"$cairnmind_bin" engine status
+"$cairnmind_bin" doctor
 
 if [[ "$upgraded_from_devbrain" == true ]]; then
     # Hooks and MCP entries in existing projects name the removed interpreter.
     printf '\nProjects set up by DevBrain still point at its removed Python. Reconnect each one:\n'
-    "$devbrain_bin" project list | "$(uv tool dir)/cairnmind/bin/python" -I -c '
+    "$cairnmind_bin" project list | "$(uv tool dir)/cairnmind/bin/python" -I -c '
 import json, shlex, sys
 projects = json.load(sys.stdin)
 for project in projects:
@@ -146,16 +197,16 @@ if not projects:
 fi
 
 if [[ "$pull_models" == true ]]; then
-    if ! "$devbrain_bin" models list >/dev/null; then
+    if ! "$cairnmind_bin" models list >/dev/null; then
         printf 'Cannot reach Ollama. Start ollama serve, then run cairnmind models pull.\n' >&2
         exit 1
     fi
-    "$devbrain_bin" models pull
+    "$cairnmind_bin" models pull
 else
     printf '\nModels were not downloaded. With Ollama running, run: cairnmind models pull\n'
 fi
 
-printf '\nCairnmind installed: %s\n' "$devbrain_bin"
+printf '\nCairnmind installed: %s\n' "$cairnmind_bin"
 case ":$PATH:" in
     *":$tool_bin_dir:"*) ;;
     *) printf 'Add this directory to PATH: %s\n' "$tool_bin_dir" ;;

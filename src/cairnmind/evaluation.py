@@ -190,7 +190,7 @@ def _git(path: Path, *args: str) -> None:
 def _fixture_settings(settings: Settings, data_dir: Path) -> Settings:
     # Copy only local runtime settings. The namespace is never derived from a user
     # environment override; Store's explicit settings parameter preserves isolation.
-    fixture = replace(settings, data_dir=data_dir, arcade_database="devbrain_eval_" + uuid4().hex,
+    fixture = replace(settings, data_dir=data_dir, arcade_database="cairnmind_eval_" + uuid4().hex,
                       token=secrets.token_urlsafe(32))
     fixture.save()
     return fixture
@@ -392,7 +392,7 @@ def _codex_configuration(server: dict) -> str:
         return json.dumps(value, ensure_ascii=False)
     env = "{" + ",".join(encode(key) + "=" + encode(value) for key, value in environment.items()) + "}"
     tools = "{" + ",".join(encode(name) + '={approval_mode="approve"}' for name in _FIXTURE_TOOLS) + "}"
-    return ('mcp_servers={devbrain_eval={command=' + encode(command) + ',args=' + encode(arguments)
+    return ('mcp_servers={cairnmind_eval={command=' + encode(command) + ',args=' + encode(arguments)
             + ',env=' + env + ',enabled_tools=' + encode(list(_FIXTURE_TOOLS)) + ',tools=' + tools + '}}')
 
 
@@ -506,11 +506,11 @@ def _native_client(client: str, root: Path, settings: Settings, project_id: str,
                     "-c", 'approval_policy="never"', "-c", configuration, prompt]
         else:
             config_path = settings.data_dir / "native-mcp.json"
-            config_path.write_text(json.dumps({"mcpServers": {"devbrain_eval": server}}))
+            config_path.write_text(json.dumps({"mcpServers": {"cairnmind_eval": server}}))
             config_path.chmod(0o600)
             argv = [executable, "--strict-mcp-config", "--mcp-config", str(config_path), "--tools", "",
-                    "--allowedTools", "mcp__devbrain_eval__memory", "mcp__devbrain_eval__read_source",
-                    "mcp__devbrain_eval__resume_context", "mcp__devbrain_eval__ack_resume",
+                    "--allowedTools", "mcp__cairnmind_eval__memory", "mcp__cairnmind_eval__read_source",
+                    "mcp__cairnmind_eval__resume_context", "mcp__cairnmind_eval__ack_resume",
                     "--permission-mode", "dontAsk", "--no-session-persistence", "--output-format", "json", "-p", prompt]
         started = time.monotonic()
         process_started = True
@@ -585,7 +585,7 @@ def _clients(store: Store, settings: Settings, project: dict, canonical: dict, r
             previous = sessions.status(previous_session)
             # A real compact epoch invalidates the previous acknowledgment.
             sessions.note_event({"event_id": str(uuid4()), "hook_event_name": "PreCompact",
-                                 "devbrain_session_id": previous_session, "cwd": project["root"]}, previous["client"])
+                                 "cairnmind_session_id": previous_session, "cwd": project["root"]}, previous["client"])
             compaction_client = previous["client"]
             try:
                 sessions.require_ack(previous_session)
@@ -640,7 +640,7 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
     output = Path(report_dir or settings.data_dir / "evaluations").expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="devbrain-eval-") as name:
+    with tempfile.TemporaryDirectory(prefix="cairnmind-eval-") as name:
         temporary = Path(name)
         seed_root, worktree, other = temporary / "seed", temporary / "worktree", temporary / "other"
         seed_root.mkdir()
@@ -677,7 +677,7 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
                       or any(r["critical"] and r["status"] == "failed" for r in results)
                       else "not_run" if not complete or (clients and any(r["status"] == "not_run" for r in native))
                       else "passed" if accuracy is not None and accuracy >= .9 and critical else "failed")
-            report = {"format_version": 1, "devbrain_version": __version__, "status": status,
+            report = {"format_version": 1, "cairnmind_version": __version__, "status": status,
                 "evaluation_mode": "typed_caller_contract",
                 "model": isolated.chat_model,
                 "embedding_model": isolated.embedding_model, "golden_count": 20, "attempted": len(attempted),
@@ -710,10 +710,10 @@ def fixture_mcp(data_dir: Path, session_id: str | None = None) -> None:
     from mcp.server.fastmcp import FastMCP
 
     settings = Settings.load(data_dir)
-    if not settings.arcade_database.startswith("devbrain_eval_"):
+    if not settings.arcade_database.startswith("cairnmind_eval_"):
         raise ValueError("Evaluation MCP requires an isolated evaluation namespace")
     store = Store(data_dir, settings=settings)
-    server = FastMCP("devbrain_eval")
+    server = FastMCP("cairnmind_eval")
     from .sessions import SessionManager
 
     sessions = SessionManager(store, settings)

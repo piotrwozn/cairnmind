@@ -17,7 +17,7 @@ from typing import Annotated
 import httpx
 import typer
 
-from cairnmind.config import Settings, drop_env, session_value
+from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
 
@@ -111,7 +111,7 @@ def service_alive(settings: Settings) -> bool:
         with httpx.Client(trust_env=False, timeout=0.7) as client:
             result = client.get(settings.url + "/health")
             data = result.json()
-            return result.is_success and data.get("service") == "devbrain" and data.get("instance") == instance_id(settings)
+            return result.is_success and data.get("service") in SERVICE_NAMES and data.get("instance") == instance_id(settings)
     except (httpx.HTTPError, ValueError):
         return False
 

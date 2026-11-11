@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from cairnmind import __version__
-from cairnmind.config import Settings
+from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
 
 log = logging.getLogger(__name__)
 
@@ -199,6 +199,22 @@ class MemorySettingsBody(MemorySnapshotBody):
     interval_minutes: int = Field(default=15, ge=1, le=10080, strict=True)
 
 
+def daily_backups(backup_dir) -> list[Path]:
+    """The scheduled backups of a data directory, oldest first, under the current and the earlier suffix.
+
+    Only files named by the time they were written are scheduled backups. The safety copies made
+    before a restore or a schema change, and backups a user named, are never pruned with them.
+    The order follows the time in the name, which a copy or a restore of the directory keeps.
+    """
+    found = []
+    for suffix in BACKUP_SUFFIXES:
+        for path in Path(backup_dir).glob(f"[0-9]*{suffix}") if Path(backup_dir).is_dir() else ():
+            written = path.name[:-len(suffix)]
+            if written.isdigit():
+                found.append((int(written), path.name, path))
+    return [path for _, _, path in sorted(found)]
+
+
 def instance_id(settings: Settings) -> str:
     return hashlib.sha256(str(settings.data_dir).encode()).hexdigest()[:16]
 
@@ -329,11 +345,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 from cairnmind.verification import recover_interrupted_runs
                 await asyncio.to_thread(recover_interrupted_runs, store, settings)
                 backup_dir = settings.data_dir / "backups"
-                backups = sorted(backup_dir.glob("*.devbrain.json.gz")) if backup_dir.exists() else []
+                backups = daily_backups(backup_dir)
                 if not backups or time.time() - backups[-1].stat().st_mtime > 86400:
                     backup_dir.mkdir(exist_ok=True)
-                    await asyncio.to_thread(store.backup, backup_dir / f"{time.time_ns()}.devbrain.json.gz")
-                    for old in sorted(backup_dir.glob("*.devbrain.json.gz"))[:-7]:
+                    await asyncio.to_thread(store.backup, backup_dir / f"{time.time_ns()}{BACKUP_SUFFIXES[0]}")
+                    for old in daily_backups(backup_dir)[:-7]:
                         old.unlink()
                 background_status["scanner_error"] = "; ".join(scan_errors[:5]) or None
                 background_status["scan_errors"] = scan_errors[:20]
@@ -462,7 +478,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.get("/health")
     async def health():
-        return {"service": "devbrain", "version": __version__, "instance": instance_id(settings),
+        return {"service": SERVICE_NAMES[0], "version": __version__, "instance": instance_id(settings),
                 "backend": "arcadedb"}
 
     @app.get("/projects", dependencies=auth)

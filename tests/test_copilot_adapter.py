@@ -259,7 +259,7 @@ async def test_handler_typeerror_does_not_repeat_effect(tmp_path):
     await subject.run_turn("read", [TOOL], handler)
     assert effects == [{"path": "x"}]
     assert observed[0].result_type == "failure"
-    assert json.loads(observed[0].text_result_for_llm) == {"error": "devbrain_tool_failed"}
+    assert json.loads(observed[0].text_result_for_llm) == {"error": "cairnmind_tool_failed"}
     assert "private token" not in observed[0].text_result_for_llm
     await subject.close()
 

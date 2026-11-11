@@ -160,7 +160,7 @@ The fingerprint also covers untracked files that are not ignored. Put generated 
 
 `eval run` exercises 20 scenarios against a real Ollama in a temporary repository and a separate ArcadeDB database. The optional `--clients` flag starts a fresh Codex, then Claude, then Codex again, using existing logins and consuming their quotas. A missing model, client or login yields `not_run`. The report gives accuracy, state errors, latency, the local model's context size, and token counts only when the provider actually reports them.
 
-`--clients --skip-claude` checks only two fresh Codex sessions and does not start a Claude process. The report labels this as a partial test and does not count it as a full cross-client handoff. Codex tool approvals cover only the four operations of the `devbrain_eval` server against the temporary database; the sandbox stays `read-only`.
+`--clients --skip-claude` checks only two fresh Codex sessions and does not start a Claude process. The report labels this as a partial test and does not count it as a full cross-client handoff. Codex tool approvals cover only the four operations of the `cairnmind_eval` server against the temporary database; the sandbox stays `read-only`.
 
 `cairnmind doctor --contract --format text` prints the client compatibility checks as one line per client and check, with the output line that confirmed each one or, for a failed check, what was needed and what was found. A check that needs no output shows its requirement in parentheses. Each installed client ends with a `verified_resume` line; the command exits with 1 only when that line is `failed`. A client that is not installed gets a single `installed  missing` line and does not change the exit code. JSON stays the default.
 
@@ -240,7 +240,7 @@ The default data directory is `~/.local/share/cairnmind` for a new installation.
 ```bash
 cairnmind export ~/memory.json --project my-app
 cairnmind export ~/memory.md --project my-app --markdown
-cairnmind backup ~/devbrain-backup.devbrain.json.gz
+cairnmind backup ~/cairnmind-backup.cairnmind.json.gz
 ```
 
 The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`. To move a single project, use `memory import`; `restore` replaces the entire store.

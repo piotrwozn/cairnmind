@@ -822,7 +822,9 @@ def hook(settings: Settings, payload: dict[str, Any], client: str) -> dict[str, 
     data["client"] = client
     data["cwd"] = data["cwd"] or str(Path.cwd())
     data["event_id"] = event_id
-    data["devbrain_session_id"] = session_value("SESSION_ID", strict=False)
+    # Under both keys for one release: a service of an earlier version that is still running
+    # reads the earlier key, and without it the event would lose its session.
+    data["cairnmind_session_id"] = data["devbrain_session_id"] = session_value("SESSION_ID", strict=False)
     data["packet_id"] = session_value("PACKET_ID", strict=False)
     data["resume_reason"] = payload.get("source") or payload.get("resume_reason") or "startup"
     if isinstance(data.get("transcript_path"), str) and data["transcript_path"]:
@@ -968,7 +970,7 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
             # Receipt first invalidates compact/resume ACKs even if its source
             # file is not yet available. Readiness separately waits for its
             # captured archive range; no model inference is performed here.
-            if payload.get("devbrain_session_id") or payload.get("session_id"):
+            if payload.get("cairnmind_session_id") or payload.get("devbrain_session_id") or payload.get("session_id"):
                 from .sessions import SessionManager
                 SessionManager(store, settings).note_event(payload, payload["client"])
                 counts["events"] += 1

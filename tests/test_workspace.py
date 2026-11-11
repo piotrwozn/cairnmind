@@ -75,7 +75,7 @@ def manager(tmp_path, monkeypatch):
 
 
 def rows(manager):
-    result = manager.tmux("list-panes", "-a", "-F", "#{@devbrain_role}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_pid}")
+    result = manager.tmux("list-panes", "-a", "-F", "#{@cairnmind_role}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_pid}")
     return {parts[0]: list(map(int, parts[1:])) for line in result.stdout.splitlines() if (parts := line.split("\t"))[0]}
 
 
@@ -172,7 +172,7 @@ def test_native_border_ack_is_only_validated_broker_state(manager):
     workspace.refresh()
     pane = workspace.panes()["client1"]
     def badge():
-        return workspace.tmux("show-options", "-pv", "-t", pane, "@devbrain_memory").stdout.strip()
+        return workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_memory").stdout.strip()
     assert badge() == "ACK required"
     for memory, expected in (({"status": "ready", "acknowledged": True}, "ack"),
                              ({"status": "ready", "acknowledged": False, "stale": True}, "stale"),
@@ -188,7 +188,7 @@ def test_compact_focus_and_zoom_preserve_all_view_processes(manager):
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
     before = {key: value[-1] for key, value in rows(workspace).items()}
-    workspace.tmux("resize-window", "-t", "devbrain-ui:workspace", "-x", "100", "-y", "30")
+    workspace.tmux("resize-window", "-t", "cairnmind-ui:workspace", "-x", "100", "-y", "30")
     workspace._layout()
     assert workspace.state.read()["layout"] == "compact"
     assert workspace.tmux("display-message", "-p", "-t", workspace.panes()["sidebar"], "#{window_zoomed_flag}").stdout.strip() == "1"
@@ -232,7 +232,7 @@ def test_outer_keyboard_claim_requires_exact_identity_and_explicit_takeover(tmp_
     calls.clear()
     assert workspace._claim_attached(observer["pid"], observer["tty"], takeover=True) is True
     assert calls[0] == ("refresh-client", "-t", writer["tty"], "-f", "read-only,ignore-size")
-    assert calls[1] == ("switch-client", "-r", "-c", observer["tty"], "-t", "devbrain-ui")
+    assert calls[1] == ("switch-client", "-r", "-c", observer["tty"], "-t", "cairnmind-ui")
     assert not (tmp_path / "missing").exists()
 
 

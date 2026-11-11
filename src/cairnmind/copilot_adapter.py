@@ -294,6 +294,8 @@ class CopilotAdapter:
         self.logical_session_id = session_id or uuid4().hex
         if not isinstance(self.logical_session_id, str) or not _SESSION.fullmatch(self.logical_session_id):
             raise ValueError("Invalid Copilot session ID")
+        # The prefix is part of an identifier that Copilot stores on its side: a session created by an
+        # earlier version is resumed under exactly this name, so it does not change.
         self.session_id = "devbrain-" + self.logical_session_id
         self._factory, self._sdk_override = client_factory, sdk
         self._client = self._session = None
@@ -450,8 +452,8 @@ class CopilotAdapter:
                     # plain dict is not normalized by direct Tool handlers.
                     # Do not leak arbitrary exception text into its logs or
                     # back into the model after an uncertain side effect.
-                    return self._sdk_api.Result(text_result_for_llm='{"error":"devbrain_tool_failed"}',
-                                                result_type="failure", error="devbrain_tool_failed")
+                    return self._sdk_api.Result(text_result_for_llm='{"error":"cairnmind_tool_failed"}',
+                                                result_type="failure", error="cairnmind_tool_failed")
             finally:
                 if task is not None:
                     self._tool_tasks.discard(task)
@@ -461,7 +463,7 @@ class CopilotAdapter:
                                   skip_permission=False, defer="never")
 
     def _session_options(self, tools, system):
-        return {"model": self.profile.get("model"), "client_name": "devbrain",
+        return {"model": self.profile.get("model"), "client_name": "cairnmind",
                 "tools": [self._tool(row) for row in tools],
                 "available_tools": ["custom:" + row["name"] for row in tools],
                 "excluded_tools": ["builtin:*", "mcp:*"],
@@ -658,15 +660,15 @@ class CopilotAdapter:
         observed = []
 
         async def handler(name, args):
-            if name == "devbrain_connection_probe" and args == {"nonce": nonce}:
+            if name == "cairnmind_connection_probe" and args == {"nonce": nonce}:
                 observed.append(nonce)
                 return {"ok": True}
             return {"error": "invalid_probe"}
 
-        tools = [{"name": "devbrain_connection_probe", "description": "Confirm a Cairnmind connection.",
+        tools = [{"name": "cairnmind_connection_probe", "description": "Confirm a Cairnmind connection.",
                   "parameters": {"type": "object", "properties": {"nonce": {"type": "string", "enum": [nonce]}},
                                  "required": ["nonce"], "additionalProperties": False}}]
-        reply = await self.run_turn(f"Call devbrain_connection_probe exactly once with nonce {nonce}.", tools, handler,
+        reply = await self.run_turn(f"Call cairnmind_connection_probe exactly once with nonce {nonce}.", tools, handler,
                                     system="You are testing a connection. Call only the supplied probe tool.")
         return {"status": "ready" if observed else "unsupported", "code": "ready" if observed else "copilot_tools_unsupported",
                 "tool_call_verified": bool(observed), "usage": reply.get("usage", {})}
@@ -695,7 +697,7 @@ class CopilotAdapter:
                 await asyncio.wait_for(self._session.disconnect(), 5)
         self._session = None
         self._catalog_hash = None
-        self.session_id = "devbrain-" + uuid4().hex
+        self.session_id = "cairnmind-" + uuid4().hex
 
     async def close(self):
         await self.interrupt()
