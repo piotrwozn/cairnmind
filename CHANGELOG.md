@@ -2,6 +2,10 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+- `cairnmind impact PROJECT --since COMMIT` lists the decisions, facts and tasks linked to the files and symbols changed since a commit, each with the reason for the link: the record's evidence names the changed file or definition, or the record cites a snapshot of the changed file. It is read-only and asks no model (#8).
+
 ## 0.9.0
 
 The first release under the name Cairnmind.
