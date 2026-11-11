@@ -102,10 +102,10 @@ If the installer prints `Add this directory to PATH`, add that directory to your
 
 ### Manual installation
 
-The same steps can be run by hand, for example on a system where you do not want to run the script:
+The same steps can be run by hand from the directory that contains `pyproject.toml`, for example on a system where you do not want to run the script:
 
 ```bash
-uv tool install --python 3.12 ~/src/cairnmind
+uv tool install --python 3.12 .
 cairnmind engine install
 cairnmind init
 cairnmind engine status

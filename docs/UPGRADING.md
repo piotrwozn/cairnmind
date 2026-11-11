@@ -19,7 +19,15 @@ devbrain backup ~/devbrain-backup-0.8.0.devbrain.json.gz
 
 ### 2. Close the workspace and coding sessions
 
-Close the terminal workspace and any Codex or Claude Code session started from it. A workspace or worker that keeps running from before the upgrade keeps its old processes; they are not migrated.
+Close the terminal workspace and any Codex or Claude Code session started from it, then stop what keeps running in the background:
+
+```bash
+devbrain workspace stop
+devbrain cockpit stop
+devbrain stop
+```
+
+The interface broker and the knowledge service are background processes that outlive the workspace. The installer also stops these two when it replaces DevBrain, but it does not close a workspace: a workspace or worker that keeps running from before the upgrade keeps its old processes, and they are not migrated. If `cairnmind` later refuses to open because the running broker has another version, run `cairnmind cockpit stop` and open it again.
 
 ### 3. Get 0.9.0 and run the installer
 
@@ -51,7 +59,15 @@ cairnmind doctor
 cairnmind project list
 ```
 
-There is no automatic rollback. To go back, reinstall 0.8.0 from its release archive and restore the backup.
+### Going back to 0.8.0
+
+There is no automatic rollback.
+
+1. Close the workspace and coding sessions, then run `cairnmind workspace stop`, `cairnmind cockpit stop` and `cairnmind stop`.
+2. Remove the new tool, which owns the `devbrain` command: `uv tool uninstall cairnmind`.
+3. Run `bash scripts/install-wsl.sh` from the unpacked 0.8.0 release archive.
+4. With the service stopped (`devbrain stop`), restore the backup: `devbrain restore ~/devbrain-backup-0.8.0.devbrain.json.gz`.
+5. In each project, put back the configuration that 0.8.0 wrote, and do not run `devbrain install` over the entries written by 0.9.0: 0.8.0 does not recognise them and would add its hooks next to them. `cairnmind install` left a copy of every file it changed next to it, named `<file>.devbrain-backup-<number>`: `.mcp.json`, `.codex/config.toml`, `.codex/hooks.json`, `.claude/settings.local.json`, `AGENTS.md` and `CLAUDE.md`. Copy the earliest copy made during the upgrade back over each file; it names the Python of the `devbrain` tool, which exists again.
 
 ## From 0.7.2 to 0.8.0
 
