@@ -36,6 +36,8 @@ def workspace(tmp_path):
     (root / "test_app.py").write_text("from app import main\n\n\ndef test_main():\n    assert main()\n")
     (root / "notes.md").write_text("# Notes\n\nLogin goes through pkg/auth.py.\n")
     (root / "logo.bin").write_bytes(b"\x00\x01\x02 binary")
+    (root / ".gitignore").write_text("hidden.py\n")
+    (root / "hidden.py").write_text("HIDDEN = 1\n")
     for index in range(12):
         (root / "pkg" / f"module_{index:02d}.py").write_text(f"VALUE_{index} = {index}\n")
     subprocess.run(["git", "-C", str(root), "init", "-q"], capture_output=True, check=True)
@@ -55,7 +57,9 @@ def index_state(store, pid):
     sources = rows("SELECT id,uri,sha256,kind,is_current FROM sources WHERE project_id=:project")
     chunks = rows("SELECT id,source_id,is_current FROM chunks WHERE project_id=:project")
     marker = rows("SELECT id,graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project")
-    return {"nodes": nodes, "edges": edges, "sources": sources, "chunks": chunks, "marker": marker}
+    jobs = sorted(row["dedupe_key"] for row in store.query(
+        "SELECT dedupe_key FROM jobs WHERE project_id=:project", {"project": pid}))
+    return {"nodes": nodes, "edges": edges, "sources": sources, "chunks": chunks, "marker": marker, "jobs": jobs}
 
 
 def full_run(store, pid):
@@ -84,7 +88,7 @@ def reads_under(root, monkeypatch):
 def test_after_one_edit_only_the_edited_file_is_read(workspace, monkeypatch):
     store, pid, root = workspace
     first = index_project(store, pid)
-    assert first["files"] == 18 and first["read"] == 19 and not first["errors"]  # the binary file is read once too
+    assert first["files"] == 19 and first["read"] == 20 and not first["errors"]  # the binary file is read once too
     (root / "pkg" / "limits.py").write_text("LIMIT = 4\n\n\ndef allowed(token):\n    return token == 'valid'\n")
     read = reads_under(root, monkeypatch)
     lookups = []
@@ -94,7 +98,7 @@ def test_after_one_edit_only_the_edited_file_is_read(workspace, monkeypatch):
     monkeypatch.undo()
     assert read == ["pkg/limits.py"]
     assert lookups == [str(root / "pkg" / "limits.py")]
-    assert (edited["files"], edited["changed"], edited["unchanged"], edited["read"]) == (18, 1, 17, 1)
+    assert (edited["files"], edited["changed"], edited["unchanged"], edited["read"]) == (19, 1, 18, 1)
     assert_same_as_a_full_run(store, pid)
 
 
@@ -131,6 +135,7 @@ STEPS = {
     "turn a text file into a binary one": lambda root: (root / "notes.md").write_bytes(b"\x00\x01"),
     "turn a binary file into text": lambda root: (root / "logo.bin").write_text("now text\n"),
     "ignore a file that was indexed": lambda root: (root / ".gitignore").write_text("pkg/module_07.py\n"),
+    "stop ignoring a file": lambda root: (root / ".gitignore").write_text(""),
     "remove an import": lambda root: (root / "app.py").write_text(
         "from pkg.auth import authenticate\n\n\ndef main():\n    return authenticate('valid')\n"),
     "rename a file": lambda root: (root / "pkg" / "module_09.py").rename(root / "pkg" / "renamed.py"),
@@ -233,13 +238,13 @@ def test_a_failed_run_remembers_nothing(workspace, monkeypatch):
         index_project(store, pid)
     monkeypatch.setattr(store, "upsert_edge", original)
     repaired = index_project(store, pid)
-    assert repaired["read"] == 19 and repaired["graph_unchanged"] is False
+    assert repaired["read"] == 20 and repaired["graph_unchanged"] is False
     assert_same_as_a_full_run(store, pid)
 
 
 def test_a_file_written_a_moment_ago_is_read_again_next_time(workspace, monkeypatch):
     store, pid, root = workspace
-    monkeypatch.setattr(ingest, "RACY_WINDOW_NS", 2_000_000_000)
+    monkeypatch.setattr(ingest, "RACY_WINDOW_NS", 10**18)  # every file is young, however slow the run
     first = index_project(store, pid)
     # Every file is younger than the window: its times cannot yet prove that it did not change.
     assert index_project(store, pid)["read"] == first["read"]
@@ -248,9 +253,36 @@ def test_a_file_written_a_moment_ago_is_read_again_next_time(workspace, monkeypa
     assert index_project(store, pid)["read"] == 0
 
 
-def test_one_store_does_not_reuse_what_another_remembered(workspace, tmp_path):
+def test_what_is_remembered_belongs_to_one_store_and_to_existing_projects(workspace, tmp_path):
+    store, pid, root = workspace
+    index_project(store, pid)
+    key = (str(store.data_dir), pid)
+    assert set(ingest._REMEMBERED) >= {key}
+    # The same project identifier in another data directory is another key.
+    ingest.forget_missing_projects(Store(tmp_path / "other-memory"), [])
+    assert key in ingest._REMEMBERED and key in ingest._INDEXED
+    ingest.forget_missing_projects(store, [pid])
+    assert key in ingest._REMEMBERED
+    # A project deleted by another process: the service drops it at its next scan.
+    ingest.forget_missing_projects(store, [])
+    assert key not in ingest._REMEMBERED and key not in ingest._INDEXED
+
+
+def test_a_stored_graph_is_remembered_only_after_it_was_compared(workspace):
     store, pid, root = workspace
     first = index_project(store, pid)
-    other = Store(tmp_path / "other-memory")
-    same = other.add_project("incremental", root)
-    assert index_project(other, same["id"])["read"] == first["read"]
+    # A new process: nothing is remembered, and the stored fingerprint matches.
+    forget_index_signature(store, pid)
+    cold = index_project(store, pid)
+    assert cold["graph_unchanged"] is True and cold["read"] == first["read"]
+    (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
+    assert index_project(store, pid)["graph_written"] == {"nodes": 2, "edges": 1}  # the compared graph was trusted
+    # The same, but a stored row differs from what the fingerprint promises.
+    forget_index_signature(store, pid)
+    store.command("UPDATE nodes SET label='changed elsewhere' WHERE project_id=:project AND kind='symbol' LIMIT 1",
+                  {"project": pid})
+    assert index_project(store, pid)["graph_unchanged"] is True
+    (root / "pkg" / "module_04.py").write_text("VALUE_4 = 44\n")
+    repaired = index_project(store, pid)
+    assert repaired["graph_written"] == {"nodes": first["nodes"], "edges": first["edges"]}
+    assert_same_as_a_full_run(store, pid)

@@ -366,6 +366,17 @@ def forget_index_signature(store, project_id: str | None = None) -> None:
             del remembered[key]
 
 
+def forget_missing_projects(store, project_ids) -> None:
+    """Drop what is remembered about projects of this store that no longer exist.
+
+    A project can be deleted by another process, which cannot reach this one's memory.
+    """
+    live = set(project_ids)
+    for remembered in (_INDEXED, _REMEMBERED):
+        for key in [key for key in remembered if key[0] == str(store.data_dir) and key[1] not in live]:
+            del remembered[key]
+
+
 def index_project(store, project_id: str) -> dict:
     """Snapshot changed files, update chunks, and bring the derived code graph up to date.
 
@@ -578,6 +589,32 @@ def _graph_as_remembered(tx, project_id: str, remembered: dict | None) -> bool:
     return bool(stored) and int(stored[0].get("total") or 0) == len(remembered["edges"])
 
 
+def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict[str, dict]) -> bool:
+    """Whether the database holds exactly these graph rows, read row by row.
+
+    The fingerprint does not cover everything the graph follows from (the root a file was
+    reached through steers import resolution), so a computed graph is remembered as the
+    stored one only after it was compared with what is stored.
+    """
+    stored_edges = store.query(
+        "SELECT id,from_id,to_id,kind,source_id FROM edges WHERE project_id=:project AND kind IN :kinds",
+        {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
+    if len(stored_edges) != len(edges) or any(
+            row["id"] not in edges or any(row.get(key) != edges[row["id"]][key]
+                                          for key in ("from_id", "to_id", "kind", "source_id"))
+            for row in stored_edges):
+        return False
+    stored_nodes = {row["id"]: row for row in store.query(
+        "SELECT id,kind,label,source_id,metadata FROM nodes WHERE project_id=:project AND kind IN :kinds",
+        {"project": project_id, "kinds": [*GRAPH_NODE_KINDS, "source"]})}
+    return all(
+        identifier in stored_nodes
+        and stored_nodes[identifier].get("kind") == item["kind"] and stored_nodes[identifier].get("label") == item["label"]
+        and stored_nodes[identifier].get("source_id") == item["source_id"]
+        and _metadata(stored_nodes[identifier].get("metadata")) == item["metadata"]
+        for identifier, item in nodes.items())
+
+
 def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: dict | None = None,
                  state: dict | None = None) -> dict:
     """Write the graph that follows from `indexed`.
@@ -685,8 +722,11 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
     digests = {identifier: _node_digest(item) for identifier, item in nodes.items()}
     written = {"fingerprint": fingerprint, "nodes": digests, "edges": set(edges)}
     if unchanged:
-        # The stored graph already follows from these sources; it was only not in memory yet.
-        state.update(written)
+        # The fingerprint says the stored graph follows from these sources, but this process
+        # has not seen it. It is remembered only if it is, row for row, the computed one;
+        # otherwise the next change replaces the graph in full.
+        if _stored_graph_is(store, project_id, nodes, edges):
+            state.update(written)
         return {"nodes": int(markers[0].get("graph_nodes") or 0),
                 "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
 

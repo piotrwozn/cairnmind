@@ -2,6 +2,10 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+- After an edit, indexing opens only the files whose size, times or inode changed since this process last indexed them, and writes only the graph rows that differ instead of replacing the whole graph. On a project with 5,000 files the indexing part of the first question after editing one file fell from 159 s to about 1 s. The first indexing after the service starts still reads every file (#62).
+
 ## 0.9.0
 
 The first release under the name Cairnmind.
