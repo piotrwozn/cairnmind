@@ -78,7 +78,7 @@ steps/history, not destructive deletion. Scope worktree must be registered.
 - validate_completion(store,tx,project_id,task:dict)->None raises ValueError unless
   current successful fresh machine runs cover required_profiles for task definition.
 
-`.devbrain/checks.toml`: [checks.<name>] argv=[executable,args...], cwd=".",
+`.cairnmind/checks.toml`: [checks.<name>] argv=[executable,args...], cwd=".",
 timeout_seconds default600, output_limit_bytes default10485760, extra_inputs=[]
 (registeredroot-relative filepaths/globs). Commands use subprocess argv shell=False,
 process group timeout/cancel/overflow, bounded persisted stdout/stderr sources.

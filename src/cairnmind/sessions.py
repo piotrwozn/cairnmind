@@ -63,19 +63,25 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
 
 def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
     """Whether a generated MCP or hook file is exactly what `_command` would produce."""
-    from .integrations import SERVER, TOML_BEGIN, TOML_END, SESSION_ENV_VARS
+    from .integrations import (EARLIER_SERVER, EARLIER_SESSION_ENV_VARS, EARLIER_TOML_BEGIN, EARLIER_TOML_END, SERVER,
+                               SESSION_ENV_VARS, TOML_BEGIN, TOML_END)
 
     command = _command(settings, "mcp")
     server = {"command": command[0], "args": command[1:]}
+    # What this version generates, and what versions up to 0.9.0 generated under the earlier names.
+    shapes = ((SERVER, SESSION_ENV_VARS, TOML_BEGIN, TOML_END),
+              (EARLIER_SERVER, EARLIER_SESSION_ENV_VARS, EARLIER_TOML_BEGIN, EARLIER_TOML_END))
     if relative == ".mcp.json":
-        return json.loads(text) == {"mcpServers": {SERVER: {
-            **server, "env": {name: "${" + name + ":-}" for name in SESSION_ENV_VARS}}}}
+        content = json.loads(text)
+        return any(content == {"mcpServers": {key: {**server, "env": {name: "${" + name + ":-}" for name in forwarded}}}}
+                   for key, forwarded, _, _ in shapes)
     if relative == ".codex/config.toml":
-        expected = {"mcp_servers": {SERVER: {**server, "env_vars": list(SESSION_ENV_VARS),
-                                                "startup_timeout_sec": 15, "tool_timeout_sec": 75}}}
-        return (tomllib.loads(text) == expected and text.strip().startswith(TOML_BEGIN)
-                and text.strip().endswith(TOML_END)
-                and text.count(TOML_BEGIN) == text.count(TOML_END) == 1)
+        content = tomllib.loads(text)
+        return any(content == {"mcp_servers": {key: {**server, "env_vars": list(forwarded),
+                                                     "startup_timeout_sec": 15, "tool_timeout_sec": 75}}}
+                   and text.strip().startswith(begin) and text.strip().endswith(end)
+                   and text.count(begin) == text.count(end) == 1
+                   for key, forwarded, begin, end in shapes)
     client = "codex" if relative == ".codex/hooks.json" else "claude"
     hooks = {}
     for event in ("SessionStart", "PreCompact", "Stop", "SessionEnd"):

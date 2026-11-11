@@ -73,7 +73,7 @@ project is named `devbrain-pilot` in memory.
   mkdir "$pilot_root/.devbrain"
   cp "$kit_dir/templates/.gitignore" "$pilot_root/.gitignore"
   cp "$kit_dir/templates/README.md" "$pilot_root/README.md"
-  cp "$kit_dir/templates/checks.toml" "$pilot_root/.devbrain/checks.toml"
+  cp "$kit_dir/templates/checks.toml" "$pilot_root/.cairnmind/checks.toml"
   cp "$kit_dir/plan.json" "$pilot_root/pilot-plan.json"
   git -C "$pilot_root" init
   git -C "$pilot_root" add .

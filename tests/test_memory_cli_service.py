@@ -283,11 +283,11 @@ def test_http_preview_snapshot_and_auto_never_call_models(memory_workspace):
         preview = client.post("/memory/preview", json={"project": project["id"]}, headers=headers)
         assert preview.status_code == 200, preview.text
         assert preview.json()["counts"]["records"] == 1
-        assert not (root / ".memory" / "devbrain" / "manifest.json").exists()
+        assert not (root / ".memory" / "cairnmind" / "manifest.json").exists()
         saved = client.post("/memory/snapshot", json={"project": project["id"]}, headers=headers)
         assert saved.status_code == 200, saved.text
         assert saved.json()["status"] == "created"
-        assert (root / ".memory" / "devbrain" / "manifest.json").is_file()
+        assert (root / ".memory" / "cairnmind" / "manifest.json").is_file()
         config = client.patch("/memory/settings", json={"project": project["id"], "enabled": True}, headers=headers)
         assert config.status_code == 200, config.text
         status = client.get("/memory/status", params={"project": project["id"]}, headers=headers)
@@ -337,7 +337,7 @@ def test_snapshot_and_settings_require_current_actor_ack_and_worktree(memory_wor
         body = {"project": project["id"], "session_id": sid}
         denied = client.post("/memory/snapshot", json=body, headers=headers)
         assert denied.status_code == 409 and "resume_required" in denied.text
-        assert not (root / ".memory" / "devbrain" / "manifest.json").exists()
+        assert not (root / ".memory" / "cairnmind" / "manifest.json").exists()
         denied = client.patch("/memory/settings", json={**body, "enabled": True}, headers=headers)
         assert denied.status_code == 409
         packet = manager.resume_context(sid)["packet"]
@@ -373,7 +373,7 @@ def test_snapshot_rechecks_ack_after_preflight_before_capture(memory_workspace, 
         assert result.status_code == 409, result.text
         assert "resume_required" in result.text
         assert changed == [True]
-        assert not (root / ".memory" / "devbrain" / "manifest.json").exists()
+        assert not (root / ".memory" / "cairnmind" / "manifest.json").exists()
 
 
 def test_http_import_is_atomic_project_scoped_and_dry_run_noop(memory_workspace, tmp_path):

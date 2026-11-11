@@ -149,7 +149,7 @@ async def test_actual_stdio_resume_refresh_keeps_horizon_and_requires_new_explic
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer) as client:
                 initialized = await client.initialize()
-                assert initialized.serverInfo.name == "devbrain"
+                assert initialized.serverInfo.name == "cairnmind"
                 context = tool_result(await client.call_tool("resume_context", {}))
                 assert context["packet"] == initial
                 assert not store.query("SELECT FROM resume_acks")

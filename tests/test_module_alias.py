@@ -107,7 +107,9 @@ def test_install_rewrites_entries_written_under_the_earlier_name(settings, tmp_p
                                               "other": {"command": "keep"}}}))
     assert integrations._merge_json_mcp(mcp, settings) is True
     written = json.loads(mcp.read_text())["mcpServers"]
-    assert written["devbrain"]["args"] == integrations._command(settings, "mcp")[1:] and written["other"] == {"command": "keep"}
+    # The entry moves to the current server name at its place; nothing is left under the earlier one.
+    assert list(written) == ["cairnmind", "other"]
+    assert written["cairnmind"]["args"] == integrations._command(settings, "mcp")[1:] and written["other"] == {"command": "keep"}
 
     hooks = tmp_path / "project" / "hooks.json"
     old_hook = " ".join(earlier(integrations._command(settings, "hook", "--client", "claude")))
@@ -125,10 +127,19 @@ def test_untouched_files_generated_under_the_earlier_name_still_count_as_ours(se
     project = {"id": "project-a", "name": "Example", "root": str(tmp_path / "project")}
     for builder in (integrations._command, integrations._earlier_command):
         command = builder(settings, "mcp")
-        generated = json.dumps({"mcpServers": {"devbrain": {
-            "command": command[0], "args": command[1:],
-            "env": {name: "${" + name + ":-}" for name in integrations.SESSION_ENV_VARS}}}})
-        assert _managed_empty_file(".mcp.json", generated.encode(), settings, project) is True
+        for key, forwarded in (("cairnmind", integrations.SESSION_ENV_VARS),
+                               ("devbrain", integrations.EARLIER_SESSION_ENV_VARS)):
+            generated = json.dumps({"mcpServers": {key: {
+                "command": command[0], "args": command[1:], "env": {name: "${" + name + ":-}" for name in forwarded}}}})
+            assert _managed_empty_file(".mcp.json", generated.encode(), settings, project) is True
+            toml = (("# BEGIN CAIRNMIND\n" if key == "cairnmind" else "# BEGIN DEVBRAIN\n") + f"[mcp_servers.{key}]\n"
+                    f"command = {json.dumps(command[0])}\nargs = {json.dumps(command[1:])}\n"
+                    f"env_vars = {json.dumps(list(forwarded))}\nstartup_timeout_sec = 15\ntool_timeout_sec = 75\n"
+                    + ("# END CAIRNMIND\n" if key == "cairnmind" else "# END DEVBRAIN\n"))
+            assert _managed_empty_file(".codex/config.toml", toml.encode(), settings, project) is True
+    mixed = json.dumps({"mcpServers": {"devbrain": {"command": command[0], "args": command[1:], "env": {
+        name: "${" + name + ":-}" for name in integrations.SESSION_ENV_VARS}}}})
+    assert _managed_empty_file(".mcp.json", mixed.encode(), settings, project) is False  # no version wrote this
     foreign = json.dumps({"mcpServers": {"devbrain": {"command": sys.executable, "args": ["-m", "another_tool"]}}})
     assert _managed_empty_file(".mcp.json", foreign.encode(), settings, project) is False
     assert _managed_empty_file(".mcp.json", b"not json", settings, project) is False

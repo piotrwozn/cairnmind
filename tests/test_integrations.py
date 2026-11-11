@@ -79,9 +79,9 @@ def test_install_preserves_native_config_and_is_idempotent(settings, project, in
     config = tomllib.loads((root / ".codex/config.toml").read_text())
     assert config["model"] == "custom"
     assert config["mcp_servers"]["other"]["command"] == "other"
-    assert config["mcp_servers"]["devbrain"]["args"][-1] == "mcp"
-    assert config["mcp_servers"]["devbrain"]["env_vars"] == list(integrations.SESSION_ENV_VARS)
-    claude_mcp = json.loads((root / ".mcp.json").read_text())["mcpServers"]["devbrain"]
+    assert config["mcp_servers"]["cairnmind"]["args"][-1] == "mcp"
+    assert config["mcp_servers"]["cairnmind"]["env_vars"] == list(integrations.SESSION_ENV_VARS)
+    claude_mcp = json.loads((root / ".mcp.json").read_text())["mcpServers"]["cairnmind"]
     assert claude_mcp["env"] == {name: "${" + name + ":-}" for name in integrations.SESSION_ENV_VARS}
     claude = json.loads((root / ".claude/settings.local.json").read_text())
     assert claude["permissions"] == {"allow": ["Read"]}
@@ -94,7 +94,7 @@ def test_install_preserves_native_config_and_is_idempotent(settings, project, in
     assert "metadata.check_run_ids" in (root / "AGENTS.md").read_text()
     assert "ack_resume" in (root / "AGENTS.md").read_text()
     assert "client-reported" in (root / "AGENTS.md").read_text()
-    assert list((root / ".codex").glob("config.toml.devbrain-backup-*"))
+    assert list((root / ".codex").glob("config.toml.cairnmind-backup-*"))
     second = integrations.install_integrations(settings, project)
     assert second["changed"] == []
     # Global configuration is never changed as a side effect of adding a project.
@@ -110,12 +110,12 @@ def test_managed_legacy_mcp_config_upgrades_session_forwarding(settings, project
                                 if not line.startswith("env_vars =")) + "\n")
     claude = root / ".mcp.json"
     previous = json.loads(claude.read_text())
-    previous["mcpServers"]["devbrain"].pop("env")
+    previous["mcpServers"]["cairnmind"].pop("env")
     claude.write_text(json.dumps(previous))
     upgraded = integrations.install_integrations(settings, project)
     assert {str(codex), str(claude)} <= set(upgraded["changed"])
-    assert tomllib.loads(codex.read_text())["mcp_servers"]["devbrain"]["env_vars"] == list(integrations.SESSION_ENV_VARS)
-    assert set(json.loads(claude.read_text())["mcpServers"]["devbrain"]["env"]) == set(integrations.SESSION_ENV_VARS)
+    assert tomllib.loads(codex.read_text())["mcp_servers"]["cairnmind"]["env_vars"] == list(integrations.SESSION_ENV_VARS)
+    assert set(json.loads(claude.read_text())["mcpServers"]["cairnmind"]["env"]) == set(integrations.SESSION_ENV_VARS)
     assert integrations.install_integrations(settings, project)["changed"] == []
 
 
@@ -172,12 +172,19 @@ def test_legacy_native_approval_fixture_upgrades_isolation_once_preserving_permi
     path.chmod(0o600)
     assert integrations.install_integrations(settings, project, clients=("codex",))["changed"] == [str(path)]
     expected = tomllib.loads(raw.decode())
-    expected["mcp_servers"]["devbrain"]["args"].insert(0, "-I")
-    # The entry was written under the earlier module name; installing rewrites it to the new one.
-    assert expected["mcp_servers"]["devbrain"]["args"][2] == "devbrain"
-    expected["mcp_servers"]["devbrain"]["args"][2] = "cairnmind"
+    # The entry was written under the earlier server and module names. Installing renames the table
+    # where it stands, so the three tool approvals below it move with it.
+    expected["mcp_servers"]["cairnmind"] = expected["mcp_servers"].pop("devbrain")
+    expected["mcp_servers"]["cairnmind"]["args"].insert(0, "-I")
+    assert expected["mcp_servers"]["cairnmind"]["args"][2] == "devbrain"
+    expected["mcp_servers"]["cairnmind"]["args"][2] = "cairnmind"
+    expected["mcp_servers"]["cairnmind"]["env_vars"] = [*integrations.EARLIER_SESSION_ENV_VARS,
+                                                         *integrations.CURRENT_SESSION_ENV_VARS]
     assert tomllib.loads(path.read_text()) == expected
-    backups = list(path.parent.glob("config.toml.devbrain-backup-*"))
+    assert set(expected["mcp_servers"]["cairnmind"]["tools"]) == {"resume_context", "ack_resume", "checkpoint"}
+    assert path.read_text().startswith("# BEGIN CAIRNMIND\n[mcp_servers.cairnmind]\n")
+    assert path.read_text().rstrip().endswith("# END CAIRNMIND") and "DEVBRAIN --" not in path.read_text()
+    backups = list(path.parent.glob("config.toml.cairnmind-backup-*"))
     assert len(backups) == 1 and backups[0].read_bytes() == raw
     upgraded = path.read_bytes()
     before = path.stat()
@@ -186,7 +193,7 @@ def test_legacy_native_approval_fixture_upgrades_isolation_once_preserving_permi
     assert path.read_bytes() == upgraded
     assert (after.st_ino, after.st_mtime_ns, after.st_ctime_ns, stat.S_IMODE(after.st_mode)) == (
         before.st_ino, before.st_mtime_ns, before.st_ctime_ns, 0o600)
-    assert list(path.parent.glob("config.toml.devbrain-backup-*")) == backups
+    assert list(path.parent.glob("config.toml.cairnmind-backup-*")) == backups
 
 
 @pytest.mark.parametrize("mode", [0o600, 0o640])
@@ -208,19 +215,23 @@ def test_managed_mcp_update_preserves_native_approvals_options_and_permissions(s
     assert integrations._merge_toml_mcp(path, settings)
     updated = tomllib.loads(path.read_text())
     expected = copy.deepcopy(previous)
-    expected["mcp_servers"]["devbrain"].update(command=executable, args=integrations._command(settings, "mcp")[1:])
+    expected["mcp_servers"] = {("cairnmind" if name == "devbrain" else name): value
+                               for name, value in expected["mcp_servers"].items()}
+    expected["mcp_servers"]["cairnmind"].update(
+        command=executable, args=integrations._command(settings, "mcp")[1:],
+        env_vars=[*integrations.EARLIER_SESSION_ENV_VARS, *integrations.CURRENT_SESSION_ENV_VARS])
     assert updated == expected
     assert unrelated in path.read_text()
     assert stat.S_IMODE(path.stat().st_mode) == mode
-    backups = list(path.parent.glob("config.toml.devbrain-backup-*"))
+    backups = list(path.parent.glob("config.toml.cairnmind-backup-*"))
     assert len(backups) == 1 and backups[0].read_bytes() == original.encode()
     assert stat.S_IMODE(backups[0].stat().st_mode) == mode
     before = path.stat()
     assert not integrations._merge_toml_mcp(path, settings)
     assert path.stat().st_ino == before.st_ino
     assert path.stat().st_mtime_ns == before.st_mtime_ns
-    assert len(list(path.parent.glob("config.toml.devbrain-backup-*"))) == 1
-    assert not list(path.parent.glob(".config.toml.devbrain-*.tmp"))
+    assert len(list(path.parent.glob("config.toml.cairnmind-backup-*"))) == 1
+    assert not list(path.parent.glob(".config.toml.cairnmind-*.tmp"))
 
 
 def test_managed_mcp_quoted_keys_multiline_arrays_and_extra_forwarded_environment(settings, project):
@@ -233,10 +244,13 @@ def test_managed_mcp_quoted_keys_multiline_arrays_and_extra_forwarded_environmen
                 '[mcp_servers.devbrain.tools."checkpoint"]\napproval_mode = "approve"\n# END DEVBRAIN\n')
     path.write_text(original)
     assert integrations._merge_toml_mcp(path, settings)
-    server = tomllib.loads(path.read_text())["mcp_servers"]["devbrain"]
+    assert "devbrain" not in tomllib.loads(path.read_text())["mcp_servers"]
+    assert '["mcp_servers"."cairnmind"]' in path.read_text()  # the quoting of the header is kept
+    server = tomllib.loads(path.read_text())["mcp_servers"]["cairnmind"]
     assert server["command"] == sys.executable
     assert server["args"] == integrations._command(settings, "mcp")[1:]
-    assert server["env_vars"] == ["NATIVE_EXTRA", *integrations.SESSION_ENV_VARS]
+    assert server["env_vars"] == ["NATIVE_EXTRA", *integrations.EARLIER_SESSION_ENV_VARS,
+                                  *integrations.CURRENT_SESSION_ENV_VARS]
     assert server["tools"] == {"checkpoint": {"approval_mode": "approve"}}
     assert not integrations._merge_toml_mcp(path, settings)
 
@@ -252,13 +266,18 @@ def test_managed_mcp_literal_session_override_is_refused_without_changing_native
         integrations._merge_toml_mcp(path, settings)
     assert path.read_text() == original
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert not list(path.parent.glob("config.toml.devbrain-backup-*"))
+    assert not list(path.parent.glob("config.toml.cairnmind-backup-*"))
 
 
 @pytest.mark.parametrize("original", [
     'mcp_servers = false\n',
-    '[mcp_servers]\ndevbrain = false\n',
-    '[mcp_servers]\ndevbrain = []\n',
+    '[mcp_servers]\ncairnmind = false\n',
+    '[mcp_servers]\ncairnmind = []\n',
+    '# BEGIN CAIRNMIND\n[mcp_servers.cairnmind]\n# END CAIRNMIND\n',
+    '# BEGIN CAIRNMIND\nmodel = "no-server"\n# END CAIRNMIND\n',
+    # Both an earlier block and a current table: nothing says which one to keep.
+    '# BEGIN DEVBRAIN\n[mcp_servers.devbrain]\ncommand = "python"\nargs = ["-m", "devbrain", "mcp"]\n# END DEVBRAIN\n'
+    '[mcp_servers.cairnmind]\ncommand = "python"\nargs = ["-m", "cairnmind", "mcp"]\n',
     '# BEGIN DEVBRAIN\n[mcp_servers.devbrain]\n# END DEVBRAIN\n',
     '# BEGIN DEVBRAIN\nmodel = "no-server"\n# END DEVBRAIN\n',
 ])
@@ -269,22 +288,22 @@ def test_invalid_managed_mcp_shapes_are_not_overwritten(settings, project, origi
     with pytest.raises(ValueError):
         integrations._merge_toml_mcp(path, settings)
     assert path.read_text() == original
-    assert not list(path.parent.glob("config.toml.devbrain-backup-*"))
+    assert not list(path.parent.glob("config.toml.cairnmind-backup-*"))
 
 
 @pytest.mark.parametrize("marked", [False, True])
 def test_toml_marker_strings_cannot_claim_an_unrelated_mcp_server(settings, project, marked):
     path = Path(project["root"]) / ".codex/config.toml"
     path.parent.mkdir()
-    fake_markers = 'notes = """\n# BEGIN DEVBRAIN\n# END DEVBRAIN\n"""\n'
-    original = fake_markers + '[mcp_servers.devbrain]\ncommand = "unrelated"\nargs = ["other"]\n'
+    fake_markers = 'notes = """\n# BEGIN CAIRNMIND\n# END CAIRNMIND\n# BEGIN DEVBRAIN\n# END DEVBRAIN\n"""\n'
+    original = fake_markers + '[mcp_servers.cairnmind]\ncommand = "unrelated"\nargs = ["other"]\n'
     if marked:
-        original = '# BEGIN DEVBRAIN\n' + original + '# END DEVBRAIN\n'
+        original = '# BEGIN CAIRNMIND\n' + original + '# END CAIRNMIND\n'
     path.write_text(original)
     with pytest.raises(ValueError, match="unrelated server"):
         integrations._merge_toml_mcp(path, settings)
     assert path.read_text() == original
-    assert not list(path.parent.glob("config.toml.devbrain-backup-*"))
+    assert not list(path.parent.glob("config.toml.cairnmind-backup-*"))
 
 
 def test_new_native_configuration_is_private_while_new_instructions_follow_umask(settings, project, installed):
@@ -309,19 +328,61 @@ def test_new_empty_scope_recognizes_exact_session_forwarding_config(settings, pr
         raw = (root / relative).read_bytes()
         assert _managed_empty_file(relative, raw, settings, project)
         if relative.endswith("toml"):
-            changed = raw.replace(b'"DEVBRAIN_SESSION_ID"', b'"SOME_OTHER_VARIABLE"')
+            changed = raw.replace(b'"CAIRNMIND_SESSION_ID"', b'"SOME_OTHER_VARIABLE"')
         else:
-            changed = raw.replace(b'${DEVBRAIN_SESSION_ID:-}', b'stale-session')
+            changed = raw.replace(b'${CAIRNMIND_SESSION_ID:-}', b'stale-session')
+        assert changed != raw
         assert not _managed_empty_file(relative, changed, settings, project)
 
 
 def test_manual_name_collision_is_not_overwritten(settings, project, installed):
     root = Path(project["root"])
-    original = '{"mcpServers":{"devbrain":{"command":"unrelated-server"}}}'
+    original = '{"mcpServers":{"cairnmind":{"command":"unrelated-server"}}}'
     (root / ".mcp.json").write_text(original)
     result = integrations.install_integrations(settings, project, clients=("claude",))
     assert (root / ".mcp.json").read_text() == original
     assert any("unrelated server" in warning for warning in result["warnings"])
+
+
+def test_a_foreign_server_under_the_earlier_name_is_left_beside_ours(settings, project, installed):
+    root = Path(project["root"])
+    (root / ".mcp.json").write_text('{"mcpServers":{"devbrain":{"command":"unrelated-server"}}}')
+    (root / ".codex").mkdir()
+    (root / ".codex/config.toml").write_text('[mcp_servers.devbrain]\ncommand = "unrelated"\nargs = ["other"]\n')
+    result = integrations.install_integrations(settings, project)
+    assert not any("left unchanged" in warning for warning in result["warnings"])
+    claude = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+    assert claude["devbrain"] == {"command": "unrelated-server"} and claude["cairnmind"]["args"][-1] == "mcp"
+    codex = tomllib.loads((root / ".codex/config.toml").read_text())["mcp_servers"]
+    assert codex["devbrain"] == {"command": "unrelated", "args": ["other"]} and codex["cairnmind"]["args"][-1] == "mcp"
+    assert integrations.install_integrations(settings, project)["changed"] == []
+
+
+def test_entries_and_blocks_of_the_earlier_name_are_converted_without_duplicates(settings, project, installed):
+    root = Path(project["root"])
+    integrations.install_integrations(settings, project)
+    current = {name: (root / name).read_text() for name in ("AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml")}
+    # What 0.9.0 left: the same files under the earlier server name and the earlier markers.
+    (root / ".mcp.json").write_text(json.dumps({"mcpServers": {"devbrain": {
+        **json.loads(current[".mcp.json"])["mcpServers"]["cairnmind"],
+        "env": {name: "${" + name + ":-}" for name in integrations.EARLIER_SESSION_ENV_VARS}}, "other": {"command": "keep"}}}))
+    (root / ".codex/config.toml").write_text(
+        current[".codex/config.toml"].replace("CAIRNMIND", "DEVBRAIN").replace("mcp_servers.cairnmind", "mcp_servers.devbrain")
+        + '\n[mcp_servers.devbrain.tools.ask]\napproval_mode = "approve"\n')
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        (root / name).write_text("# Mine\n\n<!-- BEGIN DEVBRAIN -->\nearlier text\n<!-- END DEVBRAIN -->\n\nKept below.\n")
+    result = integrations.install_integrations(settings, project)
+    assert not any("left unchanged" in warning for warning in result["warnings"]) and len(result["changed"]) == 4
+    claude = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+    assert list(claude) == ["cairnmind", "other"] and set(claude["cairnmind"]["env"]) == set(integrations.SESSION_ENV_VARS)
+    codex = tomllib.loads((root / ".codex/config.toml").read_text())["mcp_servers"]
+    assert list(codex) == ["cairnmind"] and codex["cairnmind"]["tools"] == {"ask": {"approval_mode": "approve"}}
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        text = (root / name).read_text()
+        assert text.count("<!-- BEGIN CAIRNMIND -->") == text.count("<!-- END CAIRNMIND -->") == 1
+        assert "DEVBRAIN -->" not in text and "earlier text" not in text
+        assert text.startswith("# Mine\n") and text.rstrip().endswith("Kept below.")
+    assert integrations.install_integrations(settings, project)["changed"] == []
 
 
 def test_unsupported_hook_version_has_explicit_refusal(settings, project, installed):
@@ -1000,7 +1061,7 @@ async def test_actual_stdio_mcp_initialization_is_protocol_clean(settings):
     async with stdio_client(server) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             result = await session.initialize()
-            assert result.serverInfo.name == "devbrain"
+            assert result.serverInfo.name == "cairnmind"
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == TOOLS
 

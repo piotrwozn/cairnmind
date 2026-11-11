@@ -1,6 +1,6 @@
 # Portable project memory version 1
 
-DevBrain 0.4.0 writes one project's archived knowledge under `.memory/devbrain/`.
+Cairnmind writes one project's archived knowledge under `.memory/cairnmind/`, with the format name `cairnmind-portable-memory`. Versions from DevBrain 0.4.0 to Cairnmind 0.9.0 wrote it under `.memory/devbrain/` with the format name `devbrain-portable-memory`. Both directories are reserved and both format names are read; a manifest is never rewritten, because the format name is part of what its identifier is computed from. When both directories hold a package, the one in `.memory/cairnmind/` is read, and `memory status` says under `earlier_package` whether the other one is part of its history (`superseded`) or not (`diverged`).
 The package is data, not executable configuration. An explicit import is separate
 from the administrative whole-database `restore` command.
 

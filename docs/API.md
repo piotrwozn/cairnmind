@@ -67,7 +67,7 @@ Signing in with an account does not require your own API key. The Cairnmind runt
 
 The API/Copilot panel shows the history, the streamed response, tool calls and their results, and the memory state. **Send** or `Ctrl+Enter` starts a turn. `Ctrl+C` or **Interrupt** stops the current operation. The `Ctrl+B` workspace prefix and the panel shortcuts still work; press `Ctrl+B` twice to pass a native `Ctrl+B` through.
 
-The agent can browse, create, edit and delete files in the selected worktree. File tools validate paths and links, and changing an existing file requires a match with the hash of the version that was read. Direct writes to `.git/` and to the managed `.memory/devbrain/` directory are blocked. If a second client changes a file, the agent must re-read it instead of overwriting the newer work.
+The agent can browse, create, edit and delete files in the selected worktree. File tools validate paths and links, and changing an existing file requires a match with the hash of the version that was read. Direct writes to `.git/` and to the managed `.memory/cairnmind/` directory are blocked. If a second client changes a file, the agent must re-read it instead of overwriting the newer work.
 
 Every system command, including running tests, requires **one-time approval**. The approval screen shows the exact command, the working directory, the session and the generation. The approval applies only to that specific operation; changing any parameter requires a new approval. The command runs with the user's permissions; this mechanism is not system-level sandboxing. Native Codex and Claude Code processes keep their own tool policies.
 

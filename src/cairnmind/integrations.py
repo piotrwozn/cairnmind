@@ -363,6 +363,17 @@ def _forwards_session(env_vars: Any) -> bool:
                                               for pair in (CURRENT_SESSION_ENV_VARS, EARLIER_SESSION_ENV_VARS))
 
 
+def _toml_markers(container, names) -> list[str]:
+    """Marker comments of a parsed TOML document, in order; text inside a string is not a comment."""
+    found = []
+    for _, item in container.body:
+        if isinstance(item, Comment) and item.as_string().strip() in names:
+            found.append(item.as_string().strip())
+        elif isinstance(item, Table):
+            found.extend(_toml_markers(item.value, names))
+    return found
+
+
 def _renamed_toml(text: str, path: Path) -> str:
     """A managed block written under the earlier server name, renamed in place.
 
@@ -370,22 +381,31 @@ def _renamed_toml(text: str, path: Path) -> str:
     added below the table moves with it: Codex keeps tool approvals in its sub-tables.
     An entry without markers is not ours to rewrite and is left under its name.
     """
-    servers = tomllib.loads(text).get("mcp_servers", {})
-    earlier = servers.get(EARLIER_SERVER) if isinstance(servers, dict) else None
-    marked = [line.strip() for line in text.splitlines() if line.strip() in (EARLIER_TOML_BEGIN, EARLIER_TOML_END)]
+    parsed = tomllib.loads(text)
+    servers = parsed.get("mcp_servers", {})
+    marked = _toml_markers(tomlkit.parse(text), {EARLIER_TOML_BEGIN, EARLIER_TOML_END})
     if not marked:
         return text
+    earlier = servers.get(EARLIER_SERVER) if isinstance(servers, dict) else None
     if marked != [EARLIER_TOML_BEGIN, EARLIER_TOML_END] or not isinstance(earlier, dict) or not _is_ours(earlier):
         raise ValueError("Ambiguous Cairnmind TOML markers; original file left unchanged")
     if SERVER in servers:
         raise ValueError(f"{path} has both [mcp_servers.{EARLIER_SERVER}] and [mcp_servers.{SERVER}]; "
                          "remove one of them; original file left unchanged")
-    header = re.compile(r"^(\s*\[\[?\s*mcp_servers\s*\.\s*)" + EARLIER_SERVER + r"(\s*[\].])", re.M)
-    renamed = header.sub(lambda match: match.group(1) + SERVER + match.group(2), text)
+    quoted = r"""(["']?)"""
+    header = re.compile(r"^(\s*\[\[?\s*" + quoted + r"mcp_servers\2\s*\.\s*" + quoted + ")" + EARLIER_SERVER
+                        + r"(\3\s*[\].])", re.M)
+    renamed = header.sub(lambda match: match.group(1) + SERVER + match.group(4), text)
     renamed = "\n".join(TOML_BEGIN if line.strip() == EARLIER_TOML_BEGIN else TOML_END
                         if line.strip() == EARLIER_TOML_END else line for line in renamed.split("\n"))
-    after = tomllib.loads(renamed).get("mcp_servers", {})
-    if EARLIER_SERVER in after or after.get(SERVER) != earlier:
+    # Nothing but the name of that one table may differ, or the rename touched something else.
+    expected = {**parsed, "mcp_servers": {(SERVER if name == EARLIER_SERVER else name): value
+                                          for name, value in servers.items()}}
+    try:
+        unchanged_otherwise = tomllib.loads(renamed) == expected
+    except tomllib.TOMLDecodeError:
+        unchanged_otherwise = False
+    if not unchanged_otherwise or _toml_markers(tomlkit.parse(renamed), {TOML_BEGIN, TOML_END}) != [TOML_BEGIN, TOML_END]:
         raise ValueError(f"The [mcp_servers.{EARLIER_SERVER}] entry in {path} is written in a form that cannot be "
                          f"renamed safely; rename it to [mcp_servers.{SERVER}] by hand; original file left unchanged")
     return renamed
@@ -406,16 +426,7 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
         raise ValueError("Invalid Cairnmind MCP table; original file left unchanged")
     document = tomlkit.parse(text)
 
-    def markers(container):
-        found = []
-        for _, item in container.body:
-            if isinstance(item, Comment) and item.as_string().strip() in {TOML_BEGIN, TOML_END}:
-                found.append(item.as_string().strip())
-            elif isinstance(item, Table):
-                found.extend(markers(item.value))
-        return found
-
-    owned_markers = markers(document)
+    owned_markers = _toml_markers(document, {TOML_BEGIN, TOML_END})
     if owned_markers and owned_markers != [TOML_BEGIN, TOML_END]:
         raise ValueError("Ambiguous Cairnmind TOML markers; original file left unchanged")
     managed = bool(owned_markers)

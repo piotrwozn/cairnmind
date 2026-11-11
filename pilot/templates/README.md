@@ -4,7 +4,7 @@ A single task handed over between fresh sessions: Codex implements, Claude tests
 and reviews, and another Codex restores the result from the shared memory.
 
 The task definition and criteria are in `pilot-plan.json`. The `unit` profile is
-in `.devbrain/checks.toml`. The implementation and tests will be created by the
+in `.cairnmind/checks.toml`. The implementation and tests will be created by the
 first Codex session; the initial directory intentionally does not contain them.
 
 Target API: `token_auth.validate_token(token) -> bool`. Only the string `valid`
