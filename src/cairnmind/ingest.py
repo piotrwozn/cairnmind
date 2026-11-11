@@ -311,6 +311,16 @@ _INVALIDATIONS: dict[str, int] = {}
 # it was taken (git's "racy clean" rule): on a filesystem with coarse timestamps a second
 # write of the same size inside one tick would otherwise look like no change.
 RACY_WINDOW_NS = 2_000_000_000
+# What the last indexing by this process learned, per store and project: the identity on disk of
+# every file with what indexing derived from it, and the graph it wrote. The next indexing then
+# opens only files whose identity changed and writes only graph rows that differ. It is a hint
+# and never the truth: each reuse is first checked against the database, and anything that
+# does not match is indexed in full.
+_REMEMBERED: dict[tuple[str, str], dict] = {}
+
+
+def _file_identity(status: os.stat_result) -> tuple:
+    return (status.st_dev, status.st_ino, status.st_mode, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
 
 
 def _tree_state(store, project_id: str) -> tuple[str, int, bool]:
@@ -351,26 +361,35 @@ def forget_index_signature(store, project_id: str | None = None) -> None:
     already in flight does not record its signature either.
     """
     _INVALIDATIONS[str(store.data_dir)] = _INVALIDATIONS.get(str(store.data_dir), 0) + 1
-    for key in [key for key in _INDEXED if key[0] == str(store.data_dir) and project_id in (None, key[1])]:
-        del _INDEXED[key]
+    for remembered in (_INDEXED, _REMEMBERED):
+        for key in [key for key in remembered if key[0] == str(store.data_dir) and project_id in (None, key[1])]:
+            del remembered[key]
 
 
 def index_project(store, project_id: str) -> dict:
-    """Snapshot changed files, update chunks, and rebuild the derived code graph."""
+    """Snapshot changed files, update chunks, and bring the derived code graph up to date.
+
+    Files that this process indexed before and whose identity on disk is unchanged are not
+    opened again, and only graph rows that differ are written. The result is the index a
+    run that reads every file would produce; the first run of a process is such a run.
+    """
     project_id = store.resolve_project(project_id)["id"]
     key = (str(store.data_dir), project_id)
     with _ingestion_lock(store, "project", project_id):
         # No signature while indexing runs or after it raises: a concurrent or later caller
         # then waits for the lock and indexes, instead of trusting a half-written index.
         _INDEXED.pop(key, None)
+        previous = _REMEMBERED.pop(key, None)
         invalidations = _INVALIDATIONS.get(key[0], 0)
         # Taken before any file is read: a file edited during indexing then differs next time.
         started = time.time_ns()
         signature, newest, complete = _tree_state(store, project_id)
-        result = _index_project_locked(store, project_id)
-        if (not result.get("errors") and complete and newest < started - RACY_WINDOW_NS
-                and _INVALIDATIONS.get(key[0], 0) == invalidations):
-            _INDEXED[key] = signature
+        state: dict = {}
+        result = _index_project_locked(store, project_id, previous, state, started)
+        if _INVALIDATIONS.get(key[0], 0) == invalidations:
+            _REMEMBERED[key] = state
+            if not result.get("errors") and complete and newest < started - RACY_WINDOW_NS:
+                _INDEXED[key] = signature
         return result
 
 
@@ -391,36 +410,76 @@ def index_project_if_changed(store, project_id: str) -> dict:
     return index_project(store, project_id)
 
 
-def _index_project_locked(store, project_id: str) -> dict:
+def _index_project_locked(store, project_id: str, previous: dict | None = None, state: dict | None = None,
+                          started: int | None = None) -> dict:
+    """Index under the project lock. `previous` is what an earlier run remembered; `state` receives this run's."""
     project = store.resolve_project(project_id)
     project_id = project["id"]
-    counts: dict[str, Any] = {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": []}
+    counts: dict[str, Any] = {"files": 0, "changed": 0, "unchanged": 0, "deleted": 0, "chunks": 0, "errors": [],
+                              "read": 0}
     indexed: dict[Path, dict] = {}
     walk_errors: list[OSError] = []
     registered_roots = _roots(store, project)
+    started = time.time_ns() if started is None else started
+    known = previous["files"] if previous and previous.get("parser") == parser_identity() else {}
+    files: dict[str, dict] = {}
+    # Read before the walk: a remembered file is reused only while the database still holds
+    # the very source that was remembered for it. Sources written below are all in `seen`.
+    rows = store.query(
+        "SELECT id,uri,metadata.path AS path,metadata.root AS root FROM sources "
+        "WHERE project_id=:project AND is_current=true AND kind IN ['code','document']",
+        {"project": project_id},
+    )
+    current = {row["uri"]: row["id"] for row in rows}
     for root in registered_roots:
         if not root.is_dir():
             counts["errors"].append(f"Project root unavailable: {root}")
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
         for path in _files(root, excluded=(store.data_dir,), errors=walk_errors):
+            name = str(path)
             try:
-                if path.stat().st_size > MAX_FILE_BYTES or not path.is_file():
-                    continue
-                raw = path.read_bytes()
-                if b"\x00" in raw:
-                    continue
-                content = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
+                # Before the file is opened: an edit made while it is read then shows as a new identity.
+                status = path.stat()
             except OSError as exc:
                 counts["errors"].append(f"{path}: {exc}")
                 continue
+            identity = _file_identity(status)
+            # A file touched this recently can change again without its times moving (see RACY_WINDOW_NS).
+            settled = max(status.st_mtime_ns, status.st_ctime_ns) < started - RACY_WINDOW_NS
+            remembered = known.get(name)
+            if remembered and remembered["identity"] == identity and remembered["root"] == root:
+                entry = remembered["entry"]
+                if entry is None:  # not indexable when it was read: too large, binary or not UTF-8
+                    files[name] = remembered
+                    continue
+                if current.get(name) == entry["source"]["id"]:
+                    files[name] = remembered
+                    counts["files"] += 1
+                    counts["unchanged"] += 1
+                    indexed[remembered["resolved"]] = {**entry, "root": root}
+                    continue
+            try:
+                if status.st_size > MAX_FILE_BYTES or not path.is_file():
+                    raw = None
+                else:
+                    counts["read"] += 1
+                    raw = path.read_bytes()
+                content = None if raw is None or b"\x00" in raw else raw.decode("utf-8")
+            except UnicodeDecodeError:
+                content = None
+            except OSError as exc:
+                counts["errors"].append(f"{path}: {exc}")
+                continue
+            if content is None:
+                if settled:
+                    files[name] = {"identity": identity, "root": root, "entry": None}
+                continue
             counts["files"] += 1
             digest = hashlib.sha256(content.encode()).hexdigest()
-            previous = _source_before(store, project_id, str(path))
-            if previous and previous["sha256"] == digest:
-                source = previous
+            before = _source_before(store, project_id, str(path))
+            if before and before["sha256"] == digest:
+                source = before
                 metadata = _metadata(source["metadata"])
                 analysis = metadata.get("analysis") if metadata.get("analysis_version") == parser_identity() else None
                 if not analysis:
@@ -443,29 +502,33 @@ def _index_project_locked(store, project_id: str) -> dict:
                 )
                 counts["changed"] += 1
             counts["chunks"] += _write_chunks(store, project_id, source["id"], content, {"language": analysis["language"]})
-            indexed[path.resolve()] = {"source": source, "analysis": analysis, "root": root}
+            resolved = path.resolve()
+            # Only what the graph needs is kept; the content stays in the database.
+            entry = {"source": {"id": source["id"], "uri": source["uri"], "kind": source["kind"]}, "analysis": analysis}
+            indexed[resolved] = {**entry, "root": root}
             # Idempotent enqueue also repairs a crash between source write and
             # queue write. Code facts themselves are already represented by syntax.
             if path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"}:
                 store.enqueue("extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
+            # Remembered only after its chunks and jobs are written, so a reuse never skips a repair.
+            if settled:
+                files[name] = {"identity": identity, "root": root, "resolved": resolved, "entry": entry}
 
     counts["errors"].extend(f"Cannot list {error.filename}: {error.strerror or error}" for error in walk_errors)
     seen = {str(p) for p in indexed}
-    rows = store.query(
-        "SELECT id,uri,metadata FROM sources WHERE project_id=:project AND is_current=true AND kind IN ['code','document']",
-        {"project": project_id},
-    )
     # A directory that could not be listed says nothing about its files: do not deactivate anything.
     for row in rows if not walk_errors else []:
-        metadata = _metadata(row["metadata"])
-        path = metadata.get("path")
+        path = row.get("path")
         if path and path not in seen:
             # Do not call a temporarily unavailable root a project-wide deletion.
-            root = Path(metadata.get("root", project["root"]))
+            root = Path(row.get("root") or project["root"])
             if root.is_dir():
                 _deactivate_source(store, row["id"])
                 counts["deleted"] += 1
-    counts.update(_build_graph(store, project_id, indexed))
+    graph: dict = {}
+    counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph))
+    if state is not None:
+        state.update(parser=parser_identity(), files=files, graph=graph)
     return counts
 
 
@@ -495,7 +558,34 @@ def _resolve_import(path: Path, root: Path, module: str, indexed: dict[Path, dic
     return next((p.resolve() for p in candidates if p.resolve() in indexed), None)
 
 
-def _build_graph(store, project_id: str, indexed: dict[Path, dict]) -> dict:
+def _node_digest(item: dict) -> bytes:
+    return hashlib.blake2b(_json(item).encode(), digest_size=16).digest()
+
+
+def _graph_as_remembered(tx, project_id: str, remembered: dict | None) -> bool:
+    """Whether the graph in the database is still the one this process wrote last."""
+    if not remembered:
+        return False
+    markers = tx.query("SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project",
+                       {"project": project_id})
+    if not markers or markers[0].get("graph_fingerprint") != remembered["fingerprint"]:
+        return False
+    if (int(markers[0].get("graph_nodes") or 0), int(markers[0].get("graph_edges") or 0)) != (
+            len(remembered["nodes"]), len(remembered["edges"])):
+        return False
+    stored = tx.query("SELECT count(*) AS total FROM edges WHERE project_id=:project AND kind IN :kinds",
+                      {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
+    return bool(stored) and int(stored[0].get("total") or 0) == len(remembered["edges"])
+
+
+def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: dict | None = None,
+                 state: dict | None = None) -> dict:
+    """Write the graph that follows from `indexed`.
+
+    With `remembered`, the graph this process wrote last, only rows that differ are written,
+    provided the database still holds exactly that graph. Otherwise every row is replaced.
+    `state` receives what was written, for the next call.
+    """
     fingerprint = _identifier(parser_identity(), *[
         f"{path}:{indexed[path]['source']['id']}" for path in sorted(indexed)
     ])
@@ -503,7 +593,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict]) -> dict:
         "SELECT graph_fingerprint,graph_nodes,graph_edges FROM projects WHERE id=:project",
         {"project": project_id},
     )
-    if markers and markers[0].get("graph_fingerprint") == fingerprint:
+    unchanged = bool(markers) and markers[0].get("graph_fingerprint") == fingerprint
+    if unchanged and (state is None or (remembered and remembered["fingerprint"] == fingerprint)):
+        if state is not None:
+            state.update(remembered)
         return {"nodes": int(markers[0].get("graph_nodes") or 0),
                 "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
     nodes: dict[str, dict] = {}
@@ -589,18 +682,36 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict]) -> dict:
                 )
                 edge(owner, target_id, "references", source_id, item["line"])
 
+    digests = {identifier: _node_digest(item) for identifier, item in nodes.items()}
+    written = {"fingerprint": fingerprint, "nodes": digests, "edges": set(edges)}
+    if unchanged:
+        # The stored graph already follows from these sources; it was only not in memory yet.
+        state.update(written)
+        return {"nodes": int(markers[0].get("graph_nodes") or 0),
+                "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
+
     with store.transaction() as tx:
         if not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
             raise ValueError("Project no longer exists; graph was not rebuilt")
         from .journal import Journal
         Journal.touch(tx, project_id, "graph", op="reset")
-        tx.command(
-            "DELETE FROM edges WHERE project_id=:project AND kind IN :kinds",
-            {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
-        )
-        for item in nodes.values():
+        if _graph_as_remembered(tx, project_id, remembered):
+            removed = sorted(remembered["edges"] - edges.keys())
+            for offset in range(0, len(removed), 500):
+                tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
+                           {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": removed[offset:offset + 500]})
+            changed_nodes = [item for identifier, item in nodes.items()
+                             if remembered["nodes"].get(identifier) != digests[identifier]]
+            new_edges = [item for identifier, item in edges.items() if identifier not in remembered["edges"]]
+        else:
+            tx.command(
+                "DELETE FROM edges WHERE project_id=:project AND kind IN :kinds",
+                {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
+            )
+            changed_nodes, new_edges = list(nodes.values()), list(edges.values())
+        for item in changed_nodes:
             store.upsert_node(item, tx=tx)
-        for item in edges.values():
+        for item in new_edges:
             store.upsert_edge(item, tx=tx)
         previous_nodes = tx.query(
             "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
@@ -619,7 +730,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict]) -> dict:
             "UPDATE projects SET graph_fingerprint=:fingerprint,graph_nodes=:nodes,graph_edges=:edges WHERE id=:project",
             {"fingerprint": fingerprint, "nodes": len(nodes), "edges": len(edges), "project": project_id},
         )
-    return {"nodes": len(nodes), "edges": len(edges), "graph_unchanged": False}
+    if state is not None:
+        state.update(written)
+    return {"nodes": len(nodes), "edges": len(edges), "graph_unchanged": False,
+            "graph_written": {"nodes": len(changed_nodes), "edges": len(new_edges)}}
 
 
 def _save_cursor(store, path: Path, project_id: str | None, client: str, offset: int) -> None:
