@@ -89,7 +89,7 @@ def terminal_status(terminal):
 class WorkerStack:
     def __init__(self, root, monkeypatch):
         self.root = Path(root)
-        self.tmux = os.environ.get("DEVBRAIN_TEST_TMUX") or shutil.which("tmux")
+        self.tmux = (os.environ.get("CAIRNMIND_TEST_TMUX") or os.environ.get("DEVBRAIN_TEST_TMUX")) or shutil.which("tmux")
         if not self.tmux and Path("/tmp/devbrain-tmux-3.4/tmux").is_file():
             self.tmux = "/tmp/devbrain-tmux-3.4/tmux"
         if not self.tmux:

@@ -32,7 +32,7 @@ uv run pytest                                # full suite with the real ArcadeDB
 
 - Tests that need the real engine are marked `arcade`. New test modules get the marker by default. Add a module to `NO_ARCADE_MODULES` in `tests/conftest.py` only after it passes with no engine running.
 - Tests that drive a real tmux server are listed in `TMUX_MODULES` in the same file.
-- Keyboard latency budgets target a developer workstation. On slow or shared machines, set `DEVBRAIN_LATENCY_SCALE`, as CI does.
+- Keyboard latency budgets target a developer workstation. On slow or shared machines, set `CAIRNMIND_LATENCY_SCALE`, as CI does.
 
 ## Where to start
 
@@ -65,7 +65,7 @@ All modules are in `src/cairnmind/`, all tests in `tests/`. **Fast** tests run w
 
 Run a single file with, for example, `uv run pytest tests/test_terminal_commands.py`.
 
-Some internal names still say `devbrain` (`DEVBRAIN_*` variables, data paths, the MCP server name and its tools). That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40). The Python module is `cairnmind`; `src/devbrain/` is only an import alias kept for one release, so do not import from it.
+Some names still say `devbrain` on purpose: the data directory of an existing installation, the names that project files and portable memory share with earlier versions, the MCP server name and its tools. Environment variables are `CAIRNMIND_*`, with `DEVBRAIN_*` still read. That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40). The Python module is `cairnmind`; `src/devbrain/` is only an import alias kept for one release, so do not import from it.
 
 ## Evaluations
 

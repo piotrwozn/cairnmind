@@ -17,7 +17,7 @@ from typing import Annotated
 import httpx
 import typer
 
-from cairnmind.config import Settings
+from cairnmind.config import Settings, drop_env, session_value
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
 
@@ -78,7 +78,7 @@ def store_for(settings: Settings):
 def actor_scope(store, project_id: str, worktree: Path | str | None = None):
     """Read the launcher's worktree without requiring an ACK merely to inspect state."""
     scope = str(Path(worktree).expanduser().resolve()) if worktree else None
-    session_id = os.environ.get("DEVBRAIN_SESSION_ID")
+    session_id = session_value("SESSION_ID")
     if session_id:
         rows = store.query("SELECT project_id,worktree FROM sessions WHERE id=:id", {"id": session_id})
         if not rows or rows[0]["project_id"] != project_id:
@@ -92,7 +92,7 @@ def actor_scope(store, project_id: str, worktree: Path | str | None = None):
 @contextmanager
 def actor_write(store, settings: Settings, project_id: str, worktree: Path | str | None = None):
     """Native CLI commands inherit the launcher's logical session; manual repair stays possible."""
-    session_id = os.environ.get("DEVBRAIN_SESSION_ID")
+    session_id = session_value("SESSION_ID")
     if session_id:
         from cairnmind.integrations import drain_hook_spool
         drain_hook_spool(settings, store)
@@ -124,8 +124,7 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
     with log.open("ab") as handle:
         env = dict(os.environ)
         # The service is a shared system worker, not a child actor of one coding session.
-        for key in ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"):
-            env.pop(key, None)
+        drop_env(env, "SESSION_ID", "PACKET_ID")
         command = [sys.executable, "-m", "cairnmind", "--data-dir", str(settings.data_dir), "serve"]
         if not background_inference:
             command.append("--defer-background-inference")
@@ -148,7 +147,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             "/remember", "/checkpoint", "/plans/save", "/plans/activate",
             "/memory/snapshot", "/memory/import"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
-        session_id = os.environ.get("DEVBRAIN_SESSION_ID")
+        session_id = session_value("SESSION_ID")
         if session_id:
             payload = dict(kwargs.get("json") or {})
             if payload.get("session_id") not in (None, session_id):
@@ -156,14 +155,14 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             payload["session_id"] = session_id
             kwargs["json"] = payload
     elif method.upper() == "POST" and path in {"/ask", "/plans/next", "/memory/preview", "/memory/inspect"}:
-        session_id = os.environ.get("DEVBRAIN_SESSION_ID")
+        session_id = session_value("SESSION_ID")
         if session_id:
             payload = dict(kwargs.get("json") or {})
             payload["session_id"] = session_id
             kwargs["json"] = payload
     elif method.upper() == "GET" and (path in {"/context", "/checks", "/jobs", "/memory/status"}
                                       or path.startswith("/jobs/")):
-        session_id = os.environ.get("DEVBRAIN_SESSION_ID")
+        session_id = session_value("SESSION_ID")
         if session_id:
             kwargs["params"] = {**dict(kwargs.get("params") or {}), "session_id": session_id}
     with httpx.Client(trust_env=False, timeout=settings.ask_timeout + 90,
@@ -337,6 +336,11 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result = inspect(ctx.obj)
     result["service_running"] = service_alive(ctx.obj)
     result["data_dir"] = str(ctx.obj.data_dir)
+    from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts
+    # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
+    result["environment_notes"] = [
+        f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
+        for name in env_conflicts()] + [note for note in [data_dir_note()] if note]
     result["models_lock_present"] = (ctx.obj.data_dir / "models.lock.json").exists()
     from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
@@ -757,7 +761,7 @@ def session_context(ctx: typer.Context, session_id: str):
 @sessions_app.command("ack")
 @initialized
 def session_ack(ctx: typer.Context, session_id: str, packet_id: str, packet_hash: str, readback_json: Path):
-    actor = os.environ.get("DEVBRAIN_SESSION_ID")
+    actor = session_value("SESSION_ID")
     if actor and actor != session_id:
         raise typer.BadParameter("Another session cannot be acknowledged")
     output(request(ctx.obj, "POST", "/sessions/ack", json={"session_id": session_id,
@@ -805,7 +809,7 @@ def memory_inspect(ctx: typer.Context, path: Path):
     from cairnmind.memory import inspect_snapshot
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
-    if os.environ.get("DEVBRAIN_SESSION_ID"):
+    if session_value("SESSION_ID"):
         output(request(ctx.obj, "POST", "/memory/inspect", start_service=False, json={"path": selected}))
     else:
         output(inspect_snapshot(selected))
@@ -821,7 +825,7 @@ def memory_show(ctx: typer.Context, path: Path,
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
     expected = None
-    if os.environ.get("DEVBRAIN_SESSION_ID"):
+    if session_value("SESSION_ID"):
         # A coding session may read only its own project's memory; the service decides.
         expected = request(ctx.obj, "POST", "/memory/inspect", start_service=False,
                            json={"path": selected})["snapshot_id"]
@@ -983,7 +987,7 @@ def _retry_jobs(store):
 @app.command("retry-jobs")
 @initialized
 def retry_jobs(ctx: typer.Context):
-    if os.environ.get("DEVBRAIN_SESSION_ID"):
+    if session_value("SESSION_ID"):
         raise typer.BadParameter(
             "A model session cannot retry the jobs of all projects. "
             "Use `cairnmind jobs retry PROJECT JOB_ID --expected-attempts N` with a current ACK.")

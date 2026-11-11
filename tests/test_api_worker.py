@@ -233,7 +233,7 @@ def test_real_tmux_panel_restores_then_requires_human_command_approval(tmp_path,
     import sys
     import time
 
-    tmux = os.environ.get("DEVBRAIN_TEST_TMUX") or shutil.which("tmux")
+    tmux = (os.environ.get("CAIRNMIND_TEST_TMUX") or os.environ.get("DEVBRAIN_TEST_TMUX")) or shutil.which("tmux")
     if not tmux:
         pytest.skip("tmux is required for the real terminal case")
     socket = tmp_path / "agent.sock"

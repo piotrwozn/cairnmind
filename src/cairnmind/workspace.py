@@ -20,7 +20,7 @@ from uuid import uuid4
 from rich.cells import cell_len
 
 from .cockpit_state import CockpitState, _atomic, _private_directory, _private_lock
-from .config import Settings
+from .config import SESSION_NAMES, Settings, drop_env
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
 from .workspace_state import WorkspaceState
@@ -115,8 +115,8 @@ def workspace_status_lines(selected, cached, slot, control, language="en"):
 
 def _clean_env():
     result = dict(os.environ)
-    for key in ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID", "DEVBRAIN_PROJECT", "DEVBRAIN_CLIENT",
-                "DEVBRAIN_CONTEXT_FILE", "TMUX", "TMUX_PANE", "CLAUDECODE", "CODEX_THREAD_ID"):
+    drop_env(result, *SESSION_NAMES)
+    for key in ("TMUX", "TMUX_PANE", "CLAUDECODE", "CODEX_THREAD_ID"):
         result.pop(key, None)
     return result
 

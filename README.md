@@ -218,7 +218,7 @@ This is an explicit test against a real Ollama: extraction of a fact, a decision
 
 ## Data and backups
 
-The default data directory is `~/.local/share/devbrain`; change it with `DEVBRAIN_HOME` or the global `--data-dir` option. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `cairnmind stop` stops the knowledge service; once clients are closed, `cairnmind engine stop` stops the database without deleting data.
+The default data directory is `~/.local/share/cairnmind` for a new installation. An installation that already has data in `~/.local/share/devbrain` keeps using that directory where it is; nothing is moved or copied. Choose another one with `CAIRNMIND_HOME` or the global `--data-dir` option. Variables are spelled `CAIRNMIND_*`; the earlier `DEVBRAIN_*` spelling is still read, the new one wins when both are set, and `cairnmind doctor` reports a pair that disagrees. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `cairnmind stop` stops the knowledge service; once clients are closed, `cairnmind engine stop` stops the database without deleting data.
 
 ```bash
 cairnmind export ~/memory.json --project my-app

@@ -98,7 +98,7 @@ uv export --directory "$package_dir" --locked --no-dev --no-emit-project \
 upgraded_from_devbrain=false
 if uv tool list 2>/dev/null | grep -q '^devbrain '; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
-        "${DEVBRAIN_HOME:-$HOME/.local/share/devbrain}"
+        "${CAIRNMIND_HOME:-${DEVBRAIN_HOME:-$HOME/.local/share/devbrain}}"
     # Its knowledge service and interface broker run detached and outlive the workspace. Stop them
     # while the tool that started them still exists: a broker of another version refuses the new
     # workspace, and the earlier service would keep answering from a Python that is gone.
@@ -112,7 +112,7 @@ if uv tool list 2>/dev/null | grep -q '^devbrain '; then
 fi
 
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
-uv tool install --python "${DEVBRAIN_INSTALL_PYTHON:-3.12}" --reinstall --constraints "$constraints_file" "$package_dir"
+uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir"
 
 tool_bin_dir="$(uv tool dir --bin)"
 devbrain_bin="$tool_bin_dir/cairnmind"
@@ -122,8 +122,9 @@ if [[ ! -x "$devbrain_bin" ]]; then
 fi
 
 printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
-if [[ -n "${DEVBRAIN_ARCADE_DIST:-}" ]]; then
-    "$devbrain_bin" engine install --distribution "$DEVBRAIN_ARCADE_DIST"
+arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
+if [[ -n "$arcade_dist" ]]; then
+    "$devbrain_bin" engine install --distribution "$arcade_dist"
 else
     "$devbrain_bin" engine install
 fi

@@ -15,7 +15,7 @@ from uuid import uuid4
 import httpx
 
 from .client_runtime import LIVE, NativeRuntime, _ID, _atomic
-from .config import Settings
+from .config import ENV_PREFIXES, Settings
 
 AGENT_CLIENTS = {"api", "copilot"}
 NATIVE_CLIENTS = {"codex", "claude"}
@@ -46,7 +46,7 @@ def _worker_environment(profiles=()):
         if reference.startswith("env:"):
             names.add(reference[4:])
     for name in list(environment):
-        if (name in names or name.startswith("DEVBRAIN_") or name in {"CLAUDECODE", "CODEX_THREAD_ID"}
+        if (name in names or name.startswith(ENV_PREFIXES) or name in {"CLAUDECODE", "CODEX_THREAD_ID"}
                 or name.endswith(("_API_KEY", "_AUTH_TOKEN", "_GITHUB_TOKEN"))):
             environment.pop(name, None)
     return environment

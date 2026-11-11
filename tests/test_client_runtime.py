@@ -69,9 +69,9 @@ for line in sys.stdin:
 
 @pytest.fixture
 def native(tmp_path, monkeypatch):
-    binary = os.environ.get('DEVBRAIN_TEST_TMUX') or shutil.which('tmux')
+    binary = (os.environ.get('CAIRNMIND_TEST_TMUX') or os.environ.get('DEVBRAIN_TEST_TMUX')) or shutil.which('tmux')
     if not binary:
-        pytest.skip('Real terminal tests require tmux >=3.4 (set DEVBRAIN_TEST_TMUX)')
+        pytest.skip('Real terminal tests require tmux >=3.4 (set CAIRNMIND_TEST_TMUX)')
     root = tmp_path / 'project'
     root.mkdir()
     bindir = tmp_path / 'bin'

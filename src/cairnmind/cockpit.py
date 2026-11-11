@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
 from . import __version__
+from .config import SESSION_NAMES, drop_env
 from .cockpit_state import CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, normalize_path
 
 
@@ -886,8 +887,8 @@ def ensure_cockpit(settings):
         status = cockpit_status(settings)
         if not status["available"]:
             env = native_environment()
-            for key in ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID", "DEVBRAIN_PROJECT", "DEVBRAIN_CLIENT",
-                        "DEVBRAIN_CONTEXT_FILE", "TMUX", "TMUX_PANE"):
+            drop_env(env, *SESSION_NAMES)
+            for key in ("TMUX", "TMUX_PANE"):
                 env.pop(key, None)
             fd = os.open(folder / "server.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "ab") as log:

@@ -419,6 +419,9 @@ def test_native_launch_preserves_args_stdio_and_permissions(settings, project, i
     assert json.loads(Path(kwargs["env"]["DEVBRAIN_CONTEXT_FILE"]).read_text()) == prepared["packet"]
     assert kwargs["env"]["DEVBRAIN_SESSION_ID"] == prepared["session_id"]
     assert kwargs["env"]["DEVBRAIN_PACKET_ID"] == prepared["packet"]["id"]
+    # Both spellings carry the same session, so a reader of either version is bound to it.
+    for name in ("PROJECT", "CONTEXT_FILE", "SESSION_ID", "PACKET_ID", "CLIENT", "HOME"):
+        assert kwargs["env"]["CAIRNMIND_" + name] == kwargs["env"]["DEVBRAIN_" + name]
 
 
 @pytest.mark.parametrize("client", ["codex", "claude"])

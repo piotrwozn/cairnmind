@@ -52,7 +52,7 @@ class Broker:
 
 @pytest.fixture
 def manager(tmp_path, monkeypatch):
-    binary = os.environ.get("DEVBRAIN_TEST_TMUX") or shutil.which("tmux")
+    binary = (os.environ.get("CAIRNMIND_TEST_TMUX") or os.environ.get("DEVBRAIN_TEST_TMUX")) or shutil.which("tmux")
     if not binary and Path("/tmp/devbrain-tmux-3.4/tmux").is_file():
         binary = "/tmp/devbrain-tmux-3.4/tmux"
     if not binary:

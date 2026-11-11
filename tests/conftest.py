@@ -2,7 +2,7 @@
 
 Ollama and coding clients are mocked; storage/FTS/ANN/graph/transactions are not.
 An existing isolated developer test engine can be reused with
-DEVBRAIN_TEST_ARCADE_HOME. Each pytest process owns a unique database namespace.
+CAIRNMIND_TEST_ARCADE_HOME. Each pytest process owns a unique database namespace.
 
 Every test module is marked ``arcade`` and starts the engine, unless it is listed in
 NO_ARCADE_MODULES. Add a module there only after it passes with no engine running.
@@ -19,7 +19,7 @@ import uuid
 import pytest
 
 from cairnmind.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import Settings
+from cairnmind.config import Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
 
 # Verified on 2026-11-09: each passes in full with no ArcadeDB engine available.
@@ -28,7 +28,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_api_credentials", "test_api_panels", "test_api_profiles", "test_api_providers",
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth",
     "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
-    "test_copilot_adapter", "test_graph_raster", "test_graph_widget_rendering", "test_memory_view", "test_module_alias",
+    "test_copilot_adapter", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_view", "test_module_alias",
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parsing",
     "test_runtime_pane", "test_runtime_selection", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
@@ -58,10 +58,11 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(scope="session")
 def arcade_test_engine(tmp_path_factory):
-    runtime_names = ("DEVBRAIN_ARCADE_URL", "DEVBRAIN_ARCADE_USER", "DEVBRAIN_ARCADE_PASSWORD",
-                     "DEVBRAIN_ARCADE_DATABASE", "DEVBRAIN_ARCADE_DB_PREFIX")
+    # Both spellings: a developer's exported earlier name must not reach the test engine either.
+    runtime_names = tuple(key for name in ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE",
+                                           "ARCADE_DB_PREFIX") for key in env_names(name))
     original = {name: os.environ.pop(name, None) for name in runtime_names}
-    existing = os.environ.get("DEVBRAIN_TEST_ARCADE_HOME")
+    existing = env_value("TEST_ARCADE_HOME")
     owns = not existing
     root = Path(existing) if existing else tmp_path_factory.mktemp("arcade-engine")
     settings = Settings.load(root, create=True)
@@ -71,14 +72,14 @@ def arcade_test_engine(tmp_path_factory):
             port = sock.getsockname()[1]
         settings.arcade_url = f"http://127.0.0.1:{port}"
         settings.save()
-        distribution = os.environ.get("DEVBRAIN_ARCADE_DIST")
+        distribution = env_value("ARCADE_DIST")
         install_engine(settings, Path(distribution) if distribution else None)
     start_engine(settings)
     prefix = "devbrain_test_" + uuid.uuid4().hex[:8]
-    changes = {"DEVBRAIN_ARCADE_URL": settings.arcade_url,
-               "DEVBRAIN_ARCADE_USER": settings.arcade_user,
-               "DEVBRAIN_ARCADE_PASSWORD": settings.arcade_password,
-               "DEVBRAIN_ARCADE_DB_PREFIX": prefix}
+    changes = {"CAIRNMIND_ARCADE_URL": settings.arcade_url,
+               "CAIRNMIND_ARCADE_USER": settings.arcade_user,
+               "CAIRNMIND_ARCADE_PASSWORD": settings.arcade_password,
+               "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
     os.environ.update(changes)
     try:
         yield settings, prefix

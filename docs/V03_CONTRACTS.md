@@ -116,7 +116,7 @@ no complete hardtoolgate claimed.
 ## Integrations and HTTP (root owns server/CLI)
 
 run_client creates/prepares verified session BEFORE subprocess; sets inherited
-DEVBRAIN_SESSION_ID, DEVBRAIN_PACKET_ID; native MCP bridges bind to that session.
+CAIRNMIND_SESSION_ID, CAIRNMIND_PACKET_ID and, with the same values, the earlier DEVBRAIN_SESSION_ID, DEVBRAIN_PACKET_ID; native MCP bridges bind to that session.
 SessionStart spools logicalsession/nativeID, returns EXACT preparedpacket (no silent
 replacement). End hooks only fast spool enriched known transcript EOF where possible.
 Drain durably queues archival work and invokes SessionManager.note_event immediately,

@@ -5,13 +5,12 @@ The native clients start this process. Stdout belongs exclusively to MCP.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from .config import Settings
+from .config import Settings, session_value
 
 
 def _plan_header(plan: Any) -> dict[str, Any] | None:
@@ -91,8 +90,13 @@ class ServiceClient:
     def __init__(self, settings: Settings, session_id: str | None = None,
                  packet_id: str | None = None):
         self.settings = settings
-        self.session_id = session_id if session_id is not None else os.environ.get("DEVBRAIN_SESSION_ID")
-        self.packet_id = packet_id if packet_id is not None else os.environ.get("DEVBRAIN_PACKET_ID")
+        # Two spellings that disagree leave the server unbound: every write then asks for a verified resume.
+        try:
+            bound = session_value("SESSION_ID"), session_value("PACKET_ID")
+        except ValueError:
+            bound = (None, None)
+        self.session_id = session_id if session_id is not None else bound[0]
+        self.packet_id = packet_id if packet_id is not None else bound[1]
 
     def require_session(self) -> str:
         if not self.session_id:

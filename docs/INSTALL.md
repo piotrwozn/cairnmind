@@ -95,7 +95,7 @@ The installer:
 
 1. checks Java and tmux versions;
 2. installs Cairnmind as a `uv` tool, with dependency versions pinned by `uv.lock`;
-3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/devbrain`;
+3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it);
 4. runs `cairnmind doctor` and prints anything that still needs attention.
 
 If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal.
@@ -176,7 +176,7 @@ cairnmind engine stop
 uv tool uninstall cairnmind
 ```
 
-This keeps your memory in `~/.local/share/devbrain`. To remove it too, first make a backup with `cairnmind backup ~/devbrain-backup.devbrain.json.gz`, then delete the directory. Deleting it cannot be undone.
+This keeps your memory in the data directory that `cairnmind doctor` shows as `data_dir`. To remove it too, first make a backup with `cairnmind backup ~/devbrain-backup.devbrain.json.gz`, then delete the directory. Deleting it cannot be undone.
 
 ## Troubleshooting
 

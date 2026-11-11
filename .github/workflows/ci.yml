@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Shared 2-core runners: keyboard latency budgets x4 (still below the 3 s blocked-UI case).
-  DEVBRAIN_LATENCY_SCALE: "4"
+  CAIRNMIND_LATENCY_SCALE: "4"
 
 jobs:
   lint:
@@ -62,6 +62,6 @@ jobs:
           settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
           path = install_engine(settings)
           with open(os.environ["GITHUB_ENV"], "a") as env:
-              env.write(f"DEVBRAIN_ARCADE_DIST={path}\n")
+              env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
           PY
       - run: uv run pytest -q
