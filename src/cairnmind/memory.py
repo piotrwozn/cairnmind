@@ -181,6 +181,14 @@ def _validate(payload, project_id, active_plan_id=None):
         profiles = metadata.get("required_profiles", [])
         if not isinstance(profiles, list) or not all(isinstance(p, str) and p.strip() for p in profiles):
             raise ValueError("Invalid memory required check profiles")
+        links = metadata.get("criterion_checks", {})
+        if not isinstance(links, dict) or not all(isinstance(text, str) and isinstance(check, str) and check.strip()
+                                                  for text, check in links.items()):
+            raise ValueError("Invalid memory criterion checks")
+        proposals = metadata.get("check_proposals", {})
+        if not isinstance(proposals, dict) or not all(
+                isinstance(argv, list) and all(isinstance(part, str) for part in argv) for argv in proposals.values()):
+            raise ValueError("Invalid memory check proposals")
         if "step_index" in metadata and (type(metadata["step_index"]) is not int or metadata["step_index"] < 0):
             raise ValueError("Invalid memory plan step index")
         for name in ("test_source_ids", "review_source_ids", "acceptance_source_ids"):

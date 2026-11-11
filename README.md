@@ -206,6 +206,15 @@ Each record also has an evidence state, derived whenever it is read and never st
 cairnmind memory orphans my-app
 ```
 
+A plan can say which check proves each acceptance criterion. Write a criterion as text, or as `{"text": ..., "check": "unit"}` to link it to a check profile; add `"argv": [...]` to propose the command of a profile that is not declared yet. Then:
+
+```bash
+cairnmind plan contract my-app
+cairnmind plan contract my-app --write
+```
+
+The first command lists every criterion of the active plan with how it stands (`machine_fresh` when a passed run of its check matches the current code, `machine_stale`, `machine_missing`, `machine_unknown`, or `manual_pending` and `manual_reported` for a criterion with no check) and shows, as a diff, the profiles it would add to `.cairnmind/checks.toml` from the proposed commands. `--write` adds exactly that. Neither runs anything: a proposed command is text until you run the check yourself, and a profile that is already declared is never changed. `check_status` and `cairnmind plan next` report the same per-criterion list.
+
 After a code change, `cairnmind impact` lists the records that are linked to what changed since a commit, with the reason for each link:
 
 ```bash

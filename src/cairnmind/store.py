@@ -35,8 +35,55 @@ V04_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, *V04_DOCUMENT_T
 EXPORT_TYPES = (*DOCUMENT_TYPES, "nodes", "edges")
 MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
     "plan_ref", "step_key", "required_profiles", "plan_context_hash", "depends_on", "acceptance_criteria",
-    "requires_test", "requires_review", "step_index", "plan_archived",
+    "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals",
 })
+_PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def normalise_criteria(metadata: dict) -> None:
+    """Accept a criterion written as {text, check, argv} and store the link beside the text.
+
+    `acceptance_criteria` stays a list of strings, which every version reads. The link from a
+    criterion to the check profile that proves it lives in `criterion_checks` (text -> profile),
+    and a command proposed for a profile that is not declared yet in `check_proposals`
+    (profile -> argument list). A proposal is text for a person to review: nothing runs it.
+    """
+    criteria = metadata.get("acceptance_criteria")
+    if not isinstance(criteria, list):
+        return
+    links = metadata.get("criterion_checks") if isinstance(metadata.get("criterion_checks"), dict) else {}
+    proposals = metadata.get("check_proposals") if isinstance(metadata.get("check_proposals"), dict) else {}
+    if any(isinstance(item, dict) for item in criteria):
+        texts, links, given = [], {}, {}
+        for item in criteria:
+            if isinstance(item, str):
+                texts.append(item)
+                continue
+            if not isinstance(item, dict) or set(item) - {"text", "check", "argv"} or not isinstance(item.get("text"), str):
+                raise ValueError("A criterion is text, or an object with text and optionally check and argv")
+            text, check, argv = item["text"], item.get("check"), item.get("argv")
+            texts.append(text)
+            if check is None:
+                if argv is not None:
+                    raise ValueError("A criterion can propose a command only for a named check")
+                continue
+            if links.get(text, check) != check:
+                raise ValueError("One criterion cannot be linked to two checks")
+            links[text] = check
+            if argv is not None:
+                if given.get(check, argv) != argv:
+                    raise ValueError("Two different commands were proposed for one check")
+                given[check] = argv
+        metadata["acceptance_criteria"] = texts
+        proposals = {**{name: argv for name, argv in proposals.items()}, **given}
+    # A link or a proposal whose criterion or check is gone has nothing left to describe.
+    links = {text: check for text, check in links.items() if text in metadata["acceptance_criteria"]}
+    proposals = {name: argv for name, argv in proposals.items() if name in links.values()}
+    for key, value in (("criterion_checks", links), ("check_proposals", proposals)):
+        if value:
+            metadata[key] = value
+        else:
+            metadata.pop(key, None)
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _JOB_UNSET = object()
@@ -404,6 +451,16 @@ class Store:
             values = metadata.get(key, [])
             if not isinstance(values, list) or not all(isinstance(x, str) and x.strip() for x in values):
                 raise ValueError(f"{key} must be a list of nonempty strings")
+        links = metadata.get("criterion_checks", {})
+        if (not isinstance(links, dict) or not all(text in criteria and isinstance(check, str) and _PROFILE_NAME.fullmatch(check)
+                                                    for text, check in links.items())):
+            raise ValueError("criterion_checks must link acceptance criteria to check profile names")
+        proposals = metadata.get("check_proposals", {})
+        if (not isinstance(proposals, dict) or not all(
+                name in links.values() and isinstance(argv, list) and argv and len(argv) <= 64
+                and all(isinstance(part, str) and part and "\0" not in part and len(part) <= 2000 for part in argv)
+                for name, argv in proposals.items())):
+            raise ValueError("check_proposals must give an argument list for a linked check")
         for run_id in metadata.get("check_run_ids", []):
             run = _one(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
             if not run or run.get("project_id") != project_id or run.get("task_id") != record_id:
@@ -571,6 +628,8 @@ class Store:
             updates = {key: value for key, value in updates.items() if key not in CONFLICT_REVIEW_METADATA
                        and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
+        if kind == "task":
+            normalise_criteria(metadata)
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
