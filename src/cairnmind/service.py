@@ -288,7 +288,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     async def scanner() -> None:
         from pathlib import Path
-        from cairnmind.ingest import import_history, index_pending_sources, index_project_if_changed, poll_imports
+        from cairnmind.ingest import (forget_missing_projects, import_history, index_pending_sources,
+                                      index_project_if_changed, poll_imports)
 
         while True:
             try:
@@ -318,7 +319,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                                                 worker=job["worker"], expected_attempts=job["attempts"])
                 polled = await asyncio.to_thread(poll_imports, store)
                 scan_errors.extend(f"history: {err}" for err in polled.get("errors", []))
-                for project in await asyncio.to_thread(store.list_projects):
+                projects = await asyncio.to_thread(store.list_projects)
+                forget_missing_projects(store, [project["id"] for project in projects])
+                for project in projects:
                     indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
                     scan_errors.extend(f"{project['name']}: {err}" for err in indexed.get("errors", []))
                 pending = await asyncio.to_thread(index_pending_sources, store)

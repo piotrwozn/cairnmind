@@ -451,9 +451,9 @@ def test_project_deletion_during_index_cannot_recreate_orphan_vertices(workspace
     (root / "app.py").write_text("def app():\n    return True\n")
     original = ingest._build_graph
 
-    def forget_before_graph(store, project_id, indexed):
+    def forget_before_graph(store, project_id, indexed, *remembered):
         store.forget_project(project_id)
-        return original(store, project_id, indexed)
+        return original(store, project_id, indexed, *remembered)
 
     monkeypatch.setattr(ingest, "_build_graph", forget_before_graph)
     with pytest.raises(ValueError, match="Project no longer exists"):
