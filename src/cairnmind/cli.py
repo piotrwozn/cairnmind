@@ -461,6 +461,23 @@ def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
 
 
 @app.command()
+@initialized
+def impact(ctx: typer.Context, project: str,
+           since: Annotated[str, typer.Option("--since", help="Commit, tag or branch to compare the worktree with.")],
+           worktree: Path | None = None,
+           as_json: Annotated[bool, typer.Option("--json", help="Print the linked records as JSON.")] = False):
+    """List records linked to the files and symbols changed since a commit. Read-only; asks no model."""
+    from cairnmind.impact import build_impact
+    store = store_for(ctx.obj)
+    pid = store.resolve_project(project)["id"]
+    result = build_impact(store, pid, since, actor_scope(store, pid, worktree))
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+
+
+@app.command()
 def status(ctx: typer.Context, project: str | None = None):
     output(request(ctx.obj, "GET", "/status", start_service=False,
                    params={"project": project} if project else {}))

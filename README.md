@@ -206,6 +206,14 @@ Each record also has an evidence state, derived whenever it is read and never st
 cairnmind memory orphans my-app
 ```
 
+After a code change, `cairnmind impact` lists the records that are linked to what changed since a commit, with the reason for each link:
+
+```bash
+cairnmind impact my-app --since HEAD~3
+```
+
+It compares the worktree with that commit, including uncommitted edits and files that Git does not track yet (ignored files and nested repositories are left out; a rename made without `git mv` or `git add` shows as a deleted and an added file). It follows two kinds of stored links: a record whose evidence names a changed file or a function, class or method whose definition or decorators changed, and a record that cites an earlier snapshot of a changed file as its evidence. A link means "worth checking", not that the record is wrong. The command asks no model, starts no service and writes nothing, so repeating it duplicates nothing and it never changes a task's state. Which record is linked to what comes from the index, so index the project first if files changed since the last indexing. `--json` prints the same list with the changed files and symbols.
+
 When extraction finds a fact or a decision under a key that is already taken, it stores the new finding beside the old one and marks the pair as a possible conflict. The **Conflicts** view of the memory inspector shows each pending pair with both texts, their evidence times, scope and sources, and says which finding has the newer evidence and whether that order is reliable. You decide: one finding replaces the other and becomes confirmed, both stay because they hold in different scopes, or the alarm is dismissed. A fact and a decision cannot replace each other, so such a pair can only be kept or dismissed. When a marked finding has been replaced in the meantime, the pair is shown against the finding that replaced it. Each decision is saved with an audit note and a new revision, and the scopes you describe are kept on the finding; no source is removed. A model never resolves a pair: the fields that record a decision are ignored when any other writer sends them.
 
 Import keeps the project's identity and does not replace other projects in the database. Re-importing the same state duplicates nothing; diverging changes require conflict resolution. Search indexes are rebuilt locally. Historical `done` states are preserved, but checks carried over from another machine are not local `fresh` evidence. Logins, client configuration and new sessions are set up locally. See [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md) for the format contract, limits and restore rules.
