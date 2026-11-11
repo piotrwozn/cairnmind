@@ -27,7 +27,7 @@ from uuid import uuid4
 
 import httpx
 
-from .config import Settings
+from .config import ENV_PREFIXES, Settings
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
 
@@ -346,7 +346,7 @@ class NativeRuntime:
         if not self.diagnostics()["available"]:
             raise ValueError("tmux_missing_or_unsupported: install tmux >= 3.4")
         command = auth_command(client)
-        environment = {k: v for k, v in native_environment().items() if not k.startswith("DEVBRAIN_")}
+        environment = {k: v for k, v in native_environment().items() if not k.startswith(ENV_PREFIXES)}
         with self._locked():
             rows = self._read()
             for row in rows:

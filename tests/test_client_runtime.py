@@ -69,9 +69,9 @@ for line in sys.stdin:
 
 @pytest.fixture
 def native(tmp_path, monkeypatch):
-    binary = os.environ.get('DEVBRAIN_TEST_TMUX') or shutil.which('tmux')
+    binary = (os.environ.get('CAIRNMIND_TEST_TMUX') or os.environ.get('DEVBRAIN_TEST_TMUX')) or shutil.which('tmux')
     if not binary:
-        pytest.skip('Real terminal tests require tmux >=3.4 (set DEVBRAIN_TEST_TMUX)')
+        pytest.skip('Real terminal tests require tmux >=3.4 (set CAIRNMIND_TEST_TMUX)')
     root = tmp_path / 'project'
     root.mkdir()
     bindir = tmp_path / 'bin'
@@ -331,7 +331,7 @@ def test_independent_launch_removes_only_parent_invocation_markers(native,monkey
         assert 'CLAUDECODE' not in env and 'CODEX_THREAD_ID' not in env
         assert {key:env.get(key) for key in preserved}==preserved
         if purpose=='auth':
-            assert not any(key.startswith('DEVBRAIN_') for key in env)
+            assert not any(key.startswith(('CAIRNMIND_', 'DEVBRAIN_')) for key in env)
         else:
             assert env['DEVBRAIN_SESSION_ID']==launch['session_id']
         seen.append(purpose)

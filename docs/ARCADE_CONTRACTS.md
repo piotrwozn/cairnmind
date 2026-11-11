@@ -7,7 +7,7 @@ checksummed backup envelope 1.
 Runtime SQLite is removed. ArcadeDB 26.11.1 (Apache2.0), native Java21 server.
 Settings fields now exist: arcade_url (loopback http default2480), arcade_user,
 arcade_password (secret in0600 config), arcade_database (derived per-data-dir hash),
-arcade_version26.11.1. Test fixture root sets DEVBRAIN_ARCADE_URL/PASSWORD with an
+arcade_version26.11.1. Test fixture root sets CAIRNMIND_ARCADE_URL/PASSWORD with an
 actual shared test engine; each temporary data-dir derives its own isolated DB.
 
 ## HTTP DAL (root owns arcade.py and engine.py)

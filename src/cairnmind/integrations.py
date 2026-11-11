@@ -25,13 +25,15 @@ import httpx
 import tomlkit
 from tomlkit.items import Comment, Table
 
-from .config import Settings
+from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
 
 BEGIN = "<!-- BEGIN DEVBRAIN -->"
 END = "<!-- END DEVBRAIN -->"
 TOML_BEGIN = "# BEGIN DEVBRAIN"
 TOML_END = "# END DEVBRAIN"
 CLIENTS = ("codex", "claude")
+# What project files tell a client to forward to the MCP server. The earlier spelling on purpose:
+# every released version recognises and reads it, and the launcher sets both spellings.
 SESSION_ENV_VARS = ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID")
 NATIVE_INVOCATION_MARKERS = frozenset({"CLAUDECODE", "CODEX_THREAD_ID"})
 HOOK_PACKET_LIMIT_BYTES = 32768
@@ -672,12 +674,13 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
             "and readback. If partial or unavailable, report its unknowns and do not attempt ACK, checkpoint "
             "or other shared-memory writes. Context delivery is not an ACK. Preserve native permissions.")
     env = native_environment()
-    env["DEVBRAIN_HOME"] = str(settings.data_dir)
-    env["DEVBRAIN_PROJECT"] = project["id"]
-    env["DEVBRAIN_CONTEXT_FILE"] = str(context_path)
-    env["DEVBRAIN_SESSION_ID"] = prepared["session_id"]
-    env["DEVBRAIN_PACKET_ID"] = packet["id"]
-    env["DEVBRAIN_CLIENT"] = client
+    # Nothing of an outer session may survive, and readers of either version must see this one:
+    # a project file written by an earlier version forwards only the earlier spelling.
+    drop_env(env, *SESSION_NAMES)
+    for name, value in (("HOME", str(settings.data_dir)), ("PROJECT", project["id"]),
+                        ("CONTEXT_FILE", str(context_path)), ("SESSION_ID", prepared["session_id"]),
+                        ("PACKET_ID", packet["id"]), ("CLIENT", client)):
+        set_env(env, name, value)
     return {"command": command, "cwd": str(root), "env": env,
             "session_id": prepared["session_id"], "packet_id": packet["id"],
             "packet_hash": packet["hash"], "context_path": str(context_path), "client": client}
@@ -721,8 +724,8 @@ def hook(settings: Settings, payload: dict[str, Any], client: str) -> dict[str, 
     data["client"] = client
     data["cwd"] = data["cwd"] or str(Path.cwd())
     data["event_id"] = event_id
-    data["devbrain_session_id"] = os.environ.get("DEVBRAIN_SESSION_ID")
-    data["packet_id"] = os.environ.get("DEVBRAIN_PACKET_ID")
+    data["devbrain_session_id"] = session_value("SESSION_ID", strict=False)
+    data["packet_id"] = session_value("PACKET_ID", strict=False)
     data["resume_reason"] = payload.get("source") or payload.get("resume_reason") or "startup"
     if isinstance(data.get("transcript_path"), str) and data["transcript_path"]:
         try:
@@ -799,8 +802,8 @@ def _transcript_watermark(path: Path) -> dict[str, Any]:
 
 def _hook_startup_context(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
     """Deliver the exact prepared packet, never silently replace it or ACK it."""
-    session_id = os.environ.get("DEVBRAIN_SESSION_ID")
-    packet_id = os.environ.get("DEVBRAIN_PACKET_ID")
+    session_id = session_value("SESSION_ID", strict=False)
+    packet_id = session_value("PACKET_ID", strict=False)
 
     def pending(reason: str) -> dict[str, Any]:
         text = (f"Cairnmind verified resume pending: {reason}. No ACK was created. "
@@ -829,11 +832,11 @@ def _hook_startup_context(settings: Settings, payload: dict[str, Any]) -> dict[s
             root = packet.get("worktree")
             if not isinstance(root, str) or not cwd.is_relative_to(Path(root).expanduser().resolve()):
                 return pending("the prepared packet does not match this registered worktree")
-            if (os.environ.get("DEVBRAIN_PROJECT") and
-                    packet.get("project_id") != os.environ["DEVBRAIN_PROJECT"]):
-                return pending("the prepared packet does not match the launcher project")
-            if os.environ.get("DEVBRAIN_CLIENT") and packet.get("client") != os.environ["DEVBRAIN_CLIENT"]:
-                return pending("the prepared packet does not match the native client")
+            for name, field, what in (("PROJECT", "project_id", "the launcher project"),
+                                      ("CLIENT", "client", "the native client")):
+                expected = [os.environ[key] for key in env_names(name) if os.environ.get(key)]
+                if any(packet.get(field) != value for value in expected):
+                    return pending(f"the prepared packet does not match {what}")
             # No truncation/substitution: callers can recover this same immutable
             # packet from DEVBRAIN_CONTEXT_FILE or resume_context.
             context = json.dumps(packet, ensure_ascii=False, separators=(",", ":"))

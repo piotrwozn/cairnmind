@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from . import __version__
 from .agent import KnowledgeAgent, parse_object
-from .config import Settings
+from .config import Settings, env_names, set_env
 from .ingest import index_pending_sources
 from .ollama import Ollama, OllamaUnavailable
 from .retrieval import Retriever
@@ -467,10 +467,10 @@ def _native_client(client: str, root: Path, settings: Settings, project_id: str,
                 "process_started": False}
     env = dict(os.environ)
     # Use saved interactive logins only. API-key environment fallback is disabled.
-    for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DEVBRAIN_ARCADE_DATABASE",
+    for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", *env_names("ARCADE_DATABASE"),
                  "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"):
         env.pop(name, None)
-    env["DEVBRAIN_HOME"] = str(settings.data_dir)
+    set_env(env, "HOME", str(settings.data_dir))
     process_started = False
     try:
         auth_args = [executable, "login", "status"] if client == "codex" else [executable, "auth", "status", "--json"]
@@ -487,7 +487,7 @@ def _native_client(client: str, root: Path, settings: Settings, project_id: str,
             return {"status": "not_run", "error_code": "authentication_required",
                     "reason": f"{client} does not report a supported interactive login", "process_started": False}
         server = {"command": sys.executable, "args": ["-m", "cairnmind.evaluation", "mcp", "--data-dir",
-                  str(settings.data_dir)], "env": {"DEVBRAIN_ARCADE_DATABASE": settings.arcade_database}}
+                  str(settings.data_dir)], "env": {env_names("ARCADE_DATABASE")[0]: settings.arcade_database}}
         if session:
             server["args"] += ["--session-id", session["session_id"]]
         prompt = ("First call Cairnmind evaluation resume_context, read its complete packet, and call ack_resume "

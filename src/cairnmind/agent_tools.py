@@ -18,6 +18,7 @@ import stat
 from uuid import uuid4
 
 from .agent_journal import AgentJournal
+from .config import ENV_PREFIXES
 from .native_worker import process_start
 
 
@@ -395,7 +396,7 @@ class ToolExecutor:
         environment = {}
         for name, value in os.environ.items():
             if (name in excluded or _SECRET_ENV.search(name) or name in {"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}
-                    or name.startswith(("DEVBRAIN_", "BASH_FUNC_")) or self.journal.redact(value) != value):
+                    or name.startswith((*ENV_PREFIXES, "BASH_FUNC_")) or self.journal.redact(value) != value):
                 continue
             environment[name] = value
         environment.update(PWD=str(self.worktree), TERM="dumb")

@@ -77,7 +77,7 @@ Reaching a limit stops the turn; you continue by sending another message. Token 
 
 ## Memory and recovery after interruption
 
-Cairnmind's local data directory must be located outside project directories, for example in `~/.local/share/devbrain`. A new agent refuses to start when its store is inside the selected project; saving a persistent key also checks the other registered directories. This keeps configuration files and local credentials from becoming the agent's working files.
+Cairnmind's local data directory must be located outside project directories, for example in `~/.local/share/cairnmind`. A new agent refuses to start when its store is inside the selected project; saving a persistent key also checks the other registered directories. This keeps configuration files and local credentials from becoming the agent's working files.
 
 Every engine uses the shared project memory, with an actual `resume_context` read and an exact ACK from the model. Delivery of context by the UI or the SDK is not an ACK. A partial package, a mismatched readback or a change in relevant state blocks writes and any actions that require restored context.
 

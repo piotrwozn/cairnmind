@@ -21,7 +21,7 @@ from test_terminal_ux080 import setup_ui
 
 # Budgets target the developer workstation. Shared CI runners set a larger scale; it stays
 # below the 3 s controlled backend delay, so a UI blocked on the backend still fails.
-SCALE = float(os.environ.get("DEVBRAIN_LATENCY_SCALE", "1"))
+SCALE = float(os.environ.get("CAIRNMIND_LATENCY_SCALE") or os.environ.get("DEVBRAIN_LATENCY_SCALE") or "1")
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- Environment variables are spelled `CAIRNMIND_*`. The earlier `DEVBRAIN_*` spelling is still read; for a configuration variable the new one wins when both are set, and `cairnmind doctor` reports a pair that disagrees. A new installation keeps its data in `~/.local/share/cairnmind`; an existing `~/.local/share/devbrain` is used where it is and is never moved or copied. The launcher gives coding clients both spellings of the session variables, so project files written by earlier versions keep working (#40).
 - `cairnmind impact PROJECT --since COMMIT` lists the decisions, facts and tasks linked to the files and symbols changed since a commit, each with the reason for the link: the record's evidence names the changed file or definition, or the record cites a snapshot of the changed file. It is read-only and asks no model (#8).
 - After an edit, indexing opens only the files whose size, times or inode changed since this process last indexed them, and writes only the graph rows that differ instead of replacing the whole graph. On a project with 5,000 files the indexing part of the first question after editing one file fell from 159 s to about 1 s. The first indexing after the service starts still reads every file (#62).
 
