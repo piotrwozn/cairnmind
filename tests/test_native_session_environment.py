@@ -13,8 +13,8 @@ import tomllib
 
 import pytest
 
-from devbrain.config import Settings
-from devbrain import integrations
+from cairnmind.config import Settings
+from cairnmind import integrations
 
 
 @pytest.mark.parametrize("forward_session", [False, True])

@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from devbrain.config import Settings
-from devbrain.workspace_state import WorkspaceState
+from cairnmind.config import Settings
+from cairnmind.workspace_state import WorkspaceState
 
 
 def test_workspace_read_is_pure_and_updates_are_private_cas(tmp_path):

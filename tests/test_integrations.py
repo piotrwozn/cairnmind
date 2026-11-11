@@ -15,9 +15,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from devbrain.config import Settings
-from devbrain import integrations
-from devbrain.mcp_server import ServiceClient, create_server
+from cairnmind.config import Settings
+from cairnmind import integrations
+from cairnmind.mcp_server import ServiceClient, create_server
 
 TOOLS = {"ask", "remember", "checkpoint", "save_plan", "next_task", "resume_context", "ack_resume", "check_status"}
 
@@ -59,7 +59,7 @@ def prepared(project):
 
 @pytest.fixture
 def native_backend(monkeypatch):
-    from devbrain import ingest, store
+    from cairnmind import ingest, store
     monkeypatch.setattr(store, "Store", lambda *a: object())
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
 
@@ -173,6 +173,9 @@ def test_legacy_native_approval_fixture_upgrades_isolation_once_preserving_permi
     assert integrations.install_integrations(settings, project, clients=("codex",))["changed"] == [str(path)]
     expected = tomllib.loads(raw.decode())
     expected["mcp_servers"]["devbrain"]["args"].insert(0, "-I")
+    # The entry was written under the earlier module name; installing rewrites it to the new one.
+    assert expected["mcp_servers"]["devbrain"]["args"][2] == "devbrain"
+    expected["mcp_servers"]["devbrain"]["args"][2] = "cairnmind"
     assert tomllib.loads(path.read_text()) == expected
     backups = list(path.parent.glob("config.toml.devbrain-backup-*"))
     assert len(backups) == 1 and backups[0].read_bytes() == raw
@@ -298,7 +301,7 @@ def test_new_native_configuration_is_private_while_new_instructions_follow_umask
 
 
 def test_new_empty_scope_recognizes_exact_session_forwarding_config(settings, project, installed):
-    from devbrain.sessions import _managed_empty_file
+    from cairnmind.sessions import _managed_empty_file
 
     integrations.install_integrations(settings, project)
     root = Path(project["root"])
@@ -394,7 +397,7 @@ def test_probe_does_not_claim_verified_binding_for_unknown_or_shared_process(mon
 
 def test_native_launch_preserves_args_stdio_and_permissions(settings, project, installed, prepared,
                                                            native_backend, monkeypatch):
-    from devbrain import ingest
+    from cairnmind import ingest
 
     monkeypatch.setattr(integrations.shutil, "which", lambda name: f"/native/{name}")
     monkeypatch.setattr(integrations, "_prepare_session", lambda *a: copy.deepcopy(prepared))
@@ -450,7 +453,7 @@ def test_each_native_launch_binds_new_ids_without_persisting_them(settings, proj
 
 def test_first_native_launch_installs_project_memory_before_client_starts(settings, project, installed, prepared, native_backend,
                                                                          monkeypatch, capsys):
-    from devbrain import ingest
+    from cairnmind import ingest
 
     root = Path(project["root"])
     probes = []
@@ -527,7 +530,7 @@ def test_verified_launch_refuses_remote_server_before_preparing(settings, projec
 
 
 def test_prepare_session_ensures_service_and_preserves_selected_worktree(settings, project, prepared, monkeypatch):
-    from devbrain import cli, sessions, store
+    from cairnmind import cli, sessions, store
 
     calls = []
     root = Path(project["root"])
@@ -564,7 +567,7 @@ def test_saved_packet_is_exact_immutable_and_session_scoped(settings, project, p
 
 
 def test_end_hook_only_enqueues_durable_import(settings, tmp_path, monkeypatch):
-    from devbrain.store import Store
+    from cairnmind.store import Store
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -585,7 +588,7 @@ def test_end_hook_only_enqueues_durable_import(settings, tmp_path, monkeypatch):
 
 
 def test_end_hook_never_initializes_the_database(settings, tmp_path, monkeypatch):
-    from devbrain import store
+    from cairnmind import store
 
     monkeypatch.setattr(store, "Store", lambda *args: pytest.fail("SessionEnd touched the database"))
     assert integrations.hook(settings, {"hook_event_name": "SessionEnd", "cwd": str(tmp_path)}, "codex") == {}
@@ -593,7 +596,7 @@ def test_end_hook_never_initializes_the_database(settings, tmp_path, monkeypatch
 
 
 def test_end_hook_captures_bounded_eof_and_logical_identity_without_network(settings, tmp_path, monkeypatch):
-    from devbrain import store
+    from cairnmind import store
 
     monkeypatch.setattr(store, "Store", lambda *a: pytest.fail("End hook opened a database"))
     monkeypatch.setattr(integrations.httpx, "Client", lambda **kw: pytest.fail("End hook opened HTTP"))
@@ -666,8 +669,8 @@ def test_end_hook_retains_explicit_watermark_capture_failure(settings, tmp_path,
 
 
 def test_spool_drain_records_logical_receipt_before_removing_event(settings, tmp_path, monkeypatch):
-    from devbrain import sessions
-    from devbrain.store import Store
+    from cairnmind import sessions
+    from cairnmind.store import Store
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -697,8 +700,8 @@ def test_spool_drain_records_logical_receipt_before_removing_event(settings, tmp
 
 
 def test_end_hook_survives_unavailable_backend_and_restart(settings, tmp_path, monkeypatch):
-    from devbrain.store import Store
-    from devbrain import store as store_module
+    from cairnmind.store import Store
+    from cairnmind import store as store_module
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -745,8 +748,8 @@ def test_session_start_returns_exact_prepared_packet(settings, project, prepared
 
 def test_start_hook_exact_http_read_preserves_packet_when_project_state_changed(settings, project, monkeypatch):
     from fastapi.testclient import TestClient
-    from devbrain.service import create_app
-    from devbrain.sessions import SessionManager
+    from cairnmind.service import create_app
+    from cairnmind.sessions import SessionManager
 
     root = Path(project["root"])
     (root / "app.py").write_text("VALUE = 1\n")
@@ -848,7 +851,7 @@ def test_hook_does_not_mix_unknown_directory_into_project(settings, tmp_path, mo
 
 
 def test_start_hook_offline_never_initializes_database(settings, tmp_path, monkeypatch):
-    from devbrain import store
+    from cairnmind import store
 
     monkeypatch.setattr(store, "Store", lambda *args: pytest.fail("Start hook initialized an engine"))
     monkeypatch.setenv("DEVBRAIN_SESSION_ID", "logical-session")
@@ -888,7 +891,7 @@ def test_start_hook_never_substitutes_legacy_rolling_context(settings, tmp_path,
 
 
 def test_doctor_reports_arcadedb_without_lifecycle_work_or_credentials(settings, monkeypatch):
-    from devbrain import store
+    from cairnmind import store
 
     monkeypatch.setattr(settings, "java_executable", "")
     monkeypatch.setattr(store, "Store", lambda *a: pytest.fail("Doctor initialized a database"))
@@ -990,7 +993,7 @@ async def test_actual_stdio_mcp_initialization_is_protocol_clean(settings):
     from mcp.client.stdio import stdio_client
 
     server = StdioServerParameters(command=sys.executable,
-                                  args=["-m", "devbrain", "--data-dir", str(settings.data_dir), "mcp"])
+                                  args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp"])
     async with stdio_client(server) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             result = await session.initialize()
@@ -1012,7 +1015,7 @@ async def test_service_bridge_uses_bearer_and_local_transport(settings, monkeypa
         assert kwargs["trust_env"] is False
         return real_client(**kwargs, transport=httpx.MockTransport(handler))
 
-    monkeypatch.setattr("devbrain.mcp_server.httpx.AsyncClient", client_factory)
+    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", client_factory)
     result = await ServiceClient(settings).post("/ask", {"project": "demo", "question": "what?"})
     assert result["status"] == "complete"
     assert seen[0].headers["Authorization"] == f"Bearer {settings.token}"
@@ -1022,7 +1025,7 @@ async def test_service_bridge_uses_bearer_and_local_transport(settings, monkeypa
 @pytest.mark.asyncio
 async def test_service_bridge_reports_http_error_without_token(settings, monkeypatch):
     real_client = httpx.AsyncClient
-    monkeypatch.setattr("devbrain.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
+    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(lambda req: httpx.Response(401, json={"detail": "Unauthorized"}))))
     with pytest.raises(RuntimeError, match="401") as error:
         await ServiceClient(settings, session_id="logical-session", packet_id="packet-one").post("/remember", {})
@@ -1032,14 +1035,14 @@ async def test_service_bridge_reports_http_error_without_token(settings, monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["/remember", "/checkpoint", "/plans/save", "/sessions/context", "/sessions/ack"])
 async def test_unbound_mcp_cannot_use_manual_admin_write_path(settings, monkeypatch, endpoint):
-    monkeypatch.setattr("devbrain.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Unbound client reached HTTP"))
+    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Unbound client reached HTTP"))
     with pytest.raises(RuntimeError, match="resume_required"):
         await ServiceClient(settings).post(endpoint, {})
 
 
 @pytest.mark.asyncio
 async def test_bound_bridge_rejects_forged_session_identity(settings, monkeypatch):
-    monkeypatch.setattr("devbrain.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Forged session reached HTTP"))
+    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kw: pytest.fail("Forged session reached HTTP"))
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
     with pytest.raises(RuntimeError, match="Session mismatch"):
         await client.post("/checkpoint", {"session_id": "different", "state": {}})
@@ -1060,7 +1063,7 @@ async def test_bound_project_reads_include_session_scope_without_requiring_ack(s
         assert payload["session_id"] == "logical-session"
         return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.setattr("devbrain.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
+    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(backend)))
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
     body = {"project": "demo", "question": "What differs on this branch?"}
@@ -1093,7 +1096,7 @@ async def test_bound_bridge_refreshes_packet_then_requires_explicit_real_ack(set
         assert kwargs["timeout"] in {15, 45}
         return real_client(**kwargs, transport=httpx.MockTransport(backend))
 
-    monkeypatch.setattr("devbrain.mcp_server.httpx.AsyncClient", factory)
+    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", factory)
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
     await client.post("/sessions/context", {})
     assert client.packet_id == "packet-new"
@@ -1111,7 +1114,7 @@ async def test_bound_bridge_refreshes_packet_then_requires_explicit_real_ack(set
 @pytest.mark.asyncio
 async def test_bound_bridge_rejects_cross_session_context_response(settings, monkeypatch):
     real_client = httpx.AsyncClient
-    monkeypatch.setattr("devbrain.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
+    monkeypatch.setattr("cairnmind.mcp_server.httpx.AsyncClient", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(lambda req: httpx.Response(200, json={
             "session_id": "another-session", "packet": {"id": "bad", "hash": "bad"}}))))
     client = ServiceClient(settings, session_id="logical-session", packet_id="packet-one")
@@ -1121,7 +1124,7 @@ async def test_bound_bridge_rejects_cross_session_context_response(settings, mon
 
 
 def test_plan_tool_views_bound_context_without_echoing_source_contents():
-    from devbrain.mcp_server import _next_task_view, _saved_plan_view
+    from cairnmind.mcp_server import _next_task_view, _saved_plan_view
 
     tasks = [{"id": f"task-{n}", "version": 1, "content": "code" * 10000,
               "source_ids": ["source-a"], "metadata": {"state": "todo", "step_key": str(n),
@@ -1254,7 +1257,7 @@ def test_contract_text_shows_what_a_failed_pattern_check_found_and_cuts_long_evi
 
 def test_doctor_contract_prints_text_on_request_and_json_by_default(tmp_path, monkeypatch):
     from typer.testing import CliRunner
-    from devbrain import cli
+    from cairnmind import cli
     probes = {"codex": _golden_probe(monkeypatch, "codex-0.166.0"), "claude": _golden_probe(monkeypatch, "claude-2.1.319")}
     monkeypatch.setattr(integrations, "_probe_cli", lambda name: probes[name])
     runner, base = CliRunner(), ["--data-dir", str(tmp_path / "data"), "doctor", "--contract"]

@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from devbrain.arcade import ArcadeError
-from devbrain.config import Settings
-from devbrain import engine, integrations
-from devbrain import runtime_selection
-from devbrain.client_runtime import NativeRuntime
+from cairnmind.arcade import ArcadeError
+from cairnmind.config import Settings
+from cairnmind import engine, integrations
+from cairnmind import runtime_selection
+from cairnmind.client_runtime import NativeRuntime
 
 
 def executable(tmp_path):
@@ -209,7 +209,7 @@ def test_tmux_diagnostics_and_operations_use_same_selected_binary(tmp_path, monk
 
 
 def test_native_attach_rejects_invalid_binary_before_tty_or_exec(tmp_path, monkeypatch):
-    from devbrain import native_worker
+    from cairnmind import native_worker
     import sys
     monkeypatch.setattr(sys, "argv", ["worker", "--attach", "--tmux-bin", "/missing/tmux",
                                       "--socket", "/private/socket", "--session", "private"])

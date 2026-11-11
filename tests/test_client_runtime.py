@@ -13,9 +13,9 @@ from uuid import uuid4
 
 import pytest
 
-from devbrain import client_auth, integrations
-from devbrain.client_runtime import NativeRuntime
-from devbrain.config import Settings
+from cairnmind import client_auth, integrations
+from cairnmind.client_runtime import NativeRuntime
+from cairnmind.config import Settings
 
 
 FAKE = r'''
@@ -379,7 +379,7 @@ def test_starting_intent_recovers_exec_identity_after_host_restart(native):
 def test_project_cannot_shadow_private_launcher_module(native):
     runtime,project,_=native
     from pathlib import Path
-    (Path(project['root'])/'devbrain.py').write_text('raise RuntimeError("project shadow executed")')
+    (Path(project['root'])/'cairnmind.py').write_text('raise RuntimeError("project shadow executed")')
     row=runtime.start(project,'codex')
     assert row['lifecycle']=='running'
 
@@ -412,18 +412,18 @@ def test_generated_mcp_and_hook_commands_ignore_project_python_shadow(native,mon
     runtime,project,_=native
     root=Path(project['root'])
     marker=root/'shadow-executed'
-    (root/'devbrain.py').write_text('from pathlib import Path\nPath('+repr(str(marker))+').write_text("unsafe")\nraise RuntimeError("shadow")')
+    (root/'cairnmind.py').write_text('from pathlib import Path\nPath('+repr(str(marker))+').write_text("unsafe")\nraise RuntimeError("shadow")')
     monkeypatch.setenv('PYTHONPATH',str(root))
     config=root/'.codex/config.toml'
     config.parent.mkdir()
     integrations._merge_toml_mcp(config,runtime.settings)
     mcp=tomllib.loads(config.read_text())['mcp_servers']['devbrain']
-    assert mcp['args'][:3]==['-I','-m','devbrain']
+    assert mcp['args'][:3]==['-I','-m','cairnmind']
     completed=subprocess.run([mcp['command'],*mcp['args'],'--help'],cwd=root,capture_output=True,text=True,timeout=10)
     assert completed.returncode==0,completed.stderr
     hookpath=root/'.codex/hooks.json'
     integrations._merge_hooks(hookpath,runtime.settings,'codex')
     command=json.loads(hookpath.read_text())['hooks']['SessionStart'][0]['hooks'][0]['command']
-    assert shlex.split(command)[1:4]==['-I','-m','devbrain']
+    assert shlex.split(command)[1:4]==['-I','-m','cairnmind']
     completed=subprocess.run(shlex.split(command),cwd=root,input='{}',capture_output=True,text=True,timeout=10)
     assert completed.returncode==0 and not marker.exists(),completed.stderr

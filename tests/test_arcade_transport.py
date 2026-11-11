@@ -5,8 +5,8 @@ import ssl
 import httpx
 import pytest
 
-from devbrain.arcade import ArcadeClient, ArcadeError
-from devbrain.config import Settings
+from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.config import Settings
 
 
 def settings(tmp_path, url="http://127.0.0.1:2480"):

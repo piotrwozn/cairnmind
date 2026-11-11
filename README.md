@@ -256,7 +256,7 @@ The launcher blocks a client from starting when the resume package is partial or
 
 | Path | Contents |
 |---|---|
-| [`src/devbrain/`](src/devbrain/) | The Python package. The module keeps its earlier name until a compatible migration ([#40](https://github.com/piotrwozn/cairnmind/issues/40)). |
+| [`src/cairnmind/`](src/cairnmind/) | The Python package. `src/devbrain/` is an import alias of the earlier module name, kept for one release so that entries starting `python -m devbrain` keep working until `cairnmind install` rewrites them. |
 | [`tests/`](tests/) | Automated tests; see [CONTRIBUTING.md](CONTRIBUTING.md) for the tiers and a code map. |
 | [`docs/`](docs/) | Guides and implementation contracts. |
 | [`scripts/`](scripts/) | The installer. |

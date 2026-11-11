@@ -1,3 +1,3 @@
-from devbrain.cli import entrypoint
+from cairnmind.cli import entrypoint
 
 entrypoint()

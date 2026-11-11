@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from devbrain.api_credentials import CredentialStore, credential_environment_names
-from devbrain.config import Settings
+from cairnmind.api_credentials import CredentialStore, credential_environment_names
+from cairnmind.config import Settings
 
 
 def profile(reference="profile:code"):

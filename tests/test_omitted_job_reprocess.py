@@ -7,9 +7,9 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from devbrain.service import create_app
-from devbrain.sessions import SessionManager
-from devbrain.store import JobNotFoundError, Store, job_diagnostics
+from cairnmind.service import create_app
+from cairnmind.sessions import SessionManager
+from cairnmind.store import JobNotFoundError, Store, job_diagnostics
 
 
 OMITTED = {"stage": "extract", "code": "completed_with_omissions", "repair_attempted": False,

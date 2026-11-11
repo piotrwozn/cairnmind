@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from devbrain import cockpit
-from devbrain.config import Settings
-from devbrain.terminal_client import BrokerClient, BrokerError
+from cairnmind import cockpit
+from cairnmind.config import Settings
+from cairnmind.terminal_client import BrokerClient, BrokerError
 
 
 ORIGIN = "http://127.0.0.1:8766"
@@ -142,7 +142,7 @@ def test_ensure_broker_does_not_mint_display_ticket_or_open_browser(tmp_path, mo
     settings = Settings.load(tmp_path / "data", create=True)
     status = {"available": True, "url": ORIGIN, "pid": 42, "birth": "owned", "version_matches": True}
     starts = []
-    monkeypatch.setattr("devbrain.cli.ensure_service", lambda settings, **kwargs: starts.append(kwargs))
+    monkeypatch.setattr("cairnmind.cli.ensure_service", lambda settings, **kwargs: starts.append(kwargs))
     monkeypatch.setattr(cockpit, "cockpit_status", lambda settings: status)
     assert not hasattr(cockpit, "_open_browser"), "The browser launcher was removed in 0.8.0"
     monkeypatch.setattr(cockpit.httpx, "Client", lambda **kwargs: pytest.fail("Headless startup minted a ticket"))
@@ -154,7 +154,7 @@ def test_new_broker_daemon_drops_parent_tmux_and_native_invocation_markers(tmp_p
     settings = Settings.load(tmp_path / "data", create=True)
     ready = {"available": True, "url": ORIGIN, "pid": 42, "birth": "owned", "version_matches": True}
     states = iter([{"available": False}, ready])
-    monkeypatch.setattr("devbrain.cli.ensure_service", lambda settings, **kwargs: None)
+    monkeypatch.setattr("cairnmind.cli.ensure_service", lambda settings, **kwargs: None)
     monkeypatch.setattr(cockpit, "cockpit_status", lambda settings: next(states))
     for key in ("TMUX", "TMUX_PANE", "CLAUDECODE", "CODEX_THREAD_ID", "DEVBRAIN_SESSION_ID"):
         monkeypatch.setenv(key, "parent-invocation")
@@ -164,6 +164,6 @@ def test_new_broker_daemon_drops_parent_tmux_and_native_invocation_markers(tmp_p
     assert cockpit.ensure_cockpit(settings) == ready
     argv = calls[0][0][0]
     environment = calls[0][1]["env"]
-    assert argv[1:4] == ["-I", "-m", "devbrain"]
+    assert argv[1:4] == ["-I", "-m", "cairnmind"]
     assert environment["CODEX_HOME"] == "/fixture/native-home"
     assert not {"TMUX", "TMUX_PANE", "CLAUDECODE", "CODEX_THREAD_ID", "DEVBRAIN_SESSION_ID"}.intersection(environment)

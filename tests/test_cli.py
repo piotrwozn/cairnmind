@@ -8,13 +8,13 @@ import sys
 
 from typer.testing import CliRunner
 
-from devbrain.cli import app
-from devbrain.config import Settings
-from devbrain.store import Store
+from cairnmind.cli import app
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 
 def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch):
-    from devbrain import ingest
+    from cairnmind import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     runner = CliRunner()
     data = tmp_path / "memory"
@@ -63,7 +63,7 @@ def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch):
 
 
 def test_restore_requires_service_lock_even_if_health_is_down(tmp_path, monkeypatch):
-    monkeypatch.setattr("devbrain.cli.service_alive", lambda settings: False)
+    monkeypatch.setattr("cairnmind.cli.service_alive", lambda settings: False)
     settings = Settings.load(tmp_path / "memory", create=True)
     backup = Store(settings.data_dir).backup(tmp_path / "backup.devbrain.json.gz")
     with (settings.data_dir / "service.lock").open("a") as lock:
@@ -75,7 +75,7 @@ def test_restore_requires_service_lock_even_if_health_is_down(tmp_path, monkeypa
 
 
 def test_unacked_cli_evidence_write_is_atomic(tmp_path, monkeypatch):
-    from devbrain.sessions import SessionManager
+    from cairnmind.sessions import SessionManager
     settings = Settings.load(tmp_path / "memory", create=True)
     store = Store(settings.data_dir)
     root = tmp_path / "empty"
@@ -102,7 +102,7 @@ def test_cli_ask_accepts_bounded_answer_contract_and_keeps_default_payload(tmp_p
     def request(settings, method, path, **kwargs):
         calls.append((method, path, kwargs["json"]))
         return {"status": "complete", "answer": "{}"}
-    monkeypatch.setattr("devbrain.cli.request", request)
+    monkeypatch.setattr("cairnmind.cli.request", request)
     schema = {"type": "object", "properties": {"version": {"type": "integer"}},
               "required": ["version"], "additionalProperties": False}
     file = tmp_path / "answer.json"
@@ -125,7 +125,7 @@ def test_cli_evaluation_skip_claude_is_explicit_and_remains_not_run(tmp_path, mo
     def evaluate(settings, **kwargs):
         calls.append(kwargs)
         return {"status": "not_run", "native_mode": "codex_only_partial"}
-    monkeypatch.setattr("devbrain.evaluation.run_evaluation", evaluate)
+    monkeypatch.setattr("cairnmind.evaluation.run_evaluation", evaluate)
     base = ["--data-dir", str(tmp_path / "memory"), "eval", "run"]
     runner = CliRunner()
     assert runner.invoke(app, [*base, "--skip-claude"]).exit_code != 0

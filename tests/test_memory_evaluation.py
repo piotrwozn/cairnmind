@@ -7,10 +7,10 @@ import re
 
 import pytest
 
-from devbrain.config import Settings
-from devbrain.memory_evaluation import run_memory_evaluation
-from devbrain.ollama import OllamaUnavailable
-from devbrain.store import Store
+from cairnmind.config import Settings
+from cairnmind.memory_evaluation import run_memory_evaluation
+from cairnmind.ollama import OllamaUnavailable
+from cairnmind.store import Store
 
 
 class MemoryFixtureOllama:
@@ -91,7 +91,7 @@ class MidrunUnavailable(MemoryFixtureOllama):
 
 
 def test_positive_extraction_then_portable_recall_preserves_user_data_and_uses_separate_namespaces(tmp_path, monkeypatch):
-    import devbrain.memory_evaluation as evaluation
+    import cairnmind.memory_evaluation as evaluation
 
     settings = Settings.load(tmp_path / "user-data", create=True)
     store = Store(settings.data_dir)
@@ -175,7 +175,7 @@ def test_malformed_unknown_fallback_does_not_pass_abstention(tmp_path):
 
 
 def test_missing_models_are_not_run_without_creating_fixture_databases(tmp_path, monkeypatch):
-    import devbrain.memory_evaluation as evaluation
+    import cairnmind.memory_evaluation as evaluation
 
     def forbidden_store(*args, **kwargs):
         raise AssertionError("Missing-model preflight must not create a database")

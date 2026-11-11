@@ -10,11 +10,11 @@ import threading
 import pytest
 from textual.widgets import OptionList, Static
 
-from devbrain.config import Settings
-from devbrain.terminal_graph import (BrailleCanvas, Camera, EDGE_LIMIT, GraphApp, GraphModel, GraphScope,
+from cairnmind.config import Settings
+from cairnmind.terminal_graph import (BrailleCanvas, Camera, EDGE_LIMIT, GraphApp, GraphModel, GraphScope,
                                     GroupPicker, NODE_LIMIT, TerminalGraph, layout_positions, render_scene,
                                     seed_position, selection_for, terminal_visible)
-from devbrain.workspace_state import WorkspaceState
+from cairnmind.workspace_state import WorkspaceState
 
 
 def projection(project="p", count=3):

@@ -15,11 +15,11 @@ import time
 
 import pytest
 
-from devbrain import verification
-from devbrain.memory_paths import is_reserved_memory
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
-from devbrain.verification import capture_code_state
+from cairnmind import verification
+from cairnmind.memory_paths import is_reserved_memory
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
+from cairnmind.verification import capture_code_state
 
 
 def git(root, *args):

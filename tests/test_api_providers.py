@@ -9,7 +9,7 @@ import threading
 import httpx
 import pytest
 
-from devbrain.api_providers import ProviderError, make_provider
+from cairnmind.api_providers import ProviderError, make_provider
 
 
 TOOL = {"name": "read_file", "description": "Read a project file.", "parameters": {
@@ -266,7 +266,7 @@ async def test_output_limit_and_size_limit_do_not_return_a_success(monkeypatch):
         with pytest.raises(ProviderError) as error:
             await make_provider(profile("openai"), "SAFE", client=client).complete([{"role": "user", "content": "Test"}], [])
         assert error.value.code == "output_limit"
-    monkeypatch.setattr("devbrain.api_providers.MAX_RESPONSE_BYTES", 100)
+    monkeypatch.setattr("cairnmind.api_providers.MAX_RESPONSE_BYTES", 100)
     async with httpx.AsyncClient(transport=transport(lambda request: stream_response("openai"))) as client:
         with pytest.raises(ProviderError) as error:
             await make_provider(profile("openai"), "SAFE", client=client).complete([{"role": "user", "content": "Test"}], [])

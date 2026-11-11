@@ -15,8 +15,8 @@ from pathlib import Path
 import subprocess
 import unicodedata
 
-from devbrain.store import DERIVED_RECORD_METADATA
-from devbrain.terminal_safe import safe_text
+from cairnmind.store import DERIVED_RECORD_METADATA
+from cairnmind.terminal_safe import safe_text
 
 MAX_LINES = 40
 ACTIVE_STATES = ("in_progress", "needs_test", "needs_review")
@@ -140,7 +140,7 @@ def _plan(plans, project_id, root, by_id):
 
 
 def _verification(store, tasks, root):
-    from devbrain.verification import capture_code_state, verification_status
+    from cairnmind.verification import capture_code_state, verification_status
     active = [task for task in tasks if task["metadata"].get("state", "todo") in ACTIVE_STATES]
     if not active:
         return [("machine", "No task is in progress, waiting for a test or waiting for a review.")]
@@ -202,8 +202,8 @@ def _proposed(records):
 
 def _scoped_records(store, project_id, root):
     """The same worktree rule as `context`: a record bound to another root is not part of this brief."""
-    from devbrain.memory_paths import bound_metadata, memory_bindings
-    from devbrain.retrieval import Retriever
+    from cairnmind.memory_paths import bound_metadata, memory_bindings
+    from cairnmind.retrieval import Retriever
     roots = [Path(row["path"]).resolve() for row in store.query(
         "SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})]
     bindings = memory_bindings(store, project_id)
@@ -213,8 +213,8 @@ def _scoped_records(store, project_id, root):
 
 def build_brief(store, project_id, worktree=None, *, now=None):
     """Return the brief as marked lines plus ready text; reads only, asks no model."""
-    from devbrain.plans import PlanManager
-    from devbrain.verification import _root
+    from cairnmind.plans import PlanManager
+    from cairnmind.verification import _root
     project = store.resolve_project(project_id)
     root = _root(store, project["id"], worktree)
     now = now or datetime.now(timezone.utc)

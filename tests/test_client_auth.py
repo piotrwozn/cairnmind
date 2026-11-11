@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from devbrain import client_auth as auth
-from devbrain.client_adapters import native_adapter, observed_capabilities
+from cairnmind import client_auth as auth
+from cairnmind.client_adapters import native_adapter, observed_capabilities
 
 
 CANARY = "PRIVATE_AUTH_OUTPUT_AND_KEY_MUST_NOT_ESCAPE_050"

@@ -5,8 +5,8 @@ import json
 import httpx
 import pytest
 
-from devbrain.arcade import ArcadeClient, ArcadeError
-from devbrain.config import Settings
+from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.config import Settings
 
 
 def test_client_uses_readonly_endpoint_and_named_json_parameters(tmp_path):
@@ -45,7 +45,7 @@ def test_client_redacts_password_in_backend_error(tmp_path):
 
 
 def test_native_transaction_rolls_back_and_query_rejects_writes(tmp_path):
-    from devbrain.store import Store
+    from cairnmind.store import Store
     store = Store(tmp_path)
     with pytest.raises(RuntimeError, match="abort"):
         with store.transaction() as tx:
@@ -58,7 +58,7 @@ def test_native_transaction_rolls_back_and_query_rejects_writes(tmp_path):
 
 
 def test_edge_id_cannot_be_reassigned_to_another_project(tmp_path):
-    from devbrain.store import Store
+    from cairnmind.store import Store
     store = Store(tmp_path)
     first = store.add_project("first", tmp_path / "first")
     second = store.add_project("second", tmp_path / "second")

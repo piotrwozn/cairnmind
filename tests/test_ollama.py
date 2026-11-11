@@ -6,8 +6,8 @@ import json
 import httpx
 import pytest
 
-from devbrain.config import Settings
-from devbrain.ollama import Ollama, OllamaUnavailable
+from cairnmind.config import Settings
+from cairnmind.ollama import Ollama, OllamaUnavailable
 
 
 @pytest.mark.parametrize("status,message,category", [

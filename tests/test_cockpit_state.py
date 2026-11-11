@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from devbrain.cockpit_state import CockpitState, ProjectDiscovery, normalize_path
-from devbrain.config import Settings
+from cairnmind.cockpit_state import CockpitState, ProjectDiscovery, normalize_path
+from cairnmind.config import Settings
 
 
 def test_preferences_are_local_private_and_validate_native_profiles(tmp_path):
@@ -74,7 +74,7 @@ def test_explicit_windows_path_conversion_uses_no_shell(monkeypatch):
         assert args[0] == ["wslpath", "-u", r"C:\Users\piotr\My Projects"]
         assert "shell" not in kwargs
         raise FileNotFoundError
-    monkeypatch.setattr("devbrain.cockpit_state.subprocess.run", missing)
+    monkeypatch.setattr("cairnmind.cockpit_state.subprocess.run", missing)
     assert str(normalize_path(r"C:\Users\piotr\My Projects")) == "/mnt/c/Users/piotr/My Projects"
 
 

@@ -11,14 +11,14 @@ import subprocess
 from fastapi.testclient import TestClient
 import pytest
 
-from devbrain import ingest
-from devbrain.config import Settings
-from devbrain.ingest import forget_index_signature, index_project, index_project_if_changed, tree_signature
-from devbrain.journal import Journal
-from devbrain.plans import PlanManager
-from devbrain.service import create_app
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
+from cairnmind import ingest
+from cairnmind.config import Settings
+from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed, tree_signature
+from cairnmind.journal import Journal
+from cairnmind.plans import PlanManager
+from cairnmind.service import create_app
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
 
 
 class LocalModel:
@@ -335,7 +335,7 @@ def test_a_directory_that_cannot_be_listed_is_an_error_and_deactivates_nothing(w
 
 def test_memory_import_makes_the_next_question_index_again(workspace, monkeypatch):
     settings, store, project, root = workspace
-    from devbrain.memory import MemoryManager
+    from cairnmind.memory import MemoryManager
     # The import itself is covered elsewhere; here only what the route does after it matters.
     monkeypatch.setattr(MemoryManager, "import_snapshot",
                         lambda self, *args, **kwargs: {"status": "imported", "project": {"id": project["id"]}})

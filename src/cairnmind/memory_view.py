@@ -5,9 +5,9 @@ the same loader as ``memory inspect`` and prints what the package contains.
 """
 from __future__ import annotations
 
-from devbrain.memory import _load_snapshot
-from devbrain.store import STATUSES
-from devbrain.terminal_safe import safe_text
+from cairnmind.memory import _load_snapshot
+from cairnmind.store import STATUSES
+from cairnmind.terminal_safe import safe_text
 
 RECORD_KINDS = ("decision", "constraint", "task", "fact", "question", "preference", "checkpoint")
 SHOW_KINDS = (*RECORD_KINDS, "plan")

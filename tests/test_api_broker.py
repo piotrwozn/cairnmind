@@ -5,10 +5,10 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from devbrain.api_credentials import CredentialStore
-from devbrain.cockpit import create_cockpit_app
-from devbrain.cockpit_state import CockpitState
-from devbrain.config import Settings
+from cairnmind.api_credentials import CredentialStore
+from cairnmind.cockpit import create_cockpit_app
+from cairnmind.cockpit_state import CockpitState
+from cairnmind.config import Settings
 
 ORIGIN = 'http://127.0.0.1:8766'
 
@@ -54,7 +54,7 @@ def broker(tmp_path, monkeypatch):
         if request.url.path == '/project-roots':
             return httpx.Response(200, json={'roots': [str(root)]})
         return httpx.Response(200, json={})
-    monkeypatch.setattr('devbrain.client_auth.probe_client', lambda name, **kw: {'client': name, 'auth': 'unknown'})
+    monkeypatch.setattr('cairnmind.client_auth.probe_client', lambda name, **kw: {'client': name, 'auth': 'unknown'})
     app = create_cockpit_app(settings, runtime=runtime, proxy_transport=httpx.MockTransport(upstream))
     with TestClient(app, base_url=ORIGIN) as client:
         ticket = app.state.browser_sessions.ticket()
@@ -110,7 +110,7 @@ def test_models_and_paid_probe_are_explicit_and_profile_bound(broker, monkeypatc
             return {'status': 'ready', 'tools': True}
         async def close(self):
             calls.append('close')
-    monkeypatch.setattr('devbrain.api_providers.make_provider', lambda *a, **kw: Provider())
+    monkeypatch.setattr('cairnmind.api_providers.make_provider', lambda *a, **kw: Provider())
     assert client.get('/api/state').status_code == 200
     assert client.get('/api/profiles/api/status').status_code == 200
     assert calls == []
@@ -140,7 +140,7 @@ def test_profile_changed_with_same_launch_key_is_conflict(broker):
 def test_copilot_preparation_and_login_are_explicit(broker, monkeypatch):
     settings, state, runtime, client, headers = broker
     calls = []
-    monkeypatch.setattr('devbrain.copilot_adapter.prepare_runtime', lambda s: calls.append('prepare') or {'available': True})
+    monkeypatch.setattr('cairnmind.copilot_adapter.prepare_runtime', lambda s: calls.append('prepare') or {'available': True})
     assert client.get('/api/state').status_code == 200
     assert calls == []
     assert client.post('/api/copilot/prepare', json={}).status_code == 403
@@ -150,7 +150,7 @@ def test_copilot_preparation_and_login_are_explicit(broker, monkeypatch):
 
 
 def test_provider_diagnostics_never_echo_mutated_upstream_hint(broker, monkeypatch):
-    from devbrain.api_providers import ProviderError
+    from cairnmind.api_providers import ProviderError
     settings, state, runtime, client, headers = broker
     class Provider:
         async def probe(self):
@@ -160,7 +160,7 @@ def test_provider_diagnostics_never_echo_mutated_upstream_hint(broker, monkeypat
             raise error
         async def close(self):
             pass
-    monkeypatch.setattr('devbrain.api_providers.make_provider', lambda *a, **kw: Provider())
+    monkeypatch.setattr('cairnmind.api_providers.make_provider', lambda *a, **kw: Provider())
     response = client.post('/api/profiles/api/probe', headers=headers, json={})
     assert response.json()['code'] == 'context_limit'
     assert response.json()['context_details']['model_context_window'] == 8192

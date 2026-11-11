@@ -9,9 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 
-from devbrain.config import Settings
-from devbrain.service import InferenceQueue, create_app
-from devbrain.store import Store
+from cairnmind.config import Settings
+from cairnmind.service import InferenceQueue, create_app
+from cairnmind.store import Store
 
 
 class LocalModelFixture:
@@ -76,7 +76,7 @@ def test_private_endpoints_require_local_bearer(workspace):
 
 @pytest.mark.parametrize("expected_field", ["packet_id", "expected_packet_id"])
 def test_exact_startup_context_does_not_refresh_a_stale_packet(workspace, expected_field):
-    from devbrain.sessions import SessionManager
+    from cairnmind.sessions import SessionManager
 
     settings, store, project, root = workspace
     initial = SessionManager(store, settings).prepare(project["id"], "codex", timeout=0)
@@ -111,7 +111,7 @@ def test_exact_startup_context_does_not_refresh_a_stale_packet(workspace, expect
                                  {"packet_id": ""}, {"expected_packet_id": ""},
                                  {"packet_id": "one", "expected_packet_id": "another"}])
 def test_wrong_expected_context_identity_cannot_replace_current_packet(workspace, body):
-    from devbrain.sessions import SessionManager
+    from cairnmind.sessions import SessionManager
 
     settings, store, project, root = workspace
     manager = SessionManager(store, settings)
@@ -251,8 +251,8 @@ def test_cache_tracks_profiles_and_ignored_verification_inputs(workspace):
 
 
 def test_embedding_digest_rebuild_preserves_sources(workspace):
-    from devbrain.ingest import index_project
-    from devbrain.service import schedule_embeddings
+    from cairnmind.ingest import index_project
+    from cairnmind.service import schedule_embeddings
     settings, store, project, root = workspace
     index_project(store, project["id"])
     chunk = store.query("SELECT id FROM chunks LIMIT 1")[0]["id"]

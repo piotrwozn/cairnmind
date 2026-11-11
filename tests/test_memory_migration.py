@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from devbrain.arcade import ArcadeClient
-from devbrain.store import SCHEMA_VERSION, V03_EXPORT_TYPES, V04_DOCUMENT_TYPES, Store
+from cairnmind.arcade import ArcadeClient
+from cairnmind.store import SCHEMA_VERSION, V03_EXPORT_TYPES, V04_DOCUMENT_TYPES, Store
 
 
 def schema_two(tmp_path):

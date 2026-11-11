@@ -11,12 +11,12 @@ from uuid import uuid4
 
 import pytest
 
-from devbrain import memory as portable
-from devbrain.memory import MemoryConflict, MemoryManager, inspect_snapshot
-from devbrain.plans import PlanManager
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
-from devbrain.verification import run_check, verification_status
+from cairnmind import memory as portable
+from cairnmind.memory import MemoryConflict, MemoryManager, inspect_snapshot
+from cairnmind.plans import PlanManager
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
+from cairnmind.verification import run_check, verification_status
 
 
 def git(root, *args):

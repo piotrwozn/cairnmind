@@ -6,11 +6,11 @@ from types import ModuleType
 
 from typer.testing import CliRunner
 
-from devbrain.cli import app
+from cairnmind.cli import app
 
 
 def cockpit_stub(monkeypatch, calls):
-    module = ModuleType("devbrain.cockpit")
+    module = ModuleType("cairnmind.cockpit")
 
     def status(settings):
         assert not (settings.data_dir / "config.json").exists()
@@ -24,7 +24,7 @@ def cockpit_stub(monkeypatch, calls):
 
     module.cockpit_status = status
     module.stop_cockpit = stop
-    monkeypatch.setitem(sys.modules, "devbrain.cockpit", module)
+    monkeypatch.setitem(sys.modules, "cairnmind.cockpit", module)
 
 
 def test_browser_open_command_was_removed(tmp_path):

@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import pytest
 
-from devbrain.ingest import import_history
-from devbrain.integrations import _transcript_watermark
-from devbrain.sessions import SessionManager
-from devbrain.store import Store, _insert, _now, _set
+from cairnmind.ingest import import_history
+from cairnmind.integrations import _transcript_watermark
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store, _insert, _now, _set
 
 
 NATIVE_ID = "70000000-0000-4000-8000-000000000007"

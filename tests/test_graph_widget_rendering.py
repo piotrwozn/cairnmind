@@ -17,9 +17,9 @@ from textual.geometry import Region
 from textual.strip import Strip
 from textual.style import Style
 
-from devbrain.config import Settings
-from devbrain.terminal_graph import Camera, GraphApp, GraphModel, TerminalGraph, render_scene
-from devbrain.workspace_state import WorkspaceState
+from cairnmind.config import Settings
+from cairnmind.terminal_graph import Camera, GraphApp, GraphModel, TerminalGraph, render_scene
+from cairnmind.workspace_state import WorkspaceState
 
 
 class GraphPainterApp(App):
@@ -156,7 +156,7 @@ async def test_production_graph_app_timer_applies_and_paints_completed_frames(tm
     workspace = WorkspaceState(settings, "paint-lifecycle")
     workspace.select_project({"id": "paint-project", "name": "Painter", "root": str(root)}, intent="inspect")
     workspace.update({"focus": "graph"})
-    monkeypatch.setattr("devbrain.terminal_graph.tmux_visible", lambda *args: True)
+    monkeypatch.setattr("cairnmind.terminal_graph.tmux_visible", lambda *args: True)
     app = GraphApp(settings, broker=ProjectionBroker(), workspace=workspace, motion=True)
     async with app.run_test(size=(90, 30)) as pilot:
         widget = app.query_one(TerminalGraph)

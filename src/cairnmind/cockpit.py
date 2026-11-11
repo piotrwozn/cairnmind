@@ -891,7 +891,7 @@ def ensure_cockpit(settings):
                 env.pop(key, None)
             fd = os.open(folder / "server.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "ab") as log:
-                subprocess.Popen([sys.executable, "-I", "-m", "devbrain", "--data-dir", str(settings.data_dir), "cockpit", "serve"],
+                subprocess.Popen([sys.executable, "-I", "-m", "cairnmind", "--data-dir", str(settings.data_dir), "cockpit", "serve"],
                                  cwd=settings.data_dir, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                  start_new_session=True, env=env)
             deadline = time.monotonic() + 20

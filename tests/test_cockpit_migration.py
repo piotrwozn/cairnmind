@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from devbrain.arcade import ArcadeClient
-from devbrain.journal import Journal
-from devbrain.store import SCHEMA_VERSION, V04_EXPORT_TYPES, V05_DOCUMENT_TYPES, Store
+from cairnmind.arcade import ArcadeClient
+from cairnmind.journal import Journal
+from cairnmind.store import SCHEMA_VERSION, V04_EXPORT_TYPES, V05_DOCUMENT_TYPES, Store
 
 
 def schema_three(tmp_path):

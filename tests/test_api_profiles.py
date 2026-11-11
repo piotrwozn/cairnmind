@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from devbrain.api_profiles import normalize_profile
-from devbrain.cockpit_state import CockpitState
-from devbrain.config import Settings
+from cairnmind.api_profiles import normalize_profile
+from cairnmind.cockpit_state import CockpitState
+from cairnmind.config import Settings
 
 
 def api(**changes):

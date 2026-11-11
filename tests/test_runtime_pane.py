@@ -6,9 +6,9 @@ import sys
 
 import pytest
 
-from devbrain import client_runtime
-from devbrain.client_runtime import NativeRuntime
-from devbrain.config import Settings
+from cairnmind import client_runtime
+from cairnmind.client_runtime import NativeRuntime
+from cairnmind.config import Settings
 
 
 @pytest.fixture
