@@ -63,8 +63,8 @@ def test_c_locale_formats_and_actual_attach_keep_exact_terminal_lease(manager, m
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 180, 0, 0))
     script = """import fcntl, os, sys, termios
 from pathlib import Path
-from devbrain.config import Settings
-from devbrain.workspace import WorkspaceManager
+from cairnmind.config import Settings
+from cairnmind.workspace import WorkspaceManager
 # Python may coerce an unset locale at startup; restore the user's environment
 # before creating either the query clients or the interactive tmux client.
 for key in list(os.environ):

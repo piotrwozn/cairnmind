@@ -178,7 +178,7 @@ class RuntimeSupervisor(NativeRuntime):
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
                 raise ValueError("agent_configuration_invalid")
             _atomic(configs / (run_id + ".json"), configuration)
-            launch = {"command": [sys.executable, "-I", "-m", "devbrain.api_worker", "--data-dir",
+            launch = {"command": [sys.executable, "-I", "-m", "cairnmind.api_worker", "--data-dir",
                                   str(self.settings.data_dir), "--run-id", run_id, "--generation", str(generation)],
                       "env": _worker_environment(self._credential_profiles(profile)), "cwd": root,
                       "session_id": prepared["session_id"],

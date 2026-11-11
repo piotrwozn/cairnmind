@@ -9,12 +9,12 @@ from uuid import uuid4
 
 import pytest
 
-import devbrain.agent as agent_module
-import devbrain.service as service_module
-from devbrain.agent import KnowledgeAgent
-from devbrain.config import Settings
-from devbrain.ollama import OllamaUnavailable
-from devbrain.store import Store
+import cairnmind.agent as agent_module
+import cairnmind.service as service_module
+from cairnmind.agent import KnowledgeAgent
+from cairnmind.config import Settings
+from cairnmind.ollama import OllamaUnavailable
+from cairnmind.store import Store
 
 
 PRIVATE = "PRIVATE_METADATA_CREDENTIAL_DO_NOT_ECHO"
@@ -124,11 +124,11 @@ def service_job_fixture(workspace, monkeypatch, model, *, kind="extract"):
     settings.token = "synthetic-service-token"
     item = source(store, project, "Do not commit memory after extraction has timed out.")
     job_id = store.enqueue(kind, project["id"], {"source_id": item["id"]}, f"budget:{kind}:{item['id']}")
-    for name in ("devbrain.integrations.drain_hook_spool", "devbrain.ingest.poll_imports",
-                 "devbrain.ingest.index_project", "devbrain.ingest.index_pending_sources"):
+    for name in ("cairnmind.integrations.drain_hook_spool", "cairnmind.ingest.poll_imports",
+                 "cairnmind.ingest.index_project", "cairnmind.ingest.index_pending_sources"):
         monkeypatch.setattr(name, lambda *_args, **_kwargs: {"errors": []})
-    monkeypatch.setattr("devbrain.memory.MemoryManager.tick", lambda _self: {"errors": []})
-    monkeypatch.setattr("devbrain.verification.recover_interrupted_runs", lambda *_args: None)
+    monkeypatch.setattr("cairnmind.memory.MemoryManager.tick", lambda _self: {"errors": []})
+    monkeypatch.setattr("cairnmind.verification.recover_interrupted_runs", lambda *_args: None)
     monkeypatch.setattr(Store, "backup", lambda *_args: None)
     claims, original_claim = [], Store.claim_job
 
@@ -222,7 +222,7 @@ async def test_service_watchdog_still_stops_stalled_work_and_embedding_keeps_thi
 
     # Deliberately no inner agent deadline: the independent watchdog must work.
     monkeypatch.setattr(KnowledgeAgent, "extract", stalled)
-    monkeypatch.setattr("devbrain.retrieval.Retriever.embed_pending", stalled)
+    monkeypatch.setattr("cairnmind.retrieval.Retriever.embed_pending", stalled)
 
     class ServiceAsyncio:
         def __getattr__(self, name):

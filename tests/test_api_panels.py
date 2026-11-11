@@ -4,8 +4,8 @@ from copy import deepcopy
 import pytest
 from textual.widgets import Input, Static, Switch
 
-from devbrain.terminal_panels import CredentialModal, SidebarApp, profile_fields, profile_from_form
-from devbrain.terminal_ui import FormModal
+from cairnmind.terminal_panels import CredentialModal, SidebarApp, profile_fields, profile_from_form
+from cairnmind.terminal_ui import FormModal
 from test_terminal_panels import setup, settle
 
 

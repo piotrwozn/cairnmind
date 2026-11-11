@@ -1,9 +1,9 @@
 """User intent, keyboard navigation and additive UI settings for 0.8."""
 import pytest
 
-from devbrain.cockpit_state import CockpitState
-from devbrain.config import Settings
-from devbrain.workspace_state import WorkspaceState
+from cairnmind.cockpit_state import CockpitState
+from cairnmind.config import Settings
+from cairnmind.workspace_state import WorkspaceState
 from test_workspace import manager as manager
 
 
@@ -129,8 +129,8 @@ def test_popup_targets_exact_initiating_writer_and_is_not_timed_out(manager, mon
 def test_status_literal_width_and_cached_negative_evidence(language):
     import re
     from rich.cells import cell_len
-    from devbrain.terminal_i18n import tr
-    from devbrain.workspace import workspace_status_lines
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.workspace import workspace_status_lines
 
     selected = {"project_name": "#{pid}#(true)#[fg=red]\x1b\u202e日本語e\u0301" * 5,
                 "broker_available": True}
@@ -163,7 +163,7 @@ def test_status_literal_width_and_cached_negative_evidence(language):
     ({"error_code": "auth_status_timeout"}, "Unknown"),
 ])
 def test_status_connection_never_infers_network_or_credentials_from_live_run(auth, expected):
-    from devbrain.workspace import workspace_status_lines
+    from cairnmind.workspace import workspace_status_lines
     _, line = workspace_status_lines({"broker_available": True},
         {"profiles": [{"id": "p", "client": "codex"}], "auth": {"codex": auth}},
         {"profile_id": "p", "client": "codex", "run_id": "running", "lifecycle": "running"}, None)
@@ -178,8 +178,8 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
     import re
     import time
     from rich.cells import cell_len
-    from devbrain.terminal_i18n import tr
-    from devbrain.terminal_preview import PreviewTerminal
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal_preview import PreviewTerminal
 
     workspace, broker, project = manager
     CockpitState(workspace.settings).update({"view": "focus", "language": language})
@@ -305,7 +305,7 @@ def test_operational_auth_run_is_never_adopted_by_coding_slot(manager):
 def test_cockpit_minimum_terminal_includes_both_status_rows(manager):
     import os
     import time
-    from devbrain.terminal_preview import PreviewTerminal
+    from cairnmind.terminal_preview import PreviewTerminal
     workspace, _, _ = manager
     CockpitState(workspace.settings).update({"view": "cockpit"})
     workspace.create(start_supervisor=False)

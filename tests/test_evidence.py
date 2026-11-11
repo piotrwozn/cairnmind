@@ -10,14 +10,14 @@ from fastapi.testclient import TestClient
 import pytest
 from typer.testing import CliRunner
 
-from devbrain import cli
-from devbrain.evidence import evidence_states, unanchored
-from devbrain.ingest import current_source, index_project
-from devbrain.inspector import Inspector
-from devbrain.inspector_api import attach_inspector_routes
-from devbrain.plans import PlanManager
-from devbrain.sessions import MAX_PACKET_BYTES, SessionManager
-from devbrain.store import Store
+from cairnmind import cli
+from cairnmind.evidence import evidence_states, unanchored
+from cairnmind.ingest import current_source, index_project
+from cairnmind.inspector import Inspector
+from cairnmind.inspector_api import attach_inspector_routes
+from cairnmind.plans import PlanManager
+from cairnmind.sessions import MAX_PACKET_BYTES, SessionManager
+from cairnmind.store import Store
 
 PASSAGE = "LOGIN_ERRORS = {'expired': 401, 'locked': 423}"
 ORIGINAL = f"# login errors\n{PASSAGE}\n"

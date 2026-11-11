@@ -10,13 +10,13 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from devbrain.agent_memory import AgentMemoryClient
-from devbrain.api_agent import AgentEngine
-from devbrain.api_profiles import normalize_profile
-from devbrain.api_providers import make_provider
-from devbrain.service import create_app
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
+from cairnmind.agent_memory import AgentMemoryClient
+from cairnmind.api_agent import AgentEngine
+from cairnmind.api_profiles import normalize_profile
+from cairnmind.api_providers import make_provider
+from cairnmind.service import create_app
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
 
 
 def last_result(provider, request):

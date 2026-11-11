@@ -4,10 +4,10 @@ import json
 import httpx
 import pytest
 
-from devbrain.api_credentials import CredentialStore
-from devbrain.api_profiles import normalize_profile
-from devbrain.api_runtime import RuntimeSupervisor, _worker_environment
-from devbrain.config import Settings
+from cairnmind.api_credentials import CredentialStore
+from cairnmind.api_profiles import normalize_profile
+from cairnmind.api_runtime import RuntimeSupervisor, _worker_environment
+from cairnmind.config import Settings
 
 
 @pytest.fixture
@@ -69,7 +69,7 @@ def test_live_slot_reused_and_explicit_resume_reuses_logical_session(runtime):
     rows = runner._read()
     rows[0]['lifecycle'] = 'exited'
     runner._save(rows)
-    from devbrain.agent_journal import AgentJournal
+    from cairnmind.agent_journal import AgentJournal
     AgentJournal(runner.settings, first['session_id']).append('message', {'role': 'user', 'content': 'Archived turn'})
     resumed = runner.start_agent(project, profile, slot_id='slot', resume=True)
     assert resumed['id'] != first['id'] and resumed['generation'] == 2
@@ -135,7 +135,7 @@ def test_reopening_live_agent_needs_no_new_credential_or_model_call(runtime):
 
 
 def test_all_profiles_custom_credentials_are_absent_from_worker_spec(runtime, monkeypatch):
-    from devbrain.cockpit_state import CockpitState
+    from cairnmind.cockpit_state import CockpitState
     runner, credentials, project, spawned, requests = runtime
     state = CockpitState(runner.settings)
     row = normalize_profile({'id': 'foreign', 'client': 'api', 'label': 'Other', 'provider': 'openai',

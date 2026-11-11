@@ -7,10 +7,10 @@ import json
 
 import pytest
 
-from devbrain.arcade import ArcadeClient
-from devbrain.store import (LEGACY_EXPORT_TYPES, SCHEMA_VERSION, V03_DOCUMENT_TYPES,
+from cairnmind.arcade import ArcadeClient
+from cairnmind.store import (LEGACY_EXPORT_TYPES, SCHEMA_VERSION, V03_DOCUMENT_TYPES,
                             Store, _json, _set)
-from devbrain.verification import verification_status
+from cairnmind.verification import verification_status
 
 
 def read_envelope(path):

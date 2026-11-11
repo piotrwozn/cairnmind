@@ -8,11 +8,11 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from devbrain.ingest import import_history
-from devbrain.integrations import _transcript_watermark, drain_hook_spool
-from devbrain.service import create_app, finish_job_if_present
-from devbrain.sessions import SessionManager
-from devbrain.store import JobNotFoundError, Store, _json, job_diagnostics
+from cairnmind.ingest import import_history
+from cairnmind.integrations import _transcript_watermark, drain_hook_spool
+from cairnmind.service import create_app, finish_job_if_present
+from cairnmind.sessions import SessionManager
+from cairnmind.store import JobNotFoundError, Store, _json, job_diagnostics
 
 
 @pytest.fixture

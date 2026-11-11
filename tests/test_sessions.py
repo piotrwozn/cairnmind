@@ -8,10 +8,10 @@ import time
 
 import pytest
 
-from devbrain.ingest import import_history
-from devbrain.plans import PlanManager
-from devbrain.sessions import MAX_PACKET_BYTES, SessionManager, format_packet
-from devbrain.store import Store, _json
+from cairnmind.ingest import import_history
+from cairnmind.plans import PlanManager
+from cairnmind.sessions import MAX_PACKET_BYTES, SessionManager, format_packet
+from cairnmind.store import Store, _json
 
 
 def git(root, *args):
@@ -334,7 +334,7 @@ def test_unknown_code_state_is_unavailable_and_readback_versions_are_typed(sessi
 
 
 def test_first_empty_scope_may_start_without_claiming_verified_code(sessions, tmp_path):
-    from devbrain.integrations import _instructions
+    from cairnmind.integrations import _instructions
 
     store, _, _, manager = sessions
     plain = tmp_path / "brand-new"
@@ -371,8 +371,8 @@ def test_missing_current_memory_provenance_blocks_resume_and_stales_ack(sessions
 
 @pytest.mark.parametrize("client", ["codex", "claude"])
 def test_real_install_into_empty_project_then_prepare_handles_index_race(sessions, tmp_path, monkeypatch, client):
-    from devbrain import integrations
-    from devbrain.ingest import index_project
+    from cairnmind import integrations
+    from cairnmind.ingest import index_project
 
     store, _, _, manager = sessions
     plain = tmp_path / f"empty-{client}"
@@ -398,7 +398,7 @@ def test_real_install_into_empty_project_then_prepare_handles_index_race(session
 
 @pytest.mark.parametrize("alteration", ["other_mcp", "permissions", "hook_command", "instructions", "codex_model"])
 def test_empty_exception_rejects_other_native_config_and_substring_impersonation(sessions, tmp_path, monkeypatch, alteration):
-    from devbrain import integrations
+    from cairnmind import integrations
 
     store, _, _, manager = sessions
     plain = tmp_path / "config-is-state"

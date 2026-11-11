@@ -5,8 +5,8 @@ from copy import deepcopy
 import pytest
 from textual.widgets import Button, RichLog, Static, TextArea
 
-from devbrain.api_worker import AgentApp, incomplete_streams, usage_text
-from devbrain.config import Settings
+from cairnmind.api_worker import AgentApp, incomplete_streams, usage_text
+from cairnmind.config import Settings
 
 
 class Journal:
@@ -241,8 +241,8 @@ def test_real_tmux_panel_restores_then_requires_human_command_approval(tmp_path,
     script = tmp_path / "controlled_worker.py"
     script.write_text('''import asyncio
 from pathlib import Path
-from devbrain.api_worker import AgentApp
-from devbrain.config import Settings
+from cairnmind.api_worker import AgentApp
+from cairnmind.config import Settings
 class Journal:
     def messages(self):
         return [{"role":"assistant","content":"CONTROLLED-NO-INFERENCE"}]
@@ -312,7 +312,7 @@ def test_usage_language_keeps_provider_units_and_never_invents_usd(language):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_keyboard_only_send_interrupt_resolve_at_80x24(tmp_path, language):
-    from devbrain.cockpit_state import CockpitState
+    from cairnmind.cockpit_state import CockpitState
     app = make_app(tmp_path)
     CockpitState(app.settings).update({"language": language})
     app.language = language
@@ -347,7 +347,7 @@ async def test_keyboard_only_send_interrupt_resolve_at_80x24(tmp_path, language)
 
 @pytest.mark.asyncio
 async def test_language_change_preserves_prompt_engine_and_updates_usage(tmp_path):
-    from devbrain.cockpit_state import CockpitState
+    from cairnmind.cockpit_state import CockpitState
     app = make_app(tmp_path)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()

@@ -295,7 +295,7 @@ class PreviewWorkspace(WorkspaceManager):
     def _panel(self, role):
         if role.startswith("client"):
             return super()._panel(role)
-        return shlex.join([sys.executable, "-I", "-m", "devbrain.terminal_preview", "--panel", role,
+        return shlex.join([sys.executable, "-I", "-m", "cairnmind.terminal_preview", "--panel", role,
                            "--data-dir", str(self.settings.data_dir)])
 
 

@@ -8,8 +8,8 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from devbrain import cli
-from devbrain.config import Settings
+from cairnmind import cli
+from cairnmind.config import Settings
 
 
 def no_start(monkeypatch):
@@ -18,7 +18,7 @@ def no_start(monkeypatch):
     monkeypatch.setattr(cli, "ensure_service", forbidden)
     monkeypatch.setattr(cli, "store_for", forbidden)
     monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
-    monkeypatch.setattr("devbrain.engine.start_engine", forbidden)
+    monkeypatch.setattr("cairnmind.engine.start_engine", forbidden)
 
 
 def no_initialization(monkeypatch):
@@ -217,7 +217,7 @@ def test_explicit_init_and_explicit_tui_still_initialize(tmp_path, monkeypatch):
         assert settings.token and (settings.data_dir / "config.json").is_file()
         initialized.append(settings.data_dir)
 
-    module = ModuleType("devbrain.workspace")
+    module = ModuleType("cairnmind.workspace")
 
     def launch(settings):
         store(settings)
@@ -227,7 +227,7 @@ def test_explicit_init_and_explicit_tui_still_initialize(tmp_path, monkeypatch):
     module.launch_workspace = launch
 
     monkeypatch.setattr(cli, "store_for", store)
-    monkeypatch.setitem(sys.modules, "devbrain.workspace", module)
+    monkeypatch.setitem(sys.modules, "cairnmind.workspace", module)
     monkeypatch.setattr(cli, "_interactive_terminal", lambda: True)
     runner = CliRunner()
     first = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "init"), "init"])
@@ -243,7 +243,7 @@ def test_models_pull_preserves_failed_jobs_and_only_schedules_embeddings(tmp_pat
     store = SimpleNamespace(retry_jobs=lambda: retries.append("implicit broad retry"))
     monkeypatch.setattr(cli, "store_for", lambda settings: store)
     monkeypatch.setattr(cli, "_retry_jobs", lambda store: retries.append("implicit helper retry"))
-    monkeypatch.setattr("devbrain.service.schedule_embeddings", lambda store, namespace: embeddings.append(namespace))
+    monkeypatch.setattr("cairnmind.service.schedule_embeddings", lambda store, namespace: embeddings.append(namespace))
 
     def handler(request):
         if request.url.path == "/api/pull":
@@ -284,9 +284,9 @@ def test_retry_uses_current_ack_after_refresh_despite_old_launcher_packet(tmp_pa
 
     from fastapi.testclient import TestClient
 
-    from devbrain.service import create_app
-    from devbrain.sessions import SessionManager
-    from devbrain.store import Store
+    from cairnmind.service import create_app
+    from cairnmind.sessions import SessionManager
+    from cairnmind.store import Store
 
     root = tmp_path / "repo"
     root.mkdir()

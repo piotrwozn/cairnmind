@@ -14,9 +14,9 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from devbrain.config import Settings
-from devbrain import copilot_adapter as module
-from devbrain.copilot_adapter import CopilotAdapter, CopilotError
+from cairnmind.config import Settings
+from cairnmind import copilot_adapter as module
+from cairnmind.copilot_adapter import CopilotAdapter, CopilotError
 
 
 @dataclass
@@ -455,7 +455,7 @@ def test_status_and_login_command_are_nonmutating_and_do_not_download(tmp_path, 
     monkeypatch.setattr(module, "_sdk", lambda: SDK)
     command = module.login_command(settings)
     assert command[-3:] == ["--login", "--data-dir", str(settings.data_dir)]
-    assert command[1:4] == ["-I", "-m", "devbrain.copilot_adapter"]
+    assert command[1:4] == ["-I", "-m", "cairnmind.copilot_adapter"]
     assert before == (receipt.read_bytes(), receipt.stat().st_mtime_ns)
     binary.write_text("tampered")
     assert module.runtime_status(settings)["code"] == "copilot_runtime_invalid"

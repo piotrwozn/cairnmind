@@ -486,7 +486,7 @@ def _native_client(client: str, root: Path, settings: Settings, project_id: str,
         if not authenticated:
             return {"status": "not_run", "error_code": "authentication_required",
                     "reason": f"{client} does not report a supported interactive login", "process_started": False}
-        server = {"command": sys.executable, "args": ["-m", "devbrain.evaluation", "mcp", "--data-dir",
+        server = {"command": sys.executable, "args": ["-m", "cairnmind.evaluation", "mcp", "--data-dir",
                   str(settings.data_dir)], "env": {"DEVBRAIN_ARCADE_DATABASE": settings.arcade_database}}
         if session:
             server["args"] += ["--session-id", session["session_id"]]

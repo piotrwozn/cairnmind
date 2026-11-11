@@ -21,9 +21,9 @@ from uuid import UUID
 
 import pathspec
 
-from devbrain.parsing import analyze_code, parser_identity
-from devbrain.arcade import ArcadeError
-from devbrain.memory_paths import bound_metadata, imported_source_ids, is_memory_path, memory_bindings
+from cairnmind.parsing import analyze_code, parser_identity
+from cairnmind.arcade import ArcadeError
+from cairnmind.memory_paths import bound_metadata, imported_source_ids, is_memory_path, memory_bindings
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 EXCLUDED_DIRS = {

@@ -11,11 +11,11 @@ from types import SimpleNamespace
 
 import pytest
 
-import devbrain.agent as agent_module
-from devbrain.agent import KnowledgeAgent
-from devbrain.arcade import ArcadeError
-from devbrain.config import Settings
-from devbrain.store import Store, TASK_STATES
+import cairnmind.agent as agent_module
+from cairnmind.agent import KnowledgeAgent
+from cairnmind.arcade import ArcadeError
+from cairnmind.config import Settings
+from cairnmind.store import Store, TASK_STATES
 
 
 QUOTE = "Use auth.py for explicit authentication."

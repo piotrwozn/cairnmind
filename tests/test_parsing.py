@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from devbrain.parsing import analyze_code
+from cairnmind.parsing import analyze_code
 
 
 def test_python_declarations_imports_and_calls():

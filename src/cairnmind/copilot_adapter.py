@@ -217,7 +217,7 @@ def _prepare_runtime_locked(settings):
     env["COPILOT_CLI_EXTRACT_DIR"] = str(_runtime_root(settings) / RUNTIME_VERSION)
     env["COPILOT_SKIP_CLI_DOWNLOAD"] = "0"
     try:
-        result = subprocess.run([sys.executable, "-I", "-m", "devbrain.copilot_adapter", "--prepare-worker",
+        result = subprocess.run([sys.executable, "-I", "-m", "cairnmind.copilot_adapter", "--prepare-worker",
                                  "--data-dir", str(_root(settings))], env=env, capture_output=True,
                                 text=True, timeout=660)
         if result.returncode:
@@ -276,7 +276,7 @@ def _prepare_worker(settings):
 def login_command(settings):
     _sdk()
     _runtime_path(settings)
-    return [sys.executable, "-I", "-m", "devbrain.copilot_adapter", "--login", "--data-dir", str(_root(settings))]
+    return [sys.executable, "-I", "-m", "cairnmind.copilot_adapter", "--login", "--data-dir", str(_root(settings))]
 
 
 async def _notify(callback, value):

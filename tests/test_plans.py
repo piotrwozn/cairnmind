@@ -4,8 +4,8 @@ from uuid import UUID
 
 import pytest
 
-from devbrain.plans import PlanManager
-from devbrain.store import Store
+from cairnmind.plans import PlanManager
+from cairnmind.store import Store
 
 
 @pytest.fixture

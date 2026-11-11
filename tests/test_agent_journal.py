@@ -8,8 +8,8 @@ import stat
 
 import pytest
 
-from devbrain.agent_journal import AgentJournal, JournalError, ZERO_HASH, canonical
-from devbrain.config import Settings
+from cairnmind.agent_journal import AgentJournal, JournalError, ZERO_HASH, canonical
+from cairnmind.config import Settings
 
 
 @pytest.fixture
@@ -115,7 +115,7 @@ def test_corrupt_history_is_rejected_before_further_append(journal, corruption):
 
 
 def test_exhausted_event_budget_prevents_any_append(journal, monkeypatch):
-    from devbrain import agent_journal
+    from cairnmind import agent_journal
     journal.append("message", {"content": "existing"})
     before = journal.path.read_bytes()
     monkeypatch.setattr(agent_journal, "MAX_EVENT_BYTES", 400)
@@ -125,7 +125,7 @@ def test_exhausted_event_budget_prevents_any_append(journal, monkeypatch):
 
 
 def test_total_budget_exhaustion_does_not_truncate_history(journal, monkeypatch):
-    from devbrain import agent_journal
+    from cairnmind import agent_journal
     journal.append("message", {"content": "existing"})
     before = journal.path.read_bytes()
     monkeypatch.setattr(agent_journal, "MAX_JOURNAL_BYTES", len(before) + 20)

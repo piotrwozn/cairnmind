@@ -8,10 +8,10 @@ import subprocess
 
 import pytest
 
-from devbrain import ingest
-from devbrain.retrieval import Retriever
-from devbrain.sessions import SessionManager
-from devbrain.store import Store
+from cairnmind import ingest
+from cairnmind.retrieval import Retriever
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
 
 
 SESSION_ID = "10000000-0000-4000-8000-000000000001"

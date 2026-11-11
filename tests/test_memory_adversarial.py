@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import pytest
 
-from devbrain import memory as portable
-from devbrain.memory import MemoryConflict, MemoryManager, inspect_snapshot
-from devbrain.plans import PlanManager
-from devbrain.store import Store
+from cairnmind import memory as portable
+from cairnmind.memory import MemoryConflict, MemoryManager, inspect_snapshot
+from cairnmind.plans import PlanManager
+from cairnmind.store import Store
 
 
 @pytest.fixture

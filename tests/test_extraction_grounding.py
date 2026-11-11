@@ -8,10 +8,10 @@ from uuid import uuid4
 import pytest
 from jsonschema import Draft202012Validator
 
-from devbrain import agent as agent_module
-from devbrain.agent import KnowledgeAgent
-from devbrain.config import Settings
-from devbrain.store import Store
+from cairnmind import agent as agent_module
+from cairnmind.agent import KnowledgeAgent
+from cairnmind.config import Settings
+from cairnmind.store import Store
 
 
 HISTORY_CANARY = "UNRELATED_EXISTING_RECORD_CONTENT_MUST_NOT_ENTER_MODEL_INPUT"

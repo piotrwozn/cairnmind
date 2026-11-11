@@ -8,11 +8,11 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
-from devbrain.config import Settings
-from devbrain.terminal_inspector import InspectorApp
-from devbrain.terminal_panels import SidebarApp
-from devbrain.terminal_safe import plain, safe_text
-from devbrain.terminal_ui import wide_dialog
+from cairnmind.config import Settings
+from cairnmind.terminal_inspector import InspectorApp
+from cairnmind.terminal_panels import SidebarApp
+from cairnmind.terminal_safe import plain, safe_text
+from cairnmind.terminal_ui import wide_dialog
 
 
 class FakeWorkspace:
@@ -101,8 +101,8 @@ def setup(tmp_path, monkeypatch, *, managed=False, project=True):
     broker = FakeBroker(value, managed=managed)
     workspace = FakeWorkspace(value if project else None)
     settings = Settings(data_dir=tmp_path / "data")
-    monkeypatch.setattr("devbrain.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
-    monkeypatch.setattr("devbrain.terminal_ui.language_for", lambda settings: "pl")
+    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args, **kwargs: workspace.read())
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "pl")
     return settings, broker, workspace
 
 
@@ -276,7 +276,7 @@ async def test_wide_dialog_zooms_real_pane_and_preserves_explicit_user_focus(tmp
     app = SimpleNamespace(settings=settings, workspace=workspace, workspace_id="default", is_headless=False)
     monkeypatch.setenv("TMUX_PANE", "%fixture")
     reconciled = []
-    monkeypatch.setattr("devbrain.workspace.refresh_workspace", lambda *args: reconciled.append(workspace.read()))
+    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args: reconciled.append(workspace.read()))
 
     async def opened(screen):
         assert screen == "fixture-screen"
@@ -365,7 +365,7 @@ async def test_sidebar_resize_uses_current_event_and_keeps_actions_reachable(
     tmp_path, monkeypatch, language, page
 ):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr("devbrain.terminal_ui.language_for", lambda settings: language)
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(24, 33)) as pilot:
         await settle(app, pilot)

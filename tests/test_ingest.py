@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from devbrain.ingest import (
+from cairnmind.ingest import (
     current_source, import_history, index_pending_sources, index_project, poll_imports, register_default_histories,
 )
-from devbrain.store import Store
+from cairnmind.store import Store
 
 
 @pytest.fixture
@@ -349,7 +349,7 @@ def test_pending_custom_normalized_source_indexes_readable_text_without_extracti
 def test_concurrent_pending_source_indexing_creates_one_chunk_set(workspace, monkeypatch):
     from threading import Barrier
 
-    from devbrain import ingest
+    from cairnmind import ingest
 
     store, project, _ = workspace
     source = store.snapshot(project["id"], "manual://concurrent", "Shared archived decision", "manual")
@@ -427,7 +427,7 @@ def test_restored_file_reactivates_new_snapshot_and_chunks(workspace):
 
 
 def test_parser_identity_change_rebuilds_derived_native_graph(workspace, monkeypatch):
-    from devbrain import ingest
+    from cairnmind import ingest
 
     store, project, root = workspace
     code = root / "app.py"
@@ -445,7 +445,7 @@ def test_parser_identity_change_rebuilds_derived_native_graph(workspace, monkeyp
 
 
 def test_project_deletion_during_index_cannot_recreate_orphan_vertices(workspace, monkeypatch):
-    from devbrain import ingest
+    from cairnmind import ingest
 
     store, project, root = workspace
     (root / "app.py").write_text("def app():\n    return True\n")
@@ -464,7 +464,7 @@ def test_project_deletion_during_index_cannot_recreate_orphan_vertices(workspace
 
 
 def test_project_deletion_during_import_cannot_recreate_orphan_cursor(workspace, tmp_path, monkeypatch):
-    from devbrain import ingest
+    from cairnmind import ingest
 
     store, project, _ = workspace
     path = tmp_path / "forget-import.jsonl"

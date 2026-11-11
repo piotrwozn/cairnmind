@@ -14,9 +14,9 @@ import time
 
 import pytest
 
-from devbrain.config import Settings
-from devbrain.cockpit_state import CockpitState
-from devbrain.workspace import WorkspaceManager, workspace_status
+from cairnmind.config import Settings
+from cairnmind.cockpit_state import CockpitState
+from cairnmind.workspace import WorkspaceManager, workspace_status
 
 
 class Broker:
@@ -238,7 +238,7 @@ def test_outer_keyboard_claim_requires_exact_identity_and_explicit_takeover(tmp_
 
 @pytest.mark.parametrize("stop_clients", [False, True])
 def test_detach_preserves_ui_and_stop_only_targets_explicitly_adopted_runs(manager, monkeypatch, stop_clients):
-    from devbrain import workspace as module
+    from cairnmind import workspace as module
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
     before = rows(workspace)

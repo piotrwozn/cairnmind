@@ -288,13 +288,13 @@ class WorkspaceManager:
                     process.wait(timeout=3)
 
     def _command(self, *arguments):
-        return shlex.join([sys.executable, "-I", "-m", "devbrain.workspace", "--data-dir", str(self.settings.data_dir),
+        return shlex.join([sys.executable, "-I", "-m", "cairnmind.workspace", "--data-dir", str(self.settings.data_dir),
                            "--workspace-id", self.workspace_id, *map(str, arguments)])
 
     def _panel(self, role):
         if role.startswith("client"):
             return self._command("--placeholder", role)
-        return shlex.join([sys.executable, "-I", "-m", "devbrain.terminal_panels", "--kind", role,
+        return shlex.join([sys.executable, "-I", "-m", "cairnmind.terminal_panels", "--kind", role,
                            "--workspace-id", self.workspace_id, "--data-dir", str(self.settings.data_dir)])
 
     def _tag(self, pane, role, run_id=None):
@@ -384,7 +384,7 @@ class WorkspaceManager:
             # model after restarting the coordinator.
             self.state.update({"handled_work_request": current["work_request"], "intent": "inspect",
                                "last_error": "Ponów jawne rozpoczęcie pracy po wznowieniu środowiska."})
-        command = [sys.executable, "-I", "-m", "devbrain.workspace", "--supervise", "--data-dir", str(self.settings.data_dir),
+        command = [sys.executable, "-I", "-m", "cairnmind.workspace", "--supervise", "--data-dir", str(self.settings.data_dir),
                    "--workspace-id", self.workspace_id, "--tmux-bin", self.binary]
         fd = os.open(self.directory / "supervisor.log", os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "ab") as output:
@@ -518,7 +518,7 @@ class WorkspaceManager:
             self._last_status = formats
 
     def _bridge_command(self, run_id, generation):
-        return shlex.join([sys.executable, "-I", "-m", "devbrain.terminal_bridge", "--data-dir", str(self.settings.data_dir),
+        return shlex.join([sys.executable, "-I", "-m", "cairnmind.terminal_bridge", "--data-dir", str(self.settings.data_dir),
                            "--run-id", run_id, "--generation", str(generation), "--workspace-id", self.workspace_id])
 
     def _reconcile_views(self, selected):
