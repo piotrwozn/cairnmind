@@ -52,6 +52,11 @@ def validate_scope(scope) -> None:
         if pattern.startswith(("/", "!", "#", "./")) or "\\" in pattern or "\0" in pattern or "\n" in pattern \
                 or ".." in parts or ".git" in parts or re.match(r"^[A-Za-z]:", pattern):
             raise ValueError("scope patterns must stay inside the worktree, cannot negate and cannot start with # or ./")
+    try:
+        import pathspec
+        pathspec.GitIgnoreSpec.from_lines(scope)
+    except Exception as exc:  # noqa: BLE001 - the library raises more than one kind of error for a bad pattern
+        raise ValueError(f"a scope pattern cannot be read: {str(exc)[:200]}") from None
 
 
 def valid_argv(argv) -> bool:
@@ -757,8 +762,12 @@ class Store:
             note_task_mutation(self, tx, result, record["expected_plan_version"])
         if kind == "task" and metadata.get("scope"):
             before, after = (old.get("metadata", {}).get("state", "todo") if old else None), metadata.get("state")
-            change = ("start" if after == "in_progress" and before != "in_progress"
-                      else "finish" if after == "done" and before not in (None, "done") else None)
+            working = after in ("in_progress", "needs_test", "needs_review", "blocked")
+            declared_now = working and not (old and old.get("metadata", {}).get("scope"))
+            # A start is entering in_progress, taking a finished task up again, or declaring a scope
+            # on a task that is already being worked on. A note that is still open is never replaced.
+            change = ("start" if (after == "in_progress" and before != "in_progress") or (before == "done" and working)
+                      or declared_now else "finish" if after == "done" and before not in (None, "done") else None)
             if change:
                 # A scoped task starts or ends: the tree is noted for the scope-drift warning. Only after
                 # the whole write is committed and the writer lock is released, and never as part of it.

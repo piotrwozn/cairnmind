@@ -63,7 +63,8 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
                     value = value[:1000]
                     truncated.append(field)
                 limited[field] = value
-        for field in ("acceptance_criteria", "scope", "depends_on", "check_run_ids", "required_profiles"):
+        # The scope is advice: it gives way before anything the task cannot be done without.
+        for field in ("scope", "acceptance_criteria", "depends_on", "check_run_ids", "required_profiles"):
             while len(json.dumps(limited, ensure_ascii=False)) > 7000 and limited.get(field):
                 limited[field] = limited[field][:-1]
                 if field not in truncated:

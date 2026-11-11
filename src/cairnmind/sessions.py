@@ -797,6 +797,9 @@ class SessionManager:
                 packet["warnings"].remove(evidence_warning)
                 if not packet["warnings"]:
                     del packet["warnings"]
+        if task_view and "scope" in task_view and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
+            # Advice, like the evidence data: it must never be what makes a packet unready.
+            task_view["scope_omitted"] = len(task_view.pop("scope"))
         if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Essential goal/constraints are never silently truncated to a ready packet.
             packet["unknowns"].append("Essential resume packet exceeds the bounded context budget")
