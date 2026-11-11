@@ -130,7 +130,7 @@ def test_deleted_renamed_and_committed_changes_are_all_seen(workspace):
     assert "of src/billing.py, which was renamed to src/payments.py" in text
     assert "names revoke_token in src/auth.py, which was modified; it is no longer defined there" in text
     assert build_impact(store, pid, "HEAD")["records"] == []
-    assert "Nothing differs from that commit" in build_impact(store, pid, "HEAD")["text"]
+    assert "Nothing in this worktree differs from that commit." in build_impact(store, pid, "HEAD")["text"]
     (root / "src" / "auth.py").unlink()
     deleted = build_impact(store, pid, base)
     assert "Sessions last 30 minutes." in titles(deleted)  # every definition of a deleted file is gone
@@ -153,7 +153,7 @@ def test_the_report_is_derived_and_writes_nothing(workspace):
     assert task["metadata"]["state"] == "todo" and task["version"] == records["task"]["version"]
 
 
-def test_superseded_records_and_other_projects_are_left_out(workspace, tmp_path):
+def test_superseded_records_are_left_out(workspace):
     store, pid, root, records = workspace
     rule = records["rule"]
     store.remember(pid, {"id": rule["id"], "expected_version": rule["version"], "status": "superseded"}, rule["source_ids"])
@@ -163,7 +163,8 @@ def test_superseded_records_and_other_projects_are_left_out(workspace, tmp_path)
 
 @pytest.mark.parametrize("since, message", [
     ("no-such-commit", "Git does not know the commit"), ("--output=/tmp/x", "--since needs a commit"),
-    ("", "--since needs a commit")])
+    ("", "--since needs a commit"), ("^HEAD", "--since needs a commit"), ("HEAD..HEAD", "Git does not know the commit"),
+    ("HEAD:src/auth.py", "Git does not know the commit")])
 def test_an_unknown_or_unsafe_commit_is_refused(workspace, since, message):
     store, pid, root, records = workspace
     with pytest.raises(ValueError, match=message):
@@ -197,3 +198,92 @@ def test_the_command_prints_the_report_and_json(workspace, monkeypatch):
     assert [row["title"] for row in json.loads(as_json.output)["records"]] == ["Sessions last 30 minutes.", "Rotate refresh tokens."]
     missing = runner.invoke(app, ["--data-dir", str(store.data_dir), "impact", "impact"])
     assert missing.exit_code != 0
+
+
+def test_outside_a_git_worktree_the_command_says_so(workspace, tmp_path):
+    store, pid, root, records = workspace
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    other = store.add_project("plain", plain)["id"]
+    with pytest.raises(ValueError, match="impact needs a Git worktree"):
+        build_impact(store, other, "HEAD")
+
+
+def test_a_changed_decorator_is_a_changed_definition(workspace):
+    store, pid, root, records = workspace
+    decorated = AUTH.replace("def refresh_token", "@cached(\n    seconds=30,\n)\ndef refresh_token")
+    (root / "src" / "auth.py").write_text(decorated)
+    git(root, "commit", "-qam", "decorate")
+    (root / "src" / "auth.py").write_text(decorated.replace("seconds=30", "seconds=60"))
+    report = build_impact(store, pid, "HEAD")
+    assert report["changed_files"][0]["symbols"] == {"refresh_token": "modified"}
+    assert "Sessions last 30 minutes." in titles(report) and "Revoking returns nothing." not in titles(report)
+
+
+def test_a_form_feed_above_a_definition_does_not_shift_the_comparison(workspace):
+    store, pid, root, records = workspace
+    paged = AUTH.replace("SESSION_MINUTES = 30\n", "SESSION_MINUTES = 30\n\x0c\n")
+    (root / "src" / "auth.py").write_text(paged)
+    git(root, "commit", "-qam", "page break")
+    (root / "src" / "auth.py").write_text(paged.replace("    return None\n", "    return False\n"))
+    assert build_impact(store, pid, "HEAD")["changed_files"][0]["symbols"] == {"revoke_token": "modified"}
+
+
+def test_a_renamed_file_still_points_at_the_records_that_name_its_definitions(workspace):
+    store, pid, root, records = workspace
+    node = store.query("SELECT id FROM nodes WHERE project_id=:project AND kind='symbol' AND label='charge'",
+                       {"project": pid})[0]["id"]
+    link(store, pid, records["revoke"], node, records["revoke"]["source_ids"][0])
+    git(root, "mv", "src/billing.py", "src/payments.py")
+    report = build_impact(store, pid, "HEAD")
+    row = next(row for row in report["records"] if row["title"] == "Revoking returns nothing.")
+    assert row["links"] == [{"via": "relates_to", "path": "src/billing.py", "change": "renamed to src/payments.py",
+                             "link_status": "proposed", "symbol": "charge", "symbol_change": "moved"}]
+    assert "it is now defined in the renamed file" in report["text"]
+    # One renamed file, although Git reports it under two names.
+    assert report["text"].splitlines()[-1] == "2 records linked to 1 of 1 changed file"
+
+
+def test_the_other_name_of_a_rename_cannot_forge_report_lines(workspace):
+    store, pid, root, records = workspace
+    git(root, "mv", "src/billing.py", "src/pay\x1b[2K\rments\nFAKE: line.py")
+    report = build_impact(store, pid, "HEAD")
+    assert not any(char in report["text"] for char in "\x1b\r") and "\nFAKE: line.py" not in report["text"]
+    assert "which was renamed to src/pay" in report["text"]
+
+
+def test_a_file_git_does_not_track_yet_counts_as_changed(workspace):
+    store, pid, root, records = workspace
+    (root / "src" / "tokens.py").write_text("def rotate(token):\n    return token\n")
+    (root / ".gitignore").write_text("ignored.py\n")
+    (root / "ignored.py").write_text("IGNORED = 1\n")
+    index_project(store, pid)
+    node = store.query("SELECT id FROM nodes WHERE project_id=:project AND kind='symbol' AND label='rotate'",
+                       {"project": pid})[0]["id"]
+    link(store, pid, records["task"], node, records["task"]["source_ids"][0])
+    report = build_impact(store, pid, "HEAD")
+    assert [entry["path"] for entry in report["changed_files"]] == [".gitignore", "src/tokens.py"]
+    assert "names rotate in src/tokens.py, which was added (not tracked by Git yet); it is newly defined there" in report["text"]
+
+
+def test_a_record_written_from_the_file_as_it_is_now_is_not_listed(workspace):
+    store, pid, root, records = workspace
+    (root / "docs" / "login.md").write_text("# Login\n\nA session lasts 60 minutes.\n")
+    index_project(store, pid)
+    current = store.query("SELECT id FROM sources WHERE project_id=:project AND uri=:uri AND is_current=true",
+                          {"project": pid, "uri": str(root / "docs" / "login.md")})[0]["id"]
+    store.remember(pid, {"kind": "fact", "key": "sixty", "content": "Sessions last 60 minutes now."}, [current])
+    report = build_impact(store, pid, "HEAD")
+    # The record that cites the earlier version is listed; the one written from the edited file is not.
+    assert titles(report) == ["The login page documents renewal."]
+
+
+def test_a_file_of_another_registered_root_is_not_mistaken_for_one_of_this_worktree(workspace, tmp_path):
+    store, pid, root, records = workspace
+    second = tmp_path / "second"
+    git(root, "worktree", "add", "-q", str(second), "-b", "second")
+    store.add_project_root(pid, second)
+    index_project(store, pid)
+    (second / "src" / "auth.py").write_text(AUTH.replace('":refreshed"', '":elsewhere"'))
+    # The records are linked to the nodes of the first root; an edit in the second worktree is not theirs.
+    assert build_impact(store, pid, "HEAD", worktree=str(root))["records"] == []
