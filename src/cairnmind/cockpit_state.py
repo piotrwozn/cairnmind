@@ -23,7 +23,13 @@ DEFAULT_SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profi
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,159}$")
 _EXCLUDED = {".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__", "dist", "build",
-             "target", ".memory", ".devbrain", ".codex", ".claude", ".cache", ".local", ".ssh"}
+             "target", ".memory", ".cairnmind", ".devbrain", ".codex", ".claude", ".cache", ".local", ".ssh"}
+
+
+def _snapshot(root: Path) -> str | None:
+    from .memory_paths import snapshot_directory
+    found = snapshot_directory(root)
+    return str(found) if found is not None and (found / "manifest.json").is_file() else None
 
 
 def normalize_path(value: str | Path) -> Path:
@@ -252,7 +258,7 @@ class ProjectDiscovery:
                 if (path / ".git").exists() and str(path) not in found:
                     found.add(str(path))
                     item = {"name": path.name, "root": str(path),
-                            "memory_snapshot": str(path / ".memory/devbrain") if (path / ".memory/devbrain/manifest.json").is_file() else None}
+                            "memory_snapshot": _snapshot(path)}
                     with self._lock:
                         self._state["projects"].append(item)
                 dirs[:] = [name for name in sorted(dirs) if name not in _EXCLUDED and not (path / name).is_symlink()]

@@ -63,15 +63,15 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
 
 def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
     """Whether a generated MCP or hook file is exactly what `_command` would produce."""
-    from .integrations import TOML_BEGIN, TOML_END, SESSION_ENV_VARS
+    from .integrations import SERVER, TOML_BEGIN, TOML_END, SESSION_ENV_VARS
 
     command = _command(settings, "mcp")
     server = {"command": command[0], "args": command[1:]}
     if relative == ".mcp.json":
-        return json.loads(text) == {"mcpServers": {"devbrain": {
+        return json.loads(text) == {"mcpServers": {SERVER: {
             **server, "env": {name: "${" + name + ":-}" for name in SESSION_ENV_VARS}}}}
     if relative == ".codex/config.toml":
-        expected = {"mcp_servers": {"devbrain": {**server, "env_vars": list(SESSION_ENV_VARS),
+        expected = {"mcp_servers": {SERVER: {**server, "env_vars": list(SESSION_ENV_VARS),
                                                 "startup_timeout_sec": 15, "tool_timeout_sec": 75}}}
         return (tomllib.loads(text) == expected and text.strip().startswith(TOML_BEGIN)
                 and text.strip().endswith(TOML_END)
@@ -131,8 +131,8 @@ def format_packet(packet: dict) -> str:
         f"Logical session: {packet['session_id']}; epoch: {packet['epoch']}.",
         f"Packet: {packet['id']}; SHA-256: {packet['hash']}.",
         f"Project: {packet['project_id']}; worktree: {packet['worktree']}.",
-        "Before normal shared-memory writes, call devbrain.resume_context, read the complete "
-        "packet, then call devbrain.ack_resume with its exact id/hash and this readback shape:",
+        "Before normal shared-memory writes, call the Cairnmind MCP tool resume_context, read the complete "
+        "packet, then call ack_resume with its exact id/hash and this readback shape:",
         _json(_readback(packet)),
         "Do not invent missing state or mark tasks done from a summary. "
         "Native CLI permissions still apply to all native actions.",

@@ -29,7 +29,7 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 EXCLUDED_DIRS = {
     ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".next", ".nuxt", "dist", "build",
-    "target", "vendor", ".idea", ".devbrain", ".terraform", ".ssh", ".aws", ".azure", ".gnupg",
+    "target", "vendor", ".idea", ".cairnmind", ".devbrain", ".terraform", ".ssh", ".aws", ".azure", ".gnupg",
     ".codex", ".claude",
 }
 SECRET_NAMES = {".env", ".netrc", ".npmrc", ".pypirc", "credentials", "credentials.json", "id_rsa", "id_ed25519"}

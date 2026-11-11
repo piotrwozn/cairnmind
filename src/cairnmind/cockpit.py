@@ -25,7 +25,8 @@ import httpx
 
 from . import __version__
 from .config import SESSION_NAMES, drop_env
-from .cockpit_state import CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, normalize_path
+from .cockpit_state import (CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, _snapshot,
+                            normalize_path)
 
 
 COOKIE = "devbrain_cockpit"
@@ -331,8 +332,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             except HTTPException:
                 response = None
             row["roots"] = response.json().get("roots", [row["root"]]) if response is not None and response.is_success else [row["root"]]
-            row["memory_snapshot"] = (str(Path(row["root"]) / ".memory/devbrain")
-                                      if (Path(row["root"]) / ".memory/devbrain/manifest.json").is_file() else None)
+            row["memory_snapshot"] = _snapshot(Path(row["root"]))
         from .client_auth import clear_probe_cache, probe_client
         runs = await asyncio.to_thread(runtime.list_runs)
         for run in runs:
@@ -371,7 +371,8 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         root = await asyncio.to_thread(normalize_path, value["root"])
         if not await asyncio.to_thread(root.is_dir):
             raise HTTPException(422, "Katalog projektu nie istnieje.")
-        manifest = root / ".memory/devbrain/manifest.json"
+        from .memory_paths import MEMORY_RELATIVE, snapshot_directory
+        manifest = (snapshot_directory(root) or root / MEMORY_RELATIVE) / "manifest.json"
         # Presence is enough: parsing/validation belongs to memory inspect and
         # import dry-run. A corrupt snapshot must not cause a new UUID to be
         # registered before the user can resolve or import it.
