@@ -70,7 +70,7 @@ project is named `devbrain-pilot` in memory.
   test -f "$kit_dir/plan.json"
   mkdir -p "$HOME/src"
   mkdir "$pilot_root"
-  mkdir "$pilot_root/.devbrain"
+  mkdir "$pilot_root/.cairnmind"
   cp "$kit_dir/templates/.gitignore" "$pilot_root/.gitignore"
   cp "$kit_dir/templates/README.md" "$pilot_root/README.md"
   cp "$kit_dir/templates/checks.toml" "$pilot_root/.cairnmind/checks.toml"

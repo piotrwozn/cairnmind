@@ -366,9 +366,14 @@ def test_entries_and_blocks_of_the_earlier_name_are_converted_without_duplicates
     (root / ".mcp.json").write_text(json.dumps({"mcpServers": {"devbrain": {
         **json.loads(current[".mcp.json"])["mcpServers"]["cairnmind"],
         "env": {name: "${" + name + ":-}" for name in integrations.EARLIER_SESSION_ENV_VARS}}, "other": {"command": "keep"}}}))
+    as_written_before = "\n".join(
+        "# BEGIN DEVBRAIN" if line == "# BEGIN CAIRNMIND" else "# END DEVBRAIN" if line == "# END CAIRNMIND"
+        else "[mcp_servers.devbrain]" if line == "[mcp_servers.cairnmind]"
+        else "env_vars = " + json.dumps(list(integrations.EARLIER_SESSION_ENV_VARS)) if line.startswith("env_vars =")
+        else line for line in current[".codex/config.toml"].split("\n"))
+    assert "CAIRNMIND" not in as_written_before and as_written_before != current[".codex/config.toml"]
     (root / ".codex/config.toml").write_text(
-        current[".codex/config.toml"].replace("CAIRNMIND", "DEVBRAIN").replace("mcp_servers.cairnmind", "mcp_servers.devbrain")
-        + '\n[mcp_servers.devbrain.tools.ask]\napproval_mode = "approve"\n')
+        as_written_before + '\n[mcp_servers.devbrain.tools.ask]\napproval_mode = "approve"\n')
     for name in ("AGENTS.md", "CLAUDE.md"):
         (root / name).write_text("# Mine\n\n<!-- BEGIN DEVBRAIN -->\nearlier text\n<!-- END DEVBRAIN -->\n\nKept below.\n")
     result = integrations.install_integrations(settings, project)
@@ -377,6 +382,7 @@ def test_entries_and_blocks_of_the_earlier_name_are_converted_without_duplicates
     assert list(claude) == ["cairnmind", "other"] and set(claude["cairnmind"]["env"]) == set(integrations.SESSION_ENV_VARS)
     codex = tomllib.loads((root / ".codex/config.toml").read_text())["mcp_servers"]
     assert list(codex) == ["cairnmind"] and codex["cairnmind"]["tools"] == {"ask": {"approval_mode": "approve"}}
+    assert codex["cairnmind"]["env_vars"] == [*integrations.EARLIER_SESSION_ENV_VARS, *integrations.CURRENT_SESSION_ENV_VARS]
     for name in ("AGENTS.md", "CLAUDE.md"):
         text = (root / name).read_text()
         assert text.count("<!-- BEGIN CAIRNMIND -->") == text.count("<!-- END CAIRNMIND -->") == 1
@@ -1354,3 +1360,31 @@ def test_doctor_contract_prints_text_on_request_and_json_by_default(tmp_path, mo
 def test_mcp_capability_requires_the_command_word_not_a_flag(help_text, expected):
     import re
     assert bool(re.search(integrations.MCP_COMMAND, help_text)) is expected
+
+
+def test_a_block_of_an_earlier_version_converted_by_install_still_counts_as_generated(settings, project, installed):
+    from cairnmind.sessions import _managed_empty_file
+
+    path = Path(project["root"]) / ".codex/config.toml"
+    path.parent.mkdir()
+    command = integrations._command(settings, "mcp")
+    path.write_text("# BEGIN DEVBRAIN\n[mcp_servers.devbrain]\n"
+                    f"command = {json.dumps(command[0])}\nargs = {json.dumps(command[1:])}\n"
+                    f"env_vars = {json.dumps(list(integrations.EARLIER_SESSION_ENV_VARS))}\n"
+                    "startup_timeout_sec = 15\ntool_timeout_sec = 75\n# END DEVBRAIN\n")
+    assert _managed_empty_file(".codex/config.toml", path.read_bytes(), settings, project)
+    assert integrations._merge_toml_mcp(path, settings)
+    assert "[mcp_servers.cairnmind]" in path.read_text()
+    assert _managed_empty_file(".codex/config.toml", path.read_bytes(), settings, project)
+
+
+def test_a_table_renamed_by_hand_under_the_earlier_markers_is_accepted(settings, project):
+    path = Path(project["root"]) / ".codex/config.toml"
+    path.parent.mkdir()
+    path.write_text('# BEGIN DEVBRAIN\n[mcp_servers.cairnmind]\ncommand = "old-python"\n'
+                    'args = ["-m", "cairnmind", "mcp"]\nenv_vars = ["DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"]\n'
+                    '# END DEVBRAIN\n')
+    assert integrations._merge_toml_mcp(path, settings)
+    assert path.read_text().startswith("# BEGIN CAIRNMIND\n") and "DEVBRAIN\n" not in path.read_text().replace("_SESSION", "")
+    assert tomllib.loads(path.read_text())["mcp_servers"]["cairnmind"]["command"] == sys.executable
+    assert not integrations._merge_toml_mcp(path, settings)

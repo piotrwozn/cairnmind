@@ -77,6 +77,10 @@ def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
                    for key, forwarded, _, _ in shapes)
     if relative == ".codex/config.toml":
         content = tomllib.loads(text)
+        listed = (content.get("mcp_servers") or {}).get(SERVER, {}).get("env_vars")
+        if isinstance(listed, list) and sorted(map(str, listed)) == sorted(SESSION_ENV_VARS):
+            # A block of an earlier version converted by install lists the same names in another order.
+            content["mcp_servers"][SERVER]["env_vars"] = list(SESSION_ENV_VARS)
         return any(content == {"mcp_servers": {key: {**server, "env_vars": list(forwarded),
                                                      "startup_timeout_sec": 15, "tool_timeout_sec": 75}}}
                    and text.strip().startswith(begin) and text.strip().endswith(end)

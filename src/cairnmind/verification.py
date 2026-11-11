@@ -223,7 +223,8 @@ def load_profiles(store, project_id, worktree=None) -> dict:
     present = [root / path for path in _PROFILE_PATHS if (root / path).exists()]
     if not present:
         return {}
-    if len(present) > 1:
+    # One file reached through two names (a directory linked to the other) is one declaration.
+    if len({path.resolve() for path in present}) > 1:
         # Two declarations of the same checks would let a run pass under one and be required under the other.
         raise ValueError(f"Check profiles are declared in both {_PROFILE_PATHS[0]} and {_PROFILE_PATHS[1]}; "
                          "keep one of them")
@@ -612,8 +613,8 @@ def _verification_status(store, reader, task, worktree=None, capture=None):
     scoped = [r for r in runs if r.get("worktree") == str(root)]
     try:
         profiles = load_profiles(store, project_id, root)
-    except ValueError:
-        return {"status": "unknown", "reasons": ["check profiles unavailable"], "run_ids": []}
+    except ValueError as exc:
+        return {"status": "unknown", "reasons": [f"check profiles unavailable: {exc}"], "run_ids": []}
     required = metadata.get("required_profiles", [])
     if not isinstance(required, list) or not all(isinstance(p, str) and p for p in required):
         return {"status": "unknown", "reasons": ["invalid required profiles"], "run_ids": []}

@@ -387,11 +387,24 @@ def _renamed_toml(text: str, path: Path) -> str:
     if not marked:
         return text
     earlier = servers.get(EARLIER_SERVER) if isinstance(servers, dict) else None
-    if marked != [EARLIER_TOML_BEGIN, EARLIER_TOML_END] or not isinstance(earlier, dict) or not _is_ours(earlier):
-        raise ValueError("Ambiguous Cairnmind TOML markers; original file left unchanged")
+    lines = "'" + EARLIER_TOML_BEGIN + "' and '" + EARLIER_TOML_END + "'"
+    if marked != [EARLIER_TOML_BEGIN, EARLIER_TOML_END]:
+        raise ValueError(f"Ambiguous Cairnmind TOML markers in {path}: expected one {lines} pair; "
+                         "original file left unchanged")
+    current = servers.get(SERVER) if isinstance(servers, dict) else None
+    if earlier is None and isinstance(current, dict) and _is_ours(current):
+        # The table was renamed by hand, as the refusal below asks; only the two comment lines are left.
+        renamed = "\n".join(TOML_BEGIN if line.strip() == EARLIER_TOML_BEGIN else TOML_END
+                            if line.strip() == EARLIER_TOML_END else line for line in text.split("\n"))
+        if tomllib.loads(renamed) == parsed and _toml_markers(tomlkit.parse(renamed), {TOML_BEGIN, TOML_END}) == [
+                TOML_BEGIN, TOML_END]:
+            return renamed
+    if not isinstance(earlier, dict) or not _is_ours(earlier):
+        raise ValueError(f"The {lines} comment lines in {path} do not enclose an [mcp_servers.{EARLIER_SERVER}] "
+                         "table written by Cairnmind; remove those two lines; original file left unchanged")
     if SERVER in servers:
         raise ValueError(f"{path} has both [mcp_servers.{EARLIER_SERVER}] and [mcp_servers.{SERVER}]; "
-                         "remove one of them; original file left unchanged")
+                         "remove one of them together with its comment lines; original file left unchanged")
     quoted = r"""(["']?)"""
     header = re.compile(r"^(\s*\[\[?\s*" + quoted + r"mcp_servers\2\s*\.\s*" + quoted + ")" + EARLIER_SERVER
                         + r"(\3\s*[\].])", re.M)
@@ -407,7 +420,8 @@ def _renamed_toml(text: str, path: Path) -> str:
         unchanged_otherwise = False
     if not unchanged_otherwise or _toml_markers(tomlkit.parse(renamed), {TOML_BEGIN, TOML_END}) != [TOML_BEGIN, TOML_END]:
         raise ValueError(f"The [mcp_servers.{EARLIER_SERVER}] entry in {path} is written in a form that cannot be "
-                         f"renamed safely; rename it to [mcp_servers.{SERVER}] by hand; original file left unchanged")
+                         f"renamed safely; rename the table and its sub-tables to [mcp_servers.{SERVER}] by hand; "
+                         "original file left unchanged")
     return renamed
 
 
@@ -528,7 +542,7 @@ def _instructions(project: dict[str, Any], settings: Settings) -> str:
     return f"""{BEGIN}
 ## Cairnmind shared knowledge
 
-Project ID: `{project['id']}`. The local MCP server is `{SERVER}`.
+Project ID: `{project['id']}`.
 The verified launcher supplies `CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` and
 `CAIRNMIND_CONTEXT_FILE`. The context file contains the exact immutable prepared
 packet, scoped to this logical session and registered worktree, not a rolling
@@ -569,7 +583,8 @@ is only an old grouping label. Progress updates through `remember` require task
 `acceptance_criteria`, `requires_test`, `requires_review`, and named
 `required_profiles`. Resolve version conflicts rather than overwriting work.
 
-Configure named checks in `.cairnmind/checks.toml`. Run them ONLY through the
+Configure named checks in `.cairnmind/checks.toml`; a project that still has
+`.devbrain/checks.toml` keeps using that file, never both. Run them ONLY through the
 native CLI/user permission flow: `{check_command} PROFILE --task TASK_ID`
 with `--worktree ROOT` when needed. There is no MCP check runner. `check_status`
 only reads fresh/stale/reported/unknown evidence. Reference immutable successful

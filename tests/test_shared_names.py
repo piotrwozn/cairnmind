@@ -94,7 +94,7 @@ def test_a_package_of_an_earlier_version_is_read_where_it_is_and_never_rewritten
     shutil.copytree(earlier, clone / ".memory/devbrain")
     other = Store(tmp_path / "other-memory")
     imported = MemoryManager(other).import_snapshot(clone / ".memory/devbrain", clone)
-    assert imported["status"] in {"imported", "created"} or imported.get("snapshot_id") == inspected["snapshot_id"]
+    assert imported["snapshot_id"] == inspected["snapshot_id"]
     assert [record["content"] for record in other.list_records(pid)] == ["Use cookies."]
     after = {path.relative_to(earlier).as_posix(): path.read_bytes() for path in earlier.rglob("*") if path.is_file()}
     assert after == before
@@ -115,7 +115,7 @@ def test_the_next_snapshot_goes_to_the_current_directory_and_continues_the_histo
     assert snapshot_directory(root) == root / ".memory/cairnmind"
     status = manager.status(pid)
     assert status["latest"]["snapshot_id"] == manifest["snapshot_id"]
-    assert status["earlier_package"]["state"] in {"superseded", "diverged"}
+    assert status["earlier_package"] == {"path": str(earlier), "state": "superseded"}
 
 
 def test_a_newer_snapshot_published_into_the_earlier_directory_is_reported_not_ignored_silently(workspace):
@@ -177,3 +177,49 @@ def test_the_directory_of_check_profiles_is_not_indexed_as_project_content(works
     checks(root, ".cairnmind")
     (root / ".cairnmind/notes.md").write_text("not project documentation\n")
     assert index_project(store, pid)["files"] == 1
+
+
+def test_an_unchanged_project_gets_no_second_copy_in_the_current_directory(workspace):
+    store, pid, root, manager = workspace
+    manager.snapshot(pid)
+    earlier = as_written_by_an_earlier_version(root, store)
+    again = manager.snapshot(pid)  # what the auto-save does on its first tick after the upgrade
+    assert again["status"] == "unchanged" and again["manifest_path"] == str(earlier / "manifest.json")
+    assert not (root / ".memory/cairnmind/manifest.json").exists()
+
+
+def test_a_package_in_the_earlier_directory_that_this_store_never_saw_blocks_publication(workspace):
+    store, pid, root, manager = workspace
+    manager.snapshot(pid)
+    earlier = as_written_by_an_earlier_version(root, store)
+    foreign = json.loads((earlier / "manifest.json").read_text())
+    foreign["created_at"] = "2026-01-01T00:00:00+00:00"
+    foreign["snapshot_id"] = portable._manifest_id(foreign)
+    (earlier / "manifest.json").write_bytes(portable._bytes(foreign))
+    with pytest.raises(portable.MemoryConflict, match="was not published or imported by this store"):
+        manager.snapshot(pid)
+    assert not (root / ".memory/cairnmind/manifest.json").exists()
+
+
+def test_a_broken_current_manifest_does_not_break_status(workspace):
+    store, pid, root, manager = workspace
+    manager.snapshot(pid)
+    shutil.copytree(root / ".memory/cairnmind", root / ".memory/devbrain")
+    broken = json.loads((root / ".memory/cairnmind/manifest.json").read_text())
+    broken["ancestors"] = None
+    (root / ".memory/cairnmind/manifest.json").write_text(json.dumps(broken))
+    status = manager.status(pid)
+    assert status["earlier_package"]["state"] == "unreadable" and status["error"] == "invalid_snapshot"
+
+
+def test_two_profile_files_are_named_as_the_reason_a_task_cannot_be_verified(workspace):
+    from cairnmind.verification import verification_status
+
+    store, pid, root, manager = workspace
+    checks(root, ".devbrain")
+    checks(root, ".cairnmind")
+    note = store.snapshot(pid, "note://task", "Do it.", "note")
+    task = store.remember(pid, {"kind": "task", "key": "t", "content": "Do it.",
+                                "metadata": {"required_profiles": ["unit"]}}, [note["id"]])
+    status = verification_status(store, task)
+    assert status["status"] == "unknown" and "declared in both" in status["reasons"][0]

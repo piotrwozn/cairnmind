@@ -474,7 +474,7 @@ class MemoryManager:
                 if old.get("snapshot_id") not in [new.get("snapshot_id"), *new.get("ancestors", [])]:
                     # Someone still publishes there with an earlier version; that snapshot is not in this history.
                     note["state"] = "diverged"
-            except (OSError, ValueError, AttributeError):
+            except (OSError, ValueError, AttributeError, TypeError):
                 note["state"] = "unreadable"
         return note
 
@@ -557,6 +557,16 @@ class MemoryManager:
                     raise MemoryConflict("Memory manifest changed externally; inspect/import it before publishing")
             elif known:
                 raise MemoryConflict("Previously published memory manifest is missing")
+            # Nothing was published in this directory yet. A package left in the earlier one gets the
+            # same scrutiny as a manifest here would: it must be the one this store published or accepted.
+            earlier, earlier_path = None, root / EARLIER_MEMORY_RELATIVE / "manifest.json"
+            if previous is None and (earlier_path.exists() or earlier_path.is_symlink()):
+                _, earlier_raw, earlier, _ = _load_snapshot(earlier_path)
+                receipt = self._known_manifest(project_id, earlier_path)
+                if (not receipt or receipt.get("manifest_sha") != hashlib.sha256(earlier_raw).hexdigest()
+                        or earlier["project"]["id"] != project_id):
+                    raise MemoryConflict(f"The memory package in {EARLIER_MEMORY_RELATIVE} was not published or imported "
+                                         "by this store; inspect/import it before publishing")
             objects = {}
             for table, rows in payload.items():
                 objects[table] = []
@@ -576,6 +586,10 @@ class MemoryManager:
             if (previous and previous.get("content_hash") == content_hash
                     and (not tip or tip["snapshot_id"] == previous["snapshot_id"])):
                 return _summary(path, previous, "unchanged")
+            if (earlier and earlier.get("content_hash") == content_hash
+                    and (not tip or tip["snapshot_id"] == earlier["snapshot_id"])):
+                # What is in the earlier directory is already this state: no second copy is written.
+                return _summary(earlier_path, earlier, "unchanged")
             parent = tip["snapshot_id"] if tip else previous["snapshot_id"] if previous else None
             ancestors = ([parent] + (tip.get("ancestors", []) if tip else previous.get("ancestors", []) if previous else [])) if parent else []
             manifest = {"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,

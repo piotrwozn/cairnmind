@@ -417,7 +417,7 @@ def test_generated_mcp_and_hook_commands_ignore_project_python_shadow(native,mon
     config=root/'.codex/config.toml'
     config.parent.mkdir()
     integrations._merge_toml_mcp(config,runtime.settings)
-    mcp=tomllib.loads(config.read_text())['mcp_servers']['devbrain']
+    mcp=tomllib.loads(config.read_text())['mcp_servers']['cairnmind']
     assert mcp['args'][:3]==['-I','-m','cairnmind']
     completed=subprocess.run([mcp['command'],*mcp['args'],'--help'],cwd=root,capture_output=True,text=True,timeout=10)
     assert completed.returncode==0,completed.stderr
