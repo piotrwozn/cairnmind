@@ -2,7 +2,9 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
-## Unreleased
+## 0.9.0
+
+The first release under the name Cairnmind.
 
 - The Python module is `cairnmind`; `devbrain` remains as an import alias for one release, so hooks and MCP entries that start `python -m devbrain` keep working wherever the Python they name is still installed. After the installer has replaced the earlier `devbrain` uv tool, run `cairnmind install <project>` for each project as the installer lists them; that also rewrites the entries to the new module name. Environment variables, the data directory and the portable memory format keep their `devbrain` names for now (#40).
 - The code fingerprint behind acknowledgements, questions and check evidence no longer resolves the path of every file: whether a directory lies inside the worktree is decided once per directory. On 5,000 files it fell from 0.45 s to 0.18 s, and from 0.91 s to 0.57 s when the files are 100 KB each. File content is still always read, so any edit changes the fingerprint; the README documents the cost for large worktrees (#24).

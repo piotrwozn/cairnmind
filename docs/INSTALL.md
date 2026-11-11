@@ -69,9 +69,9 @@ Choose one option.
 
 ```bash
 mkdir -p ~/src && cd ~/src
-curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.8.0/devbrain-0.8.0.tar.gz
-tar -xzf devbrain-0.8.0.tar.gz
-cd devbrain-0.8.0
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.9.0/cairnmind-0.9.0.tar.gz
+tar -xzf cairnmind-0.9.0.tar.gz
+cd cairnmind-0.9.0
 ```
 
 **From source.** Clone the repository to follow the latest `main`:
@@ -164,7 +164,7 @@ See [EVALUATION.md](EVALUATION.md) for what they measure.
 
 ## Upgrading
 
-- From 0.7.2 with existing data: follow [UPGRADING.md](UPGRADING.md).
+- From DevBrain 0.8.0, or from 0.7.2 with existing data: follow [UPGRADING.md](UPGRADING.md).
 - For later releases, read the release notes first, then run the installer from the new source directory.
 
 ## Uninstalling
