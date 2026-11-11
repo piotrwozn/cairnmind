@@ -287,3 +287,49 @@ def test_a_file_of_another_registered_root_is_not_mistaken_for_one_of_this_workt
     (second / "src" / "auth.py").write_text(AUTH.replace('":refreshed"', '":elsewhere"'))
     # The records are linked to the nodes of the first root; an edit in the second worktree is not theirs.
     assert build_impact(store, pid, "HEAD", worktree=str(root))["records"] == []
+
+
+def test_a_definition_does_not_absorb_the_decorator_of_its_neighbour(workspace):
+    store, pid, root, records = workspace
+    tight = ("@cached(30)\ndef refresh_token(token):\n    return token\ndef revoke_token(token):\n    return None\n"
+             "class Session:\n    @property\n    def minutes(self):\n        return 30\n    def close(self):\n        return None\n")
+    (root / "src" / "auth.py").write_text(tight)
+    git(root, "commit", "-qam", "no blank lines")
+    (root / "src" / "auth.py").write_text(tight.replace("@cached(30)", "@cached(60)").replace("@property", "@cached_property"))
+    # Only the two decorated definitions changed, and the class that contains one of them.
+    assert build_impact(store, pid, "HEAD")["changed_files"][0]["symbols"] == {
+        "refresh_token": "modified", "minutes": "modified", "Session": "modified"}
+
+
+@pytest.mark.parametrize("attributes", [None, "*.py text eol=crlf\n"])
+def test_carriage_returns_do_not_make_untouched_definitions_look_changed(workspace, attributes):
+    store, pid, root, records = workspace
+    if attributes:
+        (root / ".gitattributes").write_text(attributes)
+    (root / "src" / "auth.py").write_bytes(AUTH.replace("\n", "\r\n").encode())
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "crlf")
+    (root / "src" / "auth.py").write_bytes(AUTH.replace("= 30", "= 45").replace("\n", "\r\n").encode())
+    assert build_impact(store, pid, "HEAD")["changed_files"][-1]["symbols"] == {}
+    (root / "src" / "auth.py").write_bytes(AUTH.replace('":refreshed"', '":renewed"').replace("\n", "\r\n").encode())
+    assert build_impact(store, pid, "HEAD")["changed_files"][-1]["symbols"] == {"refresh_token": "modified"}
+
+
+def test_a_path_git_calls_deleted_but_that_exists_again_is_compared_as_modified(workspace):
+    store, pid, root, records = workspace
+    git(root, "rm", "-q", "--cached", "src/auth.py")  # the index says deleted; the file is still there, untracked
+    (root / "src" / "auth.py").write_text(AUTH.replace('":refreshed"', '":renewed"'))
+    report = build_impact(store, pid, "HEAD")
+    assert report["changed_files"] == [{"path": "src/auth.py", "change": "modified", "untracked": True,
+                                        "symbols": {"refresh_token": "modified"}}]
+    assert "Revoking returns nothing." not in titles(report)
+
+
+def test_a_nested_repository_is_not_a_changed_file(workspace):
+    store, pid, root, records = workspace
+    (root / "vendor" / "lib").mkdir(parents=True)
+    git(root / "vendor" / "lib", "init", "-q")
+    (root / "vendor" / "lib" / "inner.py").write_text("INNER = 1\n")
+    git(root / "vendor" / "lib", "add", ".")
+    git(root / "vendor" / "lib", "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture", "commit", "-qm", "inner")
+    assert build_impact(store, pid, "HEAD")["changed_files"] == []

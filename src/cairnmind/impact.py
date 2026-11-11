@@ -20,7 +20,9 @@ indexing and the last extraction.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import subprocess
 from pathlib import Path, PurePosixPath
 
 from cairnmind.brief import _git_out, _line, _scoped_records, _title
@@ -57,9 +59,16 @@ def _changes(root, commit):
             index += 2
         else:
             break
-    for name in untracked.split("\0"):
-        if name:
-            changed.setdefault(name, {"change": "added", "untracked": True})
+    # A nested repository is listed as one directory; what changed inside it is not this comparison's to say.
+    loose = {name for name in untracked.split("\0") if name and not name.endswith("/")}
+    for name in loose:
+        changed.setdefault(name, {"change": "added", "untracked": True})
+    for name, entry in list(changed.items()):
+        # Git compares its index: a path it calls deleted or renamed away can exist again as an untracked file.
+        if name in loose and (entry["change"] == "deleted" or "renamed_to" in entry):
+            if "renamed_to" in entry:
+                changed[entry["renamed_to"]] = {"change": "added"}
+            changed[name] = {"change": "modified", "untracked": True}
     return changed
 
 
@@ -71,16 +80,31 @@ def _definitions(name, text):
     if analysis["language"] == "text" or any(str(error).startswith("Parser unavailable") for error in analysis["errors"]):
         return None
     # The parser counts lines by "\n" only; str.splitlines would also split at form feeds and the like.
-    lines = text.split("\n")
+    # A carriage return is dropped, so a checkout with CRLF endings compares equal to an LF blob.
+    lines = [line.removesuffix("\r") for line in text.split("\n")]
     found = {}
     for symbol in analysis["symbols"]:
         start = symbol["line_start"] - 1
         # A decorator is part of what a definition means, but the parser's definition starts below it.
+        # Walk up over the decorator lines of this definition only: never past the end of the
+        # definition above, nor past the header of the one that encloses this one.
+        floor = max([other["line_end"] for other in analysis["symbols"] if other["line_end"] < symbol["line_start"]]
+                    + [other["line_start"] for other in analysis["symbols"]
+                       if other["line_start"] < symbol["line_start"] and other["line_end"] >= symbol["line_end"]] + [0])
+        indent = len(lines[start]) - len(lines[start].lstrip())
         top = scan = start
-        while scan > 0 and lines[scan - 1].strip():
-            scan -= 1
-            if lines[scan].lstrip().startswith("@"):
+        while scan > floor:
+            line = lines[scan - 1]
+            body = line.strip()
+            depth = len(line) - len(line.lstrip())
+            if depth == indent and body.startswith("@"):
+                scan -= 1
                 top = scan
+            elif body and (depth > indent or (depth == indent and body[0] in ")]}"
+                                              and body.rstrip(",").endswith((")", "]", "}")))):
+                scan -= 1  # possibly an argument line of a decorator call; kept only if an "@" line is above it
+            else:
+                break
         found.setdefault(symbol["name"], []).append("\n".join(lines[top:symbol["line_end"]]))
     return {key: sorted(value) for key, value in found.items()}
 
@@ -90,8 +114,13 @@ def _old_text(root, commit, name):
     size = _git_out(root, "cat-file", "-s", spec)
     if size is None or not size.isdigit() or int(size) > MAX_FILE_BYTES:
         return None
-    raw = _git_out(root, "show", spec)
-    return raw if raw is not None and "\0" not in raw else None
+    # Read without trimming, by the same rules as the file on disk, so that both sides compare byte for byte.
+    try:
+        shown = subprocess.run(["git", "-C", str(root), "show", spec], capture_output=True, timeout=15, check=False,
+                               env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+        return None if shown.returncode or b"\0" in shown.stdout else shown.stdout.decode("utf-8")
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+        return None
 
 
 def _new_text(root, name):
