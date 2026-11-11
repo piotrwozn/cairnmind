@@ -74,9 +74,9 @@ There is no automatic rollback.
 
 Nothing has to be done, and nothing on disk is renamed.
 
-- **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold a configuration, the earlier one is used and `cairnmind doctor` says so under `environment_notes`.
-- **Variables.** `CAIRNMIND_HOME`, `CAIRNMIND_ARCADE_URL` and the others are the names to use. A `DEVBRAIN_*` variable in your shell profile keeps working; when both spellings are set, the new one wins and `cairnmind doctor` reports a pair that disagrees.
-- **Sessions.** The launcher gives a coding client both spellings of the session variables, so hooks and MCP entries written by 0.8.0 or 0.9.0 keep working without `cairnmind install`. A session started before the upgrade stays bound after it.
+- **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold data, the earlier one is used and `cairnmind doctor` says so under `environment_notes`.
+- **Variables.** `CAIRNMIND_HOME`, `CAIRNMIND_ARCADE_URL` and the others are the names to use. A `DEVBRAIN_*` variable in your shell profile keeps working; when both spellings of a configuration variable are set, the new one wins and `cairnmind doctor` reports a pair that disagrees.
+- **Sessions.** The launcher gives a coding client both spellings of the session variables, so hooks and MCP entries written by 0.8.0 or 0.9.0 keep working without `cairnmind install`. A session started before the upgrade stays bound after it. If the two spellings of a session variable ever name different sessions, neither is honoured: commands are refused and the client has to be started again through the launcher.
 
 Still named `devbrain` in this release: the MCP server and its tools, the markers and backup copies in client configuration files, `.memory/devbrain` and `.devbrain/checks.toml`.
 

@@ -19,7 +19,7 @@ import uuid
 import pytest
 
 from cairnmind.arcade import ArcadeClient, ArcadeError
-from cairnmind.config import Settings, env_names, env_value
+from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
 
 # Verified on 2026-11-09: each passes in full with no ArcadeDB engine available.
@@ -54,6 +54,19 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.arcade)
         if module in TMUX_MODULES:
             item.add_marker(pytest.mark.tmux)
+
+
+@pytest.fixture(autouse=True)
+def no_inherited_session():
+    """No test starts inside the session, data directory or runtime choice of the shell that ran pytest.
+
+    Done by hand and not with monkeypatch: requesting monkeypatch here would create it before
+    every other fixture and so undo a test's patches only after those fixtures were torn down.
+    """
+    removed = {key: os.environ.pop(key) for name in (*SESSION_NAMES, "HOME", "JAVA_EXECUTABLE", "TMUX_EXECUTABLE")
+               for key in env_names(name) if key in os.environ}
+    yield
+    os.environ.update(removed)
 
 
 @pytest.fixture(scope="session")

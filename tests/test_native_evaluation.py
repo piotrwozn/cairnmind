@@ -88,7 +88,7 @@ def test_native_codex_keeps_read_only_isolated_process_and_fixture_permissions(t
         server = {field: configured[field] for field in ("command", "args", "env")}
         assert_scoped_configuration(configuration, server)
         assert configured["command"] == sys.executable
-        assert configured["env"] == {"DEVBRAIN_ARCADE_DATABASE": settings.arcade_database}
+        assert configured["env"] == {"CAIRNMIND_ARCADE_DATABASE": settings.arcade_database}
         assert configured["args"][-2:] == ["--session-id", "bound-fixture-session"]
         events = [
             {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(expected)}},

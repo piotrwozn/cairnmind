@@ -5,24 +5,19 @@ No engine: only the environment, the settings file and directories under a tempo
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
-from cairnmind import config
 from cairnmind.api_runtime import _worker_environment
 from cairnmind.config import (Settings, data_dir_note, default_data_dir, drop_env, env_conflicts, env_names, env_value,
-                              is_own_variable, session_value, set_env)
+                              is_own_variable, session_conflicts, session_value, set_env)
 from cairnmind.mcp_server import ServiceClient
-
-CONFIGURATION = ("HOME", "ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE", "ARCADE_DB_PREFIX",
-                 "JAVA_EXECUTABLE", "TMUX_EXECUTABLE")
-
 
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch, tmp_path):
-    for name in (*CONFIGURATION, *config.SESSION_NAMES):
-        for key in env_names(name):
-            monkeypatch.delenv(key, raising=False)
+    for key in [key for key in os.environ if is_own_variable(key)]:
+        monkeypatch.delenv(key)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir()
     return tmp_path / "home"
@@ -73,6 +68,10 @@ def test_a_directory_created_by_an_earlier_version_is_used_where_it_is(clean_env
     earlier = clean_environment / ".local/share/devbrain"
     earlier.mkdir(parents=True)
     assert default_data_dir() == (clean_environment / ".local/share/cairnmind").resolve()  # an empty directory is not a store
+    (earlier / "arcade").mkdir()
+    # A store that lost its configuration file is still the store: no second one is started beside it.
+    assert default_data_dir() == earlier.resolve()
+    (earlier / "arcade").rmdir()
     (earlier / "config.json").write_text(json.dumps({"token": "kept"}))
     assert default_data_dir() == earlier.resolve()
     assert Settings.load().token == "kept"
@@ -86,6 +85,13 @@ def test_two_default_directories_are_reported_and_the_earlier_one_keeps_being_us
         (clean_environment / ".local/share" / name / "config.json").write_text("{}")
     assert default_data_dir() == (clean_environment / ".local/share/devbrain").resolve()
     assert "Both" in data_dir_note() and "CAIRNMIND_HOME" in data_dir_note()
+
+
+def test_an_empty_home_variable_names_no_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAIRNMIND_HOME", "")
+    monkeypatch.setenv("DEVBRAIN_HOME", str(tmp_path / "earlier-choice"))
+    assert default_data_dir() == (tmp_path / "earlier-choice").resolve()
+    assert env_conflicts() == []
 
 
 def test_an_explicit_home_overrides_both_default_directories(monkeypatch, clean_environment, tmp_path):
@@ -153,3 +159,12 @@ def test_workers_get_neither_spelling(monkeypatch):
         monkeypatch.setenv(name, "SECRET")
     environment = _worker_environment([])
     assert not any(is_own_variable(name) for name in environment) and "PATH" in environment
+
+
+def test_doctor_words_a_session_conflict_as_refused_not_as_resolved(monkeypatch):
+    monkeypatch.setenv("CAIRNMIND_SESSION_ID", "inner")
+    monkeypatch.setenv("DEVBRAIN_SESSION_ID", "outer")
+    monkeypatch.setenv("CAIRNMIND_PACKET_ID", "")
+    monkeypatch.setenv("DEVBRAIN_PACKET_ID", "packet")
+    # Session names are never "resolved" in favour of one spelling, and an empty one is no conflict.
+    assert env_conflicts() == [] and session_conflicts() == ["SESSION_ID"]

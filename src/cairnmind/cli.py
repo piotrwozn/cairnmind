@@ -336,11 +336,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result = inspect(ctx.obj)
     result["service_running"] = service_alive(ctx.obj)
     result["data_dir"] = str(ctx.obj.data_dir)
-    from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts
+    from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, session_conflicts
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
-        for name in env_conflicts()] + [note for note in [data_dir_note()] if note]
+        for name in env_conflicts()] + [
+        f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
+        "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
+        for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
     result["models_lock_present"] = (ctx.obj.data_dir / "models.lock.json").exists()
     from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)

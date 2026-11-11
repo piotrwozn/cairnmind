@@ -66,13 +66,42 @@ def drop_env(environ, *names: str) -> None:
             environ.pop(key, None)
 
 
-def env_conflicts(environ=None) -> list[str]:
-    """Names whose two spellings are both present with different values; the current spelling is the one used."""
+def _home_override(environ=None) -> str | None:
+    """The data directory named by a variable: the first spelling that is not empty, as in the installer."""
     environ = os.environ if environ is None else environ
-    return sorted(key[len(ENV_PREFIXES[0]):] for key in environ
-                  if key.startswith(ENV_PREFIXES[0])
-                  and ENV_PREFIXES[1] + key[len(ENV_PREFIXES[0]):] in environ
-                  and environ[ENV_PREFIXES[1] + key[len(ENV_PREFIXES[0]):]] != environ[key])
+    return next((environ[key] for key in env_names("HOME") if environ.get(key)), None)
+
+
+def env_conflicts(environ=None) -> list[str]:
+    """Configuration names whose two spellings are both set and differ; the current spelling is the one used."""
+    environ = os.environ if environ is None else environ
+    found = []
+    for key in environ:
+        name = key[len(ENV_PREFIXES[0]):]
+        earlier = ENV_PREFIXES[1] + name
+        if (not key.startswith(ENV_PREFIXES[0]) or name in SESSION_NAMES or earlier not in environ
+                or environ[earlier] == environ[key]):
+            continue
+        if name == "HOME" and not (environ[key] and environ[earlier]):
+            continue  # an empty spelling names no directory and is passed over
+        found.append(name)
+    return sorted(found)
+
+
+def session_conflicts(environ=None) -> list[str]:
+    """Session names whose two spellings name different things; neither is honoured (see session_value)."""
+    environ = os.environ if environ is None else environ
+    return [name for name in SESSION_NAMES if len({environ[key] for key in env_names(name) if environ.get(key)}) > 1]
+
+
+def _holds_a_store(path: Path) -> bool:
+    """Whether an earlier version left anything there, even a store that lost its configuration file."""
+    if path.is_symlink():
+        return True  # also a dangling link: stay on it and fail there, as before
+    try:
+        return any(path.iterdir())
+    except OSError:
+        return False
 
 
 def default_data_dir() -> Path:
@@ -82,24 +111,24 @@ def default_data_dir() -> Path:
     copied, because project files, running services and the database name all refer to its
     path. Only an installation with no data yet starts under the current name.
     """
-    chosen = env_value("HOME")
+    chosen = _home_override()
     if chosen:
         return Path(chosen).expanduser().resolve()
     base = Path("~/.local/share").expanduser()
     current, earlier = (base / name for name in DATA_DIR_NAMES)
-    if (earlier / "config.json").is_file():
+    if _holds_a_store(earlier):
         return earlier.resolve()
     return current.resolve()
 
 
 def data_dir_note() -> str | None:
     """What a user should know about the directory chosen by default, or None."""
-    if env_value("HOME"):
+    if _home_override():
         return None
     base = Path("~/.local/share").expanduser()
     current, earlier = (base / name for name in DATA_DIR_NAMES)
-    if (earlier / "config.json").is_file() and (current / "config.json").is_file():
-        return (f"Both {earlier} and {current} hold a configuration; {earlier} is used. "
+    if _holds_a_store(earlier) and (current / "config.json").is_file():
+        return (f"Both {earlier} and {current} hold data; {earlier} is used. "
                 f"Choose one explicitly with --data-dir or {ENV_PREFIXES[0]}HOME.")
     return None
 
