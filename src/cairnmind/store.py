@@ -309,10 +309,19 @@ class Store:
                 self._lookup_indexes(indexed)
 
     def _lookup_indexes(self, recorded):
-        """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat."""
-        for collection, field in LOOKUP_INDEXES:
-            self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-            self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
+        """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat.
+
+        An index only makes a lookup faster. When one cannot be built now, for example because a large
+        table takes longer than a request may, the database is opened all the same and the next start
+        tries again: nothing is recorded until every index exists.
+        """
+        from .arcade import ArcadeError
+        try:
+            for collection, field in LOOKUP_INDEXES:
+                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) NOTUNIQUE NULL_STRATEGY SKIP")
+        except ArcadeError:
+            return
         with self.client.transaction() as tx:
             if recorded is None:
                 _insert(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})

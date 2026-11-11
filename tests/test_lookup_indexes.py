@@ -37,6 +37,7 @@ def test_a_database_of_an_earlier_release_gets_them_when_it_is_opened_and_only_o
     found = indexed(store)
     for collection, field in LOOKUP_INDEXES:
         store.command(f"DROP INDEX `{found[(collection, (field,))]['name']}`")
+        store.command(f"DROP PROPERTY {collection}.{field}")  # an earlier release never declared these fields
     assert not [pair for pair in LOOKUP_INDEXES if (pair[0], (pair[1],)) in indexed(store)]
 
     commands = []
@@ -50,6 +51,8 @@ def test_a_database_of_an_earlier_release_gets_them_when_it_is_opened_and_only_o
     assert not [pair for pair in LOOKUP_INDEXES if (pair[0], (pair[1],)) not in indexed(reopened)]
     assert marker(reopened) == [LOOKUP_INDEX_SET]
     assert sum("CREATE INDEX" in sql for sql in commands) == len(LOOKUP_INDEXES)
+    assert sum(any(sql.startswith(f"CREATE PROPERTY {c}.{f} ") for c, f in LOOKUP_INDEXES)
+               for sql in commands) == len(LOOKUP_INDEXES)
     assert reopened.get_source(source["id"])["content"] == "kept text"  # the data is untouched
     assert reopened.query("SELECT id FROM sources WHERE project_id=:project AND uri=:uri",
                           {"project": project["id"], "uri": "note://one"})[0]["id"] == source["id"]
@@ -57,3 +60,34 @@ def test_a_database_of_an_earlier_release_gets_them_when_it_is_opened_and_only_o
     del commands[:]
     Store(tmp_path / "memory")
     assert not [sql for sql in commands if "CREATE INDEX" in sql or "CREATE PROPERTY" in sql]  # nothing to do the next time
+
+
+def test_an_index_that_cannot_be_built_does_not_keep_the_database_closed(tmp_path, monkeypatch):
+    from cairnmind.arcade import ArcadeError
+
+    store = Store(tmp_path / "memory")
+    store.command("DELETE FROM devbrain_meta WHERE name='lookup_indexes'")
+    real = ArcadeClient.command
+
+    def failing(self, sql, params=None):
+        if sql.startswith("CREATE INDEX IF NOT EXISTS ON edges(from_id)"):
+            raise ArcadeError("Local ArcadeDB is unavailable (ReadTimeout)")
+        return real(self, sql, params)
+    with monkeypatch.context() as patch:
+        patch.setattr(ArcadeClient, "command", failing)
+        opened = Store(tmp_path / "memory")  # opens, and records nothing
+        assert marker(opened) == []
+    assert marker(Store(tmp_path / "memory")) == [LOOKUP_INDEX_SET]  # the next start finishes the work
+
+
+def test_a_migrated_database_has_the_lookup_indexes_too(tmp_path):
+    store = Store(tmp_path / "memory")
+    store.command("DELETE FROM devbrain_meta WHERE name='lookup_indexes'")
+    store.command("UPDATE devbrain_meta SET value=3 WHERE name='schema_version'")
+    found = indexed(store)
+    for collection, field in LOOKUP_INDEXES:
+        store.command(f"DROP INDEX `{found[(collection, (field,))]['name']}`")
+    migrated = Store(tmp_path / "memory")
+    assert migrated.query("SELECT value FROM devbrain_meta WHERE name='schema_version'")[0]["value"] == SCHEMA_VERSION
+    assert not [pair for pair in LOOKUP_INDEXES if (pair[0], (pair[1],)) not in indexed(migrated)]
+    assert marker(migrated) == [LOOKUP_INDEX_SET]

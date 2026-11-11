@@ -164,8 +164,31 @@ def test_threads_share_the_kept_connections_of_one_client(tmp_path):
         return httpx.Response(200, json={"result": []})
     client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(handle))
     with ThreadPoolExecutor(max_workers=8) as executor:
-        assert list(executor.map(lambda n: client.query("SELECT 1"), range(64))) == [[]] * 64
-    assert seen == [None] * 64
+        results = list(executor.map(lambda n: (client.query("SELECT 1"), client._connections.client()), range(64)))
+    assert [rows for rows, _ in results] == [[]] * 64 and seen == [None] * 64
+    assert len({id(kept) for _, kept in results}) == 1  # one pool for every thread
+
+
+def test_threads_that_start_together_make_one_pool(tmp_path, monkeypatch):
+    import threading
+
+    made = []
+    original = httpx.Client.__init__
+
+    def counting(self, *args, **kwargs):
+        made.append(self)
+        original(self, *args, **kwargs)
+    monkeypatch.setattr(httpx.Client, "__init__", counting)
+    client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"result": []})))
+    barrier = threading.Barrier(8)
+
+    def run(_):
+        barrier.wait(10)
+        return client.query("SELECT 1")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        assert list(executor.map(run, range(8))) == [[]] * 8
+    assert len(made) == 1
 
 
 def test_transaction_headers_are_scoped_and_nested_transaction_reuses_session(tmp_path):
