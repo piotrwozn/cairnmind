@@ -72,7 +72,7 @@ There is no automatic rollback.
 
 ## From 0.9.0 to the next release
 
-Finish and close running coding sessions and the workspace (`cairnmind workspace stop`), then run the installer and `cairnmind install <project>` for each project. The installer stops the interface broker and the knowledge service of the installed version itself; it refuses to continue while a workspace is running, because the new version names its terminal sessions differently and would not find the old workspace. Set `CAIRNMIND_INSTALL_STOP_WORKSPACE=1` to let it close the workspace. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
+Finish and close running coding sessions and the workspace (`cairnmind workspace stop`), then run the installer and `cairnmind install <project>` for each project. The installer stops the interface broker and the knowledge service of the installed version itself; it refuses to continue while a workspace or a coding session started from it is running, in any data directory, because the new version names its terminal sessions differently and would not find them. Set `CAIRNMIND_INSTALL_STOP_WORKSPACE=1` to let it close them. Scheduled daily backups of both names are pruned together; the safety copies written before a restore or a schema change are never pruned. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
 
 - **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold data, the earlier one is used and `cairnmind doctor` says so under `environment_notes`.
 - **Variables.** `CAIRNMIND_HOME`, `CAIRNMIND_ARCADE_URL` and the others are the names to use. A `DEVBRAIN_*` variable in your shell profile keeps working; when both spellings of a configuration variable are set, the new one wins and `cairnmind doctor` reports a pair that disagrees.
@@ -84,6 +84,13 @@ Finish and close running coding sessions and the workspace (`cairnmind workspace
 - **Check profiles.** Declare them in `.cairnmind/checks.toml`. `.devbrain/checks.toml` is still read; move the file with `git mv .devbrain .cairnmind` when every collaborator has upgraded. The move changes a path that is part of the code fingerprint, so check runs made before it count as stale once and have to be run again. If both files exist, checks are refused until one is removed.
 
 - **Backups.** A whole-database backup is written as `<name>.cairnmind.json.gz`. Files named `.devbrain.json.gz` are still restored, and the daily backups of both names are pruned together. A backup written by this version cannot be restored by 0.9.0 or earlier: to go back, restore one made before the upgrade.
+
+### Going back to 0.9.0
+
+1. Close the workspace and coding sessions, then stop everything with the installed version, which is the only one that still finds its own processes: `cairnmind workspace stop --clients`, `cairnmind cockpit stop`, `cairnmind stop`.
+2. Run `bash scripts/install-wsl.sh` from the unpacked 0.9.0 release archive.
+3. With the service stopped, restore a backup made before the upgrade: 0.9.0 does not read backups written by a later version.
+4. In each project, put back the copies named `<file>.cairnmind-backup-<number>` that `cairnmind install` left next to the files it changed; 0.9.0 does not recognise the entries written under the new names.
 
 With a collaborator still on 0.9.0 in the same repository: they do not see snapshots in `.memory/cairnmind/` or profiles in `.cairnmind/`, their `install` adds a second server and a second instruction block under the earlier names, and their version counts `.memory/cairnmind/` as project files.
 

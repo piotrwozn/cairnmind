@@ -93,44 +93,73 @@ printf 'Preparing dependencies from uv.lock...\n'
 uv export --directory "$package_dir" --locked --no-dev --no-emit-project \
     --format requirements-txt --output-file "$constraints_file" >/dev/null
 
+# --- what an installed version left running (kept between these two lines for the tests) ---
+# Terminal servers of an installed version, whatever data directory they belong to: the workspace
+# and the coding sessions started from it, under the current and the earlier names. A later
+# version does not find what an earlier one started, so nothing of it may be left behind unseen.
+live_terminals() {
+    local socket
+    command -v tmux >/dev/null 2>&1 || return 0
+    for socket in "${TMPDIR:-/tmp}"/{cairnmind,devbrain}-{ui,native}-"$(id -u)"-*/tmux.sock; do
+        if [[ -S "$socket" && -O "$socket" ]] && tmux -S "$socket" list-sessions >/dev/null 2>&1; then
+            printf '%s\n' "$socket"
+        fi
+    done
+}
+
+# $1: the executable of the installed version, $2: the name a user types for it.
+# The workspace and coding sessions hold interactive work: the installer stops here unless it is
+# told to close them. The interface broker and the knowledge service hold none and are stopped.
+stop_installed() {
+    local installed="$1" name="$2" terminals status socket
+    [[ -x "$installed" ]] || return 0
+    terminals="$(live_terminals)"
+    # Asked as well, read whole and not through a pipe: an answer cut short must not read as "none".
+    if status="$("$installed" workspace status 2>/dev/null)"; then
+        if [[ "$status" == *'"available": true'* && -z "$terminals" ]]; then
+            terminals="the workspace reported by $name workspace status"
+        fi
+    elif [[ -z "$terminals" ]]; then
+        printf 'Note: %s workspace status failed, so a running workspace could not be ruled out.\n' "$name" >&2
+    fi
+    if [[ -n "$terminals" ]]; then
+        if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" != 1 ]]; then
+            printf '%s\n' \
+                'A workspace or coding sessions of the installed version are running:' \
+                "$terminals" \
+                "Finish there and close them with: $name workspace stop --clients" \
+                'then run this installer again. The new version would not find them.' \
+                'To let the installer close them, set CAIRNMIND_INSTALL_STOP_WORKSPACE=1.' >&2
+            exit 1
+        fi
+        printf 'Closing the running workspace and coding sessions, as CAIRNMIND_INSTALL_STOP_WORKSPACE=1 asks.\n'
+        "$installed" workspace stop --clients >/dev/null 2>&1 || true
+        "$installed" cockpit stop --clients >/dev/null 2>&1 || true
+        # Whatever belongs to another data directory, or did not answer, is closed at its terminal server.
+        while IFS= read -r socket; do
+            [[ -n "$socket" ]] && tmux -S "$socket" kill-server >/dev/null 2>&1 || true
+        done <<<"$(live_terminals)"
+    fi
+    "$installed" cockpit stop >/dev/null 2>&1 || true
+    "$installed" stop >/dev/null 2>&1 || true
+}
+# --- end ---
+
 # An earlier release was installed as the uv tool "devbrain", which owns the devbrain
 # executable that this package also provides as an alias. Remove the tool, not the data.
 upgraded_from_devbrain=false
-if uv tool list 2>/dev/null | grep -q '^devbrain '; then
+if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
         "${CAIRNMIND_HOME:-${DEVBRAIN_HOME:-$HOME/.local/share/devbrain}}"
-    # Its knowledge service and interface broker run detached and outlive the workspace. Stop them
-    # while the tool that started them still exists: a broker of another version refuses the new
-    # workspace, and the earlier service would keep answering from a Python that is gone.
-    earlier_bin="$(uv tool dir --bin)/devbrain"
-    if [[ -x "$earlier_bin" ]]; then
-        "$earlier_bin" cockpit stop >/dev/null 2>&1 || true
-        "$earlier_bin" stop >/dev/null 2>&1 || true
-    fi
+    # Stopped while the tool that started them still exists: afterwards nothing could stop them.
+    stop_installed "$(uv tool dir --bin)/devbrain" devbrain
     uv tool uninstall devbrain >/dev/null
     upgraded_from_devbrain=true
 fi
 
-# An installed Cairnmind is being replaced. Its workspace, interface broker and knowledge service run
-# detached and would go on running the earlier code. A later version may not even find a workspace
-# that an earlier one started, so it is not left behind: the installer stops here unless told to
-# close it. The broker and the service hold no interactive work and are stopped without asking.
-installed_bin="$(uv tool dir --bin)/cairnmind"
-if [[ -x "$installed_bin" ]] && uv tool list 2>/dev/null | grep -q '^cairnmind '; then
-    if "$installed_bin" workspace status 2>/dev/null | grep -q '"available": true'; then
-        if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" == 1 ]]; then
-            printf 'Closing the running Cairnmind workspace, as CAIRNMIND_INSTALL_STOP_WORKSPACE=1 asks.\n'
-            "$installed_bin" workspace stop >/dev/null 2>&1 || true
-        else
-            printf '%s\n' \
-                'A Cairnmind workspace is running, with whatever coding sessions are open in it.' \
-                'Finish there, close it with: cairnmind workspace stop' \
-                'and run this installer again. To let the installer close it, set CAIRNMIND_INSTALL_STOP_WORKSPACE=1.' >&2
-            exit 1
-        fi
-    fi
-    "$installed_bin" cockpit stop >/dev/null 2>&1 || true
-    "$installed_bin" stop >/dev/null 2>&1 || true
+# An installed Cairnmind is being replaced: the same care, with the installed version's own command.
+if uv tool list 2>/dev/null | grep '^cairnmind ' >/dev/null; then
+    stop_installed "$(uv tool dir --bin)/cairnmind" cairnmind
 fi
 
 printf 'Installing Cairnmind from %s...\n' "$package_dir"

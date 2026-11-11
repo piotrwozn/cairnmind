@@ -818,7 +818,9 @@ def hook(settings: Settings, payload: dict[str, Any], client: str) -> dict[str, 
     data["client"] = client
     data["cwd"] = data["cwd"] or str(Path.cwd())
     data["event_id"] = event_id
-    data["cairnmind_session_id"] = session_value("SESSION_ID", strict=False)
+    # Under both keys for one release: a service of an earlier version that is still running
+    # reads the earlier key, and without it the event would lose its session.
+    data["cairnmind_session_id"] = data["devbrain_session_id"] = session_value("SESSION_ID", strict=False)
     data["packet_id"] = session_value("PACKET_ID", strict=False)
     data["resume_reason"] = payload.get("source") or payload.get("resume_reason") or "startup"
     if isinstance(data.get("transcript_path"), str) and data["transcript_path"]:

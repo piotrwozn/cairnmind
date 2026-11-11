@@ -682,7 +682,7 @@ def test_end_hook_captures_bounded_eof_and_logical_identity_without_network(sett
     watermark = event["transcript_watermark"]
     assert event["event_id"] == path.stem
     assert event["session_id"] == "native-session"
-    assert event["cairnmind_session_id"] == "logical-session" and "devbrain_session_id" not in event
+    assert event["cairnmind_session_id"] == event["devbrain_session_id"] == "logical-session"
     assert event["packet_id"] == "packet-one"
     assert watermark["size"] == len(content)
     assert watermark["observed_size"] == len(content)
