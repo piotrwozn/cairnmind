@@ -15,15 +15,15 @@ def settings(tmp_path, url="http://127.0.0.1:2480"):
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1:2480", "http://localhost:2480", "http://[::1]:2480"])
-def test_default_transport_skips_ca_loading_and_closes(tmp_path, monkeypatch, url):
-    requests, closed = [], []
+def test_default_transport_skips_ca_loading_is_kept_between_requests_and_closes(tmp_path, monkeypatch, url):
+    requests, closed, opened = [], [], []
 
     def forbidden(*args, **kwargs):
         raise AssertionError("A loopback HTTP request loaded TLS CA certificates")
 
     def handle(self, request):
         requests.append(request)
-        return httpx.Response(200, json={"result": []})
+        return httpx.Response(200, json={"result": []}, headers={"arcadedb-session-id": "tx"})
 
     original_exit = httpx.HTTPTransport.__exit__
     def exiting(self, *args):
@@ -32,11 +32,28 @@ def test_default_transport_skips_ca_loading_and_closes(tmp_path, monkeypatch, ur
 
     monkeypatch.setattr(ssl, "create_default_context", forbidden)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle)
+    original_close = httpx.HTTPTransport.close
+    def closing(self):
+        original_close(self)
+        closed.append(self)
+    original_init = httpx.HTTPTransport.__init__
+    def starting(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        opened.append(self)
     monkeypatch.setattr(httpx.HTTPTransport, "__exit__", exiting)
+    monkeypatch.setattr(httpx.HTTPTransport, "close", closing)
+    monkeypatch.setattr(httpx.HTTPTransport, "__init__", starting)
     client = ArcadeClient(settings(tmp_path, url))
     assert client.query("SELECT 1") == []
     client.server_info()
-    assert len(requests) == len(closed) == 2
+    with client.transaction() as tx:
+        tx.query("SELECT 1")
+    # One transport served every request, those of the transaction included, and nothing was closed meanwhile.
+    assert len(requests) == 5 and len(opened) == 1 and closed == []
+    client.close()
+    assert closed == opened
+    assert client.query("SELECT 1") == [] and len(opened) == 2  # still usable: a new one is opened
+    client.close()
     assert requests[0].extensions["timeout"]["read"] == 30
     assert requests[1].extensions["timeout"]["read"] == 2
     assert all(request.url.scheme == "http" for request in requests)
@@ -93,19 +110,62 @@ def test_redirect_is_not_followed_and_cannot_be_enabled(tmp_path, status):
     assert len(seen) == 1
 
 
-def test_transport_closes_when_request_raises(tmp_path, monkeypatch):
-    closed = []
-    original_exit = httpx.HTTPTransport.__exit__
-    def exiting(self, *args):
-        original_exit(self, *args)
-        closed.append(self)
-    def fail(self, request):
-        raise httpx.ConnectError("synthetic", request=request)
-    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fail)
-    monkeypatch.setattr(httpx.HTTPTransport, "__exit__", exiting)
+def test_a_failed_request_leaves_the_client_usable(tmp_path, monkeypatch):
+    answers = [httpx.ConnectError("synthetic"), httpx.Response(200, json={"result": [{"ok": 1}]})]
+    def handle(self, request):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle)
+    client = ArcadeClient(settings(tmp_path))
     with pytest.raises(ArcadeError, match="ConnectError"):
-        ArcadeClient(settings(tmp_path)).query("SELECT 1")
-    assert len(closed) == 1
+        client.query("SELECT 1")
+    assert client.query("SELECT 1") == [{"ok": 1}]
+    client.close()
+
+
+def test_only_a_read_outside_a_transaction_is_sent_again_when_a_kept_connection_is_dead(tmp_path):
+    seen = []
+    def handle(request):
+        seen.append(request.url.path.split("/")[3])
+        if len(seen) % 2:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.", request=request)
+        return httpx.Response(200, json={"result": []}, headers={"arcadedb-session-id": "tx"})
+    client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(handle))
+    assert client.query("SELECT 1") == [] and seen == ["query", "query"]
+    seen.clear()
+    with pytest.raises(ArcadeError, match="RemoteProtocolError"):
+        client.command("UPDATE x SET y=1")  # it may have been applied: never repeated
+    assert seen == ["command"]
+    seen[:] = ["skip"]  # the next request succeeds, the one after it fails
+    with pytest.raises(ArcadeError, match="RemoteProtocolError"):
+        with client.transaction() as tx:
+            tx.query("SELECT 1")  # inside a transaction nothing is repeated either
+    assert seen == ["skip", "begin", "query", "rollback"]
+
+
+def test_a_forked_process_does_not_use_the_connections_of_its_parent(tmp_path, monkeypatch):
+    import cairnmind.arcade as arcade
+
+    client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"result": []})))
+    client.query("SELECT 1")
+    first = client._connections.client()
+    assert client._connections.client() is first
+    monkeypatch.setattr(arcade.os, "getpid", lambda: -1)
+    assert client._connections.client() is not first
+
+
+def test_threads_share_the_kept_connections_of_one_client(tmp_path):
+    seen = []
+    def handle(request):
+        seen.append(request.headers.get("arcadedb-session-id"))
+        return httpx.Response(200, json={"result": []})
+    client = ArcadeClient(settings(tmp_path), transport=httpx.MockTransport(handle))
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        assert list(executor.map(lambda n: client.query("SELECT 1"), range(64))) == [[]] * 64
+    assert seen == [None] * 64
 
 
 def test_transaction_headers_are_scoped_and_nested_transaction_reuses_session(tmp_path):
