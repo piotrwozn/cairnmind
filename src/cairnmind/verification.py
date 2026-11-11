@@ -731,13 +731,16 @@ def criteria_status(store, task, worktree=None, *, capture=None, reader=None) ->
         mine = [r for r in local if r.get("profile_id") == profile_id]
         if not mine:
             return "machine_missing", None, "the check has not been run in this worktree"
+        candidates = [r for r in mine if r.get("task_definition_hash") == definition and r.get("profile_hash") == profile["hash"]]
+        if not candidates:
+            # Decided without reading the tree: no run was made for this definition and profile.
+            return "machine_stale", None, "no passed run matches the current code, profile and task definition"
         key = tuple(profile["extra_inputs"])
         if key not in captured:
             captured[key] = take(store, task["project_id"], root, profile["extra_inputs"])
         current = captured[key]
         if current["status"] != "fresh":
-            return "machine_unknown", None, "; ".join(current["unknowns"]) or "the code state cannot be read"
-        candidates = [r for r in mine if r.get("task_definition_hash") == definition and r.get("profile_hash") == profile["hash"]]
+            return "machine_unknown", None, ("; ".join(current["unknowns"]) or "the code state cannot be read")[:300]
         # The latest run on this exact tree decides, as for the task as a whole.
         run = next((r for r in candidates if r.get("code_before", {}).get("fingerprint") == current["fingerprint"]), None)
         if (run and run.get("passed") is True and run.get("outcome") == "completed" and run.get("returncode") == 0
@@ -766,8 +769,10 @@ def verification_status(store, task, worktree=None, *, capture=None) -> dict:
     except ValueError as exc:
         criteria = [{"text": text, "check": None, "status": "machine_unknown", "run_id": None, "reason": str(exc)}
                     for text in task.get("metadata", {}).get("acceptance_criteria", []) if isinstance(text, str)]
-    if criteria:
-        result["criteria"] = criteria
+    if criteria and task.get("metadata", {}).get("criterion_checks"):
+        # Only for a task that links a criterion to a check: every other task answers as it always did.
+        result["criteria"] = [{**row, "text": row["text"][:500]} for row in criteria[:20]]
+        result["criteria_total"] = len(criteria)
     return result
 
 

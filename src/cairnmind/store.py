@@ -40,6 +40,25 @@ MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
 _PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
+def valid_argv(argv) -> bool:
+    """A command that may be proposed for a check: a short list of non-empty strings."""
+    return (isinstance(argv, list) and 0 < len(argv) <= 64
+            and all(isinstance(part, str) and part and "\0" not in part and len(part) <= 2000 for part in argv))
+
+
+def validate_criterion_links(metadata: dict, criteria: list) -> None:
+    """The stored form of the links: every link belongs to a criterion, every proposal to a linked check."""
+    links = metadata.get("criterion_checks", {})
+    if (not isinstance(links, dict) or ("criterion_checks" in metadata and not links)
+            or not all(text in criteria and isinstance(check, str) and _PROFILE_NAME.fullmatch(check)
+                       for text, check in links.items())):
+        raise ValueError("criterion_checks must link acceptance criteria to check profile names")
+    proposals = metadata.get("check_proposals", {})
+    if (not isinstance(proposals, dict) or ("check_proposals" in metadata and not proposals)
+            or not all(name in links.values() and valid_argv(argv) for name, argv in proposals.items())):
+        raise ValueError("check_proposals must give an argument list for a linked check")
+
+
 def normalise_criteria(metadata: dict) -> None:
     """Accept a criterion written as {text, check, argv} and store the link beside the text.
 
@@ -49,12 +68,12 @@ def normalise_criteria(metadata: dict) -> None:
     (profile -> argument list). A proposal is text for a person to review: nothing runs it.
     """
     criteria = metadata.get("acceptance_criteria")
-    if not isinstance(criteria, list):
-        return
-    links = metadata.get("criterion_checks") if isinstance(metadata.get("criterion_checks"), dict) else {}
-    proposals = metadata.get("check_proposals") if isinstance(metadata.get("check_proposals"), dict) else {}
+    links, proposals = metadata.get("criterion_checks", {}), metadata.get("check_proposals", {})
+    if not isinstance(criteria, list) or not isinstance(links, dict) or not isinstance(proposals, dict):
+        return  # left as it is for the validation that follows to refuse
+    links, proposals = dict(links), dict(proposals)
     if any(isinstance(item, dict) for item in criteria):
-        texts, links, given = [], {}, {}
+        texts = []
         for item in criteria:
             if isinstance(item, str):
                 texts.append(item)
@@ -67,15 +86,16 @@ def normalise_criteria(metadata: dict) -> None:
                 if argv is not None:
                     raise ValueError("A criterion can propose a command only for a named check")
                 continue
+            if not isinstance(check, str) or not _PROFILE_NAME.fullmatch(check):
+                raise ValueError("criterion_checks must link acceptance criteria to check profile names")
             if links.get(text, check) != check:
                 raise ValueError("One criterion cannot be linked to two checks")
             links[text] = check
             if argv is not None:
-                if given.get(check, argv) != argv:
+                if proposals.get(check, argv) != argv:
                     raise ValueError("Two different commands were proposed for one check")
-                given[check] = argv
+                proposals[check] = argv
         metadata["acceptance_criteria"] = texts
-        proposals = {**{name: argv for name, argv in proposals.items()}, **given}
     # A link or a proposal whose criterion or check is gone has nothing left to describe.
     links = {text: check for text, check in links.items() if text in metadata["acceptance_criteria"]}
     proposals = {name: argv for name, argv in proposals.items() if name in links.values()}
@@ -84,6 +104,8 @@ def normalise_criteria(metadata: dict) -> None:
             metadata[key] = value
         else:
             metadata.pop(key, None)
+
+
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _JOB_UNSET = object()
@@ -451,16 +473,7 @@ class Store:
             values = metadata.get(key, [])
             if not isinstance(values, list) or not all(isinstance(x, str) and x.strip() for x in values):
                 raise ValueError(f"{key} must be a list of nonempty strings")
-        links = metadata.get("criterion_checks", {})
-        if (not isinstance(links, dict) or not all(text in criteria and isinstance(check, str) and _PROFILE_NAME.fullmatch(check)
-                                                    for text, check in links.items())):
-            raise ValueError("criterion_checks must link acceptance criteria to check profile names")
-        proposals = metadata.get("check_proposals", {})
-        if (not isinstance(proposals, dict) or not all(
-                name in links.values() and isinstance(argv, list) and argv and len(argv) <= 64
-                and all(isinstance(part, str) and part and "\0" not in part and len(part) <= 2000 for part in argv)
-                for name, argv in proposals.items())):
-            raise ValueError("check_proposals must give an argument list for a linked check")
+        validate_criterion_links(metadata, criteria)
         for run_id in metadata.get("check_run_ids", []):
             run = _one(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
             if not run or run.get("project_id") != project_id or run.get("task_id") != record_id:
@@ -629,6 +642,12 @@ class Store:
                        and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
         if kind == "task":
+            if "acceptance_criteria" in updates:
+                # A criteria list that is declared again says everything about its links: what the
+                # record held before is dropped unless the caller sends the stored form as well.
+                for stored in ("criterion_checks", "check_proposals"):
+                    if stored not in updates:
+                        metadata.pop(stored, None)
             normalise_criteria(metadata)
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
@@ -652,7 +671,11 @@ class Store:
                     raise ValueError("Managed task definitions and membership must be changed through PlanManager")
                 if type(record.get("expected_plan_version")) is not int or record["expected_plan_version"] < 1:
                     raise ValueError("Managed task updates require expected_plan_version")
-            if definition_changed:
+            # A proposed command is not part of what a task is: changing one keeps reported evidence.
+            proof_changed = bool(old) and (content != old["content"] or key != old["key"] or any(
+                metadata.get(k) != old.get("metadata", {}).get(k)
+                for k in MANAGED_DEFINITION_METADATA_FIELDS - {"check_proposals"}))
+            if proof_changed:
                 for field in ("acceptance_passed", "acceptance_source_ids", "test_passed", "test_source_ids", "review_passed", "review_source_ids"):
                     if field not in updates:
                         metadata.pop(field, None)

@@ -210,10 +210,10 @@ A plan can say which check proves each acceptance criterion. Write a criterion a
 
 ```bash
 cairnmind plan contract my-app
-cairnmind plan contract my-app --write
+cairnmind plan contract my-app --write 3f9a1c0b7d2e
 ```
 
-The first command lists every criterion of the active plan with how it stands (`machine_fresh` when a passed run of its check matches the current code, `machine_stale`, `machine_missing`, `machine_unknown`, or `manual_pending` and `manual_reported` for a criterion with no check) and shows, as a diff, the profiles it would add to `.cairnmind/checks.toml` from the proposed commands. `--write` adds exactly that. Neither runs anything: a proposed command is text until you run the check yourself, and a profile that is already declared is never changed. `check_status` and `cairnmind plan next` report the same per-criterion list.
+The first command lists every criterion of the active plan with how it stands (`machine_fresh` when a passed run of its check matches the current code, `machine_stale`, `machine_missing`, `machine_unknown`, or `manual_pending` and `manual_reported` for a criterion with no check) and shows, as a diff, the profiles it would add to `.cairnmind/checks.toml` from the proposed commands. To add them, repeat the command with `--write CODE`, where the code is printed under the diff and names exactly the proposal you looked at; if the plan or the file changed since, the write is refused. Adding profiles changes the worktree, so check runs made before count as stale. Neither form runs anything: a proposed command is text until you run the check yourself, and a profile that is already declared is never changed. `check_status` and `cairnmind plan next` report the same per-criterion list.
 
 After a code change, `cairnmind impact` lists the records that are linked to what changed since a commit, with the reason for each link:
 

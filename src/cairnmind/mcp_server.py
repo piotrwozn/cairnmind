@@ -45,8 +45,7 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
     if isinstance(task, dict):
         metadata = task.get("metadata") or {}
         fields = ("plan_ref", "step_key", "state", "requires_test", "requires_review",
-                  "required_profiles", "depends_on", "acceptance_criteria", "criterion_checks", "worktree",
-                  "check_run_ids")
+                  "required_profiles", "depends_on", "acceptance_criteria", "worktree", "check_run_ids")
         limited = {}
         truncated = []
         for field in fields:
@@ -63,19 +62,20 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
                 elif isinstance(value, str) and len(value) > 1000:
                     value = value[:1000]
                     truncated.append(field)
-                elif isinstance(value, dict):
-                    # Links from a criterion to its check: bounded like the criteria they belong to.
-                    clipped = {str(key)[:500]: (item[:100] if isinstance(item, str) else item)
-                               for key, item in list(value.items())[:20]}
-                    if clipped != value:
-                        truncated.append(field)
-                    value = clipped
                 limited[field] = value
         for field in ("acceptance_criteria", "depends_on", "check_run_ids", "required_profiles"):
             while len(json.dumps(limited, ensure_ascii=False)) > 7000 and limited.get(field):
                 limited[field] = limited[field][:-1]
                 if field not in truncated:
                     truncated.append(field)
+        links = metadata.get("criterion_checks")
+        if isinstance(links, dict) and links:
+            # The check of each criterion that is shown, in the same order; None where there is none.
+            # Built after the list was bounded, so the two always agree and no text is repeated.
+            full = metadata.get("acceptance_criteria") if isinstance(metadata.get("acceptance_criteria"), list) else []
+            shown = len(limited.get("acceptance_criteria") or [])
+            limited["criterion_checks"] = [links[text][:100] if isinstance(links.get(text), str) else None
+                                           for text in full[:shown] if isinstance(text, str)]
         content = str(task.get("content", ""))
         task_view = {"id": task.get("id"), "version": task.get("version"),
                      "content": content[:4000], "content_truncated": len(content) > 4000,

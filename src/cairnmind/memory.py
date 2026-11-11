@@ -20,7 +20,8 @@ import tempfile
 from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
-from .store import KINDS, STATUSES, TASK_STATES, _clean, _insert, _json, _now, _one, _set
+from .store import (KINDS, STATUSES, TASK_STATES, _clean, _insert, _json, _now, _one, _set,
+                    validate_criterion_links)
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
 # earlier name are read as they are: rewriting one would change its identifier and its history.
@@ -181,14 +182,11 @@ def _validate(payload, project_id, active_plan_id=None):
         profiles = metadata.get("required_profiles", [])
         if not isinstance(profiles, list) or not all(isinstance(p, str) and p.strip() for p in profiles):
             raise ValueError("Invalid memory required check profiles")
-        links = metadata.get("criterion_checks", {})
-        if not isinstance(links, dict) or not all(isinstance(text, str) and isinstance(check, str) and check.strip()
-                                                  for text, check in links.items()):
-            raise ValueError("Invalid memory criterion checks")
-        proposals = metadata.get("check_proposals", {})
-        if not isinstance(proposals, dict) or not all(
-                isinstance(argv, list) and all(isinstance(part, str) for part in argv) for argv in proposals.values()):
-            raise ValueError("Invalid memory check proposals")
+        try:
+            # The same rule as for a local write: an imported record is no way around it.
+            validate_criterion_links(metadata, criteria)
+        except ValueError:
+            raise ValueError("Invalid memory criterion checks") from None
         if "step_index" in metadata and (type(metadata["step_index"]) is not int or metadata["step_index"] < 0):
             raise ValueError("Invalid memory plan step index")
         for name in ("test_source_ids", "review_source_ids", "acceptance_source_ids"):
