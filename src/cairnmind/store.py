@@ -35,9 +35,23 @@ V04_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, *V04_DOCUMENT_T
 EXPORT_TYPES = (*DOCUMENT_TYPES, "nodes", "edges")
 MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
     "plan_ref", "step_key", "required_profiles", "plan_context_hash", "depends_on", "acceptance_criteria",
-    "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals",
+    "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals", "scope",
 })
+# Definition fields that say nothing about whether a task was proven: changing one keeps reported evidence.
+ADVISORY_DEFINITION_FIELDS = frozenset({"check_proposals", "scope"})
 _PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def validate_scope(scope) -> None:
+    """The files a task says it will touch: path patterns as in an ignore file, relative to the worktree."""
+    if (not isinstance(scope, list) or len(scope) > 64
+            or not all(isinstance(pattern, str) and pattern.strip() and len(pattern) <= 500 for pattern in scope)):
+        raise ValueError("scope must be a list of at most 64 nonempty path patterns")
+    for pattern in scope:
+        parts = pattern.replace("\\", "/").split("/")
+        if pattern.startswith(("/", "!")) or "\\" in pattern or "\0" in pattern or "\n" in pattern \
+                or ".." in parts or ".git" in parts or re.match(r"^[A-Za-z]:", pattern):
+            raise ValueError("scope patterns must stay inside the worktree and cannot negate")
 
 
 def valid_argv(argv) -> bool:
@@ -474,6 +488,8 @@ class Store:
             if not isinstance(values, list) or not all(isinstance(x, str) and x.strip() for x in values):
                 raise ValueError(f"{key} must be a list of nonempty strings")
         validate_criterion_links(metadata, criteria)
+        if "scope" in metadata:
+            validate_scope(metadata["scope"])
         for run_id in metadata.get("check_run_ids", []):
             run = _one(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
             if not run or run.get("project_id") != project_id or run.get("task_id") != record_id:
@@ -674,7 +690,7 @@ class Store:
             # A proposed command is not part of what a task is: changing one keeps reported evidence.
             proof_changed = bool(old) and (content != old["content"] or key != old["key"] or any(
                 metadata.get(k) != old.get("metadata", {}).get(k)
-                for k in MANAGED_DEFINITION_METADATA_FIELDS - {"check_proposals"}))
+                for k in MANAGED_DEFINITION_METADATA_FIELDS - ADVISORY_DEFINITION_FIELDS))
             if proof_changed:
                 for field in ("acceptance_passed", "acceptance_source_ids", "test_passed", "test_source_ids", "review_passed", "review_source_ids"):
                     if field not in updates:
@@ -735,8 +751,30 @@ class Store:
         return result
 
     def remember(self, project_id, record, sources, *, conflict_review=False):
+        starting = self._starts_progress(project_id, record)
         with self.transaction() as tx:
-            return self._remember(tx, project_id, record, sources, conflict_review=conflict_review)
+            result = self._remember(tx, project_id, record, sources, conflict_review=conflict_review)
+        if starting and result.get("kind") == "task" and result["metadata"].get("state") == "in_progress" \
+                and result["metadata"].get("scope"):
+            # A scoped task starts: note the tree it starts from, for the scope-drift warning.
+            # The note is advisory and local; failing to take it must never fail the write.
+            try:
+                from .scope import record_baseline
+                record_baseline(self, result, record.get("worktree") if isinstance(record, dict) else None)
+            except Exception:  # noqa: BLE001
+                pass
+        return result
+
+    def _starts_progress(self, project_id, record) -> bool:
+        """Whether this write moves a task into in_progress from another state, or creates it there."""
+        metadata = record.get("metadata") if isinstance(record, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("state") != "in_progress":
+            return False
+        if not record.get("id"):
+            return record.get("kind") == "task"
+        old = self.query("SELECT kind,metadata FROM records WHERE id=:id AND project_id=:project",
+                         {"id": record["id"], "project": project_id})
+        return bool(old) and old[0].get("kind") == "task" and (old[0].get("metadata") or {}).get("state") != "in_progress"
 
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):

@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .store import (KINDS, STATUSES, TASK_STATES, _clean, _insert, _json, _now, _one, _set,
-                    validate_criterion_links)
+                    validate_criterion_links, validate_scope)
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
 # earlier name are read as they are: rewriting one would change its identifier and its history.
@@ -187,6 +187,11 @@ def _validate(payload, project_id, active_plan_id=None):
             validate_criterion_links(metadata, criteria)
         except ValueError:
             raise ValueError("Invalid memory criterion checks") from None
+        if "scope" in metadata:
+            try:
+                validate_scope(metadata["scope"])
+            except ValueError:
+                raise ValueError("Invalid memory task scope") from None
         if "step_index" in metadata and (type(metadata["step_index"]) is not int or metadata["step_index"] < 0):
             raise ValueError("Invalid memory plan step index")
         for name in ("test_source_ids", "review_source_ids", "acceptance_source_ids"):

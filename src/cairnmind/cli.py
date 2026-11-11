@@ -678,8 +678,12 @@ def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, work
     scope = actor_scope(store, pid, worktree)
     result = PlanManager(store).next_task(pid, plan_id, scope)
     if result.get("task"):
+        from cairnmind.scope import drift_warning
         from cairnmind.verification import verification_status
         result["verification"] = verification_status(store, result["task"], scope)
+        warning = drift_warning(result["verification"].get("scope_drift"))
+        if warning:
+            result["warnings"] = [warning]
     output(result)
 
 

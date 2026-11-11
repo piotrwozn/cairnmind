@@ -585,7 +585,10 @@ is only an old grouping label. Progress updates through `remember` require task
 named check proves it; `check_status` then lists each criterion as `machine_fresh`,
 waiting for its check, or `manual_pending`. You may add `"argv": [...]` to propose the
 command of a check that is not declared yet: it is shown to the user for review and
-never run for you. Resolve version conflicts rather than overwriting work.
+never run for you. A step may declare `scope`, a list of path patterns it means
+to touch (`["src/auth/**"]`); once it is `in_progress`, `next_task` and `check_status`
+warn about files changed outside it. That is a warning to weigh, never a block.
+Resolve version conflicts rather than overwriting work.
 
 Configure named checks in `.cairnmind/checks.toml`; a project that still has
 `.devbrain/checks.toml` keeps using that file, never both. Run them ONLY through the
