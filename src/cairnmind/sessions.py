@@ -744,6 +744,9 @@ class SessionManager:
                       "required_profiles": task.get("metadata", {}).get("required_profiles", []),
                       "requires_test": task.get("metadata", {}).get("requires_test", False),
                       "requires_review": task.get("metadata", {}).get("requires_review", False)} if task else None)
+        if task and isinstance(task.get("metadata", {}).get("scope"), list) and task["metadata"]["scope"]:
+            # Only for a task that declares one, so every other packet stays byte for byte what it was.
+            task_view["scope"] = [str(pattern)[:500] for pattern in task["metadata"]["scope"][:64]]
         previews = sorted(state["records"], key=lambda row:
                           (0 if row["kind"] == "checkpoint" else 1, row["kind"], row["id"]))[:MAX_RECORDS]
         archived_agent_history = self.store.query(

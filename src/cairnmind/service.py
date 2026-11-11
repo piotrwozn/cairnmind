@@ -695,10 +695,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             result = plans.next_task(pid, body.plan_id, scope)
             if result.get("task") and result["task"].get("metadata", {}).get("scope"):
                 from cairnmind.scope import drift_warning, scope_drift
-                try:
-                    warning = drift_warning(scope_drift(store, result["task"], scope))
-                except ValueError as exc:
-                    warning = f"Scope drift is unknown: {exc}"[:300]
+                warning = drift_warning(scope_drift(store, result["task"], scope))
                 if warning:
                     result["warnings"] = [warning]
             return result

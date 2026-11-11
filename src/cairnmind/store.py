@@ -49,9 +49,9 @@ def validate_scope(scope) -> None:
         raise ValueError("scope must be a list of at most 64 nonempty path patterns")
     for pattern in scope:
         parts = pattern.replace("\\", "/").split("/")
-        if pattern.startswith(("/", "!")) or "\\" in pattern or "\0" in pattern or "\n" in pattern \
+        if pattern.startswith(("/", "!", "#", "./")) or "\\" in pattern or "\0" in pattern or "\n" in pattern \
                 or ".." in parts or ".git" in parts or re.match(r"^[A-Za-z]:", pattern):
-            raise ValueError("scope patterns must stay inside the worktree and cannot negate")
+            raise ValueError("scope patterns must stay inside the worktree, cannot negate and cannot start with # or ./")
 
 
 def valid_argv(argv) -> bool:
@@ -318,11 +318,16 @@ class Store:
         with self._lock(), self.client.transaction() as native:
             tx = JournalTransaction(native)
             self._local.transaction = tx
+            self._local.after_commit = pending = []
             try:
                 yield tx
                 tx.flush()
             finally:
                 del self._local.transaction
+                del self._local.after_commit
+        # Reached only when the transaction committed; the writer lock is no longer held.
+        for call in pending:
+            call()
 
     def init(self):
         with self._lock():
@@ -488,8 +493,6 @@ class Store:
             if not isinstance(values, list) or not all(isinstance(x, str) and x.strip() for x in values):
                 raise ValueError(f"{key} must be a list of nonempty strings")
         validate_criterion_links(metadata, criteria)
-        if "scope" in metadata:
-            validate_scope(metadata["scope"])
         for run_id in metadata.get("check_run_ids", []):
             run = _one(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
             if not run or run.get("project_id") != project_id or run.get("task_id") != record_id:
@@ -665,6 +668,10 @@ class Store:
                     if stored not in updates:
                         metadata.pop(stored, None)
             normalise_criteria(metadata)
+            # Checked when it is set, not whenever the task is written: a task that already carries
+            # something else under this name stays writable, and is simply never compared.
+            if "scope" in updates and updates["scope"] != (old or {}).get("metadata", {}).get("scope"):
+                validate_scope(updates["scope"])
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
@@ -748,33 +755,26 @@ class Store:
         if managed and not managed_batch:
             from .plans import note_task_mutation
             note_task_mutation(self, tx, result, record["expected_plan_version"])
+        if kind == "task" and metadata.get("scope"):
+            before, after = (old.get("metadata", {}).get("state", "todo") if old else None), metadata.get("state")
+            change = ("start" if after == "in_progress" and before != "in_progress"
+                      else "finish" if after == "done" and before not in (None, "done") else None)
+            if change:
+                # A scoped task starts or ends: the tree is noted for the scope-drift warning. Only after
+                # the whole write is committed and the writer lock is released, and never as part of it.
+                from .scope import note_progress
+                worktree = record.get("worktree")
+                self._after_commit(lambda: note_progress(self, result, worktree, change))
         return result
+
+    def _after_commit(self, call):
+        pending = getattr(self._local, "after_commit", None)
+        if pending is not None:
+            pending.append(call)
 
     def remember(self, project_id, record, sources, *, conflict_review=False):
-        starting = self._starts_progress(project_id, record)
         with self.transaction() as tx:
-            result = self._remember(tx, project_id, record, sources, conflict_review=conflict_review)
-        if starting and result.get("kind") == "task" and result["metadata"].get("state") == "in_progress" \
-                and result["metadata"].get("scope"):
-            # A scoped task starts: note the tree it starts from, for the scope-drift warning.
-            # The note is advisory and local; failing to take it must never fail the write.
-            try:
-                from .scope import record_baseline
-                record_baseline(self, result, record.get("worktree") if isinstance(record, dict) else None)
-            except Exception:  # noqa: BLE001
-                pass
-        return result
-
-    def _starts_progress(self, project_id, record) -> bool:
-        """Whether this write moves a task into in_progress from another state, or creates it there."""
-        metadata = record.get("metadata") if isinstance(record, dict) else None
-        if not isinstance(metadata, dict) or metadata.get("state") != "in_progress":
-            return False
-        if not record.get("id"):
-            return record.get("kind") == "task"
-        old = self.query("SELECT kind,metadata FROM records WHERE id=:id AND project_id=:project",
-                         {"id": record["id"], "project": project_id})
-        return bool(old) and old[0].get("kind") == "task" and (old[0].get("metadata") or {}).get("state") != "in_progress"
+            return self._remember(tx, project_id, record, sources, conflict_review=conflict_review)
 
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):

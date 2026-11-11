@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 
@@ -13,6 +14,7 @@ from cairnmind.config import Settings
 from cairnmind.memory import MemoryManager
 from cairnmind.plans import PlanManager
 from cairnmind.scope import drift_warning, record_baseline, scope_drift
+import cairnmind.scope as scope_module
 from cairnmind.store import Store, _clean
 from cairnmind.verification import task_definition_hash, verification_status
 
@@ -49,10 +51,14 @@ def scoped_plan(store, pid, root, scope=("src/auth/**",), key="scoped"):
     return saved["plan"], next(task for task in saved["tasks"] if task["metadata"]["step_key"] == "auth")
 
 
-def start(store, pid, root, saved, task):
+def move(store, pid, root, saved, task, state):
     plan = PlanManager(store).get(pid, saved["id"])["plan"]
     return store.remember(pid, {"id": task["id"], "expected_version": task["version"], "expected_plan_version": plan["version"],
-                                "metadata": {"state": "in_progress"}, "worktree": str(root)}, task["source_ids"])
+                                "metadata": {"state": state}, "worktree": str(root)}, task["source_ids"])
+
+
+def start(store, pid, root, saved, task):
+    return move(store, pid, root, saved, task, "in_progress")
 
 
 def test_a_file_edited_outside_the_scope_is_named(workspace):
@@ -99,7 +105,11 @@ def test_a_file_that_was_already_modified_when_the_task_started_is_not_reported(
 def test_without_a_note_of_the_start_the_answer_is_unknown_never_in_scope(workspace):
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root)
-    drift = scope_drift(store, task, root)  # the task has not started
+    drift = scope_drift(store, task, root)  # the task has not started: nothing to say, and no warning
+    assert drift["status"] == "not_started" and drift_warning(drift) is None
+    task = start(store, pid, root, saved, task)
+    next((store.data_dir / "scope-baselines").glob("*.json")).unlink()  # as on another machine
+    drift = scope_drift(store, task, root)
     assert drift["status"] == "unknown" and "was not noted when the task started" in drift["reasons"][0]
     assert drift_warning(drift).startswith("Scope drift is unknown:")
     unscoped = next(row for row in PlanManager(store).get(pid, saved["id"])["tasks"] if row["metadata"]["step_key"] == "other")
@@ -131,7 +141,7 @@ def test_the_note_stays_on_this_machine(workspace):
     saved, task = scoped_plan(store, pid, root)
     task = start(store, pid, root, saved, task)
     note = next((store.data_dir / "scope-baselines").glob("*.json")).read_text()
-    digest = json.loads(note)["paths"]["src/auth/login.py"]
+    digest = json.loads(note)["paths"]["src/auth/login.py"][3]
     MemoryManager(store).snapshot(pid)
     exported = "".join(path.read_text() for path in (root / ".memory").rglob("*.json"))
     assert digest not in exported and "scope-baselines" not in exported
@@ -173,7 +183,7 @@ def test_scope_is_part_of_the_plan_but_not_of_what_a_check_proved(workspace):
 
 
 @pytest.mark.parametrize("scope", [["/etc/passwd"], ["../outside/**"], ["src/.git/config"], ["!src/auth/**"], [""], "src/**",
-                                   ["a\nb"], ["C:\\\\x"], ["x"] * 65, [3]])
+                                   ["a\nb"], ["C:\\\\x"], ["x"] * 65, [3], ["./src/**"], ["#src"]])
 def test_a_malformed_scope_is_refused(workspace, scope):
     store, pid, root, settings = workspace
     note = store.snapshot(pid, "note://x", "x", "note")
@@ -191,9 +201,12 @@ def test_a_note_that_cannot_be_trusted_gives_unknown(workspace):
     assert scope_drift(store, task, root)["status"] == "unknown"
     note.write_text("not json")
     assert scope_drift(store, task, root)["status"] == "unknown"
-    note.write_text(json.dumps({**damaged, "status": "unknown", "unknowns": ["unmerged Git input: x"]}))
-    drift = scope_drift(store, task, root)
-    assert drift["status"] == "unknown" and drift["reasons"] == ["unmerged Git input: x"]
+    for paths in ({name: "0" * 24 for name in damaged["paths"]}, [], {"src/auth/login.py": [1, 2]}, None):
+        note.write_text(json.dumps({**damaged, "paths": paths}))  # an earlier or a broken form
+        assert scope_drift(store, task, root)["status"] == "unknown"
+    note.write_text(json.dumps([1, 2]))
+    assert scope_drift(store, task, root)["status"] == "unknown"
+    assert verification_status(store, task, root)["scope_drift"]["status"] == "unknown"
 
 
 def test_an_unmanaged_task_and_a_direct_note(workspace):
@@ -223,3 +236,165 @@ def test_plan_next_and_the_model_view_carry_the_warning(workspace, monkeypatch):
     view = _next_task_view({**PlanManager(store).next_task(pid, None, str(root)), "warnings": result["warnings"]})
     assert view["warnings"] == result["warnings"] and view["task"]["metadata"]["scope"] == ["src/auth/**"]
     assert "warnings" not in _next_task_view(PlanManager(store).next_task(pid, None, str(root)))
+
+
+def test_staging_or_committing_a_file_is_not_a_change(workspace):
+    store, pid, root, settings = workspace
+    (root / "src/billing/invoice.py").write_text("RATE = 5\n")  # modified and unstaged when the task starts
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+    git(root, "add", "src/billing/invoice.py")
+    assert scope_drift(store, task, root)["status"] == "in_scope"
+    git(root, "commit", "-qm", "somebody else's work")
+    drift = scope_drift(store, task, root)
+    assert (drift["status"], drift["changed"]) == ("in_scope", 0)
+    os.utime(root / "src/billing/invoice.py", ns=(1, 1))  # touched, same content
+    assert scope_drift(store, task, root)["status"] == "in_scope"
+    (root / "src/billing/invoice.py").chmod(0o755)
+    assert scope_drift(store, task, root)["out_of_scope"] == ["src/billing/invoice.py"]
+
+
+def test_an_unchanged_tree_is_compared_without_reading_a_file(workspace, monkeypatch):
+    import cairnmind.verification as verification
+
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+    read = []
+    real = verification._file_hash
+    monkeypatch.setattr(verification, "_file_hash", lambda path: read.append(path) or real(path))
+    assert scope_drift(store, task, root)["status"] == "in_scope" and read == []
+    (root / "src/billing/invoice.py").write_text("RATE = 2\n")
+    assert scope_drift(store, task, root)["status"] == "out_of_scope" and [item.name for item in read] == ["invoice.py"]
+
+
+def test_going_back_to_work_keeps_the_first_note(workspace):
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+    (root / "src/billing/invoice.py").write_text("RATE = 2\n")
+    task = move(store, pid, root, saved, task, "needs_review")
+    assert scope_drift(store, task, root)["status"] == "out_of_scope"
+    task = start(store, pid, root, saved, task)
+    assert scope_drift(store, task, root)["out_of_scope"] == ["src/billing/invoice.py"]
+
+
+def test_a_finished_task_keeps_the_answer_it_had_when_it_was_done(workspace):
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+    (root / "src/auth/login.py").write_text("def login():\n    return False\n")
+    task = move(store, pid, root, saved, task, "done")
+    (root / "src/billing/invoice.py").write_text("RATE = 2\n")  # the next task's work
+    drift = scope_drift(store, task, root)
+    assert (drift["status"], drift["changed"], drift["out_of_scope"]) == ("in_scope", 1, []) and drift["finished_at"]
+    assert drift_warning(drift) is None
+    task = start(store, pid, root, saved, task)  # reopened: a new start, from the tree as it is now
+    assert scope_drift(store, task, root)["changed"] == 0
+    (root / "docs/login.md").write_text("# changed\n")
+    assert scope_drift(store, task, root)["out_of_scope"] == ["docs/login.md"]
+
+
+def test_files_cairnmind_writes_itself_are_not_drift(workspace):
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+    (root / ".cairnmind").mkdir()
+    (root / ".cairnmind/checks.toml").write_text("[profiles.unit]\nargv = ['true']\n")
+    (root / ".codex").mkdir()
+    for name in ("AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml", "AGENTS.md.cairnmind-backup-1"):
+        (root / name).write_text("written by an installation\n")
+    assert scope_drift(store, task, root)["status"] == "in_scope"
+    (root / ".codex/other.toml").write_text("mine\n")
+    assert scope_drift(store, task, root)["out_of_scope"] == [".codex/other.toml"]
+
+
+def test_a_file_name_that_is_not_text_is_shown_safely(workspace):
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+    (root / os.fsdecode(b"src/billing/\xff\x1b[31mred.py")).write_text("x\n")
+    drift = scope_drift(store, task, root)
+    assert drift["status"] == "out_of_scope" and drift["out_of_scope_total"] == 1
+    json.dumps(drift).encode("utf-8")  # no lone surrogate
+    shown = drift["out_of_scope"][0] + drift_warning(drift)
+    assert "\x1b" not in shown and "\n" not in shown
+    assert verification_status(store, task, root)["scope_drift"] == drift
+
+
+def test_the_note_is_taken_only_after_the_write_is_committed(workspace):
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    folder = store.data_dir / "scope-baselines"
+    with pytest.raises(RuntimeError):
+        with store.transaction():
+            start(store, pid, root, saved, task)
+            assert not folder.exists()
+            raise RuntimeError("the write is abandoned")
+    assert not folder.exists()
+    with store.transaction():
+        task = start(store, pid, root, saved, task)
+        assert not folder.exists()  # the writer lock is still held here
+    assert len(list(folder.glob("*.json"))) == 1
+
+
+def test_a_task_that_already_carries_something_else_as_scope_stays_writable(workspace, monkeypatch):
+    store, pid, root, settings = workspace
+    note = store.snapshot(pid, "note://x", "x", "note")
+    with monkeypatch.context() as patch:  # as written by a version that knew no rule for this name
+        patch.setattr("cairnmind.store.validate_scope", lambda scope: None)
+        task = store.remember(pid, {"kind": "task", "content": "Old", "metadata": {"scope": "the whole project"}}, [note["id"]])
+    task = store.remember(pid, {"id": task["id"], "expected_version": task["version"],
+                                "metadata": {"state": "in_progress"}}, [note["id"]])
+    assert task["metadata"]["scope"] == "the whole project"
+    assert scope_drift(store, task) is None and "scope_drift" not in verification_status(store, task)
+    assert not (store.data_dir / "scope-baselines").exists()
+    with pytest.raises(ValueError, match="scope"):
+        store.remember(pid, {"id": task["id"], "expected_version": task["version"], "metadata": {"scope": "src"}}, [note["id"]])
+
+
+def test_old_notes_of_finished_tasks_are_removed_and_open_ones_are_kept(workspace):
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+    folder = store.data_dir / "scope-baselines"
+    mine = next(folder.glob("*.json"))
+    (folder / "finished.json").write_text(json.dumps({"paths": {}, "final": {"status": "in_scope"}}))
+    (folder / ".note-left").write_text("{")
+    for item in folder.iterdir():
+        os.utime(item, (1, 1))
+    note = store.snapshot(pid, "note://x", "x", "note")
+    store.remember(pid, {"kind": "task", "content": "Another", "metadata": {"state": "in_progress", "scope": ["docs/**"]}},
+                   [note["id"]])
+    assert mine.exists() and not (folder / "finished.json").exists() and not (folder / ".note-left").exists()
+    assert len(list(folder.glob("*.json"))) == 2
+
+
+def test_a_long_scope_fits_the_model_view_and_the_brief_and_contract_say_the_warning(workspace):
+    from cairnmind.brief import _verification
+    from cairnmind.contract import build_contract
+    from cairnmind.mcp_server import _next_task_view
+
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root, scope=["src/auth/**"] + [f"docs/{'x' * 480}{n}/**" for n in range(63)])
+    view = _next_task_view(PlanManager(store).next_task(pid, None, str(root)))
+    assert len(json.dumps(view["task"]["metadata"])) <= 7000 and "scope" in view["task"]["metadata_truncated_fields"]
+    task = start(store, pid, root, saved, task)
+    assert all("scope" not in line for _, line in _verification(store, [task], root))
+    (root / "src/billing/invoice.py").write_text("RATE = 2\n")
+    assert any("1 changed file outside the task's scope: src/billing/invoice.py" in line
+               for _, line in _verification(store, [task], root))
+    contract = build_contract(store, pid, worktree=str(root))
+    assert "1 changed file outside the task's scope: src/billing/invoice.py" in contract["text"]
+
+
+def test_a_worktree_that_cannot_be_read_gives_unknown(workspace, monkeypatch):
+    store, pid, root, settings = workspace
+    saved, task = scoped_plan(store, pid, root)
+    task = start(store, pid, root, saved, task)
+
+    def slow(*args, **kwargs):
+        raise subprocess.TimeoutExpired("git", 20)
+    monkeypatch.setattr(scope_module.subprocess, "run", slow)
+    drift = verification_status(store, task, root)["scope_drift"]
+    assert drift["status"] == "unknown" and "cannot be read" in drift["reasons"][0]
