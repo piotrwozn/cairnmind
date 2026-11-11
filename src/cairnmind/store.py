@@ -35,9 +35,28 @@ V04_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, *V04_DOCUMENT_T
 EXPORT_TYPES = (*DOCUMENT_TYPES, "nodes", "edges")
 MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
     "plan_ref", "step_key", "required_profiles", "plan_context_hash", "depends_on", "acceptance_criteria",
-    "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals",
+    "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals", "scope",
 })
+# Definition fields that say nothing about whether a task was proven: changing one keeps reported evidence.
+ADVISORY_DEFINITION_FIELDS = frozenset({"check_proposals", "scope"})
 _PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def validate_scope(scope) -> None:
+    """The files a task says it will touch: path patterns as in an ignore file, relative to the worktree."""
+    if (not isinstance(scope, list) or len(scope) > 64
+            or not all(isinstance(pattern, str) and pattern.strip() and len(pattern) <= 500 for pattern in scope)):
+        raise ValueError("scope must be a list of at most 64 nonempty path patterns")
+    for pattern in scope:
+        parts = pattern.replace("\\", "/").split("/")
+        if pattern.startswith(("/", "!", "#", "./")) or "\\" in pattern or "\0" in pattern or "\n" in pattern \
+                or ".." in parts or ".git" in parts or re.match(r"^[A-Za-z]:", pattern):
+            raise ValueError("scope patterns must stay inside the worktree, cannot negate and cannot start with # or ./")
+    try:
+        import pathspec
+        pathspec.GitIgnoreSpec.from_lines(scope)
+    except Exception as exc:  # noqa: BLE001 - the library raises more than one kind of error for a bad pattern
+        raise ValueError(f"a scope pattern cannot be read: {str(exc)[:200]}") from None
 
 
 def valid_argv(argv) -> bool:
@@ -304,11 +323,16 @@ class Store:
         with self._lock(), self.client.transaction() as native:
             tx = JournalTransaction(native)
             self._local.transaction = tx
+            self._local.after_commit = pending = []
             try:
                 yield tx
                 tx.flush()
             finally:
                 del self._local.transaction
+                del self._local.after_commit
+        # Reached only when the transaction committed; the writer lock is no longer held.
+        for call in pending:
+            call()
 
     def init(self):
         with self._lock():
@@ -649,6 +673,10 @@ class Store:
                     if stored not in updates:
                         metadata.pop(stored, None)
             normalise_criteria(metadata)
+            # Checked when it is set, not whenever the task is written: a task that already carries
+            # something else under this name stays writable, and is simply never compared.
+            if "scope" in updates and updates["scope"] != (old or {}).get("metadata", {}).get("scope"):
+                validate_scope(updates["scope"])
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
@@ -674,7 +702,7 @@ class Store:
             # A proposed command is not part of what a task is: changing one keeps reported evidence.
             proof_changed = bool(old) and (content != old["content"] or key != old["key"] or any(
                 metadata.get(k) != old.get("metadata", {}).get(k)
-                for k in MANAGED_DEFINITION_METADATA_FIELDS - {"check_proposals"}))
+                for k in MANAGED_DEFINITION_METADATA_FIELDS - ADVISORY_DEFINITION_FIELDS))
             if proof_changed:
                 for field in ("acceptance_passed", "acceptance_source_ids", "test_passed", "test_source_ids", "review_passed", "review_source_ids"):
                     if field not in updates:
@@ -732,7 +760,26 @@ class Store:
         if managed and not managed_batch:
             from .plans import note_task_mutation
             note_task_mutation(self, tx, result, record["expected_plan_version"])
+        if kind == "task" and metadata.get("scope"):
+            before, after = (old.get("metadata", {}).get("state", "todo") if old else None), metadata.get("state")
+            working = after in ("in_progress", "needs_test", "needs_review", "blocked")
+            declared_now = working and not (old and old.get("metadata", {}).get("scope"))
+            # A start is entering in_progress, taking a finished task up again, or declaring a scope
+            # on a task that is already being worked on. A note that is still open is never replaced.
+            change = ("start" if (after == "in_progress" and before != "in_progress") or (before == "done" and working)
+                      or declared_now else "finish" if after == "done" and before not in (None, "done") else None)
+            if change:
+                # A scoped task starts or ends: the tree is noted for the scope-drift warning. Only after
+                # the whole write is committed and the writer lock is released, and never as part of it.
+                from .scope import note_progress
+                worktree = record.get("worktree")
+                self._after_commit(lambda: note_progress(self, result, worktree, change))
         return result
+
+    def _after_commit(self, call):
+        pending = getattr(self._local, "after_commit", None)
+        if pending is not None:
+            pending.append(call)
 
     def remember(self, project_id, record, sources, *, conflict_review=False):
         with self.transaction() as tx:

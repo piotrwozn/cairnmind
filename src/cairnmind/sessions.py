@@ -744,6 +744,9 @@ class SessionManager:
                       "required_profiles": task.get("metadata", {}).get("required_profiles", []),
                       "requires_test": task.get("metadata", {}).get("requires_test", False),
                       "requires_review": task.get("metadata", {}).get("requires_review", False)} if task else None)
+        if task and isinstance(task.get("metadata", {}).get("scope"), list) and task["metadata"]["scope"]:
+            # Only for a task that declares one, so every other packet stays byte for byte what it was.
+            task_view["scope"] = [str(pattern)[:500] for pattern in task["metadata"]["scope"][:64]]
         previews = sorted(state["records"], key=lambda row:
                           (0 if row["kind"] == "checkpoint" else 1, row["kind"], row["id"]))[:MAX_RECORDS]
         archived_agent_history = self.store.query(
@@ -794,6 +797,9 @@ class SessionManager:
                 packet["warnings"].remove(evidence_warning)
                 if not packet["warnings"]:
                     del packet["warnings"]
+        if task_view and "scope" in task_view and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
+            # Advice, like the evidence data: it must never be what makes a packet unready.
+            task_view["scope_omitted"] = len(task_view.pop("scope"))
         if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Essential goal/constraints are never silently truncated to a ready packet.
             packet["unknowns"].append("Essential resume packet exceeds the bounded context budget")

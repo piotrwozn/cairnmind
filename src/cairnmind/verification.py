@@ -773,6 +773,12 @@ def verification_status(store, task, worktree=None, *, capture=None) -> dict:
         # Only for a task that links a criterion to a check: every other task answers as it always did.
         result["criteria"] = [{**row, "text": row["text"][:500]} for row in criteria[:20]]
         result["criteria_total"] = len(criteria)
+    if task.get("metadata", {}).get("scope"):
+        # A warning beside the verification, never part of it: drift does not make a check stale or a task blocked.
+        from cairnmind.scope import scope_drift
+        drift = scope_drift(store, task, worktree)
+        if drift is not None:
+            result["scope_drift"] = drift
     return result
 
 

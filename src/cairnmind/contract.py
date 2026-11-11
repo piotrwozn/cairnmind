@@ -25,6 +25,7 @@ import tomllib
 
 from cairnmind.brief import _line, _title
 from cairnmind.plans import PlanManager, _digest
+from cairnmind.scope import drift_warning, scope_drift
 from cairnmind.store import _PROFILE_NAME, _one, valid_argv
 from cairnmind.verification import _PROFILE_PATHS, _root, criteria_status, load_profiles
 
@@ -131,6 +132,9 @@ def build_contract(store, project_id, plan_id=None, worktree=None, *, written=Fa
             proposed.setdefault(name, []).append(argv)
         steps.append({"task_id": task["id"], "step_key": metadata.get("step_key"), "title": _title(task),
                       "state": metadata.get("state", "todo"), "criteria": rows})
+        drift = scope_drift(store, task, root)
+        if drift is not None:
+            steps[-1]["scope_drift"] = drift
     additions, undecided = {}, []
     for name in sorted(wanted):
         commands = proposed.get(name, [])
@@ -169,6 +173,10 @@ def build_contract(store, project_id, plan_id=None, worktree=None, *, written=Fa
         lines.append("No step of this plan declares an acceptance criterion.")
     else:
         lines += ["", "; ".join(f"{count} {state} ({_SUMMARY[state]})" for state, count in sorted(counts.items()))]
+    drifted = [(drift_warning(step.get("scope_drift")), step) for step in steps]
+    if any(warning for warning, _ in drifted):
+        lines.append("")
+        lines += [f"{warning} | step: {step['title']}" for warning, step in drifted if warning]
     if additions:
         lines += ["", f"Proposed additions to {_line(relative)}. Review each command: it runs with your rights when "
                       "you run the check.",

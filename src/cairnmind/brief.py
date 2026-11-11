@@ -161,6 +161,10 @@ def _verification(store, tasks, root):
         basis = "reported" if status["status"] == "reported" else "machine"
         state = _line(task["metadata"].get("state", "todo"), 20)
         lines.append((basis, f"Checks {_line(status['status'], 20)}{reason}, task state {state} | task: {_title(task)}"))
+        from cairnmind.scope import drift_warning
+        warning = drift_warning(status.get("scope_drift"))
+        if warning:
+            lines.append(("machine", f"{warning} | task: {_title(task)}"))
     if len(active) > 6:
         lines.append(("machine", f"{len(active) - 6} more tasks in progress are not listed."))
     return lines
