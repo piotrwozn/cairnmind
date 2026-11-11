@@ -277,12 +277,24 @@ def test_a_stored_graph_is_remembered_only_after_it_was_compared(workspace):
     assert cold["graph_unchanged"] is True and cold["read"] == first["read"]
     (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
     assert index_project(store, pid)["graph_written"] == {"nodes": 2, "edges": 1}  # the compared graph was trusted
-    # The same, but a stored row differs from what the fingerprint promises.
-    forget_index_signature(store, pid)
-    store.command("UPDATE nodes SET label='changed elsewhere' WHERE project_id=:project AND kind='symbol' LIMIT 1",
-                  {"project": pid})
-    assert index_project(store, pid)["graph_unchanged"] is True
-    (root / "pkg" / "module_04.py").write_text("VALUE_4 = 44\n")
+    assert_same_as_a_full_run(store, pid)
+
+
+@pytest.mark.parametrize("damage", [
+    "UPDATE nodes SET label='changed elsewhere' WHERE project_id=:project AND kind='symbol' LIMIT 1",
+    "UPDATE nodes SET is_current=false WHERE project_id=:project AND kind='symbol' LIMIT 1",
+    "UPDATE edges SET status='proposed' WHERE project_id=:project AND kind='defines' LIMIT 1",
+    "UPDATE edges SET is_current=false WHERE project_id=:project AND kind='imports' LIMIT 1",
+    "DELETE FROM edges WHERE project_id=:project AND kind='calls' LIMIT 1",
+])
+def test_a_stored_graph_that_differs_from_its_fingerprint_is_replaced(workspace, damage):
+    store, pid, root = workspace
+    first = index_project(store, pid)
+    forget_index_signature(store, pid)  # a new process
+    store.command(damage, {"project": pid})
     repaired = index_project(store, pid)
+    assert repaired["graph_unchanged"] is False
     assert repaired["graph_written"] == {"nodes": first["nodes"], "edges": first["edges"]}
+    (root / "pkg" / "module_04.py").write_text("VALUE_4 = 44\n")
+    assert index_project(store, pid)["graph_written"] == {"nodes": 2, "edges": 1}
     assert_same_as_a_full_run(store, pid)

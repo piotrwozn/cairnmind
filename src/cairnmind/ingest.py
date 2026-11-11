@@ -362,8 +362,9 @@ def forget_index_signature(store, project_id: str | None = None) -> None:
     """
     _INVALIDATIONS[str(store.data_dir)] = _INVALIDATIONS.get(str(store.data_dir), 0) + 1
     for remembered in (_INDEXED, _REMEMBERED):
-        for key in [key for key in remembered if key[0] == str(store.data_dir) and project_id in (None, key[1])]:
-            del remembered[key]
+        # A snapshot of the keys: indexing in another thread adds and removes entries meanwhile.
+        for key in [key for key in list(remembered) if key[0] == str(store.data_dir) and project_id in (None, key[1])]:
+            remembered.pop(key, None)
 
 
 def forget_missing_projects(store, project_ids) -> None:
@@ -373,8 +374,8 @@ def forget_missing_projects(store, project_ids) -> None:
     """
     live = set(project_ids)
     for remembered in (_INDEXED, _REMEMBERED):
-        for key in [key for key in remembered if key[0] == str(store.data_dir) and key[1] not in live]:
-            del remembered[key]
+        for key in [key for key in list(remembered) if key[0] == str(store.data_dir) and key[1] not in live]:
+            remembered.pop(key, None)
 
 
 def index_project(store, project_id: str) -> dict:
@@ -590,25 +591,27 @@ def _graph_as_remembered(tx, project_id: str, remembered: dict | None) -> bool:
 
 
 def _stored_graph_is(store, project_id: str, nodes: dict[str, dict], edges: dict[str, dict]) -> bool:
-    """Whether the database holds exactly these graph rows, read row by row.
+    """Whether the database holds these graph rows as a full replace would write them, read row by row.
 
     The fingerprint does not cover everything the graph follows from (the root a file was
     reached through steers import resolution), so a computed graph is remembered as the
     stored one only after it was compared with what is stored.
     """
     stored_edges = store.query(
-        "SELECT id,from_id,to_id,kind,source_id FROM edges WHERE project_id=:project AND kind IN :kinds",
+        "SELECT id,from_id,to_id,kind,source_id,status,is_current FROM edges "
+        "WHERE project_id=:project AND kind IN :kinds",
         {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)})
+    # Every computed row belongs to a current source or to none, so a full replace writes it as current.
     if len(stored_edges) != len(edges) or any(
-            row["id"] not in edges or any(row.get(key) != edges[row["id"]][key]
-                                          for key in ("from_id", "to_id", "kind", "source_id"))
+            row["id"] not in edges or row.get("is_current") is not True
+            or any(row.get(key) != edges[row["id"]][key] for key in ("from_id", "to_id", "kind", "source_id", "status"))
             for row in stored_edges):
         return False
     stored_nodes = {row["id"]: row for row in store.query(
-        "SELECT id,kind,label,source_id,metadata FROM nodes WHERE project_id=:project AND kind IN :kinds",
+        "SELECT id,kind,label,source_id,metadata,is_current FROM nodes WHERE project_id=:project AND kind IN :kinds",
         {"project": project_id, "kinds": [*GRAPH_NODE_KINDS, "source"]})}
     return all(
-        identifier in stored_nodes
+        identifier in stored_nodes and stored_nodes[identifier].get("is_current") is True
         and stored_nodes[identifier].get("kind") == item["kind"] and stored_nodes[identifier].get("label") == item["label"]
         and stored_nodes[identifier].get("source_id") == item["source_id"]
         and _metadata(stored_nodes[identifier].get("metadata")) == item["metadata"]
@@ -721,12 +724,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
 
     digests = {identifier: _node_digest(item) for identifier, item in nodes.items()}
     written = {"fingerprint": fingerprint, "nodes": digests, "edges": set(edges)}
-    if unchanged:
-        # The fingerprint says the stored graph follows from these sources, but this process
-        # has not seen it. It is remembered only if it is, row for row, the computed one;
-        # otherwise the next change replaces the graph in full.
-        if _stored_graph_is(store, project_id, nodes, edges):
-            state.update(written)
+    if unchanged and _stored_graph_is(store, project_id, nodes, edges):
+        # The fingerprint said that the stored graph follows from these sources, and this
+        # process has now seen that it does, row for row. Otherwise it is replaced in full below.
+        state.update(written)
         return {"nodes": int(markers[0].get("graph_nodes") or 0),
                 "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
 
