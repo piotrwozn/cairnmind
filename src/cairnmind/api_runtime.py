@@ -66,7 +66,7 @@ class RuntimeSupervisor(NativeRuntime):
         return {**result, "adapters": {
             "native.codex": {"supported": True, "runtime": "native"},
             "native.claude": {"supported": True, "runtime": "native"},
-            "devbrain.api": {"supported": True, "runtime": "api",
+            "cairnmind.api": {"supported": True, "runtime": "api",
                               "providers": ["openai", "anthropic", "openai_compatible", "ollama"]},
             "github.copilot": {"supported": True, "runtime": "sdk"}}}
 

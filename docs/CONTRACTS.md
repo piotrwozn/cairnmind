@@ -16,7 +16,7 @@ runner evidence; reported text and legacy booleans alone cannot satisfy it.
 
 `Store` owns native transactions, project isolation, source snapshots, record
 revisions, task validation, durable job leases, native graph identity, export and
-checksummed source-complete `.devbrain.json.gz` backups. Callers use named-parameter
+checksummed source-complete `.cairnmind.json.gz` backups (`.devbrain.json.gz` up to 0.9.0; both are restored). Callers use named-parameter
 ArcadeSQL through `query`, `command` and `transaction`, never another storage engine.
 
 The local service owns the priority inference queue. End hooks write durable

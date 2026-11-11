@@ -74,7 +74,7 @@ class PaneStatus:
             return None
         try:
             result = self.manager.tmux("display-message", "-p", "-t", self.pane,
-                "#{@devbrain_workspace}\t#{@devbrain_run_id}\t#{@devbrain_takeover}", check=False)
+                "#{@cairnmind_workspace}\t#{@cairnmind_run_id}\t#{@cairnmind_takeover}", check=False)
         except (OSError, ValueError, subprocess.SubprocessError):
             return None
         fields = result.stdout.rstrip("\n").split("\t")
@@ -87,7 +87,7 @@ class PaneStatus:
             return
         if self.poll_nonce() is not None:
             try:
-                result = self.manager.tmux("set-option", "-p", "-t", self.pane, "@devbrain_control", value, check=False)
+                result = self.manager.tmux("set-option", "-p", "-t", self.pane, "@cairnmind_control", value, check=False)
                 if result.returncode == 0:
                     self.previous = value
             except (OSError, ValueError, subprocess.SubprocessError):

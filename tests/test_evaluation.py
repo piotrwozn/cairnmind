@@ -92,7 +92,7 @@ def test_twenty_real_storage_cases_measure_usage_and_leave_user_database_untouch
     monkeypatch.setenv("DEVBRAIN_ARCADE_DATABASE", settings.arcade_database)
     report = run_evaluation(settings, ollama=FixtureOllama())
     assert report["status"] == "passed"
-    assert report["devbrain_version"] == __version__
+    assert report["cairnmind_version"] == __version__
     assert report["evaluation_mode"] == "typed_caller_contract"
     assert report["factual_accuracy"] == 1
     assert report["critical_facts_passed"] is True
@@ -112,7 +112,7 @@ def test_twenty_real_storage_cases_measure_usage_and_leave_user_database_untouch
     serialized = path.read_text()
     assert settings.arcade_password not in serialized
     assert settings.token not in serialized
-    assert not any("devbrain_eval_" in str(row) for row in store.query("SELECT FROM projects"))
+    assert not any("cairnmind_eval_" in str(row) for row in store.query("SELECT FROM projects"))
 
 
 def test_critical_id_error_fails_even_above_ninety_percent(tmp_path):
@@ -288,7 +288,7 @@ def test_native_clients_missing_auth_and_no_api_key_fallback(tmp_path, monkeypat
 
 def test_native_subprocesses_use_read_only_controls_and_report_real_usage(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
-    settings.arcade_database = "devbrain_eval_fixture"
+    settings.arcade_database = "cairnmind_eval_fixture"
     monkeypatch.setattr("cairnmind.evaluation.shutil.which", lambda name: "/usr/bin/" + name)
     expected = {"task_id": "t", "version": 2, "state": "needs_test"}
     calls = []

@@ -417,7 +417,7 @@ class SidebarApp(BasePanel):
         from dataclasses import replace
         for index, binding in enumerate(self._bindings.key_to_bindings.get("w", [])):
             self._bindings.key_to_bindings["w"][index] = replace(binding, description=self.t(label))
-            labels = getattr(self, "_devbrain_binding_labels", {})
+            labels = getattr(self, "_cairnmind_binding_labels", {})
             key = ("w", index, binding.action)
             original = labels.get(key, (binding.description, binding.tooltip, ""))
             labels[key] = (label, original[1], original[2])

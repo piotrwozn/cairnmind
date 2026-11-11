@@ -682,7 +682,7 @@ def test_end_hook_captures_bounded_eof_and_logical_identity_without_network(sett
     watermark = event["transcript_watermark"]
     assert event["event_id"] == path.stem
     assert event["session_id"] == "native-session"
-    assert event["devbrain_session_id"] == "logical-session"
+    assert event["cairnmind_session_id"] == event["devbrain_session_id"] == "logical-session"
     assert event["packet_id"] == "packet-one"
     assert watermark["size"] == len(content)
     assert watermark["observed_size"] == len(content)
@@ -765,7 +765,7 @@ def test_spool_drain_records_logical_receipt_before_removing_event(settings, tmp
                                  "session_id": "native-session", "transcript_path": str(transcript)}, "codex")
     result = integrations.drain_hook_spool(settings, store)
     assert result["events"] == result["queued"] == 1
-    assert seen[0][0]["devbrain_session_id"] == "logical-session"
+    assert seen[0][0]["cairnmind_session_id"] == "logical-session"
     assert list((settings.data_dir / "hook-events").glob("*.json")) == []
 
 

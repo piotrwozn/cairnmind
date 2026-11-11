@@ -25,14 +25,14 @@ def fixture_server():
     return {"command": '/tmp/Python "fixture"/bin/python',
             "args": ["-m", "cairnmind.evaluation", "mcp", "--data-dir", '/tmp/path "with" spaces\\fixture',
                      "--session-id", "logical-fixture-session"],
-            "env": {"DEVBRAIN_ARCADE_DATABASE": "devbrain_eval_fixture"}}
+            "env": {"DEVBRAIN_ARCADE_DATABASE": "cairnmind_eval_fixture"}}
 
 
 def assert_scoped_configuration(configuration, server):
     parsed = tomllib.loads(configuration)
     assert set(parsed) == {"mcp_servers"}
-    assert set(parsed["mcp_servers"]) == {"devbrain_eval"}
-    configured = parsed["mcp_servers"]["devbrain_eval"]
+    assert set(parsed["mcp_servers"]) == {"cairnmind_eval"}
+    configured = parsed["mcp_servers"]["cairnmind_eval"]
     for field in ("command", "args", "env"):
         assert configured[field] == server[field]
     assert len(configured["enabled_tools"]) == len(FIXTURE_TOOLS)
@@ -55,7 +55,7 @@ def test_codex_configuration_preapproves_only_named_fixture_tools():
 
 def test_native_codex_keeps_read_only_isolated_process_and_fixture_permissions(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
-    settings.arcade_database = "devbrain_eval_fixture"
+    settings.arcade_database = "cairnmind_eval_fixture"
     expected = {"task_id": "actual-fixture-task", "version": 2, "state": "needs_test"}
     monkeypatch.setattr(evaluation.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setenv("OPENAI_API_KEY", "do-not-forward")
@@ -84,7 +84,7 @@ def test_native_codex_keeps_read_only_isolated_process_and_fixture_permissions(t
         assert any(value.get("approval_policy") == "never" for value in parsed_overrides)
         assert all("ask_for_approval" not in value for value in parsed_overrides)
         configuration = next(value for value in overrides if "mcp_servers" in tomllib.loads(value))
-        configured = tomllib.loads(configuration)["mcp_servers"]["devbrain_eval"]
+        configured = tomllib.loads(configuration)["mcp_servers"]["cairnmind_eval"]
         server = {field: configured[field] for field in ("command", "args", "env")}
         assert_scoped_configuration(configuration, server)
         assert configured["command"] == sys.executable
@@ -105,13 +105,13 @@ def test_native_codex_keeps_read_only_isolated_process_and_fixture_permissions(t
 
 def test_fixture_session_writes_are_not_mislabeled_read_only(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
-    settings.arcade_database = "devbrain_eval_metadata_only"
+    settings.arcade_database = "cairnmind_eval_metadata_only"
     settings.save()
     captured = {}
 
     class FixtureMCP:
         def __init__(self, name):
-            assert name == "devbrain_eval"
+            assert name == "cairnmind_eval"
 
         def tool(self, **kwargs):
             def register(function):
@@ -158,7 +158,7 @@ def test_installed_codex_accepts_fixture_configuration_without_model_calls(tmp_p
     assert help_result.returncode == 0, help_result.stderr[:500]
     assert "--ignore-user-config" in help_result.stdout and "--strict-config" in help_result.stdout
     server = {"command": sys.executable, "args": ["-c", "pass"],
-              "env": {"DEVBRAIN_ARCADE_DATABASE": "devbrain_eval_parser_only"}}
+              "env": {"DEVBRAIN_ARCADE_DATABASE": "cairnmind_eval_parser_only"}}
     configuration = evaluation._codex_configuration(server)
     missing_schema = tmp_path / "missing-output-schema.json"
     assert not missing_schema.exists()
@@ -177,7 +177,7 @@ def test_installed_codex_accepts_fixture_configuration_without_model_calls(tmp_p
                             capture_output=True, text=True, check=False, timeout=20, cwd=tmp_path)
     assert listed.returncode == 0, listed.stderr[:500]
     assert not re.search(r"unknown|unrecognized|unsupported", listed.stderr, re.IGNORECASE)
-    fixture = [item for item in json.loads(listed.stdout) if item.get("name") == "devbrain_eval"]
+    fixture = [item for item in json.loads(listed.stdout) if item.get("name") == "cairnmind_eval"]
     assert len(fixture) == 1 and fixture[0]["enabled"] is True
     assert fixture[0]["transport"]["command"] == sys.executable
     assert fixture[0]["transport"]["args"] == ["-c", "pass"]

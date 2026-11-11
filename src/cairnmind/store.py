@@ -16,7 +16,7 @@ import threading
 import time
 from uuid import uuid4
 
-from .config import Settings
+from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 
 SCHEMA_VERSION = 4
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}
@@ -257,7 +257,7 @@ class Store:
                     payload = self._export_snapshot(tx, None,
                         LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
                         version + 1)
-                destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}.devbrain.json.gz"
+                destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
                 self._write_backup(destination, payload)
             collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
                            else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
@@ -1060,15 +1060,15 @@ class Store:
     def backup(self, destination):
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
-            destination /= f"devbrain-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}.devbrain.json.gz"
+            destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
         return self._write_backup(destination, self.export())
 
     @staticmethod
     def _write_backup(destination, payload):
         destination = Path(destination).expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        envelope = {"format": "devbrain-arcadedb-backup", "version": 1, "sha256": hashlib.sha256(_json(payload).encode()).hexdigest(), "payload": payload}
-        fd, name = tempfile.mkstemp(prefix=".devbrain-backup-", dir=destination.parent)
+        envelope = {"format": BACKUP_FORMATS[0], "version": 1, "sha256": hashlib.sha256(_json(payload).encode()).hexdigest(), "payload": payload}
+        fd, name = tempfile.mkstemp(prefix=".cairnmind-backup-", dir=destination.parent)
         temporary = Path(name)
         try:
             with os.fdopen(fd, "wb") as handle:
@@ -1092,7 +1092,7 @@ class Store:
         try:
             with gzip.open(path, "rt", encoding="utf-8") as handle:
                 envelope = json.load(handle)
-            if not isinstance(envelope, dict) or envelope.get("format") != "devbrain-arcadedb-backup" or envelope.get("version") != 1:
+            if not isinstance(envelope, dict) or envelope.get("format") not in BACKUP_FORMATS or envelope.get("version") != 1:
                 raise ValueError("This file is not a supported Cairnmind ArcadeDB backup")
             payload = envelope["payload"]
             if hashlib.sha256(_json(payload).encode()).hexdigest() != envelope.get("sha256"):
@@ -1164,7 +1164,7 @@ class Store:
     def restore(self, backup):
         """Restore validated data atomically. Stop Cairnmind workers before calling."""
         payload = self._validated_backup(Path(backup).expanduser().resolve())
-        self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}.devbrain.json.gz")
+        self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
         # DDL is deliberately outside the data transaction; no live data has been removed.
         for registry in payload["vector_indexes"]:
             name, dimension = registry.get("type_name"), registry.get("dimension")

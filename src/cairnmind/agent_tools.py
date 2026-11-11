@@ -195,7 +195,7 @@ class ToolExecutor:
             if expected is not None:
                 previous, info = self._bytes_at(parent, leaf)
                 self._check_hash(previous, expected)
-            temporary = ".devbrain-api-" + uuid4().hex
+            temporary = ".cairnmind-api-" + uuid4().hex
             fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
                          stat.S_IMODE(info.st_mode) if info else 0o644, dir_fd=parent)
             try:

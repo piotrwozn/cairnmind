@@ -176,7 +176,7 @@ cairnmind engine stop
 uv tool uninstall cairnmind
 ```
 
-This keeps your memory in the data directory that `cairnmind doctor` shows as `data_dir`. To remove it too, first make a backup with `cairnmind backup ~/devbrain-backup.devbrain.json.gz`, then delete the directory. Deleting it cannot be undone.
+This keeps your memory in the data directory that `cairnmind doctor` shows as `data_dir`. To remove it too, first make a backup with `cairnmind backup ~/cairnmind-backup.cairnmind.json.gz`, then delete the directory. Deleting it cannot be undone.
 
 ## Troubleshooting
 

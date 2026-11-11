@@ -24,12 +24,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
 from . import __version__
-from .config import SESSION_NAMES, drop_env
+from .config import BROKER_NAMES, SESSION_NAMES, drop_env
 from .cockpit_state import (CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, _snapshot,
                             normalize_path)
 
 
-COOKIE = "devbrain_cockpit"
+COOKIE = "cairnmind_cockpit"
 SESSION_SECONDS = 12 * 60 * 60
 TICKET_SECONDS = 60
 MAX_BODY = 256 * 1024
@@ -77,7 +77,7 @@ class BrowserSessions:
             raise HTTPException(401, "Niepoprawny bilet uruchomienia.")
         expiry = self.tickets.pop(hashlib.sha256(ticket.encode()).hexdigest(), 0)
         if expiry <= self.clock():
-            raise HTTPException(401, "Bilet wygasł lub został już użyty. Uruchom ponownie devbrain.")
+            raise HTTPException(401, "Bilet wygasł lub został już użyty. Uruchom ponownie cairnmind.")
         token = secrets.token_urlsafe(32)
         session = {"csrf": secrets.token_urlsafe(32), "expires": self.clock() + SESSION_SECONDS}
         self.sessions[hashlib.sha256(token.encode()).hexdigest()] = session
@@ -209,7 +209,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                                        headers={"Authorization": f"Bearer {settings.token}"}) as client:
                 return await client.request(method, path, params=params, json=data)
         except httpx.HTTPError:
-            raise HTTPException(503, "Usługa pamięci jest niedostępna. Uruchom ponownie devbrain.") from None
+            raise HTTPException(503, "Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind.") from None
 
     def forward(response):
         try:
@@ -260,7 +260,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
 
     @app.get("/health")
     async def health():
-        return {"service": "devbrain-cockpit", "version": __version__, "instance": instance_id(settings),
+        return {"service": BROKER_NAMES[0], "version": __version__, "instance": instance_id(settings),
                 "pid": os.getpid(), "birth": _birth(os.getpid())}
 
     @app.post("/_control/ticket")
@@ -868,7 +868,7 @@ def cockpit_status(settings):
         with httpx.Client(trust_env=False, timeout=1) as client:
             response = client.get(info["url"] + "/health")
             health = response.json()
-        if (response.is_success and health.get("service") == "devbrain-cockpit"
+        if (response.is_success and health.get("service") in BROKER_NAMES
                 and health.get("instance") == result["instance"] and health.get("pid") == info["pid"]
                 and health.get("birth") == info["birth"]):
             return {**result, **info, "available": True, "version_matches": health.get("version") == __version__}

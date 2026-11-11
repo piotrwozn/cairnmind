@@ -957,7 +957,7 @@ class KnowledgeAgent:
                 if source["project_id"] != project_id:
                     raise ValueError("Extraction source belongs to another project")
                 metadata = json_value(source.get("metadata"), {})
-                if metadata.get("agent") == "devbrain" or source["kind"] == "agent_answer":
+                if metadata.get("agent") in ("cairnmind", "devbrain") or source["kind"] == "agent_answer":
                     diagnostics["code"] = "source_skipped"
                     save()
                     return  # Never turn our own synthesis into independent corroboration.

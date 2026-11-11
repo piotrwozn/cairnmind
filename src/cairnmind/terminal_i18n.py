@@ -359,9 +359,9 @@ def localize_bindings(node, language="en"):
     """
     from dataclasses import replace
 
-    labels = getattr(node, "_devbrain_binding_labels", None)
+    labels = getattr(node, "_cairnmind_binding_labels", None)
     if labels is None:
-        labels = node._devbrain_binding_labels = {}
+        labels = node._cairnmind_binding_labels = {}
     for key, bindings in node._bindings.key_to_bindings.items():
         translated = []
         for index, binding in enumerate(bindings):

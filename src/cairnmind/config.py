@@ -17,6 +17,13 @@ from pathlib import Path
 ENV_PREFIXES = ("CAIRNMIND_", "DEVBRAIN_")
 SESSION_NAMES = ("SESSION_ID", "PACKET_ID", "PROJECT", "CLIENT", "CONTEXT_FILE")
 DATA_DIR_NAMES = ("cairnmind", "devbrain")
+# What the knowledge service and the interface broker answer on /health. A process started by an
+# earlier version answers with the earlier name and is still recognised, so that it can be stopped.
+SERVICE_NAMES = ("cairnmind", "devbrain")
+BROKER_NAMES = ("cairnmind-cockpit", "devbrain-cockpit")
+# Whole-database backups: the suffix written and the envelope format, each with its earlier form.
+BACKUP_SUFFIXES = (".cairnmind.json.gz", ".devbrain.json.gz")
+BACKUP_FORMATS = ("cairnmind-arcadedb-backup", "devbrain-arcadedb-backup")
 
 
 def env_names(name: str) -> tuple[str, ...]:

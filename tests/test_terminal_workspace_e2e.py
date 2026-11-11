@@ -508,7 +508,7 @@ def test_real_outer_workspace_project_switch_and_broker_restart_preserve_native_
     first = manager.panes()["client1"]
     wait_pane(manager, first, "NATIVE_READY codex")
     def controller_restored():
-        value = manager.tmux("show-options", "-pv", "-t", first, "@devbrain_control", check=False).stdout.strip()
+        value = manager.tmux("show-options", "-pv", "-t", first, "@cairnmind_control", check=False).stdout.strip()
         assert value == "controller", value
     eventually(controller_restored, timeout=10)
     manager.tmux("send-keys", "-t", first, "-l", "OUTER_RECONNECTED_zażółć")
@@ -651,7 +651,7 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
     attributes = termios.tcgetattr(slave)
     environment = {**os.environ, "TERM": "xterm-256color"}
     process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.native_worker", "--attach",
-        "--tmux-bin", stack.tmux, "--socket", str(manager.socket), "--session", "devbrain-ui"],
+        "--tmux-bin", stack.tmux, "--socket", str(manager.socket), "--session", "cairnmind-ui"],
         stdin=slave, stdout=slave, stderr=slave, env=environment, start_new_session=True)
     drain = None
     try:
