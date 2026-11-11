@@ -489,6 +489,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         # Only what the graph needs is kept; the content stays in the database.
         entry = {"source": {"id": source["id"], "uri": source["uri"], "kind": source["kind"]}, "analysis": analysis}
         indexed[resolved] = {**entry, "root": root}
+        # The path has a current source from here on: reached again through another root, it is looked up.
+        present.add(name)
         # Idempotent enqueue also repairs a crash between source write and
         # queue write. Code facts themselves are already represented by syntax.
         if extract:
@@ -591,9 +593,16 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                     one_by_one(item)
                     continue
                 item["chunks"] = list(_chunks(content))
+                cost = 2 + 2 * len(item["chunks"])  # journal events: source, chunks, their jobs, an extraction job
+                if cost > NEW_FILE_EVENTS_PER_TRANSACTION:
+                    # Too large to share a transaction: written as before, each part in its own.
+                    write_waiting()
+                    one_by_one(item)
+                    continue
+                if sum(2 + 2 * len(entry["chunks"]) for entry in waiting) + cost > NEW_FILE_EVENTS_PER_TRANSACTION:
+                    write_waiting()
                 waiting.append(item)
-                if (len(waiting) >= NEW_FILES_PER_TRANSACTION
-                        or sum(2 + 2 * len(entry["chunks"]) for entry in waiting) >= NEW_FILE_EVENTS_PER_TRANSACTION):
+                if len(waiting) >= NEW_FILES_PER_TRANSACTION:
                     write_waiting()
                 continue
             written = _write_chunks(store, project_id, source["id"], content, {"language": analysis["language"]})

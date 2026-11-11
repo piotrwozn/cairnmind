@@ -151,9 +151,8 @@ def test_a_failure_stores_nothing_of_its_group_and_the_next_run_completes_it(tmp
         with pytest.raises(RuntimeError, match="disk is full"):
             ingest.index_project(store, pid)
     sources = store.query("SELECT id,uri FROM sources WHERE project_id=:p", {"p": pid})
-    # Whole groups of the files before it are stored; of the group that failed, nothing is.
-    assert 0 < len(sources) < 11 and calls[10] not in {row["uri"] for row in sources}
-    assert {row["uri"] for row in sources} == set(calls[:len(sources)])
+    # The first group of eight is stored whole; of the group that failed, files nine to eleven, nothing is.
+    assert {row["uri"] for row in sources} == set(calls[:ingest.NEW_FILES_PER_TRANSACTION])
     chunks = store.query("SELECT id,source_id FROM chunks WHERE project_id=:p", {"p": pid})
     assert {row["source_id"] for row in chunks} == {row["id"] for row in sources}  # no source without its chunks
     jobs = store.query("SELECT payload FROM jobs WHERE project_id=:p AND kind='embed'", {"p": pid})
@@ -213,3 +212,56 @@ def test_what_a_transaction_remembers_never_replaces_a_check(tmp_path):
         assert tx.known is None
         store.upsert_edge({**edges[0], "id": "e4"}, tx=tx)  # read from the database again, and still right
     assert {row["id"] for row in store.query("SELECT id FROM edges WHERE project_id=:p", {"p": mine})} == {"e1", "e4"}
+
+
+def test_a_file_too_large_to_share_a_transaction_keeps_its_named_journal_events(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(3):
+        (root / f"a{index}.py").write_text(f"SMALL_{index} = {index}\n")
+    (root / "big.py").write_text("".join(f"LINE_{n} = {n}\n" for n in range(9000)))
+    (root / "z.py").write_text("LAST = 1\n")
+    store = Store(tmp_path / "memory")
+    pid = store.add_project("p", root)["id"]
+    seen = counted(monkeypatch)
+    result = ingest.index_project(store, pid)
+    chunks = store.query("SELECT id,source_id FROM chunks WHERE project_id=:p", {"p": pid})
+    big = store.query("SELECT id FROM sources WHERE project_id=:p AND uri=:uri", {"p": pid, "uri": str(root / "big.py")})[0]["id"]
+    assert sum(row["source_id"] == big for row in chunks) > 100 and result["chunks"] == len(chunks)
+    events = collections.Counter((row["entity_type"], row["op"], row["entity_id"] is not None)
+                                 for row in store.query("SELECT FROM journal_events WHERE project_id=:p", {"p": pid}))
+    # Every source, chunk and job is named in the journal: none was folded into "everything of this kind changed".
+    assert events[("chunk", "upsert", True)] == len(chunks) and events[("source", "upsert", True)] == 5
+    assert not [key for key in events if key[1] == "reset" and key[0] in ("source", "chunk", "job")]
+    # The small files before and after it still share transactions; the large one took the ordinary path.
+    assert sum(text.startswith("SELECT FROM sources WHERE current_key=:key") for text in seen) == 1
+
+
+def test_a_group_never_holds_more_events_than_its_limit(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(6):
+        (root / f"m{index}.py").write_text("".join(f"LINE_{index}_{n} = {n}\n" for n in range(1500)))
+    store = Store(tmp_path / "memory")
+    pid = store.add_project("p", root)["id"]
+    groups, real = [], ingest._write_new_files
+
+    def recorded(store, project_id, batch):
+        groups.append(sum(2 + 2 * len(item["chunks"]) for item in batch))
+        return real(store, project_id, batch)
+    monkeypatch.setattr(ingest, "_write_new_files", recorded)
+    ingest.index_project(store, pid)
+    assert len(groups) > 1 and max(groups) <= ingest.NEW_FILE_EVENTS_PER_TRANSACTION
+
+
+def test_a_file_under_two_registered_roots_is_written_and_counted_once(tmp_path):
+    root = tmp_path / "repo"
+    tree(root, files=6)
+    store = Store(tmp_path / "memory")
+    pid = store.add_project("p", root)["id"]
+    store.add_project_root(pid, root / "pkg0")
+    result = ingest.index_project(store, pid)
+    sources = store.query("SELECT uri FROM sources WHERE project_id=:p AND is_current=true", {"p": pid})
+    assert len(sources) == len({row["uri"] for row in sources}) == 8
+    twice = len(list((root / "pkg0").glob("*.py")))
+    assert (result["changed"], result["unchanged"]) == (8, twice)
