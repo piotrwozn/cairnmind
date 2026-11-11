@@ -30,7 +30,7 @@ cairnmind install my-app
 cairnmind
 ```
 
-For a cloned project that contains `.memory/devbrain/`, start by previewing and importing its memory so that its existing identity is preserved. Merely detecting a snapshot does not import any data and does not run any commands stored in it.
+For a cloned project that contains `.memory/cairnmind/`, start by previewing and importing its memory so that its existing identity is preserved. Merely detecting a snapshot does not import any data and does not run any commands stored in it.
 
 Starting without an interactive TTY exits with a message and code `2`, before any configuration is created or any service is started. It does not fall back to a browser. The package version can be read without a TTY and without initialization:
 
@@ -133,9 +133,9 @@ cairnmind memory snapshot my-app --preview
 cairnmind memory snapshot my-app
 cairnmind memory auto my-app --enable --interval-minutes 15
 cairnmind memory status my-app
-cairnmind memory inspect ~/src/my-app/.memory/devbrain
-cairnmind memory show ~/src/my-app/.memory/devbrain --kind decision
-cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
+cairnmind memory inspect ~/src/my-app/.memory/cairnmind
+cairnmind memory show ~/src/my-app/.memory/cairnmind --kind decision
+cairnmind memory import ~/src/my-app/.memory/cairnmind --root ~/src/my-app --dry-run
 ```
 
 Automatic snapshots remain opt-in per project. A snapshot contains the project's stored memory and history, excluding operational credentials and model weights. Raw conversations may contain private data. Import does not overwrite other projects, and transferred tests remain historical until they are checked locally. See the [memory contracts](MEMORY_CONTRACTS.md) for the full portable-memory format, limits and restore rules.

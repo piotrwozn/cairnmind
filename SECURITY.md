@@ -23,4 +23,4 @@ Cairnmind runs locally and keeps sensitive material on your machine. Reports are
 - leaks of API keys, tokens or conversation content into logs, snapshots or exports;
 - access to the local service or broker from outside the loopback interface.
 
-Portable memory snapshots in `.memory/devbrain/` can contain full conversation text. Review them before committing them to a shared repository.
+Portable memory snapshots in `.memory/cairnmind/` (and `.memory/devbrain/`, written by versions up to 0.9.0) can contain full conversation text. Review them before committing them to a shared repository.

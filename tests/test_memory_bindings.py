@@ -50,7 +50,10 @@ def receipt(store, project, *sources):
 
 def test_reserved_path_is_narrow_and_lexical(tmp_path):
     assert is_reserved_memory(MEMORY_RELATIVE)
-    assert is_reserved_memory(".memory/devbrain/snapshot.json")
+    assert is_reserved_memory(".memory/cairnmind/snapshot.json")
+    assert is_reserved_memory(".memory/devbrain/snapshot.json")  # where versions up to 0.9.0 wrote; still reserved
+    assert not is_reserved_memory(".memory/cairnmind-other/snapshot.json")
+    assert not is_reserved_memory("nested/.memory/cairnmind/snapshot.json")
     assert not is_reserved_memory(".memory/notes.md")
     assert not is_reserved_memory(".memory/devbrain-other/snapshot.json")
     assert not is_reserved_memory("nested/.memory/devbrain/snapshot.json")
@@ -67,7 +70,7 @@ def test_managed_snapshot_writes_do_not_change_code_inputs(workspace):
     snapshot = folder / "snapshot.json"
     snapshot.write_text('{"generation":1}')
     assert capture_code_state(store, project["id"])["fingerprint"] == initial["fingerprint"]
-    git(root, "add", ".memory/devbrain")
+    git(root, "add", ".memory/cairnmind")
     snapshot.write_text('{"generation":2}')
     assert capture_code_state(store, project["id"])["fingerprint"] == initial["fingerprint"]
     git(root, "commit", "-qm", "snapshot only")
@@ -83,7 +86,8 @@ def test_explicit_reserved_check_inputs_are_rejected_broad_globs_remain_safe(wor
     folder = root / MEMORY_RELATIVE
     folder.mkdir(parents=True)
     (folder / "snapshot.json").write_text("one")
-    for pattern in (".memory/devbrain", ".memory/devbrain/*", ".memory/devbrain/snapshot.json"):
+    for pattern in (".memory/cairnmind", ".memory/cairnmind/*", ".memory/devbrain", ".memory/devbrain/*",
+                    ".memory/devbrain/snapshot.json"):
         with pytest.raises(ValueError, match="reserved"):
             capture_code_state(store, project["id"], extra_inputs=[pattern])
     first = capture_code_state(store, project["id"], extra_inputs=[".memory/**/*"])

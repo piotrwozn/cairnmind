@@ -72,13 +72,18 @@ There is no automatic rollback.
 
 ## From 0.9.0 to the next release
 
-Nothing has to be done, and nothing on disk is renamed.
+Close running coding sessions first, then run the installer and `cairnmind install <project>` for each project. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
 
 - **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold data, the earlier one is used and `cairnmind doctor` says so under `environment_notes`.
 - **Variables.** `CAIRNMIND_HOME`, `CAIRNMIND_ARCADE_URL` and the others are the names to use. A `DEVBRAIN_*` variable in your shell profile keeps working; when both spellings of a configuration variable are set, the new one wins and `cairnmind doctor` reports a pair that disagrees.
 - **Sessions.** The launcher gives a coding client both spellings of the session variables, so hooks and MCP entries written by 0.8.0 or 0.9.0 keep working without `cairnmind install`. A session started before the upgrade stays bound after it. If the two spellings of a session variable ever name different sessions, neither is honoured: commands are refused and the client has to be started again through the launcher.
 
-Still named `devbrain` in this release: the MCP server and its tools, the markers and backup copies in client configuration files, `.memory/devbrain` and `.devbrain/checks.toml`.
+- **MCP server.** The server is named `cairnmind` in `.mcp.json` and `.codex/config.toml`. `cairnmind install` renames an entry it wrote under `devbrain` where it stands, so the tool approvals Codex keeps below it move with it; an entry you wrote yourself without the markers is left as it is and keeps working. Claude Code asks once more to approve the server and its tools under the new name. A session that was running during the rename has to be started again.
+- **Instructions.** The block in `AGENTS.md` and `CLAUDE.md` is replaced where it stands, with the markers `<!-- BEGIN CAIRNMIND -->` and `<!-- END CAIRNMIND -->`. Copies of changed files are named `<file>.cairnmind-backup-<number>`.
+- **Portable memory.** New snapshots go to `.memory/cairnmind/`. A package in `.memory/devbrain/` is still read and imported, and is never rewritten or deleted. After the first new snapshot, remove the earlier directory from the repository yourself (`git rm -r .memory/devbrain`) once nobody uses an earlier version; `cairnmind memory status` shows it under `earlier_package` until then.
+- **Check profiles.** Declare them in `.cairnmind/checks.toml`. `.devbrain/checks.toml` is still read; move the file with `git mv .devbrain .cairnmind` when every collaborator has upgraded. The move changes a path that is part of the code fingerprint, so check runs made before it count as stale once and have to be run again. If both files exist, checks are refused until one is removed.
+
+With a collaborator still on 0.9.0 in the same repository: they do not see snapshots in `.memory/cairnmind/` or profiles in `.cairnmind/`, their `install` adds a second server and a second instruction block under the earlier names, and their version counts `.memory/cairnmind/` as project files.
 
 ## From 0.7.2 to 0.8.0
 

@@ -52,7 +52,7 @@ cairnmind plan adopt shop login --idempotency-key adopt-login-1 --title "Login" 
 
 ## Named check profiles
 
-Declare profiles in the project repository, in `.devbrain/checks.toml`:
+Declare profiles in the project repository, in `.cairnmind/checks.toml`:
 
 ```toml
 [checks.unit]

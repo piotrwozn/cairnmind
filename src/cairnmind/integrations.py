@@ -27,14 +27,24 @@ from tomlkit.items import Comment, Table
 
 from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
 
-BEGIN = "<!-- BEGIN DEVBRAIN -->"
-END = "<!-- END DEVBRAIN -->"
-TOML_BEGIN = "# BEGIN DEVBRAIN"
-TOML_END = "# END DEVBRAIN"
+# The name of the MCP server in client configuration, and the markers around what install manages.
+# Entries and blocks written under the earlier name are recognised and converted in place.
+SERVER = "cairnmind"
+EARLIER_SERVER = "devbrain"
+BEGIN = "<!-- BEGIN CAIRNMIND -->"
+END = "<!-- END CAIRNMIND -->"
+EARLIER_BEGIN = "<!-- BEGIN DEVBRAIN -->"
+EARLIER_END = "<!-- END DEVBRAIN -->"
+TOML_BEGIN = "# BEGIN CAIRNMIND"
+TOML_END = "# END CAIRNMIND"
+EARLIER_TOML_BEGIN = "# BEGIN DEVBRAIN"
+EARLIER_TOML_END = "# END DEVBRAIN"
 CLIENTS = ("codex", "claude")
-# What project files tell a client to forward to the MCP server. The earlier spelling on purpose:
-# every released version recognises and reads it, and the launcher sets both spellings.
-SESSION_ENV_VARS = ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID")
+# What project files tell a client to forward to the MCP server: both spellings, so that a
+# client started by an earlier launcher stays bound after its project files are rewritten.
+CURRENT_SESSION_ENV_VARS = ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID")
+EARLIER_SESSION_ENV_VARS = ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID")
+SESSION_ENV_VARS = (*CURRENT_SESSION_ENV_VARS, *EARLIER_SESSION_ENV_VARS)
 NATIVE_INVOCATION_MARKERS = frozenset({"CLAUDECODE", "CODEX_THREAD_ID"})
 HOOK_PACKET_LIMIT_BYTES = 32768
 HOOK_TAIL_SCAN_LIMIT_BYTES = 2 * 1024 * 1024
@@ -287,9 +297,9 @@ def _write_changed(path: Path, text: str, *, new_mode: int = 0o666) -> bool:
     previous_mode = stat.S_IMODE(path.stat().st_mode) if previous is not None else None
     path.parent.mkdir(parents=True, exist_ok=True)
     if previous is not None:
-        backup = path.with_name(f"{path.name}.devbrain-backup-{time.time_ns()}")
+        backup = path.with_name(f"{path.name}.cairnmind-backup-{time.time_ns()}")
         shutil.copy2(path, backup)
-    temporary = path.with_name(f".{path.name}.devbrain-{uuid4().hex}.tmp")
+    temporary = path.with_name(f".{path.name}.cairnmind-{uuid4().hex}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                          0o600 if previous_mode is not None else new_mode)
     try:
@@ -322,10 +332,21 @@ def _merge_json_mcp(path: Path, settings: Settings) -> bool:
                # inherited variables. Resolve each launch's values explicitly;
                # an ordinary, unbound client retains the fail-closed empty SID.
                "env": {name: "${" + name + ":-}" for name in SESSION_ENV_VARS}}
-    existing = servers.get("devbrain")
+    existing = servers.get(SERVER)
     if existing and existing != desired and not _is_ours(existing):
-        raise ValueError(f"An unrelated server already owns 'devbrain' in {path}; original file left unchanged")
-    servers["devbrain"] = desired
+        raise ValueError(f"An unrelated server already owns '{SERVER}' in {path}; original file left unchanged")
+    # Our entry under the earlier name becomes this one, at its place; a foreign server of that name stays.
+    merged: dict[str, Any] = {}
+    for name, value in servers.items():
+        if name == EARLIER_SERVER and _is_ours(value):
+            if SERVER not in servers:
+                merged[SERVER] = desired
+        elif name == SERVER:
+            merged[SERVER] = desired
+        else:
+            merged[name] = value
+    merged.setdefault(SERVER, desired)
+    content["mcpServers"] = merged
     return _write_changed(path, json.dumps(content, indent=2, ensure_ascii=False) + "\n", new_mode=0o600)
 
 
@@ -336,34 +357,97 @@ def _is_ours(server: dict[str, Any]) -> bool:
                                           for i in range(len(args)))
 
 
+def _forwards_session(env_vars: Any) -> bool:
+    """Whether a client is told to pass on a complete pair of session variables, in either spelling."""
+    return isinstance(env_vars, list) and any(all(name in env_vars for name in pair)
+                                              for pair in (CURRENT_SESSION_ENV_VARS, EARLIER_SESSION_ENV_VARS))
+
+
+def _toml_markers(container, names) -> list[str]:
+    """Marker comments of a parsed TOML document, in order; text inside a string is not a comment."""
+    found = []
+    for _, item in container.body:
+        if isinstance(item, Comment) and item.as_string().strip() in names:
+            found.append(item.as_string().strip())
+        elif isinstance(item, Table):
+            found.extend(_toml_markers(item.value, names))
+    return found
+
+
+def _renamed_toml(text: str, path: Path) -> str:
+    """A managed block written under the earlier server name, renamed in place.
+
+    Only the table headers and the two marker lines change, so everything a user or a client
+    added below the table moves with it: Codex keeps tool approvals in its sub-tables.
+    An entry without markers is not ours to rewrite and is left under its name.
+    """
+    parsed = tomllib.loads(text)
+    servers = parsed.get("mcp_servers", {})
+    marked = _toml_markers(tomlkit.parse(text), {EARLIER_TOML_BEGIN, EARLIER_TOML_END})
+    if not marked:
+        return text
+    earlier = servers.get(EARLIER_SERVER) if isinstance(servers, dict) else None
+    lines = "'" + EARLIER_TOML_BEGIN + "' and '" + EARLIER_TOML_END + "'"
+    if marked != [EARLIER_TOML_BEGIN, EARLIER_TOML_END]:
+        raise ValueError(f"Ambiguous Cairnmind TOML markers in {path}: expected one {lines} pair; "
+                         "original file left unchanged")
+    current = servers.get(SERVER) if isinstance(servers, dict) else None
+    if earlier is None and isinstance(current, dict) and _is_ours(current):
+        # The table was renamed by hand, as the refusal below asks; only the two comment lines are left.
+        renamed = "\n".join(TOML_BEGIN if line.strip() == EARLIER_TOML_BEGIN else TOML_END
+                            if line.strip() == EARLIER_TOML_END else line for line in text.split("\n"))
+        if tomllib.loads(renamed) == parsed and _toml_markers(tomlkit.parse(renamed), {TOML_BEGIN, TOML_END}) == [
+                TOML_BEGIN, TOML_END]:
+            return renamed
+    if not isinstance(earlier, dict) or not _is_ours(earlier):
+        raise ValueError(f"The {lines} comment lines in {path} do not enclose an [mcp_servers.{EARLIER_SERVER}] "
+                         "table written by Cairnmind; remove those two lines; original file left unchanged")
+    if SERVER in servers:
+        raise ValueError(f"{path} has both [mcp_servers.{EARLIER_SERVER}] and [mcp_servers.{SERVER}]; "
+                         "remove one of them together with its comment lines; original file left unchanged")
+    quoted = r"""(["']?)"""
+    header = re.compile(r"^(\s*\[\[?\s*" + quoted + r"mcp_servers\2\s*\.\s*" + quoted + ")" + EARLIER_SERVER
+                        + r"(\3\s*[\].])", re.M)
+    renamed = header.sub(lambda match: match.group(1) + SERVER + match.group(4), text)
+    renamed = "\n".join(TOML_BEGIN if line.strip() == EARLIER_TOML_BEGIN else TOML_END
+                        if line.strip() == EARLIER_TOML_END else line for line in renamed.split("\n"))
+    # Nothing but the name of that one table may differ, or the rename touched something else.
+    expected = {**parsed, "mcp_servers": {(SERVER if name == EARLIER_SERVER else name): value
+                                          for name, value in servers.items()}}
+    try:
+        unchanged_otherwise = tomllib.loads(renamed) == expected
+    except tomllib.TOMLDecodeError:
+        unchanged_otherwise = False
+    if not unchanged_otherwise or _toml_markers(tomlkit.parse(renamed), {TOML_BEGIN, TOML_END}) != [TOML_BEGIN, TOML_END]:
+        raise ValueError(f"The [mcp_servers.{EARLIER_SERVER}] entry in {path} is written in a form that cannot be "
+                         f"renamed safely; rename the table and its sub-tables to [mcp_servers.{SERVER}] by hand; "
+                         "original file left unchanged")
+    return renamed
+
+
 def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
-    text = path.read_bytes().decode("utf-8") if path.exists() else ""
+    original = path.read_bytes().decode("utf-8") if path.exists() else ""
+    text = _renamed_toml(original, path)
     parsed = tomllib.loads(text)
     servers = parsed.get("mcp_servers", {})
     if not isinstance(servers, dict):
         raise ValueError("Invalid mcp_servers in TOML; original file left unchanged")
-    existing = servers.get("devbrain")
-    if "devbrain" in servers and not isinstance(existing, dict):
+    # An own entry without markers keeps the name it has; everything else lives under the current name.
+    key = EARLIER_SERVER if (SERVER not in servers and isinstance(servers.get(EARLIER_SERVER), dict)
+                             and _is_ours(servers[EARLIER_SERVER])) else SERVER
+    existing = servers.get(key)
+    if key in servers and not isinstance(existing, dict):
         raise ValueError("Invalid Cairnmind MCP table; original file left unchanged")
     document = tomlkit.parse(text)
 
-    def markers(container):
-        found = []
-        for _, item in container.body:
-            if isinstance(item, Comment) and item.as_string().strip() in {TOML_BEGIN, TOML_END}:
-                found.append(item.as_string().strip())
-            elif isinstance(item, Table):
-                found.extend(markers(item.value))
-        return found
-
-    owned_markers = markers(document)
+    owned_markers = _toml_markers(document, {TOML_BEGIN, TOML_END})
     if owned_markers and owned_markers != [TOML_BEGIN, TOML_END]:
         raise ValueError("Ambiguous Cairnmind TOML markers; original file left unchanged")
     managed = bool(owned_markers)
     if managed and existing is None:
         raise ValueError("Cairnmind TOML markers have no MCP table; original file left unchanged")
     if existing is not None and not _is_ours(existing):
-        raise ValueError(f"An unrelated server already owns 'devbrain' in {path}; original file left unchanged")
+        raise ValueError(f"An unrelated server already owns '{key}' in {path}; original file left unchanged")
     if existing is not None:
         overrides = existing.get("env", {})
         if not isinstance(overrides, dict) or set(SESSION_ENV_VARS).intersection(overrides):
@@ -377,11 +461,11 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
         earlier_args = _earlier_command(settings, "mcp")[1:]
         if existing.get("command") == sys.executable and existing.get("args") in (desired_args, earlier_args):
             env_vars = existing.get("env_vars", [])
-            if (isinstance(env_vars, list) and all(name in env_vars for name in SESSION_ENV_VARS)
-                    and all(isinstance(name, str) for name in env_vars)):
-                return False
+            # The launcher sets both spellings, so a complete pair of either one binds the server.
+            if (_forwards_session(env_vars) and all(isinstance(name, str) for name in env_vars)):
+                return text != original and _write_changed(path, text, new_mode=0o600)
             raise ValueError(f"Existing unmarked Cairnmind config in {path} must forward the launch environment: "
-                             f"set env_vars = {json.dumps(SESSION_ENV_VARS)} in [mcp_servers.devbrain] "
+                             f"set env_vars = {json.dumps(CURRENT_SESSION_ENV_VARS)} in [mcp_servers.{key}] "
                              "and remove literal env overrides for those names; original file left unchanged")
         raise ValueError(f"Existing unmarked Cairnmind config in {path}; update it manually or remove its table")
     if existing is not None:
@@ -391,16 +475,16 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
         desired = {"command": sys.executable, "args": _command(settings, "mcp")[1:],
                    "env_vars": [*env_vars, *(name for name in SESSION_ENV_VARS if name not in env_vars)],
                    "startup_timeout_sec": 15, "tool_timeout_sec": 75}
-        if all(existing.get(key) == value for key, value in desired.items()):
-            return False
-        server = document["mcp_servers"]["devbrain"]
-        for key, value in desired.items():
-            if existing.get(key) != value:
-                server[key] = value
+        if all(existing.get(field) == value for field, value in desired.items()):
+            return text != original and _write_changed(path, text, new_mode=0o600)
+        server = document["mcp_servers"][key]
+        for field, value in desired.items():
+            if existing.get(field) != value:
+                server[field] = value
         updated = tomlkit.dumps(document)
         tomllib.loads(updated)
         return _write_changed(path, updated, new_mode=0o600)
-    body = (f"{TOML_BEGIN}\n[mcp_servers.devbrain]\n"
+    body = (f"{TOML_BEGIN}\n[mcp_servers.{SERVER}]\n"
             f"command = {json.dumps(sys.executable)}\n"
             f"args = {json.dumps(_command(settings, 'mcp')[1:])}\n"
             # Codex's stdio MCP child gets only its baseline plus env_vars,
@@ -458,9 +542,9 @@ def _instructions(project: dict[str, Any], settings: Settings) -> str:
     return f"""{BEGIN}
 ## Cairnmind shared knowledge
 
-Project ID: `{project['id']}`. The local MCP server is `devbrain`.
-The verified launcher supplies `DEVBRAIN_SESSION_ID`, `DEVBRAIN_PACKET_ID` and
-`DEVBRAIN_CONTEXT_FILE`. The context file contains the exact immutable prepared
+Project ID: `{project['id']}`.
+The verified launcher supplies `CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` and
+`CAIRNMIND_CONTEXT_FILE`. The context file contains the exact immutable prepared
 packet, scoped to this logical session and registered worktree, not a rolling
 summary shared between concurrent sessions.
 
@@ -499,7 +583,8 @@ is only an old grouping label. Progress updates through `remember` require task
 `acceptance_criteria`, `requires_test`, `requires_review`, and named
 `required_profiles`. Resolve version conflicts rather than overwriting work.
 
-Configure named checks in `.devbrain/checks.toml`. Run them ONLY through the
+Configure named checks in `.cairnmind/checks.toml`; a project that still has
+`.devbrain/checks.toml` keeps using that file, never both. Run them ONLY through the
 native CLI/user permission flow: `{check_command} PROFILE --task TASK_ID`
 with `--worktree ROOT` when needed. There is no MCP check runner. `check_status`
 only reads fresh/stale/reported/unknown evidence. Reference immutable successful
@@ -520,10 +605,19 @@ or shell permission and its knowledge agent only reads project code.
 def _merge_instructions(path: Path, project: dict[str, Any], settings: Settings) -> bool:
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     block = _instructions(project, settings)
-    pattern = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END), re.S)
-    if BEGIN in text and not pattern.search(text):
+    # A block written under the earlier markers is ours as well: it is replaced where it stands.
+    pattern = re.compile("(?:" + re.escape(BEGIN) + r".*?" + re.escape(END) + "|"
+                         + re.escape(EARLIER_BEGIN) + r".*?" + re.escape(EARLIER_END) + ")", re.S)
+    found = pattern.findall(text)
+    if len(found) != sum(text.count(marker) for marker in (BEGIN, EARLIER_BEGIN)) or len(found) != sum(
+            text.count(marker) for marker in (END, EARLIER_END)):
         raise ValueError(f"Unclosed Cairnmind block in {path}; original file left unchanged")
-    updated = pattern.sub(lambda _: block, text) if pattern.search(text) else text.rstrip() + "\n\n" + block
+    if found:
+        # The first block becomes the current one; a second one, left by two versions in turn, goes.
+        blocks = iter([block])
+        updated = pattern.sub(lambda _: next(blocks, ""), text)
+    else:
+        updated = text.rstrip() + "\n\n" + block
     return _write_changed(path, updated.lstrip("\n").rstrip() + "\n")
 
 
@@ -666,9 +760,9 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     command.extend(args or [])
     if not args or bootstrap_when_args:
         command.append(
-            f"Cairnmind verified session {prepared['session_id']}. First call devbrain.resume_context and read "
+            f"Cairnmind verified session {prepared['session_id']}. First call the Cairnmind MCP tool resume_context and read "
             "the complete packet it returns. The returned packet is authoritative: if ready, call "
-            "devbrain.ack_resume with its exact ID/hash and active plan/task ID+version readback. "
+            "ack_resume with its exact ID/hash and active plan/task ID+version readback. "
             f"The launcher prepared file is {context_path}; use it as a fallback only when its packet ID/hash "
             "match the returned packet. If the returned packet has a different ID, use its current ID/hash "
             "and readback. If partial or unavailable, report its unknowns and do not attempt ACK, checkpoint "
@@ -807,7 +901,7 @@ def _hook_startup_context(settings: Settings, payload: dict[str, Any]) -> dict[s
 
     def pending(reason: str) -> dict[str, Any]:
         text = (f"Cairnmind verified resume pending: {reason}. No ACK was created. "
-                "Call devbrain.resume_context, read its complete packet, then call devbrain.ack_resume "
+                "Call the Cairnmind MCP tool resume_context, read its complete packet, then call ack_resume "
                 "with its exact ID/hash and active plan/task ID+version readback before shared-memory writes. "
                 "No database engine was started or downloaded by this hook.")
         return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}

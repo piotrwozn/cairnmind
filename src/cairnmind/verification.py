@@ -25,7 +25,8 @@ from .store import _clean, _insert, _json, _now
 from .memory_paths import is_reserved_memory
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
-_PROFILE_PATH = Path(".devbrain/checks.toml")
+# Check profiles are declared in the first file. The second is where versions up to 0.9.0 looked.
+_PROFILE_PATHS = (Path(".cairnmind/checks.toml"), Path(".devbrain/checks.toml"))
 
 
 class _RunReferencesGone(ValueError):
@@ -63,7 +64,7 @@ def _input_patterns(extra_inputs):
         if path.is_absolute() or ".." in path.parts or ".git" in path.parts or "\\" in pattern or "\0" in pattern:
             raise ValueError("extra_inputs must stay inside the registered worktree")
         if is_reserved_memory(path):
-            raise ValueError("extra_inputs cannot name reserved .memory/devbrain artifacts")
+            raise ValueError("extra_inputs cannot name reserved portable memory artifacts")
     return sorted(set(extra_inputs))
 
 
@@ -219,9 +220,15 @@ def task_definition_hash(task: dict) -> str:
 
 def load_profiles(store, project_id, worktree=None) -> dict:
     root = _root(store, project_id, worktree)
-    config_path = root / _PROFILE_PATH
-    if not config_path.exists():
+    present = [root / path for path in _PROFILE_PATHS if (root / path).exists()]
+    if not present:
         return {}
+    # One file reached through two names (a directory linked to the other) is one declaration.
+    if len({path.resolve() for path in present}) > 1:
+        # Two declarations of the same checks would let a run pass under one and be required under the other.
+        raise ValueError(f"Check profiles are declared in both {_PROFILE_PATHS[0]} and {_PROFILE_PATHS[1]}; "
+                         "keep one of them")
+    config_path = present[0]
     if not config_path.resolve().is_relative_to(root):
         raise ValueError("Check profile configuration must stay inside its worktree")
     try:
@@ -606,8 +613,8 @@ def _verification_status(store, reader, task, worktree=None, capture=None):
     scoped = [r for r in runs if r.get("worktree") == str(root)]
     try:
         profiles = load_profiles(store, project_id, root)
-    except ValueError:
-        return {"status": "unknown", "reasons": ["check profiles unavailable"], "run_ids": []}
+    except ValueError as exc:
+        return {"status": "unknown", "reasons": [f"check profiles unavailable: {exc}"], "run_ids": []}
     required = metadata.get("required_profiles", [])
     if not isinstance(required, list) or not all(isinstance(p, str) and p for p in required):
         return {"status": "unknown", "reasons": ["invalid required profiles"], "run_ids": []}

@@ -19,9 +19,13 @@ import re
 import tempfile
 from uuid import UUID, uuid4
 
+from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .store import KINDS, STATUSES, TASK_STATES, _clean, _insert, _json, _now, _one, _set
 
-FORMAT = "devbrain-portable-memory"
+# Written into every new manifest, and so into its identifier. Manifests written under the
+# earlier name are read as they are: rewriting one would change its identifier and its history.
+FORMAT = "cairnmind-portable-memory"
+FORMATS = (FORMAT, "devbrain-portable-memory")
 VERSION = 1
 TABLES = ("sources", "records", "record_revisions", "plans", "plan_revisions", "nodes", "edges", "check_runs")
 HISTORY_LIMIT = 5
@@ -330,7 +334,7 @@ def _load_snapshot_impl(path):
     # Snapshot paths are exact files, never unpacked archive paths.
     raw = _read(path, MAX_MANIFEST_BYTES)
     manifest = _parse(raw)
-    if (not isinstance(manifest, dict) or manifest.get("format") != FORMAT
+    if (not isinstance(manifest, dict) or manifest.get("format") not in FORMATS
             or type(manifest.get("format_version")) is not int or manifest["format_version"] != VERSION):
         raise ValueError("Unsupported portable memory format")
     project = manifest.get("project")
@@ -455,7 +459,24 @@ class MemoryManager:
 
     @staticmethod
     def _path(root):
-        return root / ".memory" / "devbrain" / "manifest.json"
+        return root / MEMORY_RELATIVE / "manifest.json"
+
+    @staticmethod
+    def _earlier_package(root):
+        """What a reader should know about a package left in the earlier directory, or None."""
+        earlier, current = (root / directory / "manifest.json" for directory in (EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE))
+        if not (earlier.exists() or earlier.is_symlink()):
+            return None
+        note = {"path": str(earlier.parent), "state": "only_copy" if not current.exists() else "superseded"}
+        if current.exists():
+            try:
+                old, new = _parse(_read(earlier, MAX_MANIFEST_BYTES)), _parse(_read(current, MAX_MANIFEST_BYTES))
+                if old.get("snapshot_id") not in [new.get("snapshot_id"), *new.get("ancestors", [])]:
+                    # Someone still publishes there with an earlier version; that snapshot is not in this history.
+                    note["state"] = "diverged"
+            except (OSError, ValueError, AttributeError, TypeError):
+                note["state"] = "unreadable"
+        return note
 
     @contextmanager
     def _publisher_lock(self, project_id, worktree=None):
@@ -536,6 +557,16 @@ class MemoryManager:
                     raise MemoryConflict("Memory manifest changed externally; inspect/import it before publishing")
             elif known:
                 raise MemoryConflict("Previously published memory manifest is missing")
+            # Nothing was published in this directory yet. A package left in the earlier one gets the
+            # same scrutiny as a manifest here would: it must be the one this store published or accepted.
+            earlier, earlier_path = None, root / EARLIER_MEMORY_RELATIVE / "manifest.json"
+            if previous is None and (earlier_path.exists() or earlier_path.is_symlink()):
+                _, earlier_raw, earlier, _ = _load_snapshot(earlier_path)
+                receipt = self._known_manifest(project_id, earlier_path)
+                if (not receipt or receipt.get("manifest_sha") != hashlib.sha256(earlier_raw).hexdigest()
+                        or earlier["project"]["id"] != project_id):
+                    raise MemoryConflict(f"The memory package in {EARLIER_MEMORY_RELATIVE} was not published or imported "
+                                         "by this store; inspect/import it before publishing")
             objects = {}
             for table, rows in payload.items():
                 objects[table] = []
@@ -555,6 +586,10 @@ class MemoryManager:
             if (previous and previous.get("content_hash") == content_hash
                     and (not tip or tip["snapshot_id"] == previous["snapshot_id"])):
                 return _summary(path, previous, "unchanged")
+            if (earlier and earlier.get("content_hash") == content_hash
+                    and (not tip or tip["snapshot_id"] == earlier["snapshot_id"])):
+                # What is in the earlier directory is already this state: no second copy is written.
+                return _summary(earlier_path, earlier, "unchanged")
             parent = tip["snapshot_id"] if tip else previous["snapshot_id"] if previous else None
             ancestors = ([parent] + (tip.get("ancestors", []) if tip else previous.get("ancestors", []) if previous else [])) if parent else []
             manifest = {"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,
@@ -803,9 +838,12 @@ class MemoryManager:
 
     def status(self, project_id, worktree=None):
         project, root = self._scope(project_id, worktree)
-        path = self._path(root)
+        # Shown: the package there is to read. Written next: always the current directory.
+        found = snapshot_directory(root)
+        path = found / "manifest.json" if found is not None else self._path(root)
         schedule = _one(self.store, "SELECT FROM memory_settings WHERE id=:id", {"id": project_id}, False) or {}
-        result = {"project_id": project_id, "path": str(path), "latest": None,
+        result = {"project_id": project_id, "path": str(path), "write_path": str(self._path(root)),
+                  "earlier_package": self._earlier_package(root), "latest": None,
                   "auto": {"enabled": False, "interval_minutes": 15, "worktree": str(root),
                            "last_checked_at": None, "last_success_at": None, "error": None}}
         result["auto"].update({k: v for k, v in schedule.items() if k in result["auto"]})

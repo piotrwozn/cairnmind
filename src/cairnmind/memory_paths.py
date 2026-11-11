@@ -11,7 +11,12 @@ import os
 from pathlib import Path
 
 
-MEMORY_RELATIVE = Path(".memory/devbrain")
+# Snapshots are written to the first directory. The second is where versions up to 0.9.0 wrote
+# them: it is still read, and still reserved, so that a package left there is neither indexed
+# nor counted as project code.
+MEMORY_RELATIVE = Path(".memory/cairnmind")
+EARLIER_MEMORY_RELATIVE = Path(".memory/devbrain")
+MEMORY_DIRECTORIES = (MEMORY_RELATIVE, EARLIER_MEMORY_RELATIVE)
 
 
 def is_reserved_memory(relative: str | Path) -> bool:
@@ -20,7 +25,16 @@ def is_reserved_memory(relative: str | Path) -> bool:
     if ".memory" not in os.fspath(relative).lower():
         return False
     path = Path(os.path.normpath(relative))
-    return not path.is_absolute() and path.is_relative_to(MEMORY_RELATIVE)
+    return not path.is_absolute() and any(path.is_relative_to(directory) for directory in MEMORY_DIRECTORIES)
+
+
+def snapshot_directory(root: str | Path) -> Path | None:
+    """The directory of a worktree that holds a snapshot to read: the current one, else the earlier one."""
+    for directory in MEMORY_DIRECTORIES:
+        manifest = Path(root) / directory / "manifest.json"
+        if manifest.exists() or manifest.is_symlink():
+            return Path(root) / directory
+    return None
 
 
 def is_memory_path(path: str | Path, root: str | Path) -> bool:

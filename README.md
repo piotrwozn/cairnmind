@@ -13,7 +13,7 @@ What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cai
 - **Every answer cites its sources.** The local knowledge agent must back an `ask` answer with verbatim quotes. The service checks that each quote occurs literally in the source it read and that the source is still current; otherwise the answer is not presented as grounded. When the project does not contain the answer, the agent says `unknown`.
 - **Resuming is verified, not assumed.** A bound session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
 - **"Done" requires fresh proof.** For tasks that require tests, completion needs a passing run of each named test profile, bound to the task definition and to a fingerprint of the current code. A later code change marks that evidence stale.
-- **Memory travels with the repository.** A checksummed snapshot in `.memory/devbrain/` moves one project's knowledge, plans and history to another machine without moving credentials.
+- **Memory travels with the repository.** A checksummed snapshot in `.memory/cairnmind/` moves one project's knowledge, plans and history to another machine without moving credentials.
 
 ## Who it is for
 
@@ -138,7 +138,7 @@ cairnmind task list my-app
 
 Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` and `blocked`. A separate `proposed`/`confirmed` status describes how certain a finding is. A `done` result remains part of the execution history; a later code change can turn its verification to `stale`. The plan format, check profiles and MCP calls are described in [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
-Declare check profiles in `.devbrain/checks.toml`, for example `[checks.unit]` with `argv = ["uv", "run", "pytest"]`. Running a check is an explicit CLI operation:
+Declare check profiles in `.cairnmind/checks.toml`, for example `[checks.unit]` with `argv = ["uv", "run", "pytest"]`. Running a check is an explicit CLI operation:
 
 ```bash
 cairnmind check run my-app unit --task TASK_ID
@@ -170,7 +170,7 @@ The fingerprint also covers untracked files that are not ignored. Put generated 
 
 ## Portable project memory
 
-A full snapshot in `.memory/devbrain/` carries one project's memory together with the repository: conversations and the exact source content, findings, plans, tasks, checkpoints, revisions and links. Saving and importing do not require Ollama. The memory panel offers preview, save, import check, import and auto-save settings; the same operations are available from the CLI. Merely detecting the files loads nothing.
+A full snapshot in `.memory/cairnmind/` carries one project's memory together with the repository: conversations and the exact source content, findings, plans, tasks, checkpoints, revisions and links. Saving and importing do not require Ollama. The memory panel offers preview, save, import check, import and auto-save settings; the same operations are available from the CLI. Merely detecting the files loads nothing.
 
 ```bash
 cairnmind memory snapshot my-app --preview
@@ -180,22 +180,22 @@ cairnmind memory status my-app
 cairnmind memory auto my-app --disable
 ```
 
-Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/devbrain/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
+Auto-save is off by default. When enabled, it saves changed memory while the service is running, including after the terminal UI is closed. It keeps the five most recent snapshots and shares identical objects between them. It does not run models, make commits or push anything to GitHub. Full conversations may contain private information: review the export before adding `.memory/cairnmind/` to the repository. Machine configuration, authentication files and configured keys are not exported; the content of saved conversations is not automatically anonymized.
 
 On a second machine, after installing Cairnmind and cloning the repository:
 
 ```bash
-cairnmind memory inspect ~/src/my-app/.memory/devbrain
-cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app --dry-run
-cairnmind memory import ~/src/my-app/.memory/devbrain --root ~/src/my-app
+cairnmind memory inspect ~/src/my-app/.memory/cairnmind
+cairnmind memory import ~/src/my-app/.memory/cairnmind --root ~/src/my-app --dry-run
+cairnmind memory import ~/src/my-app/.memory/cairnmind --root ~/src/my-app
 ```
 
 To read a snapshot without importing it, use `memory show`. It needs no Java, engine, model or service, and writes nothing. Inside a Cairnmind coding session the running service first confirms that the package belongs to the session's project, as it does for `memory inspect`:
 
 ```bash
-cairnmind memory show ~/src/my-app/.memory/devbrain
-cairnmind memory show ~/src/my-app/.memory/devbrain --kind decision --grep login
-cairnmind memory show ~/src/my-app/.memory/devbrain --kind plan
+cairnmind memory show ~/src/my-app/.memory/cairnmind
+cairnmind memory show ~/src/my-app/.memory/cairnmind --kind decision --grep login
+cairnmind memory show ~/src/my-app/.memory/cairnmind --kind plan
 ```
 
 It validates the package exactly as `memory inspect` does, then prints the snapshot header and the matching records with their status, version, time of last change and source addresses, and plans with their steps and source addresses. `--kind` takes a record kind or `plan`, `--status` a record status, and `--grep` a case-insensitive text. Check runs stored in the snapshot are printed as historical.

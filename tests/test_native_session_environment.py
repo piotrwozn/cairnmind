@@ -29,7 +29,7 @@ def test_native_codex_mcp_stdio_receives_only_explicit_launch_environment(tmp_pa
     settings = Settings.load(tmp_path / "memory", create=True)
     config_path = tmp_path / ".codex/config.toml"
     integrations._merge_toml_mcp(config_path, settings)
-    server = tomllib.loads(config_path.read_text())["mcp_servers"]["devbrain"]
+    server = tomllib.loads(config_path.read_text())["mcp_servers"]["cairnmind"]
     capture = tmp_path / "capture.json"
     bridge = tmp_path / "capture_mcp.py"
     bridge.write_text('''import json, os, sys
@@ -51,7 +51,7 @@ for line in sys.stdin:
     # initialize + status/list causes real stdio spawn but sends no model turn,
     # performs no model inference and has no access to the user's auth/config.
     allowlist = server["env_vars"] if forward_session else []
-    configuration = ('mcp_servers={devbrain={command=' + json.dumps(sys.executable)
+    configuration = ('mcp_servers={cairnmind={command=' + json.dumps(sys.executable)
                      + ',args=' + json.dumps([str(bridge), str(capture)])
                      + ',env_vars=' + json.dumps(allowlist) + ',startup_timeout_sec=4}}')
     environment = dict(os.environ)
@@ -94,7 +94,7 @@ for line in sys.stdin:
             response(1)
             send({"method": "initialized"})
             send({"id": 2, "method": "mcpServerStatus/list", "params": {
-                "serverName": "devbrain", "detail": "toolsAndAuthOnly"}})
+                "serverName": "cairnmind", "detail": "toolsAndAuthOnly"}})
             result = response(2)
             assert len(result["data"]) == 1
             assert result["data"][0]["serverInfo"]["name"] == "environment-fixture"
