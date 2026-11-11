@@ -231,7 +231,7 @@ The default data directory is `~/.local/share/cairnmind` for a new installation.
 ```bash
 cairnmind export ~/memory.json --project my-app
 cairnmind export ~/memory.md --project my-app --markdown
-cairnmind backup ~/devbrain-backup.devbrain.json.gz
+cairnmind backup ~/cairnmind-backup.cairnmind.json.gz
 ```
 
 The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`. To move a single project, use `memory import`; `restore` replaces the entire store.

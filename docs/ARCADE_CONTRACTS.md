@@ -61,7 +61,7 @@ Additional root-facing methods needed:
 - `delete_embeddings(project_id)->None`
 - export/backup restore: portable JSON/zip artifact includes sources/revisions/cursors/jobs,
   native graph reconstructed via helpers on restore, credentials excluded, transactional
-  snapshot export; native engine backup optional extra. Choose `.devbrain.json.gz` backup
+  snapshot export; native engine backup optional extra. Choose `.cairnmind.json.gz` backup (`.devbrain.json.gz` up to 0.9.0)
   default and validate manifest/hash before destructive restore. Backups remain source complete.
 
 ## Ingestion (ingestion agent owns)

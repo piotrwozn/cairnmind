@@ -67,7 +67,7 @@ async def test_existing_file_requires_exact_hash_and_preserves_mode(executor):
     assert not bad["ok"] and bad["error_code"] == "file_changed" and file.read_text() == "old"
     good = await executor.execute("write_file", {"path": "run.sh", "content": "new", "expected_sha256": digest("old")})
     assert good["ok"] and stat.S_IMODE(file.stat().st_mode) == 0o751
-    assert not list(executor.worktree.glob(".devbrain-api-*"))
+    assert not list(executor.worktree.glob(".cairnmind-api-*"))
 
 
 async def test_exclusive_create_never_overwrites_existing_file(executor):

@@ -25,7 +25,7 @@ from .native_worker import process_start
 from .runtime_selection import resolve_tmux
 from .workspace_state import WorkspaceState
 
-SESSION = "devbrain-ui"
+SESSION = "cairnmind-ui"
 MINIMUM = (140, 42)
 DEFAULT_SIZE = (180, 55)
 _ROLES = ("sidebar", "client1", "client2", "inspector", "graph")
@@ -127,7 +127,7 @@ class WorkspaceManager:
         self.state = WorkspaceState(settings, workspace_id)
         self.directory = self.state.directory
         namespace = hashlib.sha256((str(settings.data_dir.resolve()) + ":" + workspace_id).encode()).hexdigest()[:16]
-        self.socket_directory = Path(tempfile.gettempdir()) / f"devbrain-ui-{os.getuid()}-{namespace}"
+        self.socket_directory = Path(tempfile.gettempdir()) / f"cairnmind-ui-{os.getuid()}-{namespace}"
         self.socket = self.socket_directory / "tmux.sock"
         self.config = self.directory / "tmux.conf"
         self.binary = resolve_tmux(settings, override=tmux_binary)
@@ -176,7 +176,7 @@ class WorkspaceManager:
                              "set -g status-style 'bg=colour234,fg=colour151'\n"
                              "set -g pane-border-status top\nset -g pane-border-style 'fg=colour238'\n"
                              "set -g pane-active-border-style 'fg=colour151'\n"
-                             "set -g pane-border-format ' #{@devbrain_role} #{@devbrain_control} #{@devbrain_memory} '\n"
+                             "set -g pane-border-format ' #{@cairnmind_role} #{@cairnmind_control} #{@cairnmind_memory} '\n"
                              "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
                              "set -g allow-passthrough off\nset -g history-limit 5000\n")
         info = self.config.stat()
@@ -195,7 +195,7 @@ class WorkspaceManager:
         if not self.binary or not self.socket.exists():
             return False
         try:
-            result = self.tmux("show-options", "-v", "-t", SESSION, "@devbrain_workspace", check=False)
+            result = self.tmux("show-options", "-v", "-t", SESSION, "@cairnmind_workspace", check=False)
             return result.returncode == 0 and result.stdout.strip() == self.workspace_id
         except (OSError, subprocess.SubprocessError, ValueError):
             return False
@@ -203,7 +203,7 @@ class WorkspaceManager:
     def panes(self):
         if not self.exists():
             return {}
-        result = self.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@devbrain_workspace}\t#{@devbrain_role}\t#{window_name}")
+        result = self.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{window_name}")
         found = {}
         for line in result.stdout.splitlines():
             parts = line.split("\t")
@@ -298,9 +298,9 @@ class WorkspaceManager:
                            "--workspace-id", self.workspace_id, "--data-dir", str(self.settings.data_dir)])
 
     def _tag(self, pane, role, run_id=None):
-        self.tmux("set-option", "-p", "-t", pane, "@devbrain_workspace", self.workspace_id)
-        self.tmux("set-option", "-p", "-t", pane, "@devbrain_role", role)
-        self.tmux("set-option", "-p", "-t", pane, "@devbrain_run_id", run_id or "")
+        self.tmux("set-option", "-p", "-t", pane, "@cairnmind_workspace", self.workspace_id)
+        self.tmux("set-option", "-p", "-t", pane, "@cairnmind_role", role)
+        self.tmux("set-option", "-p", "-t", pane, "@cairnmind_run_id", run_id or "")
 
     def _split(self, target, role, direction, percentage):
         pane = self.tmux("split-window", "-d", direction, "-t", target, "-l", str(percentage) + "%", "-P", "-F", "#{pane_id}", self._panel(role)).stdout.strip()
@@ -313,7 +313,7 @@ class WorkspaceManager:
             if not self.exists():
                 sidebar = self.tmux("new-session", "-d", "-s", SESSION, "-n", "workspace", "-x", "180", "-y", "55",
                                     "-P", "-F", "#{pane_id}", self._panel("sidebar")).stdout.strip()
-                self.tmux("set-option", "-t", SESSION, "@devbrain_workspace", self.workspace_id)
+                self.tmux("set-option", "-t", SESSION, "@cairnmind_workspace", self.workspace_id)
                 self._tag(sidebar, "sidebar")
                 first = self._split(sidebar, "client1", "-h", 86)
                 inspector = self._split(first, "inspector", "-v", 42)
@@ -326,7 +326,7 @@ class WorkspaceManager:
                 self._layout()
             self._recover_ui_panels()
             self._bindings()
-            self.tmux("set-option", "-g", "pane-border-format", " #{@devbrain_role} #{@devbrain_control} #{@devbrain_memory} ")
+            self.tmux("set-option", "-g", "pane-border-format", " #{@cairnmind_role} #{@cairnmind_control} #{@cairnmind_memory} ")
             self.tmux("set-option", "-g", "status-right-length", "90")
             self.tmux("set-option", "-g", "status-right",
                       "#{?client_readonly, READ ONLY · C-b d: detach , C-b Space: commands · C-b ?: help · C-b Tab: next · C-b d: detach }")
@@ -344,7 +344,7 @@ class WorkspaceManager:
             if role not in {"sidebar", "inspector", "graph"}:
                 continue
             identity = self.tmux("display-message", "-p", "-t", pane,
-                                 "#{@devbrain_workspace}\t#{@devbrain_role}\t#{pane_dead}").stdout.strip()
+                                 "#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{pane_dead}").stdout.strip()
             if identity == f"{self.workspace_id}\t{role}\t1":
                 self.tmux("respawn-pane", "-k", "-t", pane, self._panel(role))
                 self._tag(pane, role)
@@ -495,11 +495,11 @@ class WorkspaceManager:
 
     def _update_status(self, selected):
         panes = self.panes()
-        previous = self.tmux("show-options", "-gv", "@devbrain_status_role", check=False).stdout.strip()
+        previous = self.tmux("show-options", "-gv", "@cairnmind_status_role", check=False).stdout.strip()
         role = selected.get("focus") if selected.get("focus") in {"client1", "client2"} else previous
         role = role if role in panes and role in {"client1", "client2"} else "client1"
         if previous != role:
-            self.tmux("set-option", "-g", "@devbrain_status_role", role)
+            self.tmux("set-option", "-g", "@cairnmind_status_role", role)
         visible = selected.get("visible_slot_ids", [])
         index = 1 if role == "client2" else 0
         identifier = visible[index] if index < len(visible) else None
@@ -507,7 +507,7 @@ class WorkspaceManager:
         control = None
         if role in panes and slot.get("run_id"):
             fields = self.tmux("display-message", "-p", "-t", panes[role],
-                "#{@devbrain_binding}\t#{@devbrain_control}").stdout.rstrip("\n").split("\t")
+                "#{@cairnmind_binding}\t#{@cairnmind_control}").stdout.rstrip("\n").split("\t")
             if len(fields) == 2 and fields[0] == f"{slot['run_id']}:{slot.get('generation')}":
                 control = fields[1]
         language = CockpitState(self.settings).load().get("language", "en")
@@ -543,15 +543,15 @@ class WorkspaceManager:
                      else "ack" if memory.get("acknowledged") is True else "ACK required" if run_id else "")
             if run_id and selected["broker_available"] is False:
                 badge = "unavailable"
-            self.tmux("set-option", "-p", "-t", panes[role], "@devbrain_memory", badge)
-            current = self.tmux("show-options", "-pv", "-t", panes[role], "@devbrain_binding", check=False).stdout.strip()
+            self.tmux("set-option", "-p", "-t", panes[role], "@cairnmind_memory", badge)
+            current = self.tmux("show-options", "-pv", "-t", panes[role], "@cairnmind_binding", check=False).stdout.strip()
             if current == binding:
                 continue
-            self.tmux("set-option", "-p", "-t", panes[role], "@devbrain_control", "")
+            self.tmux("set-option", "-p", "-t", panes[role], "@cairnmind_control", "")
             command = self._bridge_command(run_id, generation) if run_id else self._panel(role)
             self.tmux("respawn-pane", "-k", "-t", panes[role], command)
             self._tag(panes[role], role, run_id)
-            self.tmux("set-option", "-p", "-t", panes[role], "@devbrain_binding", binding)
+            self.tmux("set-option", "-p", "-t", panes[role], "@cairnmind_binding", binding)
         self._save_if_current(selected, {"pane_ids": panes})
 
     def _layout(self):
@@ -673,9 +673,9 @@ class WorkspaceManager:
 
     def take_control(self, run_id):
         for pane in self.panes().values():
-            bound = self.tmux("show-options", "-pv", "-t", pane, "@devbrain_run_id", check=False).stdout.strip()
+            bound = self.tmux("show-options", "-pv", "-t", pane, "@cairnmind_run_id", check=False).stdout.strip()
             if bound == run_id:
-                self.tmux("set-option", "-p", "-t", pane, "@devbrain_takeover", str(uuid4()))
+                self.tmux("set-option", "-p", "-t", pane, "@cairnmind_takeover", str(uuid4()))
                 return {"requested": True, "run_id": run_id}
         return {"requested": False, "run_id": run_id}
 
@@ -700,7 +700,7 @@ class WorkspaceManager:
     def auth_finished(self, run_id):
         if not self.exists():
             return {"closed": False}
-        rows = self.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@devbrain_workspace}\t#{@devbrain_role}\t#{@devbrain_run_id}").stdout.splitlines()
+        rows = self.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{@cairnmind_run_id}").stdout.splitlines()
         # The callback can run inside the bridge being closed. Commit local
         # bookkeeping before kill-pane sends SIGHUP to that very process.
         self.state.merge_ids("auth_runs", remove=[run_id])

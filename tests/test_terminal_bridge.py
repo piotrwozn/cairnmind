@@ -293,7 +293,7 @@ def test_outer_pane_status_never_targets_unverified_workspace(tmp_path, monkeypa
     tag["value"] = "default\trun-fixture\tfresh-nonce"
     assert pane.poll_nonce() == "fresh-nonce"
     pane.state("readonly")
-    assert calls[-1] == ("set-option", "-p", "-t", "%7", "@devbrain_control", "readonly")
+    assert calls[-1] == ("set-option", "-p", "-t", "%7", "@cairnmind_control", "readonly")
 
 
 @pytest.mark.parametrize("inner_term", ["tmux-256color", None])

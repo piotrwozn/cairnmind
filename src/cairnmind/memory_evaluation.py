@@ -243,7 +243,7 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
     """Run explicitly requested local-model inference in two disposable databases."""
     started = time.monotonic()
     measured = MeasuredOllama(ollama or Ollama(settings))
-    report = {"format_version": 1, "devbrain_version": __version__, "evaluation_mode": "portable_positive_extraction",
+    report = {"format_version": 1, "cairnmind_version": __version__, "evaluation_mode": "portable_positive_extraction",
         "inference": "injected_adapter" if ollama is not None else "local_ollama", "status": "not_run",
         "model": settings.chat_model, "embedding_model": settings.embedding_model,
         "model_identities": {}, "extraction": [], "recall": [], "deterministic_checks": {},
@@ -261,7 +261,7 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
     try:
         asyncio.run(preflight())
         preflight_complete = True
-        with tempfile.TemporaryDirectory(prefix="devbrain-memory-eval-") as name:
+        with tempfile.TemporaryDirectory(prefix="cairnmind-memory-eval-") as name:
             temporary = Path(name)
             roots = [temporary / "computer-a" / "project", temporary / "computer-b" / "project",
                      temporary / "computer-b" / "neighbor"]

@@ -152,7 +152,7 @@ async def test_explicit_probe_uses_one_side_effect_free_nonce_tool(provider):
         definition = tool.get("function", tool)
         schema = definition.get("parameters", definition.get("input_schema"))
         nonce = schema["properties"]["nonce"]["enum"][0]
-        return stream_response(provider, arguments={"nonce": nonce}, tool_name="devbrain_connection_probe", text="")
+        return stream_response(provider, arguments={"nonce": nonce}, tool_name="cairnmind_connection_probe", text="")
 
     async with httpx.AsyncClient(transport=transport(handle)) as client:
         adapter = make_provider(profile(provider), "PRIVATE_TEST_KEY" if provider != "ollama" else None, client=client)

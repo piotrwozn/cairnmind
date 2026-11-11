@@ -737,11 +737,11 @@ class Provider:
     async def probe(self):
         """One explicit model call; a returned probe tool is evidence of tools."""
         nonce = uuid4().hex
-        tools = [{"name": "devbrain_connection_probe", "description": "Connection test only; no side effects.",
+        tools = [{"name": "cairnmind_connection_probe", "description": "Connection test only; no side effects.",
                   "parameters": {"type": "object", "properties": {"nonce": {"type": "string", "enum": [nonce]}},
                                  "required": ["nonce"], "additionalProperties": False}}]
         reply = await self.complete([{"role": "user", "content":
-            "Test tool calling. Call devbrain_connection_probe exactly once with nonce " + nonce +
+            "Test tool calling. Call cairnmind_connection_probe exactly once with nonce " + nonce +
             ". Do not answer in text. This probe cannot access files or execute commands."}], tools)
         calls = reply.get("tool_calls", [])
         if len(calls) != 1 or calls[0]["name"] != tools[0]["name"] or calls[0]["arguments"] != {"nonce": nonce}:

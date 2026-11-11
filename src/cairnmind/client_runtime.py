@@ -66,7 +66,7 @@ class NativeRuntime:
         self.settings = settings
         self.directory = settings.data_dir / "runtime"
         namespace = hashlib.sha256(str(settings.data_dir.resolve()).encode()).hexdigest()[:16]
-        self.socket_directory = Path(tempfile.gettempdir()) / f"devbrain-native-{os.getuid()}-{namespace}"
+        self.socket_directory = Path(tempfile.gettempdir()) / f"cairnmind-native-{os.getuid()}-{namespace}"
         self.socket = self.socket_directory / "tmux.sock"
         self.registry = self.directory / "runs.json"
         self.config = self.directory / "tmux.conf"
@@ -158,7 +158,7 @@ class NativeRuntime:
         if info.st_uid != os.getuid() or not stat.S_ISSOCK(info.st_mode):
             raise ValueError("Native terminal socket is not owned by this user")
         result = self._tmux("display-message", "-p", "-t", row["tmux_session"],
-            "#{session_name}\t#{@devbrain_run_id}\t#{@devbrain_generation}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_dead_status}", check=False)
+            "#{session_name}\t#{@cairnmind_run_id}\t#{@cairnmind_generation}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_dead_status}", check=False)
         if result.returncode:
             return None
         # tmux 3.8 clears pane_pid after exit. Preserve empty fields, including
@@ -362,7 +362,7 @@ class NativeRuntime:
         run_id = run_id or uuid4().hex
         if not isinstance(run_id, str) or not _ID.fullmatch(run_id):
             raise ValueError("Invalid terminal run ID")
-        session = "devbrain_" + run_id
+        session = "cairnmind_" + run_id
         spec = self.directory / f"{run_id}.launch.json"
         row = {"id": run_id, "run_id": run_id, "project_id": project["id"], "worktree": launch["cwd"],
                "client": client, "profile_id": launch.get("profile_id", client), "slot_id": slot_id, "generation": generation,
@@ -377,8 +377,8 @@ class NativeRuntime:
                            "environment": launch["env"], "cwd": launch["cwd"]})
             self._tmux("new-session", "-d", "-x", "120", "-y", "40", "-s", session, "-c", launch["cwd"],
                        "--", sys.executable, "-I", "-m", "cairnmind.native_worker", "--spec", str(spec),
-                       ";", "set-option", "-t", session, "@devbrain_run_id", run_id,
-                       ";", "set-option", "-t", session, "@devbrain_generation", str(generation))
+                       ";", "set-option", "-t", session, "@cairnmind_run_id", run_id,
+                       ";", "set-option", "-t", session, "@cairnmind_generation", str(generation))
             self.socket.chmod(0o600)
             marker = spec.with_suffix(".started.json")
             deadline = time.monotonic() + 3

@@ -60,12 +60,12 @@ def preview_settings(root: Path, *, create=False, scenario="normal"):
         settings = Settings(root, token=secrets.token_urlsafe(32), arcade_url="http://127.0.0.1:1",
                             ollama_url="http://127.0.0.1:1", arcade_database="preview_never_opened")
         settings.save()
-        _atomic(marker, {"kind": "devbrain-synthetic-terminal-preview", "scenario": scenario,
+        _atomic(marker, {"kind": "cairnmind-synthetic-terminal-preview", "scenario": scenario,
                          "created": time.time(), "version": __version__, "source_hashes": source_hashes()})
     else:
         if marker.is_symlink() or not marker.is_file():
             raise ValueError("Not an owned synthetic preview directory.")
-        if json.loads(marker.read_text()).get("kind") != "devbrain-synthetic-terminal-preview":
+        if json.loads(marker.read_text()).get("kind") != "cairnmind-synthetic-terminal-preview":
             raise ValueError("Invalid preview ownership marker.")
         settings = Settings.load(root)
     return settings
@@ -183,7 +183,7 @@ def create_preview_app(settings, scenario="normal", *, fixture=None):
     app.state.operational_writes_accepted = 0
 
     def session(request):
-        value = sessions.get(request.cookies.get("devbrain-preview"))
+        value = sessions.get(request.cookies.get("cairnmind-preview"))
         if value is None:
             raise HTTPException(401, "Preview session required")
         return value
@@ -213,7 +213,7 @@ def create_preview_app(settings, scenario="normal", *, fixture=None):
 
     @app.get("/health")
     async def health():
-        return {"service": "devbrain-cockpit", "version": __version__, "instance": instance_id(settings),
+        return {"service": "cairnmind-cockpit", "version": __version__, "instance": instance_id(settings),
                 "pid": os.getpid(), "birth": _birth(os.getpid()), "synthetic_preview": True}
 
     @app.post("/_control/ticket")
@@ -226,7 +226,7 @@ def create_preview_app(settings, scenario="normal", *, fixture=None):
     async def exchange(request: Request):
         token, value = sessions.exchange((await request.json()).get("ticket"))
         response = JSONResponse({"csrf": value["csrf"]})
-        response.set_cookie("devbrain-preview", token, httponly=True, samesite="strict")
+        response.set_cookie("cairnmind-preview", token, httponly=True, samesite="strict")
         return response
 
     @app.get("/auth/session")
@@ -311,7 +311,7 @@ class PreviewTerminal:
         command = [manager.binary, "-S", str(manager.socket), "attach-session"]
         if readonly:
             command += ["-r", "-f", "ignore-size"]
-        command += ["-t", "devbrain-ui"]
+        command += ["-t", "cairnmind-ui"]
         script = "import fcntl,os,sys,termios; fcntl.ioctl(0,termios.TIOCSCTTY,0); os.execv(sys.argv[1],sys.argv[1:])"
         self.process = subprocess.Popen([sys.executable, "-I", "-c", script, *command],
             stdin=self.slave, stdout=self.slave, stderr=self.slave, start_new_session=True,
@@ -436,7 +436,7 @@ def main():
         projects = server.app.state.fixture.projects
         if projects:
             manager.state.select_project(projects[0], intent="inspect")
-        manager.tmux("resize-window", "-t", "devbrain-ui:workspace", "-x", args.size[0], "-y", args.size[1])
+        manager.tmux("resize-window", "-t", "cairnmind-ui:workspace", "-x", args.size[0], "-y", args.size[1])
         manager.refresh()
         if not args.attach:
             terminal = PreviewTerminal(manager, args.size)
@@ -462,7 +462,7 @@ def main():
             def expire():
                 stopped.wait(args.duration)
                 with suppress(Exception):
-                    manager.tmux("detach-client", "-s", "devbrain-ui", check=False)
+                    manager.tmux("detach-client", "-s", "cairnmind-ui", check=False)
                 stopped.set()
             threading.Thread(target=expire, daemon=True).start()
             manager.attach()

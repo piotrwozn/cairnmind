@@ -86,7 +86,7 @@ if [[ ! -f "$package_dir/pyproject.toml" || ! -f "$package_dir/uv.lock" ]]; then
     exit 1
 fi
 
-constraints_file="$(mktemp "${TMPDIR:-/tmp}/devbrain-constraints.XXXXXXXX")"
+constraints_file="$(mktemp "${TMPDIR:-/tmp}/cairnmind-constraints.XXXXXXXX")"
 trap 'rm -f -- "$constraints_file"' EXIT
 
 printf 'Preparing dependencies from uv.lock...\n'
@@ -111,31 +111,53 @@ if uv tool list 2>/dev/null | grep -q '^devbrain '; then
     upgraded_from_devbrain=true
 fi
 
+# An installed Cairnmind is being replaced. Its workspace, interface broker and knowledge service run
+# detached and would go on running the earlier code. A later version may not even find a workspace
+# that an earlier one started, so it is not left behind: the installer stops here unless told to
+# close it. The broker and the service hold no interactive work and are stopped without asking.
+installed_bin="$(uv tool dir --bin)/cairnmind"
+if [[ -x "$installed_bin" ]] && uv tool list 2>/dev/null | grep -q '^cairnmind '; then
+    if "$installed_bin" workspace status 2>/dev/null | grep -q '"available": true'; then
+        if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" == 1 ]]; then
+            printf 'Closing the running Cairnmind workspace, as CAIRNMIND_INSTALL_STOP_WORKSPACE=1 asks.\n'
+            "$installed_bin" workspace stop >/dev/null 2>&1 || true
+        else
+            printf '%s\n' \
+                'A Cairnmind workspace is running, with whatever coding sessions are open in it.' \
+                'Finish there, close it with: cairnmind workspace stop' \
+                'and run this installer again. To let the installer close it, set CAIRNMIND_INSTALL_STOP_WORKSPACE=1.' >&2
+            exit 1
+        fi
+    fi
+    "$installed_bin" cockpit stop >/dev/null 2>&1 || true
+    "$installed_bin" stop >/dev/null 2>&1 || true
+fi
+
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
 uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir"
 
 tool_bin_dir="$(uv tool dir --bin)"
-devbrain_bin="$tool_bin_dir/cairnmind"
-if [[ ! -x "$devbrain_bin" ]]; then
-    printf 'Installation did not provide the executable: %s\n' "$devbrain_bin" >&2
+cairnmind_bin="$tool_bin_dir/cairnmind"
+if [[ ! -x "$cairnmind_bin" ]]; then
+    printf 'Installation did not provide the executable: %s\n' "$cairnmind_bin" >&2
     exit 1
 fi
 
 printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
 arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
 if [[ -n "$arcade_dist" ]]; then
-    "$devbrain_bin" engine install --distribution "$arcade_dist"
+    "$cairnmind_bin" engine install --distribution "$arcade_dist"
 else
-    "$devbrain_bin" engine install
+    "$cairnmind_bin" engine install
 fi
-"$devbrain_bin" init
-"$devbrain_bin" engine status
-"$devbrain_bin" doctor
+"$cairnmind_bin" init
+"$cairnmind_bin" engine status
+"$cairnmind_bin" doctor
 
 if [[ "$upgraded_from_devbrain" == true ]]; then
     # Hooks and MCP entries in existing projects name the removed interpreter.
     printf '\nProjects set up by DevBrain still point at its removed Python. Reconnect each one:\n'
-    "$devbrain_bin" project list | "$(uv tool dir)/cairnmind/bin/python" -I -c '
+    "$cairnmind_bin" project list | "$(uv tool dir)/cairnmind/bin/python" -I -c '
 import json, shlex, sys
 projects = json.load(sys.stdin)
 for project in projects:
@@ -146,16 +168,16 @@ if not projects:
 fi
 
 if [[ "$pull_models" == true ]]; then
-    if ! "$devbrain_bin" models list >/dev/null; then
+    if ! "$cairnmind_bin" models list >/dev/null; then
         printf 'Cannot reach Ollama. Start ollama serve, then run cairnmind models pull.\n' >&2
         exit 1
     fi
-    "$devbrain_bin" models pull
+    "$cairnmind_bin" models pull
 else
     printf '\nModels were not downloaded. With Ollama running, run: cairnmind models pull\n'
 fi
 
-printf '\nCairnmind installed: %s\n' "$devbrain_bin"
+printf '\nCairnmind installed: %s\n' "$cairnmind_bin"
 case ":$PATH:" in
     *":$tool_bin_dir:"*) ;;
     *) printf 'Add this directory to PATH: %s\n' "$tool_bin_dir" ;;

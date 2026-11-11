@@ -66,7 +66,7 @@ def test_config_concurrent_start_preserves_one_token(tmp_path):
 def test_private_endpoints_require_local_bearer(workspace):
     settings, store, project, root = workspace
     with TestClient(create_app(settings, start_worker=False, ollama=LocalModelFixture())) as client:
-        assert client.get("/health").json()["service"] == "devbrain"
+        assert client.get("/health").json()["service"] == "cairnmind"
         assert client.get("/projects").status_code == 401
         assert client.get("/projects", headers={"Authorization": "Bearer wrong"}).status_code == 401
         result = client.get("/projects", headers={"Authorization": f"Bearer {settings.token}"})

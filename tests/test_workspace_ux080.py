@@ -192,7 +192,7 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
     broker.value["auth"] = {"codex": {"auth": "reported_signed_in", "ready_to_launch": True}}
     workspace.refresh()
     pane = workspace.panes()["client1"]
-    workspace.tmux("set-option", "-p", "-t", pane, "@devbrain_control", "controller")
+    workspace.tmux("set-option", "-p", "-t", pane, "@cairnmind_control", "controller")
     workspace._update_status(workspace.state.read())
     writer = observer = None
     try:
@@ -227,14 +227,14 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
         assert tr("Memory", language).encode() in bytes(writer.output)
         for binding, control, expected in (("native-fixture:7", "readonly", "Other"),
                                             ("native-fixture:8", "controller", "Unknown")):
-            workspace.tmux("set-option", "-p", "-t", pane, "@devbrain_binding", binding)
-            workspace.tmux("set-option", "-p", "-t", pane, "@devbrain_control", control)
+            workspace.tmux("set-option", "-p", "-t", pane, "@cairnmind_binding", binding)
+            workspace.tmux("set-option", "-p", "-t", pane, "@cairnmind_control", control)
             workspace._update_status(workspace.state.read())
             fmt = workspace.tmux("show-options", "-gv", "status-format[1]").stdout.rstrip("\n")
             actual = workspace.tmux("display-message", "-p", "-c", os.ttyname(writer.slave), fmt).stdout
             assert tr("Control", language) + ":" + tr(expected, language) in actual
-        workspace.tmux("set-option", "-p", "-t", pane, "@devbrain_binding", "native-fixture:7")
-        workspace.tmux("set-option", "-p", "-t", pane, "@devbrain_control", "controller")
+        workspace.tmux("set-option", "-p", "-t", pane, "@cairnmind_binding", "native-fixture:7")
+        workspace.tmux("set-option", "-p", "-t", pane, "@cairnmind_control", "controller")
         workspace.focus("client2")
         workspace._update_status(workspace.state.read())
         second_slot = workspace.tmux("show-options", "-gv", "status-format[0]").stdout

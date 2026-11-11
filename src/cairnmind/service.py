@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from cairnmind import __version__
-from cairnmind.config import Settings
+from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
 
 log = logging.getLogger(__name__)
 
@@ -329,11 +329,16 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 from cairnmind.verification import recover_interrupted_runs
                 await asyncio.to_thread(recover_interrupted_runs, store, settings)
                 backup_dir = settings.data_dir / "backups"
-                backups = sorted(backup_dir.glob("*.devbrain.json.gz")) if backup_dir.exists() else []
+                def daily_backups():
+                    # Files of both suffixes, oldest first by time: their names do not sort across two schemes.
+                    found = [path for suffix in BACKUP_SUFFIXES for path in backup_dir.glob(f"[0-9]*{suffix}")]
+                    return sorted(found, key=lambda path: (path.stat().st_mtime, path.name))
+
+                backups = daily_backups() if backup_dir.exists() else []
                 if not backups or time.time() - backups[-1].stat().st_mtime > 86400:
                     backup_dir.mkdir(exist_ok=True)
-                    await asyncio.to_thread(store.backup, backup_dir / f"{time.time_ns()}.devbrain.json.gz")
-                    for old in sorted(backup_dir.glob("*.devbrain.json.gz"))[:-7]:
+                    await asyncio.to_thread(store.backup, backup_dir / f"{time.time_ns()}{BACKUP_SUFFIXES[0]}")
+                    for old in daily_backups()[:-7]:
                         old.unlink()
                 background_status["scanner_error"] = "; ".join(scan_errors[:5]) or None
                 background_status["scan_errors"] = scan_errors[:20]
@@ -462,7 +467,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.get("/health")
     async def health():
-        return {"service": "devbrain", "version": __version__, "instance": instance_id(settings),
+        return {"service": SERVICE_NAMES[0], "version": __version__, "instance": instance_id(settings),
                 "backend": "arcadedb"}
 
     @app.get("/projects", dependencies=auth)

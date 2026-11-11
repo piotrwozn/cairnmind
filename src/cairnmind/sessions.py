@@ -1079,7 +1079,9 @@ class SessionManager:
         event = payload.get("hook_event_name")
         if event not in {"SessionStart", "PreCompact", "Stop", "SessionEnd"}:
             return
-        native_id, logical_id = payload.get("session_id"), payload.get("devbrain_session_id")
+        # An event spooled by a hook of an earlier version carries the earlier key.
+        native_id = payload.get("session_id")
+        logical_id = payload.get("cairnmind_session_id") or payload.get("devbrain_session_id")
         cwd = payload.get("cwd")
         project = self.store.resolve_project(cwd)
         # Most-specific registered root, not an inherited project environment hint.

@@ -427,7 +427,7 @@ def _atomic_write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if path.is_symlink() or path.parent.is_symlink():
         raise ValueError("Memory publication cannot replace symbolic links")
-    fd, temporary = tempfile.mkstemp(prefix=".devbrain-memory-", dir=path.parent)
+    fd, temporary = tempfile.mkstemp(prefix=".cairnmind-memory-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)

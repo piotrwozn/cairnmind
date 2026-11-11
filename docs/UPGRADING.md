@@ -72,7 +72,7 @@ There is no automatic rollback.
 
 ## From 0.9.0 to the next release
 
-Close running coding sessions first, then run the installer and `cairnmind install <project>` for each project. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
+Finish and close running coding sessions and the workspace (`cairnmind workspace stop`), then run the installer and `cairnmind install <project>` for each project. The installer stops the interface broker and the knowledge service of the installed version itself; it refuses to continue while a workspace is running, because the new version names its terminal sessions differently and would not find the old workspace. Set `CAIRNMIND_INSTALL_STOP_WORKSPACE=1` to let it close the workspace. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
 
 - **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold data, the earlier one is used and `cairnmind doctor` says so under `environment_notes`.
 - **Variables.** `CAIRNMIND_HOME`, `CAIRNMIND_ARCADE_URL` and the others are the names to use. A `DEVBRAIN_*` variable in your shell profile keeps working; when both spellings of a configuration variable are set, the new one wins and `cairnmind doctor` reports a pair that disagrees.
@@ -82,6 +82,8 @@ Close running coding sessions first, then run the installer and `cairnmind insta
 - **Instructions.** The block in `AGENTS.md` and `CLAUDE.md` is replaced where it stands, with the markers `<!-- BEGIN CAIRNMIND -->` and `<!-- END CAIRNMIND -->`. Copies of changed files are named `<file>.cairnmind-backup-<number>`.
 - **Portable memory.** New snapshots go to `.memory/cairnmind/`. A package in `.memory/devbrain/` is still read and imported, and is never rewritten or deleted. After the first new snapshot, remove the earlier directory from the repository yourself (`git rm -r .memory/devbrain`) once nobody uses an earlier version; `cairnmind memory status` shows it under `earlier_package` until then.
 - **Check profiles.** Declare them in `.cairnmind/checks.toml`. `.devbrain/checks.toml` is still read; move the file with `git mv .devbrain .cairnmind` when every collaborator has upgraded. The move changes a path that is part of the code fingerprint, so check runs made before it count as stale once and have to be run again. If both files exist, checks are refused until one is removed.
+
+- **Backups.** A whole-database backup is written as `<name>.cairnmind.json.gz`. Files named `.devbrain.json.gz` are still restored, and the daily backups of both names are pruned together. A backup written by this version cannot be restored by 0.9.0 or earlier: to go back, restore one made before the upgrade.
 
 With a collaborator still on 0.9.0 in the same repository: they do not see snapshots in `.memory/cairnmind/` or profiles in `.cairnmind/`, their `install` adds a second server and a second instruction block under the earlier names, and their version counts `.memory/cairnmind/` as project files.
 
