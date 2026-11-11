@@ -232,6 +232,40 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
     return 0 if existing else len(ids)
 
 
+NEW_FILES_PER_TRANSACTION = 8
+NEW_FILE_EVENTS_PER_TRANSACTION = 200  # far below the number at which the journal stops naming single rows
+
+
+def _write_new_files(store, project_id: str, batch: list[dict]) -> list:
+    """Write source, chunks and jobs of files that have no current source, in one transaction.
+
+    The rows and the journal events are those of ``snapshot``, ``_write_chunks`` and ``enqueue``.
+    A file is stored whole or not at all, so nothing is left for a later run to repair. Returns one
+    source per file, or None for a file whose URI turned out to have a current source after all:
+    nothing was written for that one and the caller takes the ordinary path.
+    """
+    sources = []
+    with store.transaction() as tx:
+        store._require_project(tx, project_id)
+        for item in batch:
+            source = store.snapshot_new(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
+            sources.append(source)
+            if source is None:
+                continue
+            for number, (content, first, last) in enumerate(item["chunks"]):
+                chunk_id = _identifier(project_id, source["id"], number, first, last, content)
+                tx.command(
+                    "INSERT INTO chunks SET id=:id,project_id=:project,source_id=:source,text=:text,"
+                    "line_start=:first,line_end=:last,metadata=:metadata,is_current=:current",
+                    {"id": chunk_id, "project": project_id, "source": source["id"], "text": content,
+                     "first": first, "last": last, "metadata": item["chunk_metadata"], "current": True},
+                )
+                store.enqueue_new(tx, "embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
+            if item["extract"]:
+                store.enqueue_new(tx, "extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
+    return sources
+
+
 def _source_before(store, project_id: str, uri: str):
     rows = store.query(
         "SELECT FROM sources WHERE project_id=:project AND uri=:uri AND is_current=true",
@@ -437,12 +471,48 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     files: dict[str, dict] = {}
     # Read before the walk: a remembered file is reused only while the database still holds
     # the very source that was remembered for it. Sources written below are all in `seen`.
-    rows = store.query(
-        "SELECT id,uri,metadata.path AS path,metadata.root AS root FROM sources "
-        "WHERE project_id=:project AND is_current=true AND kind IN ['code','document']",
+    every = store.query(
+        "SELECT id,uri,kind,metadata.path AS path,metadata.root AS root FROM sources "
+        "WHERE project_id=:project AND is_current=true",
         {"project": project_id},
     )
+    rows = [row for row in every if row.get("kind") in ("code", "document")]
     current = {row["uri"]: row["id"] for row in rows}
+    # A path with no current source of any kind needs no lookup of its own, and its source, chunks
+    # and jobs can be written together with those of its neighbours.
+    present = {row["uri"] for row in every}
+    waiting: list[dict] = []
+
+    def finish(path, root, name, identity, settled, source, analysis, chunks: int, extract: bool):
+        counts["chunks"] += chunks
+        resolved = path.resolve()
+        # Only what the graph needs is kept; the content stays in the database.
+        entry = {"source": {"id": source["id"], "uri": source["uri"], "kind": source["kind"]}, "analysis": analysis}
+        indexed[resolved] = {**entry, "root": root}
+        # Idempotent enqueue also repairs a crash between source write and
+        # queue write. Code facts themselves are already represented by syntax.
+        if extract:
+            store.enqueue("extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
+        # Remembered only after its chunks and jobs are written, so a reuse never skips a repair.
+        if settled:
+            files[name] = {"identity": identity, "root": root, "resolved": resolved, "entry": entry}
+
+    def one_by_one(item):
+        source = store.snapshot(project_id, item["uri"], item["content"], kind=item["kind"], metadata=item["metadata"])
+        written = _write_chunks(store, project_id, source["id"], item["content"], item["chunk_metadata"])
+        finish(*item["place"], source, item["analysis"], written, item["extract"])
+
+    def write_waiting():
+        """Everything is written, and remembered, in the order in which the files were walked."""
+        batch = waiting[:]
+        del waiting[:]
+        if not batch:
+            return
+        for item, source in zip(batch, _write_new_files(store, project_id, batch)):
+            if source is None:
+                one_by_one(item)  # another writer was first: keep or replace what it wrote
+            else:
+                finish(*item["place"], source, item["analysis"], len(item["chunks"]), False)
     for root in registered_roots:
         if not root.is_dir():
             counts["errors"].append(f"Project root unavailable: {root}")
@@ -466,6 +536,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                     files[name] = remembered
                     continue
                 if current.get(name) == entry["source"]["id"]:
+                    write_waiting()
                     files[name] = remembered
                     counts["files"] += 1
                     counts["unchanged"] += 1
@@ -489,7 +560,9 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 continue
             counts["files"] += 1
             digest = hashlib.sha256(content.encode()).hexdigest()
-            before = _source_before(store, project_id, str(path))
+            before = _source_before(store, project_id, str(path)) if str(path) in present else None
+            if before is not None or str(path) in present:
+                write_waiting()
             if before and before["sha256"] == digest:
                 source = before
                 metadata = _metadata(source["metadata"])
@@ -508,23 +581,25 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                     "git_commit": commit, "content_hash": digest, "analysis": analysis,
                     "analysis_version": parser_identity(), "language": analysis["language"], "snapshot": "working_tree",
                 }
-                source = store.snapshot(
-                    project_id, str(path), content,
-                    kind="code" if analysis["language"] != "text" else "document", metadata=metadata,
-                )
                 counts["changed"] += 1
-            counts["chunks"] += _write_chunks(store, project_id, source["id"], content, {"language": analysis["language"]})
-            resolved = path.resolve()
-            # Only what the graph needs is kept; the content stays in the database.
-            entry = {"source": {"id": source["id"], "uri": source["uri"], "kind": source["kind"]}, "analysis": analysis}
-            indexed[resolved] = {**entry, "root": root}
-            # Idempotent enqueue also repairs a crash between source write and
-            # queue write. Code facts themselves are already represented by syntax.
-            if path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"}:
-                store.enqueue("extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
-            # Remembered only after its chunks and jobs are written, so a reuse never skips a repair.
-            if settled:
-                files[name] = {"identity": identity, "root": root, "resolved": resolved, "entry": entry}
+                item = {"uri": str(path), "content": content, "metadata": metadata, "analysis": analysis,
+                        "kind": "code" if analysis["language"] != "text" else "document",
+                        "chunk_metadata": {"language": analysis["language"]},
+                        "extract": path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"},
+                        "place": (path, root, name, identity, settled)}
+                if str(path) in present:
+                    one_by_one(item)
+                    continue
+                item["chunks"] = list(_chunks(content))
+                waiting.append(item)
+                if (len(waiting) >= NEW_FILES_PER_TRANSACTION
+                        or sum(2 + 2 * len(entry["chunks"]) for entry in waiting) >= NEW_FILE_EVENTS_PER_TRANSACTION):
+                    write_waiting()
+                continue
+            written = _write_chunks(store, project_id, source["id"], content, {"language": analysis["language"]})
+            finish(path, root, name, identity, settled, source, analysis, written,
+                   path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"})
+        write_waiting()
 
     counts["errors"].extend(f"Cannot list {error.filename}: {error.strerror or error}" for error in walk_errors)
     seen = {str(p) for p in indexed}
@@ -750,10 +825,14 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
                 {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
             )
             changed_nodes, new_edges = list(nodes.values()), list(edges.values())
+        # What the upserts look up row by row is read here in a few requests; the checks stay theirs.
+        store.prefetch_graph(tx, changed_nodes, new_edges)
         for item in changed_nodes:
             store.upsert_node(item, tx=tx)
         for item in new_edges:
             store.upsert_edge(item, tx=tx)
+        if hasattr(tx, "known"):
+            tx.known = None
         previous_nodes = tx.query(
             "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
             {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},

@@ -127,6 +127,10 @@ class JournalTransaction:
         self.explicit = {}
         self.graph_resets = set()
         self.reset_reason = None
+        # Facts read earlier in this transaction (Store.prefetch_graph). None means nothing is remembered.
+        # Any write to these tables that is not made by the code that keeps them current forgets them all.
+        self.known = None
+        self.keeps_known = False
 
     def __getattr__(self, name):
         return getattr(self.native, name)
@@ -146,6 +150,9 @@ class JournalTransaction:
     def command(self, sql, params=None):
         params = params or {}
         parsed = mutation(sql)
+        if self.known is not None and not self.keeps_known and parsed is not None \
+                and parsed[1] in {"projects", "sources", "nodes", "edges"}:
+            self.known = None
         if parsed is None or self.reset_reason is not None:
             return self.native.command(sql, params)
         operation, table = parsed

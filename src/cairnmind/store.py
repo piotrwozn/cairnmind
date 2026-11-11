@@ -423,8 +423,61 @@ class Store:
 
     @staticmethod
     def _require_project(tx, project_id):
+        known = getattr(tx, "known", None)
+        if known is not None and project_id in known["projects"]:
+            return
         if project_id is not None and not tx.query("SELECT id FROM projects WHERE id=:id", {"id": project_id}):
             raise ValueError(f"Unknown project: {project_id}")
+        if known is not None and project_id is not None:
+            known["projects"].add(project_id)
+
+    @staticmethod
+    def _remembered(tx, table, identifier, load):
+        """A row as this transaction already read or wrote it, else read now. Without prefetch_graph: always read."""
+        known = getattr(tx, "known", None)
+        if known is None:
+            return load()
+        if identifier not in known[table]:
+            known[table][identifier] = load()
+        return known[table][identifier]
+
+    @staticmethod
+    @contextmanager
+    def _keeping(tx):
+        """Graph writes that keep what the transaction remembers current, instead of forgetting it."""
+        if getattr(tx, "known", None) is None:
+            yield None
+            return
+        tx.keeps_known = True
+        try:
+            yield tx.known
+        finally:
+            tx.keeps_known = False
+
+    def prefetch_graph(self, tx, nodes, edges):
+        """Read, in a few requests, what upsert_node and upsert_edge would look up row by row.
+
+        Only inside the transaction that then writes these rows. The checks stay the same checks:
+        a row that was not read here is read when it is needed, and one known to be absent fails as before.
+        """
+        if not hasattr(tx, "known"):
+            return
+        nodes, edges = list(nodes), list(edges)
+        wanted = {
+            "sources": {item["source_id"] for item in (*nodes, *edges) if isinstance(item.get("source_id"), str) and item["source_id"]},
+            "nodes": {item["id"] for item in nodes if isinstance(item.get("id"), str)}
+            | {item[key] for item in edges for key in ("from_id", "to_id") if isinstance(item.get(key), str)},
+            "edges": {item["id"] for item in edges if isinstance(item.get("id"), str)},
+        }
+        fields = {"sources": "id,project_id,is_current", "nodes": "id,project_id", "edges": "id,project_id,from_id,to_id"}
+        known = {"projects": set(), "sources": {}, "nodes": {}, "edges": {}}
+        for table, identifiers in wanted.items():
+            identifiers = sorted(identifiers)
+            for offset in range(0, len(identifiers), 500):
+                part = identifiers[offset:offset + 500]
+                found = {row["id"]: row for row in tx.query(f"SELECT {fields[table]} FROM {table} WHERE id IN :ids", {"ids": part})}
+                known[table].update({identifier: found.get(identifier) for identifier in part})
+        tx.known = known
 
     def require_safe_project_root(self, root):
         path = str(Path(root).expanduser().resolve())
@@ -503,6 +556,35 @@ class Store:
                       "sha256": digest, "metadata": metadata or {}, "is_current": True, "current_key": key, "created_at": _now()}
             _insert(tx, "sources", source)
             return source
+
+    def snapshot_new(self, tx, project_id, uri, content, kind="document", metadata=None):
+        """The source of a URI that has no current one, written inside the caller's transaction.
+
+        Returns None, having written nothing, when the URI has a current source: the caller then
+        takes ``snapshot``, which knows how to keep or replace it. The row is the one ``snapshot`` writes.
+        """
+        if not isinstance(content, str) or not isinstance(uri, str) or not uri:
+            raise ValueError("Source requires a URI and text content")
+        digest, key = hashlib.sha256(content.encode()).hexdigest(), _json([project_id, uri])
+        if _one(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False):
+            return None
+        source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
+                  "sha256": digest, "metadata": metadata or {}, "is_current": True, "current_key": key, "created_at": _now()}
+        _insert(tx, "sources", source)
+        return source
+
+    def enqueue_new(self, tx, kind, project_id, payload, dedupe_key):
+        """A job whose key cannot exist yet, because it names a row created in this same transaction.
+
+        The row is the one ``enqueue`` writes. The unique index on the key still refuses a second one.
+        """
+        if not kind or not isinstance(dedupe_key, str) or not dedupe_key:
+            raise ValueError("A job requires a kind and deduplication key")
+        job_id, now = str(uuid4()), _now()
+        _insert(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
+                             "job_key": _json([kind, project_id, dedupe_key]), "state": "pending", "lease_until": None,
+                             "worker": None, "error": None, "attempts": 0, "created_at": now, "updated_at": now})
+        return job_id
 
     def get_source(self, source_id):
         return _one(self, "SELECT FROM sources WHERE id=:id", {"id": source_id})
@@ -583,18 +665,23 @@ class Store:
         self._require_project(tx, node["project_id"])
         source = None
         if node.get("source_id"):
-            source = _one(tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": node["source_id"]}, False)
+            source = self._remembered(tx, "sources", node["source_id"], lambda: _one(
+                tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": node["source_id"]}, False))
             if not source or source.get("project_id") != node["project_id"]:
                 raise ValueError("Graph vertex source must belong to the same project")
         # Evidence/decision vertices remain traversable as provenance even if a code file changed.
         node.setdefault("is_current", bool(source["is_current"]) if source and node["kind"] not in KINDS | {"source"} else True)
-        existing = _one(tx, "SELECT FROM nodes WHERE id=:id", {"id": node["id"]}, False)
-        if existing:
-            if existing.get("project_id") != node["project_id"]:
-                raise ValueError("Graph vertex belongs to another project")
-            _set(tx, "nodes", node, "id=:id", {"id": node["id"]})
-        else:
-            tx.command(f"CREATE VERTEX nodes CONTENT {_json(node)}")
+        existing = self._remembered(tx, "nodes", node["id"], lambda: _one(
+            tx, "SELECT FROM nodes WHERE id=:id", {"id": node["id"]}, False))
+        if existing and existing.get("project_id") != node["project_id"]:
+            raise ValueError("Graph vertex belongs to another project")
+        with self._keeping(tx) as known:
+            if existing:
+                _set(tx, "nodes", node, "id=:id", {"id": node["id"]})
+            else:
+                tx.command(f"CREATE VERTEX nodes CONTENT {_json(node)}")
+            if known is not None:
+                known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
         return node
 
     def upsert_edge(self, edge, tx=None):
@@ -606,27 +693,33 @@ class Store:
             if not isinstance(edge.get(key), str):
                 raise ValueError(f"Graph edge requires {key}")
         for endpoint in (edge["from_id"], edge["to_id"]):
-            vertex = _one(tx, "SELECT project_id FROM nodes WHERE id=:id", {"id": endpoint}, False)
+            vertex = self._remembered(tx, "nodes", endpoint, lambda endpoint=endpoint: _one(
+                tx, "SELECT project_id FROM nodes WHERE id=:id", {"id": endpoint}, False))
             if not vertex or vertex.get("project_id") != edge["project_id"]:
                 raise ValueError("Graph edge endpoints must exist in the same project")
         source = None
         if edge.get("source_id"):
-            source = _one(tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": edge["source_id"]}, False)
+            source = self._remembered(tx, "sources", edge["source_id"], lambda: _one(
+                tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": edge["source_id"]}, False))
             if not source or source.get("project_id") != edge["project_id"]:
                 raise ValueError("Graph edge source must belong to the same project")
         edge.setdefault("is_current", bool(source["is_current"]) if source and edge["kind"] not in {"supported_by", "depends_on", "supersedes"} else True)
-        existing = _one(tx, "SELECT FROM edges WHERE id=:id", {"id": edge["id"]}, False)
-        if existing:
-            if existing.get("project_id") != edge["project_id"]:
-                raise ValueError("Graph edge belongs to another project")
-            if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
-                tx.command("DELETE FROM edges WHERE id=:id", {"id": edge["id"]})
-            else:
-                _set(tx, "edges", edge, "id=:id", {"id": edge["id"]})
-                return edge
-        tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
-                   f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {_json(edge)}",
-                   {"from_id": edge["from_id"], "to_id": edge["to_id"]})
+        existing = self._remembered(tx, "edges", edge["id"], lambda: _one(
+            tx, "SELECT FROM edges WHERE id=:id", {"id": edge["id"]}, False))
+        if existing and existing.get("project_id") != edge["project_id"]:
+            raise ValueError("Graph edge belongs to another project")
+        with self._keeping(tx) as known:
+            if known is not None:
+                known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
+            if existing:
+                if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
+                    tx.command("DELETE FROM edges WHERE id=:id", {"id": edge["id"]})
+                else:
+                    _set(tx, "edges", edge, "id=:id", {"id": edge["id"]})
+                    return edge
+            tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
+                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {_json(edge)}",
+                       {"from_id": edge["from_id"], "to_id": edge["to_id"]})
         return edge
 
     def _record_graph(self, tx, record):
