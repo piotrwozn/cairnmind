@@ -213,9 +213,14 @@ def capture_code_state(store, project_id, worktree=None, extra_inputs=None) -> d
 
 def task_definition_hash(task: dict) -> str:
     metadata = task.get("metadata", {})
-    return _hash({"content": task.get("content"), **{key: metadata.get(key, default) for key, default in (
+    definition = {"content": task.get("content"), **{key: metadata.get(key, default) for key, default in (
         ("acceptance_criteria", []), ("depends_on", []), ("requires_test", False),
-        ("requires_review", False), ("required_profiles", []), ("plan_context_hash", None))}})
+        ("requires_review", False), ("required_profiles", []), ("plan_context_hash", None))}}
+    # Which check proves which criterion is part of the definition. The key is added only when a
+    # task has such links, so the hash of every task without them stays what it was.
+    if metadata.get("criterion_checks"):
+        definition["criterion_checks"] = metadata["criterion_checks"]
+    return _hash(definition)
 
 
 def load_profiles(store, project_id, worktree=None) -> dict:
@@ -680,8 +685,95 @@ def _verification_status(store, reader, task, worktree=None, capture=None):
     return {"status": "unknown", "reasons": ["no machine checks for this task and worktree"], "run_ids": []}
 
 
+CRITERION_STATES = ("machine_fresh", "machine_stale", "machine_missing", "machine_unknown",
+                    "manual_reported", "manual_pending")
+
+
+def criteria_status(store, task, worktree=None, *, capture=None, reader=None) -> list[dict]:
+    """Each acceptance criterion with how it stands, derived now and stored nowhere.
+
+    A criterion linked to a check profile is `machine_fresh` when a passed local run of that
+    profile matches the current task definition, profile and code; `machine_stale` when the
+    profile ran here but no run matches any more; `machine_missing` when it never ran here;
+    `machine_unknown` when the profile is not declared or the code state cannot be read.
+    A criterion without a check is `manual_pending`, or `manual_reported` when the task carries
+    a reported acceptance with its sources. Reported is a claim, never a machine result.
+    """
+    reader = reader or store
+    metadata = task.get("metadata", {})
+    criteria = [text for text in metadata.get("acceptance_criteria", []) if isinstance(text, str)]
+    links = metadata.get("criterion_checks") if isinstance(metadata.get("criterion_checks"), dict) else {}
+    if not criteria:
+        return []
+    manual = "manual_reported" if metadata.get("acceptance_passed") is True and metadata.get("acceptance_source_ids") \
+        else "manual_pending"
+    rows = [{"text": text, "check": links.get(text), "status": manual, "run_id": None} for text in criteria]
+    if not links:
+        return rows
+    root = _root(store, task["project_id"], worktree)
+    try:
+        profiles = load_profiles(store, task["project_id"], root)
+        problem = None
+    except ValueError as exc:
+        profiles, problem = {}, str(exc)
+    definition = task_definition_hash(task)
+    runs = [_clean(r) for r in reader.query(
+        "SELECT FROM check_runs WHERE project_id=:project AND task_id=:task ORDER BY ended_at DESC,id",
+        {"project": task["project_id"], "task": task["id"]})]
+    local = [r for r in runs if r.get("worktree") == str(root) and r.get("origin") == "local_runner"]
+    captured: dict[tuple, dict] = {}
+    take = capture or capture_code_state
+
+    def state(profile_id):
+        profile = profiles.get(profile_id)
+        if profile is None:
+            return "machine_unknown", None, problem or f"check profile is not declared: {profile_id}"
+        mine = [r for r in local if r.get("profile_id") == profile_id]
+        if not mine:
+            return "machine_missing", None, "the check has not been run in this worktree"
+        candidates = [r for r in mine if r.get("task_definition_hash") == definition and r.get("profile_hash") == profile["hash"]]
+        if not candidates:
+            # Decided without reading the tree: no run was made for this definition and profile.
+            return "machine_stale", None, "no passed run matches the current code, profile and task definition"
+        key = tuple(profile["extra_inputs"])
+        if key not in captured:
+            captured[key] = take(store, task["project_id"], root, profile["extra_inputs"])
+        current = captured[key]
+        if current["status"] != "fresh":
+            return "machine_unknown", None, ("; ".join(current["unknowns"]) or "the code state cannot be read")[:300]
+        # The latest run on this exact tree decides, as for the task as a whole.
+        run = next((r for r in candidates if r.get("code_before", {}).get("fingerprint") == current["fingerprint"]), None)
+        if (run and run.get("passed") is True and run.get("outcome") == "completed" and run.get("returncode") == 0
+                and run.get("code_before", {}).get("status") == "fresh" and run.get("code_after", {}).get("status") == "fresh"
+                and run["code_after"].get("fingerprint") == current["fingerprint"]):
+            return "machine_fresh", run["id"], None
+        return "machine_stale", None, "no passed run matches the current code, profile and task definition"
+
+    decided: dict[str, tuple] = {}
+    for row in rows:
+        if row["check"] is None:
+            continue
+        if row["check"] not in decided:
+            decided[row["check"]] = state(row["check"])
+        row["status"], row["run_id"], reason = decided[row["check"]]
+        if reason:
+            row["reason"] = reason
+    return rows
+
+
 def verification_status(store, task, worktree=None, *, capture=None) -> dict:
-    return _verification_status(store, store, task, worktree, capture)
+    """The verification of a task as a whole, plus `criteria` when the task declares any."""
+    result = _verification_status(store, store, task, worktree, capture)
+    try:
+        criteria = criteria_status(store, task, worktree, capture=capture)
+    except ValueError as exc:
+        criteria = [{"text": text, "check": None, "status": "machine_unknown", "run_id": None, "reason": str(exc)}
+                    for text in task.get("metadata", {}).get("acceptance_criteria", []) if isinstance(text, str)]
+    if criteria and task.get("metadata", {}).get("criterion_checks"):
+        # Only for a task that links a criterion to a check: every other task answers as it always did.
+        result["criteria"] = [{**row, "text": row["text"][:500]} for row in criteria[:20]]
+        result["criteria_total"] = len(criteria)
+    return result
 
 
 def validate_completion(store, tx, project_id, task: dict) -> None:

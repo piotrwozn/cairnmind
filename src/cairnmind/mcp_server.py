@@ -68,6 +68,14 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
                 limited[field] = limited[field][:-1]
                 if field not in truncated:
                     truncated.append(field)
+        links = metadata.get("criterion_checks")
+        if isinstance(links, dict) and links:
+            # The check of each criterion that is shown, in the same order; None where there is none.
+            # Built after the list was bounded, so the two always agree and no text is repeated.
+            full = metadata.get("acceptance_criteria") if isinstance(metadata.get("acceptance_criteria"), list) else []
+            shown = len(limited.get("acceptance_criteria") or [])
+            limited["criterion_checks"] = [links[text][:100] if isinstance(links.get(text), str) else None
+                                           for text in full[:shown] if isinstance(text, str)]
         content = str(task.get("content", ""))
         task_view = {"id": task.get("id"), "version": task.get("version"),
                      "content": content[:4000], "content_truncated": len(content) > 4000,

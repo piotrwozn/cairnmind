@@ -708,6 +708,27 @@ def plan_adopt(ctx: typer.Context, project: str, group: str,
     output(result)
 
 
+@plans_app.command("contract")
+@initialized
+def plan_contract(ctx: typer.Context, project: str,
+                  plan_id: Annotated[str | None, typer.Option("--plan-id", help="The plan; the active one if omitted.")] = None,
+                  worktree: Path | None = None,
+                  write: Annotated[str | None, typer.Option(
+                      "--write", metavar="CODE",
+                      help="Add the proposed check profiles; CODE is printed with the diff they were shown in.")] = None,
+                  as_json: Annotated[bool, typer.Option("--json", help="Print the contract as JSON.")] = False):
+    """Show each acceptance criterion of a plan with the check that proves it. Runs no command."""
+    from cairnmind.contract import build_contract, write_contract
+    store = store_for(ctx.obj)
+    pid = store.resolve_project(project)["id"]
+    scope = actor_scope(store, pid, worktree)
+    result = write_contract(store, pid, write, plan_id, scope) if write else build_contract(store, pid, plan_id, scope)
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+
+
 @checks_app.command("profiles")
 @initialized
 def check_profiles(ctx: typer.Context, project: str, worktree: Path | None = None):

@@ -266,11 +266,13 @@ def test_a_repeated_question_does_not_index_again_and_is_served_from_the_cache(w
 def test_files_touched_just_before_indexing_are_indexed_once_more(workspace, monkeypatch):
     _, store, project, root = workspace
     pid = project["id"]
-    monkeypatch.setattr(ingest, "RACY_WINDOW_NS", 2_000_000_000)
-    # The files were written a moment ago: a second write inside one coarse timestamp tick
-    # could not be told apart, so this indexing is not trusted as a baseline.
+    # A window longer than any test run: the files count as written a moment ago however slow the
+    # machine is. A second write inside one coarse timestamp tick could not be told apart, so this
+    # indexing is not trusted as a baseline.
+    monkeypatch.setattr(ingest, "RACY_WINDOW_NS", 10**18)
     index_project(store, pid)
     assert "skipped" not in index_project_if_changed(store, pid)
+    monkeypatch.setattr(ingest, "RACY_WINDOW_NS", 2_000_000_000)
     monkeypatch.setattr(ingest.time, "time_ns", lambda: 10**19)  # long after every file time
     index_project(store, pid)
     assert index_project_if_changed(store, pid)["skipped"] is True
