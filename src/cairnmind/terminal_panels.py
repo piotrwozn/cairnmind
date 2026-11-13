@@ -17,6 +17,7 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Sta
 from .config import Settings
 from .terminal_safe import plain
 from .terminal_i18n import native_failure_notice
+from .terminal_notices import about as notice_about
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
                           LocalizedModal, MessageModal, summary_text)
 
@@ -279,6 +280,8 @@ class SidebarApp(BasePanel):
                 yield Button(self.t("Start work"), id="project-work", variant="primary", disabled=True)
                 yield Button(self.t("Memory"), id="memory-open")
                 yield Button(self.t("Add assistant"), id="assistant-add")
+                # Last, so the Tab order of the existing buttons is unchanged.
+                yield Button(self.t("Run next stage"), id="stage-next")
             with Horizontal(classes="sidebar-actions", id="project-list-actions"):
                 yield Button(self.t("Add folder"), id="project-add", variant="primary")
                 yield Button(self.t("Open"), id="project-inspect", disabled=True)
@@ -286,6 +289,7 @@ class SidebarApp(BasePanel):
                 yield Button(self.t("Connections"), id="auth-open")
                 yield Button(self.t("More"), id="more-open")
             yield Static("", id="panel-notice", markup=False)
+            yield Static("", id="notice-mark", markup=False)
             yield Static(self.t("Ctrl+B then Space: menu · Tab: next · Esc: back"), id="sidebar-help", markup=False)
         yield Footer()
 
@@ -532,7 +536,7 @@ class SidebarApp(BasePanel):
         await self._poll_workspace()
 
     @work(group="sidebar-select", exclusive=True, exit_on_error=False)
-    async def select_project(self, intent, *, focus_start=False, resume_identity=None):
+    async def select_project(self, intent, *, focus_start=False, resume_identity=None, focus_id="project-work"):
         try:
             returning = resume_identity if intent == "work" else None
             if returning:
@@ -574,7 +578,7 @@ class SidebarApp(BasePanel):
                 await self.load_state()
             self.show_page("project")
             if focus_start:
-                self.query_one("#project-work", Button).focus()
+                self.query_one("#" + focus_id, Button).focus()
             current = await asyncio.to_thread(self.workspace.read)
             latest_run = self.reusable_run() if returning else None
             reused = returning and latest_run and all(returning.get(key) == latest_run.get(key)
@@ -608,6 +612,10 @@ class SidebarApp(BasePanel):
         # A queued palette request may outlive its original project selection.
         # Always show the current project and require a fresh local activation.
         self.select_project("inspect", focus_start=True)
+
+    def action_prepare_next_stage(self):
+        # The same rule for Run next stage: a menu request only shows the current project.
+        self.select_project("inspect", focus_start=True, focus_id="stage-next")
 
     def action_inspect(self):
         self.select_project("inspect")
@@ -715,8 +723,10 @@ class SidebarApp(BasePanel):
     async def action_ask(self):
         """Ask the chosen project's memory; read-only, nothing is saved."""
         from .terminal_commands import ask_summary
+        subject = None  # the project asked about, which may not be the one shown when the answer or error comes
         try:
             project = self.chosen_project()
+            subject = notice_about(project["id"], project.get("name"))
             values = await self.push_screen_wait(FormModal(
                 "Ask memory", [Field("question", "Question", required=True, multiline=True)],
                 note="Answers come only from this project's memory, with cited sources. Nothing is saved.",
@@ -726,7 +736,8 @@ class SidebarApp(BasePanel):
             payload = {"project": project["id"], "question": values["question"]}
             if self.workspace_data.get("project_id") == project["id"] and self.workspace_data.get("worktree"):
                 payload["worktree"] = self.workspace_data["worktree"]
-            self.notice("Asking memory…")
+                subject = notice_about(project["id"], project.get("name"), payload["worktree"])
+            self.notice_for(subject, "Asking memory…")
             from .terminal_client import BrokerClient
             if isinstance(self.broker, BrokerClient):
                 # A slow answer must not hold the shared client's lock and stall refreshes.
@@ -741,16 +752,19 @@ class SidebarApp(BasePanel):
             self.notice("")
             await self.push_screen_wait(MessageModal("Memory answer", ask_summary(result, self.t)))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice_for(subject, exc)
 
     @work(group="sidebar-brief", exclusive=True, exit_on_error=False)
     async def action_brief(self):
         """Show where work stopped in the chosen project; read-only and without a model."""
+        subject = None
         try:
             project = self.chosen_project()
             params = {"project": project["id"]}
+            subject = notice_about(project["id"], project.get("name"))
             if self.workspace_data.get("project_id") == project["id"] and self.workspace_data.get("worktree"):
                 params["worktree"] = self.workspace_data["worktree"]
+                subject = notice_about(project["id"], project.get("name"), params["worktree"])
             # Check evidence hashes the worktree: allow more than the default 20 s, and use a
             # separate client so a slow brief does not hold the shared client's lock.
             from .terminal_client import BrokerClient
@@ -763,6 +777,24 @@ class SidebarApp(BasePanel):
                 result = await asyncio.to_thread(self.broker.request, "GET", "/api/brief", params=params, timeout=120)
             text = result.get("text") if isinstance(result, dict) else None
             await self.push_screen_wait(MessageModal("Brief", text or self.t("The memory service returned no brief.")))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice_for(subject, exc)
+
+    # The group of Start work: choosing another project cancels a stage in flight, and back.
+    @work(group="sidebar-select", exclusive=True, exit_on_error=False)
+    async def action_next_stage(self):
+        """Start the assistant or run the check mapped to the next plan step; changes no task."""
+        from .workspace_stage import run_next_stage
+        try:
+            await run_next_stage(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
+    @work(group="sidebar-stages", exclusive=True, exit_on_error=False)
+    async def edit_stages(self):
+        from .workspace_stage import edit_stages
+        try:
+            await edit_stages(self)
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
@@ -930,25 +962,40 @@ class SidebarApp(BasePanel):
     @work(group="sidebar-more", exclusive=True, exit_on_error=False)
     async def action_more(self):
         action = await self.push_screen_wait(ChoiceModal("More", [
-            ("Sessions", "sessions"), ("Manage assistants", "assistants"), ("Find folders", "scan"),
+            ("Sessions", "sessions"), ("Manage assistants", "assistants"),
+            ("Find folders", "scan"),
             ("Queue", "queue"),
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
-            ("Settings", "settings"), ("Technical details", "details")]))
-        actions = {"sessions": self.sessions, "assistants": self.edit_slots, "scan": self.scan_projects,
+            # New entries go last: keyboard paths to the existing ones keep their positions.
+            ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages"),
+            ("Notices", "notices")]))
+        actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
+                   "scan": self.scan_projects,
                    "queue": self.action_queue,
-                   "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings}
+                   "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings,
+                   "notices": self.action_notices}
         if action == "details":
             await self.push_screen_wait(MessageModal("Status", self.workspace_data))
         elif action in actions:
             actions[action]()
 
+    @work(group="sidebar-notices", exclusive=True, exit_on_error=False)
+    async def action_notices(self):
+        """The notices this sidebar showed, newest first; opening clears the mark on the notice line."""
+        self.notice_history.mark_seen()
+        self.show_notice_mark()
+        text = self.notice_history.lines(self.workspace_data, self.t)
+        await self.push_screen_wait(MessageModal("Notices", text or self.t("No notices yet.")))
+
     @work(group="sidebar-process-memory", exclusive=True, exit_on_error=False)
     async def action_queue(self):
+        subject = None
         try:
             selected = await asyncio.to_thread(self.workspace.read)
             if not selected.get("project_id"):
                 raise ValueError(self.t("Select a visible project first."))
             scope = (selected["project_id"], selected.get("worktree"))
+            subject = notice_about(scope[0], selected.get("project_name"), scope[1])
             approved = await self.push_screen_wait(ConfirmModal("Queue",
                 self.t("Use local models to process pending memory for this project only. No assistant is started.")
                 + "\n\n" + str(selected.get("project_name") or scope[0]), approve="Process memory"))
@@ -966,10 +1013,10 @@ class SidebarApp(BasePanel):
                 await asyncio.to_thread(self.workspace.update, {"launch_errors": [
                     row for row in current.get("launch_errors", []) if row.get("code") != "background_inference_deferred"]},
                     expected_revision=current["revision"])
-                self.notice("Memory processing enabled for this project." if result.get("worker_running") else
-                            "Background memory processing is disabled in this service.")
+                self.notice_for(subject, "Memory processing enabled for this project." if result.get("worker_running") else
+                                "Background memory processing is disabled in this service.")
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice_for(subject, exc)
 
     @work(group="sidebar-settings", exclusive=True, exit_on_error=False)
     async def action_settings(self):
@@ -997,7 +1044,7 @@ class SidebarApp(BasePanel):
         localize_bindings(self, self.language)
         labels = {"project-back": "Return to projects", "assistant-add": "Add assistant", "project-work": "Start work",
                   "project-add": "Add folder", "project-inspect": "Open", "auth-open": "Connections", "more-open": "More",
-                  "memory-open": "Memory"}
+                  "memory-open": "Memory", "stage-next": "Run next stage"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.render_project()
@@ -1144,7 +1191,8 @@ class SidebarApp(BasePanel):
                    "sessions-open": self.sessions, "auth-open": self.login,
                    "memory-open": self.action_memory, "memory-import": self.import_memory,
                    "project-back": self.action_projects, "assistant-select": self.choose_assistant,
-                   "assistant-add": self.add_assistant, "more-open": self.action_more}
+                   "assistant-add": self.add_assistant, "more-open": self.action_more,
+                   "stage-next": self.action_next_stage}
         action = actions.get(event.button.id)
         if action:
             action()

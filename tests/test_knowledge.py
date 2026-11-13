@@ -11,21 +11,33 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from cairnmind.agent import KnowledgeAgent, SYSTEM
+from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, REPAIR_CATALOG_CHARS, KnowledgeAgent, SYSTEM, question_excerpt
 from cairnmind.config import Settings
 from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.retrieval import Retriever, public_record
 from cairnmind.store import Store
+from cairnmind.support import SUPPORT_SYSTEM
 
 
 class FakeOllama:
-    def __init__(self, replies=None, vector=None):
+    """Replies in order. Support-check calls are kept apart: they go to support_calls and are
+    answered from ``support`` (default: supported), so call counts of the answer stay as they were."""
+
+    def __init__(self, replies=None, vector=None, support=None):
         self.replies = list(replies or [])
         self.vector = vector or [0.0, 1.0, 0.0]
         self.calls = []
+        self.support_calls = []
+        self.support = support
         self.embedding_calls = []
 
     async def chat(self, messages, tools=None, **kwargs):
+        if messages and messages[0].get("content") == SUPPORT_SYSTEM:
+            self.support_calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
+            if isinstance(self.support, Exception):
+                raise self.support
+            reply = self.support or {"content": json.dumps({"supported": True, "reason": "Stated."})}
+            return {"message": {"role": "assistant", **reply}, "done_reason": "stop"}
         self.calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
         if not self.replies:
             raise OllamaUnavailable("No local test response installed")
@@ -184,6 +196,133 @@ async def test_agent_rejects_invented_quote_and_plain_prose(workspace):
         assert result["status"] == "partial"
 
 
+@pytest.mark.parametrize("literal", [True, False])
+def test_citation_passage_named_quote_excerpt_is_checked_like_quote(workspace, literal):
+    # The catalog names its passages quote_excerpt and models answer with that name.
+    store, project, settings = workspace
+    text = "The retry budget is five attempts per request."
+    source = store.snapshot(project["id"], "note://retry", text, "note")
+    passage = "retry budget is five attempts" if literal else "retry budget is six attempts"
+    output = json.dumps({"answer": "Five attempts.", "unknowns": [],
+                         "citations": [{"source_id": source["id"], "quote_excerpt": passage}]})
+    result = KnowledgeAgent(store, settings, FakeOllama())._final(
+        output, project["id"], {source["id"]: source}, time.monotonic())
+    if literal:
+        assert result["status"] == "complete" and result["answer"] == "Five attempts."
+        assert result["sources"][0]["quote"] == passage
+    else:
+        assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+        assert "Five attempts." not in result["answer"] and not result["sources"]
+
+
+SUPPORTED_QUOTE = "The retry budget is five attempts per request."
+
+
+async def _judged(workspace, support, reply=None, relative_path=None):
+    store, project, settings = workspace
+    metadata = {"relative_path": relative_path} if relative_path else None
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry", metadata=metadata)
+    model = FakeOllama([reply or final(source["id"], SUPPORTED_QUOTE, "Five attempts.")], support=support)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    return result, model
+
+
+async def test_answer_the_support_check_accepts_stays_complete(workspace):
+    result, model = await _judged(workspace, None)
+    assert result["status"] == "complete" and result["answer"] == "Five attempts."
+    assert len(model.calls) == 1 and len(model.support_calls) == 1
+    judge = model.support_calls[0]
+    assert judge["tools"] is None and set(judge["kwargs"]["format"]["required"]) == {"supported", "reason"}
+    payload = json.loads(judge["messages"][1]["content"])
+    assert payload["question"] == "What is the retry budget?" and payload["answer"] == "Five attempts."
+    assert payload["citations"][0]["quote"] == SUPPORTED_QUOTE
+    assert payload["citations"][0]["secondary_file"] is False and payload["citations"][0]["line_start"] == 1
+    assert result["diagnostics"]["support_check"] == "supported"
+    assert result["diagnostics"]["model_calls"][-1]["phase"] == "support"
+
+
+async def test_answer_the_support_check_rejects_is_not_complete(workspace):
+    verdict = {"content": json.dumps({"supported": False, "reason": "The quote sets the value\nin a test."})}
+    result, model = await _judged(workspace, verdict)
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "answer_unsupported"
+    assert "Five attempts." not in result["answer"]
+    assert any("The quote sets the value in a test." in gap for gap in result["unknowns"])
+    assert result["sources"][0]["quote"] == SUPPORTED_QUOTE  # verified quotes are kept, not changed
+    assert result["diagnostics"]["support_check"] == "unsupported"
+    assert result["diagnostics"]["model_calls"][-1]["phase"] == "support"
+
+
+@pytest.mark.parametrize("support", [
+    {"content": "yes, supported"},
+    {"content": json.dumps({"supported": "yes", "reason": "Stated."})},
+    {"content": json.dumps({"supported": True})},
+    OllamaUnavailable("judge down"),
+])
+async def test_unreadable_or_failed_support_check_counts_as_no(workspace, support):
+    result, model = await _judged(workspace, support)
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
+    assert "Five attempts." not in result["answer"]
+    assert any("Nie udało się sprawdzić" in gap for gap in result["unknowns"])
+    assert result["diagnostics"]["support_check"] == "failed" and len(model.support_calls) == 1
+
+
+async def test_support_check_timeout_is_never_complete(workspace):
+    store, project, settings = workspace
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    settings.ask_timeout = 2
+
+    class SlowJudge(FakeOllama):
+        async def chat(self, messages, tools=None, **kwargs):
+            if messages[0].get("content") == SUPPORT_SYSTEM:
+                await asyncio.sleep(10)
+            return await super().chat(messages, tools, **kwargs)
+
+    model = SlowJudge([final(source["id"], SUPPORTED_QUOTE, "Five attempts.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
+    assert any("Kontrola poparcia" in gap for gap in result["unknowns"])
+    assert "Five attempts." not in result["answer"]
+
+
+async def test_support_check_timeout_after_a_repair_keeps_the_repair_outcome(workspace):
+    store, project, settings = workspace
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    settings.ask_timeout = 2
+
+    class SlowJudge(FakeOllama):
+        async def chat(self, messages, tools=None, **kwargs):
+            if messages[0].get("content") == SUPPORT_SYSTEM:
+                await asyncio.sleep(10)
+            return await super().chat(messages, tools, **kwargs)
+
+    model = SlowJudge([{"content": "not JSON"}, final(source["id"], SUPPORTED_QUOTE, "Five attempts.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert len(model.calls) == 2  # the answer and its repair; the support check never answered
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
+    assert result["diagnostics"]["repair_outcome"] == "succeeded"
+    assert any("Kontrola poparcia" in gap for gap in result["unknowns"])
+    assert not any("poprawy" in gap for gap in result["unknowns"])  # not reported as a failed repair
+    assert "Five attempts." not in result["answer"]
+
+
+@pytest.mark.parametrize("reply", ["unknown", "invalid"])
+async def test_unknown_answers_and_failed_validation_never_reach_the_support_check(workspace, reply):
+    store, project, settings = workspace
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    answer = (final(source["id"], SUPPORTED_QUOTE, "unknown", ["The budget is not stated."]) if reply == "unknown"
+              else final(source["id"], "An invented passage.", "Six attempts."))
+    model = FakeOllama([answer, answer])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert result["status"] == "partial" and model.support_calls == []
+    assert "support_check" not in result["diagnostics"]
+
+
+async def test_support_check_is_told_when_a_quote_comes_from_a_test(workspace):
+    result, model = await _judged(workspace, None, relative_path="tests/test_retry.py")
+    citation = json.loads(model.support_calls[0]["messages"][1]["content"])["citations"][0]
+    assert citation["path"] == "tests/test_retry.py" and citation["secondary_file"] is True
+
+
 @pytest.mark.parametrize("failure", ["json", "record_id", "quote"])
 async def test_final_protocol_repairs_once_with_inspected_source_schema(workspace, failure):
     store, project, settings = workspace
@@ -212,6 +351,138 @@ async def test_final_protocol_repairs_once_with_inspected_source_schema(workspac
     assert record["id"] not in allowed and chunk_id not in allowed
     assert schema["additionalProperties"] is False
     assert schema["properties"]["citations"]["maxItems"] == 8
+
+
+async def test_final_repair_sees_the_excerpt_the_first_call_showed(workspace):
+    store, project, settings = workspace
+    quote = "The retry budget is five attempts per request."
+    text = "\n".join([f"Retry note {index}: background about earlier retry experiments." for index in range(12)]
+                     + [quote])
+    assert 600 < len(text) < 900 and text.index(quote) > 600
+    source, _ = document(store, project, text)
+    model = FakeOllama([{"content": "not JSON"}, final(source["id"], quote, "Five attempts.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "retry budget")
+    assert result["status"] == "complete" and len(model.calls) == 2
+    first = json.loads(model.calls[0]["messages"][1]["content"])
+    shown = next(hit["text"] for hit in first["initial_evidence"] if hit["source_id"] == source["id"])
+    assert quote in shown
+    # The first call keeps its short catalog; the evidence itself is shown in full.
+    assert first["citation_catalog"][0]["excerpt_truncated"] is True
+    assert quote not in first["citation_catalog"][0]["quote_excerpt"]
+    repair = json.loads(model.calls[1]["messages"][1]["content"])
+    entry = next(item for item in repair["citation_catalog"] if item["source_id"] == source["id"])
+    assert entry["quote_excerpt"] == shown and entry["excerpt_truncated"] is False
+
+
+def _filler(count, start=0):
+    return [f"    note_{index} = 'background line {index} about unrelated matters'" for index in range(start, start + count)]
+
+
+def test_question_excerpt_returns_a_short_text_whole():
+    text = "line one\nretry budget = 5\nline three"
+    assert question_excerpt(text, "retry budget", 1000) == (text, 0, 2)
+
+
+def test_question_excerpt_takes_whole_lines_that_hold_most_question_words():
+    lines = [*_filler(40), "RETRY_BUDGET = 5  # attempts per request", *_filler(40, 40)]
+    text = "\n".join(lines)
+    excerpt, first, last = question_excerpt(text, "What is the retry budget per request?", 600)
+    assert "RETRY_BUDGET = 5" in excerpt and len(excerpt) <= 600
+    assert excerpt == "\n".join(lines[first:last + 1]) and excerpt in text
+    # The excerpt is centred on the matching line, with context on both sides.
+    assert first < 40 < last and abs((40 - first) - (last - 40)) <= 2
+
+
+def test_question_excerpt_without_matching_words_is_the_beginning():
+    lines = _filler(80)
+    excerpt, first, last = question_excerpt("\n".join(lines), "nothing here matches", 500)
+    assert first == 0 and excerpt == "\n".join(lines[:last + 1]) and len(excerpt) <= 500
+    assert len(excerpt) + 1 + len(lines[last + 1]) > 500
+
+
+def test_question_excerpt_cuts_a_single_long_line_to_its_beginning():
+    text = "x" * 3000
+    assert question_excerpt(text, "retry", 1000) == ("x" * 1000, 0, 0)
+
+
+async def test_initial_hit_lines_describe_the_excerpt_not_the_chunk(workspace):
+    store, project, settings = workspace
+    lines = [*_filler(60), "RETRY_BUDGET = 5  # retry budget per request", *_filler(19, 60)]
+    text = "\n".join(lines)
+    assert len(text) > EXCERPT_CHARS
+    source, _ = document(store, project, text, uri="notes://retry-settings")
+    model = FakeOllama([final(source["id"], "RETRY_BUDGET = 5", "Five.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert result["status"] == "complete"
+    hit = json.loads(model.calls[0]["messages"][1]["content"])["initial_evidence"][0]
+    assert "RETRY_BUDGET = 5" in hit["text"] and len(hit["text"]) <= EXCERPT_CHARS
+    assert hit["text"] == "\n".join(lines[hit["line_start"] - 1:hit["line_end"]])
+    assert hit["line_start"] > 1 and hit["line_end"] < len(lines)
+
+
+async def test_ten_initial_excerpts_leave_room_for_a_search_round(workspace):
+    store, project, settings = workspace
+    sources = []
+    for index in range(INITIAL_HITS + 2):
+        body = [f'    settings["retry_budget_{index}_{line}"] = "five attempts"  # retry budget, "quoted" {line}'
+                for line in range(40)]
+        sources.append(document(store, project, "\n".join(body), uri=f"notes://retry-{index}")[0])
+    quote = 'settings["retry_budget_0_0"] = "five attempts"'
+    model = FakeOllama([calls(("search", {"query": "retry budget settings"})), final(sources[0]["id"], quote)])
+    # Many quotes: every one of them is escaped twice when the guard measures the messages.
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert len(model.calls) == 2 and result["diagnostics"]["code"] != "context_budget"
+    first = json.loads(model.calls[0]["messages"][1]["content"])
+    assert len(first["initial_evidence"]) == INITIAL_HITS
+    assert all(len(hit["text"]) <= EXCERPT_CHARS for hit in first["initial_evidence"])
+    used = sum(len(json.dumps(message, ensure_ascii=False)) for message in model.calls[1]["messages"])
+    assert used <= max(12000, settings.num_ctx * 2)
+
+
+async def test_repair_catalog_starts_with_the_hits_the_model_saw_first(workspace):
+    store, project, settings = workspace
+    for index in range(INITIAL_HITS):
+        body = "\n".join(f"Retry budget note {index}, line {line}: background on retries." for line in range(14))
+        document(store, project, ("retry budget " * (INITIAL_HITS - index)) + "\n" + body, uri=f"notes://budget-{index}")
+    model = FakeOllama([{"content": "not JSON"}, {"content": "still not JSON"}])
+    await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    shown = json.loads(model.calls[0]["messages"][1]["content"])["initial_evidence"]
+    repair = json.loads(model.calls[1]["messages"][1]["content"])["citation_catalog"]
+    assert len(shown) == INITIAL_HITS and 1 < len(repair) < INITIAL_HITS  # the budget leaves some out
+    # The top hits, in the order shown, not the hits registered last.
+    assert [item["source_id"] for item in repair] == [hit["source_id"] for hit in shown[:len(repair)]]
+
+
+async def test_repair_catalog_keeps_a_passage_read_after_the_initial_evidence(workspace):
+    store, project, settings = workspace
+    for index in range(INITIAL_HITS):
+        body = "\n".join(f"Retry budget note {index}, line {line}: background on retries." for line in range(14))
+        document(store, project, ("retry budget " * (INITIAL_HITS - index)) + "\n" + body, uri=f"notes://budget-{index}")
+    read, _ = document(store, project, "LIMITS = {'attempts': 5}  # how often a request is tried", uri="notes://limits")
+    model = FakeOllama([calls(("read_source", {"source_id": read["id"]})),
+                        {"content": "The budget is five, as limits.py says."}, {"content": "still not JSON"}])
+    await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    shown = json.loads(model.calls[0]["messages"][1]["content"])["initial_evidence"]
+    assert read["id"] not in {hit["source_id"] for hit in shown}
+    repair = json.loads(model.calls[2]["messages"][1]["content"])["citation_catalog"]
+    ids = [item["source_id"] for item in repair]
+    # What the model read last comes first, then the initial evidence from its top hit.
+    assert ids[0] == read["id"] and ids[1] == shown[0]["source_id"]
+
+
+def test_repair_catalog_keeps_its_budget_with_whole_excerpts(workspace):
+    store, project, settings = workspace
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    evidence = {}
+    for index in range(10):
+        text = f"Excerpt {index}: " + "literal evidence line\n" * 70
+        source = store.snapshot(project["id"], f"note://budget-{index}", text, "note")
+        source["_catalog_excerpt"] = text
+        evidence[source["id"]] = source
+    catalog = agent._citation_catalog(project["id"], evidence)
+    assert catalog and all(not item["excerpt_truncated"] for item in catalog)
+    assert sum(len(json.dumps(item, ensure_ascii=False)) + 2 for item in catalog) + 2 <= REPAIR_CATALOG_CHARS
+    assert len(catalog) < 8
 
 
 @pytest.mark.parametrize("failure", ["source_id", "quote"])
@@ -1260,6 +1531,69 @@ def test_strong_disputed_record_is_not_buried_under_weak_confirmed_matches(works
                        "Session timeout: the session timeout is one hour; session timeout applies everywhere.")
     found = _record_ids(Retriever(store, settings, FakeOllama()), project, "session timeout", limit=6)
     assert disputed["id"] in found[:4]
+
+
+@pytest.mark.parametrize("path, secondary", [
+    ("tests/test_config.py", True), ("src/pkg/test/helpers.py", True), ("pkg/config_test.go", True),
+    ("web/app.spec.ts", True), ("web/app.test.js", True), ("uv.lock", True), ("web/package-lock.json", True),
+    ("static/app.min.js", True), ("src/pkg/config.py", False), ("docs/testing.md", False),
+    ("src/pkg/contest.py", False), ("src/latest/config.py", False), ("README.md", False),
+    # Prose is never a test; data and configuration are tests only in a test directory, and a
+    # .spec./.test. name marks only code.
+    ("docs/tests/strategy.md", False), ("tests/README.md", False), ("docs/auth.spec.md", False),
+    ("api/openapi.spec.yaml", False), ("tests/fixtures/data.json", True), ("pnpm-lock.yaml", True),
+    ("tests/fixtures/settings.toml", True), ("config/app.yaml", False), ("web/app.test.json", False),
+])
+def test_secondary_source_recognises_tests_lock_files_and_minified_text(path, secondary):
+    from cairnmind.retrieval import secondary_source
+    assert secondary_source(path) is secondary
+    assert secondary_source(path.replace("/", "\\")) is secondary
+
+
+def _file(store, project, relative_path, text):
+    return document(store, project, text, uri=f"file://{relative_path}", kind="note",
+                    metadata={"relative_path": relative_path})[0]
+
+
+def _source_ids(retriever, project, query, limit=8):
+    return [hit["source_id"] for hit in retriever.search(project["id"], query, limit=limit)]
+
+
+def test_definition_outranks_a_test_of_similar_score(workspace, monkeypatch):
+    import cairnmind.retrieval as retrieval_module
+    store, project, settings = workspace
+    # The test repeats the query terms, so full-text search ranks it first on its own.
+    test = _file(store, project, "tests/test_settings.py",
+                 "def test_default():\n    # retry budget: the retry budget default\n"
+                 "    assert Settings().budget == 5  # retry budget")
+    definition = _file(store, project, "src/pkg/settings.py", "    budget: int = 5  # retry budget")
+    retriever = Retriever(store, settings, FakeOllama())
+    monkeypatch.setattr(retrieval_module, "SECONDARY_SOURCE_PENALTY", 0)
+    assert _source_ids(retriever, project, "retry budget")[:2] == [test["id"], definition["id"]]
+    monkeypatch.undo()
+    hits = retriever.search(project["id"], "retry budget")
+    assert [hit["source_id"] for hit in hits][:2] == [definition["id"], test["id"]]
+    assert all("_path" not in hit for hit in hits)
+
+
+def test_a_query_only_a_test_matches_still_finds_the_test(workspace):
+    store, project, settings = workspace
+    test = _file(store, project, "tests/test_journal.py", "def test_rollover():\n    # journal rollover keeps order")
+    for index in range(8):
+        _file(store, project, f"src/pkg/module_{index}.py", f"def unrelated_{index}():\n    return {index}")
+    assert _source_ids(Retriever(store, settings, FakeOllama()), project, "journal rollover order") == [test["id"]]
+
+
+def test_a_better_matching_test_moves_down_only_by_the_penalty(workspace):
+    from cairnmind.retrieval import SECONDARY_SOURCE_PENALTY
+    store, project, settings = workspace
+    test = _file(store, project, "tests/test_cache.py", "def test_cache_eviction_order():\n    # cache eviction order")
+    weak = [_file(store, project, f"src/pkg/cache_{index}.py", f"CACHE_{index} = {{}}  # cache")
+            for index in range(SECONDARY_SOURCE_PENALTY + 3)]
+    found = _source_ids(Retriever(store, settings, FakeOllama()), project, "cache eviction order", limit=20)
+    # Ahead of every weaker match beyond the penalty, never dropped.
+    assert found.index(test["id"]) == SECONDARY_SOURCE_PENALTY - 1
+    assert set(found) == {test["id"], *(source["id"] for source in weak)}
 
 
 def test_confirmed_record_beats_slightly_more_relevant_disputed_records(workspace, monkeypatch):

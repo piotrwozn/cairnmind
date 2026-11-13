@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import json
 import re
 import time
@@ -14,9 +15,12 @@ from jsonschema import Draft202012Validator
 
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
+from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .ollama import Ollama, OllamaUnavailable
-from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata
+from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
+                        with_source_origin)
 from .store import TASK_STATES, validate_task_state
+from .support import SUPPORT_SCHEMA, SUPPORT_TOKENS, support_messages, support_verdict
 
 
 SYSTEM = """You are the local evidence-grounded knowledge agent for a programming workspace.
@@ -31,7 +35,9 @@ Task state done preserves historical progress; it does not prove current-code ve
 Legacy/client test_passed, test_source_ids and completion claims are reported evidence, never
 fresh machine proof. check_run_ids are references, not authority. Use the read-only check_status
 tool: only its status=fresh establishes machine verification for the current task definition,
-named profiles and scoped worktree. Report stale/reported/unknown honestly. Tests do not imply
+named profiles and scoped worktree. Report stale/reported/unknown honestly. A record, plan or source
+with origin_evidence=degraded was written by an external client's session whose conversation was
+never archived: report it as an unverified claim, never as confirmed or verified. Tests do not imply
 acceptance or human review. next_task returns a bounded scoped workflow, not a task reservation.
 For current-code questions read the current source; for history use records(include_history=true)
 for replaced records, record_history(record_id) for revisions, and read_source(current=false).
@@ -253,6 +259,66 @@ def parse_object(text: str) -> dict:
 
 
 MIN_QUOTE_CHARS = 12
+# Search hits shown to the model at the start of a question, and the size of each hit's text.
+# With the default num_ctx the context guard in ask is 32768 characters of serialized messages.
+# Ten excerpts of this size with the system prompt and the catalog take about 21000-23000 of
+# them, and a search round of six such excerpts about 8000-9000, so one search round still fits.
+# Larger excerpts would leave no room for it.
+INITIAL_HITS = 10
+EXCERPT_CHARS = 900
+
+
+def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[str, int, int]:
+    """The part of a text, at most ``size`` characters of whole lines, that holds most query words.
+
+    Returns the excerpt and the indexes of its first and last line within ``text``. A text that
+    fits is returned whole. Otherwise every run of whole lines that fits, one starting at each
+    line, is scored by how many distinct search terms of the query (``retrieval.terms``) it
+    contains, ignoring case. Of the runs with the best score the middle one is taken, which
+    centres the excerpt on what matches; with no matching term the excerpt is the beginning of
+    the text. A single line longer than ``size`` is cut to its first ``size`` characters. The
+    excerpt is always a literal passage of ``text``.
+    """
+    if len(text) <= size:
+        return text, 0, text.count("\n")
+    lines = text.split("\n")
+    folded = [line.casefold() for line in lines]
+    words = terms(query)
+    runs = []
+    for first in range(len(lines)):
+        last, length = first, len(lines[first])
+        while last + 1 < len(lines) and length + 1 + len(lines[last + 1]) <= size:
+            last += 1
+            length += 1 + len(lines[last])
+        piece = "\n".join(folded[first:last + 1])
+        runs.append((sum(word in piece for word in words), first, last))
+    best = max(score for score, _, _ in runs)
+    tied = [run for run in runs if run[0] == best]
+    _, first, last = tied[len(tied) // 2] if best else runs[0]
+    return "\n".join(lines[first:last + 1])[:size], first, last
+
+
+# Order in which passages were shown: the initial evidence takes its positions (0..), anything
+# shown later (a search or a read during the question) takes a number after them.
+LATER_RANKS = 1000
+_LATER = itertools.count(LATER_RANKS)
+REPAIR_CATALOG_CHARS = 12000
+
+
+def _show(source: dict, text: str, rank: int | None = None) -> None:
+    """Register a passage of ``source`` that the model is shown, so a repair can cite it again.
+
+    Every passage is kept with the earliest place it was shown; ``_catalog_excerpt`` stays the
+    latest one, for callers that need a single excerpt.
+    """
+    rank = next(_LATER) if rank is None else rank
+    source["_catalog_excerpt"] = text
+    passages = source.setdefault("_catalog_passages", [])
+    for item in passages:
+        if item[1] == text:
+            item[0] = min(item[0], rank)
+            return
+    passages.append([rank, text])
 
 
 def quote_coverage(answer: str, quotes: list[str]) -> dict:
@@ -298,8 +364,21 @@ class KnowledgeAgent:
         self.retriever = retriever or Retriever(store, settings, self.ollama)
 
     def _citation_catalog(self, project_id: str, evidence: dict, candidate: str = "", *,
-                          worktree=None, budget: int = 6000) -> list[dict]:
-        """Use model-visible excerpts, never expand hydrated source pointers into content."""
+                          worktree=None, budget: int = REPAIR_CATALOG_CHARS,
+                          excerpt_chars: int | None = None) -> list[dict]:
+        """Use model-visible excerpts, never expand hydrated source pointers into content.
+
+        One entry per passage registered with ``_show``, whole by default, so a repair works from
+        the same evidence as the answer it corrects; a source shown twice (a hit and a definition)
+        has two entries. Registered are the initial evidence as the model got it and what a tool
+        call returned to the model later (search hits, read_source), never the lexical hits that
+        the hybrid search replaced. Order: passages of sources the draft cites; then what the
+        model got through tools, newest first, since an answer often rests on the last read; then
+        the initial evidence in the order shown (top hit first, definitions in their places).
+        ``excerpt_chars`` shortens the passages to a prefix (the first call, which also shows them
+        in full as initial evidence). At most 8 entries; entries that do not fit the budget are
+        left out.
+        """
         sources = {source["id"]: source for source in evidence.values()
                    if source.get("project_id") == project_id
                    and isinstance(source.get("_catalog_excerpt"), str) and source["_catalog_excerpt"].strip()
@@ -315,15 +394,26 @@ class KnowledgeAgent:
                     preferred.append(identifier)
         except (ValueError, TypeError):
             pass
-        # Existing candidate references get priority only when already inspected.
-        # Recent tool reads follow; the catalog does not import other source IDs.
-        identifiers = dict.fromkeys([*preferred, *reversed(sources)])
-        catalog, used = [], 2
-        for identifier in identifiers:
+        # Existing candidate references get priority only when already inspected; then later
+        # reads newest first, then the initial evidence. The catalog does not import other IDs.
+        def place(rank) -> tuple:
+            if rank == float("inf"):
+                return 2, 0  # an excerpt set without _show: after everything that was ranked
+            return (0, -rank) if rank >= LATER_RANKS else (1, rank)
+
+        passages = []
+        for order, identifier in enumerate(reversed(sources)):
             source = sources[identifier]
-            text = source["_catalog_excerpt"]
+            for rank, text in source.get("_catalog_passages") or [[float("inf"), source["_catalog_excerpt"]]]:
+                if isinstance(text, str) and text.strip():
+                    passages.append((identifier not in preferred, preferred.index(identifier)
+                                     if identifier in preferred else 0, place(rank), order, identifier, text))
+        catalog, used = [], 2
+        for *_, identifier, text in sorted(passages, key=lambda item: item[:4]):
+            source = sources[identifier]
+            shown = text if excerpt_chars is None else text[:excerpt_chars]
             item = {"source_id": identifier, "uri": str(source["uri"])[:240],
-                    "quote_excerpt": text[:600], "excerpt_truncated": len(text) > 600,
+                    "quote_excerpt": shown, "excerpt_truncated": len(text) > len(shown),
                     "historical": bool(source.get("_historical_requested"))}
             size = len(json.dumps(item, ensure_ascii=False)) + 2
             if used + size > budget:
@@ -346,7 +436,8 @@ class KnowledgeAgent:
                     "citations": {"type": "array", "maxItems": 8, "items": {
                         "type": "object", "additionalProperties": False,
                         "required": ["source_id", "quote"], "properties": {
-                            "source_id": {"type": "string", "enum": [item["source_id"] for item in catalog]},
+                            "source_id": {"type": "string",
+                                          "enum": list(dict.fromkeys(item["source_id"] for item in catalog))},
                             "quote": {"type": "string", "minLength": quote_floor, "maxLength": 750}}}},
                     "unknowns": {"type": "array", "maxItems": 8,
                                  "items": {"type": "string", "maxLength": 240}}}}
@@ -421,7 +512,8 @@ class KnowledgeAgent:
             previous = evidence.get(alias, {})
             checks.update(previous.get("_checked_machine_scopes", {}))
             if previous.get("sha256") == source["sha256"]:
-                markers = ("_catalog_excerpt",) + (("_historical_requested",) if not current else ())
+                markers = ("_catalog_excerpt", "_catalog_passages") + (
+                    ("_historical_requested",) if not current else ())
                 for marker in markers:
                     if marker in previous:
                         source[marker] = previous[marker]
@@ -431,7 +523,14 @@ class KnowledgeAgent:
         evidence[source["id"]] = source
         return source
 
-    def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None) -> list[dict]:
+    def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "",
+              register: bool = True) -> list[dict]:
+        """Model-visible hits: each text is the excerpt of its chunk that matches ``query``.
+
+        ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk. With
+        ``register`` each excerpt is registered as shown now (a search the model asked for); the
+        initial evidence is registered by ``ask`` once it is known which hits the model gets.
+        """
         result = []
         for hit in hits:
             try:
@@ -446,11 +545,67 @@ class KnowledgeAgent:
                 value.update(source_id=source["id"], text=source_text(source)[:2200], line_start=1,
                              line_end=len(source_text(source)[:2200].splitlines()), refreshed=True)
             else:
-                value["text"] = str(value.get("text", ""))[:1600]
+                text = str(value.get("text", ""))
+                value["text"], first, last = question_excerpt(text, query)
+                if value["text"] != text and isinstance(hit.get("line_start"), int):
+                    value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
-            if isinstance(value.get("text"), str) and value["text"] in source_text(source):
-                source["_catalog_excerpt"] = value["text"]
-            result.append(value)
+            if register and isinstance(value.get("text"), str) and value["text"] in source_text(source):
+                _show(source, value["text"])
+            # The source checked just above, not the chunk, says whether an external session wrote it.
+            result.append(with_source_origin(value, source))
+        return result
+
+    def _definitions(self, project_id: str, question: str, hits: list[dict], evidence: dict,
+                     worktree=None) -> list[dict]:
+        """Up to MAX_DEFINITIONS model-visible definitions of names the question or the hits use.
+
+        Each is shown and made citable like a hit: kind "definition", the defined name, its path
+        within the worktree, and the lines shown, which are the definition with neighbouring lines
+        of its scope. A definition whose lines a hit already shows, or whose file changed since it
+        was indexed, is left out. See ``cairnmind.definitions`` for how names are found and ranked.
+        """
+        try:
+            ranked = find_definitions(self.store, self.retriever, project_id, question,
+                                      [str(hit.get("text", "")) for hit in hits], worktree)
+        except (ValueError, OSError):
+            return []
+        # Lines already in view: the hits that are always kept, then each definition added.
+        shown = [(hit["source_id"], hit.get("line_start"), hit.get("line_end"))
+                 for hit in hits[:INITIAL_HITS - MAX_DEFINITIONS]
+                 if isinstance(hit.get("line_start"), int) and isinstance(hit.get("line_end"), int)]
+        result, attempts = [], 0
+        for row in ranked:
+            if len(result) >= MAX_DEFINITIONS or attempts >= MAX_DEFINITION_ATTEMPTS:
+                break
+            symbol = row["symbol"]
+            start, end = symbol.get("line_start"), symbol.get("line_end")
+            if (not isinstance(start, int) or not isinstance(end, int)
+                    or any(source_id == row["source_id"] and first <= start and end <= last
+                           for source_id, first, last in shown)):
+                continue
+            attempts += 1  # each costs a freshness check, accepted or not
+            try:
+                source = self._source(row["source_id"], project_id, evidence, worktree=worktree)
+            except (ValueError, OSError):
+                continue
+            lines = source_text(source).split("\n")
+            if source["id"] != row["source_id"] or end > len(lines):
+                continue  # the file changed since it was indexed: its line numbers no longer hold
+            first, last = definition_lines(lines, start, end, EXCERPT_CHARS)
+            text = "\n".join(lines[first - 1:last])[:EXCERPT_CHARS]
+            if not text.strip():
+                continue
+            _show(source, text)
+            shown.append((source["id"], first, first + text.count("\n")))
+            # A definition read from a source an external session wrote carries that source's mark,
+            # exactly as a hit from it does.
+            result.append(with_source_origin({
+                "id": f"definition:{row['node_id']}", "source_id": source["id"], "kind": "definition",
+                "definition": str(symbol.get("name", ""))[:200],
+                "definition_kind": str(symbol.get("kind", ""))[:20], "path": row["path"][:240],
+                "uri": source["uri"], "text": text, "line_start": first,
+                "line_end": first + text.count("\n"), "source_sha256": source["sha256"]}, source))
         return result
 
     def _workflow(self, project_id, evidence, worktree=None, plan_id=None):
@@ -520,7 +675,7 @@ class KnowledgeAgent:
             if not isinstance(query, str) or not query.strip():
                 raise ValueError("query must be a nonempty string")
             hits = await self.retriever.asearch(project_id, query[:2000], 6, worktree=worktree)
-            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree)
+            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree, query)
             return {"hits": refreshed, "warnings": self.retriever.warnings[-3:]}
         if name == "graph":
             query = arguments.get("query")
@@ -548,7 +703,7 @@ class KnowledgeAgent:
             lines = source_text(source).splitlines()
             selected_text = "\n".join(lines[start - 1:end])
             text = selected_text[:4000]
-            source["_catalog_excerpt"] = text
+            _show(source, text)
             return {"source_id": source["id"], "uri": source["uri"], "sha256": source["sha256"],
                     "line_start": start, "line_end": start + len(text.splitlines()) - 1,
                     "content": text, "is_current": bool(source["is_current"]),
@@ -711,6 +866,10 @@ class KnowledgeAgent:
                 invalid.append("Niepoprawne cytowanie.")
                 continue
             source_id, quote = citation.get("source_id"), citation.get("quote")
+            if quote is None:
+                # The catalog the model is shown names its passages "quote_excerpt", and the model
+                # often answers with that name. The passage is checked against the source all the same.
+                quote = citation.get("quote_excerpt")
             if not isinstance(source_id, str) or source_id not in evidence:
                 invalid.append("Model wskazał źródło, którego nie odczytał.")
                 continue
@@ -778,6 +937,39 @@ class KnowledgeAgent:
         diagnostics["budget"]["elapsed_seconds"] = round(time.monotonic() - started, 3)
         return {**result, "diagnostics": diagnostics}
 
+    async def _support_gate(self, question: str, result: dict, evidence: dict, started: float,
+                            diagnostics: dict) -> dict:
+        """Keep a complete answer complete only if one judge call finds that its quotes state it.
+
+        Anything else (not complete, so no call) passes unchanged. A "no", an unparsed reply or a
+        failed call yields the result of a failed citation validation: partial, the answer withheld,
+        the verified quotes kept as sources, the judge's reason in unknowns. The code is
+        answer_unsupported when the judge said no and support_unverified when it gave no verdict.
+        A timeout is left to the caller's ask_timeout handling, which never returns complete.
+        """
+        if result.get("status") != "complete":
+            return result
+        try:
+            response = await self.ollama.chat(
+                support_messages(question, result["answer"], result["sources"]), tools=None,
+                format=deepcopy(SUPPORT_SCHEMA), options={"num_predict": SUPPORT_TOKENS})
+        except OllamaUnavailable:
+            supported, reason = False, None
+            diagnostics["support_check"] = "failed"
+        else:
+            diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
+                                          _model_diagnostics(response, "support")]
+            supported, reason = support_verdict(response)
+            diagnostics["support_check"] = ("supported" if supported else
+                                            "unsupported" if reason else "failed")
+        if supported:
+            return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
+        gap = ("Cytaty nie potwierdzają odpowiedzi: " + reason if reason else
+               "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.")
+        return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.",
+                            evidence, [*result.get("unknowns", []), gap], started, result["sources"],
+                            code="answer_unsupported" if reason else "support_unverified")
+
     def _compact_repair(self, question: str, state: dict, candidate: str, errors: list[str],
                         catalog: list[dict], answer_schema: dict | None, context_chars: int) -> tuple[list, dict] | None:
         """Reuse inspected evidence without replaying an unbounded tool transcript."""
@@ -816,21 +1008,36 @@ class KnowledgeAgent:
             raise ValueError("Question must contain 1–16000 characters")
         evidence: dict = {}
         repair_fallback = None
+        judged = None  # a validated complete answer whose support check is running
         started = time.monotonic()
         self.retriever.warnings.clear()
         try:
             async with asyncio.timeout(self.settings.ask_timeout):
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
-                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, 5, worktree=worktree)
-                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree)
-                hybrid = await self.retriever.asearch(project_id, question, 5, worktree=worktree)
+                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
+                                                  worktree=worktree)
+                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree, question,
+                                                  False)
+                hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
-                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree)
+                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree, question,
+                                                      False)
+                # Definitions of names the question and the hits use take the places of the
+                # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
+                definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
+                                                      evidence, worktree)
+                if definitions:
+                    initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
+                # Only now is it known which hits the model gets: register those, in their order.
+                for position, item in enumerate(initial):
+                    source = evidence.get(item["source_id"])
+                    if source is not None and isinstance(item.get("text"), str) and item["text"] in source_text(source):
+                        _show(source, item["text"], position)
                 context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
                           "citation_catalog": self._citation_catalog(project_id, evidence, worktree=worktree,
-                                                                     budget=4000)}
+                                                                     budget=4000, excerpt_chars=600)}
                 if answer_schema is not None:
                     prompt["answer_schema"] = answer_schema
                 messages = [
@@ -855,7 +1062,8 @@ class KnowledgeAgent:
                             self._validate_final, candidate, project_id, evidence, started, worktree, answer_schema,
                         )
                         if not repairable:
-                            return validated
+                            judged = validated
+                            return await self._support_gate(question, validated, evidence, started, diagnostics)
                         repair_fallback = validated
                         diagnostics["validation_codes"] = [validated["diagnostics"]["code"]]
                         if _step + 1 >= self.settings.max_steps:
@@ -890,7 +1098,8 @@ class KnowledgeAgent:
                             project_id, evidence, started, worktree, answer_schema)
                         diagnostics["repair_outcome"] = ("failed" if still_repairable or
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
-                        return result
+                        judged = result
+                        return await self._support_gate(question, result, evidence, started, diagnostics)
                     if not isinstance(calls, list) or len(calls) > 6:
                         return self._result("partial", "Model zwrócił niepoprawną listę narzędzi.", evidence,
                                             ["Niepoprawny protokół narzędzi modelu."], started,
@@ -914,6 +1123,14 @@ class KnowledgeAgent:
                 return self._result("partial", "Analiza osiągnęła limit kroków; zawęź pytanie.", evidence,
                                     ["Przekroczono limit kroków agenta."], started, code="step_budget")
         except TimeoutError:
+            if judged is not None and judged.get("status") == "complete":
+                # The answer and its quotes were verified; only the support check ran out of time.
+                # Not complete, as when the check gives no verdict; the repair outcome stands.
+                diagnostics["support_check"] = "failed"
+                return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.", evidence,
+                                    [*judged.get("unknowns", []),
+                                     "Kontrola poparcia odpowiedzi nie zakończyła się w limicie czasu analizy."],
+                                    started, judged["sources"], code="support_unverified")
             diagnostics["repair_outcome"] = "budget_exhausted" if diagnostics["repair_attempted"] else "not_needed"
             if repair_fallback is not None:
                 return self._repair_fallback(repair_fallback, started,
@@ -1116,10 +1333,15 @@ class KnowledgeAgent:
         names = sorted(token for token in tokens if len(token) >= 4)[:128]
         if not names:
             return []
+        # A constant or field is linked only when the quote writes a compound name (with "_" or
+        # "."): every module may define a "logger" or "client", and prose uses PROJECT or ROOT
+        # as placeholders, but SCHEMA_VERSION or Settings.port names one definition.
+        compound = [name for name in names if "_" in name or "." in name] or [""]
         rows = self.store.query(
             "SELECT id,label FROM nodes WHERE project_id=:project AND is_current=true "
-            "AND kind IN ['file','symbol'] AND label IN :names LIMIT 200",
-            {"project": project_id, "names": names},
+            "AND kind IN ['file','symbol'] AND label IN :names AND (kind='file' OR metadata.kind IS NULL "
+            "OR metadata.kind NOT IN ['constant','field'] OR label IN :compound) ORDER BY label, id LIMIT 200",
+            {"project": project_id, "names": names, "compound": compound},
         )
         seen = {row["id"] for row in rows}
         file_names = sorted({Path(token).name for token in tokens

@@ -10,6 +10,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static
 
+from .terminal_impact import ImpactView
+from .terminal_notices import about
 from .terminal_safe import plain, safe_text
 from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, summary_text
 
@@ -21,6 +23,7 @@ EVIDENCE_LABELS = {
     ("evidence_replaced", None): "the source changed; there is no verified quoted passage to compare",
     ("orphaned", None): "orphaned: no supporting source has a current version",
     ("unverified", None): "imported file evidence has not been compared with local files yet",
+    ("degraded", None): "written by an external client's session, or resting only on one; never verified",
 }
 
 def _finding_text(letter, role, item, translate):
@@ -62,11 +65,11 @@ def conflict_text(pair, translate):
 _EVIDENCE_TIME = {"stated": "Stated", "observed": "Observed no later than", "mixed": "Mixed evidence"}
 _VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),
           ("Zadania", "tasks"), ("Testy", "checks"), ("Kolejka", "jobs"),
-          ("Conflicts", "conflicts"), ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
+          ("Conflicts", "conflicts"), ("Impact", "impact"), ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
 _TYPES = {"record": "records", "source": "sources", "plan": "plans", "check": "checks", "job": "jobs"}
 
 
-class InspectorApp(BasePanel):
+class InspectorApp(ImpactView, BasePanel):
     panel_role = "inspector"
     TITLE = "Cairnmind · Memory"
     CSS = BasePanel.CSS + """
@@ -81,6 +84,9 @@ class InspectorApp(BasePanel):
     #memory-extra { height: 3; }
     #entity-actions Button, #review-actions Button, #memory-actions Button, #memory-extra Button,
     #conflict-actions Button { min-width: 8; }
+    #impact-bar, #impact-actions { height: 3; }
+    #impact-since-label { padding: 1 1 0 0; }
+    #impact-since { width: 30; }
     """
     BINDINGS = [("r", "refresh", "Refresh"), ("escape", "back", "List"),
                 ("h", "history", "History"), ("m", "memory", "Memory")]
@@ -114,6 +120,7 @@ class InspectorApp(BasePanel):
             yield Static(self.t("Wybierz projekt w panelu projektów."), id="inspector-heading", markup=False)
             yield Select([(self.t(label), value) for label, value in _VIEWS], value="records", allow_blank=False, id="inspector-view")
             yield Input(placeholder=self.t("Filtruj załadowaną stronę…"), id="inspector-filter")
+            yield from self.compose_impact_bar()
             yield DataTable(id="inspector-rows", cursor_type="row", zebra_stripes=True)
             with VerticalScroll(id="inspector-details"):
                 yield Static("", id="entity-body", markup=False)
@@ -130,6 +137,8 @@ class InspectorApp(BasePanel):
                 yield Button(self.t("Źródła"), id="entity-sources")
             with Horizontal(id="conflict-actions"):
                 yield Button(self.t("Resolve"), id="conflict-resolve")
+            with Horizontal(id="impact-actions"):
+                yield Button(self.t("Verdict"), id="impact-verdict")
             with Horizontal(id="memory-actions"):
                 yield Button(self.t("Podgląd"), id="memory-preview")
                 yield Button(self.t("Zapisz"), id="memory-save", disabled=True)
@@ -146,6 +155,8 @@ class InspectorApp(BasePanel):
         self.query_one("#inspector-details").display = False
         self.query_one("#review-actions").display = False
         self.query_one("#conflict-actions").display = False
+        self.query_one("#impact-actions").display = False
+        self.query_one("#impact-bar").display = False
         self.query_one("#memory-actions").display = False
         self.query_one("#memory-extra").display = False
         self.set_interval(.3, self._poll_workspace)
@@ -168,6 +179,7 @@ class InspectorApp(BasePanel):
                   "memory-apply": "Apply", "memory-refresh": "Status", "conflict-resolve": "Resolve"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
+        self.refresh_impact_language()
 
     async def workspace_changed(self, value):
         scope = (value.get("project_id"), value.get("worktree"))
@@ -200,7 +212,10 @@ class InspectorApp(BasePanel):
         elif not selection and (context_changed or self._selected_entity_signature not in {None, "null"}):
             self._selected_entity_signature = None
             self.entity = None
-            await self.load_page()
+            if self.view == "impact":
+                self.refresh_page()  # Git may take minutes: never inside the workspace poll
+            else:
+                await self.load_page()
 
     def set_view(self, view):
         self.view = view
@@ -209,6 +224,7 @@ class InspectorApp(BasePanel):
         for selector in ("#memory-actions", "#memory-extra"):
             self.query_one(selector).display = is_memory
         self.query_one("#inspector-filter").display = not is_memory
+        self.query_one("#impact-bar").display = view == "impact"
         self.query_one("#entity-actions").display = not is_memory
 
     @on(Select.Changed, "#inspector-view")
@@ -240,6 +256,9 @@ class InspectorApp(BasePanel):
         if self.view == "memory":
             await self.load_memory()
             return
+        if self.view == "impact":
+            await self.load_impact()
+            return
         project = self.workspace_data.get("project_id")
         if not project and self.view != "inbox":
             self.notice(self.t("Wybierz projekt. Nieprzypisane wpisy i import są dostępne globalnie."))
@@ -266,20 +285,25 @@ class InspectorApp(BasePanel):
 
     def render_rows(self, rows):
         table = self.query_one("#inspector-rows", DataTable)
-        table.clear()
-        query = self.query_one("#inspector-filter", Input).value.casefold()
-        for row in rows:
-            content = row.get("content", row.get("title", row.get("uri", row.get("profile_id", row.get("id", "")))))
-            if query and query not in str(content).casefold():
-                continue
-            metadata = row.get("metadata") or {}
-            state = row.get("state", metadata.get("state", row.get("status", row.get("outcome", ""))))
-            table.add_row(plain(f"{row.get('kind', self.view)} / {state}"), plain(str(content).replace("\n", " "), limit=300),
-                          plain(row.get("version", row.get("attempts", ""))), key=str(row["id"]))
+        if self.view == "impact" and not self.history_owner:
+            self.render_impact_rows(rows)
+        else:
+            self.use_columns("standard")
+            table.clear()
+            query = self.query_one("#inspector-filter", Input).value.casefold()
+            for row in rows:
+                content = row.get("content", row.get("title", row.get("uri", row.get("profile_id", row.get("id", "")))))
+                if query and query not in str(content).casefold():
+                    continue
+                metadata = row.get("metadata") or {}
+                state = row.get("state", metadata.get("state", row.get("status", row.get("outcome", ""))))
+                table.add_row(plain(f"{row.get('kind', self.view)} / {state}"), plain(str(content).replace("\n", " "), limit=300),
+                              plain(row.get("version", row.get("attempts", ""))), key=str(row["id"]))
         table.display = True
         self.query_one("#inspector-details").display = False
         self.query_one("#review-actions").display = False
         self.query_one("#conflict-actions").display = False
+        self.query_one("#impact-actions").display = False
         self.query_one("#entity-more", Button).disabled = not bool(self.next_cursor)
 
     @on(Input.Changed, "#inspector-filter")
@@ -319,6 +343,7 @@ class InspectorApp(BasePanel):
         self.query_one("#entity-body", Static).update(plain(self._detail_text))
         self.query_one("#review-actions").display = kind in {"records", "plans", "sources", "inbox"}
         self.query_one("#conflict-actions").display = kind == "conflicts"
+        self.query_one("#impact-actions").display = kind == "impact"
         for selector in ("#entity-confirm", "#entity-dispute"):
             self.query_one(selector, Button).disabled = kind != "records"
         self.query_one("#entity-history", Button).disabled = kind not in {"records", "plans"}
@@ -401,6 +426,9 @@ class InspectorApp(BasePanel):
         if not isinstance(identifier, str) or not identifier:
             return
         kind = kind or self.view
+        if kind == "impact":
+            self.open_impact(identifier)  # an entry has no detail route either: the list carries it whole
+            return
         if kind == "conflicts":
             # A pair has no detail route: the list already carries both findings in full.
             pair = self.rows.get(identifier)
@@ -463,7 +491,7 @@ class InspectorApp(BasePanel):
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice(self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
             return
         payload = {"project": project_id, "action": action,
                    "expected_version": record["version"], "reason": form["reason"]}
@@ -506,7 +534,7 @@ class InspectorApp(BasePanel):
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice(self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
             return
         payload = {"project": project_id, "record_id": first["id"], "other_id": second["id"], "action": action,
                    "expected_version": first["version"], "other_expected_version": second["version"],
@@ -702,7 +730,8 @@ class InspectorApp(BasePanel):
             self.notice(self.t("Memory updates") + ": " + safe_text(exc))
 
     def refresh_if_list(self):
-        if not self.entity and not self.history_owner and self.view != "memory":
+        # The impact list runs Git over the worktree and changes with files the journal does not report: r reads it.
+        if not self.entity and not self.history_owner and self.view not in {"memory", "impact"}:
             self.refresh_page()
 
     @on(Button.Pressed)
@@ -724,6 +753,8 @@ class InspectorApp(BasePanel):
             self.review("dispute")
         elif button == "conflict-resolve":
             self.resolve_conflict()
+        elif button == "impact-verdict":
+            self.record_impact_verdict()
         elif button == "entity-history":
             self.action_history()
         elif button == "entity-sources":
@@ -758,6 +789,8 @@ class InspectorApp(BasePanel):
     def action_refresh(self):
         if self.entity and self.entity_kind == "conflicts":
             self.reload_conflict(self.entity["id"])
+        elif self.entity and self.entity_kind == "impact":
+            self.reload_impact(self.entity["id"])
         elif self.entity:
             self.open_selected(self.entity["id"], self.entity_kind)
         else:

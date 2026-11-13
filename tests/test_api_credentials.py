@@ -60,6 +60,18 @@ def test_custom_environment_reference_never_copies_key_to_disk_or_public_status(
     assert {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} <= set(credential_environment_names())
 
 
+@pytest.mark.parametrize("value", ["PRIVATE ENV MARKER", "PRIVATE_ŻÓŁW_MARKER", "x" * 16385])
+def test_a_set_but_invalid_environment_key_is_not_reported_configured(tmp_path, value):
+    # status() and resolve() must agree: the launcher resolves, the stage router reads status.
+    store = CredentialStore(Settings.load(tmp_path / "data"), environ={"CUSTOM_PROVIDER_KEY": value})
+    selected = profile("env:CUSTOM_PROVIDER_KEY")
+    status = store.status(selected)
+    assert status == {"configured": False, "storage": "environment", "code": "credential_invalid"}
+    assert "MARKER" not in json.dumps(status) and "xxxx" not in json.dumps(status)
+    with pytest.raises(ValueError):
+        store.resolve(selected)
+
+
 @pytest.mark.parametrize("key", ["", None, "unsafe\nPRIVATE", "unsafe\rPRIVATE", "x\0PRIVATE", "ümlaut", "x" * 16385])
 def test_invalid_key_is_not_echoed_or_written(tmp_path, key):
     store = CredentialStore(Settings.load(tmp_path / "data"))

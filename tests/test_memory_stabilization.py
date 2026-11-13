@@ -15,6 +15,7 @@ from cairnmind.agent import KnowledgeAgent
 from cairnmind.config import Settings
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.store import Store
+from cairnmind.support import SUPPORT_SYSTEM
 
 
 PRIVATE = "PRIVATE_METADATA_CREDENTIAL_DO_NOT_ECHO"
@@ -27,10 +28,15 @@ class ScriptedOllama:
     def __init__(self, replies, *, context_chars=None):
         self.replies = list(replies)
         self.calls = []
+        self.support_calls = []  # the support check of a complete answer, which always agrees here
         self.context_chars = context_chars
 
     async def chat(self, messages, tools=None, **kwargs):
         call = {"messages": copy.deepcopy(messages), "tools": tools, "kwargs": copy.deepcopy(kwargs)}
+        if messages and messages[0].get("content") == SUPPORT_SYSTEM:
+            self.support_calls.append(call)
+            return {"message": {"role": "assistant", "content": json.dumps({"supported": True, "reason": "Stated."})},
+                    "done_reason": "stop", "prompt_eval_count": 80, "eval_count": 10, "total_duration": 500}
         self.calls.append(call)
         if self.context_chars is not None and kwargs.get("format"):
             size = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
@@ -275,10 +281,11 @@ async def test_answer_diagnostics_normalize_untrusted_runtime_counters(workspace
     assert result["status"] == "complete"
     diagnostic = result["diagnostics"]
     safe_diagnostics(diagnostic)
-    assert len(diagnostic["model_calls"]) == 1
-    call = diagnostic["model_calls"][0]
-    for name in ("prompt_eval_count", "eval_count", "total_duration"):
-        assert name not in call or (type(call[name]) is int and 0 <= call[name] <= 2**63 - 1)
+    # The answer call and the support check of the complete answer.
+    assert [call["phase"] for call in diagnostic["model_calls"]] == ["discovery", "support"]
+    for call in diagnostic["model_calls"]:
+        for name in ("prompt_eval_count", "eval_count", "total_duration"):
+            assert name not in call or (type(call[name]) is int and 0 <= call[name] <= 2**63 - 1)
 
 
 async def test_compact_answer_repair_fits_after_a_large_inspected_tool_exchange(workspace):
@@ -573,6 +580,28 @@ async def test_extraction_links_records_to_named_symbols_and_nested_files(worksp
     linked = {edge["to_id"] for edge in store.query(
         "SELECT FROM edges WHERE project_id=:project AND kind='relates_to'", {"project": project["id"]})}
     assert linked == {"symbol-refresh", "file-session"}
+
+
+async def test_extraction_links_a_constant_or_field_only_when_the_quote_writes_its_compound_name(workspace):
+    store, project, settings = workspace
+    quote = "The logger of each worker reads SESSION_TTL and Settings.port, and PROJECT is a placeholder."
+    item = source(store, project, quote)
+    nodes = {
+        "constant-logger": ("logger", "constant"), "constant-ttl": ("SESSION_TTL", "constant"),
+        "field-port": ("Settings.port", "field"), "constant-project": ("PROJECT", "constant"),
+        "function-logger": ("worker", "function"),
+    }
+    for node_id, (label, kind) in nodes.items():
+        store.upsert_node({"id": node_id, "project_id": project["id"], "kind": "symbol", "label": label,
+                           "source_id": item["id"], "is_current": True, "metadata": {"kind": kind, "name": label}})
+    job = extraction_job(store, project, item)
+    model = ScriptedOllama([extraction(candidate(quote, key="session-ttl", content="Workers read the session TTL."))])
+    await KnowledgeAgent(store, settings, model).extract(job)
+    linked = {edge["to_id"] for edge in store.query(
+        "SELECT FROM edges WHERE project_id=:project AND kind='relates_to'", {"project": project["id"]})}
+    # A plain word (logger) or a capitalised placeholder (PROJECT) is not taken for a constant;
+    # a function keeps being linked by its plain name, as before.
+    assert linked == {"constant-ttl", "field-port", "function-logger"}
 
 
 async def test_single_character_quote_is_not_accepted_as_evidence(workspace):

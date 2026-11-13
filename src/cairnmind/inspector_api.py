@@ -8,11 +8,11 @@ import time
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import conflicts
+from . import conflicts, impact_verdicts
 from .arcade import ArcadeError
 from .inspector import Inspector, InspectorNotFound
 
@@ -36,6 +36,18 @@ class ConflictBody(BaseModel):
     other_expected_version: int = Field(strict=True, ge=1)
     keep: str | None = Field(default=None, max_length=200)
     reason: str | None = Field(default=None, max_length=4000)
+
+
+class ImpactVerdictBody(BaseModel):
+    # No session field: a verdict is a person's, and a coding session has no way to send one.
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    worktree: str | None = Field(default=None, max_length=4096)
+    since: str = Field(min_length=1, max_length=200)
+    record_id: str = Field(min_length=1, max_length=200)
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verdict: Literal["still_valid", "needs_update", "not_related"]
+    note: str | None = Field(default=None, max_length=4000)
 
 
 def _event_id(cursor):
@@ -171,6 +183,30 @@ def create_inspector_router(store, settings):
     async def resolve_conflict(body: ConflictBody):
         return await call(conflicts.resolve, inspector, body.project, body.record_id, body.other_id, body.action,
                           body.expected_version, body.other_expected_version, keep=body.keep, reason=body.reason)
+
+    async def impact_call(method, *args):
+        # Mapped by type, not by text: a commit name or a path in a message must not turn 400 into 409.
+        try:
+            return await asyncio.to_thread(method, inspector, *args)
+        except InspectorNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except impact_verdicts.StaleVerdict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except ArcadeError:
+            raise HTTPException(status_code=503, detail="Memory storage is unavailable") from None
+
+    @router.get("/inspector/impact")
+    async def impact_list(project: str, since: str = Query(min_length=1, max_length=200),
+                          worktree: str | None = Query(default=None, max_length=4096), pending: bool = False):
+        # Read-only, the parameters of `cairnmind impact`, and its --json answer.
+        return await impact_call(impact_verdicts.listing, project, worktree, since, pending)
+
+    @router.post("/inspector/impact/verdict")
+    async def impact_verdict(body: ImpactVerdictBody):
+        return await impact_call(impact_verdicts.resolve, body.project, body.worktree, body.since, body.record_id,
+                                 body.fingerprint, body.verdict, body.note)
 
     @router.post("/inspector/records/{record_id}/review")
     async def review(record_id: str, body: ReviewBody):

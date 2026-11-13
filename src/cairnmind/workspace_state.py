@@ -140,7 +140,7 @@ class WorkspaceState:
             if (not isinstance(command, dict) or set(command) != {"id", "action", "target_role"}
                     or not isinstance(command["target_role"], str) or command["target_role"] not in {"sidebar", "inspector", "graph"}
                     or not isinstance(command["action"], str) or command["action"] not in {"search", "add_project", "start_work", "connections", "sessions",
-                                                  "memory", "more", "settings"}):
+                                                  "memory", "ask", "brief", "more", "settings", "next_stage", "notices"}):
                 raise ValueError("Invalid workspace command")
             _identifier(command["id"])
         if len(json.dumps(value, allow_nan=False).encode()) > 2 * 1024 * 1024:
