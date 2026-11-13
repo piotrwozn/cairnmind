@@ -27,6 +27,8 @@ COMMANDS = (
     ("Focus view", "One view at a time", "view", "focus"),
     ("Cockpit view", "Multiple panes on a large terminal", "view", "cockpit"),
     ("Keyboard help", "Navigation and native client shortcuts", "help", ""),
+    # New entries go last: the position of every existing command stays the same.
+    ("Run next stage", "Show the project, then start what is mapped to the next plan step", "command", "next_stage"),
 )
 
 

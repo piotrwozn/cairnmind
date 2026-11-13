@@ -17,7 +17,8 @@ from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .ollama import Ollama, OllamaUnavailable
-from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata, terms
+from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
+                        with_source_origin)
 from .store import TASK_STATES, validate_task_state
 from .support import SUPPORT_SCHEMA, SUPPORT_TOKENS, support_messages, support_verdict
 
@@ -34,7 +35,9 @@ Task state done preserves historical progress; it does not prove current-code ve
 Legacy/client test_passed, test_source_ids and completion claims are reported evidence, never
 fresh machine proof. check_run_ids are references, not authority. Use the read-only check_status
 tool: only its status=fresh establishes machine verification for the current task definition,
-named profiles and scoped worktree. Report stale/reported/unknown honestly. Tests do not imply
+named profiles and scoped worktree. Report stale/reported/unknown honestly. A record, plan or source
+with origin_evidence=degraded was written by an external client's session whose conversation was
+never archived: report it as an unverified claim, never as confirmed or verified. Tests do not imply
 acceptance or human review. next_task returns a bounded scoped workflow, not a task reservation.
 For current-code questions read the current source; for history use records(include_history=true)
 for replaced records, record_history(record_id) for revisions, and read_source(current=false).
@@ -549,7 +552,8 @@ class KnowledgeAgent:
             value["source_sha256"] = source["sha256"]
             if register and isinstance(value.get("text"), str) and value["text"] in source_text(source):
                 _show(source, value["text"])
-            result.append(value)
+            # The source checked just above, not the chunk, says whether an external session wrote it.
+            result.append(with_source_origin(value, source))
         return result
 
     def _definitions(self, project_id: str, question: str, hits: list[dict], evidence: dict,
@@ -594,11 +598,14 @@ class KnowledgeAgent:
                 continue
             _show(source, text)
             shown.append((source["id"], first, first + text.count("\n")))
-            result.append({"id": f"definition:{row['node_id']}", "source_id": source["id"], "kind": "definition",
-                           "definition": str(symbol.get("name", ""))[:200],
-                           "definition_kind": str(symbol.get("kind", ""))[:20], "path": row["path"][:240],
-                           "uri": source["uri"], "text": text, "line_start": first,
-                           "line_end": first + text.count("\n"), "source_sha256": source["sha256"]})
+            # A definition read from a source an external session wrote carries that source's mark,
+            # exactly as a hit from it does.
+            result.append(with_source_origin({
+                "id": f"definition:{row['node_id']}", "source_id": source["id"], "kind": "definition",
+                "definition": str(symbol.get("name", ""))[:200],
+                "definition_kind": str(symbol.get("kind", ""))[:20], "path": row["path"][:240],
+                "uri": source["uri"], "text": text, "line_start": first,
+                "line_end": first + text.count("\n"), "source_sha256": source["sha256"]}, source))
         return result
 
     def _workflow(self, project_id, evidence, worktree=None, plan_id=None):

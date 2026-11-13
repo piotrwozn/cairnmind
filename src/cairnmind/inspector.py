@@ -129,7 +129,7 @@ class Inspector:
             selected = available[:limit]
             fields = "*"
             if collection == "sources":
-                fields = "id,project_id,uri,kind,sha256,created_at,is_current,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset"
+                fields = "id,project_id,uri,kind,sha256,created_at,is_current,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset"
             rows = reader.query(f"SELECT {fields} FROM {collection} WHERE project_id=:project AND id IN :ids ORDER BY id",
                                 {"project": pid, "ids": selected}) if selected else []
             items = []
@@ -147,7 +147,8 @@ class Inspector:
                         "outcome", "passed", "returncode", "started_at", "ended_at", "origin", "source_ids")}
                 else:
                     item = {key: row.get(key) for key in ("id", "project_id", "version", "title", "goal", "step_ids",
-                                                        "created_at", "updated_at")}
+                                                        "created_at", "updated_at", "origin_client", "origin_evidence")
+                            if key in row or not key.startswith("origin_")}
                 items.append(item)
             result = {"items": items, "total": len(ids), "next_cursor": _encode_cursor({"query": query_key,
                 "after": selected[-1]}) if len(available) > limit else None, "cursor": _cursor(reader, self.store)}
@@ -341,7 +342,7 @@ class Inspector:
         pid = scope[0]["id"]
         result = {}
         fields = {
-            "sources": "id,kind,uri,is_current,created_at,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset",
+            "sources": "id,kind,uri,is_current,created_at,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset",
             "records": "id,kind,status,version,metadata.root AS root,metadata.worktree AS worktree,metadata.path AS path",
             "plans": "id,title,version",
             "record_revisions": "id,record_id,version,snapshot.metadata.root AS root,snapshot.metadata.worktree AS worktree",

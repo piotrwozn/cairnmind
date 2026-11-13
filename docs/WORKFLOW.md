@@ -70,7 +70,7 @@ cairnmind check run shop unit --task TASK_ID
 cairnmind check list shop --task TASK_ID
 ```
 
-A check runs in the **current worktree** with the user's permissions. It does not create an isolated, immutable checkout. The terminal UI and MCP show results, but running a check always requires the explicit CLI command with a profile name. There is no MCP tool for arbitrary commands.
+A check runs in the **current worktree** with the user's permissions. It does not create an isolated, immutable checkout. The terminal UI and MCP show results; a check runs only through `cairnmind check run` with a profile name. **Run next stage** in the workspace runs that same command for the profile mapped to the `test` stage (see [Plan stages](#plan-stages)). There is no MCP tool for arbitrary commands.
 
 An immutable run record binds the profile, the semantic task definition, and code fingerprints taken before and after the run. The fingerprint covers the content of tracked and non-ignored untracked files, file modes, deletions and symlink targets; the 2 MiB indexing limit does not apply. Incomplete or unstable inputs give `unknown` or a result that cannot count as fresh. The before/after comparison is the best available check of the working directory; it cannot detect every transient change reverted during the run, and it does not track external services or the environment.
 
@@ -82,9 +82,27 @@ Exit code 0 confirms that the configured command succeeded. It does not prove th
 
 After a change to the code, the profile or the task content, a result can become `stale`. Earlier `done` progress stays in history and does not reopen tasks automatically. Legacy `test_passed` flags and source claims remain `reported`; migration never turns them into runner results. A model cannot create a machine result through `remember` or `checkpoint`.
 
+## Plan stages
+
+The state of the next step names the work it waits for: `todo` and `in_progress` are the `implement` stage, `needs_review` is `review` and `needs_test` is `test`. Per project, you can map `implement` and `review` to one of the project's assistants and `test` to a check profile, in the workspace under **More → Plan stages**. Only Codex and Claude Code assistants can be chosen; the built-in API agent and Copilot have no stage yet. The map is an owner preference of this machine, kept with the other cockpit preferences (`project_stages` in `cockpit/preferences.json` of the data directory), not in the repository; the check profile itself is still read from the worktree's `.cairnmind/checks.toml` when it runs.
+
+**Run next stage** reads the next step of the active plan for the open folder and does what is mapped to its stage:
+
+- for `implement` or `review`, it starts that one assistant exactly as **Start work** does. The assistant gets a fresh resume packet and must acknowledge it before it writes. If that assistant is already running (or starting) in this folder, for example because `implement` and `review` name the same one, nothing is started or restarted and it receives no new packet; the message says so, and the next stage needs that session ended or another assistant mapped. If it cannot start (not installed, signed out), the reason is shown;
+- for `test`, it runs `cairnmind check run PROJECT PROFILE --task TASK --worktree DIR` and shows the result. The run is recorded like any other check run, under the same rules for fresh and stale evidence, and with the same session rule: inside a coding session the command refuses until that session has acknowledged its packet.
+
+When nothing is mapped to the stage, when the mapped assistant is no longer configured for the project, or when it cannot be launched for a step, this is shown and nothing else is started in its place. Opening another project while a stage is being prepared cancels it, and a check result that arrives after that is recorded for the earlier project but not shown as the current one's. The router never changes a task, a plan or an acknowledgement: after a stage, the assistant or you move the step on with `task update` or through MCP, and completing a step that requires tests still needs fresh check evidence. Because recording a step's new state raises the plan version, the session that reviews a step acknowledges the same plan at a later version than the session that implemented it.
+
+```bash
+cairnmind stage next shop
+cairnmind stage next shop --worktree ~/src/shop-worktree --json
+```
+
+`cairnmind stage next` shows the same decision and starts nothing. For the `test` stage it prints the `cairnmind check run …` command. For an assistant it prints `cairnmind run …` only when that command does exactly what the map says: the assistant's profile sets no model, no other assistant of the project uses the same client, and the step belongs to the folder's active plan (`cairnmind run` knows no slot, profile or model, and a session reads the active plan). Otherwise it names the assistant and says to start the stage from the workspace with **Run next stage**; in `--json`, `command` is then `null` and `command_reason` is `profile_model`, `shared_client` or `inactive_plan`.
+
 ## MCP calls
 
-Connected clients get `ask`, `remember`, `checkpoint`, `save_plan`, `next_task`, `resume_context`, `ack_resume` and the read-only `check_status`. Updating a step of a managed plan passes the real versions:
+Connected clients get `ask`, `remember`, `checkpoint`, `save_plan`, `next_task`, `resume_context`, `ack_resume` and the read-only `check_status`. A client started with `cairnmind mcp --client external` (Cursor, Cline, Zed) gets the same tools in an evidence-degraded session: what it saves is marked as written by an external session and never counts as verified (see the README). Updating a step of a managed plan passes the real versions:
 
 ```json
 {

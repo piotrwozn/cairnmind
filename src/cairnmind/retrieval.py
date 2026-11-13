@@ -33,13 +33,16 @@ def json_value(value: Any, default: Any = None) -> Any:
     return value if value is not None else default
 
 
+# store.ORIGIN_METADATA: the mark of an external session's write. First in the allowlists below, so that a
+# bounded view never drops it.
+ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
 SOURCE_METADATA_KEYS = (
-    "path", "root", "worktree", "relative_path", "git_commit", "content_hash", "language", "role", "client", "session_id",
+    *ORIGIN_KEYS, "path", "root", "worktree", "relative_path", "git_commit", "content_hash", "language", "role", "client", "session_id",
     "source_timestamp", "timestamp", "import_path", "byte_offset", "citation_view",
     "origin", "plan_id", "run_id", "stream", "raw_bytes", "raw_sha256", "rendered_truncated",
 )
 RECORD_METADATA_KEYS = (
-    "state", "reported_state", "plan_ref", "step_key", "plan_context_hash", "required_profiles", "check_run_ids",
+    "origin_client", "origin_session_id", "origin_history", "origin_evidence", "state", "reported_state", "plan_ref", "step_key", "plan_context_hash", "required_profiles", "check_run_ids",
     "plan_id", "step_index", "requires_test", "requires_review", "test_passed",
     "review_passed", "acceptance_passed", "depends_on", "acceptance_criteria", "scope", "test_source_ids",
     "review_source_ids", "acceptance_source_ids", "possible_conflicts", "unresolved_dependencies",
@@ -152,6 +155,19 @@ def public_metadata(value: Any, keys: tuple[str, ...], budget: int = 900) -> dic
     if omitted:
         result["omitted_fields"] = omitted
     return result
+
+
+def with_source_origin(hit: dict, source: dict) -> dict:
+    """A chunk hit with its source's external-session mark, read from the source row, never stored in chunks.
+
+    A hit from any other source is returned unchanged.
+    """
+    metadata = json_value(source.get("metadata"), {})
+    origin = {key: metadata[key] for key in ORIGIN_KEYS if isinstance(metadata, dict) and key in metadata}
+    if not origin:
+        return hit
+    own = json_value(hit.get("metadata"), {})
+    return {**hit, "metadata": {**(own if isinstance(own, dict) else {}), **origin}}
 
 
 def public_source_metadata(value: Any) -> dict:
@@ -337,7 +353,7 @@ class Retriever:
             return None
         metadata = json_value(source.get("metadata"), {})
         relative = metadata.get("relative_path") if isinstance(metadata, dict) else None
-        return {
+        hit = {
             # Only for ranking within search; removed before hits are returned.
             "_path": relative if isinstance(relative, str) else str(source["uri"]),
         } | {
@@ -347,6 +363,7 @@ class Retriever:
             "uri": source["uri"], "sha256": source["sha256"], "source_kind": source["kind"],
             "source_created_at": source["created_at"],
         }
+        return with_source_origin(hit, source)
 
     @staticmethod
     def _demote_secondary(ranking: list[dict]) -> None:
@@ -601,7 +618,7 @@ class Retriever:
             # requests remain reachable through source/history pagination.
             shown = {**plan, "source_ids": list(reversed(plan.get("source_ids", [])))}
             projection["plan"] = public_metadata(shown, (
-                "id", "version", "title", "source_ids", "goal", "constraints", "step_ids"), budget=1400)
+                "origin_client", "origin_session_id", "origin_history", "origin_evidence", "id", "version", "title", "source_ids", "goal", "constraints", "step_ids"), budget=1400)
             # List totals stay visible even when long preceding fields consume
             # the presentation budget and the list itself must be omitted.
             for field in ("step_ids", "constraints", "source_ids"):

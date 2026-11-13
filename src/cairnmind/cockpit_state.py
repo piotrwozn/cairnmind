@@ -16,6 +16,7 @@ import time
 from uuid import uuid4
 
 from .api_profiles import normalize_profile
+from .stages import validate_project_stages
 
 DEFAULT_PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
                     {"id": "claude", "client": "claude", "label": "Claude"}]
@@ -95,7 +96,7 @@ class CockpitState:
     def load(self) -> dict:
         defaults = {"version": 2, "profiles": deepcopy(DEFAULT_PROFILES), "scan_roots": [],
                     "default_slots": deepcopy(DEFAULT_SLOTS), "project_slots": {}, "last_project": None,
-                    "language": "en", "view": "focus", "reduced_motion": False}
+                    "project_stages": {}, "language": "en", "view": "focus", "reduced_motion": False}
         if not self.path.exists():
             return defaults
         if self.path.is_symlink():
@@ -132,7 +133,7 @@ class CockpitState:
         return result
 
     def update(self, changes: dict) -> dict:
-        if not isinstance(changes, dict) or set(changes) - {"profiles", "scan_roots", "default_slots", "project_slots", "last_project", "language", "view", "reduced_motion"}:
+        if not isinstance(changes, dict) or set(changes) - {"profiles", "scan_roots", "default_slots", "project_slots", "project_stages", "last_project", "language", "view", "reduced_motion"}:
             raise ValueError("Nieobsługiwane pole ustawień kokpitu.")
         with _private_lock(self.root / "preferences.lock"):
             value = self.load()
@@ -175,6 +176,9 @@ class CockpitState:
             else:
                 for slots in value["project_slots"].values():
                     self._slots(slots, known)
+            # The stage map is checked for shape only; a slot it names may be removed later
+            # and the router then reports it as unknown instead of choosing another.
+            value["project_stages"] = validate_project_stages(changes.get("project_stages", value["project_stages"]))
             if "last_project" in changes:
                 value["last_project"] = None if changes["last_project"] is None else _project_id(changes["last_project"])
             if original_version == 1:

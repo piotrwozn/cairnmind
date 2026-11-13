@@ -16,14 +16,18 @@ go stale, change the portable state hash and travel wrongly to another machine.
 - ``orphaned``: no supporting source has a current version at all.
 - ``unverified``: the record rests on file snapshots imported from another machine,
   and the local files have not been indexed yet, so nothing can be said.
+- ``degraded``: an external client's session (whose conversation Cairnmind cannot read)
+  wrote the record, or the record rests only on sources such a session wrote. It is never
+  ``anchored``, whatever its sources: nothing it says has been verified.
 
 The state is only as fresh as the last indexing of the project's files.
 """
 from __future__ import annotations
 
 from cairnmind.memory_paths import bound_metadata, imported_source_ids, memory_bindings
+from cairnmind.store import degraded_origin
 
-STATES = ("anchored", "evidence_replaced", "orphaned", "unverified")
+STATES = ("anchored", "evidence_replaced", "orphaned", "unverified", "degraded")
 _FILE_KINDS = ("code", "document", "file")
 
 
@@ -131,17 +135,23 @@ def evidence_states(store, project_id, records, *, quotes=True):
     for record in records:
         cited = [source_id for source_id in dict.fromkeys(record.get("source_ids") or []) if isinstance(source_id, str)]
         counts = {"current": 0, "replaced": 0, "gone": 0, "pending": 0}
-        replaced = []
+        replaced, external = [], 0
         for source_id in cited:
             source = sources.get(source_id)
             if source is not None and _is_audit(source):
+                continue
+            if source is not None and degraded_origin(_metadata(source)):
+                # An external session's own statement cannot keep anything anchored, its own records
+                # or a record another session based on it.
+                external += 1
                 continue
             verdict, replacement = (("gone", None) if source is None else verdicts.get(source_id, ("current", None)))
             counts[verdict] += 1
             if verdict == "replaced":
                 replaced.append((source_id, replacement))
-        state = ("anchored" if counts["current"] else "evidence_replaced" if counts["replaced"]
-                 else "unverified" if counts["pending"] else "orphaned")
+        state = ("degraded" if degraded_origin(_metadata(record))
+                 else "anchored" if counts["current"] else "evidence_replaced" if counts["replaced"]
+                 else "unverified" if counts["pending"] else "degraded" if external else "orphaned")
         quote = _metadata(record).get("evidence")
         survives = None
         if quotes and state == "evidence_replaced" and isinstance(quote, str) and quote.strip():
@@ -161,7 +171,7 @@ def unanchored(store, project_id, records, *, quotes=True):
     """Records whose evidence does not stand, each with its state; orphaned first."""
     records = [record for record in records if record.get("status") != "superseded"]
     states = evidence_states(store, project_id, records, quotes=quotes)
-    order = {"orphaned": 0, "evidence_replaced": 1, "unverified": 2}
+    order = {"orphaned": 0, "evidence_replaced": 1, "unverified": 2, "degraded": 3}
     found = [{"record": record, **states[record["id"]]} for record in records
              if states[record["id"]]["evidence_state"] != "anchored"]
     found.sort(key=lambda row: (order[row["evidence_state"]], row["record"]["kind"], row["record"]["id"]))
@@ -205,5 +215,9 @@ def orphans_report(store, project, root, records):
         lines += ["", f"Imported file evidence not yet compared with local files ({len(groups['unverified'])}); "
                       "index the project first"]
         lines += [entry(row) for row in groups["unverified"]]
+    if groups["degraded"]:
+        lines += ["", f"Written by, or resting only on, an external client's session; never verified "
+                      f"({len(groups['degraded'])})"]
+        lines += [entry(row) for row in groups["degraded"]]
     return {"project": {"id": project["id"], "name": project["name"]}, "worktree": str(root),
             **{state: len(groups[state]) for state in STATES[1:]}, "records": rows, "text": "\n".join(lines)}

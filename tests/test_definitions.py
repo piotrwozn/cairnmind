@@ -288,6 +288,20 @@ def test_settings_named_only_by_their_words_are_found_in_the_project(workspace):
     assert found and found[0]["definition"] == "MAX_LISTED"
 
 
+def test_a_definition_from_a_source_an_external_session_wrote_carries_its_mark(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    source = store.query("SELECT id FROM sources WHERE uri=:uri AND is_current=true",
+                         {"uri": str(root / "pkg" / "config.py")})[0]["id"]
+    store.command("UPDATE sources SET metadata.origin_client='cursor', metadata.origin_evidence='degraded' "
+                  "WHERE id=:id", {"id": source})
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "On which port does the cockpit listen by default?",
+                               [{"source_id": "none", "text": "cockpit_port"}], {})
+    marked = [item for item in found if item["source_id"] == source]
+    assert marked and all(item["metadata"]["origin_evidence"] == "degraded" for item in marked)
+    assert all(item["metadata"]["origin_client"] == "cursor" for item in marked)
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
