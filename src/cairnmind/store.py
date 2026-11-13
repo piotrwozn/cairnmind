@@ -192,9 +192,19 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+# Where a write came from, set by the service from the session row and never by a client: today only
+# for an external client's session, whose conversation is unarchived and whose evidence is degraded.
+ORIGIN_METADATA = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
+
+
 # Record metadata derived by the store; values supplied by a client are never kept.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
-                           "supersede_warning", "supersede_replaced_evidence_latest")
+                           "supersede_warning", "supersede_replaced_evidence_latest", *ORIGIN_METADATA)
+
+
+def degraded_origin(metadata) -> bool:
+    """Whether a record, source or plan was written by an external session (never verified)."""
+    return isinstance(metadata, dict) and metadata.get("origin_evidence") == "degraded"
 
 
 # Bookkeeping of conflict decisions. Only the conflict inbox, acting for a person, may
@@ -340,6 +350,23 @@ class Store:
         # Reached only when the transaction committed; the writer lock is no longer held.
         for call in pending:
             call()
+
+    @contextmanager
+    def write_origin(self, mark):
+        """Stamp every record and source this thread writes inside the block with a session mark.
+
+        The mark comes from the service's session row, never from the caller's payload. A record keeps
+        it on every later write by anyone: its content may still be what the external session wrote.
+        """
+        previous = getattr(self._local, "write_origin", None)
+        self._local.write_origin = {key: mark[key] for key in ORIGIN_METADATA} if mark else None
+        try:
+            yield
+        finally:
+            self._local.write_origin = previous
+
+    def current_origin(self):
+        return getattr(self._local, "write_origin", None)
 
     def init(self):
         with self._lock():
@@ -553,7 +580,8 @@ class Store:
                 _set(tx, "edges", {"is_current": False}, "source_id=:id AND kind NOT IN ['supported_by','depends_on','supersedes']", params)
                 self._delete_old_vectors(tx, [existing["id"]])
             source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
-                      "sha256": digest, "metadata": metadata or {}, "is_current": True, "current_key": key, "created_at": _now()}
+                      "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
+                      "is_current": True, "current_key": key, "created_at": _now()}
             _insert(tx, "sources", source)
             return source
 
@@ -569,7 +597,8 @@ class Store:
         if _one(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False):
             return None
         source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
-                  "sha256": digest, "metadata": metadata or {}, "is_current": True, "current_key": key, "created_at": _now()}
+                  "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
+                  "is_current": True, "current_key": key, "created_at": _now()}
         _insert(tx, "sources", source)
         return source
 
@@ -805,6 +834,8 @@ class Store:
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
+        # Set after the client's metadata, which can neither forge nor clear it; kept from the old version.
+        metadata.update(self.current_origin() or {})
         explicit_completion = kind == "task" and metadata.get("state") == "done" and (not old or updates.get("state") == "done")
         if managed_batch and old and old.get("metadata", {}).get("state") == "done" and metadata.get("state") == "done":
             explicit_completion = False  # Internal plan batches preserve progress; they do not assert a new check.

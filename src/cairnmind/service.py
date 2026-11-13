@@ -264,7 +264,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     from cairnmind.retrieval import Retriever
     from cairnmind.store import Store
     from cairnmind.plans import PlanManager
-    from cairnmind.sessions import SessionManager
+    from cairnmind.sessions import SessionManager, origin_mark
     from cairnmind.memory import MemoryConflict, MemoryManager, inspect_snapshot
 
     settings = settings or Settings.load(create=True)
@@ -453,14 +453,18 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             from cairnmind.integrations import drain_hook_spool
             drain_hook_spool(settings, store)
         with store.transaction():
-            scope = None
+            scope, mark = None, None
             if session_id:
                 sessions.require_ack(session_id, packet_id)
-                row = store.query("SELECT project_id,worktree FROM sessions WHERE id=:id", {"id": session_id})
+                row = store.query("SELECT id,project_id,worktree,client FROM sessions WHERE id=:id", {"id": session_id})
                 if not row or row[0]["project_id"] != pid:
                     raise ValueError("resume_required: session belongs to another project")
                 scope = row[0]["worktree"]
-            return operation(scope)
+                # Derived from the session row, never from the payload: an external session's writes are
+                # stamped as such, and nothing a client sends can add, change or remove that stamp.
+                mark = origin_mark(row[0])
+            with store.write_origin(mark):
+                return operation(scope)
 
     def read_scope(pid: str, requested: str | None, session_id: str | None = None) -> str | None:
         scope = str(Path(requested).expanduser().resolve()) if requested else None

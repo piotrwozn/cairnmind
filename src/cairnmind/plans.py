@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from .store import _clean, _insert, _json, _now, _one, _set
+from .store import ORIGIN_METADATA, _clean, _insert, _json, _now, _one, _set
 
 
 _EVIDENCE_FIELDS = {
@@ -88,7 +88,7 @@ def note_task_mutation(store, tx, task: dict, expected_plan_version: int) -> Non
         raise ValueError("Plan version conflict; read the current plan and retry")
     if task["id"] not in plan["step_ids"]:
         raise ValueError("Task is not an active member of its plan")
-    plan.update(version=plan["version"] + 1, updated_at=_now())
+    plan.update(version=plan["version"] + 1, updated_at=_now(), **(store.current_origin() or {}))
     _set(tx, "plans", plan, "id=:id AND version=:version",
          {"id": plan_id, "version": expected_plan_version})
     _revision(store, tx, plan, _tasks(tx, task["project_id"], plan), "task_progress")
@@ -315,6 +315,9 @@ class PlanManager:
                            "step_ids": [task["id"] for task in tasks], "context_hash": context_hash,
                            "source_ids": list(dict.fromkeys((old.get("source_ids", []) if old else []) + [source["id"]])),
                            "created_at": old["created_at"] if old else now, "updated_at": now}
+            # Like a record, a plan an external session ever wrote keeps that mark; a native plan has none.
+            origin = self.store.current_origin() or {key: old[key] for key in ORIGIN_METADATA if old and key in old}
+            result_plan.update(origin)
             if old:
                 _set(tx, "plans", result_plan, "id=:id AND version=:version", {"id": plan_id, "version": expected_version})
             else:

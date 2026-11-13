@@ -31,6 +31,14 @@ EXTERNAL_WARNING = (
     "by an external session and is never shown or counted as verified.")
 
 
+def origin_mark(session: dict) -> dict | None:
+    """The mark a write made in this session carries, derived from the session row alone."""
+    if session.get("client") != EXTERNAL_CLIENT:
+        return None
+    return {"origin_client": EXTERNAL_CLIENT, "origin_session_id": session["id"],
+            "origin_history": "unarchived", "origin_evidence": "degraded"}
+
+
 def _hash(value: Any) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
 
