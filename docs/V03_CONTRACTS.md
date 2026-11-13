@@ -113,6 +113,21 @@ New epoch on resume/compact; relevant versions/scope/code change invalidates ACK
 not each technical transcriptline. Raw nativeCLI operations retain nativecontrols;
 no complete hardtoolgate claimed.
 
+Clients: codex, claude (launcher), api, copilot (own runtime) and external (any MCP
+client whose conversation cannot be read: Cursor, Cline, Zed). No product name is a
+client and nothing is detected by guessing. An external session is EVIDENCE-DEGRADED:
+there is no archived conversation to quote or verify against. Its packet adds
+history:'unarchived', evidence:'degraded', a first warning saying so, no_history:false
+and archive.scope naming the unarchived own conversation; native packets are unchanged
+byte for byte. archive.status still covers every other client's captured transcript in
+the worktree, so an unknown or unarchived native record keeps it partial. Same ready
+packet, readback ACK and require_ack as any client. status() adds history/evidence.
+Writes in an external session (records, sources, plans) carry server-derived
+origin_client/origin_session_id/origin_history/origin_evidence, set in write_scoped
+from the session row; clients can neither set nor clear them, and they stay on every
+later version. Evidence state 'degraded' (never 'anchored') for such records and for
+records resting only on such sources; check evidence still comes only from local runs.
+
 ## Integrations and HTTP (root owns server/CLI)
 
 run_client creates/prepares verified session BEFORE subprocess; sets inherited
@@ -127,13 +142,16 @@ manualCLI/admin operations stay available for repair. Bootstrap read/ack always 
 
 POST /plans/save {project,plan,steps,idempotency_key,expected_version?,task_versions?,worktree?,activate?,session_id?}
 POST /plans/next {project,plan_id?,worktree?}; GET /plans?project=...
-POST /sessions/prepare {project,client,worktree?,session_id?,reason?}
+POST /sessions/prepare {project,client,worktree?,session_id?,reason?} (client: codex|claude|external|api|copilot)
 POST /sessions/context {session_id}; POST /sessions/ack {session_id,packet_id,packet_hash,readback}
 GET /sessions/{id}; GET /checks?project=...&task_id=...
 Existing /context enhanced current plan/scope/verification, old public tools retained.
 MCP new save_plan,next_task,resume_context,ack_resume,check_status (read-only checks).
 ServiceClient autoadds bound sessionid for writes and scoped ask/context/next/check reads;
 rejects request session mismatch. Direct CLI workflow reads inherit the same worktree.
+`cairnmind mcp --client external [--project P] [--worktree W]` binds nothing at start;
+its first resume_context prepares one external session for the process (refused when
+launcher session/packet variables are set), later calls refresh that session.
 The answer cache includes complete code fingerprints, normalized profile hashes and
 explicit ignored check inputs; unknown code state prevents cache reuse.
 No arbitrary execution endpoint/MCP tool.

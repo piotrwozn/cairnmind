@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from .store import _clean, _insert, _json, _now, _one, _set
+from .store import ORIGIN_METADATA, _clean, _insert, _json, _now, _one, _set, outcome_changed
 
 
 _EVIDENCE_FIELDS = {
@@ -88,7 +88,7 @@ def note_task_mutation(store, tx, task: dict, expected_plan_version: int) -> Non
         raise ValueError("Plan version conflict; read the current plan and retry")
     if task["id"] not in plan["step_ids"]:
         raise ValueError("Task is not an active member of its plan")
-    plan.update(version=plan["version"] + 1, updated_at=_now())
+    plan.update(version=plan["version"] + 1, updated_at=_now(), **(store.current_origin() or {}))
     _set(tx, "plans", plan, "id=:id AND version=:version",
          {"id": plan_id, "version": expected_plan_version})
     _revision(store, tx, plan, _tasks(tx, task["project_id"], plan), "task_progress")
@@ -279,7 +279,7 @@ class PlanManager:
                     fields["metadata"] = {key: value for key, value in task["metadata"].items()
                                           if key != "worktree"}
                 _set(tx, "records", fields, "id=:id", {"id": task["id"]})
-            saved = {}
+            saved, changed_steps = {}, False
             for key in order:
                 definition = definitions[key]
                 step, existing = definition["step"], definition["existing"]
@@ -300,11 +300,18 @@ class PlanManager:
                 if existing:
                     record["expected_version"] = existing["version"]
                 sources = list(dict.fromkeys([source["id"]] + (existing["source_ids"] if existing else [])))
-                saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True)
+                # Only a step whose stored result differs carries the writer's mark (decided inside _remember on
+                # what it stores, so a field the write drops counts too); an unchanged step keeps its own.
+                saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True,
+                                                  mark_only_changes=True)
+                changed_steps |= outcome_changed(existing, saved[key]["content"], saved[key]["key"],
+                                                 saved[key]["metadata"])
             for task_id, task in removed.items():
-                self.store._remember(tx, project_id, {"id": task_id, "expected_version": task["version"],
-                    "status": "superseded", "metadata": {"plan_archived": True}},
-                    list(dict.fromkeys(task["source_ids"] + [source["id"]])), managed_batch=True)
+                # Archiving a step changes nothing it says; its own mark, or none, stays.
+                with self.store.write_origin(None):
+                    self.store._remember(tx, project_id, {"id": task_id, "expected_version": task["version"],
+                        "status": "superseded", "metadata": {"plan_archived": True}},
+                        list(dict.fromkeys(task["source_ids"] + [source["id"]])), managed_batch=True)
             tasks = [saved[key] for key in definitions]
             # All vertices now exist; rebuild batch dependency edges as a final pass.
             for task in tasks:
@@ -315,6 +322,12 @@ class PlanManager:
                            "step_ids": [task["id"] for task in tasks], "context_hash": context_hash,
                            "source_ids": list(dict.fromkeys((old.get("source_ids", []) if old else []) + [source["id"]])),
                            "created_at": old["created_at"] if old else now, "updated_at": now}
+            # Like a record, a plan an external session ever changed keeps that mark; a native plan has none.
+            plan_changed = (not old or changed_steps or bool(removed)
+                            or (title, goal, constraints, result_plan["step_ids"])
+                            != (old["title"], old["goal"], old["constraints"], old["step_ids"]))
+            kept = {key: old[key] for key in ORIGIN_METADATA if old and key in old}
+            result_plan.update((plan_changed and self.store.current_origin()) or kept)
             if old:
                 _set(tx, "plans", result_plan, "id=:id AND version=:version", {"id": plan_id, "version": expected_version})
             else:

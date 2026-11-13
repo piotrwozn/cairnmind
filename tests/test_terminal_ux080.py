@@ -590,7 +590,8 @@ async def test_a_refused_decision_reloads_the_list_and_a_mixed_pair_is_not_offer
 def test_every_evidence_label_has_a_polish_translation():
     from cairnmind.terminal_i18n import tr
     from cairnmind.terminal_inspector import EVIDENCE_LABELS
-    assert {state for state, _ in EVIDENCE_LABELS} == {"anchored", "evidence_replaced", "orphaned", "unverified"}
+    assert {state for state, _ in EVIDENCE_LABELS} == {"anchored", "evidence_replaced", "orphaned", "unverified",
+                                                       "degraded"}
     for text in ["Evidence", *EVIDENCE_LABELS.values()]:
         assert tr(text, "en") == text and tr(text, "pl") != text
 

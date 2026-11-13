@@ -192,9 +192,35 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+# Where a write came from, set by the service from the session row and never by a client: today only
+# for an external client's session, whose conversation is unarchived and whose evidence is degraded.
+ORIGIN_METADATA = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
+
+
 # Record metadata derived by the store; values supplied by a client are never kept.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
-                           "supersede_warning", "supersede_replaced_evidence_latest")
+                           "supersede_warning", "supersede_replaced_evidence_latest", *ORIGIN_METADATA)
+
+
+# Not part of what a plan step says: plan-level or transient fields and everything the store derives.
+_UNCOMPARED_METADATA = frozenset({"plan_context_hash", "plan_archived", "worktree", *DERIVED_RECORD_METADATA})
+
+
+def outcome_changed(old, content, key, metadata) -> bool:
+    """Whether a write stores a record that says something else than the stored version.
+
+    Compares the result, not the request: a field the write drops as a consequence counts as well.
+    """
+    if not old:
+        return True
+    before = {name: value for name, value in (old.get("metadata") or {}).items() if name not in _UNCOMPARED_METADATA}
+    after = {name: value for name, value in metadata.items() if name not in _UNCOMPARED_METADATA}
+    return content != old["content"] or key != old["key"] or before != after
+
+
+def degraded_origin(metadata) -> bool:
+    """Whether a record, source or plan was written by an external session (never verified)."""
+    return isinstance(metadata, dict) and metadata.get("origin_evidence") == "degraded"
 
 
 # Bookkeeping of conflict decisions. Only the conflict inbox, acting for a person, may
@@ -374,6 +400,23 @@ class Store:
         # Reached only when the transaction committed; the writer lock is no longer held.
         for call in pending:
             call()
+
+    @contextmanager
+    def write_origin(self, mark):
+        """Stamp every record and source this thread writes inside the block with a session mark.
+
+        The mark comes from the service's session row, never from the caller's payload. A record keeps
+        it on every later write by anyone: its content may still be what the external session wrote.
+        """
+        previous = getattr(self._local, "write_origin", None)
+        self._local.write_origin = {key: mark[key] for key in ORIGIN_METADATA} if mark else None
+        try:
+            yield
+        finally:
+            self._local.write_origin = previous
+
+    def current_origin(self):
+        return getattr(self._local, "write_origin", None)
 
     def init(self):
         with self._lock():
@@ -587,7 +630,8 @@ class Store:
                 _set(tx, "edges", {"is_current": False}, "source_id=:id AND kind NOT IN ['supported_by','depends_on','supersedes']", params)
                 self._delete_old_vectors(tx, [existing["id"]])
             source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
-                      "sha256": digest, "metadata": metadata or {}, "is_current": True, "current_key": key, "created_at": _now()}
+                      "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
+                      "is_current": True, "current_key": key, "created_at": _now()}
             _insert(tx, "sources", source)
             return source
 
@@ -603,7 +647,8 @@ class Store:
         if _one(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False):
             return None
         source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
-                  "sha256": digest, "metadata": metadata or {}, "is_current": True, "current_key": key, "created_at": _now()}
+                  "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
+                  "is_current": True, "current_key": key, "created_at": _now()}
         _insert(tx, "sources", source)
         return source
 
@@ -787,7 +832,16 @@ class Store:
                                         "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": _now()})
         self._record_graph(tx, record)
 
-    def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False):
+    def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
+                  replace_origin=False, replace_metadata=False, mark_only_changes=False):
+        """Write one record version.
+
+        replace_origin: the origin mark follows this writer instead of the old version (checkpoints).
+        replace_metadata: the metadata is built from this write alone, not merged onto the old version's.
+        Used when a non-external checkpoint replaces an external one, so no external text stays behind
+        unmarked; state that earlier native checkpoints set and neither checkpoint repeats is dropped too.
+        mark_only_changes: stamp the current origin only if the stored result differs (plan steps).
+        """
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
         if not isinstance(record, dict):
@@ -815,7 +869,8 @@ class Store:
         key = record_id if key is None else key
         if not isinstance(key, str) or not key.strip():
             raise ValueError("Record key must be nonempty text")
-        metadata, updates = dict(old.get("metadata", {})) if old else {}, record.get("metadata", {})
+        metadata = dict(old.get("metadata", {})) if old and not replace_metadata else {}
+        updates = record.get("metadata", {})
         if not isinstance(updates, dict):
             raise ValueError("Record metadata must be an object")
         if not conflict_review:
@@ -839,6 +894,12 @@ class Store:
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
+        # Set after the client's metadata, which can neither forge nor clear it; kept from the old version,
+        # except when a checkpoint replaces the checkpoint record: it replaces its content and its only source,
+        # so there the mark follows the writer of the current checkpoint.
+        if replace_origin:
+            for name in ORIGIN_METADATA:
+                metadata.pop(name, None)
         explicit_completion = kind == "task" and metadata.get("state") == "done" and (not old or updates.get("state") == "done")
         if managed_batch and old and old.get("metadata", {}).get("state") == "done" and metadata.get("state") == "done":
             explicit_completion = False  # Internal plan batches preserve progress; they do not assert a new check.
@@ -868,6 +929,12 @@ class Store:
                         metadata.pop(field, None)
             self._validate_task(tx, project_id, record_id, metadata, sources,
                                 assert_completion=explicit_completion, validate_dependencies=not managed_batch)
+        # Decided on the final metadata, after every field this write drops (criteria links, reported proof).
+        origin = self.current_origin()
+        if origin and mark_only_changes and not outcome_changed(old, content, key, metadata):
+            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none.
+            origin = None
+        metadata.update(origin or {})
         supersedes = record.get("supersedes", old.get("supersedes") if old else None)
         if supersedes and (not old or supersedes != old.get("supersedes")):
             previous = _one(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": supersedes, "project": project_id}, False)
@@ -954,7 +1021,11 @@ class Store:
             record = {"kind": "checkpoint", "key": "latest", "content": content, "metadata": state}
             if old:
                 record.update(id=old["id"], expected_version=old["version"])
-            return self._remember(tx, project_id, record, [source["id"]])
+            # The record's metadata accumulates the fields of earlier checkpoints. When a writer that is not
+            # an external session replaces an external checkpoint, none of the external fields may stay behind
+            # unmarked: the metadata is then built from this state alone. Any other succession merges as before.
+            fresh = bool(old) and degraded_origin(old.get("metadata")) and not self.current_origin()
+            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True, replace_metadata=fresh)
 
     def list_records(self, project_id, include_history=False):
         self._require_project(self, project_id)

@@ -338,6 +338,8 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
                     evidence = f"; {_QUOTE[row['quote_survives']]}"
                 elif row.get("evidence_state") == "orphaned":
                     evidence = "; no supporting source has a current version"
+                elif row.get("evidence_state") == "degraded":
+                    evidence = "; written by, or resting only on, an external client's session, never verified"
                 snapshot = f" from {_line(link['snapshot'], 10)}" if link["snapshot"] else ""
                 lines.append(f"  - rests on a snapshot{snapshot} of {where}{evidence}")
         checked = verdict_line(row, _line)
