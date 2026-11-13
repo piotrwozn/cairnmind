@@ -8,9 +8,17 @@ Every test module is marked ``arcade`` and starts the engine, unless it is liste
 NO_ARCADE_MODULES. Add a module there only after it passes with no engine running.
 Modules in TMUX_MODULES drive a real tmux server and are also marked ``tmux``.
 Fast local run: ``uv run pytest -m "not arcade and not tmux"``.
+
+Parallel run: ``uv run pytest -n 4`` (pytest-xdist). All workers share one engine: the first
+worker that needs it starts it under a file lock in the run's temporary directory, each worker
+keeps its own database namespace, and the controlling process stops the engine at the end.
+An engine whose pytest process was killed is stopped by the next run (see reap_orphan_engines).
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import json
 import os
 from pathlib import Path
 import socket
@@ -41,6 +49,9 @@ TMUX_MODULES = frozenset({
     "test_terminal_workspace_e2e", "test_workspace",
 })
 
+# The directory, under the run's temporary root, of the engine that parallel workers share.
+SHARED_ENGINE = "arcade-engine-shared"
+
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "arcade: needs the real pinned ArcadeDB engine (Java 21)")
@@ -54,6 +65,77 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.arcade)
         if module in TMUX_MODULES:
             item.add_marker(pytest.mark.tmux)
+
+
+def is_xdist_worker(config) -> bool:
+    return hasattr(config, "workerinput")
+
+
+def is_xdist_controller(config) -> bool:
+    return not is_xdist_worker(config) and getattr(config.option, "numprocesses", None) not in (None, 0)
+
+
+@contextlib.contextmanager
+def file_lock(path: Path):
+    with path.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+def _pytest_alive(pid: int) -> bool:
+    try:
+        return b"pytest" in Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+
+
+def reap_orphan_engines(runs_root: Path) -> None:
+    """Stop test engines whose owning pytest process is gone (killed, not torn down).
+
+    Only engines this conftest started and recorded in owner.json are touched, and only when that
+    process no longer runs pytest; stop_engine itself checks the process belongs to that directory.
+    """
+    for owner in runs_root.glob("pytest-*/arcade-engine*/owner.json"):
+        try:
+            pid = int(json.loads(owner.read_text())["pid"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if _pytest_alive(pid) or not (owner.parent / "arcade" / "process.json").exists():
+            continue
+        with contextlib.suppress(Exception):
+            stop_engine(Settings.load(owner.parent))
+
+
+def record_owner(root: Path, pid: int) -> None:
+    (root / "owner.json").write_text(json.dumps({"pid": pid}))
+
+
+def prepare_engine(root: Path, owner_pid: int) -> Settings:
+    """Configure, install and start an owned test engine in ``root`` (idempotent)."""
+    settings = Settings.load(root, create=True)
+    if not (root / "owner.json").exists():
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        settings.arcade_url = f"http://127.0.0.1:{port}"
+        settings.save()
+        record_owner(root, owner_pid)
+    distribution = env_value("ARCADE_DIST")
+    install_engine(settings, Path(distribution) if distribution else None)
+    start_test_engine(settings)
+    return settings
+
+
+def pytest_unconfigure(config):
+    """With xdist the controlling process, not a worker, stops the engine the workers shared."""
+    if not is_xdist_controller(config) or env_value("TEST_ARCADE_HOME"):
+        return
+    factory = getattr(config, "_tmp_path_factory", None)
+    if factory is None:
+        return
+    root = factory.getbasetemp() / SHARED_ENGINE
+    if (root / "arcade" / "process.json").exists():
+        stop_engine(Settings.load(root))
 
 
 @pytest.fixture(autouse=True)
@@ -85,24 +167,31 @@ def start_test_engine(settings):
 
 
 @pytest.fixture(scope="session")
-def arcade_test_engine(tmp_path_factory):
+def arcade_test_engine(tmp_path_factory, request):
     # Both spellings: a developer's exported earlier name must not reach the test engine either.
     runtime_names = tuple(key for name in ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE",
                                            "ARCADE_DB_PREFIX") for key in env_names(name))
     original = {name: os.environ.pop(name, None) for name in runtime_names}
     existing = env_value("TEST_ARCADE_HOME")
-    owns = not existing
-    root = Path(existing) if existing else tmp_path_factory.mktemp("arcade-engine")
-    settings = Settings.load(root, create=True)
-    if owns:
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-        settings.arcade_url = f"http://127.0.0.1:{port}"
-        settings.save()
-        distribution = env_value("ARCADE_DIST")
-        install_engine(settings, Path(distribution) if distribution else None)
-    start_test_engine(settings)
+    worker = is_xdist_worker(request.config)
+    # A serial run owns and stops its engine; parallel workers share one that the controller stops.
+    owns = not existing and not worker
+    if existing:
+        settings = Settings.load(Path(existing), create=True)
+        start_test_engine(settings)
+    else:
+        run_root = tmp_path_factory.getbasetemp()
+        if worker:
+            # A worker's base directory is <run root>/popen-gwN; the run root is shared by all workers.
+            run_root = run_root.parent
+        reap_orphan_engines(run_root.parent)
+        if worker:
+            root = run_root / SHARED_ENGINE
+            root.mkdir(exist_ok=True)
+            with file_lock(run_root / (SHARED_ENGINE + ".lock")):
+                settings = prepare_engine(root, os.getppid())
+        else:
+            settings = prepare_engine(tmp_path_factory.mktemp("arcade-engine"), os.getpid())
     prefix = "devbrain_test_" + uuid.uuid4().hex[:8]
     changes = {"CAIRNMIND_ARCADE_URL": settings.arcade_url,
                "CAIRNMIND_ARCADE_USER": settings.arcade_user,
