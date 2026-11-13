@@ -193,6 +193,13 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
             "audit_source_id": source["id"], "already_saved": False}
 
 
+def listing(inspector, project, worktree, since, pending=False):
+    """The inspector's read: what ``cairnmind impact --json`` prints, with an unknown project answered as not found."""
+    from cairnmind.impact import build_impact
+    project_id = inspector._project(project)["id"]
+    return build_impact(inspector.store, project_id, since, worktree, pending=pending)
+
+
 def resolve(inspector, project, worktree, since, record_id, fingerprint, verdict, note=None):
     """The inspector's write: a person's verdict, with an unknown project or record answered as not found."""
     from cairnmind.inspector import InspectorNotFound
