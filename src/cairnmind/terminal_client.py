@@ -107,6 +107,14 @@ class BrokerClient:
         if self._client is None:
             self._existing()
 
+    def connect(self):
+        """Find and authenticate the broker without sending a request, so a caller can tell a
+        failure that happened before its request from one that happened after."""
+        with self._lock:
+            self._ready()
+            if self._csrf is None:
+                self._authenticate()
+
     def request(self, method, path, *, params=None, json=None, timeout=20):
         if not isinstance(path, str) or not (path.startswith("/api/") or path == "/auth/session") or path.startswith("//"):
             raise ValueError("Broker request requires a relative API path")

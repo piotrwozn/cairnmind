@@ -32,7 +32,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parsing",
     "test_runtime_pane", "test_runtime_selection", "test_sample_memory", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
-    "test_terminal_ux080", "test_workspace", "test_workspace_cli", "test_workspace_locale",
+    "test_terminal_ux080", "test_usage", "test_workspace","test_workspace_cli", "test_workspace_locale",
     "test_workspace_state", "test_workspace_ux080",
 })
 

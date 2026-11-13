@@ -16,6 +16,9 @@ files that differ from the commit, files Git does not track yet, and, inside a f
 definition whose text (with its decorators) differs between the commit and the worktree.
 Which record is linked to what is taken from the index, so it is as fresh as the last
 indexing and the last extraction.
+
+Documentation files that mention a changed definition are listed too, even when no record points
+at them (see ``cairnmind.impact_docs`` for what counts as a mention).
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ from pathlib import Path, PurePosixPath
 
 from cairnmind.brief import _git_out, _line, _scoped_records, _title
 from cairnmind.evidence import _FILE_KINDS, _QUOTE, _metadata, evidence_states
+from cairnmind.impact_docs import documentation_lines, documentation_mentions
 from cairnmind.parsing import analyze_code
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -329,6 +333,9 @@ def build_impact(store, project_id, since, worktree=None):
                     evidence = "; no supporting source has a current version"
                 snapshot = f" from {_line(link['snapshot'], 10)}" if link["snapshot"] else ""
                 lines.append(f"  - rests on a snapshot{snapshot} of {where}{evidence}")
+    # Pages no record points at: documentation that mentions a definition changed in this range.
+    documentation = documentation_mentions(root, changed, symbols)
+    lines += documentation_lines(documentation)
     if changed and rows:
         rest = len(files) - len(linked_files)
         lines += ["", f"{_count(len(rows), 'record')} linked to {len(linked_files)} of "
@@ -338,4 +345,4 @@ def build_impact(store, project_id, since, worktree=None):
             "commit": commit,
             "changed_files": [{"path": name, **entry, "symbols": symbols.get(name)}
                               for name, entry in sorted(changed.items(), key=lambda item: PurePosixPath(item[0]).parts)],
-            "records": rows, "text": "\n".join(lines)}
+            "records": rows, "text": "\n".join(lines), "documentation": documentation}

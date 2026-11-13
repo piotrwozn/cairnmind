@@ -359,6 +359,8 @@ class WorkspaceManager:
         client = ("--client-pid", "#{client_pid}", "--client-tty", "#{client_tty}")
         self.tmux("bind-key", "Space", "run-shell", self._command("--palette", *client))
         self.tmux("bind-key", "?", "run-shell", self._command("--help-popup", *client))
+        # The form is a popup process of its own: typed text never enters this command line.
+        self.tmux("bind-key", "n", "run-shell", self._command("--finding", *client))
         self.tmux("bind-key", "Tab", "run-shell", self._command("--next-view"))
         self.tmux("bind-key", "[", "copy-mode")
 
@@ -658,18 +660,28 @@ class WorkspaceManager:
                            "focus": target_role})
         self._layout()
 
-    def open_palette(self, *, help_only=False, client_pid=None, client_tty=None):
+    def _owner(self, client_pid, client_tty):
         if not self.exists():
             raise ValueError("Open Cairnmind before using commands")
         owner = next((client for client in self.clients()
                       if client["pid"] == client_pid and client["tty"] == client_tty and not client["readonly"]), None)
         if owner is None:
             raise ValueError("The command menu requires the initiating writable terminal")
+        return owner
+
+    def open_palette(self, *, help_only=False, client_pid=None, client_tty=None):
+        owner = self._owner(client_pid, client_tty)
         arguments = ["--palette-ui"] + (["--help-only"] if help_only else [])
         # An interactive popup ends when the user closes it, not after the
         # bounded timeout used for ordinary tmux queries.
         self.tmux("display-popup", "-c", owner["tty"], "-E", "-w", "90%", "-h", "85%",
                   self._command(*arguments), timeout=None)
+
+    def open_finding(self, *, client_pid=None, client_tty=None):
+        """The quick finding form, opened like the palette for the terminal that pressed the key."""
+        owner = self._owner(client_pid, client_tty)
+        self.tmux("display-popup", "-c", owner["tty"], "-E", "-w", "90%", "-h", "85%",
+                  self._command("--finding-ui", "--client-tty", owner["tty"]), timeout=None)
 
     def take_control(self, run_id):
         for pane in self.panes().values():
@@ -861,6 +873,8 @@ def main():
     parser.add_argument("--help-popup", action="store_true")
     parser.add_argument("--palette-ui", action="store_true")
     parser.add_argument("--help-only", action="store_true")
+    parser.add_argument("--finding", action="store_true")
+    parser.add_argument("--finding-ui", action="store_true")
     parser.add_argument("--next-view", action="store_true")
     parser.add_argument("--ui-command", choices=("search", "add_project", "start_work", "connections", "sessions", "memory", "more", "settings"))
     parser.add_argument("--client-pid", type=int)
@@ -873,6 +887,11 @@ def main():
         dispatch_command(manager, CommandPaletteApp(manager, help_only=args.help_only).run())
     elif args.palette or args.help_popup:
         manager.open_palette(help_only=args.help_popup, client_pid=args.client_pid, client_tty=args.client_tty)
+    elif args.finding_ui:
+        from .workspace_finding import run_finding_form
+        run_finding_form(manager, args.client_tty)
+    elif args.finding:
+        manager.open_finding(client_pid=args.client_pid, client_tty=args.client_tty)
     elif args.next_view:
         manager.next_view()
     elif args.ui_command:

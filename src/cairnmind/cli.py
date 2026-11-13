@@ -144,7 +144,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         raise typer.BadParameter("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
-            "/remember", "/checkpoint", "/plans/save", "/plans/activate",
+            "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
             "/memory/snapshot", "/memory/import"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
@@ -471,6 +471,26 @@ def impact(ctx: typer.Context, project: str,
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     result = build_impact(store, pid, since, actor_scope(store, pid, worktree))
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+
+
+@app.command()
+@initialized
+def usage(ctx: typer.Context, project: str,
+          since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
+          as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
+    """Sum the token usage of the built-in API agent per day, profile and model. Asks no model, starts no service."""
+    from cairnmind.usage import build_usage
+    # Resolving the project name opens the store (it starts the database engine if stopped and may create the
+    # data directory); the usage itself is read from the session journals and nothing is written to them.
+    found = store_for(ctx.obj).resolve_project(project)
+    try:
+        result = build_usage(ctx.obj.data_dir, found, since)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--since")
     if as_json:
         output(result)
     else:
