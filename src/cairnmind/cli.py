@@ -78,6 +78,34 @@ def store_for(settings: Settings):
     return Store(settings.data_dir)
 
 
+def store_for_read(settings: Settings):
+    """The existing store for a command that only reads. It starts no engine and creates nothing: when the
+    configuration, engine, database or schema is not ready it fails at once, saying what to run."""
+    from cairnmind.store import Store
+    return Store.open_readonly(settings)
+
+
+# The journal entity types (journal.TABLE_TYPES) each read-only command reads; a commit of one of
+# them in the command's project during the read makes it read again. Resolving the project and its
+# worktree reads `project` and `scope` (projects, project_roots, worktree_states). Sessions, read only
+# for the bound session's own project and worktree, which do not change, are left out on purpose:
+# session events are written all the time. tests/test_store_readonly.py checks each set against the
+# tables the command really queries.
+_RESOLVE = frozenset({"project", "scope"})
+READ_KINDS = {
+    "records": _RESOLVE | {"record"},
+    "task list": _RESOLVE | {"record", "check"},
+    "plan list": _RESOLVE | {"plan"},
+    "plan show": _RESOLVE | {"plan", "record"},
+    "plan next": _RESOLVE | {"plan", "record", "check"},
+    "plan contract": _RESOLVE | {"plan", "record", "check"},
+    "check profiles": _RESOLVE,
+    "memory orphans": _RESOLVE | {"record", "source", "memory"},
+    "impact": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
+    "usage": _RESOLVE,
+}
+
+
 def actor_scope(store, project_id: str, worktree: Path | str | None = None):
     """Read the launcher's worktree without requiring an ACK merely to inspect state."""
     scope = str(Path(worktree).expanduser().resolve()) if worktree else None
@@ -396,9 +424,8 @@ def project_add(ctx: typer.Context, name: str, root: Path):
 
 
 @projects_app.command("list")
-@initialized
 def project_list(ctx: typer.Context):
-    output(store_for(ctx.obj).list_projects())
+    output(store_for_read(ctx.obj).list_projects())
 
 
 @projects_app.command("root")
@@ -464,7 +491,6 @@ def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
 
 
 @app.command()
-@initialized
 def impact(ctx: typer.Context, project: str,
            since: Annotated[str, typer.Option("--since", help="Commit, tag or branch to compare the worktree with.")],
            worktree: Path | None = None,
@@ -473,9 +499,13 @@ def impact(ctx: typer.Context, project: str,
                "--pending", help="List only records without a current verdict.")] = False):
     """List records linked to the files and symbols changed since a commit. Read-only; asks no model."""
     from cairnmind.impact import build_impact
-    store = store_for(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    result = build_impact(store, pid, since, actor_scope(store, pid, worktree), pending=pending)
+    store = store_for_read(ctx.obj)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        return pid, build_impact(store, pid, since, actor_scope(store, pid, worktree), pending=pending)
+
+    result = store.read_consistently(read, READ_KINDS["impact"])
     if as_json:
         output(result)
     else:
@@ -512,7 +542,6 @@ class UsageBy(str, Enum):
 
 
 @app.command()
-@initialized
 def usage(ctx: typer.Context, project: str,
           since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
           by: Annotated[UsageBy, typer.Option("--by", help="Group by UTC day or by ISO week.")] = UsageBy.day,
@@ -524,11 +553,18 @@ def usage(ctx: typer.Context, project: str,
     from cairnmind.codex_usage import stored_records, waiting_in_inbox
     from cairnmind.usage import build_usage
     from cairnmind.verification import usage_warn_threshold
-    # Resolving the project name opens the store (it starts the database engine if stopped and may create the
-    # data directory); the usage itself is read from the session journals and nothing is written to them.
-    store = store_for(ctx.obj)
-    found = store.resolve_project(project)
+    # The store is read, never prepared: it needs the running engine and never starts it. The usage itself is
+    # read from the session journals and, for Codex, from the store; nothing is written anywhere.
+    store = store_for_read(ctx.obj)
+
+    def read():
+        selected = store.resolve_project(project)
+        return selected["id"], selected
+
+    found = store.read_consistently(read, READ_KINDS["usage"])
     # Codex usage is read from the transcript lines that history import stored for this project, not from files.
+    # It is counted while import may still be writing, so not repeated: the pages of stored lines and of the
+    # inbox go by key (codex_usage._pages), and a row present during the whole read is counted exactly once.
     unavailable = None
     if warn_over is None:
         try:
@@ -592,17 +628,20 @@ def jobs_retry(ctx: typer.Context, project: str, job_id: str,
 
 
 @app.command()
-@initialized
 def records(ctx: typer.Context, project: str, history: bool = False):
-    store = store_for(ctx.obj)
-    output(store.list_records(store.resolve_project(project)["id"], include_history=history))
+    store = store_for_read(ctx.obj)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        return pid, store.list_records(pid, include_history=history)
+
+    output(store.read_consistently(read, READ_KINDS["records"]))
 
 
 @app.command()
-@initialized
 def source(ctx: typer.Context, source_id: str):
     """Read the stored snapshot of a source, even when the original no longer exists."""
-    output(store_for(ctx.obj).get_source(source_id))
+    output(store_for_read(ctx.obj).get_source(source_id))
 
 
 @app.command()
@@ -630,14 +669,17 @@ def checkpoint(ctx: typer.Context, project: str, state_file: Path):
 
 
 @tasks_app.command("list")
-@initialized
 def task_list(ctx: typer.Context, project: str, worktree: Path | None = None):
     from cairnmind.verification import verification_status
-    store = store_for(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    scope = actor_scope(store, pid, worktree)
-    tasks = [r for r in store.list_records(pid) if r["kind"] == "task"]
-    output([{**task, "verification": verification_status(store, task, scope)} for task in tasks])
+    store = store_for_read(ctx.obj)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        scope = actor_scope(store, pid, worktree)
+        tasks = [r for r in store.list_records(pid) if r["kind"] == "task"]
+        return pid, [{**task, "verification": verification_status(store, task, scope)} for task in tasks]
+
+    output(store.read_consistently(read, READ_KINDS["task list"]))
 
 
 @tasks_app.command("add")
@@ -728,37 +770,48 @@ def plan_save(ctx: typer.Context, project: str, input_json: Path,
 
 
 @plans_app.command("list")
-@initialized
 def plan_list(ctx: typer.Context, project: str):
     from cairnmind.plans import PlanManager
-    store = store_for(ctx.obj)
-    output(PlanManager(store).list(store.resolve_project(project)["id"]))
+    store = store_for_read(ctx.obj)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        return pid, PlanManager(store).list(pid)
+
+    output(store.read_consistently(read, READ_KINDS["plan list"]))
 
 
 @plans_app.command("show")
-@initialized
 def plan_show(ctx: typer.Context, project: str, plan_id: str):
     from cairnmind.plans import PlanManager
-    store = store_for(ctx.obj)
-    output(PlanManager(store).get(store.resolve_project(project)["id"], plan_id))
+    store = store_for_read(ctx.obj)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        return pid, PlanManager(store).get(pid, plan_id)
+
+    output(store.read_consistently(read, READ_KINDS["plan show"]))
 
 
 @plans_app.command("next")
-@initialized
 def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None):
     from cairnmind.plans import PlanManager
-    store = store_for(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    scope = actor_scope(store, pid, worktree)
-    result = PlanManager(store).next_task(pid, plan_id, scope)
-    if result.get("task"):
-        from cairnmind.scope import drift_warning
-        from cairnmind.verification import verification_status
-        result["verification"] = verification_status(store, result["task"], scope)
-        warning = drift_warning(result["verification"].get("scope_drift"))
-        if warning:
-            result["warnings"] = [warning]
-    output(result)
+    store = store_for_read(ctx.obj)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        scope = actor_scope(store, pid, worktree)
+        result = PlanManager(store).next_task(pid, plan_id, scope)
+        if result.get("task"):
+            from cairnmind.scope import drift_warning
+            from cairnmind.verification import verification_status
+            result["verification"] = verification_status(store, result["task"], scope)
+            warning = drift_warning(result["verification"].get("scope_drift"))
+            if warning:
+                result["warnings"] = [warning]
+        return pid, result
+
+    output(store.read_consistently(read, READ_KINDS["plan next"]))
 
 
 @plans_app.command("activate")
@@ -787,7 +840,6 @@ def plan_adopt(ctx: typer.Context, project: str, group: str,
 
 
 @plans_app.command("contract")
-@initialized
 def plan_contract(ctx: typer.Context, project: str,
                   plan_id: Annotated[str | None, typer.Option("--plan-id", help="The plan; the active one if omitted.")] = None,
                   worktree: Path | None = None,
@@ -797,10 +849,19 @@ def plan_contract(ctx: typer.Context, project: str,
                   as_json: Annotated[bool, typer.Option("--json", help="Print the contract as JSON.")] = False):
     """Show each acceptance criterion of a plan with the check that proves it. Runs no command."""
     from cairnmind.contract import build_contract, write_contract
-    store = store_for(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    scope = actor_scope(store, pid, worktree)
-    result = write_contract(store, pid, write, plan_id, scope) if write else build_contract(store, pid, plan_id, scope)
+    if write:
+        # Writing the profile file prepares the store as every writing command does.
+        ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+    store = store_for(ctx.obj) if write else store_for_read(ctx.obj)
+
+    def run_contract():
+        pid = store.resolve_project(project)["id"]
+        scope = actor_scope(store, pid, worktree)
+        return pid, (write_contract(store, pid, write, plan_id, scope) if write
+                     else build_contract(store, pid, plan_id, scope))
+
+    # Repeated only for a read-only store, never for --write: Store(path) runs it once.
+    result = store.read_consistently(run_contract, READ_KINDS["plan contract"])
     if as_json:
         output(result)
     else:
@@ -808,12 +869,15 @@ def plan_contract(ctx: typer.Context, project: str,
 
 
 @checks_app.command("profiles")
-@initialized
 def check_profiles(ctx: typer.Context, project: str, worktree: Path | None = None):
     from cairnmind.verification import load_profiles
-    store = store_for(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    output(load_profiles(store, pid, actor_scope(store, pid, worktree)))
+    store = store_for_read(ctx.obj)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        return pid, load_profiles(store, pid, actor_scope(store, pid, worktree))
+
+    output(store.read_consistently(read, READ_KINDS["check profiles"]))
 
 
 @checks_app.command("run")
@@ -990,17 +1054,20 @@ def memory_show(ctx: typer.Context, path: Path,
 
 
 @memory_app.command("orphans")
-@initialized
 def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = None,
                    as_json: Annotated[bool, typer.Option("--json", help="Print the records as JSON.")] = False):
     """List records whose evidence is no longer current: orphaned, or resting on a changed source. Read-only."""
     from cairnmind.brief import _scoped_records
     from cairnmind.evidence import orphans_report
     from cairnmind.verification import _root
-    store = store_for(ctx.obj)
-    selected = store.resolve_project(project)
-    root = _root(store, selected["id"], actor_scope(store, selected["id"], worktree))
-    report = orphans_report(store, selected, root, _scoped_records(store, selected["id"], root))
+    store = store_for_read(ctx.obj)
+
+    def read():
+        selected = store.resolve_project(project)
+        root = _root(store, selected["id"], actor_scope(store, selected["id"], worktree))
+        return selected["id"], orphans_report(store, selected, root, _scoped_records(store, selected["id"], root))
+
+    report = store.read_consistently(read, READ_KINDS["memory orphans"])
     if as_json:
         output(report)
     else:

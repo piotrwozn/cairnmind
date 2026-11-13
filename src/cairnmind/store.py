@@ -281,6 +281,27 @@ def _set(tx, collection, data, where, params):
 
 
 class Store:
+    # True only for a store from open_readonly, which starts, creates and writes nothing.
+    read_only = False
+
+    @classmethod
+    def open_readonly(cls, settings: Settings) -> Store:
+        """Read the existing store. Raises StoreNotReady, naming the command to run, instead of preparing it."""
+        from .store_readonly import open_readonly
+        return open_readonly(cls, settings)
+
+    def read_consistently(self, read, kinds):
+        """The result of ``read()``, which returns ``(project_id, result)`` and reads the journal entity ``kinds``.
+
+        A read-only store repeats it while a change of those kinds in that project landed during it
+        (else StoreBusy). A store opened with Store(path) reads behind the writer lock where it needs to,
+        so ``read`` runs once.
+        """
+        if not self.read_only:
+            return read()[1]
+        from .store_readonly import read_consistently
+        return read_consistently(self, read, kinds)
+
     def __init__(self, data_dir: Path, *, settings: Settings | None = None):
         from .arcade import ArcadeClient
         from .engine import ensure_engine
@@ -311,6 +332,9 @@ class Store:
 
     def command(self, sql, params=None):
         from .journal import mutation
+        if self.read_only:
+            from .store_readonly import ReadOnlyStoreError
+            raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
         tx = getattr(self._local, "transaction", None)
         if tx:
             return tx.command(sql, params)
@@ -325,6 +349,16 @@ class Store:
         active = getattr(self._local, "transaction", None)
         if active:
             yield active
+            return
+        if self.read_only:
+            # No writer lock and no journal, and the server transaction is rolled back. Not a snapshot:
+            # a read of several queries is made consistent by read_consistently, not by this transaction.
+            with self.client.transaction() as reader:
+                self._local.transaction = reader
+                try:
+                    yield reader
+                finally:
+                    del self._local.transaction
             return
         from .journal import JournalTransaction
         with self._lock(), self.client.transaction() as native:
