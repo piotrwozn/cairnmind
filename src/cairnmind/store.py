@@ -782,7 +782,8 @@ class Store:
                                         "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": _now()})
         self._record_graph(tx, record)
 
-    def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False):
+    def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
+                  replace_origin=False):
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
         if not isinstance(record, dict):
@@ -834,7 +835,12 @@ class Store:
         evidence = _evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
-        # Set after the client's metadata, which can neither forge nor clear it; kept from the old version.
+        # Set after the client's metadata, which can neither forge nor clear it; kept from the old version,
+        # except when a checkpoint replaces the checkpoint record: it replaces its content and its only source,
+        # so there the mark follows the writer of the current checkpoint.
+        if replace_origin:
+            for name in ORIGIN_METADATA:
+                metadata.pop(name, None)
         metadata.update(self.current_origin() or {})
         explicit_completion = kind == "task" and metadata.get("state") == "done" and (not old or updates.get("state") == "done")
         if managed_batch and old and old.get("metadata", {}).get("state") == "done" and metadata.get("state") == "done":
@@ -951,7 +957,7 @@ class Store:
             record = {"kind": "checkpoint", "key": "latest", "content": content, "metadata": state}
             if old:
                 record.update(id=old["id"], expected_version=old["version"])
-            return self._remember(tx, project_id, record, [source["id"]])
+            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True)
 
     def list_records(self, project_id, include_history=False):
         self._require_project(self, project_id)
