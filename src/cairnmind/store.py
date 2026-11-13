@@ -202,6 +202,22 @@ DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_bas
                            "supersede_warning", "supersede_replaced_evidence_latest", *ORIGIN_METADATA)
 
 
+# Not part of what a plan step says: plan-level or transient fields and everything the store derives.
+_UNCOMPARED_METADATA = frozenset({"plan_context_hash", "plan_archived", "worktree", *DERIVED_RECORD_METADATA})
+
+
+def outcome_changed(old, content, key, metadata) -> bool:
+    """Whether a write stores a record that says something else than the stored version.
+
+    Compares the result, not the request: a field the write drops as a consequence counts as well.
+    """
+    if not old:
+        return True
+    before = {name: value for name, value in (old.get("metadata") or {}).items() if name not in _UNCOMPARED_METADATA}
+    after = {name: value for name, value in metadata.items() if name not in _UNCOMPARED_METADATA}
+    return content != old["content"] or key != old["key"] or before != after
+
+
 def degraded_origin(metadata) -> bool:
     """Whether a record, source or plan was written by an external session (never verified)."""
     return isinstance(metadata, dict) and metadata.get("origin_evidence") == "degraded"
@@ -783,7 +799,7 @@ class Store:
         self._record_graph(tx, record)
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
-                  replace_origin=False):
+                  replace_origin=False, replace_metadata=False, mark_only_changes=False):
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
         if not isinstance(record, dict):
@@ -811,7 +827,8 @@ class Store:
         key = record_id if key is None else key
         if not isinstance(key, str) or not key.strip():
             raise ValueError("Record key must be nonempty text")
-        metadata, updates = dict(old.get("metadata", {})) if old else {}, record.get("metadata", {})
+        metadata = dict(old.get("metadata", {})) if old and not replace_metadata else {}
+        updates = record.get("metadata", {})
         if not isinstance(updates, dict):
             raise ValueError("Record metadata must be an object")
         if not conflict_review:
@@ -841,7 +858,11 @@ class Store:
         if replace_origin:
             for name in ORIGIN_METADATA:
                 metadata.pop(name, None)
-        metadata.update(self.current_origin() or {})
+        origin = self.current_origin()
+        if origin and mark_only_changes and not outcome_changed(old, content, key, metadata):
+            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none.
+            origin = None
+        metadata.update(origin or {})
         explicit_completion = kind == "task" and metadata.get("state") == "done" and (not old or updates.get("state") == "done")
         if managed_batch and old and old.get("metadata", {}).get("state") == "done" and metadata.get("state") == "done":
             explicit_completion = False  # Internal plan batches preserve progress; they do not assert a new check.
@@ -957,7 +978,11 @@ class Store:
             record = {"kind": "checkpoint", "key": "latest", "content": content, "metadata": state}
             if old:
                 record.update(id=old["id"], expected_version=old["version"])
-            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True)
+            # The record's metadata accumulates the fields of earlier checkpoints. When a writer that is not
+            # an external session replaces an external checkpoint, none of the external fields may stay behind
+            # unmarked: the metadata is then built from this state alone. Any other succession merges as before.
+            fresh = bool(old) and degraded_origin(old.get("metadata")) and not self.current_origin()
+            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True, replace_metadata=fresh)
 
     def list_records(self, project_id, include_history=False):
         self._require_project(self, project_id)

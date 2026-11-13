@@ -20,9 +20,8 @@ def test_a_native_checkpoint_after_an_external_one_is_not_marked(fixture):
     assert native["id"] == external["id"] and native["version"] == external["version"] + 1
     record = fixture.record(native["id"])
     assert not set(ORIGIN_METADATA) & set(record["metadata"])
-    # Known merge behaviour of the one checkpoint record: a state key the later checkpoint does not name
-    # stays in the metadata, while the content is exactly the latest checkpoint.
-    assert record["metadata"]["blockers"] == ["external"] and "blockers" not in record["content"]
+    # Nothing the external checkpoint stated stays behind in the now unmarked record.
+    assert "blockers" not in record["metadata"] and record["metadata"]["summary"] == "From a native client"
     assert evidence_states(fixture.store, fixture.project["id"], [record])[record["id"]]["evidence_state"] == "anchored"
     assert not any("external client" in line["text"] for line in build_brief(fixture.store, fixture.project["id"])["lines"])
     packet = fixture.manager.prepare(fixture.project["id"], "claude", timeout=0)["packet"]
@@ -31,6 +30,63 @@ def test_a_native_checkpoint_after_an_external_one_is_not_marked(fixture):
     # And an external checkpoint after a native one is marked again.
     again = checkpoint(fixture, "external", {"summary": "External again"})
     assert fixture.record(again["id"])["metadata"]["origin_client"] == "external"
+
+
+def test_a_native_checkpoint_over_a_native_one_merges_as_before(fixture):
+    first = checkpoint(fixture, "codex", {"summary": "First", "blockers": ["native"]})
+    second = checkpoint(fixture, "claude", {"summary": "Second"})
+    metadata = fixture.record(second["id"])["metadata"]
+    assert second["id"] == first["id"] and metadata["blockers"] == ["native"] and metadata["summary"] == "Second"
+
+
+def task_by_key(result):
+    return {task["metadata"]["step_key"]: task for task in result["tasks"]}
+
+
+def resave(fixture, previous, key, steps):
+    return save_plan(fixture, fixture.session("external"), key, steps, plan={"id": previous["plan"]["id"]},
+                     expected_version=previous["plan"]["version"],
+                     task_versions={task["id"]: task["version"] for task in previous["tasks"]})
+
+
+def marked(fixture, task):
+    return fixture.record(task["id"])["metadata"].get("origin_evidence") == "degraded"
+
+
+def test_a_plan_step_is_marked_by_what_the_save_stores_not_by_what_it_sends(fixture):
+    criteria = {"acceptance_criteria": [{"text": "It works", "check": "unit"}]}
+    native = save_plan(fixture, None, "native", [{"key": "a", "content": "Step A", "metadata": criteria},
+                                                  {"key": "b", "content": "Step B"}])
+    task = fixture.record(task_by_key(native)["a"]["id"])
+    assert task["metadata"]["criterion_checks"] == {"It works": "unit"}
+    # The same criteria as plain text: the request equals the stored criteria, but the write drops the links.
+    plain = resave(fixture, native, "plain", [
+        {"key": "a", "content": "Step A", "metadata": {"acceptance_criteria": ["It works"]}},
+        {"key": "b", "content": "Step B"}])
+    after = fixture.record(task_by_key(plain)["a"]["id"])
+    assert "criterion_checks" not in after["metadata"] and marked(fixture, after)
+    assert not marked(fixture, task_by_key(plain)["b"])
+    stored = fixture.store.query("SELECT FROM plans WHERE id=:id", {"id": native["plan"]["id"]})[0]
+    assert stored["origin_evidence"] == "degraded"
+
+
+def test_reordering_profiles_and_dependencies_each_mark_the_steps_they_change(fixture):
+    native = save_plan(fixture, None, "native", [{"key": "a", "content": "Step A"}, {"key": "b", "content": "Step B"},
+                                                  {"key": "c", "content": "Step C"}])
+    reordered = resave(fixture, native, "order", [{"key": "b", "content": "Step B"}, {"key": "a", "content": "Step A"},
+                                                  {"key": "c", "content": "Step C"}])
+    steps = task_by_key(reordered)
+    assert marked(fixture, steps["a"]) and marked(fixture, steps["b"]) and not marked(fixture, steps["c"])
+    profiles = resave(fixture, reordered, "profiles", [
+        {"key": "b", "content": "Step B"}, {"key": "a", "content": "Step A"},
+        {"key": "c", "content": "Step C", "metadata": {"required_profiles": ["unit"]}}])
+    assert marked(fixture, task_by_key(profiles)["c"])
+    fixture2 = save_plan(fixture, None, "other", [{"key": "x", "content": "Step X"}, {"key": "y", "content": "Step Y"}],
+                         plan={"title": "Second plan", "goal": "Dependencies"})
+    depends = resave(fixture, fixture2, "depends", [{"key": "x", "content": "Step X"},
+                                                    {"key": "y", "content": "Step Y", "depends_on": ["x"]}])
+    steps = task_by_key(depends)
+    assert marked(fixture, steps["y"]) and not marked(fixture, steps["x"])
 
 
 def save_plan(fixture, bound, key, steps, plan=None, **extra):

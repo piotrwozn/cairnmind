@@ -5,7 +5,6 @@ memory-record mutation, with a compare-and-swap on both task and plan versions.
 """
 from __future__ import annotations
 
-from contextlib import nullcontext
 from copy import deepcopy
 import hashlib
 import heapq
@@ -13,7 +12,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from .store import ORIGIN_METADATA, _clean, _insert, _json, _now, _one, _set
+from .store import ORIGIN_METADATA, _clean, _insert, _json, _now, _one, _set, outcome_changed
 
 
 _EVIDENCE_FIELDS = {
@@ -301,15 +300,12 @@ class PlanManager:
                 if existing:
                     record["expected_version"] = existing["version"]
                 sources = list(dict.fromkeys([source["id"]] + (existing["source_ids"] if existing else [])))
-                # Only a step this save defines anew carries the writer's mark; an unchanged step keeps its own.
-                # The plan-level context hash is the plan row's, which is marked below.
-                changed = not existing or bool(adoption) or record["key"] != existing["key"] or (
-                    step["content"] != existing["content"] or any(
-                        existing["metadata"].get(name) != value for name, value in metadata.items()
-                        if name not in ("plan_context_hash", "plan_archived", "state")))
-                changed_steps |= changed
-                with nullcontext() if changed else self.store.write_origin(None):
-                    saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True)
+                # Only a step whose stored result differs carries the writer's mark (decided inside _remember on
+                # what it stores, so a field the write drops counts too); an unchanged step keeps its own.
+                saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True,
+                                                  mark_only_changes=True)
+                changed_steps |= outcome_changed(existing, saved[key]["content"], saved[key]["key"],
+                                                 saved[key]["metadata"])
             for task_id, task in removed.items():
                 # Archiving a step changes nothing it says; its own mark, or none, stays.
                 with self.store.write_origin(None):
