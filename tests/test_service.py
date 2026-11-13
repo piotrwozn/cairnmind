@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from cairnmind.config import Settings
 from cairnmind.service import InferenceQueue, create_app
 from cairnmind.store import Store
+from cairnmind.support import SUPPORT_SYSTEM
 
 
 class LocalModelFixture:
@@ -19,6 +20,7 @@ class LocalModelFixture:
 
     def __init__(self):
         self.calls = 0
+        self.support_calls = []  # the support check of each complete answer; it agrees here
 
     async def models(self):
         return {"models": []}
@@ -26,7 +28,15 @@ class LocalModelFixture:
     async def embed(self, texts):
         return [[1.0, 0.0] for _ in texts]
 
+    def support(self, messages):
+        if messages[0].get("content") != SUPPORT_SYSTEM:
+            return None
+        self.support_calls.append(json.loads(messages[1]["content"]))
+        return {"message": {"content": json.dumps({"reason": "Stated.", "supported": True})}, "done_reason": "stop"}
+
     async def chat(self, messages, tools=None, **kwargs):
+        if verdict := self.support(messages):
+            return verdict
         self.calls += 1
         prompt = json.loads(messages[1]["content"])
         if not prompt["initial_evidence"]:
@@ -140,17 +150,21 @@ def test_real_http_agent_retrieval_cache_and_uncommitted_change(workspace):
         assert data["cached"] is False
         repeated = client.post("/ask", json=body, headers=headers).json()
         assert repeated["cached"] is True
-        assert model.calls == 1
+        # The cached complete answer is served as it passed its support check, without a new one.
+        assert model.calls == 1 and len(model.support_calls) == 1
+        assert repeated["diagnostics"]["support_check"] == "supported"
         (root / "auth.py").write_text("def authenticate(token):\n    return token == 'changed'\n")
         changed = client.post("/ask", json=body, headers=headers).json()
         assert changed["cached"] is False
         assert changed["sources"][0]["sha256"] != data["sources"][0]["sha256"]
-        assert model.calls == 2
+        assert model.calls == 2 and len(model.support_calls) == 2
 
 
 def test_typed_answer_contract_is_validated_and_part_of_cache_key(workspace):
     class TypedModel(LocalModelFixture):
         async def chat(self, messages, tools=None, **kwargs):
+            if verdict := self.support(messages):
+                return verdict
             self.calls += 1
             prompt = json.loads(messages[1]["content"])
             schema = prompt.get("answer_schema")
@@ -181,6 +195,9 @@ def test_typed_answer_contract_is_validated_and_part_of_cache_key(workspace):
         third = client.post("/ask", json=body, headers=headers).json()
         assert third["cached"] is False and third["answer"] == "authenticate"
         assert model.calls == 3
+        # Typed answers are checked too, with the answer as the caller receives it.
+        assert [call["answer"] for call in model.support_calls] == ['{"symbol":"authenticate"}', '{"line":1}',
+                                                                      "authenticate"]
         invalid = client.post("/ask", json={**body, "answer_schema": {"$ref": "https://example.invalid/private"}},
                               headers=headers)
         assert invalid.status_code == 400

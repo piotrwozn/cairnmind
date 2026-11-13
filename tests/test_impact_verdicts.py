@@ -16,7 +16,7 @@ from cairnmind.inspector_api import attach_inspector_routes
 from cairnmind.store import _clean
 
 from test_cockpit_server import cockpit as cockpit, login
-from test_impact import AUTH, workspace as workspace
+from test_impact import AUTH, link, workspace as workspace
 
 RENEWED = AUTH.replace('":refreshed"', '":renewed"')
 
@@ -94,6 +94,25 @@ def test_editing_the_definition_again_makes_the_entry_unreviewed(changed):
     assert again["verdict"] is None and again["fingerprint"] != seen["fingerprint"]
     with pytest.raises(ValueError, match="changed since this list was shown"):
         record_verdict(store, pid, records["rule"]["id"], seen["fingerprint"], "still_valid", "HEAD")
+
+
+def test_a_verdict_on_a_record_linked_to_a_constant_follows_the_constant_s_value(workspace):
+    store, pid, root, records = workspace
+    constant = store.query("SELECT id FROM nodes WHERE project_id=:project AND kind='symbol' AND label='SESSION_MINUTES'",
+                           {"project": pid})[0]["id"]
+    link(store, pid, records["rule"], constant, records["rule"]["source_ids"][0])
+    (root / "src" / "auth.py").write_text(AUTH.replace("= 30", "= 45"))
+    shown = entry(build_impact(store, pid, "HEAD"), records["rule"])
+    assert {item["symbol"] for item in shown["links"] if "symbol" in item} == {"SESSION_MINUTES"}
+    give(store, pid, records["rule"])
+    # An edit elsewhere in the file leaves the constant, so the verdict still holds.
+    (root / "src" / "auth.py").write_text(AUTH.replace("= 30", "= 45").replace("return None", "return False"))
+    again = entry(build_impact(store, pid, "HEAD"), records["rule"])
+    assert again["fingerprint"] == shown["fingerprint"] and again["verdict"]["verdict"] == "still_valid"
+    # A new value of the constant is a new entry, not yet reviewed.
+    (root / "src" / "auth.py").write_text(AUTH.replace("= 30", "= 60"))
+    later = entry(build_impact(store, pid, "HEAD"), records["rule"])
+    assert later["fingerprint"] != shown["fingerprint"] and later["verdict"] is None
 
 
 def test_editing_the_record_makes_the_entry_unreviewed(changed):

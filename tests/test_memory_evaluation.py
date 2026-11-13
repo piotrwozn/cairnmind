@@ -11,6 +11,7 @@ from cairnmind.config import Settings
 from cairnmind.memory_evaluation import run_memory_evaluation
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.store import Store
+from cairnmind.support import SUPPORT_SYSTEM
 
 
 class MemoryFixtureOllama:
@@ -22,6 +23,7 @@ class MemoryFixtureOllama:
         self.malformed_unknown = malformed_unknown
         self.extraction_calls = 0
         self.recall_calls = 0
+        self.support_calls = 0
         self.schemas = []
 
     async def model_identity(self, name):
@@ -32,6 +34,12 @@ class MemoryFixtureOllama:
 
     async def chat(self, messages, **kwargs):
         prompt = json.loads(messages[1]["content"])
+        if messages[0]["content"] == SUPPORT_SYSTEM:
+            # The support check of a complete answer; this fixture always agrees, so a wrong recall
+            # is left for the evaluation's own grading to catch.
+            self.support_calls += 1
+            return {"message": {"content": json.dumps({"supported": True, "reason": "Stated."})},
+                    "done_reason": "stop", "prompt_eval_count": 40, "eval_count": 8}
         if "text" in prompt and "source_id" in prompt:
             self.extraction_calls += 1
             text = prompt["text"]
