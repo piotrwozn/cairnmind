@@ -438,8 +438,7 @@ def test_json_has_stable_keys_and_text_and_json_are_printable(data):
                                          "estimated_cost", "cost_currency"]
     assert list(result["data"]) == ["turns_seen", "turns_complete", "lines_skipped", "sessions_skipped",
                                     "sessions_not_api", "sessions_read", "registry", "codex_covered",
-                                    "transcripts_read", "transcripts_missing", "transcripts_skipped",
-                                    "transcript_lines_skipped"]
+                                    "codex_records", "codex_unreadable", "codex_waiting"]
     dumped = json.dumps(result, ensure_ascii=False)
     for bad in ("\x1b", " ", "\u009b", "‮"):
         assert bad not in dumped and bad not in result["text"]
@@ -539,32 +538,19 @@ def test_the_row_cap_and_the_lower_bound_rule_hold_for_weeks(data):
     assert (result["groups"][0]["input_tokens"], result["groups"][0]["output_tokens"]) == (5, None)
     assert "Total  turns 75/76 incomplete  input at least 80  output at least 75" in result["text"]
 
-
 # Codex: record shapes follow technical() in test_transcript_compatibility.py (the Codex 0.166 rollout).
+# ``usage`` is the usage of one response, ``thread_token_usage`` the running sum of the thread.
 def _counts(incoming, outgoing, **extra):
     return {"input_tokens": incoming, "cached_input_tokens": 0, "output_tokens": outgoing,
             "reasoning_output_tokens": 0, "total_tokens": incoming + outgoing, **extra}
 
 
 def record(number, total, own, at, thread="00000000-0000-4000-8000-000000000001", **extra):
-    """A token_usage_record: ``own`` is the usage of this response, ``total`` the running total of the thread."""
+    """A stored token_usage_record line: ``own`` is the usage of this response, ``total`` the thread's sum."""
     payload = {"thread_id": thread, "turn_id": f"turn-{number}", "session_id": "00000000-0000-4000-8000-000000000002",
                "root_turn_id": "root-turn", "response_id": f"resp-{number}", "usage": _counts(*own, **extra),
                "turn_token_usage": _counts(*own), "thread_token_usage": _counts(*total, **extra)}
-    return json.dumps({"type": "token_usage_record", "timestamp": at, "payload": payload}) + "\n"
-
-
-def rollout(data, name, *lines, owner="p1", client="codex", mtime=NOW):
-    """Write a rollout file and return the import cursor that names it."""
-    folder = data.root.parent / "codex"
-    folder.mkdir(exist_ok=True)
-    path = folder / f"{name}.jsonl"
-    meta = json.dumps({"type": "session_meta", "payload": {"id": name, "cwd": "/work/app"}}) + "\n"
-    path.write_text(meta + "".join(lines))
-    os.utime(path, (mtime.timestamp(), mtime.timestamp()))
-    if not (data.root / "runtime" / "runs.json").exists():
-        data.registry(json.dumps({"version": 1, "runs": data.runs}))  # a readable registry, as in real use
-    return {"path": str(path), "project_id": owner, "client": client}
+    return json.dumps({"type": "token_usage_record", "timestamp": at, "payload": payload})
 
 
 def three_reports():
@@ -572,46 +558,58 @@ def three_reports():
             record(3, (200, 20), (40, 4), stamp(1.4, -1)))
 
 
+def with_codex(data, lines, since="2d", **options):
+    """Build with the given stored lines as what the store returns for Codex; a readable registry exists."""
+    if not (data.root / "runtime" / "runs.json").exists():
+        data.registry(json.dumps({"version": 1, "runs": data.runs}))
+    return data.build(since, codex_records=lambda start: list(lines), **options)
+
+
 def codex_rows(result):
     return [g for g in result["groups"] if g["client"] == "codex"]
 
 
-def test_codex_running_totals_count_once_and_only_the_growth_inside_the_period(data):
-    cursor = rollout(data, "a", *three_reports())
-    # The same thread copied to a second file (an archived rollout) must not count twice.
-    twin = rollout(data, "b", *three_reports())
-    before = sorted((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in data.root.parent.rglob("*"))
-    result = data.build("2d", transcripts=[cursor, twin])
-    assert sorted((str(p), p.stat().st_mtime_ns, p.stat().st_size)
-                  for p in data.root.parent.rglob("*")) == before
+def test_codex_responses_of_the_period_count_once_and_the_fetch_gets_the_start(data):
+    starts = []
+    lines = [*three_reports(), record(9, (999, 99), (799, 79), stamp(0, -1))]  # a record after "now" is not counted
+    # The same lines twice (a rollout imported from two paths) must not count twice.
+    result = with_codex(data, lines * 2, "2d")
     (row,) = codex_rows(result)
-    # 200 - 100 = 100: the report before the period is only the baseline; adding the totals would give 360.
     assert (row["period"], row["turns"], row["input_tokens"], row["output_tokens"]) == ("2026-11-12", 2, 100, 10)
-    assert row["complete"] is True and result["partial"] is False
-    assert (result["data"]["transcripts_read"], result["data"]["codex_covered"]) == (2, True)
+    assert row["complete"] is True and result["partial"] is False and row["estimated_cost"] is None
+    assert (result["data"]["codex_covered"], result["data"]["codex_records"]) == (True, 4)
     assert "2026-11-12  codex  unknown  unknown  turns 2/2 complete  input 100  output 10  cost unknown" in result["text"]
     assert "Claude Code is not covered" in result["text"]
-    assert data.build("2d")["data"]["codex_covered"] is False and codex_rows(data.build("2d")) == []
+    data.build("2d", codex_records=lambda start: starts.append(start) or [])
+    assert starts == [NOW - timedelta(days=2)]
+    plain = data.build("2d")
+    assert plain["data"]["codex_covered"] is False and codex_rows(plain) == []
+    assert "Codex" not in plain["text"]
 
 
-def test_codex_thread_totals_are_kept_apart_and_a_period_without_reports_is_empty(data):
+def test_codex_threads_are_kept_apart_and_a_period_without_responses_is_empty(data):
     other = "00000000-0000-4000-8000-0000000000aa"
-    cursor = rollout(data, "a", record(1, (100, 10), (100, 10), stamp(1)),
-                     record(2, (7, 1), (7, 1), stamp(1), thread=other),
-                     record(3, (150, 12), (50, 2), stamp(0, 3)), record(4, (9, 2), (2, 1), stamp(0, 2), thread=other))
-    result = data.build("1d", transcripts=[cursor])
+    lines = [record(1, (100, 10), (100, 10), stamp(1)), record(2, (7, 1), (7, 1), stamp(1), thread=other),
+             record(3, (150, 12), (50, 2), stamp(0, 3)), record(4, (9, 2), (2, 1), stamp(0, 2), thread=other)]
+    result = with_codex(data, lines, "1d")
     assert [(g["period"], g["input_tokens"], g["output_tokens"]) for g in codex_rows(result)] == [
         ("2026-11-12", 107, 11), ("2026-11-13", 52, 3)]
-    assert result["totals"]["turns"] == 4
-    assert codex_rows(data.build("1h", transcripts=[cursor])) == []
+    assert result["totals"]["turns"] == 4 and all(g["complete"] for g in codex_rows(result))
+    assert codex_rows(with_codex(data, lines, "1h")) == []
+
+
+def test_a_response_the_period_starts_in_the_middle_of_a_thread_needs_no_earlier_record(data):
+    # Only the later records are fetched (older sources are not read); usage is per response, so no baseline.
+    result = with_codex(data, [record(2, (160, 16), (60, 6), stamp(1.4)), record(3, (200, 20), (40, 4), stamp(1))])
+    (row,) = codex_rows(result)
+    assert (row["input_tokens"], row["output_tokens"], row["complete"]) == (100, 10, True)
 
 
 def test_codex_never_has_a_cost_and_a_price_in_the_records_is_ignored(data):
     data.run("r1", "s1")
     data.journal("s1", turn("r1", stamp(1), done(10, 1, 0.5)))
-    cursor = rollout(data, "a", *three_reports(), record(4, (210, 21), (10, 1), stamp(0, 1),
-                                                        estimated_cost=3.0, cost_currency="USD"))
-    result = data.build("2d", transcripts=[cursor])
+    lines = [*three_reports(), record(4, (210, 21), (10, 1), stamp(0, 1), estimated_cost=3.0, cost_currency="USD")]
+    result = with_codex(data, lines)
     assert {g["client"]: g["estimated_cost"] for g in result["groups"]} == {"api": 0.5, "codex": None}
     # The estimate of the API agent stays visible in its own total; the mixed total cannot be a cost.
     assert result["totals_by_client"]["api"]["estimated_cost"] == 0.5
@@ -622,74 +620,42 @@ def test_codex_never_has_a_cost_and_a_price_in_the_records_is_ignored(data):
     assert "$3" not in result["text"] and "subscription client" in result["text"]
 
 
-def test_a_codex_session_of_another_project_is_left_alone_and_one_without_a_project_is_skipped(data):
-    mine = rollout(data, "mine", *three_reports())
-    foreign = rollout(data, "foreign", *three_reports(), owner="p2")
-    result = data.build("2d", transcripts=[mine, foreign])
-    assert result["totals"]["input_tokens"] == 100 and result["partial"] is False
-    assert result["data"]["transcripts_read"] == 1 and result["data"]["transcripts_skipped"] == 0
-    unknown = rollout(data, "unknown", *three_reports(), owner=None)
-    result = data.build("2d", transcripts=[mine, unknown])
-    assert result["partial"] is True and result["data"]["transcripts_skipped"] == 1
-    assert result["totals"]["input_tokens"] == 100 and result["totals"]["tokens_are_lower_bound"] is True
-    assert result["text"].splitlines()[3].startswith("PARTIAL REPORT: 1 Codex transcripts were skipped because")
-    # A stray unknown rollout from before the period does not make the report partial.
-    old = rollout(data, "old", *three_reports(), owner=None, mtime=NOW - timedelta(days=30))
-    assert data.build("2d", transcripts=[mine, old])["partial"] is False
+def test_a_missing_response_between_two_records_makes_the_row_incomplete(data):
+    # Response 2 is not stored: the thread's sum grew by 60 but the next record only accounts for 40.
+    lines = [three_reports()[0], three_reports()[2]]
+    first, last = codex_rows(with_codex(data, lines, "6d"))
+    assert (first["complete"], first["input_tokens"]) == (True, 100)
+    assert (last["complete"], last["input_tokens"], last["tokens_are_lower_bound"]) == (False, 40, True)
 
 
-def test_a_missing_or_unreadable_rollout_makes_the_report_partial(data, tmp_path):
-    cursor = rollout(data, "a", *three_reports())
-    gone = {"path": str(tmp_path / "gone.jsonl"), "project_id": "p1", "client": "codex"}
-    link = tmp_path / "link.jsonl"
-    link.symlink_to(cursor["path"])
-    os.utime(tmp_path, (NOW.timestamp(), NOW.timestamp()))  # a directory is not a rollout, and not a stale one
-    result = data.build("2d", transcripts=[cursor, gone, {**gone, "path": str(link)}, {**gone, "path": str(tmp_path)}])
-    assert result["partial"] is True and result["data"]["transcripts_missing"] == 3
-    assert result["data"]["transcripts_read"] == 1
-    assert result["totals"]["tokens_are_lower_bound"] is True and result["totals"]["complete"] is False
-    assert codex_rows(result)[0]["complete"] is True
-    assert "PARTIAL REPORT: 3 Codex transcripts are gone or unreadable" in result["text"]
-    assert "Total  turns 2/2 incomplete  input at least 100" in result["text"]
-
-
-def test_a_rollout_not_touched_since_before_the_period_is_not_read_and_other_clients_are_ignored(data):
-    stale = rollout(data, "a", *three_reports(), mtime=NOW - timedelta(days=4))
-    claude = rollout(data, "c", *three_reports(), client="claude")
-    result = data.build("2d", transcripts=[stale, claude])
-    assert result["data"]["transcripts_read"] == 0 and codex_rows(result) == []
-    assert "No turns of the built-in API agent or Codex were found" in result["text"]
-
-
-def test_a_codex_report_without_a_known_earlier_total_is_a_lower_bound(data):
-    # The first report in the files is not a first response (its own usage is smaller than the thread total),
-    # so what the thread used before it is unknown: it counts nothing and the row is incomplete.
-    cursor = rollout(data, "a", record(1, (500, 50), (100, 10), stamp(1)), record(2, (560, 56), (60, 6), stamp(1)))
-    (row,) = codex_rows(data.build("2d", transcripts=[cursor]))
-    assert (row["input_tokens"], row["output_tokens"], row["turns"], row["complete_turns"]) == (60, 6, 2, 1)
-    assert row["complete"] is False and row["tokens_are_lower_bound"] is True
-
-
-def test_a_codex_total_that_goes_down_is_not_counted_as_negative_usage(data):
-    cursor = rollout(data, "a", record(1, (100, 10), (100, 10), stamp(1)), record(2, (30, 3), (30, 3), stamp(1)),
-                     record(3, (50, 5), (20, 2), stamp(1)))
-    (row,) = codex_rows(data.build("2d", transcripts=[cursor]))
-    assert (row["input_tokens"], row["output_tokens"], row["complete_turns"], row["complete"]) == (120, 12, 2, False)
-
-
-def test_damaged_codex_records_are_counted_and_other_lines_are_not_parsed(data, monkeypatch):
-    junk = ('{"type": "event_msg", "payload": {"type": "user_message", "message": "about token_usage_record"}}\n'
-            '{"type": "token_usage_record", "timestamp": "' + stamp(1) + '", "payload": {"thread_id": 5}}\n'
-            '{"type": "token_usage_record", "timestamp": "no time", "payload": ' + "{" + '\n'
-            '{"type": "response_item", "payload": ' + json.dumps("x" * 200) + "}\n")
-    cursor = rollout(data, "a", *three_reports(), junk, "x" * 3000 + "\n", '{"type": "token_usage_record"')
-    monkeypatch.setattr("cairnmind.codex_usage.MAX_EVENT_BYTES", 2000)
-    result = data.build("2d", transcripts=[cursor])
-    # The user message that merely mentions the type is not damage; the two broken records and the cut tail are.
-    assert result["data"]["transcript_lines_skipped"] == 3
+def test_damaged_codex_records_are_counted_and_make_the_rows_incomplete(data):
+    mention = json.dumps({"type": "event_msg", "payload": {"type": "user_message", "message": "token_usage_record"}})
+    broken = [record(1, (5, 5), (5, 5), "no time"),
+              json.dumps({"type": "token_usage_record", "timestamp": stamp(1), "payload": {"thread_id": 5}}),
+              '{"type": "token_usage_record", "timestamp": ', json.dumps([1, 2])]
+    result = with_codex(data, [*three_reports(), mention, *broken])
+    # A user message that merely mentions the type is not damage; the four unreadable records are.
+    assert result["data"]["codex_unreadable"] == 4
     (row,) = codex_rows(result)
     assert (row["input_tokens"], row["complete"]) == (100, False)
-    assert "3 usage records unreadable" in result["text"]
+    assert "4 unreadable" in result["text"]
+
+
+def test_records_waiting_in_the_inbox_make_the_report_partial_and_are_counted(data):
+    result = with_codex(data, three_reports(), codex_waiting=4)
+    assert result["partial"] is True and result["data"]["codex_waiting"] == 4
+    assert result["text"].splitlines()[3].startswith(
+        "PARTIAL REPORT: 4 Codex usage records are waiting in the ingestion inbox, not yet attributed")
+    assert result["totals"]["tokens_are_lower_bound"] is True and codex_rows(result)[0]["complete"] is True
+    assert result["totals_by_client"]["codex"]["complete"] is False
+    # Without a Codex reader the number means nothing and is not reported.
+    ignored = data.build("2d", codex_waiting=4)
+    assert ignored["partial"] is False and ignored["data"]["codex_waiting"] == 0
+
+
+def test_without_any_usage_the_text_names_both_clients_when_codex_is_covered(data):
+    result = with_codex(data, [])
+    assert "No turns of the built-in API agent or Codex were found" in result["text"] and "Total" not in result["text"]
 
 
 def test_a_complete_total_over_the_threshold_warns_first_in_text_and_in_json(data):
@@ -714,11 +680,10 @@ def test_a_lower_bound_total_over_the_threshold_says_at_least(data):
     result = data.build(warn_over=100)
     assert result["warning"]["tokens_are_lower_bound"] is True and result["warning"]["observed_tokens"] == 150
     assert result["text"].startswith("WARNING: at least 150 tokens (input plus output, all clients)")
-    # A report that cannot see everything (here: a Codex rollout that is gone) makes a complete-looking total a
-    # lower bound too, and the warning keeps saying so.
+    # A report that cannot see everything (here: Codex records still in the inbox) makes a complete-looking
+    # total a lower bound too, and the warning keeps saying so.
     data.journal("s1", turn("r1", stamp(1), done(60, 50)))
-    gone = {"path": str(data.root / "gone.jsonl"), "project_id": "p1", "client": "codex"}
-    partial = data.build(warn_over=100, transcripts=[gone])
+    partial = data.build(warn_over=100, codex_records=lambda start: [], codex_waiting=1)
     assert partial["warning"]["tokens_are_lower_bound"] is True
     assert partial["text"].startswith("WARNING: at least 110 tokens")
 
@@ -734,9 +699,19 @@ def test_no_warning_at_or_below_the_threshold_or_without_one(data):
 def test_codex_tokens_count_towards_the_threshold(data):
     data.run("r1", "s1")
     data.journal("s1", turn("r1", stamp(1), done(1, 1)))
-    cursor = rollout(data, "a", *three_reports())
-    assert data.build("2d", warn_over=100, transcripts=[cursor])["warning"]["observed_tokens"] == 112
-    assert "warning" not in data.build("2d", warn_over=112, transcripts=[cursor])
+    assert with_codex(data, three_reports(), warn_over=100)["warning"]["observed_tokens"] == 112
+    assert "warning" not in with_codex(data, three_reports(), warn_over=112)
+
+
+def test_an_unreadable_default_threshold_is_a_line_and_a_key_not_a_failure(data):
+    data.run("r1", "s1")
+    data.journal("s1", turn("r1", stamp(1), done(60, 50)))
+    result = data.build(warn_unavailable="Cannot read check profiles\x1b[31m")
+    assert result["warning_unavailable"].startswith("Cannot read check profiles")
+    assert "\x1b" not in result["text"] and "\x1b" not in json.dumps(result)
+    assert result["text"].splitlines()[0].startswith("Warning threshold not read: Cannot read check profiles")
+    assert list(result)[-2:] == ["warning_unavailable", "text"]
+    assert "warning_unavailable" not in data.build()
 
 
 @pytest.mark.parametrize("bad", [0, -5, "100", 1.5, True])
@@ -747,7 +722,7 @@ def test_a_threshold_must_be_a_positive_whole_number(data, bad):
 
 def test_codex_weeks_use_the_same_iso_weeks(data):
     year_end = datetime(2025, 1, 5, 12, 0, tzinfo=timezone.utc)
-    cursor = rollout(data, "a", record(1, (10, 1), (10, 1), "2024-12-29T23:30:00+00:00"),
-                     record(2, (25, 3), (15, 2), "2025-01-01T10:00:00+00:00"), mtime=year_end)
-    result = data.build("30d", now=year_end, by="week", transcripts=[cursor])
+    lines = [record(1, (10, 1), (10, 1), "2024-12-29T23:30:00+00:00"),
+             record(2, (25, 3), (15, 2), "2025-01-01T10:00:00+00:00")]
+    result = with_codex(data, lines, "30d", now=year_end, by="week")
     assert [(g["period"], g["input_tokens"]) for g in codex_rows(result)] == [("2024-W52", 10), ("2025-W01", 15)]

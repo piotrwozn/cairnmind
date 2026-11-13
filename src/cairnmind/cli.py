@@ -493,21 +493,25 @@ def usage(ctx: typer.Context, project: str,
               "nothing. Default: warn_over_tokens under [usage] in .cairnmind/checks.toml.")] = None,
           as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
     """Sum the token usage of the built-in API agent per day or week, profile and model. Asks no model."""
+    from cairnmind.codex_usage import stored_records, waiting_in_inbox
     from cairnmind.usage import build_usage
     from cairnmind.verification import usage_warn_threshold
     # Resolving the project name opens the store (it starts the database engine if stopped and may create the
     # data directory); the usage itself is read from the session journals and nothing is written to them.
     store = store_for(ctx.obj)
     found = store.resolve_project(project)
-    # The cursors of history import name the Codex transcript files; the files themselves are read read-only.
-    cursors = store.query("SELECT path,project_id,client FROM import_cursors WHERE client=:client", {"client": "codex"})
+    # Codex usage is read from the transcript lines that history import stored for this project, not from files.
+    unavailable = None
     if warn_over is None:
         try:
             warn_over = usage_warn_threshold(store, found["id"])
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc), param_hint="usage settings")
+        except (ValueError, OSError) as exc:
+            # A report must not depend on the checks file: say why there is no default threshold and go on.
+            unavailable = str(exc)
     try:
-        result = build_usage(ctx.obj.data_dir, found, since, by=by.value, transcripts=cursors, warn_over=warn_over)
+        result = build_usage(ctx.obj.data_dir, found, since, by=by.value, warn_over=warn_over,
+                             codex_records=lambda start: stored_records(store, found["id"], start),
+                             codex_waiting=waiting_in_inbox(store, found["id"]), warn_unavailable=unavailable)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--since")
     if as_json:

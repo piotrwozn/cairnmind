@@ -71,29 +71,37 @@ def test_by_week_groups_by_iso_week_and_a_bad_value_fails(tmp_path, monkeypatch)
     assert bad.exit_code != 0 and "month" in re.sub(r"\x1b\[[0-9;]*m", "", bad.output)
 
 
-def codex_rollout(tmp_path, root):
-    """A rollout in the shape of test_transcript_compatibility.py, three reports of one thread in the last hours."""
+def codex_rollout(path, root):
+    """A rollout in the shape of test_transcript_compatibility.py: three responses of one thread, the last hours.
+
+    ``usage`` is the response, ``thread_token_usage`` the running sum. Without a ``root`` there is no cwd.
+    """
     def counts(incoming, outgoing):
         return {"input_tokens": incoming, "cached_input_tokens": 0, "output_tokens": outgoing,
                 "reasoning_output_tokens": 0, "total_tokens": incoming + outgoing}
 
     now = datetime.now(timezone.utc)
-    events = [{"type": "session_meta", "payload": {"id": "native", "cwd": str(root)}}]
+    events = [{"type": "session_meta", "payload": {"id": "native", "cwd": str(root)}}] if root else []
     for number, (own, total) in enumerate([((100, 10), (100, 10)), ((60, 6), (160, 16)), ((40, 4), (200, 20))], 1):
         events.append({"type": "token_usage_record", "timestamp": (now - timedelta(hours=4 - number)).isoformat(),
                        "payload": {"thread_id": "00000000-0000-4000-8000-000000000001", "turn_id": f"t{number}",
                                    "session_id": "00000000-0000-4000-8000-000000000002", "root_turn_id": "root",
                                    "response_id": f"r{number}", "usage": counts(*own),
                                    "turn_token_usage": counts(*own), "thread_token_usage": counts(*total)}})
-    path = tmp_path / "rollout.jsonl"
     path.write_text("".join(json.dumps(event) + "\n" for event in events))
     return path
 
 
-def test_codex_usage_comes_from_the_rollouts_that_import_follows(tmp_path, monkeypatch):
+def codex_totals(settings, name, *args):
+    payload = json.loads(run(settings, name, "--json", *args).output)
+    return payload, payload["totals_by_client"].get("codex", {}).get("input_tokens")
+
+
+def test_codex_usage_comes_from_what_import_stored_for_the_project(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)  # three records: the second page is read too
     settings, pid = workspace(tmp_path)
-    rollout = codex_rollout(tmp_path, tmp_path / "repo")
+    rollout = codex_rollout(tmp_path / "rollout.jsonl", tmp_path / "repo")
     assert ingest.import_history(Store(settings.data_dir), rollout, pid, "codex")["errors"] == []
     shown = run(settings, "demo")
     assert shown.exit_code == 0, shown.output or repr(shown.exception)
@@ -105,12 +113,46 @@ def test_codex_usage_comes_from_the_rollouts_that_import_follows(tmp_path, monke
     payload = json.loads(run(settings, "demo", "--json").output)
     assert {g["client"] for g in payload["groups"]} == {"api", "codex"}
     assert payload["totals_by_client"]["codex"]["input_tokens"] == 200 and payload["partial"] is False
-    assert payload["data"]["transcripts_read"] == 1 and payload["totals"]["estimated_cost"] is None
-    # The original file is what is read: once it is gone the report says so and is partial.
+    assert payload["data"]["codex_records"] == 3 and payload["totals"]["estimated_cost"] is None
+    assert codex_totals(settings, "demo", "--since", "2h")[1] == 40  # only the last response is that recent
+    # The stored lines are what is read, not the file: a moved or deleted rollout changes nothing.
     rollout.unlink()
-    gone = json.loads(run(settings, "demo", "--json").output)
-    assert gone["partial"] is True and gone["data"]["transcripts_missing"] == 1
-    assert run(settings, "demo").output.splitlines()[3].startswith("PARTIAL REPORT: 1 Codex transcripts are gone")
+    gone, codex = codex_totals(settings, "demo")
+    assert codex == 200 and gone["partial"] is False
+
+
+def test_codex_usage_follows_the_project_import_attributed_each_event_to(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, pid = workspace(tmp_path)
+    store = Store(settings.data_dir)
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    other = store.add_project("other", other_root)["id"]
+    mine = codex_rollout(tmp_path / "mine.jsonl", tmp_path / "repo")
+    foreign = codex_rollout(tmp_path / "foreign.jsonl", other_root)
+    # `cairnmind import DIR --project demo` saves a cursor for demo on every rollout, but attributes each event
+    # by its own working directory and parks the foreign ones in the inbox.
+    for path in (mine, foreign):
+        ingest.import_history(store, path, pid, "codex")
+    payload, codex = codex_totals(settings, "demo")
+    assert codex == 200 and payload["partial"] is False and payload["data"]["codex_waiting"] == 0
+    # The other project has nothing yet, and its records waiting in the inbox make its report partial.
+    waiting, codex = codex_totals(settings, "other")
+    assert codex is None and waiting["partial"] is True and waiting["data"]["codex_waiting"] == 3
+    assert "PARTIAL REPORT: 3 Codex usage records are waiting in the ingestion inbox" in run(settings, "other").output
+    # Once import assigns them, they are other's usage and no longer waiting.
+    ingest.import_history(store, foreign, other, "codex")
+    assigned, codex = codex_totals(settings, "other")
+    assert codex == 200 and assigned["partial"] is False and assigned["data"]["codex_waiting"] == 0
+    assert codex_totals(settings, "demo")[1] == 200
+
+
+def test_codex_records_of_no_known_directory_wait_in_the_inbox_for_every_project(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    ingest.import_history(Store(settings.data_dir), codex_rollout(tmp_path / "loose.jsonl", None), None, "codex")
+    payload, codex = codex_totals(settings, "demo")
+    assert codex is None and payload["partial"] is True and payload["data"]["codex_waiting"] == 3
 
 
 def test_warn_over_adds_a_warning_and_never_changes_the_exit_code(tmp_path, monkeypatch):
@@ -149,15 +191,61 @@ def test_the_default_threshold_comes_from_the_checks_file_and_the_option_wins(tm
 @pytest.mark.parametrize("text", ["[usage]\nwarn_over_tokens = 0\n", '[usage]\nwarn_over_tokens = "many"\n',
                                   "[usage]\nwarn_over_tokens = 5\nlimit = 1\n", "[usage]\nwarn_over_tokens = true\n",
                                   "usage = 3\n", "[usage\n"])
-def test_a_bad_checks_file_setting_is_an_error_unless_the_option_is_given(tmp_path, monkeypatch, text):
+def test_an_unreadable_default_threshold_never_stops_the_report(tmp_path, monkeypatch, text):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)
     config = tmp_path / "repo" / ".cairnmind" / "checks.toml"
     config.parent.mkdir()
     config.write_text(text)
-    bad = run(settings, "demo")
-    assert bad.exit_code != 0 and "WARNING" not in bad.output
-    assert run(settings, "demo", "--warn-over", "1000").exit_code == 0
+    shown = run(settings, "demo")
+    assert shown.exit_code == 0, shown.output or repr(shown.exception)
+    assert shown.output.startswith("Warning threshold not read: ") and "WARNING" not in shown.output
+    assert "Usage of the built-in API agent for demo" in shown.output
+    payload = json.loads(run(settings, "demo", "--json").output)
+    assert payload["warning_unavailable"] and "warning" not in payload and payload["groups"][0]["input_tokens"] == 30
+    # With the option nothing is read from the file, so there is nothing to report about it.
+    given = run(settings, "demo", "--warn-over", "1000")
+    assert given.exit_code == 0 and "Warning threshold not read" not in given.output
+
+
+def test_other_problems_of_the_checks_file_do_not_stop_the_report_either(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    root = tmp_path / "repo"
+    (root / ".cairnmind").mkdir()
+    config = root / ".cairnmind" / "checks.toml"
+    # A broken profile is not the threshold's business: it is still read.
+    config.write_text('[checks.unit]\nargv = 3\n\n[usage]\nwarn_over_tokens = 20\n')
+    assert run(settings, "demo").output.startswith("WARNING: 34 tokens")
+    # Two declarations of the file make the threshold unreadable, not the report.
+    (root / ".devbrain").mkdir()
+    (root / ".devbrain" / "checks.toml").write_text('[usage]\nwarn_over_tokens = 20\n')
+    both = run(settings, "demo")
+    assert both.exit_code == 0 and both.output.startswith("Warning threshold not read: Check profiles are declared in both")
+    assert json.loads(run(settings, "demo", "--json").output)["warning_unavailable"].endswith("keep one of them")
+
+
+def test_load_profiles_still_raises_the_errors_it_raised_before(tmp_path, monkeypatch):
+    from cairnmind.verification import load_profiles
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, pid = workspace(tmp_path)
+    store, root = Store(settings.data_dir), tmp_path / "repo"
+    assert load_profiles(store, pid) == {}
+    (root / ".cairnmind").mkdir()
+    (root / ".cairnmind" / "checks.toml").write_text("[checks.unit\n")
+    with pytest.raises(ValueError, match="^Cannot read check profiles$") as parse_error:
+        load_profiles(store, pid)
+    assert type(parse_error.value.__cause__).__name__ == "TOMLDecodeError"
+    (root / ".cairnmind" / "checks.toml").write_text('[checks.unit]\nargv = ["true"]\n')
+    (root / ".devbrain").mkdir()
+    (root / ".devbrain" / "checks.toml").write_text('[checks.unit]\nargv = ["true"]\n')
+    with pytest.raises(ValueError, match="^Check profiles are declared in both .cairnmind/checks.toml and "
+                                         ".devbrain/checks.toml; keep one of them$"):
+        load_profiles(store, pid)
+    (root / ".devbrain" / "checks.toml").unlink()
+    (root / ".cairnmind" / "checks.toml").write_text("checks = 3\n")
+    with pytest.raises(ValueError, match="^checks must contain named profiles$"):
+        load_profiles(store, pid)
 
 
 def test_a_bad_since_fails_with_its_message(tmp_path, monkeypatch):

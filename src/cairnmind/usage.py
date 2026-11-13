@@ -1,7 +1,7 @@
 """Token usage of the built-in API agent (and of Codex), summed per day or week, client, profile and model.
 
-The API agent is read from its session journals, Codex from the rollout files of history import (see
-``codex_usage``). Nothing is written to the journals or the store and no model is asked. A counter nobody reported stays
+The API agent is read from its session journals, Codex from the transcript lines that history import stored
+(see ``codex_usage``; the command passes them in, this module never queries). Nothing is written to the journals or the store and no model is asked. A counter nobody reported stays
 ``unknown``. A row or total that holds a turn without full usage is marked incomplete and its sums are
 lower bounds ("at least N"). A cost appears only for a group in which every turn was complete and carried
 an estimate. The command resolves the project name through the store (see ``cli.usage``); this module
@@ -28,8 +28,8 @@ _SINCE = re.compile(r"^([1-9][0-9]{0,5})([dh])$")
 _KEYS = ("input_tokens", "output_tokens")
 COST_NOTE = ("Cost is an estimate from the rates stored with each turn, not an invoice; unknown means it was "
              "not reported. Subscription usage and remaining quota are never converted into money.")
-CODEX_NOTE = ("Codex rows are read from the Codex transcripts that history import follows: the growth of each "
-              "thread's running total, counted once; one \"turn\" there is one model response. Codex is a "
+CODEX_NOTE = ("Codex rows are read from the transcript lines that history import stored for this project, one "
+              "\"turn\" being one model response; rollouts that were not imported yet are not seen. Codex is a "
               "subscription client, so its cost is always unknown. Claude Code is not covered.")
 
 
@@ -222,6 +222,8 @@ def _render(report: dict) -> str:
     groups, data, by = report["groups"], report["data"], report["by"]
     unit = "days are UTC" if by == "day" else "weeks are ISO weeks (Monday to Sunday) in UTC"
     lines = [f"WARNING: {report['warning']['message']}"] if "warning" in report else []
+    if "warning_unavailable" in report:
+        lines.append(f"Warning threshold not read: {report['warning_unavailable']}")
     lines += [f"Usage of the built-in API agent for {report['project']['name']}, last {report['since']} "
               f"(from {report['from']}); {unit}", COST_NOTE]
     if data["codex_covered"]:
@@ -230,10 +232,8 @@ def _render(report: dict) -> str:
         why = ([f"the run registry is {data['registry']}"] if data["registry"] != "ok" else []) + (
             [f"{data['sessions_skipped']} sessions were skipped because their project is unknown"]
             if data["sessions_skipped"] else []) + (
-            [f"{data['transcripts_missing']} Codex transcripts are gone or unreadable"]
-            if data["transcripts_missing"] else []) + (
-            [f"{data['transcripts_skipped']} Codex transcripts were skipped because their project is unknown"]
-            if data["transcripts_skipped"] else [])
+            [f"{data['codex_waiting']} Codex usage records are waiting in the ingestion inbox, not yet "
+             f"attributed to a project"] if data["codex_waiting"] else [])
         lines.append("PARTIAL REPORT: " + "; ".join(why) + ", so usage of this project may be missing.")
     if len(groups) > MAX_ROWS:
         lines.append(f"{len(groups) - MAX_ROWS} older rows are only in the JSON output.")
@@ -242,9 +242,8 @@ def _render(report: dict) -> str:
         lines += [_row(f"Total {client}", row) for client, row in report["totals_by_client"].items()]
     what = "the built-in API agent or Codex" if data["codex_covered"] else "the built-in API agent"
     lines.append(_row("Total", report["totals"]) if groups else f"No turns of {what} were found in this period.")
-    codex = (f"; {data['transcripts_read']} Codex transcripts read, {data['transcripts_missing']} missing, "
-             f"{data['transcripts_skipped']} skipped because their project is unknown, "
-             f"{data['transcript_lines_skipped']} usage records unreadable" if data["codex_covered"] else "")
+    codex = (f"; {data['codex_records']} Codex usage records, {data['codex_unreadable']} unreadable, "
+             f"{data['codex_waiting']} waiting in the ingestion inbox" if data["codex_covered"] else "")
     lines.append(f"Data: {data['turns_complete']} of {data['turns_seen']} turns had complete usage; "
                  f"{data['lines_skipped']} journal lines skipped as unreadable; "
                  f"{data['sessions_skipped']} sessions skipped because their project is unknown; "
@@ -252,15 +251,16 @@ def _render(report: dict) -> str:
     return "\n".join(lines)
 
 
-def build_usage(data_dir, project: dict, since="7d", *, by="day", transcripts=None, warn_over=None,
-                now=None) -> dict:
+def build_usage(data_dir, project: dict, since="7d", *, by="day", codex_records=None, codex_waiting=0,
+                warn_over=None, warn_unavailable=None, now=None) -> dict:
     """Sum the usage of this project's API agent turns inside the period; reads files only.
 
-    ``warn_over``: a number of tokens; when the observed total (input plus output) is above it the result has
-    a ``warning`` and the text starts with ``WARNING:``. It never blocks anything.
-
-    ``transcripts`` are the import cursors (dicts with path, project_id, client) that name the Codex rollout
-    files of history import; the module cannot query the store, so without them Codex is not looked at.
+    ``codex_records``: a function from the start of the period to the raw ``token_usage_record`` lines that
+    import stored for this project (see ``codex_usage``); this module cannot query the store, so without it
+    Codex is not looked at. ``codex_waiting``: such records still in the ingestion inbox, which makes the
+    report partial. ``warn_over``: a number of tokens; when the observed total (input plus output) is above it
+    the result has a ``warning`` and the text starts with ``WARNING:``; it never blocks anything.
+    ``warn_unavailable``: why a default threshold could not be read, shown as a line and a JSON key.
     """
     if by not in ("day", "week"):
         raise ValueError("by must be day or week")
@@ -316,25 +316,25 @@ def build_usage(data_dir, project: dict, since="7d", *, by="day", transcripts=No
             profile, model = (_line(run[key], 60) if isinstance(run.get(key), str) and _line(run[key], 60)
                               else "unknown" for key in ("profile_id", "model"))
             add(turn["at"], "api", profile, model, _summary(turn))
-    codex = {"transcripts_read": 0, "transcripts_missing": 0, "transcripts_skipped": 0,
-             "transcript_lines_skipped": 0}
-    for at, incoming, outgoing, complete in codex_units(transcripts or [], project["id"], start, now, _time, codex):
+    codex = {"codex_records": 0, "codex_unreadable": 0, "codex_waiting": codex_waiting if codex_records else 0}
+    for at, incoming, outgoing, complete in codex_units(
+            codex_records(start) if codex_records else [], start, now, _time, codex):
         # The cost stays None: Codex is a subscription client and its transcripts hold no price.
         add(at, "codex", "unknown", "unknown", (complete, incoming, outgoing, None))
-    partial_by = {"api": registry != "ok" or counts["sessions_skipped"] > 0,
-                  "codex": codex["transcripts_missing"] > 0 or codex["transcripts_skipped"] > 0}
+    partial_by = {"api": registry != "ok" or counts["sessions_skipped"] > 0, "codex": codex["codex_waiting"] > 0}
     partial = any(partial_by.values())
     # ``day`` stays in day rows for readers of earlier versions; a week is not a day, so week rows have none.
     rows = [{"period": period, **({"day": period} if by == "day" else {}), "client": client, "profile": profile,
              "model": model, **_final(acc)} for (period, client, profile, model), acc in sorted(groups.items())]
     final = _final(totals, partial)
     data = {"turns_seen": totals["turns"], "turns_complete": final["complete_turns"], **counts,
-            "registry": registry, "codex_covered": transcripts is not None, **codex}
+            "registry": registry, "codex_covered": codex_records is not None, **codex}
     report = {"project": {"id": project["id"], "name": _line(project["name"], 60)}, "since": str(since).strip(),
               "timezone": "UTC", "from": start.isoformat(timespec="seconds"),
               "to": now.isoformat(timespec="seconds"), "partial": partial, "groups": rows, "totals": final,
               "totals_by_client": {client: _final(acc, partial_by[client]) for client, acc in sorted(clients.items())},
               "data": data, "cost_note": COST_NOTE, "by": by}
     warning = _warning(final, warn_over, report["since"])
-    report = {**report, **({"warning": warning} if warning else {})}
+    report = {**report, **({"warning": warning} if warning else {}),
+              **({"warning_unavailable": _line(warn_unavailable, 200)} if warn_unavailable else {})}
     return {**report, "text": _render(report)}
