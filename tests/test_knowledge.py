@@ -11,7 +11,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from cairnmind.agent import KnowledgeAgent, SYSTEM
+from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, KnowledgeAgent, SYSTEM, question_excerpt
 from cairnmind.config import Settings
 from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.retrieval import Retriever, public_record
@@ -252,6 +252,71 @@ async def test_final_repair_sees_the_excerpt_the_first_call_showed(workspace):
     repair = json.loads(model.calls[1]["messages"][1]["content"])
     entry = next(item for item in repair["citation_catalog"] if item["source_id"] == source["id"])
     assert entry["quote_excerpt"] == shown and entry["excerpt_truncated"] is False
+
+
+def _filler(count, start=0):
+    return [f"    note_{index} = 'background line {index} about unrelated matters'" for index in range(start, start + count)]
+
+
+def test_question_excerpt_returns_a_short_text_whole():
+    text = "line one\nretry budget = 5\nline three"
+    assert question_excerpt(text, "retry budget", 1000) == (text, 0, 2)
+
+
+def test_question_excerpt_takes_whole_lines_that_hold_most_question_words():
+    lines = [*_filler(40), "RETRY_BUDGET = 5  # attempts per request", *_filler(40, 40)]
+    text = "\n".join(lines)
+    excerpt, first, last = question_excerpt(text, "What is the retry budget per request?", 600)
+    assert "RETRY_BUDGET = 5" in excerpt and len(excerpt) <= 600
+    assert excerpt == "\n".join(lines[first:last + 1]) and excerpt in text
+    # The excerpt is centred on the matching line, with context on both sides.
+    assert first < 40 < last and abs((40 - first) - (last - 40)) <= 2
+
+
+def test_question_excerpt_without_matching_words_is_the_beginning():
+    lines = _filler(80)
+    excerpt, first, last = question_excerpt("\n".join(lines), "nothing here matches", 500)
+    assert first == 0 and excerpt == "\n".join(lines[:last + 1]) and len(excerpt) <= 500
+    assert len(excerpt) + 1 + len(lines[last + 1]) > 500
+
+
+def test_question_excerpt_cuts_a_single_long_line_to_its_beginning():
+    text = "x" * 3000
+    assert question_excerpt(text, "retry", 1000) == ("x" * 1000, 0, 0)
+
+
+async def test_initial_hit_lines_describe_the_excerpt_not_the_chunk(workspace):
+    store, project, settings = workspace
+    lines = [*_filler(60), "RETRY_BUDGET = 5  # retry budget per request", *_filler(19, 60)]
+    text = "\n".join(lines)
+    assert len(text) > EXCERPT_CHARS
+    source, _ = document(store, project, text, uri="notes://retry-settings")
+    model = FakeOllama([final(source["id"], "RETRY_BUDGET = 5", "Five.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert result["status"] == "complete"
+    hit = json.loads(model.calls[0]["messages"][1]["content"])["initial_evidence"][0]
+    assert "RETRY_BUDGET = 5" in hit["text"] and len(hit["text"]) <= EXCERPT_CHARS
+    assert hit["text"] == "\n".join(lines[hit["line_start"] - 1:hit["line_end"]])
+    assert hit["line_start"] > 1 and hit["line_end"] < len(lines)
+
+
+async def test_ten_initial_excerpts_leave_room_for_a_search_round(workspace):
+    store, project, settings = workspace
+    sources = []
+    for index in range(INITIAL_HITS + 2):
+        body = [f'    settings["retry_budget_{index}_{line}"] = "five attempts"  # retry budget, "quoted" {line}'
+                for line in range(40)]
+        sources.append(document(store, project, "\n".join(body), uri=f"notes://retry-{index}")[0])
+    quote = 'settings["retry_budget_0_0"] = "five attempts"'
+    model = FakeOllama([calls(("search", {"query": "retry budget settings"})), final(sources[0]["id"], quote)])
+    # Many quotes: every one of them is escaped twice when the guard measures the messages.
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert len(model.calls) == 2 and result["diagnostics"]["code"] != "context_budget"
+    first = json.loads(model.calls[0]["messages"][1]["content"])
+    assert len(first["initial_evidence"]) == INITIAL_HITS
+    assert all(len(hit["text"]) <= EXCERPT_CHARS for hit in first["initial_evidence"])
+    used = sum(len(json.dumps(message, ensure_ascii=False)) for message in model.calls[1]["messages"])
+    assert used <= max(12000, settings.num_ctx * 2)
 
 
 def test_repair_catalog_keeps_its_budget_with_whole_excerpts(workspace):

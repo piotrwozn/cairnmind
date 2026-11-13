@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
 from .ollama import Ollama, OllamaUnavailable
-from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata
+from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata, terms
 from .store import TASK_STATES, validate_task_state
 
 
@@ -253,6 +253,43 @@ def parse_object(text: str) -> dict:
 
 
 MIN_QUOTE_CHARS = 12
+# Search hits shown to the model at the start of a question, and the size of each hit's text.
+# With the default num_ctx the context guard in ask is 32768 characters of serialized messages.
+# Ten excerpts of this size with the system prompt and the catalog take about 21000-23000 of
+# them, and a search round of six such excerpts about 8000-9000, so one search round still fits.
+# Larger excerpts would leave no room for it.
+INITIAL_HITS = 10
+EXCERPT_CHARS = 900
+
+
+def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[str, int, int]:
+    """The part of a text, at most ``size`` characters of whole lines, that holds most query words.
+
+    Returns the excerpt and the indexes of its first and last line within ``text``. A text that
+    fits is returned whole. Otherwise every run of whole lines that fits, one starting at each
+    line, is scored by how many distinct search terms of the query (``retrieval.terms``) it
+    contains, ignoring case. Of the runs with the best score the middle one is taken, which
+    centres the excerpt on what matches; with no matching term the excerpt is the beginning of
+    the text. A single line longer than ``size`` is cut to its first ``size`` characters. The
+    excerpt is always a literal passage of ``text``.
+    """
+    if len(text) <= size:
+        return text, 0, text.count("\n")
+    lines = text.split("\n")
+    folded = [line.casefold() for line in lines]
+    words = terms(query)
+    runs = []
+    for first in range(len(lines)):
+        last, length = first, len(lines[first])
+        while last + 1 < len(lines) and length + 1 + len(lines[last + 1]) <= size:
+            last += 1
+            length += 1 + len(lines[last])
+        piece = "\n".join(folded[first:last + 1])
+        runs.append((sum(word in piece for word in words), first, last))
+    best = max(score for score, _, _ in runs)
+    tied = [run for run in runs if run[0] == best]
+    _, first, last = tied[len(tied) // 2] if best else runs[0]
+    return "\n".join(lines[first:last + 1])[:size], first, last
 
 
 def quote_coverage(answer: str, quotes: list[str]) -> dict:
@@ -438,7 +475,11 @@ class KnowledgeAgent:
         evidence[source["id"]] = source
         return source
 
-    def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None) -> list[dict]:
+    def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "") -> list[dict]:
+        """Model-visible hits: each text is the excerpt of its chunk that matches ``query``.
+
+        ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk.
+        """
         result = []
         for hit in hits:
             try:
@@ -453,7 +494,10 @@ class KnowledgeAgent:
                 value.update(source_id=source["id"], text=source_text(source)[:2200], line_start=1,
                              line_end=len(source_text(source)[:2200].splitlines()), refreshed=True)
             else:
-                value["text"] = str(value.get("text", ""))[:1600]
+                text = str(value.get("text", ""))
+                value["text"], first, last = question_excerpt(text, query)
+                if value["text"] != text and isinstance(hit.get("line_start"), int):
+                    value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
             if isinstance(value.get("text"), str) and value["text"] in source_text(source):
                 source["_catalog_excerpt"] = value["text"]
@@ -527,7 +571,7 @@ class KnowledgeAgent:
             if not isinstance(query, str) or not query.strip():
                 raise ValueError("query must be a nonempty string")
             hits = await self.retriever.asearch(project_id, query[:2000], 6, worktree=worktree)
-            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree)
+            refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree, query)
             return {"hits": refreshed, "warnings": self.retriever.warnings[-3:]}
         if name == "graph":
             query = arguments.get("query")
@@ -832,11 +876,12 @@ class KnowledgeAgent:
         try:
             async with asyncio.timeout(self.settings.ask_timeout):
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
-                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, 5, worktree=worktree)
-                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree)
-                hybrid = await self.retriever.asearch(project_id, question, 5, worktree=worktree)
+                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
+                                                  worktree=worktree)
+                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree, question)
+                hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
-                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree)
+                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree, question)
                 context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
