@@ -20,8 +20,8 @@ written forms of the value that also count for that question: ``"{}m"`` (the val
 
 Scoring is mechanical. A question is *complete* when the answer's status is complete (its
 citations verified and the support check agreed). It is *right* when an accepted form occurs in
-the answer as a whole token, ignoring case: not inside a longer word or number (``8`` is not in
-``18``, ``8.5``, ``8,192`` or ``8m``); ``60.0`` also counts as ``60``. A complete answer without
+the answer as a whole token, ignoring case: not inside a longer word or number (``7`` is not in
+``17``, ``7.5``, ``7,168`` or ``7m``); ``45.0`` also counts as ``45``. A complete answer without
 an accepted form counts as *complete and wrong*. The acceptance figure is complete and right.
 """
 from __future__ import annotations
@@ -116,7 +116,7 @@ def answer_is_right(answer: str, accepted: list[str]) -> bool:
     """True when an accepted form occurs in ``answer`` as a whole token, ignoring case.
 
     Not as part of a longer word or number: no letter, digit or underscore next to it, no decimal
-    part after it, and no thousands group around it (``1,500`` does not contain ``500``).
+    part after it, and no thousands group around it (``1,300`` does not contain ``300``).
     """
     for value in accepted:
         pattern = (r"(?<![\w.])(?<!\d,)" + re.escape(value) + r"(?![\w]|[.,]\d)")
