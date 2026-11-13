@@ -69,6 +69,10 @@ Measured on 9 November 2026 on release 0.8.0 with `qwen3.5:9b` on an RTX 4080 Su
 
 The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](docs/EVALUATION.md).
 
+## Look before you install
+
+The full system needs Java, tmux, Ollama and several gigabytes of models. To see what Cairnmind keeps without any of them, read the [sample project memory](examples/sample-project/README.md): a small project with its decisions, a plan and a check run committed next to it, and a read-only command that needs only Python and uv.
+
 ## Quick start
 
 Cairnmind runs on Linux, and on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform). It needs Java 21+, tmux 3.4+, uv and Ollama. With those in place:
