@@ -484,6 +484,22 @@ CATALOG.update({
     "Server ids of a project must be unique.": "Identyfikatory serwerów projektu muszą być unikalne.",
     "The server list of a project is too large.": "Lista serwerów projektu jest za duża.",
     "Invalid MCP server lists.": "Niepoprawne listy serwerów MCP.",
+    "This environment name changes which code a program loads and is not allowed.":
+        "Ta nazwa zmiennej zmienia kod, który program wczytuje, i jest niedozwolona.",
+    "The MCP servers of this project changed meanwhile. Open the list again.":
+        "Serwery MCP tego projektu zmieniły się w międzyczasie. Otwórz listę ponownie.",
+    "Not allowed as environment names, since they change which code a program loads: PATH, HOME, SHELL, "
+    "LD_* and DYLD_*, PYTHONPATH, PYTHONSTARTUP, PYTHONHOME, PYTHONUSERBASE, PYTHONPLATLIBDIR, "
+    "NODE_PATH, NODE_OPTIONS, PERL5LIB, PERL5OPT, PERLLIB, RUBYLIB, RUBYOPT, GEM_HOME, GEM_PATH, "
+    "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
+    "XDG_DATA_HOME. A server whose program, an argument or a value names a path inside this project "
+    "folder is not started.":
+        "Niedozwolone nazwy zmiennych, bo zmieniają kod wczytywany przez program: PATH, HOME, SHELL, "
+        "LD_* i DYLD_*, PYTHONPATH, PYTHONSTARTUP, PYTHONHOME, PYTHONUSERBASE, PYTHONPLATLIBDIR, "
+        "NODE_PATH, NODE_OPTIONS, PERL5LIB, PERL5OPT, PERLLIB, RUBYLIB, RUBYOPT, GEM_HOME, GEM_PATH, "
+        "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
+        "XDG_DATA_HOME. Serwer, którego program, argument lub wartość wskazuje ścieżkę w katalogu tego "
+        "projektu, nie zostanie uruchomiony.",
 })
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)

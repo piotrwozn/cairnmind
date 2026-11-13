@@ -27,11 +27,34 @@ _SECRET_NAME = re.compile(r"(?:TOKEN|PASSWORD|PASSWD|SECRET|API_?KEY|AUTHORIZATI
                           r"PRIVATE_?KEY|ACCESS_?KEY|COOKIE|SESSION)", re.I)
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _FIELDS = {"id", "command", "args", "env"}
+# Variables that change which code a program loads or where it looks for it. A server gets the
+# worker's own HOME, PATH and SHELL; configuring them, or any of these, is refused outright.
+LOADER_ENV = ("PATH", "HOME", "SHELL", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "PYTHONPATH",
+              "PYTHONSTARTUP", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONPLATLIBDIR", "NODE_PATH", "NODE_OPTIONS",
+              "PERL5LIB", "PERL5OPT", "PERLLIB", "RUBYLIB", "RUBYOPT", "GEM_HOME", "GEM_PATH", "BASH_ENV",
+              "ENV", "CLASSPATH", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "XDG_CONFIG_HOME",
+              "XDG_DATA_HOME")
+LOADER_PREFIXES = ("LD_", "DYLD_")
 
 
 def secret_name(name: str) -> bool:
     from .api_credentials import credential_environment_names
     return bool(_SECRET_NAME.search(name)) or name.upper().startswith(ENV_PREFIXES) or name in credential_environment_names()
+
+
+def loader_name(name: str) -> bool:
+    return name.upper() in LOADER_ENV or name.upper().startswith(LOADER_PREFIXES)
+
+
+def _text(value) -> bool:
+    """Literal text that can be written to a process: bounded, no NUL, encodable as UTF-8."""
+    if not isinstance(value, str) or len(value) > MAX_TEXT or "\0" in value:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def validate_server(value) -> dict:
@@ -41,12 +64,10 @@ def validate_server(value) -> dict:
     identifier, command = value["id"], value["command"]
     if not isinstance(identifier, str) or not SERVER_ID.fullmatch(identifier):
         raise ValueError("A server id has 1 to 24 lowercase letters, digits or hyphens.")
-    if (not isinstance(command, str) or not command.startswith("/") or len(command) > MAX_TEXT
-            or _CONTROL.search(command)):
+    if not _text(command) or not command.startswith("/") or _CONTROL.search(command):
         raise ValueError("A server command must be an absolute path.")
     args = value.get("args", [])
-    if (not isinstance(args, list) or len(args) > MAX_ARGS
-            or any(not isinstance(arg, str) or len(arg) > MAX_TEXT or "\0" in arg for arg in args)):
+    if not isinstance(args, list) or len(args) > MAX_ARGS or any(not _text(arg) for arg in args):
         raise ValueError("A server has at most 32 arguments of at most 4096 characters.")
     env = value.get("env", {})
     if not isinstance(env, dict) or len(env) > MAX_ENV:
@@ -56,25 +77,40 @@ def validate_server(value) -> dict:
             raise ValueError("An environment name has letters, digits and underscores.")
         if secret_name(name):
             raise ValueError("A server gets no secrets: this environment name is refused.")
-        if not isinstance(text, str) or len(text) > MAX_TEXT or "\0" in text:
+        if loader_name(name):
+            raise ValueError("This environment name changes which code a program loads and is not allowed.")
+        if not _text(text):
             raise ValueError("An environment value is literal text of at most 4096 characters.")
     return {"id": identifier, "command": command, "args": list(args), "env": dict(env)}
 
 
-def inside_worktree(definition: dict, worktree) -> bool:
-    """Whether the program or a path argument of a server lies in the worktree.
+def _paths(text: str):
+    """The absolute paths a value names: itself, an option's value after '=', and ':'-separated parts."""
+    pieces = [text]
+    if "=" in text:
+        pieces.append(text.split("=", 1)[1])
+    for piece in list(pieces):
+        if ":" in piece:
+            pieces.extend(piece.split(":"))
+    return [piece for piece in pieces if piece.startswith("/")]
 
-    A coding session edits the worktree without an approval, so a server program or script there
-    would let it choose code that runs at the next start. Such a server is not started.
+
+def inside_worktree(definition: dict, worktree) -> bool:
+    """Whether the program, an argument or an environment value of a server names a path in the worktree.
+
+    A coding session edits the worktree without an approval, so code there would let it choose what runs
+    at the next start. Every absolute path a value names (the value itself, an option's value after '=',
+    each ':'-separated part) is resolved, so links and aliases of the worktree are seen, and compared
+    component by component, so a sibling that merely shares a name prefix is not. A value that only
+    becomes a path inside the server (a relative name, a configuration file it reads) cannot be seen.
     """
     from pathlib import Path
     root = Path(worktree).resolve()
-    for text in (definition["command"], *definition.get("args", [])):
-        if str(root) in text:
-            return True
-        if text.startswith("/"):
+    values = (definition["command"], *definition.get("args", []), *(definition.get("env") or {}).values())
+    for text in values:
+        for path in _paths(text):
             try:
-                if Path(text).resolve().is_relative_to(root):
+                if Path(path).resolve().is_relative_to(root):
                     return True
             except (OSError, RuntimeError, ValueError):
                 return True
@@ -113,6 +149,26 @@ def frozen_servers(preferences: dict, project_id: str, worktree) -> tuple[list[d
         else:
             kept.append(row)
     return kept, problems
+
+
+def apply_project_edit(stored: dict, edit) -> dict:
+    """One project's list replaced, only if it is still the list the editor showed (compare and swap).
+
+    The editor sends the list it read and the list it wants; the other projects' lists are taken from the
+    file under the preferences lock, so an edit made elsewhere meanwhile is neither undone nor lost.
+    """
+    if not isinstance(edit, dict) or set(edit) != {"project", "expected", "servers"}:
+        raise ValueError("Invalid MCP server lists.")
+    project = edit["project"]
+    if not isinstance(project, str) or not 1 <= len(project) <= 160 or "\0" in project:
+        raise ValueError("Invalid project identifier.")
+    if edit["expected"] != stored.get(project, []):
+        raise ValueError("The MCP servers of this project changed meanwhile. Open the list again.")
+    servers = validate_servers(edit["servers"])
+    result = {key: rows for key, rows in stored.items() if key != project}
+    if servers:
+        result[project] = servers
+    return result
 
 
 def validate_project_mcp_servers(value) -> dict:

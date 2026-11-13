@@ -13,7 +13,8 @@ from cairnmind.agent_tools import FILE_TOOLS
 from cairnmind.terminal_i18n import CATALOG
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_ui import ChoiceModal, FormModal
-from cairnmind.workspace_mcp import NOTE, REMOVED, SAVED, parse_form
+from cairnmind.mcp_servers import LOADER_ENV
+from cairnmind.workspace_mcp import LOADER_NOTE, NOTE, REMOVED, SAVED, parse_form
 from test_terminal_panels import settle
 from test_terminal_ux080 import screen_text, setup_ui
 from test_workspace_stage import wait_for
@@ -46,7 +47,9 @@ async def test_adding_a_server_saves_it_for_the_selected_project_only(tmp_path, 
         await pilot.press("ctrl+s")
         await settle(app, pilot)
         notice = screen_text(app)
-    assert saves(broker) == [{"project_mcp_servers": {"another-project": other, "project-keyboard": [SERVER]}}]
+    # Only this project's list, checked against the list shown; other projects are never sent back.
+    assert saves(broker) == [{"project_mcp_server_edit": {"project": "project-keyboard", "expected": [],
+                                                          "servers": [SERVER]}}]
     assert SAVED.split(".")[0] in notice
 
 
@@ -96,7 +99,9 @@ async def test_stored_text_is_shown_escaped_and_removal_needs_a_confirmation(tmp
         await settle(app, pilot)
     for text in (listed, confirm):
         assert "\x1b" not in text and "\x07" not in text and "\\x1b" in text
-    assert saves(broker) == [{"project_mcp_servers": {"project-keyboard": [SERVER | {"id": "second"}]}}]
+    assert saves(broker) == [{"project_mcp_server_edit": {"project": "project-keyboard",
+                                                          "expected": [hostile, SERVER | {"id": "second"}],
+                                                          "servers": [SERVER | {"id": "second"}]}}]
     assert REMOVED in CATALOG
 
 
@@ -105,8 +110,12 @@ def test_form_parsing_and_every_new_string_has_a_polish_entry():
         "id": "a", "command": "/bin/a", "args": ["x", " y"], "env": {"A": "1=2"}}
     with pytest.raises(ValueError, match="NAME=value"):
         parse_form({"id": "a", "command": "/bin/a", "env": "JUSTNAME"})
-    for text in (NOTE, SAVED, REMOVED, "MCP servers", "Add server", "Add MCP server", "Remove MCP server"):
+    for text in (NOTE, SAVED, REMOVED, LOADER_NOTE, "MCP servers", "Add server", "Add MCP server",
+                 "Remove MCP server"):
         assert text in CATALOG, text
+    # The form names every variable that is refused.
+    for name in LOADER_ENV:
+        assert name in LOADER_NOTE or name.startswith("LD_") and "LD_*" in LOADER_NOTE, name
     source = Path(__file__).parents[1] / "src" / "cairnmind" / "mcp_servers.py"
     for message in re.findall(r'raise ValueError\("([^"]+)"\)', source.read_text()):
         assert message in CATALOG, message

@@ -41,7 +41,8 @@ async def test_tools_are_listed_under_the_reserved_prefix_with_a_marked_descript
     try:
         assert [kind for kind, _ in events] == ["mcp_server_started"]
         data = events[0][1]
-        assert set(host.catalogue) == {"mcp_files_echo", "mcp_files_environment", "mcp_files_slow", "mcp_files_read_file"}
+        assert set(host.catalogue) == {"mcp_files_echo", "mcp_files_environment", "mcp_files_slow", "mcp_files_read_file",
+                                       "mcp_files_children"}
         assert data["env_names"] == ["LOG_LEVEL"] and data["command"] == sys.executable
         echo = next(row for row in data["tools"] if row["tool"] == "echo")
         # A read-only hint is recorded and grants nothing.
