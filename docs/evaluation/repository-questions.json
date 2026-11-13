@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "about": "Questions with known answers about this repository, for `cairnmind eval repository .` (see docs/EVALUATION.md). A value that can change (a version, a default, a limit) is read from the named file at run time by the pattern; a fixed answer is listed. This file is left out of the copy that is indexed, so it cannot be quoted.",
+  "about": "Questions with known answers about this repository, for `cairnmind eval repository .` (see docs/EVALUATION.md). A value that can change (a version, a default, a limit) is read from the named file at run time by the pattern; a fixed answer is listed. This file and the results in this directory are left out of the copy that is indexed, so they cannot be quoted. \"forms\" lists other written forms that count for one question: a unit (\"{}m\") or the number as a word (\"{word}\").",
   "questions": [
     {"id": "python-version", "question": "Which Python version does this project require?",
      "file": "pyproject.toml", "answer": {"pattern": "^requires-python = \">=([0-9.]+)\""}},
@@ -29,17 +29,17 @@
     {"id": "recall-accuracy", "question": "What factual accuracy must the recall evaluation reach to pass?",
      "file": "docs/EVALUATION.md", "answer": {"pattern": "factual accuracy ≥ ([0-9.]+)"}},
     {"id": "files-per-transaction", "question": "How many new files does indexing write in one transaction at most?",
-     "file": "src/cairnmind/ingest.py", "answer": {"pattern": "^NEW_FILES_PER_TRANSACTION = ([0-9]+)"}},
+     "file": "src/cairnmind/ingest.py", "answer": {"pattern": "^NEW_FILES_PER_TRANSACTION = ([0-9]+)", "forms": ["{word}"]}},
     {"id": "schema-version", "question": "What is the database schema version?",
      "file": "src/cairnmind/store.py", "answer": {"pattern": "^SCHEMA_VERSION = ([0-9]+)"}},
     {"id": "ask-timeout", "question": "What is the default timeout of a question, in seconds?",
-     "file": "src/cairnmind/config.py", "answer": {"pattern": "^    ask_timeout: float = ([0-9.]+)"}},
+     "file": "src/cairnmind/config.py", "answer": {"pattern": "^    ask_timeout: float = ([0-9.]+)", "forms": ["{}s"]}},
     {"id": "journal-events", "question": "At how many events does a journal transaction stop naming single rows?",
      "file": "src/cairnmind/journal.py", "answer": {"pattern": "^MAX_TRANSACTION_EVENTS = ([0-9]+)"}},
     {"id": "scope-drift-list", "question": "How many out-of-scope files does a scope drift report list at most?",
      "file": "src/cairnmind/scope.py", "answer": {"pattern": "^MAX_REPORTED = ([0-9]+)"}},
     {"id": "engine-heap", "question": "How much Java heap does the database engine get?",
-     "file": "src/cairnmind/engine.py", "answer": {"pattern": "\"-Xmx([0-9]+)m\""}},
+     "file": "src/cairnmind/engine.py", "answer": {"pattern": "\"-Xmx([0-9]+)m\"", "forms": ["-Xmx{}m", "{}m", "{} MB", "{}MB"]}},
     {"id": "context-size", "question": "What is the default context size num_ctx of the chat model?",
      "file": "src/cairnmind/config.py", "answer": {"pattern": "^    num_ctx: int = ([0-9]+)"}}
   ]

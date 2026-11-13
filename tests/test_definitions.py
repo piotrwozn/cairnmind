@@ -302,6 +302,39 @@ def test_a_definition_from_a_source_an_external_session_wrote_carries_its_mark(w
     assert all(item["metadata"]["origin_client"] == "cursor" for item in marked)
 
 
+def test_names_made_of_question_words_are_not_crowded_out_by_word_name_matches(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    # 250 fields named by a plain question word, sorting before the one the question spells out.
+    (root / "pkg" / "crowd.py").write_text("".join(
+        f"class A{index:03d}:\n    answer: int = {index}\n\n\n" for index in range(250)))
+    (root / "pkg" / "limits.py").write_text("class Limits:\n    answer_tokens: int = 2048\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "How many tokens may an answer have by default?", [], {})
+    assert found and found[0]["definition"] == "Limits.answer_tokens"
+
+
+def test_a_politely_phrased_question_keeps_the_words_that_spell_the_setting(workspace):  # noqa: F811
+    from cairnmind.definitions import pattern_words
+    question = ("Could you please tell me, if you happen to know it, how many tokens an answer may have "
+                "at most by default in this project?")
+    assert {"token", "answer"} <= set(pattern_words(question))
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "limits.py").write_text("class Limits:\n    answer_tokens: int = 2048\n")
+    index_project(store, project["id"])
+    found = KnowledgeAgent(store, settings, FakeOllama())._definitions(project["id"], question, [], {})
+    assert found and found[0]["definition"] == "Limits.answer_tokens"
+
+
+def test_a_test_constant_never_outranks_the_primary_definition_of_the_same_class():
+    rows = [{"symbol": {"name": "DEFAULT_TIMEOUT", "kind": "constant"}, "path": "tests/test_client.py"},
+            {"symbol": {"name": "Settings.timeout", "kind": "field", "owner": "Settings", "member": "timeout"},
+             "path": "pkg/config.py"}]
+    # One question word and a filler word is no full match, so the primary file decides.
+    ranked = rank_definitions("What is the default timeout?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["Settings.timeout", "DEFAULT_TIMEOUT"]
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
@@ -315,6 +348,6 @@ def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # 
         store.query, store.command = real_query, real_command
     assert found and len(found) <= MAX_DEFINITIONS
     print(f"definitions={len(found)} queries={len(counted)}")
-    # Project, roots, the worktree's sources (two), code names, word names; then one freshness
-    # check per definition.
-    assert len(counted) <= 7 + 12 * len(found)
+    # Project, roots, the worktree's sources (two), code names, word names, names made of question
+    # words; then one freshness check per definition.
+    assert len(counted) <= 8 + 12 * len(found)

@@ -27,21 +27,13 @@ The measurement found three problems, all fixed in 0.8.0:
 - **Lost citation during repair.** The format-repair step could drop a verified citation, which cost one run a single recall case. Repair now carries over draft citations that already verify.
 - **Decision classified as fact.** Extraction once labelled an explicitly chosen decision as a fact. The extraction instruction now defines each record kind.
 
-## Questions about Cairnmind's own repository
+## Questions about a real repository
 
-`cairnmind eval repository .` with the 20 questions of [evaluation/repository-questions.json](evaluation/repository-questions.json), measured on 13 November 2026 at commit 333c692 (the code of this release; only this page changed after it) with `qwen3.5:9b` (digest 56671c2a…) and `qwen3-embedding:0.6b` (digest ac6da0df…) on an NVIDIA RTX 4080 Super under WSL2. Each run indexed its own copy into its own data directory and database (242 files, 1,307 chunks) and took about 5 minutes.
+`cairnmind eval repository ROOT` needs ROOT to be the top of a Git worktree and indexes only the files Git tracks there: ignored files (secrets, build output, earlier reports) and links are never copied. The copy lives in a temporary directory readable only by its owner. Never indexed, so that the evaluation cannot read its own questions, accepted answers or reported results: the question file and everything under `docs/evaluation/` (the list is `NOT_INDEXED` in `src/cairnmind/repository_evaluation.py`).
 
-| Run | Complete | Complete and right | Complete and wrong | Not complete |
-| --- | --- | --- | --- | --- |
-| 1 | 16 | 16 | 0 | 4 |
-| 2 | 17 | 17 | 0 | 3 |
-| 3 | 17 | 17 | 0 | 3 |
+Before it copies anything, the command checks that the models and the engine are there and answers `not_run` (exit 3) otherwise; it never starts an engine. Each run creates a database named `cairnmind_eval_<hex>` on the running engine, names it in the report (`isolation.database`) and drops it at the end, also after Ctrl+C; when it cannot drop it, the run fails and prints the name. A run that is killed outright can leave such a database behind. Cairnmind has no command to remove one; drop it through the engine, with the URL and the password from the `config.json` of your data directory: `curl -u root:PASSWORD -X POST ARCADE_URL/api/v1/server -d '{"command": "drop database cairnmind_eval_<hex>"}'`.
 
-Complete and right: 16 to 17 of 20 (worst run 16, best 17). Complete means that every quote is a literal passage of the current source and that the support check agreed; right means that the expected value, read from the code at run time where it can change, appears in the answer. A complete answer without it would count as wrong; none did in these runs. A fourth run stopped while indexing with a database error before it asked anything and is not counted; it was repeated.
-
-Not complete in every run: the Python version (stated only in `pyproject.toml`; the answer was refused as unparseable, not literal or `unknown`), the Java heap (`-Xmx1024m` is a literal inside a function; the quotes were not literal, or not accepted by the support check) and the journal's event limit (twice the model answered from the neighbouring constant `NEW_FILE_EVENTS_PER_TRANSACTION`, which the support check rejected; once it found no evidence). Run 1 also lost the service port to a quote that was not literal.
-
-What the support check does and does not catch, as measured while this was built: it rejects a value quoted from a test, a lock file or a comment that only mentions a number ("far below the number at which …"), and lets through a value of a neighbouring setting or a number used for something else, such as a display limit. The questions above did not need it to tell those apart in these runs, because the definition of the asked setting was shown to the model; on another repository it may.
+The results for Cairnmind's own repository are in [evaluation/RESULTS.md](evaluation/RESULTS.md), kept out of the indexed copy.
 
 ## Limits
 

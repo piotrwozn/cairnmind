@@ -14,17 +14,21 @@ are resolved by exact name:
   definition, a word name constants and fields only, since a plain word such as "version" or
   "write" names many functions; code-name matches are read first, word-name matches fill up
   the rest of the bound;
-- a constant or field is also a candidate when every word of its name (two or more) is a word
-  of the question, in any order (``answer_tokens`` for "How many tokens may an answer have?"). Name
-  words are split at "_" and case changes; the filler words in FILLER_WORDS are ignored; words
-  are compared by a light stem (a trailing "ing", "ed" or "s" is dropped, so "reported" is
-  "report"). Such candidates come from the word-name query itself: it also returns constants
-  and fields whose name contains two of the question's words, or one and a filler word;
-- candidates are ranked: a name the question writes as code first; then a name all of whose
-  words are question words; then by how many question words the name shares; then by how many
-  its owner and file name share; then a primary file before a test, lock or minified file. A
-  candidate whose name shares no word is dropped, and a name defined in a primary file is never
-  shown from a secondary one;
+- a constant or field is also a candidate when its snake_case name is made only of question
+  words and FILLER_WORDS, with at least one question word and two words in all
+  (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
+  drift report list at most?"). Words compare by a light stem (a trailing "ing", "ed" or "s" is
+  dropped). The question words used are those that can be name words: NAME_STOPWORDS and words
+  under three letters are left out, the longest MAX_PATTERN_WORDS are kept. The database applies
+  this as a regular expression in its own bounded read, so only such names come back;
+- each kind of match has its own read of at most MAX_ROWS rows, after the worktree filter:
+  code names (any kind), word names (constants and fields), names made of question words;
+- candidates are ranked: a name the question writes as code first; then a full match, a name
+  of at least two question words with nothing else but filler words (``answer_tokens``; not
+  ``MAX_REPORTED``, which has one); then a primary file before a test, lock or minified file;
+  then by how many question words the name shares; then by how many its owner and file name
+  share. A candidate whose name shares no word is dropped, and a name defined in a primary
+  file is never shown from a secondary one;
 - each shown definition is the whole definition with neighbouring lines of its scope, within
   the excerpt size (see ``definition_lines``).
 """
@@ -45,6 +49,13 @@ _KIND_ORDER = {"constant": 0, "field": 0, "function": 1, "method": 1, "class": 2
 # Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
 FILLER_WORDS = ("max", "min", "default", "num")
 MAX_PATTERN_WORDS = 8  # question words used to look up names by their words
+# Question words that do not name what a setting is about.
+NAME_STOPWORDS = frozenset("""
+about all and any are can could did does doing done for from get give has have how into its know
+least many may might more most much must need not one our please should some tell than that the
+their there these this those use used was were what when where which who why will with would you
+your
+""".split())
 
 
 def _stem(word: str) -> str:
@@ -103,8 +114,9 @@ def relevance(question: str, symbol: dict, path: str) -> tuple[int, int, int, in
     asked_words = {_stem(word) for term in asked for word in _words(term)}
     own = {_stem(word) for word in _words(str(symbol.get("member") or symbol.get("name", "")))}
     content = own - {_stem(word) for word in FILLER_WORDS}
-    # A one-word name (port, question) is a plain word match, not a name the question spells out.
-    full = int(len(own) >= 2 and bool(content) and content <= asked_words)
+    # A full match needs two question words: port, question, MAX_TIMEOUT or DEFAULT_PORT is a
+    # plain word match, not a name the question spells out.
+    full = int(len(content) >= 2 and content <= asked_words)
     context = {_stem(word) for word in _words(str(symbol.get("owner", ""))) | _words(PurePosixPath(path).stem)}
     return named, full, len(own & asked_words), len(context & asked_words)
 
@@ -130,40 +142,41 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
                            "secondary": secondary_source(row["path"])})
     primary_names = {bare(row) for row in scored if not row["secondary"]}
     kept = [row for row in scored if not (row["secondary"] and bare(row) in primary_names)]
-    return sorted(kept, key=lambda row: (-row["named"], -row["full"], -row["relevance"], -row["file_relevance"],
-                                         row["secondary"],
+    return sorted(kept, key=lambda row: (-row["named"], -row["full"], row["secondary"], -row["relevance"],
+                                         -row["file_relevance"],
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3),
                                          row["path"], int(row["symbol"].get("line_start") or 0)))
 
 
-def name_word_condition(question: str) -> tuple[str, dict]:
-    """SQL (to OR into the word-name query) for names that contain two question words, or one and
-    a filler word, compared in lower case by stem; and its parameters. Empty for fewer than one
-    usable word. It narrows the rows the database returns; ``relevance`` decides on whole words.
-    """
-    stems = [stem for stem in dict.fromkeys(
+def pattern_words(question: str) -> list[str]:
+    """Stems of the question words that can be words of a name, longest first, at most MAX_PATTERN_WORDS."""
+    stems = dict.fromkeys(
         _stem(word) for term in terms(question) for word in _words(term)
-        if word.isascii() and word.isalnum() and _stem(word) not in FILLER_WORDS)
-        if len(stem) >= 3][:MAX_PATTERN_WORDS]
-    if not stems:
-        return "", {}
-    params = {f"w{index}": f"%{stem}%" for index, stem in enumerate(stems)}
-    params.update({f"f{index}": f"%{word}%" for index, word in enumerate(FILLER_WORDS)})
-    pairs = [f"(label.toLowerCase() LIKE :w{first} AND label.toLowerCase() LIKE :w{second})"
-             for first in range(len(stems)) for second in range(first + 1, len(stems))]
-    pairs += [f"(label.toLowerCase() LIKE :w{first} AND label.toLowerCase() LIKE :f{second})"
-              for first in range(len(stems)) for second in range(len(FILLER_WORDS))]
-    return " OR " + " OR ".join(pairs), params
+        if word.isascii() and word.isalnum() and word not in NAME_STOPWORDS and word not in FILLER_WORDS)
+    chosen = [stem for stem in stems if len(stem) >= 3]
+    return sorted(chosen, key=len, reverse=True)[:MAX_PATTERN_WORDS]
+
+
+def name_word_pattern(question: str) -> str | None:
+    """A regular expression for a lower-case snake_case name made of question words and filler
+    words, with at least one question word and two words in all; None without a usable word."""
+    words = pattern_words(question)
+    if not words:
+        return None
+    real = "(?:" + "|".join(re.escape(word) for word in words) + ")(?:s|es|ed|ing)?"
+    word = "(?:" + real + "|" + "|".join(FILLER_WORDS) + ")"
+    return f"^(?=(?:.*_)?{real}(?:_|$))(?:{word}_)+{word}$"
 
 
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
     """Ranked definition rows of this worktree for the names in ``question`` and ``texts``.
 
     The worktree's current sources are read first (as search reads them), and the node queries
-    keep only symbols of those sources, ordered by label, path and line: first the matches of
-    code names (any kind), at most MAX_ROWS, then word-name matches (constants and fields) up to
-    MAX_ROWS in all. Every bound applies after the worktree filter, a common word cannot crowd
-    out a name the question writes as code, and the same index gives the same rows. A row is
+    keep only symbols of those sources, ordered by label, path and line, each at most MAX_ROWS:
+    the matches of code names (any kind), of word names (constants and fields), and of names made
+    of question words (``name_word_pattern``). Every bound applies after the worktree filter and
+    to one kind of match, so one kind cannot crowd out another, and the same index gives the same
+    rows; three queries at most. A row is
     ``{"node_id", "source_id", "symbol", "path", "named", "relevance", ...}`` with ``path``
     relative to the worktree root.
     """
@@ -180,14 +193,22 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
     rows = store.query(
         select + f"(label IN :names OR metadata.member IN :names) {order} LIMIT {MAX_ROWS}",
         {"project": project_id, "eligible": eligible, "names": code}) if code else []
-    if plain and len(rows) < MAX_ROWS:
-        known = {row["id"] for row in rows}
-        words, params = name_word_condition(question)
+    known = {row["id"] for row in rows}
+    if plain:
+        # Word names in their own bounded read, so that names made of question words below
+        # cannot be crowded out by them, nor they by those.
         rows += [row for row in store.query(
-            select + f"(label IN :names OR metadata.member IN :names{words}) "
-            f"AND metadata.kind IN ['constant', 'field'] {order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "names": plain, **params}) if row["id"] not in known
-        ][:MAX_ROWS - len(rows)]
+            select + f"(label IN :names OR metadata.member IN :names) AND metadata.kind IN ['constant', 'field'] "
+            f"{order} LIMIT {MAX_ROWS}",
+            {"project": project_id, "eligible": eligible, "names": plain}) if row["id"] not in known]
+        known = {row["id"] for row in rows}
+    pattern = name_word_pattern(question)
+    if pattern:
+        rows += [row for row in store.query(
+            select + "((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :pattern) "
+            "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :pattern)) "
+            f"{order} LIMIT {MAX_ROWS}",
+            {"project": project_id, "eligible": eligible, "pattern": pattern}) if row["id"] not in known]
     found = []
     for row in rows:
         symbol = json_value(row.get("metadata"), {})
