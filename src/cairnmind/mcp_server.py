@@ -107,10 +107,12 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _looks_like_path(value: str) -> bool:
-    """A project given as a path ("." or "../app", "~/app", "/abs/app"); anything else is an id or a name.
+    """A project that is a path by its form ("." or "../app", "~/app", "/abs/app"); made absolute at start.
 
-    A name is never guessed from the working directory: a local folder of that name, or a "/" in it,
-    does not make it a path.
+    Any other value is settled on the first resume_context (_project_for_service): a registered project
+    id or name is sent as given, even when a folder of that name exists here; otherwise a relative path
+    that exists from the editor's working directory ("packages/api") is made absolute, because the
+    service would read it from its own working directory.
     """
     return value.startswith((".", "~")) or os.path.isabs(value)
 
@@ -163,7 +165,7 @@ class ServiceClient:
         async with self._starting:
             if self.session_id:
                 return await self.request("POST", "/sessions/context", payload={})
-            project, worktree = self.external["project"], self.external.get("worktree")
+            project, worktree = await self._project_for_service(self.external["project"]), self.external.get("worktree")
             if worktree is None:
                 worktree = await self._containing_root(project)
             result = await self._send("POST", "/sessions/prepare", {
@@ -171,6 +173,17 @@ class ServiceClient:
             if not self.session_id:
                 raise RuntimeError("Cairnmind service returned no session for this external client")
             return result
+
+    async def _project_for_service(self, project: str) -> str:
+        """A name wins over a local folder; a relative path is read from this process's working directory."""
+        if os.path.isabs(project):
+            return project
+        listed = (await self._send("GET", "/projects", None, {}, allow_list=True)).get("items") or []
+        if any(isinstance(row, dict) and project in (row.get("id"), row.get("name")) for row in listed):
+            return project
+        local = Path(project).expanduser()
+        # Otherwise sent as given, and the service answers "Unknown project".
+        return str(local.resolve()) if local.exists() else project
 
     async def _containing_root(self, project: str) -> str | None:
         """The most specific registered root containing the project path (or the working directory)."""
@@ -217,7 +230,7 @@ class ServiceClient:
         return await self._send(method, endpoint, body, query, adopt=endpoint == "/sessions/context")
 
     async def _send(self, method: str, endpoint: str, body: dict[str, Any] | None,
-                    query: dict[str, Any], *, adopt: bool = False) -> dict[str, Any]:
+                    query: dict[str, Any], *, adopt: bool = False, allow_list: bool = False) -> dict[str, Any]:
         timeout = (self.settings.ask_timeout + 15 if endpoint == "/ask" else
                    45 if endpoint in {"/sessions/context", "/sessions/prepare"} else 15)
         try:
@@ -227,6 +240,8 @@ class ServiceClient:
                                                 headers={"Authorization": f"Bearer {self.settings.token}"})
                 response.raise_for_status()
                 result = response.json()
+                if allow_list and isinstance(result, list):
+                    return {"items": result}
                 if not isinstance(result, dict):
                     raise ValueError("Expected an object response from local service")
                 if adopt:

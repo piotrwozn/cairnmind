@@ -800,6 +800,14 @@ class Store:
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
                   replace_origin=False, replace_metadata=False, mark_only_changes=False):
+        """Write one record version.
+
+        replace_origin: the origin mark follows this writer instead of the old version (checkpoints).
+        replace_metadata: the metadata is built from this write alone, not merged onto the old version's.
+        Used when a non-external checkpoint replaces an external one, so no external text stays behind
+        unmarked; state that earlier native checkpoints set and neither checkpoint repeats is dropped too.
+        mark_only_changes: stamp the current origin only if the stored result differs (plan steps).
+        """
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
         if not isinstance(record, dict):
@@ -858,11 +866,6 @@ class Store:
         if replace_origin:
             for name in ORIGIN_METADATA:
                 metadata.pop(name, None)
-        origin = self.current_origin()
-        if origin and mark_only_changes and not outcome_changed(old, content, key, metadata):
-            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none.
-            origin = None
-        metadata.update(origin or {})
         explicit_completion = kind == "task" and metadata.get("state") == "done" and (not old or updates.get("state") == "done")
         if managed_batch and old and old.get("metadata", {}).get("state") == "done" and metadata.get("state") == "done":
             explicit_completion = False  # Internal plan batches preserve progress; they do not assert a new check.
@@ -892,6 +895,12 @@ class Store:
                         metadata.pop(field, None)
             self._validate_task(tx, project_id, record_id, metadata, sources,
                                 assert_completion=explicit_completion, validate_dependencies=not managed_batch)
+        # Decided on the final metadata, after every field this write drops (criteria links, reported proof).
+        origin = self.current_origin()
+        if origin and mark_only_changes and not outcome_changed(old, content, key, metadata):
+            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none.
+            origin = None
+        metadata.update(origin or {})
         supersedes = record.get("supersedes", old.get("supersedes") if old else None)
         if supersedes and (not old or supersedes != old.get("supersedes")):
             previous = _one(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": supersedes, "project": project_id}, False)

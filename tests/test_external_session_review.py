@@ -180,3 +180,21 @@ def test_a_search_hit_from_an_external_source_carries_the_mark(fixture):
     agent = KnowledgeAgent(fixture.store, fixture.settings, object(), retriever)
     shown = {hit["source_id"]: hit for hit in agent._hits(hits, fixture.project["id"], {})}
     assert shown[external["source_id"]]["metadata"]["origin_evidence"] == "degraded"
+
+
+def test_a_new_goal_that_drops_reported_evidence_marks_the_step(fixture):
+    native = save_plan(fixture, None, "native", [{"key": "a", "content": "Step A"}])
+    task = native["tasks"][0]
+    claims = {"test_passed": True, "test_source_ids": [fixture.note["id"]],
+              "acceptance_passed": True, "acceptance_source_ids": [fixture.note["id"]]}
+    reported = fixture.store.remember(fixture.project["id"], {
+        "id": task["id"], "expected_version": task["version"], "expected_plan_version": native["plan"]["version"],
+        "metadata": {**task["metadata"], **claims}}, [fixture.note["id"]])
+    current = fixture.store.query("SELECT FROM plans WHERE id=:id", {"id": native["plan"]["id"]})[0]
+    # Same step, new goal: the plan-level context changes, so the store drops the reported claims.
+    saved = save_plan(fixture, fixture.session("external"), "goal", [{"key": "a", "content": "Step A"}],
+                      plan={"id": current["id"], "goal": "A new goal from the editor"},
+                      expected_version=current["version"], task_versions={task["id"]: reported["version"]})
+    after = fixture.record(saved["tasks"][0]["id"])
+    assert not set(claims) & set(after["metadata"])
+    assert marked(fixture, after)

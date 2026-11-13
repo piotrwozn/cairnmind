@@ -262,3 +262,27 @@ async def test_a_relative_project_names_the_project_seen_from_the_editor(tmp_pat
                 context = tool_result(await client.call_tool("resume_context", {}))
     assert context["packet"]["worktree"] == str(root.resolve())
     assert store.query("SELECT client FROM sessions")[0]["client"] == "external"
+
+
+async def test_a_relative_folder_is_read_from_the_editor_not_from_the_service(tmp_path, clean_env):
+    mono = repository(tmp_path / "mono")
+    (mono / "packages" / "api").mkdir(parents=True)
+    settings = Settings.load(tmp_path / "memory", create=True)
+    store = Store(settings.data_dir)
+    editor_project = store.add_project("mono", mono)
+    # The in-thread service runs in the test's working directory, which is the root of another project:
+    # read there, "packages/api" would silently name that one.
+    service_side = store.add_project("service-side", Path.cwd())
+    parameters = StdioServerParameters(
+        command=sys.executable, cwd=str(mono),
+        args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp", "--client", "external",
+              "--project", "packages/api"],
+        env=clean_environment())
+    with local_service(settings):
+        async with stdio_client(parameters) as (reader, writer):
+            async with ClientSession(reader, writer) as client:
+                await client.initialize()
+                await client.call_tool("resume_context", {})
+    sessions = store.query("SELECT project_id,worktree FROM sessions")
+    assert [(row["project_id"], row["worktree"]) for row in sessions] == [(editor_project["id"], str(mono.resolve()))]
+    assert service_side["id"] != editor_project["id"]
