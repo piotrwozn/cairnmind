@@ -244,7 +244,7 @@ async def test_answer_the_support_check_accepts_stays_complete(workspace):
 async def test_answer_the_support_check_rejects_is_not_complete(workspace):
     verdict = {"content": json.dumps({"supported": False, "reason": "The quote sets the value\nin a test."})}
     result, model = await _judged(workspace, verdict)
-    assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "answer_unsupported"
     assert "Five attempts." not in result["answer"]
     assert any("The quote sets the value in a test." in gap for gap in result["unknowns"])
     assert result["sources"][0]["quote"] == SUPPORTED_QUOTE  # verified quotes are kept, not changed
@@ -260,7 +260,7 @@ async def test_answer_the_support_check_rejects_is_not_complete(workspace):
 ])
 async def test_unreadable_or_failed_support_check_counts_as_no(workspace, support):
     result, model = await _judged(workspace, support)
-    assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
     assert "Five attempts." not in result["answer"]
     assert any("Nie udało się sprawdzić" in gap for gap in result["unknowns"])
     assert result["diagnostics"]["support_check"] == "failed" and len(model.support_calls) == 1

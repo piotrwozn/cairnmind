@@ -839,8 +839,9 @@ class KnowledgeAgent:
         """Keep a complete answer complete only if one judge call finds that its quotes state it.
 
         Anything else (not complete, so no call) passes unchanged. A "no", an unparsed reply or a
-        failed call yields the result of a failed citation validation: partial, citation_invalid,
-        the answer withheld, the verified quotes kept as sources, the judge's reason in unknowns.
+        failed call yields the result of a failed citation validation: partial, the answer withheld,
+        the verified quotes kept as sources, the judge's reason in unknowns. The code is
+        answer_unsupported when the judge said no and support_unverified when it gave no verdict.
         A timeout is left to the caller's ask_timeout handling, which never returns complete.
         """
         if result.get("status") != "complete":
@@ -864,7 +865,7 @@ class KnowledgeAgent:
                "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.")
         return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.",
                             evidence, [*result.get("unknowns", []), gap], started, result["sources"],
-                            code="citation_invalid")
+                            code="answer_unsupported" if reason else "support_unverified")
 
     def _compact_repair(self, question: str, state: dict, candidate: str, errors: list[str],
                         catalog: list[dict], answer_schema: dict | None, context_chars: int) -> tuple[list, dict] | None:
