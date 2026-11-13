@@ -14,6 +14,7 @@ from jsonschema import Draft202012Validator
 
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
+from .definitions import MAX_DEFINITIONS, definition_lines, find_definitions
 from .ollama import Ollama, OllamaUnavailable
 from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata, terms
 from .store import TASK_STATES, validate_task_state
@@ -505,6 +506,54 @@ class KnowledgeAgent:
             result.append(value)
         return result
 
+    def _definitions(self, project_id: str, question: str, hits: list[dict], evidence: dict,
+                     worktree=None) -> list[dict]:
+        """Up to MAX_DEFINITIONS model-visible definitions of names the question or the hits use.
+
+        Each is shown and made citable like a hit: kind "definition", the defined name, its path
+        within the worktree, and the lines shown, which are the definition with neighbouring lines
+        of its scope. A definition whose lines a hit already shows, or whose file changed since it
+        was indexed, is left out. See ``cairnmind.definitions`` for how names are found and ranked.
+        """
+        try:
+            ranked = find_definitions(self.store, self.retriever, project_id, question,
+                                      [str(hit.get("text", "")) for hit in hits], worktree)
+        except (ValueError, OSError):
+            return []
+        # Lines already in view: the hits that are always kept, then each definition added.
+        shown = [(hit["source_id"], hit.get("line_start"), hit.get("line_end"))
+                 for hit in hits[:INITIAL_HITS - MAX_DEFINITIONS]
+                 if isinstance(hit.get("line_start"), int) and isinstance(hit.get("line_end"), int)]
+        result = []
+        for row in ranked:
+            if len(result) >= MAX_DEFINITIONS:
+                break
+            symbol = row["symbol"]
+            start, end = symbol.get("line_start"), symbol.get("line_end")
+            if (not isinstance(start, int) or not isinstance(end, int)
+                    or any(source_id == row["source_id"] and first <= start and end <= last
+                           for source_id, first, last in shown)):
+                continue
+            try:
+                source = self._source(row["source_id"], project_id, evidence, worktree=worktree)
+            except (ValueError, OSError):
+                continue
+            lines = source_text(source).split("\n")
+            if source["id"] != row["source_id"] or end > len(lines):
+                continue  # the file changed since it was indexed: its line numbers no longer hold
+            first, last = definition_lines(lines, start, end, EXCERPT_CHARS)
+            text = "\n".join(lines[first - 1:last])[:EXCERPT_CHARS]
+            if not text.strip():
+                continue
+            source["_catalog_excerpt"] = text
+            shown.append((source["id"], first, first + text.count("\n")))
+            result.append({"id": f"definition:{row['node_id']}", "source_id": source["id"], "kind": "definition",
+                           "definition": str(symbol.get("name", ""))[:200],
+                           "definition_kind": str(symbol.get("kind", ""))[:20], "path": row["path"][:240],
+                           "uri": source["uri"], "text": text, "line_start": first,
+                           "line_end": first + text.count("\n"), "source_sha256": source["sha256"]})
+        return result
+
     def _workflow(self, project_id, evidence, worktree=None, plan_id=None):
         workflow = self.retriever.workflow(project_id, worktree, plan_id)
         plan = workflow.get("plan") or {}
@@ -916,6 +965,12 @@ class KnowledgeAgent:
                 hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
                     initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree, question)
+                # Definitions of names the question and the hits use take the places of the
+                # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
+                definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
+                                                      evidence, worktree)
+                if definitions:
+                    initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
                 context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
