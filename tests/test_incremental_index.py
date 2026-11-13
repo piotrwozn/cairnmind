@@ -298,3 +298,17 @@ def test_a_stored_graph_that_differs_from_its_fingerprint_is_replaced(workspace,
     (root / "pkg" / "module_04.py").write_text("VALUE_4 = 44\n")
     assert index_project(store, pid)["graph_written"] == {"nodes": 2, "edges": 1}
     assert_same_as_a_full_run(store, pid)
+
+
+def test_a_memory_package_kept_deeper_in_the_tree_is_not_indexed_as_project_text(tmp_path):
+    root = tmp_path / "repo"
+    for folder in ("examples/sample/.memory/cairnmind/objects", "examples/sample/.memory/devbrain", "examples/sample/src",
+                   "docs/.memory/other"):
+        (root / folder).mkdir(parents=True)
+    (root / "examples/sample/.memory/cairnmind/manifest.json").write_text("{}")
+    (root / "examples/sample/.memory/cairnmind/objects/row.json").write_text('{"content": "a stored row"}')
+    (root / "examples/sample/.memory/devbrain/manifest.json").write_text("{}")
+    (root / "examples/sample/src/app.py").write_text("VALUE = 1\n")
+    (root / "docs/.memory/other/note.md").write_text("an ordinary file\n")
+    found = sorted(path.relative_to(root).as_posix() for path in ingest._files(root))
+    assert found == ["docs/.memory/other/note.md", "examples/sample/src/app.py"]
