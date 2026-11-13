@@ -14,10 +14,17 @@ are resolved by exact name:
   definition, a word name constants and fields only, since a plain word such as "version" or
   "write" names many functions; code-name matches are read first, word-name matches fill up
   the rest of the bound;
-- candidates are ranked by how many search terms of the question occur among the words of the
-  name, its owner and its file name; a candidate sharing none is dropped; then a primary file
-  before a test, lock or minified file; a name defined in a primary file is never shown from a
-  secondary one;
+- a constant or field is also a candidate when every word of its name (two or more) is a word
+  of the question, in any order (``answer_tokens`` for "How many tokens may an answer have?"). Name
+  words are split at "_" and case changes; the filler words in FILLER_WORDS are ignored; words
+  are compared by a light stem (a trailing "ing", "ed" or "s" is dropped, so "reported" is
+  "report"). Such candidates come from the word-name query itself: it also returns constants
+  and fields whose name contains two of the question's words, or one and a filler word;
+- candidates are ranked: a name the question writes as code first; then a name all of whose
+  words are question words; then by how many question words the name shares; then by how many
+  its owner and file name share; then a primary file before a test, lock or minified file. A
+  candidate whose name shares no word is dropped, and a name defined in a primary file is never
+  shown from a secondary one;
 - each shown definition is the whole definition with neighbouring lines of its scope, within
   the excerpt size (see ``definition_lines``).
 """
@@ -35,6 +42,18 @@ MAX_NAMES = 64
 MAX_ROWS = 200  # candidate definitions read per question, after the worktree filter
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
 _KIND_ORDER = {"constant": 0, "field": 0, "function": 1, "method": 1, "class": 2}
+# Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
+FILLER_WORDS = ("max", "min", "default", "num")
+MAX_PATTERN_WORDS = 8  # question words used to look up names by their words
+
+
+def _stem(word: str) -> str:
+    """A light stem: "reported" and "report", "events" and "event" compare equal."""
+    word = word.casefold()
+    for suffix, keep in (("ing", 5), ("ed", 4), ("s", 4)):
+        if word.endswith(suffix) and len(word) >= keep and not word.endswith("ss"):
+            return word[:-len(suffix)]
+    return word
 
 
 def _code_like(name: str) -> bool:
@@ -68,47 +87,73 @@ def _words(text: str) -> set[str]:
     return {word.casefold() for word in re.split(r"[^A-Za-z0-9]+", spaced) if word}
 
 
-def relevance(question: str, symbol: dict, path: str) -> tuple[int, int, int]:
-    """(named, words in name and owner, words in file name) for a definition and a question.
+def relevance(question: str, symbol: dict, path: str) -> tuple[int, int, int, int]:
+    """(named, full, name words, context words) for a definition and a question.
 
     ``named`` is 1 when the question writes the definition's name or bare member as code, in any
     case (``ask_timeout``, ``SCHEMA_VERSION``, ``Settings.port``); a plain word such as "port" is
-    not a name written as code. The word counts compare the
-    question's search terms split into words (``schema_version`` counts as schema and version)
-    with the words of the name and its owner, and of the file name.
+    not a name written as code. ``full`` is 1 when the bare name has at least two words and every
+    one of them, filler words left out, is a question word (``answer_tokens``, ``MAX_REPORTED``). The counts are the question words found among the words of the bare
+    name and among those of its owner and file name. Words are compared by ``_stem``; the
+    question's search terms are split into words (``schema_version`` is schema and version).
     """
     asked = terms(question)
     spelled = {str(symbol.get(key, "")).casefold() for key in ("name", "member") if symbol.get(key)}
     named = int(any(match.casefold() in spelled for match in _IDENTIFIER.findall(question) if _code_like(match)))
-    words = _words(str(symbol.get("name", ""))) | _words(str(symbol.get("owner", "")))
-    stem = _words(PurePosixPath(path).stem)
-    asked_words = [word for term in asked for word in _words(term)]
-    return named, sum(word in words for word in asked_words), sum(word in stem for word in asked_words)
+    asked_words = {_stem(word) for term in asked for word in _words(term)}
+    own = {_stem(word) for word in _words(str(symbol.get("member") or symbol.get("name", "")))}
+    content = own - {_stem(word) for word in FILLER_WORDS}
+    # A one-word name (port, question) is a plain word match, not a name the question spells out.
+    full = int(len(own) >= 2 and bool(content) and content <= asked_words)
+    context = {_stem(word) for word in _words(str(symbol.get("owner", ""))) | _words(PurePosixPath(path).stem)}
+    return named, full, len(own & asked_words), len(context & asked_words)
 
 
 def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     """Rows ``{"symbol": node metadata, "path": project-relative path, ...}`` in the order shown.
 
-    Drops rows whose name and owner share no word with the question (unless the question writes
-    the name) and, per bare name (a field's member), secondary rows when a primary file defines
-    that name. Order: a name the question writes first, then question words in name and owner,
-    then in the file name, primary before secondary, constants and fields before functions before
-    classes, then path and line for a stable result.
+    Drops rows whose bare name shares no word with the question (unless the question writes the
+    name) and, per bare name (a field's member), secondary rows when a primary file defines that
+    name. Order: a name the question writes first, then a name made only of question words, then
+    question words in the name, then in its owner and file name, primary before secondary,
+    constants and fields before functions before classes, then path and line for a stable result.
+    So a one-word overlap (SUPPORT_TOKENS for "tokens") never outranks a full match.
     """
     def bare(row: dict) -> str:
         return str(row["symbol"].get("member") or row["symbol"].get("name") or "")
 
     scored = []
     for row in rows:
-        named, words, filed = relevance(question, row["symbol"], row["path"])
+        named, full, words, context = relevance(question, row["symbol"], row["path"])
         if named or words:
-            scored.append({**row, "named": named, "relevance": words, "file_relevance": filed,
+            scored.append({**row, "named": named, "full": full, "relevance": words, "file_relevance": context,
                            "secondary": secondary_source(row["path"])})
     primary_names = {bare(row) for row in scored if not row["secondary"]}
     kept = [row for row in scored if not (row["secondary"] and bare(row) in primary_names)]
-    return sorted(kept, key=lambda row: (-row["named"], -row["relevance"], -row["file_relevance"], row["secondary"],
+    return sorted(kept, key=lambda row: (-row["named"], -row["full"], -row["relevance"], -row["file_relevance"],
+                                         row["secondary"],
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3),
                                          row["path"], int(row["symbol"].get("line_start") or 0)))
+
+
+def name_word_condition(question: str) -> tuple[str, dict]:
+    """SQL (to OR into the word-name query) for names that contain two question words, or one and
+    a filler word, compared in lower case by stem; and its parameters. Empty for fewer than one
+    usable word. It narrows the rows the database returns; ``relevance`` decides on whole words.
+    """
+    stems = [stem for stem in dict.fromkeys(
+        _stem(word) for term in terms(question) for word in _words(term)
+        if word.isascii() and word.isalnum() and _stem(word) not in FILLER_WORDS)
+        if len(stem) >= 3][:MAX_PATTERN_WORDS]
+    if not stems:
+        return "", {}
+    params = {f"w{index}": f"%{stem}%" for index, stem in enumerate(stems)}
+    params.update({f"f{index}": f"%{word}%" for index, word in enumerate(FILLER_WORDS)})
+    pairs = [f"(label.toLowerCase() LIKE :w{first} AND label.toLowerCase() LIKE :w{second})"
+             for first in range(len(stems)) for second in range(first + 1, len(stems))]
+    pairs += [f"(label.toLowerCase() LIKE :w{first} AND label.toLowerCase() LIKE :f{second})"
+              for first in range(len(stems)) for second in range(len(FILLER_WORDS))]
+    return " OR " + " OR ".join(pairs), params
 
 
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
@@ -137,10 +182,11 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
         {"project": project_id, "eligible": eligible, "names": code}) if code else []
     if plain and len(rows) < MAX_ROWS:
         known = {row["id"] for row in rows}
+        words, params = name_word_condition(question)
         rows += [row for row in store.query(
-            select + "(label IN :names OR metadata.member IN :names) AND metadata.kind IN ['constant', 'field'] "
-            f"{order} LIMIT {MAX_ROWS}",
-            {"project": project_id, "eligible": eligible, "names": plain}) if row["id"] not in known
+            select + f"(label IN :names OR metadata.member IN :names{words}) "
+            f"AND metadata.kind IN ['constant', 'field'] {order} LIMIT {MAX_ROWS}",
+            {"project": project_id, "eligible": eligible, "names": plain, **params}) if row["id"] not in known
         ][:MAX_ROWS - len(rows)]
     found = []
     for row in rows:

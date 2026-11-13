@@ -243,6 +243,51 @@ def test_a_named_definition_is_not_crowded_out_by_a_common_word(workspace):  # n
     assert found and found[0]["definition"] == "PROFILE_NAME"
 
 
+def test_a_name_made_of_question_words_outranks_a_one_word_overlap():
+    rows = [{"symbol": {"name": "SUPPORT_TOKENS", "kind": "constant"}, "path": "pkg/support.py"},
+            {"symbol": {"name": "Settings.answer_tokens", "kind": "field", "owner": "Settings",
+                        "member": "answer_tokens"}, "path": "pkg/config.py"},
+            {"symbol": {"name": "MAX_REPORTED", "kind": "constant"}, "path": "pkg/scope.py"}]
+    ranked = rank_definitions("How many tokens may an answer have by default?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["Settings.answer_tokens", "SUPPORT_TOKENS"]
+    # Two shared words and a file named after the question do not outrank a name made only of
+    # question words.
+    longer = {"symbol": {"name": "SUPPORT_ANSWER_TOKENS_LIMIT", "kind": "constant"}, "path": "pkg/answers.py"}
+    ranked = rank_definitions("How many tokens may an answer have by default?", [longer, *rows])
+    assert [row["symbol"]["name"] for row in ranked][:2] == ["Settings.answer_tokens", "SUPPORT_ANSWER_TOKENS_LIMIT"]
+    # Filler words (max) are left out and words compare by stem: reported is report.
+    ranked = rank_definitions("How many files does a drift report list at most?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["MAX_REPORTED"]
+
+
+def test_a_one_word_name_is_never_a_full_match():
+    from cairnmind.definitions import relevance
+    question = "What is the default timeout of a question, in seconds?"
+    field = {"name": "AskBody.question", "kind": "field", "owner": "AskBody", "member": "question"}
+    assert relevance(question, field, "pkg/service.py") == (0, 0, 1, 0)
+    assert relevance("How many tokens may an answer have?", {"name": "ANSWER_TOKENS"}, "pkg/a.py")[1] == 1
+
+
+def test_of_two_one_word_matches_the_one_whose_file_shares_a_word_ranks_first():
+    rows = [{"symbol": {"name": "TIMEOUT", "kind": "constant"}, "path": "pkg/billing.py"},
+            {"symbol": {"name": "TIMEOUT", "kind": "constant"}, "path": "pkg/journal.py"}]
+    ranked = rank_definitions("What is the journal timeout?", rows)
+    assert [row["path"] for row in ranked] == ["pkg/journal.py", "pkg/billing.py"]
+
+
+def test_settings_named_only_by_their_words_are_found_in_the_project(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "limits.py").write_text(
+        "SUPPORT_TOKENS = 256\n\n\nclass Limits:\n    answer_tokens: int = 1200\n    retries: int = 3\n")
+    (root / "pkg" / "scope.py").write_text("MAX_REPORTED = 50\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "How many tokens may an answer have by default?", [], {})
+    assert found and found[0]["definition"] == "Limits.answer_tokens"
+    found = agent._definitions(project["id"], "How many files does a drift report list at most?", [], {})
+    assert found and found[0]["definition"] == "MAX_REPORTED"
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
