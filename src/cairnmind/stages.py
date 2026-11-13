@@ -101,6 +101,16 @@ def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: lis
     return decision
 
 
+def next_command(decision: dict, project_id: str, worktree: str) -> list[str] | None:
+    """The existing command that performs the suggested action, as an argument list."""
+    if decision.get("action") == "run_check":
+        return ["cairnmind", "check", "run", project_id, decision["check_profile"],
+                "--task", decision["task"]["id"], "--worktree", worktree]
+    if decision.get("action") == "start_slot":
+        return ["cairnmind", "run", project_id, decision["client"], "--worktree", worktree]
+    return None
+
+
 _PROBLEMS = {
     "no_task": "There is no next plan step to route.",
     "no_stage": "This step's state has no stage.",
