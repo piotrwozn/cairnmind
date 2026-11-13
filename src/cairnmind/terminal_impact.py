@@ -14,6 +14,7 @@ from textual import work
 from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, DataTable, Input, Label
 
+from .terminal_notices import about
 from .terminal_safe import plain
 from .terminal_ui import ChoiceModal, Field, FormModal
 
@@ -309,7 +310,7 @@ class ImpactView:
         if form is None:
             return
         if scope != self._scope_version or self.impact_key()[:2] != (project, worktree):
-            self.notice(self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            self.notice_for(about(project, worktree), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
             return
         note = str(form.get("note") or "").strip()
         if needs and not note:
