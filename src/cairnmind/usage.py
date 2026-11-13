@@ -1,6 +1,7 @@
-"""Token usage of the built-in API agent, summed per day, profile and model from its session journals.
+"""Token usage of the built-in API agent (and of Codex), summed per day or week, client, profile and model.
 
-Nothing is written to the journals or the store and no model is asked. A counter nobody reported stays
+The API agent is read from its session journals, Codex from the transcript lines that history import stored
+(see ``codex_usage``; the command passes them in, this module never queries). Nothing is written to the journals or the store and no model is asked. A counter nobody reported stays
 ``unknown``. A row or total that holds a turn without full usage is marked incomplete and its sums are
 lower bounds ("at least N"). A cost appears only for a group in which every turn was complete and carried
 an estimate. The command resolves the project name through the store (see ``cli.usage``); this module
@@ -18,6 +19,7 @@ import stat
 
 from cairnmind.agent_journal import MAX_EVENT_BYTES, _ID
 from cairnmind.brief import _line
+from cairnmind.codex_usage import codex_units
 
 MAX_ROWS = 60
 MAX_DAYS = 366
@@ -26,6 +28,9 @@ _SINCE = re.compile(r"^([1-9][0-9]{0,5})([dh])$")
 _KEYS = ("input_tokens", "output_tokens")
 COST_NOTE = ("Cost is an estimate from the rates stored with each turn, not an invoice; unknown means it was "
              "not reported. Subscription usage and remaining quota are never converted into money.")
+CODEX_NOTE = ("Codex rows are read from the transcript lines that history import stored for this project, one "
+              "\"turn\" being one model response; rollouts that were not imported yet are not seen. Codex is a "
+              "subscription client, so its cost is always unknown. Claude Code is not covered.")
 
 
 def parse_since(text) -> timedelta:
@@ -36,6 +41,14 @@ def parse_since(text) -> timedelta:
     if span > timedelta(days=MAX_DAYS):
         raise ValueError(f"--since cannot reach back more than {MAX_DAYS} days")
     return span
+
+
+def _period(at: datetime, by: str) -> str:
+    """The day (``2026-11-13``) or ISO week (``2026-W46``, Monday to Sunday) of a UTC time."""
+    if by == "week":
+        year, week, _ = at.isocalendar()
+        return f"{year}-W{week:02d}"
+    return at.date().isoformat()
 
 
 def _time(value):
@@ -194,27 +207,65 @@ def _row(label, row):
             f"  output {_cell(row['output_tokens'], row)}  cost {cost}")
 
 
-def _render(name, since, start, groups, totals, data, partial) -> str:
-    lines = [f"Usage of the built-in API agent for {name}, last {since} "
-             f"(from {start.isoformat(timespec='seconds')}); days are UTC", COST_NOTE]
-    if partial:
+def _warning(totals: dict, threshold, since: str):
+    """A notice, never a limit, when the observed tokens of the period (input plus output) pass ``threshold``."""
+    observed = (totals["input_tokens"] or 0) + (totals["output_tokens"] or 0)
+    if threshold is None or observed <= threshold:
+        return None
+    bound = totals["tokens_are_lower_bound"]
+    return {"threshold_tokens": threshold, "observed_tokens": observed, "tokens_are_lower_bound": bound,
+            "message": f"{'at least ' if bound else ''}{observed} tokens (input plus output, all clients) in the "
+                       f"last {since}, over the warning threshold of {threshold}; nothing is blocked."}
+
+
+def _render(report: dict) -> str:
+    groups, data, by = report["groups"], report["data"], report["by"]
+    unit = "days are UTC" if by == "day" else "weeks are ISO weeks (Monday to Sunday) in UTC"
+    lines = [f"WARNING: {report['warning']['message']}"] if "warning" in report else []
+    if "warning_unavailable" in report:
+        lines.append(f"Warning threshold not read: {report['warning_unavailable']}")
+    lines += [f"Usage of the built-in API agent for {report['project']['name']}, last {report['since']} "
+              f"(from {report['from']}); {unit}", COST_NOTE]
+    if data["codex_covered"]:
+        lines.append(CODEX_NOTE)
+    if report["partial"]:
         why = ([f"the run registry is {data['registry']}"] if data["registry"] != "ok" else []) + (
             [f"{data['sessions_skipped']} sessions were skipped because their project is unknown"]
-            if data["sessions_skipped"] else [])
-        lines.append("PARTIAL REPORT: " + "; ".join(why) + ", so turns of this project may be missing.")
+            if data["sessions_skipped"] else []) + (
+            [f"{data['codex_waiting']} Codex usage records are waiting in the ingestion inbox, not yet "
+             f"attributed to a project"] if data["codex_waiting"] else [])
+        lines.append("PARTIAL REPORT: " + "; ".join(why) + ", so usage of this project may be missing.")
     if len(groups) > MAX_ROWS:
         lines.append(f"{len(groups) - MAX_ROWS} older rows are only in the JSON output.")
-    lines += [_row(f"{g['day']}  {g['profile']}  {g['model']}", g) for g in groups[-MAX_ROWS:]]
-    lines.append(_row("Total", totals) if groups else "No turns of the built-in API agent were found in this period.")
+    lines += [_row(f"{g['period']}  {g['client']}  {g['profile']}  {g['model']}", g) for g in groups[-MAX_ROWS:]]
+    if len(report["totals_by_client"]) > 1:
+        lines += [_row(f"Total {client}", row) for client, row in report["totals_by_client"].items()]
+    what = "the built-in API agent or Codex" if data["codex_covered"] else "the built-in API agent"
+    lines.append(_row("Total", report["totals"]) if groups else f"No turns of {what} were found in this period.")
+    codex = (f"; {data['codex_records']} Codex usage records, {data['codex_unreadable']} unreadable, "
+             f"{data['codex_waiting']} waiting in the ingestion inbox" if data["codex_covered"] else "")
     lines.append(f"Data: {data['turns_complete']} of {data['turns_seen']} turns had complete usage; "
                  f"{data['lines_skipped']} journal lines skipped as unreadable; "
                  f"{data['sessions_skipped']} sessions skipped because their project is unknown; "
-                 f"{data['sessions_not_api']} sessions of other clients not counted.")
+                 f"{data['sessions_not_api']} sessions of other clients not counted{codex}.")
     return "\n".join(lines)
 
 
-def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
-    """Sum the usage of this project's API agent turns inside the period; reads files only."""
+def build_usage(data_dir, project: dict, since="7d", *, by="day", codex_records=None, codex_waiting=None,
+                warn_over=None, warn_unavailable=None, now=None) -> dict:
+    """Sum the usage of this project's API agent turns inside the period; reads files only.
+
+    ``codex_records``: a function from the start of the period to the raw ``token_usage_record`` lines that
+    import stored for this project (see ``codex_usage``); this module cannot query the store, so without it
+    Codex is not looked at. ``codex_waiting``: a function from the start of the period to the number of such
+    records of the period still in the ingestion inbox, which makes the report partial. ``warn_over``: a number of tokens; when the observed total (input plus output) is above it
+    the result has a ``warning`` and the text starts with ``WARNING:``; it never blocks anything.
+    ``warn_unavailable``: why a default threshold could not be read, shown as a line and a JSON key.
+    """
+    if by not in ("day", "week"):
+        raise ValueError("by must be day or week")
+    if warn_over is not None and (type(warn_over) is not int or warn_over < 1):
+        raise ValueError("warn_over must be a whole number of tokens, at least 1")
     span, data_dir = parse_since(since), Path(data_dir)
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -224,7 +275,13 @@ def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
     runs, registry = _registry(data_dir)
     by_run = {row["id"]: row for row in runs if row.get("id")}
     counts = {"lines_skipped": 0, "sessions_skipped": 0, "sessions_not_api": 0, "sessions_read": 0}
-    groups, totals, seen = {}, _new(), 0
+    groups, clients, totals = {}, {}, _new()
+
+    def add(at, client, profile, model, summary):
+        _fold(groups.setdefault((_period(at, by), client, profile, model), _new()), summary)
+        _fold(clients.setdefault(client, _new()), summary)
+        _fold(totals, summary)
+
     root = data_dir / "runtime" / "agents"
     try:
         folders = sorted((e for e in os.scandir(root) if e.is_dir(follow_symlinks=False)), key=lambda e: e.name)
@@ -258,18 +315,26 @@ def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
             run = by_run.get(turn["run"]) or {}
             profile, model = (_line(run[key], 60) if isinstance(run.get(key), str) and _line(run[key], 60)
                               else "unknown" for key in ("profile_id", "model"))
-            summary = _summary(turn)
-            _fold(groups.setdefault((turn["at"].date().isoformat(), profile, model), _new()), summary)
-            _fold(totals, summary)
-            seen += 1
-    partial = registry != "ok" or counts["sessions_skipped"] > 0
-    rows = [{"day": day, "profile": profile, "model": model, **_final(acc)}
-            for (day, profile, model), acc in sorted(groups.items())]
+            add(turn["at"], "api", profile, model, _summary(turn))
+    codex = {"codex_records": 0, "codex_unreadable": 0, "codex_waiting": codex_waiting(start) if codex_records and codex_waiting else 0}
+    for at, incoming, outgoing, complete in codex_units(
+            codex_records(start) if codex_records else [], start, now, _time, codex):
+        # The cost stays None: Codex is a subscription client and its transcripts hold no price.
+        add(at, "codex", "unknown", "unknown", (complete, incoming, outgoing, None))
+    partial_by = {"api": registry != "ok" or counts["sessions_skipped"] > 0, "codex": codex["codex_waiting"] > 0}
+    partial = any(partial_by.values())
+    # ``day`` stays in day rows for readers of earlier versions; a week is not a day, so week rows have none.
+    rows = [{"period": period, **({"day": period} if by == "day" else {}), "client": client, "profile": profile,
+             "model": model, **_final(acc)} for (period, client, profile, model), acc in sorted(groups.items())]
     final = _final(totals, partial)
-    data = {"turns_seen": seen, "turns_complete": final["complete_turns"], **counts, "registry": registry}
-    since = str(since).strip()
-    name = _line(project["name"], 60)
-    return {"project": {"id": project["id"], "name": name}, "since": since, "timezone": "UTC",
-            "from": start.isoformat(timespec="seconds"), "to": now.isoformat(timespec="seconds"),
-            "partial": partial, "groups": rows, "totals": final, "data": data, "cost_note": COST_NOTE,
-            "text": _render(name, since, start, rows, final, data, partial)}
+    data = {"turns_seen": totals["turns"], "turns_complete": final["complete_turns"], **counts,
+            "registry": registry, "codex_covered": codex_records is not None, **codex}
+    report = {"project": {"id": project["id"], "name": _line(project["name"], 60)}, "since": str(since).strip(),
+              "timezone": "UTC", "from": start.isoformat(timespec="seconds"),
+              "to": now.isoformat(timespec="seconds"), "partial": partial, "groups": rows, "totals": final,
+              "totals_by_client": {client: _final(acc, partial_by[client]) for client, acc in sorted(clients.items())},
+              "data": data, "cost_note": COST_NOTE, "by": by}
+    warning = _warning(final, warn_over, report["since"])
+    report = {**report, **({"warning": warning} if warning else {}),
+              **({"warning_unavailable": _line(warn_unavailable, 200)} if warn_unavailable else {})}
+    return {**report, "text": _render(report)}

@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 from contextlib import contextmanager
+from enum import Enum
 from functools import wraps
 import subprocess
 import sys
@@ -503,18 +504,43 @@ def impact_verdict(ctx: typer.Context, project: str, record_id: str,
     output(result)
 
 
+class UsageBy(str, Enum):
+    day = "day"
+    week = "week"
+
+
 @app.command()
 @initialized
 def usage(ctx: typer.Context, project: str,
           since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
+          by: Annotated[UsageBy, typer.Option("--by", help="Group by UTC day or by ISO week.")] = UsageBy.day,
+          warn_over: Annotated[int | None, typer.Option(
+              "--warn-over", min=1, help="Warn when input plus output tokens of the period exceed this; blocks "
+              "nothing. Default: warn_over_tokens under [usage] in .cairnmind/checks.toml.")] = None,
           as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
-    """Sum the token usage of the built-in API agent per day, profile and model. Asks no model, starts no service."""
+    """Sum the token usage of the built-in API agent per day or week, profile and model. Asks no model."""
+    from cairnmind.codex_usage import stored_records, waiting_in_inbox
     from cairnmind.usage import build_usage
+    from cairnmind.verification import usage_warn_threshold
     # Resolving the project name opens the store (it starts the database engine if stopped and may create the
     # data directory); the usage itself is read from the session journals and nothing is written to them.
-    found = store_for(ctx.obj).resolve_project(project)
+    store = store_for(ctx.obj)
+    found = store.resolve_project(project)
+    # Codex usage is read from the transcript lines that history import stored for this project, not from files.
+    unavailable = None
+    if warn_over is None:
+        try:
+            warn_over = usage_warn_threshold(store, found["id"])
+        except (ValueError, OSError, RecursionError) as exc:
+            # A report must not depend on the checks file: say why there is no default threshold and go on.
+            # (tomllib raises RecursionError, not a TOML error, on a deeply nested array.)
+            unavailable = ("the checks file is nested too deeply to read" if isinstance(exc, RecursionError)
+                           else str(exc))
     try:
-        result = build_usage(ctx.obj.data_dir, found, since)
+        result = build_usage(ctx.obj.data_dir, found, since, by=by.value, warn_over=warn_over,
+                             codex_records=lambda start: stored_records(store, found["id"], start),
+                             codex_waiting=lambda start: waiting_in_inbox(store, found["id"], start),
+                             warn_unavailable=unavailable)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--since")
     if as_json:
@@ -910,8 +936,15 @@ def memory_inspect(ctx: typer.Context, path: Path):
 def memory_show(ctx: typer.Context, path: Path,
                 kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
                 status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None,
-                grep: Annotated[str | None, typer.Option("--grep", help="Case-insensitive text to look for.")] = None):
-    """Read a snapshot's records and plans as text. Writes nothing; outside a coding session needs no engine or service."""
+                grep: Annotated[str | None, typer.Option(
+                    "--grep", help="Case-insensitive text to look for, also in the acceptance criteria and check names "
+                                     "shown for tasks; with --sources also in the source texts shown.")] = None,
+                sources: Annotated[bool, typer.Option(
+                    "--sources", help="Print the text of each record's sources, up to 1,200 characters each and 60,000 "
+                                      "in all. A source that supports several records is printed under each.")] = False):
+    """Read a snapshot's records and plans as text. Writes nothing; outside a coding session needs no engine or service.
+
+    Tasks show their acceptance criteria and the check each is linked to; a record that replaced another, or was replaced, names it."""
     from cairnmind.memory_view import show_snapshot
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
@@ -920,7 +953,8 @@ def memory_show(ctx: typer.Context, path: Path,
         # A coding session may read only its own project's memory; the service decides.
         expected = request(ctx.obj, "POST", "/memory/inspect", start_service=False,
                            json={"path": selected})["snapshot_id"]
-    typer.echo(show_snapshot(selected, kind=kind, status=status, grep=grep, expected_snapshot_id=expected))
+    typer.echo(show_snapshot(selected, kind=kind, status=status, grep=grep, sources_text=sources,
+                             expected_snapshot_id=expected))
 
 
 @memory_app.command("orphans")

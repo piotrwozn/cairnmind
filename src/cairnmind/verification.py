@@ -223,11 +223,11 @@ def task_definition_hash(task: dict) -> str:
     return _hash(definition)
 
 
-def load_profiles(store, project_id, worktree=None) -> dict:
-    root = _root(store, project_id, worktree)
+def _config_document(root) -> dict | None:
+    """The parsed ``.cairnmind/checks.toml`` of a worktree (or the older name), None when there is none."""
     present = [root / path for path in _PROFILE_PATHS if (root / path).exists()]
     if not present:
-        return {}
+        return None
     # One file reached through two names (a directory linked to the other) is one declaration.
     if len({path.resolve() for path in present}) > 1:
         # Two declarations of the same checks would let a run pass under one and be required under the other.
@@ -237,9 +237,28 @@ def load_profiles(store, project_id, worktree=None) -> dict:
     if not config_path.resolve().is_relative_to(root):
         raise ValueError("Check profile configuration must stay inside its worktree")
     try:
-        document = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ValueError("Cannot read check profiles") from exc
+
+
+def usage_warn_threshold(store, project_id) -> int | None:
+    """``warn_over_tokens`` of the ``[usage]`` table in the file that holds the check profiles, or None."""
+    document = _config_document(_root(store, project_id))
+    table = (document or {}).get("usage", {})
+    if not isinstance(table, dict) or set(table) - {"warn_over_tokens"}:
+        raise ValueError("[usage] in the checks file accepts only warn_over_tokens")
+    value = table.get("warn_over_tokens")
+    if value is not None and (type(value) is not int or not 1 <= value <= 10**12):
+        raise ValueError("[usage] warn_over_tokens must be a whole number of tokens from 1 to 10**12")
+    return value
+
+
+def load_profiles(store, project_id, worktree=None) -> dict:
+    root = _root(store, project_id, worktree)
+    document = _config_document(root)
+    if document is None:
+        return {}
     checks = document.get("checks", {})
     if not isinstance(checks, dict):
         raise ValueError("checks must contain named profiles")
