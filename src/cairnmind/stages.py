@@ -13,8 +13,11 @@ STAGES = ("implement", "review", "test")
 # A task state names the work it waits for. Only the state decides the stage.
 STATE_STAGES = {"todo": "implement", "in_progress": "implement", "needs_review": "review", "needs_test": "test"}
 CLIENT_STAGES = ("implement", "review")
+# The assistants the workspace launches as native clients, and its own agent run in a panel.
+NATIVE_CLIENTS = ("codex", "claude")
+AGENT_CLIENTS = ("api", "copilot")
 # Only the assistants the workspace can launch for a plan step.
-LAUNCHABLE_CLIENTS = ("codex", "claude")
+LAUNCHABLE_CLIENTS = (*NATIVE_CLIENTS, *AGENT_CLIENTS)
 _SLOT = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -58,12 +61,36 @@ def project_routing(preferences: dict, project_id: str) -> tuple[dict, list, lis
     return stages, slots, preferences.get("profiles", [])
 
 
-def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: list) -> dict:
-    """Pure: the next step's stage and the single action the owner mapped to it."""
+def agent_problem(profile: dict, readiness: dict | None) -> str | None:
+    """Pure: what the launcher would refuse before it starts the built-in agent or Copilot.
+
+    `readiness` is what was observed without a network call, login or download: `credential`
+    is the credential store's status code for the profile (None when it could not be read,
+    "unknown" when nobody could look), `runtime` the Copilot runtime's status code.
+    """
+    readiness = readiness or {}
+    credential = readiness.get("credential")
+    if credential is None:
+        return "credential_unavailable"
+    if credential == "credential_missing":
+        return "credential_missing"
+    if profile.get("client") == "copilot" and readiness.get("runtime") not in {"ready", "unknown"}:
+        return "runtime_missing"
+    return None
+
+
+def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: list, readiness=None) -> dict:
+    """Pure: the next step's stage and the single action the owner mapped to it.
+
+    `readiness(profile)` is asked only for the mapped built-in agent or Copilot profile; see
+    `agent_problem`. Without it, its credential and runtime are "unknown": the launcher still
+    refuses a missing credential or runtime when the stage is started.
+    """
     task, plan = next_result.get("task"), next_result.get("plan")
     decision = {"stage": None, "action": "none", "problem": None, "reason": next_result.get("reason"),
                 "plan": {"id": plan.get("id"), "version": plan.get("version"), "title": plan.get("title")} if plan else None,
                 "task": None, "slot_id": None, "profile_id": None, "client": None, "label": None,
+                "provider": None, "model": None, "credential": None, "runtime": None,
                 "check_profile": None, "required_profiles": []}
     if not task:
         decision["problem"] = "no_task"
@@ -97,6 +124,16 @@ def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: lis
     if profile.get("client") not in LAUNCHABLE_CLIENTS:
         decision["problem"] = "unavailable_assistant"
         return decision
+    if profile["client"] in AGENT_CLIENTS:
+        observed = readiness(profile) if readiness else {"credential": "unknown", "runtime": "unknown"}
+        decision.update(provider=profile.get("provider"), model=profile.get("model"),
+                        credential=observed.get("credential"),
+                        runtime=observed.get("runtime") if profile["client"] == "copilot" else None)
+        problem = agent_problem(profile, observed)
+        if problem:
+            # Shown as it is; another assistant, native or paid, is never started instead.
+            decision["problem"] = problem
+            return decision
     decision["action"] = "start_slot"
     return decision
 
@@ -133,7 +170,13 @@ _PROBLEMS = {
     "not_mapped": "No assistant or check is mapped to this stage.",
     "unknown_assistant": "The mapped assistant is not configured for this project.",
     "unavailable_assistant": "The mapped assistant cannot be launched for a plan step.",
+    "credential_missing": "The mapped assistant has no credential. Add its key in Connections; nothing was started.",
+    "credential_unavailable": ("The mapped assistant's credential cannot be read. Check it in Connections; "
+                               "nothing was started."),
+    "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.",
 }
+# Problems the person fixes in the stage map, not in the assistant's connection.
+MAP_PROBLEMS = ("not_mapped", "unknown_assistant", "unavailable_assistant")
 _REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Every step of the plan is done.",
             "blocked": "Every remaining step is blocked."}
 

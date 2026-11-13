@@ -244,6 +244,52 @@ def api_worker_config(settings: Settings, run_id: str, generation: int) -> dict:
         raise ValueError("Nie można odtworzyć prywatnej konfiguracji agenta. Uruchom go ponownie z Cairnmind.") from None
 
 
+def stage_readiness(settings: Settings, credentials):
+    """For the stage router: what `start_agent` would refuse, read locally (no network, login or download).
+
+    The credential is the store's status code (None when it cannot be read); a Copilot profile
+    also gets the runtime's status code. Whether a key is valid or the account signed in is
+    only known when the agent sends its first request.
+    """
+    def observe(profile):
+        try:
+            credential = credentials.status(profile).get("code")
+        except (OSError, ValueError):
+            credential = None
+        runtime = None
+        if profile.get("client") == "copilot":
+            from .copilot_adapter import runtime_status
+            runtime = runtime_status(settings).get("code")
+        return {"credential": credential, "runtime": runtime}
+    return observe
+
+
+def cli_stage_readiness(settings: Settings):
+    """The same observation from the command line: a key saved only for the cockpit's session
+    lives in the cockpit, so it is asked when it runs; otherwise the local store answers."""
+    from .api_credentials import CredentialStore
+    from .cockpit import cockpit_status
+    local = stage_readiness(settings, CredentialStore(settings))
+
+    def observe(profile):
+        if not cockpit_status(settings).get("available"):
+            return local(profile)
+        from .terminal_client import BrokerClient
+        broker = None
+        try:
+            broker = BrokerClient(settings)
+            status = broker.request("GET", "/api/profiles/" + profile["id"] + "/status", timeout=5)
+            runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
+            return {"credential": status.get("code") if status.get("code") else None,
+                    "runtime": runtime.get("code") if profile.get("client") == "copilot" else None}
+        except (ValueError, OSError, httpx.HTTPError):
+            return {"credential": "unknown", "runtime": "unknown"}
+        finally:
+            if broker is not None:
+                broker.close()
+    return observe
+
+
 def coding_profiles_status(settings: Settings) -> dict:
     """Inspect configured connections without inference, login or downloads."""
     from .api_credentials import CredentialStore

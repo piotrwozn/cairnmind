@@ -203,6 +203,49 @@ def test_two_step_plan_hands_implement_to_codex_and_review_to_claude_each_with_i
     assert steps == [(t["content"], t["metadata"].get("depends_on")) for t in saved["tasks"]]
 
 
+AGENT_PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
+                  {"id": "claude", "client": "claude", "label": "Claude"},
+                  {"id": "api-cloud", "client": "api", "label": "Cloud API", "provider": "openai", "model": "gpt-x"},
+                  {"id": "copilot", "client": "copilot", "label": "GitHub Copilot"}]
+
+
+def test_cockpit_stage_reads_an_agent_credential_and_runtime_without_starting_anything(cockpit, monkeypatch):
+    settings, app, client, runtime, project, requests = cockpit
+    CockpitState(settings).update({"profiles": AGENT_PROFILES, "project_slots": {project["id"]: [
+        {"id": "codex", "profile_id": "codex"}, {"id": "cloud", "profile_id": "api-cloud"},
+        {"id": "pilot", "profile_id": "copilot"}]}, "project_stages": {project["id"]: {"review": "cloud"}}})
+    headers = login(app, client)
+
+    def stage():
+        answer = client.get("/api/stage", params={"project": project["id"]}, headers=headers)
+        assert answer.status_code == 200, answer.text
+        return answer.json()
+    value = stage()
+    # A stage mapped to an API profile without a credential says so and starts nothing.
+    assert (value["action"], value["problem"], value["slot_id"], value["client"]) == (
+        "none", "credential_missing", "cloud", "api")
+    assert (value["provider"], value["model"], value["credential"]) == ("openai", "gpt-x", "credential_missing")
+    saved = client.post("/api/profiles/api-cloud/credential", json={"key": "FIXTURE-SESSION-KEY"}, headers=headers)
+    assert saved.status_code == 200, saved.text
+    value = stage()  # A key kept only in this cockpit's session counts.
+    assert (value["action"], value["problem"], value["credential"]) == ("start_slot", None, "configured_unchecked")
+    assert "FIXTURE-SESSION-KEY" not in json.dumps(value)
+
+    CockpitState(settings).update({"project_stages": {project["id"]: {"review": "pilot"}}})
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": False, "code": "copilot_sdk_missing"})
+    value = stage()
+    assert (value["action"], value["problem"], value["runtime"]) == ("none", "runtime_missing", "copilot_sdk_missing")
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": True, "code": "ready"})
+    value = stage()
+    assert (value["action"], value["client"], value["credential"], value["runtime"]) == (
+        "start_slot", "copilot", "not_required", "ready")
+    # Reading the stage never starts an assistant, prepares a session or calls a provider.
+    assert runtime.starts == []
+    assert {row[1] for row in requests} <= {"/projects", "/project-roots", "/plans/next"}
+
+
 def test_cockpit_stage_reports_an_unknown_assistant_instead_of_another(cockpit):
     settings, app, client, runtime, project, requests = cockpit
     CockpitState(settings).update({"project_stages": {project["id"]: {"review": "removed-slot"}}})

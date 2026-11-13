@@ -5,10 +5,14 @@ from cairnmind.stages import describe, resolve_stage, validate_project_stages, v
 from cairnmind.store import Store
 
 SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": "claude"},
-         {"id": "helper", "profile_id": "api-helper"}, {"id": "orphan", "profile_id": "gone"}]
+         {"id": "helper", "profile_id": "api-helper"}, {"id": "orphan", "profile_id": "gone"},
+         {"id": "pilot", "profile_id": "copilot"}, {"id": "odd", "profile_id": "odd"}]
 PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
             {"id": "claude", "client": "claude", "label": "Claude"},
-            {"id": "api-helper", "client": "api", "label": "API helper"}]
+            {"id": "api-helper", "client": "api", "label": "API helper", "provider": "openai", "model": "gpt-x",
+             "credential_ref": "profile:api-helper"},
+            {"id": "copilot", "client": "copilot", "label": "GitHub Copilot"},
+            {"id": "odd", "client": "cursor", "label": "Not launchable"}]
 MAP = {"implement": "codex", "review": "claude", "test": "unit"}
 
 
@@ -46,11 +50,70 @@ def test_missing_mapping_does_nothing_and_says_so():
 
 
 @pytest.mark.parametrize("slot,problem", [("missing", "unknown_assistant"), ("orphan", "unknown_assistant"),
-                                          ("helper", "unavailable_assistant")])
+                                          ("odd", "unavailable_assistant")])
 def test_unknown_or_unlaunchable_assistant_is_shown_and_never_replaced(slot, problem):
     decision = resolve_stage(step("todo"), {"implement": slot, "review": "claude"}, SLOTS, PROFILES)
     assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", problem, slot)
-    assert decision["client"] in {None, "api"}
+    assert decision["client"] in {None, "cursor"}
+
+
+def observed(credential="configured_unchecked", runtime="ready", seen=None):
+    def readiness(profile):
+        if seen is not None:
+            seen.append(profile["id"])
+        return {"credential": credential, "runtime": runtime if profile["client"] == "copilot" else None}
+    return readiness
+
+
+@pytest.mark.parametrize("slot,client", [("helper", "api"), ("pilot", "copilot")])
+def test_an_api_or_copilot_slot_starts_with_the_facts_the_workspace_needs(slot, client):
+    seen = []
+    decision = resolve_stage(step("needs_review"), {"review": slot}, SLOTS, PROFILES, readiness=observed(seen=seen))
+    assert (decision["action"], decision["problem"], decision["slot_id"], decision["client"]) == (
+        "start_slot", None, slot, client)
+    profile = next(p for p in PROFILES if p["client"] == client)
+    assert (decision["profile_id"], decision["provider"], decision["model"]) == (
+        profile["id"], profile.get("provider"), profile.get("model"))
+    assert decision["credential"] == "configured_unchecked"
+    assert decision["runtime"] == ("ready" if client == "copilot" else None)
+    assert seen == [profile["id"]]  # Only the mapped profile is looked at.
+
+
+def test_a_native_stage_never_looks_at_agent_credentials():
+    decision = resolve_stage(step("todo"), MAP, SLOTS, PROFILES,
+                             readiness=lambda profile: pytest.fail("read a credential for a native client"))
+    assert (decision["action"], decision["credential"], decision["provider"]) == ("start_slot", None, None)
+
+
+@pytest.mark.parametrize("slot,credential,runtime,problem", [
+    ("helper", "credential_missing", None, "credential_missing"),
+    ("helper", None, None, "credential_unavailable"),
+    ("pilot", "credential_missing", "ready", "credential_missing"),
+    ("pilot", "not_required", "copilot_sdk_missing", "runtime_missing"),
+    ("pilot", "not_required", "copilot_runtime_invalid", "runtime_missing")])
+def test_an_agent_that_cannot_start_is_shown_as_such_and_never_replaced(slot, credential, runtime, problem):
+    decision = resolve_stage(step("todo"), {"implement": slot, "review": "claude"}, SLOTS, PROFILES,
+                             readiness=observed(credential, runtime))
+    assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", problem, slot)
+    assert decision["client"] in {"api", "copilot"}
+    text = describe(decision)
+    assert text.endswith(describe_problem[problem])
+
+
+describe_problem = {
+    "credential_missing": "The mapped assistant has no credential. Add its key in Connections; nothing was started.",
+    "credential_unavailable": "credential cannot be read. Check it in Connections; nothing was started.",
+    "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started."}
+
+
+def test_without_an_observation_the_launcher_decides():
+    decision = resolve_stage(step("todo"), {"implement": "helper"}, SLOTS, PROFILES)
+    assert (decision["action"], decision["credential"]) == ("start_slot", "unknown")
+
+
+def test_no_stage_is_mapped_by_default_even_to_a_configured_agent():
+    decision = resolve_stage(step("todo"), {}, SLOTS, PROFILES, readiness=observed())
+    assert (decision["action"], decision["problem"], decision["client"]) == ("none", "not_mapped", None)
 
 
 def test_test_stage_names_only_the_mapped_profile_and_shows_required_ones():
