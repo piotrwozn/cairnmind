@@ -9,11 +9,13 @@ of Cairnmind's own variables, is refused. No server receives a credential in thi
 """
 from __future__ import annotations
 
+import json
 import re
 
 from .config import ENV_PREFIXES
 
 MAX_SERVERS = 4
+MAX_LIST_CHARS = 64 * 1024
 MAX_ARGS = 32
 MAX_ENV = 16
 MAX_TEXT = 4096
@@ -85,7 +87,32 @@ def validate_servers(value) -> list[dict]:
     servers = [validate_server(row) for row in value]
     if len({row["id"] for row in servers}) != len(servers):
         raise ValueError("Server ids of a project must be unique.")
+    # The list is copied into the run's private configuration file, which is read with a size limit.
+    if len(json.dumps(servers, ensure_ascii=False)) > MAX_LIST_CHARS:
+        raise ValueError("The server list of a project is too large.")
     return servers
+
+
+def frozen_servers(preferences: dict, project_id: str, worktree) -> tuple[list[dict], list[dict]]:
+    """The servers a run of this project gets, fixed at launch, and fixed codes for what was left out.
+
+    An invalid stored list gives no servers and the run still starts; so does a server whose program
+    or path argument lies in the worktree.
+    """
+    try:
+        stored = preferences.get("project_mcp_servers", {})
+        if not isinstance(stored, dict):
+            raise ValueError("invalid")
+        servers = validate_servers(stored.get(project_id, []))
+    except (ValueError, TypeError, AttributeError):
+        return [], [{"code": "configuration_invalid"}]
+    kept, problems = [], []
+    for row in servers:
+        if inside_worktree(row, worktree):
+            problems.append({"server_id": row["id"], "code": "definition_refused"})
+        else:
+            kept.append(row)
+    return kept, problems
 
 
 def validate_project_mcp_servers(value) -> dict:
