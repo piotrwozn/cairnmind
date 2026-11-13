@@ -154,12 +154,25 @@ def format_packet(packet: dict) -> str:
     # A plan or task an external session wrote is never presented as verified, not even to a native client.
     unverified_plan = bool(plan) and plan.get("origin_evidence") == "degraded"
     unverified_task = bool(task) and task.get("origin_evidence") == "degraded"
-    note = " [written by an external client's session; not verified]"
+    # Written by the built-in agent after a third-party MCP tool result (origin_client mcp:<server>) has its own
+    # wording; an external client's wording stays for what an external client wrote.
+    def third_party(item):
+        return str(item.get("origin_client", "")).startswith("mcp:")
+
+    def note(item):
+        return (" [written after a third-party tool result in a built-in agent session; not verified]"
+                if third_party(item) else " [written by an external client's session; not verified]")
+    only_third_party = all(third_party(item) for item, unverified in ((plan, unverified_plan),
+                                                                      (task, unverified_task)) if unverified)
     result = [
         ("Cairnmind external-client resume bootstrap: history unarchived, evidence degraded "
          "(receipt is not proof of understanding)." if external else
-         "Cairnmind resume bootstrap: the active plan or task was written by an external client's session "
-         "and is not verified (receipt is not proof of understanding)." if unverified_plan or unverified_task else
+         ("Cairnmind resume bootstrap: the active plan or task was written after a third-party tool result in a "
+          "built-in agent session and is not verified (receipt is not proof of understanding)."
+          if only_third_party else
+          "Cairnmind resume bootstrap: the active plan or task was written by an external client's session "
+          "and is not verified (receipt is not proof of understanding).")
+         if unverified_plan or unverified_task else
          "Cairnmind verified resume bootstrap (receipt is not proof of understanding)."),
         f"Logical session: {packet['session_id']}; epoch: {packet['epoch']}.",
         f"Packet: {packet['id']}; SHA-256: {packet['hash']}.",
@@ -171,14 +184,14 @@ def format_packet(packet: dict) -> str:
         "Native CLI permissions still apply to all native actions.",
     ]
     if plan:
-        result.extend([f"Active plan v{plan['version']}{note if unverified_plan else ''}: "
+        result.extend([f"Active plan v{plan['version']}{note(plan) if unverified_plan else ''}: "
                        f"{plan.get('title', '')[:300]}",
                        f"Goal: {plan.get('goal', '')[:1200]}"])
         for constraint in plan.get("constraints", [])[:8]:
             result.append("Constraint: " + constraint[:240])
     if task:
         result.append(f"Active task {task['id']} v{task['version']} [{task.get('state', 'todo')}]"
-                      f"{note if unverified_task else ''}: " + task.get("content", "")[:1000])
+                      f"{note(task) if unverified_task else ''}: " + task.get("content", "")[:1000])
     else:
         result.append("Active task: none; use the explicit reason in the complete packet.")
     if packet.get("no_history"):

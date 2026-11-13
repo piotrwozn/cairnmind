@@ -14,6 +14,7 @@ import inspect
 import json
 import math
 from pathlib import Path
+import re
 import sys
 
 from textual import on, work
@@ -28,6 +29,9 @@ from .terminal_safe import plain, safe_text
 from .terminal_ui import ChoiceModal, Field, FormModal
 from .terminal_i18n import language_for
 from .terminal_agent_i18n import status_text, tr
+
+_SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+_CODE = re.compile(r"^[a-z][a-z_]{0,39}$")
 
 
 def usage_text(usage: dict, profile: dict, language="en") -> str:
@@ -115,9 +119,12 @@ class AgentApp(App):
                 Binding("ctrl+enter", "send", "Send", priority=True),
                 Binding("ctrl+r", "resolve", "Resolve", priority=True)]
 
-    def __init__(self, settings, run, profile, *, key=None, engine_factory=None):
+    def __init__(self, settings, run, profile, *, key=None, engine_factory=None, mcp_servers=None, mcp_problems=None):
         super().__init__()
         self.settings, self.run_record, self.profile = settings, dict(run), dict(profile)
+        # Third-party MCP servers fixed for this run by the launcher (#126); API runs only.
+        self.mcp_servers = list(mcp_servers or []) if self.run_record.get("client") == "api" else []
+        self.mcp_problems = [row for row in (mcp_problems or []) if isinstance(row, dict)]
         self.language = language_for(settings)
         self._status_value = ("Restoring the local journal; no model is running…", {})
         self._last_usage = None
@@ -159,8 +166,9 @@ class AgentApp(App):
                 factory = AgentEngine
             else:
                 factory = self._engine_factory
+            extra = {"mcp_servers": self.mcp_servers} if self.mcp_servers else {}
             self.engine = factory(self.settings, self.run_record, self.profile, key=self._key,
-                                  approve=self.approve, on_delta=self.on_delta, on_event=self.agent_event)
+                                  approve=self.approve, on_delta=self.on_delta, on_event=self.agent_event, **extra)
             self._key = None
             # The journal is already redacted by the engine. Defend the display
             # boundary as well, including controlled/test engine callbacks.
@@ -175,6 +183,8 @@ class AgentApp(App):
                     self.write_message({"role": self.t("Incomplete response") + suffix,
                         "content": self.t("Request {request_id} — this output is not a confirmed response.\n", request_id=observed["request_id"]) + observed["text"]})
             self.set_status("Ready. Send a message to start work and restore memory.")
+            for problem in self.mcp_problems:
+                self.mcp_server_off(problem.get("server_id"), problem.get("code"))
             await self.refresh_pending()
             self.query_one("#agent-send", Button).disabled = False
             self.query_one("#agent-prompt", TextArea).focus()
@@ -247,10 +257,33 @@ class AgentApp(App):
             self.update_usage(data)
         elif kind in {"status", "memory_required", "context_compacted", "error"}:
             self.set_status(data.get("message", data.get("status", data.get("code", json.dumps(data, ensure_ascii=False)))))
+        elif kind == "mcp_server_failed":
+            self.mcp_server_off(data.get("server_id"), data.get("code"))
+        elif kind == "mcp_tool_withdrawn":
+            text = self.t("A third-party MCP tool took too long to check its arguments and is withdrawn for this run.")
+            self.set_status(text)
+            self.query_one("#agent-history", RichLog).write(self.display_text(text))
+        elif kind in {"mcp_tools_withdrawn", "mcp_tools_kept"}:
+            code = data.get("code") if isinstance(data.get("code"), str) and _CODE.fullmatch(data["code"]) else "unknown"
+            text = self.t("The provider refused the request with third-party MCP tools ({code}); they are withdrawn "
+                          "for this run and the agent works without them." if kind == "mcp_tools_withdrawn" else
+                          "The provider refused the request ({code}) also without the third-party MCP tools; they "
+                          "stay offered.", code=code)
+            self.set_status(text)
+            self.query_one("#agent-history", RichLog).write(self.display_text(text))
         elif kind in {"tool_start", "tool_result"}:
             # Results are visible as literal data, never terminal control codes.
             label = self.t("Tool started" if kind == "tool_start" else "Tool result")
             self.query_one("#agent-history", RichLog).write(self.display_text(label + "\n" + json.dumps(data, ensure_ascii=False, default=str)))
+
+    def mcp_server_off(self, server_id, code):
+        """A fixed code and a validated id only: never text from the server."""
+        server = server_id if isinstance(server_id, str) and _SERVER_ID.fullmatch(server_id) else "unknown"
+        code = code if isinstance(code, str) and _CODE.fullmatch(code) else "unknown"
+        text = self.t("Third-party MCP server {server} is off ({code}); the agent works without its tools.",
+                      server=server, code=code)
+        self.set_status(text)
+        self.query_one("#agent-history", RichLog).write(self.display_text(text))
 
     async def approve(self, request):
         # Every decision remains bound to the exact current run and generation.
@@ -260,9 +293,27 @@ class AgentApp(App):
             return False
         if request.get("session_id") != self.run_record.get("session_id"):
             return False
-        if not request.get("action_id") or not isinstance(request.get("command"), str):
+        body = self.display_text(json.dumps(request, ensure_ascii=False, indent=2)).plain
+        if request.get("kind") == "mcp_tool":
+            # One call of a third-party tool: server, tool and the exact arguments, approved once (#126).
+            from .mcp_agent import MAX_SHOWN_CHARS, approval_text
+            if (not request.get("action_id") or not isinstance(request.get("server_id"), str)
+                    or not isinstance(request.get("tool"), str) or not isinstance(request.get("name"), str)
+                    or not isinstance(request.get("arguments"), dict)):
+                return False
+            shown = approval_text(request)
+            if len(shown) > MAX_SHOWN_CHARS:
+                return False  # never a cut view of what would run
+            body = self.display_text(shown, limit=None).plain
+            title, note, button = ("Approve one third-party tool call",
+                                   "This sends exactly these arguments to a program you configured. Its answer "
+                                   "is untrusted third-party text.", "Call once")
+        elif not request.get("action_id") or not isinstance(request.get("command"), str):
             return False
-        self._approval_screen = ConfirmModal(self.t("Approve one command"), self.display_text(json.dumps(request, ensure_ascii=False, indent=2)).plain + "\n\n" + self.t("This command runs with your user account permissions."), approve=self.t("Run once"))
+        else:
+            title, note, button = ("Approve one command", "This command runs with your user account permissions.",
+                                   "Run once")
+        self._approval_screen = ConfirmModal(self.t(title), body + "\n\n" + self.t(note), approve=self.t(button))
         try:
             return await self.push_screen_wait(self._approval_screen) is True
         finally:
@@ -419,7 +470,8 @@ def main():
         run = config["run"]
         if run.get("id") != args.run_id or run.get("generation") != args.generation:
             raise ValueError("worker scope mismatch")
-        app = AgentApp(settings, run, config["profile"], key=config.get("key"))
+        app = AgentApp(settings, run, config["profile"], key=config.get("key"),
+                       mcp_servers=config.get("mcp_servers"), mcp_problems=config.get("mcp_problems"))
         config.pop("key", None)
     except Exception:
         raise SystemExit(tr("Cannot restore this run. Check the profile status in Cairnmind.", language_for(settings) if settings else "en")) from None

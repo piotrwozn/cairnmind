@@ -29,7 +29,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 from cairnmind.brief import _git_out, _line, _scoped_records, _title
-from cairnmind.evidence import _FILE_KINDS, _QUOTE, _metadata, evidence_states
+from cairnmind.evidence import THIRD_PARTY_WRITTEN, _FILE_KINDS, _QUOTE, _metadata, evidence_states
 from cairnmind.impact_docs import documentation_lines, documentation_mentions
 from cairnmind.parsing import analyze_code
 
@@ -306,6 +306,8 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
         if record_id in states:
             row.update(evidence_state=states[record_id]["evidence_state"],
                        quote_survives=states[record_id]["quote_survives"])
+            if "degraded_by" in states[record_id]:
+                row["degraded_by"] = states[record_id]["degraded_by"]
         rows.append(row)
     annotate(store, project["id"], root, changed, records, rows)
     shown = [row for row in rows if not (pending and row["verdict"])]
@@ -338,6 +340,8 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
                     evidence = f"; {_QUOTE[row['quote_survives']]}"
                 elif row.get("evidence_state") == "orphaned":
                     evidence = "; no supporting source has a current version"
+                elif row.get("evidence_state") == "degraded" and row.get("degraded_by") == "third_party_tool":
+                    evidence = "; " + THIRD_PARTY_WRITTEN[0].lower() + THIRD_PARTY_WRITTEN[1:] + ", never verified"
                 elif row.get("evidence_state") == "degraded":
                     evidence = "; written by, or resting only on, an external client's session, never verified"
                 snapshot = f" from {_line(link['snapshot'], 10)}" if link["snapshot"] else ""

@@ -16,6 +16,7 @@ import time
 from uuid import uuid4
 
 from .api_profiles import normalize_profile
+from .mcp_servers import apply_project_edit, validate_project_mcp_servers
 from .stages import validate_project_stages
 
 DEFAULT_PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
@@ -96,7 +97,8 @@ class CockpitState:
     def load(self) -> dict:
         defaults = {"version": 2, "profiles": deepcopy(DEFAULT_PROFILES), "scan_roots": [],
                     "default_slots": deepcopy(DEFAULT_SLOTS), "project_slots": {}, "last_project": None,
-                    "project_stages": {}, "language": "en", "view": "focus", "reduced_motion": False}
+                    "project_stages": {}, "project_mcp_servers": {}, "language": "en", "view": "focus",
+                    "reduced_motion": False}
         if not self.path.exists():
             return defaults
         if self.path.is_symlink():
@@ -133,8 +135,10 @@ class CockpitState:
         return result
 
     def update(self, changes: dict) -> dict:
-        if not isinstance(changes, dict) or set(changes) - {"profiles", "scan_roots", "default_slots", "project_slots", "project_stages", "last_project", "language", "view", "reduced_motion"}:
+        if not isinstance(changes, dict) or set(changes) - {"profiles", "scan_roots", "default_slots", "project_slots", "project_stages", "project_mcp_servers", "project_mcp_server_edit", "last_project", "language", "view", "reduced_motion"}:
             raise ValueError("Nieobsługiwane pole ustawień kokpitu.")
+        if {"project_mcp_servers", "project_mcp_server_edit"} <= set(changes):
+            raise ValueError("Invalid MCP server lists.")
         with _private_lock(self.root / "preferences.lock"):
             value = self.load()
             original_version = value["version"]
@@ -179,6 +183,12 @@ class CockpitState:
             # The stage map is checked for shape only; a slot it names may be removed later
             # and the router then reports it as unknown instead of choosing another.
             value["project_stages"] = validate_project_stages(changes.get("project_stages", value["project_stages"]))
+            # Third-party MCP servers of the built-in agent (#126): only this person route writes them.
+            servers = changes.get("project_mcp_servers", value["project_mcp_servers"])
+            if "project_mcp_server_edit" in changes:
+                # One project's list, checked against what the editor showed, under this lock.
+                servers = apply_project_edit(value["project_mcp_servers"], changes["project_mcp_server_edit"])
+            value["project_mcp_servers"] = validate_project_mcp_servers(servers)
             if "last_project" in changes:
                 value["last_project"] = None if changes["last_project"] is None else _project_id(changes["last_project"])
             if original_version == 1:

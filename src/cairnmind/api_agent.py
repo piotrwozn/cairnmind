@@ -88,7 +88,7 @@ class AgentEngine:
     """One explicit user turn at a time; process/UI restarts grant no authority."""
 
     def __init__(self, settings, run, profile, *, key=None, provider=None, memory=None,
-                 journal=None, approve=None, on_delta=None, on_event=None, tools=None):
+                 journal=None, approve=None, on_delta=None, on_event=None, tools=None, mcp_servers=None):
         from .agent_journal import AgentJournal
         from .agent_memory import AgentMemoryClient, MEMORY_TOOLS, READ_MEMORY_TOOLS
         from .agent_tools import FILE_TOOLS, ToolExecutor
@@ -129,6 +129,17 @@ class AgentEngine:
         self._read_memory = set(READ_MEMORY_TOOLS) | _BOOTSTRAP_TOOLS
         self._schemas = {row["name"]: deepcopy(row)
                          for row in [*MEMORY_TOOLS, *FILE_TOOLS, COMPACT_TOOL]}
+        from .mcp_agent import McpTools
+        from .mcp_host import PREFIX
+        if any(name.startswith(PREFIX) for name in self._schemas):
+            raise ValueError("The mcp_ prefix is reserved for third-party tools")
+        # Third-party MCP tools (#126): API runs only. Their names are never read-memory names, so the
+        # ACK gate below offers and admits them like every other effect.
+        self.mcp = McpTools(mcp_servers if run["client"] == "api" else [], run=self.run, journal=self.journal,
+                            worktree=run["worktree"], reserved=set(self._schemas),
+                            approve=self._approve_command if approve is not None else None)
+        self._mcp_started = False
+        self._emitted = False
         self._prepared = False
         self._acknowledged = False
         self._last_packet = None
@@ -199,6 +210,7 @@ class AgentEngine:
     async def _emit_stream(self, text):
         if not text:
             return
+        self._emitted = True  # shown text: a failed request is then never made again (#126)
         self._stream_buffer += text
         if len(self._stream_buffer) >= 2048:
             self._flush_stream()
@@ -253,7 +265,12 @@ class AgentEngine:
                 value = json.loads(message["content"])
             except (ValueError, TypeError):
                 value = {"content": message["content"]}
-            projection = self._bounded_projection(value)
+            if message.get("name") in self.mcp.catalogue and isinstance(value, dict):
+                # A third-party result keeps its marking; its text stays apart from host keys (#126).
+                from .mcp_agent import projection as third_party_projection
+                projection = third_party_projection(value)
+            else:
+                projection = self._bounded_projection(value)
             if not isinstance(projection, dict):
                 projection = {"result": projection}
             projection.update(host_context_truncated=True, full_result_archived=True,
@@ -485,7 +502,8 @@ class AgentEngine:
         schema = self._schemas.get(name)
         if not schema or not isinstance(arguments, dict):
             return self._error("invalid_tool_call")
-        if not Draft202012Validator(schema["parameters"]).is_valid(arguments):
+        # A third-party schema is checked by McpTools.call, off the event loop and with a time bound.
+        if name not in self.mcp.catalogue and not Draft202012Validator(schema["parameters"]).is_valid(arguments):
             return self._error("invalid_tool_arguments")
         if self._redact(arguments) != arguments:
             return self._error("credential_in_tool_arguments")
@@ -500,6 +518,15 @@ class AgentEngine:
                 return await self._compact(arguments)
             if name in self._memory_tools:
                 return await self._memory_tool(name, arguments)
+            if name in self.mcp.catalogue:
+                called = self.mcp.results
+                result = await self.mcp.call(name, arguments, call_id, self.tools.command_timeout_seconds)
+                if name in self.mcp.withdrawn and self._schemas.pop(name, None) is not None:
+                    await self._notify("mcp_tool_withdrawn", {"name": name})
+                if self.mcp.results != called:
+                    # Archived at once: the service then marks this session's later memory writes degraded.
+                    await self._checked_archive()
+                return result
             self.tools.current_tool_call_id = call_id
             try:
                 return await self.tools.execute(name, arguments)
@@ -641,9 +668,7 @@ class AgentEngine:
             self._display_pending = ""
             self._record("provider_started", {"request_id": self._request_id, "call": self._model_calls,
                                                "provider": self.profile.get("provider", "api")})
-            reply = await self.provider.complete(
-                [{"role": "system", "content": SYSTEM}, *deepcopy(self._context)],
-                self._available_tools(), on_delta=self._delta)
+            reply = await self._complete()
             await self._finish_stream()
             message, calls = self._reply(reply)
             await self._message(message)
@@ -758,6 +783,7 @@ class AgentEngine:
                     "An earlier action has no confirmed outcome. Resolve it explicitly before continuing."],
                     pending_actions=self.pending_actions())
             try:
+                await self._start_mcp()
                 if not self._prepared:
                     previous = bool(self.journal.events())
                     prepared = await self._prepare(reason="resume" if previous else "startup", archive=previous)
@@ -828,6 +854,52 @@ class AgentEngine:
             finally:
                 self._turn_task = None
 
+    async def _start_mcp(self):
+        """Start the run's MCP servers once, before the first model call; failures are reported, not fatal."""
+        if self._mcp_started:
+            return
+        # An interrupted start has stopped what it started; it is tried again on the next turn.
+        failures = await self.mcp.start(self._record)
+        self._mcp_started = True
+        for schema in self.mcp.schemas():
+            self._schemas[schema["name"]] = deepcopy(schema)
+        for server_id, code in failures:
+            await self._notify("mcp_server_failed", {"server_id": server_id, "code": code})
+
+    async def _complete(self):
+        """One model call (#126). When the provider refuses a request that offered third-party tools, either
+        naming the tool definitions (``tools_rejected``) or with no usable cause (``provider_error``,
+        ``unsupported_request``), and nothing was shown yet, the call is made once more without them. If that
+        succeeds they are withdrawn for the run and reported; if it fails, they stay and the original error
+        stands. Any other refusal, a context overflow included, is not retried."""
+        from .api_providers import ProviderError
+        tools = self._available_tools()
+        messages = [{"role": "system", "content": SYSTEM}, *deepcopy(self._context)]
+        self._emitted = False
+        try:
+            return await self.provider.complete(messages, tools, on_delta=self._delta)
+        except ProviderError as error:
+            offered = sorted({self.mcp.catalogue[t["name"]]["server_id"] for t in tools if t["name"] in self.mcp.catalogue})
+            if (not offered or self._emitted
+                    or error.code not in {"tools_rejected", "provider_error", "unsupported_request"}):
+                raise
+            first = error
+        self._stream_buffer = self._display_pending = ""
+        without = [tool for tool in tools if tool["name"] not in self.mcp.catalogue]
+        try:
+            reply = await self.provider.complete(messages, without, on_delta=self._delta)
+        except ProviderError:
+            # Not the third-party tools: they stay offered, and the person sees the original refusal.
+            self._record("mcp_tools_kept", {"code": first.code, "servers": offered})
+            await self._notify("mcp_tools_kept", {"code": first.code, "servers": offered})
+            raise first from None
+        for name in list(self.mcp.catalogue):
+            self._schemas.pop(name, None)
+        data = {"code": first.code, "servers": offered, "named_by_provider": first.code == "tools_rejected"}
+        self._record("mcp_tools_withdrawn", data)
+        await self._notify("mcp_tools_withdrawn", data)
+        return reply
+
     async def _stop_tools(self):
         stop = getattr(self.tools, "interrupt", None)
         if stop is not None:
@@ -861,6 +933,13 @@ class AgentEngine:
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
             except (TimeoutError, asyncio.CancelledError):
+                pass
+        # No server process and no command outlives the run.
+        for closer in (lambda: self.mcp.close(self._record), getattr(self.tools, "close", None)):
+            try:
+                if closer is not None:
+                    await _await(closer())
+            except Exception:
                 pass
         for target in (self.provider, self.memory):
             closer = getattr(target, "aclose", None) or getattr(target, "close", None)

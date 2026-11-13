@@ -167,3 +167,69 @@ def test_deleted_private_journal_requires_new_session_not_sequence_reuse(runtime
         runner.start_agent(project, profile, slot_id='slot', resume=True)
     assert len(requests) == len(spawned) == 1
     assert first['session_id'] == 'logical-session'
+
+
+def mcp_server(identifier='tracker', command='/usr/bin/env', args=('python3', '-m', 'tracker')):
+    return {'id': identifier, 'command': command, 'args': list(args), 'env': {}}
+
+
+def local_profile():
+    return normalize_profile({'id': 'local', 'client': 'api', 'label': 'Local', 'provider': 'ollama', 'model': 'm'})
+
+
+def test_project_mcp_servers_are_frozen_into_the_api_run_only(runtime, tmp_path, monkeypatch):
+    from cairnmind.cockpit_state import CockpitState
+    runner, credentials, project, spawned, requests = runtime
+    other = tmp_path / 'other'
+    other.mkdir()
+    state = CockpitState(runner.settings)
+    state.update({'project_mcp_servers': {'project': [mcp_server()]}})
+    run = runner.start_agent(project, local_profile(), slot_id='slot')
+    config = runner.agent_configuration(run['id'], run['generation'])
+    assert config['mcp_servers'] == [mcp_server()] and config['mcp_problems'] == []
+    # Edits apply to the next run only.
+    state.update({'project_mcp_servers': {'project': [mcp_server('changed')]}})
+    assert runner.agent_configuration(run['id'], run['generation'])['mcp_servers'] == [mcp_server()]
+    second = runner.start_agent({'id': 'other', 'root': str(other)}, local_profile(), slot_id='slot')
+    assert runner.agent_configuration(second['id'], second['generation'])['mcp_servers'] == []
+    monkeypatch.setattr('cairnmind.copilot_adapter.runtime_status', lambda settings: {'available': True})
+    copilot = normalize_profile({'id': 'copilot', 'client': 'copilot', 'label': 'Copilot'})
+    third = runner.start_agent(project, copilot, slot_id='copilot-slot')
+    assert runner.agent_configuration(third['id'], third['generation'])['mcp_servers'] == []
+    path = runner.directory / 'agent-configs' / (third['id'] + '.json')
+    assert json.loads(path.read_text())['mcp_servers'] == []
+
+
+def test_a_worktree_program_or_an_invalid_list_gives_no_server_and_the_run_starts(runtime):
+    from cairnmind.cockpit_state import CockpitState
+    runner, credentials, project, spawned, requests = runtime
+    state = CockpitState(runner.settings)
+    inside = mcp_server('local', command=project['root'] + '/bin/server', args=())
+    state.update({'project_mcp_servers': {'project': [inside, mcp_server()]}})
+    run = runner.start_agent(project, local_profile(), slot_id='slot')
+    config = runner.agent_configuration(run['id'], run['generation'])
+    assert config['mcp_servers'] == [mcp_server()]
+    assert config['mcp_problems'] == [{'server_id': 'local', 'code': 'definition_refused'}]
+    stored = json.loads(state.path.read_text())
+    stored['project_mcp_servers'] = {'project': [{'id': 'x', 'command': 'relative'}]}
+    state.path.write_text(json.dumps(stored))
+    rows = runner._read()
+    rows[0]['lifecycle'] = 'exited'
+    runner._save(rows)
+    again = runner.start_agent(project, local_profile(), slot_id='slot')
+    assert again['id'] != run['id']
+    config = runner.agent_configuration(again['id'], again['generation'])
+    assert config['mcp_servers'] == [] and config['mcp_problems'] == [{'code': 'configuration_invalid'}]
+
+
+def test_the_largest_valid_list_still_fits_the_private_configuration(runtime):
+    from cairnmind.cockpit_state import CockpitState
+    runner, credentials, project, spawned, requests = runtime
+    state = CockpitState(runner.settings)
+    big = [mcp_server(f's{i}', args=['a' * 4000] * 4) for i in range(4)]
+    assert state.update({'project_mcp_servers': {'project': big}})
+    with pytest.raises(ValueError, match='too large'):
+        state.update({'project_mcp_servers': {'project': [mcp_server(f's{i}', args=['a' * 4096] * 32)
+                                                          for i in range(4)]}})
+    run = runner.start_agent(project, local_profile(), slot_id='slot')
+    assert len(runner.agent_configuration(run['id'], run['generation'])['mcp_servers']) == 4

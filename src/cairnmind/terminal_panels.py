@@ -798,6 +798,15 @@ class SidebarApp(BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
+    @work(group="sidebar-mcp", exclusive=True, exit_on_error=False)
+    async def edit_mcp_servers(self):
+        """Only a person adds or removes a project's MCP servers, here (#126)."""
+        from .workspace_mcp import edit_mcp_servers
+        try:
+            await edit_mcp_servers(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
     @work(group="sidebar-profiles", exclusive=True, exit_on_error=False)
     async def edit_profiles(self, identifier=None, *, advanced=False):
         try:
@@ -968,8 +977,10 @@ class SidebarApp(BasePanel):
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
             # New entries go last: keyboard paths to the existing ones keep their positions.
             ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages"),
+            ("MCP servers", "mcp"),
             ("Notices", "notices")]))
         actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
+                   "mcp": self.edit_mcp_servers,
                    "scan": self.scan_projects,
                    "queue": self.action_queue,
                    "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings,
