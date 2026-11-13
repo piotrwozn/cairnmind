@@ -37,17 +37,33 @@ class Impact:
     def __init__(self, broker, workspace, *, fail=None):
         self.broker, self.workspace, self.fail = broker, workspace, fail
         self.reads, self.posted, self.original = [], [], broker.request
+        # A read or a post waits for the next gate in its list, if any; read_fail/answer replace a read's answer.
+        self.read_gates, self.post_gates, self.read_fail, self.answer = [], [], None, None
+        self.in_flight = self.most_in_flight = 0
         broker.request = self.request
 
     def request(self, method, path, *, params=None, json=None, timeout=20):
         if path == "/api/inspector/impact":
             self.broker.calls.append((method, path, deepcopy(params), deepcopy(json)))
             self.reads.append({key: value for key, value in params.items() if value is not None})
+            self.in_flight += 1
+            self.most_in_flight = max(self.most_in_flight, self.in_flight)
+            try:
+                if self.read_gates:
+                    assert self.read_gates.pop(0).wait(10)
+                if self.read_fail:
+                    raise self.read_fail
+            finally:
+                self.in_flight -= 1
+            if self.answer is not None:
+                return deepcopy(self.answer)
             rows = [row for row in REPORT["records"] if not (params.get("pending") and row["verdict"])]
             return deepcopy({**REPORT, "since": params["since"], "records": rows})
         if path == VERDICT:
             self.broker.calls.append((method, path, deepcopy(params), deepcopy(json)))
             self.posted.append(deepcopy(json))
+            if self.post_gates:
+                assert self.post_gates.pop(0).wait(10)
             if self.fail:
                 raise self.fail
             return {"record_id": json["record_id"], "already_saved": False}
@@ -160,11 +176,16 @@ async def test_a_verdict_is_posted_with_the_fingerprint_shown_and_the_list_is_re
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await open_impact(app, pilot)
-        # Another commit was entered and its list is still being read: the verdict belongs to the list shown.
+        # Typed but not submitted: the verdict belongs to the list shown.
         app.query_one("#impact-since", Input).value = "main"
-        app.impact_since = "main"
-        offered = []
-        script(app, monkeypatch, [choice, {"note": note}], offered)
+        offered, answers = [], iter([choice, {"note": note}])
+
+        async def scripted(screen):
+            offered.append(screen)
+            app.impact_since = "main"  # whatever the view asks for later, the verdict is for the list shown
+            return next(answers)
+
+        monkeypatch.setattr(app, "push_screen_wait", scripted)
         app.query_one("#impact-verdict", Button).press()
         await wait(pilot, lambda: impact.posted and len(impact.reads) == 2)
         await settle(app, pilot)
@@ -200,11 +221,47 @@ async def test_needs_update_without_a_note_and_a_project_change_send_nothing(tmp
             return next(answers)
 
         monkeypatch.setattr(app, "push_screen_wait", moved)
+        app.notice("")
         app.record_impact_verdict()
         await settle(app, pilot)
-        assert "Niczego nie zapisano" in text(app.query_one("#panel-notice", Static)) or \
-            "Nothing was saved" in text(app.query_one("#panel-notice", Static))
+        assert text(app.query_one("#panel-notice", Static)) == "The project changed during review. Nothing was saved."
     assert impact.posted == [] and impact.writes() == []
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_is_offered_only_for_an_entry_of_the_list_asked_for_now(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    impact = Impact(broker, workspace)
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await app.load_page()  # the records page: record-a is in the table
+        app.set_view("impact")  # as the selector does, before the impact read has started
+        await app.open_entity("record-a", "impact")
+        assert app.entity is None and not app.query_one("#impact-actions").display
+        gate = __import__("threading").Event()
+        impact.read_gates.append(gate)
+        app.refresh_page()
+        await wait(pilot, lambda: impact.in_flight)
+        # While a slow read runs, nothing of an earlier list can be opened.
+        assert app.rows == {} and app.query_one("#inspector-rows", DataTable).row_count == 0
+        await app.open_entity("record-a", "impact")
+        assert app.entity is None
+        gate.set()
+        await wait(pilot, lambda: app.rows)
+        await settle(app, pilot)
+        app.workspace_data = {**app.workspace_data, "project_id": "another"}  # polled, its read not started yet
+        await app.open_entity("rec-rule", "impact")
+        assert app.entity is None
+        app.workspace_data = {**app.workspace_data, "project_id": "project-keyboard"}
+        await app.open_entity("rec-rule", "impact")
+        app.impact_since = "main"  # another commit entered: the open entry is not of that list
+        offered = []
+        script(app, monkeypatch, ["still_valid", {"note": ""}], offered)
+        app.record_impact_verdict()
+        await settle(app, pilot)
+        assert offered == [] and text(app.query_one("#panel-notice", Static)) == "Open an entry of the list first."
+    assert impact.posted == []
 
 
 @pytest.mark.asyncio

@@ -103,12 +103,26 @@ def list_summary(result, since, pending, translate):
     return text
 
 
+def _settle(task):
+    """Collect the outcome of a read nobody waits for any more, so it is never reported as lost."""
+    if not task.cancelled():
+        task.exception()
+
+
 class ImpactView:
-    """The Impact view's part of the inspector panel. Its handlers are named, so Textual finds them by MRO."""
+    """The Impact view's part of the inspector panel. Its handlers are named, so Textual finds them by MRO.
+
+    Rows can be opened as entries only while they are the impact answer shown now: ``impact_shown`` is the
+    identity of that answer (project, worktree, commit as typed, pending filter) and ``impact_entries`` its rows.
+    """
     impact_since = DEFAULT_SINCE
     impact_pending = False
-    impact_report: dict = {}
+    impact_shown = None
+    impact_entries: dict = {}
+    impact_commit = None
     _columns_kind = "standard"
+    _impact_task = None
+    _verdict_busy = False
 
     def compose_impact_bar(self):
         with Horizontal(id="impact-bar"):
@@ -122,6 +136,8 @@ class ImpactView:
         self.query_one("#impact-verdict", Button).label = self.t("Verdict")
 
     def use_columns(self, kind):
+        if kind != "impact":
+            self.impact_shown, self.impact_entries = None, {}  # the table no longer shows an impact answer
         if kind == self._columns_kind:
             return
         table = self.query_one("#inspector-rows", DataTable)
@@ -132,34 +148,74 @@ class ImpactView:
             table.add_columns(self.t("Typ / stan"), self.t("Treść / źródło"), self.t("Wersja / próba"))
         self._columns_kind = kind
 
+    def impact_key(self):
+        return (self.workspace_data.get("project_id"), self.workspace_data.get("worktree"), self.impact_since,
+                self.impact_pending)
+
+    def impact_request(self, method, path, *, sent=None, **kwargs):
+        """One request on a client of its own, as /api/ask and /api/brief do: the shared client's lock is held for a
+        whole call, and a list that runs Git for two minutes must not hold up the other views."""
+        from .terminal_client import BrokerClient
+        if not isinstance(self.broker, BrokerClient):
+            if sent is not None:
+                sent.append(True)
+            return self.broker.request(method, path, timeout=IMPACT_TIMEOUT, **kwargs)
+        with BrokerClient(self.settings, ensure=False) as client:
+            client.connect()
+            if sent is not None:
+                sent.append(True)  # found and authenticated: from here on the request may reach the service
+            return client.request(method, path, timeout=IMPACT_TIMEOUT, **kwargs)
+
+    async def read_impact(self, params):
+        """At most one read runs; a newer request waits for it, then reads what is asked now. A read whose caller
+        was cancelled still finishes in its thread, and nobody starts a second one beside it."""
+        while self._impact_task is not None and not self._impact_task.done():
+            await asyncio.wait([self._impact_task])
+        self._impact_task = asyncio.ensure_future(asyncio.to_thread(
+            self.impact_request, "GET", "/api/inspector/impact", params=params))
+        self._impact_task.add_done_callback(_settle)
+        return await asyncio.shield(self._impact_task)
+
+    def clear_impact(self):
+        self.rows, self.impact_shown, self.impact_entries = {}, None, {}
+        if self.entity_kind == "impact":
+            self.entity = self.entity_kind = None
+        self.render_rows([])
+
     async def load_impact(self):
+        """Read the list for what the view asks now; True only when that list is the one now shown."""
+        if self.view != "impact":
+            return False
+        self.clear_impact()
         if not self.workspace_data.get("project_id"):
-            self.rows = {}
-            self.render_rows([])
             self.notice(self.t("Open a project first."))
-            return
-        scope, since, pending = self._scope_version, self.impact_since, self.impact_pending
+            return False
+        key = self.impact_key()
+        since, pending = key[2], key[3]
         params = {**self.params(), "since": since, "pending": True if pending else None}
         self.notice(self.t("Comparing the worktree with {since}…", since=_line(since, 80)))
         try:
-            result = await asyncio.to_thread(self.broker.request, "GET", "/api/inspector/impact", params=params,
-                                             timeout=IMPACT_TIMEOUT)
+            result = await self.read_impact(params)
         except (OSError, ValueError, RuntimeError) as exc:
-            if (scope, since, pending) == (self._scope_version, self.impact_since, self.impact_pending):
-                self.rows, self.entity, self.entity_kind = {}, None, None
-                self.render_rows([])
+            if self.view == "impact" and key == self.impact_key():
+                self.clear_impact()
                 self.notice(self.t("Could not read the impact list.") + " " + self.error_detail(exc))
-            return
-        if (scope, since, pending) != (self._scope_version, self.impact_since, self.impact_pending) \
-                or self.view != "impact":
-            return
+            return False
+        if self.view != "impact" or key != self.impact_key():
+            return False
         self.history_owner, self.entity, self.entity_kind = None, None, None
         self.next_cursor = self.source_next = None
-        self.impact_report = {"since": since, "commit": result.get("commit"), "pending": pending}
-        self.rows = {row["id"]: row for row in result.get("records") or []
-                     if isinstance(row, dict) and isinstance(row.get("id"), str)}
-        self.render_rows(list(self.rows.values()))
+        if not isinstance(result, dict) or "changed_files" not in result or "commit" not in result:
+            self.clear_impact()  # e.g. the preview answers every inspector read with an empty page
+            self.notice(self.t("The impact list is not available here."))
+            return False
+        entries = {row["id"]: row for row in result.get("records") or []
+                   if isinstance(row, dict) and isinstance(row.get("id"), str)}
+        self.rows = dict(entries)
+        self.render_rows(list(entries.values()))
+        self.impact_shown, self.impact_entries, self.impact_commit = key, entries, result.get("commit")
         self.notice(list_summary(result, since, pending, self.t))
+        return True
 
     def render_impact_rows(self, rows):
         self.use_columns("impact")
@@ -181,12 +237,14 @@ class ImpactView:
                           plain(title), plain(shown, limit=200), plain(checked), key=row["id"])
 
     def open_impact(self, identifier):
-        row = self.rows.get(identifier)
-        if not row:
+        # Only an entry of the answer shown now, for the project, worktree and commit the view asks for now.
+        row = self.impact_entries.get(identifier)
+        if self.view != "impact" or row is None or self.impact_shown != self.impact_key():
             return
         self._entity_request += 1
         self.entity_kind, self.entity, self.history_owner, self.source_next = "impact", row, None, None
-        self.show_detail(row, kind="impact", text=impact_text(row, self.impact_report, self.t))
+        report = {"since": self.impact_shown[2], "commit": self.impact_commit}
+        self.show_detail(row, kind="impact", text=impact_text(row, report, self.t))
         self.notice(self.t("Verdict saves your judgement of this entry as an audit note. It changes no record, "
                            "no status and no task."))
 
@@ -195,15 +253,12 @@ class ImpactView:
             return
         since = " ".join(event.value.split()) or DEFAULT_SINCE
         event.input.value = since
-        if since != self.impact_since:
-            self.impact_since = since
-            self.entity = self.entity_kind = None
+        self.impact_since = since
         self.refresh_page()
 
     def on_checkbox_changed(self, event):
         if event.checkbox.id == "impact-pending" and bool(event.value) != self.impact_pending:
             self.impact_pending = bool(event.value)
-            self.entity = self.entity_kind = None
             self.refresh_page()
 
     def error_detail(self, exc):
@@ -212,17 +267,32 @@ class ImpactView:
 
     @work(group="inspector-read", exclusive=True, exit_on_error=False)
     async def reload_impact(self, identifier):
-        await self.load_impact()
-        if identifier in self.rows:
+        before = self.impact_shown
+        if await self.load_impact() and self.impact_shown == before and identifier in self.impact_entries:
             self.open_impact(identifier)
 
-    @work(group="inspector-review", exclusive=True, exit_on_error=False)
-    async def record_impact_verdict(self):
-        if self.entity_kind != "impact" or not self.entity:
+    def record_impact_verdict(self):
+        # Checked before a worker starts: a second press must neither cancel nor repeat a verdict being saved.
+        if self._verdict_busy:
+            self.notice(self.t("A verdict is being saved. Wait for its answer."))
+            return
+        if self.entity_kind != "impact" or not self.entity or self.impact_shown != self.impact_key():
             self.notice(self.t("Open an entry of the list first."))
             return
-        row, since, scope, params = dict(self.entity), self.impact_report.get("since"), self._scope_version, self.params()
-        if not isinstance(row.get("fingerprint"), str) or not _FINGERPRINT.fullmatch(row["fingerprint"]) or not since:
+        self._verdict_busy = True
+        self.send_impact_verdict(dict(self.entity), self.impact_shown)
+
+    @work(group="impact-verdict", exit_on_error=False)
+    async def send_impact_verdict(self, row, shown):
+        try:
+            await self.ask_and_send_verdict(row, shown)
+        finally:
+            self._verdict_busy = False
+
+    async def ask_and_send_verdict(self, row, shown):
+        project, worktree, since, _ = shown
+        scope = self._scope_version
+        if not isinstance(row.get("fingerprint"), str) or not _FINGERPRINT.fullmatch(row["fingerprint"]):
             self.notice(self.t("This entry cannot be judged as shown. Press r to read the list again."))
             return
         choice = await self.push_screen_wait(ChoiceModal(self.t("Verdict"), [
@@ -238,28 +308,38 @@ class ImpactView:
             submit=self.t("Save verdict")))
         if form is None:
             return
-        if scope != self._scope_version:
+        if scope != self._scope_version or self.impact_key()[:2] != (project, worktree):
             self.notice(self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
             return
         note = str(form.get("note") or "").strip()
         if needs and not note:
             self.notice(self.t("Needs update requires a note on what to update. Nothing was saved."))
             return
-        payload = {"project": params["project"], "since": since, "record_id": row["id"],
-                   "fingerprint": row["fingerprint"], "verdict": choice}
-        if params.get("worktree"):
-            payload["worktree"] = params["worktree"]
+        payload = {"project": project, "since": since, "record_id": row["id"], "fingerprint": row["fingerprint"],
+                   "verdict": choice}
+        if worktree:
+            payload["worktree"] = worktree
         if note:
             payload["note"] = note
+        sent = []
         try:
-            result = await asyncio.to_thread(self.broker.request, "POST", "/api/inspector/impact/verdict",
-                                             json=payload, timeout=IMPACT_TIMEOUT)
+            result = await asyncio.to_thread(self.impact_request, "POST", "/api/inspector/impact/verdict",
+                                             json=payload, sent=sent)
         except (OSError, ValueError, RuntimeError) as exc:
             if scope != self._scope_version:
                 return
-            if getattr(exc, "status_code", None) == 409:
+            from .workspace_finding import outcome_unknown
+            status = getattr(exc, "status_code", None)
+            if status in (404, 409) or outcome_unknown(exc, sent):
                 await self.load_impact()
+            if status == 409:
                 self.notice(self.t("The code or the record changed, the list was reloaded. Nothing was saved."))
+            elif status == 404:
+                self.notice(self.t("This record is no longer in the list, the list was reloaded. Nothing was saved."))
+            elif outcome_unknown(exc, sent):
+                self.notice(self.t("No clear answer from the memory service. The verdict may have been saved; the "
+                                   "list was reloaded and shows it if so. Saving the same verdict again is safe "
+                                   "and stores nothing twice.") + " " + self.error_detail(exc))
             else:
                 self.notice(self.t("The verdict was not saved.") + " " + self.error_detail(exc))
             return

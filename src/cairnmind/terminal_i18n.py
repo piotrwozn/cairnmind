@@ -108,6 +108,14 @@ CATALOG = {
     "The code or the record changed, the list was reloaded. Nothing was saved.":
         "Kod lub ustalenie się zmieniły, wczytano listę ponownie. Niczego nie zapisano.",
     "The verdict was not saved.": "Ocena nie została zapisana.",
+    "The impact list is not available here.": "Lista wpływu zmian nie jest tu dostępna.",
+    "A verdict is being saved. Wait for its answer.": "Ocena jest zapisywana. Poczekaj na odpowiedź.",
+    "This record is no longer in the list, the list was reloaded. Nothing was saved.":
+        "Tego ustalenia nie ma już na liście, wczytano listę ponownie. Niczego nie zapisano.",
+    "No clear answer from the memory service. The verdict may have been saved; the list was reloaded and shows it "
+    "if so. Saving the same verdict again is safe and stores nothing twice.":
+        "Brak jednoznacznej odpowiedzi usługi pamięci. Ocena mogła zostać zapisana; wczytano listę ponownie i jeśli "
+        "tak, pokazuje ją. Ponowny zapis tej samej oceny jest bezpieczny i niczego nie powtórzy.",
     "This verdict was already saved.": "Ta ocena była już zapisana.",
     "Verdict saved: {verdict}. No record, status or task was changed.":
         "Ocena zapisana: {verdict}. Żadne ustalenie, stan ani zadanie się nie zmieniło.",

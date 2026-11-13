@@ -210,7 +210,10 @@ class InspectorApp(ImpactView, BasePanel):
         elif not selection and (context_changed or self._selected_entity_signature not in {None, "null"}):
             self._selected_entity_signature = None
             self.entity = None
-            await self.load_page()
+            if self.view == "impact":
+                self.refresh_page()  # Git may take minutes: never inside the workspace poll
+            else:
+                await self.load_page()
 
     def set_view(self, view):
         self.view = view
