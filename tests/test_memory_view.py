@@ -201,8 +201,8 @@ def test_the_total_of_source_text_is_bounded_and_the_note_comes_once(snapshot, m
     assert text.count("Source texts are limited to 1,500 characters in all; further texts are not shown.") == 1
     # The later records that rest on the same source get no text at all once the bound is reached.
     assert text.count("a" * 1000) == 1
-    assert "Source texts are limited" not in render_snapshot(manifest, payload, kind="decision", grep="zzz",
-                                                             sources_text=True)
+    # The note does not depend on a record being shown: the bound may have hidden what would have matched.
+    assert "Source texts are limited" in render_snapshot(manifest, payload, kind="decision", grep="zzz", sources_text=True)
 
 
 def test_source_text_cannot_carry_terminal_escapes_or_forged_lines(snapshot):
@@ -286,3 +286,82 @@ def test_output_without_the_new_option_does_not_depend_on_source_text(snapshot):
         del row["content"]
     assert render_snapshot(manifest, payload) == with_text
     assert "replaces" not in with_text and "replaced by" not in with_text and "acceptance criteria" not in with_text
+
+
+def test_the_total_bound_note_is_printed_even_when_the_record_it_hid_is_not_shown(snapshot):
+    manifest, payload = snapshot
+    # 51 records, each with its own 1,200-character source that matches: the 50 first fill the 60,000 bound.
+    payload["sources"] = [{"id": f"x{n}", "uri": f"note://{n}", "kind": "note", "content": "shared " + "x" * 1193}
+                          for n in range(51)]
+    payload["records"] = [_record(f"r{n}", "fact", f"Fact {n}.", sources=(f"x{n}",),
+                                  updated=f"2026-11-01T10:{59 - n % 60:02d}:00+00:00") for n in range(51)]
+    payload["plans"] = []
+    text = render_snapshot(manifest, payload, grep="shared", sources_text=True)
+    # The last record matches only through a text the bound cut away, so it is not shown, and the note says why.
+    assert "Records (50 shown of 51)" in text and "Fact 50." not in text
+    assert text.count("Source texts are limited to 60,000 characters in all; further texts are not shown.") == 1
+
+
+def test_a_cut_never_ends_inside_an_escape(snapshot, monkeypatch):
+    manifest, payload = snapshot
+    payload["sources"][0]["content"] = "a" * 1199 + "‮" + "b" * 10
+    text = render_snapshot(manifest, payload, kind="decision", sources_text=True)
+    assert "    | " + "a" * 1199 + "\n" in text and "a\\\n" not in text
+    # 6 characters of the escape and the 10 after it are left out, and the count says so.
+    assert "    (16 more characters left out)" in text
+    monkeypatch.setattr(memory_view, "TOTAL_TEXT_LIMIT", 500)
+    payload["sources"][0]["content"] = "a" * 499 + "\x1b[31m" + "b" * 10
+    text = render_snapshot(manifest, payload, kind="decision", sources_text=True)
+    assert "    | " + "a" * 499 + "\n" in text and "    (18 more characters left out)" in text
+
+
+def test_a_source_cited_by_many_records_is_escaped_once(snapshot, monkeypatch):
+    manifest, payload = snapshot
+    big = "a line of source text\n" * 1000
+    payload["sources"][0]["content"] = big
+    payload["records"] += [_record(f"m{n}", "fact", f"More {n}.", sources=("s1",)) for n in range(30)]
+    escaped = []
+    original = memory_view._block
+    monkeypatch.setattr(memory_view, "_block", lambda value: escaped.append(len(str(value))) or original(value))
+    render_snapshot(manifest, payload, sources_text=True)
+    render_snapshot(manifest, payload, grep="no such text", sources_text=True)
+    assert [size for size in escaped if size >= len(big)] == [len(big)] * 2
+
+
+def test_replacement_by_conflict_resolution_is_shown_from_the_notes_it_leaves(snapshot):
+    manifest, payload = snapshot
+    # conflicts.py: the loser gets metadata.superseded_by and the winner metadata.superseded_ids; no link.
+    payload["records"] = [
+        _record("d0", "decision", "Zero.", status="superseded"),
+        _record("d1", "decision", "One.", status="superseded", superseded_by="d2"),
+        _record("d3", "decision", "Three.", status="superseded", superseded_by=5),
+        _record("d2", "decision", "Two.", supersedes="d0", superseded_ids=["d1", "d0", "d1", 5, "", None, "d3"]),
+        _record("d4", "decision", "Four.", supersedes="d1")]
+    text = render_snapshot(manifest, payload, kind="decision")
+    assert "  replaces: d0 (key-d0), d1 (key-d1), d3 (key-d3)\n" in _block(text, "d2")
+    # The inbox's note comes before the back-link: d4 also points at d1, but d2 replaced it.
+    assert "  replaced by: d2 (key-d2)\n" in _block(text, "d1")
+    # A note that is not an identifier is ignored and the back-link is used, if there is one.
+    assert "replaced by" not in _block(text, "d3")
+    payload["records"][2]["metadata"]["superseded_by"] = ""
+    payload["records"][4]["supersedes"] = "d3"
+    assert "  replaced by: d4 (key-d4)\n" in _block(render_snapshot(manifest, payload, kind="decision"), "d3")
+
+
+@pytest.mark.parametrize("empty", ["", 5, None])
+def test_an_empty_or_odd_supersedes_prints_no_replacement_line(snapshot, empty):
+    manifest, payload = snapshot
+    payload["records"][0]["status"] = "superseded"
+    payload["records"][1]["supersedes"] = empty
+    text = render_snapshot(manifest, payload)
+    assert "replaces" not in text and "replaced by" not in text
+
+
+def test_grep_also_finds_the_criteria_and_check_names_printed_for_a_task(snapshot):
+    manifest, payload = snapshot
+    payload["records"][2]["metadata"].update(acceptance_criteria=["Retries stop after five attempts."],
+                                             criterion_checks={"Retries stop after five attempts.": "unit_retry"})
+    for word in ("STOP AFTER FIVE", "unit_retry"):
+        text = render_snapshot(manifest, payload, grep=word)
+        assert "Records (1 shown of 4)" in text and "  id: t1" in text
+    assert "Nothing in this snapshot matches" in render_snapshot(manifest, payload, kind="decision", grep="unit_retry")

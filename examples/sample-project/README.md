@@ -70,9 +70,9 @@ And one thing only when you ask for it. The text of a source is in the package, 
 cairnmind memory show examples/sample-project/.memory/cairnmind --kind decision --sources
 ```
 
-You now read the meeting note of 2 March under the storage decision. A source that supports two decisions is printed under both. Each text is cut after 1,200 characters, with a note of how many were left out, and a run prints at most 60,000 characters of source text. A source that is not text, is empty or is missing from the package is named and not printed. With `--sources`, `--grep` also searches the text you see, and only that.
+You now read the meeting note of 2 March under the storage decision. A source that supports two decisions is printed under both. Each text is cut after 1,200 characters, with a note of how many were left out, and a run prints at most 60,000 characters of source text. A source whose text is empty or binary is named and not printed. `--grep` also searches the criteria and check names you see under a task, and with `--sources` the source text you see, and only that.
 
-What it leaves out even then: the sources of a plan (a plan is listed with their addresses only) and the earlier versions of a record.
+What it leaves out even then: the earlier versions of a record. A plan is listed with the addresses of its sources only, but the request that created it is a source too, so its text is printed under each task that cites it.
 
 Searching, asking questions, the workspace and the briefing all need the full installation, where this package can be imported into a project. See the [main README](../../README.md).
 

@@ -885,7 +885,8 @@ def memory_show(ctx: typer.Context, path: Path,
                 kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
                 status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None,
                 grep: Annotated[str | None, typer.Option(
-                    "--grep", help="Case-insensitive text to look for; with --sources also in the source texts shown.")] = None,
+                    "--grep", help="Case-insensitive text to look for, also in the acceptance criteria and check names "
+                                     "shown for tasks; with --sources also in the source texts shown.")] = None,
                 sources: Annotated[bool, typer.Option(
                     "--sources", help="Print the text of each record's sources, up to 1,200 characters each and 60,000 "
                                       "in all. A source that supports several records is printed under each.")] = False):
