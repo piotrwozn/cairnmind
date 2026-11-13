@@ -106,3 +106,27 @@ def test_assistant_preferences_reject_ambiguous_or_unbounded_history(tmp_path, k
     with pytest.raises(ValueError):
         state.update({"assistant_selections": {} if kind == "not-list" else rows})
     assert not state.path.exists()
+
+
+def menu_request(tmp_path, row):
+    """What choosing this menu row writes: the real menu dispatch and the real request_command, a real state."""
+    from types import SimpleNamespace
+
+    from cairnmind.terminal_commands import dispatch_command
+    from cairnmind.workspace import WorkspaceManager
+
+    state = WorkspaceState(Settings(data_dir=tmp_path / "data"))
+    stub = SimpleNamespace(state=state, _layout=lambda: None)
+    stub.request_command = lambda action: WorkspaceManager.request_command(stub, action)
+    dispatch_command(stub, row)
+    return state.read()["command_request"]
+
+
+def test_every_command_the_menu_lists_is_accepted_by_the_workspace_state(tmp_path):
+    from cairnmind.terminal_commands import COMMANDS
+
+    for row in COMMANDS:
+        if row[2] != "command":
+            continue
+        request = menu_request(tmp_path / row[3], row)
+        assert request["action"] == row[3] and request["target_role"] == "sidebar", row
