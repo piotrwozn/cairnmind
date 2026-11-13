@@ -11,7 +11,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, KnowledgeAgent, SYSTEM, question_excerpt
+from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, REPAIR_CATALOG_CHARS, KnowledgeAgent, SYSTEM, question_excerpt
 from cairnmind.config import Settings
 from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.retrieval import Retriever, public_record
@@ -279,7 +279,29 @@ async def test_support_check_timeout_is_never_complete(workspace):
 
     model = SlowJudge([final(source["id"], SUPPORTED_QUOTE, "Five attempts.")])
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
-    assert result["status"] != "complete" and result["diagnostics"]["code"] == "timeout"
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
+    assert any("Kontrola poparcia" in gap for gap in result["unknowns"])
+    assert "Five attempts." not in result["answer"]
+
+
+async def test_support_check_timeout_after_a_repair_keeps_the_repair_outcome(workspace):
+    store, project, settings = workspace
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    settings.ask_timeout = 2
+
+    class SlowJudge(FakeOllama):
+        async def chat(self, messages, tools=None, **kwargs):
+            if messages[0].get("content") == SUPPORT_SYSTEM:
+                await asyncio.sleep(10)
+            return await super().chat(messages, tools, **kwargs)
+
+    model = SlowJudge([{"content": "not JSON"}, final(source["id"], SUPPORTED_QUOTE, "Five attempts.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert len(model.calls) == 2  # the answer and its repair; the support check never answered
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
+    assert result["diagnostics"]["repair_outcome"] == "succeeded"
+    assert any("Kontrola poparcia" in gap for gap in result["unknowns"])
+    assert not any("poprawy" in gap for gap in result["unknowns"])  # not reported as a failed repair
     assert "Five attempts." not in result["answer"]
 
 
@@ -417,19 +439,33 @@ async def test_ten_initial_excerpts_leave_room_for_a_search_round(workspace):
     assert used <= max(12000, settings.num_ctx * 2)
 
 
+async def test_repair_catalog_starts_with_the_hits_the_model_saw_first(workspace):
+    store, project, settings = workspace
+    for index in range(INITIAL_HITS):
+        body = "\n".join(f"Retry budget note {index}, line {line}: background on retries." for line in range(14))
+        document(store, project, ("retry budget " * (INITIAL_HITS - index)) + "\n" + body, uri=f"notes://budget-{index}")
+    model = FakeOllama([{"content": "not JSON"}, {"content": "still not JSON"}])
+    await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    shown = json.loads(model.calls[0]["messages"][1]["content"])["initial_evidence"]
+    repair = json.loads(model.calls[1]["messages"][1]["content"])["citation_catalog"]
+    assert len(shown) == INITIAL_HITS and 1 < len(repair) < INITIAL_HITS  # the budget leaves some out
+    # The top hits, in the order shown, not the hits registered last.
+    assert [item["source_id"] for item in repair] == [hit["source_id"] for hit in shown[:len(repair)]]
+
+
 def test_repair_catalog_keeps_its_budget_with_whole_excerpts(workspace):
     store, project, settings = workspace
     agent = KnowledgeAgent(store, settings, FakeOllama())
     evidence = {}
-    for index in range(6):
+    for index in range(10):
         text = f"Excerpt {index}: " + "literal evidence line\n" * 70
         source = store.snapshot(project["id"], f"note://budget-{index}", text, "note")
         source["_catalog_excerpt"] = text
         evidence[source["id"]] = source
     catalog = agent._citation_catalog(project["id"], evidence)
     assert catalog and all(not item["excerpt_truncated"] for item in catalog)
-    assert sum(len(json.dumps(item, ensure_ascii=False)) + 2 for item in catalog) + 2 <= 6000
-    assert len(catalog) < 6
+    assert sum(len(json.dumps(item, ensure_ascii=False)) + 2 for item in catalog) + 2 <= REPAIR_CATALOG_CHARS
+    assert len(catalog) < 8
 
 
 @pytest.mark.parametrize("failure", ["source_id", "quote"])
@@ -1485,6 +1521,9 @@ def test_strong_disputed_record_is_not_buried_under_weak_confirmed_matches(works
     ("web/app.spec.ts", True), ("web/app.test.js", True), ("uv.lock", True), ("web/package-lock.json", True),
     ("static/app.min.js", True), ("src/pkg/config.py", False), ("docs/testing.md", False),
     ("src/pkg/contest.py", False), ("src/latest/config.py", False), ("README.md", False),
+    # Documents are never tests, wherever they lie and whatever their name says.
+    ("docs/tests/strategy.md", False), ("tests/README.md", False), ("docs/auth.spec.md", False),
+    ("api/openapi.spec.yaml", False), ("tests/fixtures/data.json", False), ("pnpm-lock.yaml", True),
 ])
 def test_secondary_source_recognises_tests_lock_files_and_minified_text(path, secondary):
     from cairnmind.retrieval import secondary_source

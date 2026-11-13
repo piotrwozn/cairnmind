@@ -582,6 +582,28 @@ async def test_extraction_links_records_to_named_symbols_and_nested_files(worksp
     assert linked == {"symbol-refresh", "file-session"}
 
 
+async def test_extraction_links_a_constant_or_field_only_when_the_quote_writes_its_compound_name(workspace):
+    store, project, settings = workspace
+    quote = "The logger of each worker reads SESSION_TTL and Settings.port, and PROJECT is a placeholder."
+    item = source(store, project, quote)
+    nodes = {
+        "constant-logger": ("logger", "constant"), "constant-ttl": ("SESSION_TTL", "constant"),
+        "field-port": ("Settings.port", "field"), "constant-project": ("PROJECT", "constant"),
+        "function-logger": ("worker", "function"),
+    }
+    for node_id, (label, kind) in nodes.items():
+        store.upsert_node({"id": node_id, "project_id": project["id"], "kind": "symbol", "label": label,
+                           "source_id": item["id"], "is_current": True, "metadata": {"kind": kind, "name": label}})
+    job = extraction_job(store, project, item)
+    model = ScriptedOllama([extraction(candidate(quote, key="session-ttl", content="Workers read the session TTL."))])
+    await KnowledgeAgent(store, settings, model).extract(job)
+    linked = {edge["to_id"] for edge in store.query(
+        "SELECT FROM edges WHERE project_id=:project AND kind='relates_to'", {"project": project["id"]})}
+    # A plain word (logger) or a capitalised placeholder (PROJECT) is not taken for a constant;
+    # a function keeps being linked by its plain name, as before.
+    assert linked == {"constant-ttl", "field-port", "function-logger"}
+
+
 async def test_single_character_quote_is_not_accepted_as_evidence(workspace):
     store, project, settings = workspace
     text = "Authentication requires a literal source-backed policy."

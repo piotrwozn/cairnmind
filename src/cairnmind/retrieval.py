@@ -63,25 +63,33 @@ RECORD_STATUS_PENALTY = {"confirmed": 0, "proposed": 1, "disputed": 3}
 SECONDARY_SOURCE_PENALTY = 5
 _TEST_DIRECTORIES = {"test", "tests"}
 _LOCK_FILES = {"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml"}
+# Text, not code: a document is never a test, wherever it lies and whatever its name says.
+_DOCUMENT_SUFFIXES = {".md", ".mdx", ".rst", ".txt", ".adoc", ".yaml", ".yml", ".json", ".toml",
+                      ".ini", ".cfg", ".csv", ".html", ".htm", ".xml"}
 
 
 def secondary_source(path: str) -> bool:
     """True for a test file, a lock file or minified text, by its path within the project.
 
-    Tests: a directory named ``test`` or ``tests``, ``test_*.py``, ``*_test.*``, ``*.test.*``
-    and ``*.spec.*``. Lock files: ``*.lock`` and the npm/pnpm lock files. Minified: ``*.min.*``.
+    Lock files: ``*.lock`` and the npm/pnpm lock files. Minified: ``*.min.*``. Tests, for files
+    that are not documents (Markdown, reStructuredText, plain text, YAML, JSON, TOML and the
+    like): a file in a directory named ``test`` or ``tests``, ``test_*.py``, ``*_test.*``,
+    ``*.test.*`` and ``*.spec.*``. So ``tests/README.md`` or ``openapi.spec.yaml`` is primary.
     """
     parts = [part.casefold() for part in re.split(r"[\\/]", path) if part]
     if not parts:
         return False
     name = parts[-1]
-    stem = name.rsplit(".", 1)[0]
+    stem, dot, suffix = name.rpartition(".")
+    if name.endswith(".lock") or name in _LOCK_FILES or ".min." in name:
+        return True
+    if dot and "." + suffix in _DOCUMENT_SUFFIXES:
+        return False
     return bool(
         _TEST_DIRECTORIES.intersection(parts[:-1])
         or (name.startswith("test_") and name.endswith(".py"))
-        or ("." in name and stem.endswith("_test"))
-        or any(marker in name for marker in (".test.", ".spec.", ".min."))
-        or name.endswith(".lock") or name in _LOCK_FILES
+        or (dot and stem.endswith("_test"))
+        or any(marker in name for marker in (".test.", ".spec."))
     )
 
 

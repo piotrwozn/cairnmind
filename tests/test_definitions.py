@@ -4,10 +4,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
 from cairnmind.agent import EXCERPT_CHARS, INITIAL_HITS, KnowledgeAgent
-from cairnmind.definitions import MAX_DEFINITIONS, candidate_names, definition_lines, rank_definitions
+from cairnmind.definitions import (
+    MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, MAX_ROWS, candidate_names, definition_lines, rank_definitions,
+)
 from cairnmind.ingest import index_project
 
 CONFIG = '''"""Settings."""
@@ -137,6 +141,86 @@ async def test_a_question_whose_names_resolve_to_nothing_is_asked_as_before(work
     assert shown and all(item.get("kind") != "definition" for item in shown)
 
 
+@pytest.mark.parametrize("question, first", [
+    ("What is SCHEMA_VERSION?", "SCHEMA_VERSION"),
+    ("What is the default ask_timeout?", "Settings.ask_timeout"),
+    ("What is the default Settings.port?", "Settings.port"),
+])
+def test_a_definition_the_question_names_as_code_ranks_first(question, first):
+    rows = [{"symbol": {"name": name, "kind": kind, **({"owner": "Settings", "member": name.split(".")[1]}
+                                                       if "." in name else {})}, "path": path}
+            for name, kind, path in [("VERSION", "constant", "pkg/memory.py"),
+                                     ("SCHEMA_VERSION", "constant", "pkg/store.py"),
+                                     ("Settings.timeout", "field", "pkg/config.py"),
+                                     ("Settings.ask_timeout", "field", "pkg/config.py"),
+                                     ("Settings.port", "field", "pkg/config.py"),
+                                     ("default_port", "function", "pkg/net.py")]]
+    ranked = rank_definitions(question, rows)
+    assert ranked and ranked[0]["symbol"]["name"] == first
+
+
+def test_definitions_come_from_the_asked_worktree_only_and_in_a_stable_order(workspace, tmp_path):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    # Another registered root that sorts first and defines the same name more often than the
+    # bound on candidate rows: a bound applied before the worktree filter would leave only these.
+    second = tmp_path / "a-second-worktree"
+    (second / "pkg").mkdir(parents=True)
+    (second / "pkg" / "config.py").write_text(CONFIG.replace("8766", "9766"))
+    for index in range(MAX_ROWS + 10):
+        (second / "pkg" / f"copy_{index:03d}.py").write_text(f"class Settings:\n    cockpit_port: int = {index}\n")
+    store.add_project_root(project["id"], second)
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    hits = [{"source_id": "none", "text": 'getattr(settings, "cockpit_port", 1)'}]
+    question = "On which port does the cockpit listen by default?"
+    first = agent._definitions(project["id"], question, hits, {}, worktree=str(second))
+    again = agent._definitions(project["id"], question, hits, {}, worktree=str(second))
+    assert first and [item["text"] for item in first] == [item["text"] for item in again]
+    assert all(item["uri"].startswith(str(second)) for item in first)
+    assert any("9766" in item["text"] for item in first)
+    main = agent._definitions(project["id"], question, hits, {})
+    assert main and all(item["uri"].startswith(str(root)) for item in main)
+    assert any("8766" in item["text"] for item in main)
+
+
+def test_files_changed_since_indexing_cost_a_bounded_number_of_checks(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    for index in range(MAX_DEFINITION_ATTEMPTS + 4):
+        (root / "pkg" / f"limits_{index}.py").write_text(f"RETRY_LIMIT = {index}\n")
+    index_project(store, project["id"])
+    for index in range(MAX_DEFINITION_ATTEMPTS + 4):  # every definition is stale now
+        (root / "pkg" / f"limits_{index}.py").write_text(f"# moved\nRETRY_LIMIT = {index}\n")
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    checks, real = [], agent._source
+    agent._source = lambda *args, **kwargs: checks.append(args[0]) or real(*args, **kwargs)
+    counted, real_query = [], store.query
+    store.query = lambda *args, **kwargs: counted.append(args[0]) or real_query(*args, **kwargs)
+    try:
+        found = agent._definitions(project["id"], "What is the retry limit?", [], {})
+    finally:
+        store.query, agent._source = real_query, real
+    assert found == [] and len(checks) == MAX_DEFINITION_ATTEMPTS
+    print(f"stale: checks={len(checks)} queries={len(counted)}")
+
+
+def test_a_hit_and_a_definition_of_one_file_both_reach_the_repair_catalog(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    source = store.query("SELECT id FROM sources WHERE uri=:uri AND is_current=true",
+                         {"uri": str(root / "pkg" / "config.py")})[0]["id"]
+    lines = CONFIG.split("\n")
+    evidence = {}
+    hit = agent._hits([{"id": "chunk", "source_id": source, "text": "\n".join(lines[:4]), "line_start": 1,
+                        "line_end": 4, "uri": str(root / "pkg" / "config.py")}], project["id"], evidence)
+    definitions = agent._definitions(project["id"], "On which port does the cockpit listen by default?",
+                                     [*hit, {"source_id": "none", "text": "cockpit_port"}], evidence)
+    assert any(item["source_id"] == source for item in definitions)
+    catalog = agent._citation_catalog(project["id"], evidence, "not JSON")
+    passages = [item["quote_excerpt"] for item in catalog if item["source_id"] == source]
+    assert hit[0]["text"] in passages
+    assert any("cockpit_port: int = 8766" in passage for passage in passages) and len(passages) == 2
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
@@ -150,4 +234,5 @@ def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # 
         store.query, store.command = real_query, real_command
     assert found and len(found) <= MAX_DEFINITIONS
     print(f"definitions={len(found)} queries={len(counted)}")
-    assert len(counted) <= 4 + 12 * len(found)
+    # Project, roots, the worktree's sources (two), the nodes; then one freshness check per definition.
+    assert len(counted) <= 6 + 12 * len(found)

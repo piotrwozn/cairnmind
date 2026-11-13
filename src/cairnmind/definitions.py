@@ -27,7 +27,10 @@ from pathlib import Path, PurePosixPath
 from .retrieval import json_value, secondary_source, terms
 
 MAX_DEFINITIONS = 4
+# Definitions whose file is checked for freshness, shown or not: each check costs about twelve queries.
+MAX_DEFINITION_ATTEMPTS = 8
 MAX_NAMES = 64
+MAX_ROWS = 200  # candidate definitions read per question, after the worktree filter
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
 _KIND_ORDER = {"constant": 0, "field": 0, "function": 1, "method": 1, "class": 2}
 
@@ -58,34 +61,45 @@ def _words(text: str) -> set[str]:
     return {word.casefold() for word in re.split(r"[^A-Za-z0-9]+", spaced) if word}
 
 
-def relevance(question: str, symbol: dict, path: str) -> int:
-    """(question terms among the words of name and owner, question terms among the words of the file name)."""
+def relevance(question: str, symbol: dict, path: str) -> tuple[int, int, int]:
+    """(named, words in name and owner, words in file name) for a definition and a question.
+
+    ``named`` is 1 when the question writes the definition's name or bare member as code, in any
+    case (``ask_timeout``, ``SCHEMA_VERSION``, ``Settings.port``); a plain word such as "port" is
+    not a name written as code. The word counts compare the
+    question's search terms split into words (``schema_version`` counts as schema and version)
+    with the words of the name and its owner, and of the file name.
+    """
+    asked = terms(question)
+    spelled = {str(symbol.get(key, "")).casefold() for key in ("name", "member") if symbol.get(key)}
+    named = int(any(match.casefold() in spelled for match in _IDENTIFIER.findall(question) if _code_like(match)))
     words = _words(str(symbol.get("name", ""))) | _words(str(symbol.get("owner", "")))
     stem = _words(PurePosixPath(path).stem)
-    asked = terms(question)
-    return sum(term in words for term in asked), sum(term in stem for term in asked)
+    asked_words = [word for term in asked for word in _words(term)]
+    return named, sum(word in words for word in asked_words), sum(word in stem for word in asked_words)
 
 
 def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     """Rows ``{"symbol": node metadata, "path": project-relative path, ...}`` in the order shown.
 
-    Drops rows whose name and owner share no question term and, per bare name (a field's
-    member), secondary rows when a primary file defines that name. Order: question terms in name
-    and owner, then in the file name, primary before secondary, constants and fields before
-    functions before classes, then path and line for a stable result.
+    Drops rows whose name and owner share no word with the question (unless the question writes
+    the name) and, per bare name (a field's member), secondary rows when a primary file defines
+    that name. Order: a name the question writes first, then question words in name and owner,
+    then in the file name, primary before secondary, constants and fields before functions before
+    classes, then path and line for a stable result.
     """
     def bare(row: dict) -> str:
         return str(row["symbol"].get("member") or row["symbol"].get("name") or "")
 
     scored = []
     for row in rows:
-        named, filed = relevance(question, row["symbol"], row["path"])
-        if named:
-            scored.append({**row, "relevance": named, "file_relevance": filed,
+        named, words, filed = relevance(question, row["symbol"], row["path"])
+        if named or words:
+            scored.append({**row, "named": named, "relevance": words, "file_relevance": filed,
                            "secondary": secondary_source(row["path"])})
     primary_names = {bare(row) for row in scored if not row["secondary"]}
     kept = [row for row in scored if not (row["secondary"] and bare(row) in primary_names)]
-    return sorted(kept, key=lambda row: (-row["relevance"], -row["file_relevance"], row["secondary"],
+    return sorted(kept, key=lambda row: (-row["named"], -row["relevance"], -row["file_relevance"], row["secondary"],
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3),
                                          row["path"], int(row["symbol"].get("line_start") or 0)))
 
@@ -93,19 +107,25 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
     """Ranked definition rows of this worktree for the names in ``question`` and ``texts``.
 
-    One query for the nodes (bounded to 200 rows) after the worktree's roots are read. A row is
-    ``{"node_id", "source_id", "symbol", "path", "relevance", "secondary"}`` with ``path``
-    relative to the worktree root; definitions under another registered root are left out.
+    The worktree's current sources are read first (as search reads them), and the node query
+    keeps only symbols of those sources, ordered by label, path and line, at most MAX_ROWS: the
+    bound applies after the worktree filter, and the same index gives the same rows. A row is
+    ``{"node_id", "source_id", "symbol", "path", "named", "relevance", ...}`` with ``path``
+    relative to the worktree root.
     """
     code, plain = candidate_names(question, texts)
     if not code and not plain:
         return []
     project_id, root, roots = retriever._scope(project_id, worktree)
+    eligible = sorted(retriever._source_ids(project_id, root, roots))
+    if not eligible:
+        return []
     rows = store.query(
         "SELECT id,label,source_id,metadata FROM nodes WHERE project_id=:project AND is_current=true "
-        "AND kind='symbol' AND (label IN :code OR metadata.member IN :code OR ((label IN :plain "
-        "OR metadata.member IN :plain) AND metadata.kind IN ['constant', 'field'])) LIMIT 200",
-        {"project": project_id, "code": code or [""], "plain": plain or [""]})
+        "AND kind='symbol' AND source_id IN :eligible AND (label IN :code OR metadata.member IN :code "
+        "OR ((label IN :plain OR metadata.member IN :plain) AND metadata.kind IN ['constant', 'field'])) "
+        f"ORDER BY label, metadata.path, metadata.line_start, id LIMIT {MAX_ROWS}",
+        {"project": project_id, "eligible": eligible, "code": code or [""], "plain": plain or [""]})
     found = []
     for row in rows:
         symbol = json_value(row.get("metadata"), {})

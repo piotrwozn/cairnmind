@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import json
 import re
 import time
@@ -14,7 +15,7 @@ from jsonschema import Draft202012Validator
 
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
-from .definitions import MAX_DEFINITIONS, definition_lines, find_definitions
+from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .ollama import Ollama, OllamaUnavailable
 from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata, terms
 from .store import TASK_STATES, validate_task_state
@@ -294,6 +295,28 @@ def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[
     return "\n".join(lines[first:last + 1])[:size], first, last
 
 
+# Order in which passages were shown: the initial evidence takes its positions (0..), anything
+# shown later (a search or a read during the question) takes a number after them.
+_LATER = itertools.count(1000)
+REPAIR_CATALOG_CHARS = 12000
+
+
+def _show(source: dict, text: str, rank: int | None = None) -> None:
+    """Register a passage of ``source`` that the model is shown, so a repair can cite it again.
+
+    Every passage is kept with the earliest place it was shown; ``_catalog_excerpt`` stays the
+    latest one, for callers that need a single excerpt.
+    """
+    rank = next(_LATER) if rank is None else rank
+    source["_catalog_excerpt"] = text
+    passages = source.setdefault("_catalog_passages", [])
+    for item in passages:
+        if item[1] == text:
+            item[0] = min(item[0], rank)
+            return
+    passages.append([rank, text])
+
+
 def quote_coverage(answer: str, quotes: list[str]) -> dict:
     """Share of the answer's content words that occur in its verified quotes.
 
@@ -337,13 +360,16 @@ class KnowledgeAgent:
         self.retriever = retriever or Retriever(store, settings, self.ollama)
 
     def _citation_catalog(self, project_id: str, evidence: dict, candidate: str = "", *,
-                          worktree=None, budget: int = 6000, excerpt_chars: int | None = None) -> list[dict]:
+                          worktree=None, budget: int = REPAIR_CATALOG_CHARS,
+                          excerpt_chars: int | None = None) -> list[dict]:
         """Use model-visible excerpts, never expand hydrated source pointers into content.
 
-        Each entry carries the excerpt the model was shown for that source, whole by default,
-        so a repair works from the same evidence as the answer it corrects. ``excerpt_chars``
-        shortens the excerpts to a prefix (the first call, which also shows the excerpts in
-        full as initial evidence). Entries that do not fit the budget are left out.
+        One entry per passage the model was shown, whole by default, so a repair works from the
+        same evidence as the answer it corrects; a source shown twice (a hit and a definition)
+        has two entries. Order: passages of sources the draft cites, then every other passage in
+        the order the model was shown it (initial evidence first, top hit first). ``excerpt_chars``
+        shortens the passages to a prefix (the first call, which also shows them in full as
+        initial evidence). At most 8 entries; entries that do not fit the budget are left out.
         """
         sources = {source["id"]: source for source in evidence.values()
                    if source.get("project_id") == project_id
@@ -360,13 +386,18 @@ class KnowledgeAgent:
                     preferred.append(identifier)
         except (ValueError, TypeError):
             pass
-        # Existing candidate references get priority only when already inspected.
-        # Recent tool reads follow; the catalog does not import other source IDs.
-        identifiers = dict.fromkeys([*preferred, *reversed(sources)])
-        catalog, used = [], 2
-        for identifier in identifiers:
+        # Existing candidate references get priority only when already inspected; then the order
+        # in which the model saw the passages. The catalog does not import other source IDs.
+        passages = []
+        for order, identifier in enumerate(reversed(sources)):
             source = sources[identifier]
-            text = source["_catalog_excerpt"]
+            for rank, text in source.get("_catalog_passages") or [[float("inf"), source["_catalog_excerpt"]]]:
+                if isinstance(text, str) and text.strip():
+                    passages.append((identifier not in preferred, preferred.index(identifier)
+                                     if identifier in preferred else 0, rank, order, identifier, text))
+        catalog, used = [], 2
+        for *_, identifier, text in sorted(passages, key=lambda item: item[:4]):
+            source = sources[identifier]
             shown = text if excerpt_chars is None else text[:excerpt_chars]
             item = {"source_id": identifier, "uri": str(source["uri"])[:240],
                     "quote_excerpt": shown, "excerpt_truncated": len(text) > len(shown),
@@ -392,7 +423,8 @@ class KnowledgeAgent:
                     "citations": {"type": "array", "maxItems": 8, "items": {
                         "type": "object", "additionalProperties": False,
                         "required": ["source_id", "quote"], "properties": {
-                            "source_id": {"type": "string", "enum": [item["source_id"] for item in catalog]},
+                            "source_id": {"type": "string",
+                                          "enum": list(dict.fromkeys(item["source_id"] for item in catalog))},
                             "quote": {"type": "string", "minLength": quote_floor, "maxLength": 750}}}},
                     "unknowns": {"type": "array", "maxItems": 8,
                                  "items": {"type": "string", "maxLength": 240}}}}
@@ -467,7 +499,8 @@ class KnowledgeAgent:
             previous = evidence.get(alias, {})
             checks.update(previous.get("_checked_machine_scopes", {}))
             if previous.get("sha256") == source["sha256"]:
-                markers = ("_catalog_excerpt",) + (("_historical_requested",) if not current else ())
+                markers = ("_catalog_excerpt", "_catalog_passages") + (
+                    ("_historical_requested",) if not current else ())
                 for marker in markers:
                     if marker in previous:
                         source[marker] = previous[marker]
@@ -502,7 +535,7 @@ class KnowledgeAgent:
                     value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
             if isinstance(value.get("text"), str) and value["text"] in source_text(source):
-                source["_catalog_excerpt"] = value["text"]
+                _show(source, value["text"])
             result.append(value)
         return result
 
@@ -524,9 +557,9 @@ class KnowledgeAgent:
         shown = [(hit["source_id"], hit.get("line_start"), hit.get("line_end"))
                  for hit in hits[:INITIAL_HITS - MAX_DEFINITIONS]
                  if isinstance(hit.get("line_start"), int) and isinstance(hit.get("line_end"), int)]
-        result = []
+        result, attempts = [], 0
         for row in ranked:
-            if len(result) >= MAX_DEFINITIONS:
+            if len(result) >= MAX_DEFINITIONS or attempts >= MAX_DEFINITION_ATTEMPTS:
                 break
             symbol = row["symbol"]
             start, end = symbol.get("line_start"), symbol.get("line_end")
@@ -534,6 +567,7 @@ class KnowledgeAgent:
                     or any(source_id == row["source_id"] and first <= start and end <= last
                            for source_id, first, last in shown)):
                 continue
+            attempts += 1  # each costs a freshness check, accepted or not
             try:
                 source = self._source(row["source_id"], project_id, evidence, worktree=worktree)
             except (ValueError, OSError):
@@ -545,7 +579,7 @@ class KnowledgeAgent:
             text = "\n".join(lines[first - 1:last])[:EXCERPT_CHARS]
             if not text.strip():
                 continue
-            source["_catalog_excerpt"] = text
+            _show(source, text)
             shown.append((source["id"], first, first + text.count("\n")))
             result.append({"id": f"definition:{row['node_id']}", "source_id": source["id"], "kind": "definition",
                            "definition": str(symbol.get("name", ""))[:200],
@@ -649,7 +683,7 @@ class KnowledgeAgent:
             lines = source_text(source).splitlines()
             selected_text = "\n".join(lines[start - 1:end])
             text = selected_text[:4000]
-            source["_catalog_excerpt"] = text
+            _show(source, text)
             return {"source_id": source["id"], "uri": source["uri"], "sha256": source["sha256"],
                     "line_start": start, "line_end": start + len(text.splitlines()) - 1,
                     "content": text, "is_current": bool(source["is_current"]),
@@ -954,6 +988,7 @@ class KnowledgeAgent:
             raise ValueError("Question must contain 1–16000 characters")
         evidence: dict = {}
         repair_fallback = None
+        judged = None  # a validated complete answer whose support check is running
         started = time.monotonic()
         self.retriever.warnings.clear()
         try:
@@ -971,6 +1006,9 @@ class KnowledgeAgent:
                                                       evidence, worktree)
                 if definitions:
                     initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
+                for position, item in enumerate(initial):
+                    if item["source_id"] in evidence and isinstance(item.get("text"), str):
+                        _show(evidence[item["source_id"]], item["text"], position)
                 context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
@@ -1000,6 +1038,7 @@ class KnowledgeAgent:
                             self._validate_final, candidate, project_id, evidence, started, worktree, answer_schema,
                         )
                         if not repairable:
+                            judged = validated
                             return await self._support_gate(question, validated, evidence, started, diagnostics)
                         repair_fallback = validated
                         diagnostics["validation_codes"] = [validated["diagnostics"]["code"]]
@@ -1035,6 +1074,7 @@ class KnowledgeAgent:
                             project_id, evidence, started, worktree, answer_schema)
                         diagnostics["repair_outcome"] = ("failed" if still_repairable or
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
+                        judged = result
                         return await self._support_gate(question, result, evidence, started, diagnostics)
                     if not isinstance(calls, list) or len(calls) > 6:
                         return self._result("partial", "Model zwrócił niepoprawną listę narzędzi.", evidence,
@@ -1059,6 +1099,14 @@ class KnowledgeAgent:
                 return self._result("partial", "Analiza osiągnęła limit kroków; zawęź pytanie.", evidence,
                                     ["Przekroczono limit kroków agenta."], started, code="step_budget")
         except TimeoutError:
+            if judged is not None and judged.get("status") == "complete":
+                # The answer and its quotes were verified; only the support check ran out of time.
+                # Not complete, as when the check gives no verdict; the repair outcome stands.
+                diagnostics["support_check"] = "failed"
+                return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.", evidence,
+                                    [*judged.get("unknowns", []),
+                                     "Kontrola poparcia odpowiedzi nie zakończyła się w limicie czasu analizy."],
+                                    started, judged["sources"], code="support_unverified")
             diagnostics["repair_outcome"] = "budget_exhausted" if diagnostics["repair_attempted"] else "not_needed"
             if repair_fallback is not None:
                 return self._repair_fallback(repair_fallback, started,
@@ -1261,10 +1309,15 @@ class KnowledgeAgent:
         names = sorted(token for token in tokens if len(token) >= 4)[:128]
         if not names:
             return []
+        # A constant or field is linked only when the quote writes a compound name (with "_" or
+        # "."): every module may define a "logger" or "client", and prose uses PROJECT or ROOT
+        # as placeholders, but SCHEMA_VERSION or Settings.port names one definition.
+        compound = [name for name in names if "_" in name or "." in name] or [""]
         rows = self.store.query(
             "SELECT id,label FROM nodes WHERE project_id=:project AND is_current=true "
-            "AND kind IN ['file','symbol'] AND label IN :names LIMIT 200",
-            {"project": project_id, "names": names},
+            "AND kind IN ['file','symbol'] AND label IN :names AND (kind='file' OR metadata.kind IS NULL "
+            "OR metadata.kind NOT IN ['constant','field'] OR label IN :compound) ORDER BY label, id LIMIT 200",
+            {"project": project_id, "names": names, "compound": compound},
         )
         seen = {row["id"] for row in rows}
         file_names = sorted({Path(token).name for token in tokens
