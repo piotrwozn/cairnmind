@@ -128,11 +128,22 @@ def test_java_that_cannot_be_run_is_an_arcade_error(tmp_path, monkeypatch, sheba
 def test_a_server_that_does_not_come_up_is_gone_before_start_engine_fails(tmp_path, monkeypatch):
     pid_file = tmp_path / "server-pid"
     binary = fake_java(tmp_path, 'case "$1" in -version) echo \'openjdk version "21.0.13"\' >&2; exit 0;; esac\n'
-                                 f'echo $$ > "{pid_file}"\ntrap \'\' TERM\nsleep 1.5\n')
+                                 f'trap \'\' TERM\necho $$ > "{pid_file}.new"\nmv "{pid_file}.new" "{pid_file}"\n'
+                                 'sleep 1.5\n')
     settings = Settings(tmp_path, java_executable=str(binary), arcade_database="runtime_test")
     (engine.runtime_dir(settings) / "lib").mkdir(parents=True)
-    monkeypatch.setattr(engine, "engine_status", lambda settings: {"available": False})
     real_sleep = time.sleep
+
+    def not_up(settings):
+        # Hold the start loop until the fake server ignores SIGTERM and has named itself: on a slow
+        # runner the signal must not arrive before that. Calls made before the launch do not wait.
+        launched = (tmp_path / "arcade" / "process.json").exists()
+        for _ in range(2000 if launched else 0):
+            if pid_file.exists():
+                break
+            real_sleep(0.005)
+        return {"available": False}
+    monkeypatch.setattr(engine, "engine_status", not_up)
     monkeypatch.setattr(engine.time, "sleep", lambda seconds: real_sleep(0.001))
     with pytest.raises(ArcadeError, match="startup timed out"):
         engine.start_engine(settings)
