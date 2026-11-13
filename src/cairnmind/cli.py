@@ -1010,6 +1010,25 @@ def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
 
 
+@eval_app.command("repository")
+@initialized
+def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = None, report_dir: Path | None = None):
+    """Ask questions with known answers about a real repository, in a throwaway copy and database.
+
+    QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the
+    configured models and a running engine; exits 3 when the models are not available.
+    """
+    from cairnmind.repository_evaluation import run_repository_evaluation
+    path = questions or Path(root) / "docs" / "evaluation" / "repository-questions.json"
+    try:
+        result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    output(result)
+    if result.get("status") != "passed":
+        raise typer.Exit(3 if result.get("status") == "not_run" else 1)
+
+
 @memory_app.command("snapshot")
 @initialized
 def memory_snapshot(ctx: typer.Context, project: str, worktree: Path | None = None, preview: bool = False):

@@ -19,7 +19,8 @@ def tree(root, files=24):
         (folder / f"module_{index:03d}.py").write_text(
             f"{imported}\nVALUE_{index} = {index}\n\n\ndef function_{index}(argument):\n    return argument + VALUE_{index}\n")
     (root / "README.md").write_text("# Notes\n\nA document, so that an extraction job is queued.\n")
-    (root / "pkg0" / "long.py").write_text("".join(f"LINE_{n} = {n}\n" for n in range(400)))  # several chunks
+    # Several chunks; one constant, so that its graph rows are those of an ordinary file.
+    (root / "pkg0" / "long.py").write_text("LINES = [\n" + "".join(f"    {n},\n" for n in range(400)) + "]\n")
 
 
 def dump(store, pid):
