@@ -1382,6 +1382,64 @@ def test_strong_disputed_record_is_not_buried_under_weak_confirmed_matches(works
     assert disputed["id"] in found[:4]
 
 
+@pytest.mark.parametrize("path, secondary", [
+    ("tests/test_config.py", True), ("src/pkg/test/helpers.py", True), ("pkg/config_test.go", True),
+    ("web/app.spec.ts", True), ("web/app.test.js", True), ("uv.lock", True), ("web/package-lock.json", True),
+    ("static/app.min.js", True), ("src/pkg/config.py", False), ("docs/testing.md", False),
+    ("src/pkg/contest.py", False), ("src/latest/config.py", False), ("README.md", False),
+])
+def test_secondary_source_recognises_tests_lock_files_and_minified_text(path, secondary):
+    from cairnmind.retrieval import secondary_source
+    assert secondary_source(path) is secondary
+    assert secondary_source(path.replace("/", "\\")) is secondary
+
+
+def _file(store, project, relative_path, text):
+    return document(store, project, text, uri=f"file://{relative_path}", kind="note",
+                    metadata={"relative_path": relative_path})[0]
+
+
+def _source_ids(retriever, project, query, limit=8):
+    return [hit["source_id"] for hit in retriever.search(project["id"], query, limit=limit)]
+
+
+def test_definition_outranks_a_test_of_similar_score(workspace, monkeypatch):
+    import cairnmind.retrieval as retrieval_module
+    store, project, settings = workspace
+    # The test repeats the query terms, so full-text search ranks it first on its own.
+    test = _file(store, project, "tests/test_settings.py",
+                 "def test_default():\n    # retry budget: the retry budget default\n"
+                 "    assert Settings().budget == 5  # retry budget")
+    definition = _file(store, project, "src/pkg/settings.py", "    budget: int = 5  # retry budget")
+    retriever = Retriever(store, settings, FakeOllama())
+    monkeypatch.setattr(retrieval_module, "SECONDARY_SOURCE_PENALTY", 0)
+    assert _source_ids(retriever, project, "retry budget")[:2] == [test["id"], definition["id"]]
+    monkeypatch.undo()
+    hits = retriever.search(project["id"], "retry budget")
+    assert [hit["source_id"] for hit in hits][:2] == [definition["id"], test["id"]]
+    assert all("_path" not in hit for hit in hits)
+
+
+def test_a_query_only_a_test_matches_still_finds_the_test(workspace):
+    store, project, settings = workspace
+    test = _file(store, project, "tests/test_journal.py", "def test_rollover():\n    # journal rollover keeps order")
+    for index in range(8):
+        _file(store, project, f"src/pkg/module_{index}.py", f"def unrelated_{index}():\n    return {index}")
+    assert _source_ids(Retriever(store, settings, FakeOllama()), project, "journal rollover order") == [test["id"]]
+
+
+def test_a_better_matching_test_moves_down_only_by_the_penalty(workspace):
+    from cairnmind.retrieval import SECONDARY_SOURCE_PENALTY
+    store, project, settings = workspace
+    test = _file(store, project, "tests/test_cache.py", "def test_cache_eviction_order():\n    # cache eviction order")
+    weak = [_file(store, project, f"src/pkg/cache_{index}.py", f"CACHE_{index} = {{}}  # cache")
+            for index in range(SECONDARY_SOURCE_PENALTY + 3)]
+    found = _source_ids(Retriever(store, settings, FakeOllama()), project, "cache eviction order", limit=20)
+    # Ahead of every weaker match beyond the penalty, never dropped.
+    assert found.index(test["id"]) == SECONDARY_SOURCE_PENALTY - 1
+    assert set(found) == {test["id"], *(source["id"] for source in weak)}
+
+
 def test_confirmed_record_beats_slightly_more_relevant_disputed_records(workspace, monkeypatch):
     import cairnmind.retrieval as retrieval_module
     store, project, settings = workspace

@@ -54,6 +54,35 @@ RECORD_METADATA_KEYS = (
 # Like any lower-ranked hit, a demoted record can still fall outside a very small limit.
 # Superseded records never reach fusion. Unknown statuses count as proposed.
 RECORD_STATUS_PENALTY = {"confirmed": 0, "proposed": 1, "disputed": 3}
+# Positions a chunk moves down within each chunk ranking (full text and vector) when its file is a
+# test, a lock file or minified text (see secondary_source). Such files repeat the names and values
+# that one definition states, so without this a question about a default can be answered from a
+# test that asserts some other value. It is a preference, not a filter: a secondary chunk still
+# ranks ahead of anything that ranked this many places below it, and a query that only a test
+# matches still finds the test.
+SECONDARY_SOURCE_PENALTY = 5
+_TEST_DIRECTORIES = {"test", "tests"}
+_LOCK_FILES = {"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml"}
+
+
+def secondary_source(path: str) -> bool:
+    """True for a test file, a lock file or minified text, by its path within the project.
+
+    Tests: a directory named ``test`` or ``tests``, ``test_*.py``, ``*_test.*``, ``*.test.*``
+    and ``*.spec.*``. Lock files: ``*.lock`` and the npm/pnpm lock files. Minified: ``*.min.*``.
+    """
+    parts = [part.casefold() for part in re.split(r"[\\/]", path) if part]
+    if not parts:
+        return False
+    name = parts[-1]
+    stem = name.rsplit(".", 1)[0]
+    return bool(
+        _TEST_DIRECTORIES.intersection(parts[:-1])
+        or (name.startswith("test_") and name.endswith(".py"))
+        or ("." in name and stem.endswith("_test"))
+        or any(marker in name for marker in (".test.", ".spec.", ".min."))
+        or name.endswith(".lock") or name in _LOCK_FILES
+    )
 
 
 def public_metadata(value: Any, keys: tuple[str, ...], budget: int = 900) -> dict:
@@ -291,7 +320,12 @@ class Retriever:
         source = self.store.get_source(chunk["source_id"])
         if source["project_id"] != chunk["project_id"] or not source["is_current"]:
             return None
+        metadata = json_value(source.get("metadata"), {})
+        relative = metadata.get("relative_path") if isinstance(metadata, dict) else None
         return {
+            # Only for ranking within search; removed before hits are returned.
+            "_path": relative if isinstance(relative, str) else str(source["uri"]),
+        } | {
             key: chunk[key] for key in ("id", "project_id", "source_id", "text", "line_start", "line_end", "metadata")
             if key in chunk
         } | {
@@ -299,11 +333,32 @@ class Retriever:
             "source_created_at": source["created_at"],
         }
 
+    @staticmethod
+    def _demote_secondary(ranking: list[dict]) -> None:
+        """Move chunks of test, lock and minified files SECONDARY_SOURCE_PENALTY places down.
+
+        The path is the file's path within its project root, so a directory above the root never
+        counts. Stable: a secondary chunk stays ahead of one that was exactly that many places below.
+        """
+        penalty = SECONDARY_SOURCE_PENALTY
+        order = {id(hit): position + (penalty if secondary_source(hit["_path"]) else 0)
+                 for position, hit in enumerate(ranking)}
+        ranking.sort(key=lambda hit: order[id(hit)])
+
     def search(
         self, project_id: str, query: str, limit: int = 8,
         query_vector: list[float] | None = None, embedding_key: str | None = None,
         worktree=None,
     ) -> list[dict]:
+        """Chunks and records of this worktree that match ``query``, best first, at most ``limit``.
+
+        Up to three rankings are merged by reciprocal rank fusion (each hit scores
+        1 / (61 + its position) in every ranking it is in): full-text chunks, vector-nearest
+        chunks when ``query_vector`` is given, and full-text records. Before merging, a chunk of
+        a test, lock or minified file moves SECONDARY_SOURCE_PENALTY places down in each chunk
+        ranking, and a record moves down by RECORD_STATUS_PENALTY for its status. Both are
+        preferences at similar relevance; nothing is filtered out.
+        """
         project_id, root, roots = self._scope(project_id, worktree)
         eligible_sources = sorted(self._source_ids(project_id, root, roots))
         eligible_records = sorted(self._record_ids(project_id, root, roots))
@@ -319,7 +374,9 @@ class Retriever:
                 f"ORDER BY $score DESC LIMIT {limit * 3}",
                 {"query": expression, "project": project_id, "eligible_sources": eligible_sources},
             )
-            ranks.append([hit for row in rows if (hit := self._chunk_hit(row)) is not None])
+            lexical = [hit for row in rows if (hit := self._chunk_hit(row)) is not None]
+            self._demote_secondary(lexical)
+            ranks.append(lexical)
         if query_vector is not None:
             vector = validate_vector(query_vector)
             namespace = embedding_key or self.embedding_key
@@ -353,6 +410,7 @@ class Retriever:
                         if chunk is not None and (hit := self._chunk_hit(chunk)) is not None:
                             hit["distance"] = neighbor.get("distance")
                             semantic.append(hit)
+                    self._demote_secondary(semantic)
                     ranks.append(semantic)
                 except ArcadeError as exc:
                     self.warnings.append(f"Native vector search unavailable: {type(exc).__name__}")
@@ -405,6 +463,7 @@ class Retriever:
                 fused.setdefault(key, {**hit, "score": 0.0})["score"] += 1.0 / (60 + rank + 1)
         result = sorted(fused.values(), key=lambda hit: hit["score"], reverse=True)[:limit]
         for hit in result:
+            hit.pop("_path", None)
             hit["metadata"] = (public_metadata(hit.get("metadata"), RECORD_METADATA_KEYS)
                                if hit.get("record_id") else public_source_metadata(hit.get("metadata")))
         return result
