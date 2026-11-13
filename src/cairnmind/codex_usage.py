@@ -32,18 +32,29 @@ def stored_records(store, project_id: str, start):
     An event of the period was imported after it happened, so ``created_at`` of its source is not before
     ``start``; older sources are never read. ``_`` in LIKE is a wildcard, so the lines are checked again.
     """
-    skip = 0
+    rows = _pages(store, "SELECT id,created_at,content FROM sources WHERE project_id=:project AND is_current=true "
+                         "AND uri LIKE :prefix AND created_at>=:start AND content LIKE :marker",
+                  {"project": project_id, "prefix": "transcript://codex/%", "marker": f"%{_MARKER}%",
+                   "start": start.isoformat(timespec="microseconds")})
+    yield from (row["content"] for row in rows if isinstance(row.get("content"), str))
+
+
+def _pages(store, sql, params):
+    """The rows of ``sql`` (a SELECT with id and created_at, ending in its conditions), in pages by created_at, id.
+
+    A page starts after the last row of the one before, not at an offset. The store is read without a lock, so
+    rows may be added or removed between pages: a row that stays unchanged the whole time is still read exactly
+    once, where with SKIP a removed earlier row would shift an unread one out of every page. A row whose
+    created_at is rewritten meanwhile can be read twice; a caller that counts must tell rows apart by id.
+    """
+    last = {}
     while True:
-        rows = store.query(
-            "SELECT content FROM sources WHERE project_id=:project AND is_current=true "
-            "AND uri LIKE :prefix AND created_at>=:start AND content LIKE :marker "
-            f"ORDER BY created_at,id SKIP {skip} LIMIT {PAGE}",
-            {"project": project_id, "prefix": "transcript://codex/%", "marker": f"%{_MARKER}%",
-             "start": start.isoformat(timespec="microseconds")})
-        yield from (row["content"] for row in rows if isinstance(row.get("content"), str))
+        after = " AND (created_at>:last_at OR (created_at=:last_at AND id>:last_id))" if last else ""
+        rows = store.query(f"{sql}{after} ORDER BY created_at,id LIMIT {PAGE}", {**params, **last})
+        yield from rows
         if len(rows) < PAGE:
             return
-        skip += PAGE
+        last = {"last_at": rows[-1]["created_at"], "last_id": rows[-1]["id"]}
 
 
 def waiting_in_inbox(store, project_id: str, start) -> int:
@@ -55,29 +66,28 @@ def waiting_in_inbox(store, project_id: str, start) -> int:
     a usage record (a message that merely mentions the name is not) and whose directory resolves to this
     project, or is unknown. Rows of directories of other projects, or of none we know, are not ours.
     """
-    waiting, skip, ours = 0, 0, {}
-    while True:
-        rows = store.query(
-            "SELECT cwd,raw FROM ingestion_inbox WHERE client=:client AND created_at>=:start AND raw LIKE :marker "
-            f"ORDER BY created_at,id SKIP {skip} LIMIT {PAGE}",
-            {"client": "codex", "marker": f"%{_MARKER}%", "start": start.isoformat(timespec="microseconds")})
-        for row in rows:
-            try:
-                event = json.loads(row.get("raw"))
-                if not isinstance(event, dict) or event.get("type") != _MARKER:
-                    continue
-            except (ValueError, TypeError, RecursionError):
+    waiting, ours, seen = 0, {}, set()
+    for row in _pages(store, "SELECT id,created_at,cwd,raw FROM ingestion_inbox WHERE client=:client "
+                             "AND created_at>=:start AND raw LIKE :marker",
+                      {"client": "codex", "marker": f"%{_MARKER}%", "start": start.isoformat(timespec="microseconds")}):
+        # Import parks a line again under the same id with a new time; such a row can come back on a later page.
+        if row.get("id") in seen:
+            continue
+        seen.add(row.get("id"))
+        try:
+            event = json.loads(row.get("raw"))
+            if not isinstance(event, dict) or event.get("type") != _MARKER:
                 continue
-            cwd = row.get("cwd")
-            if cwd not in ours:
-                try:
-                    ours[cwd] = cwd is None or store.resolve_project(cwd)["id"] == project_id
-                except ValueError:
-                    ours[cwd] = False
-            waiting += ours[cwd]
-        if len(rows) < PAGE:
-            return waiting
-        skip += PAGE
+        except (ValueError, TypeError, RecursionError):
+            continue
+        cwd = row.get("cwd")
+        if cwd not in ours:
+            try:
+                ours[cwd] = cwd is None or store.resolve_project(cwd)["id"] == project_id
+            except ValueError:
+                ours[cwd] = False
+        waiting += ours[cwd]
+    return waiting
 
 
 def codex_units(records, start, now, parse_time, counts: dict) -> list[tuple]:
