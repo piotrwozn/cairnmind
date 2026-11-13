@@ -138,3 +138,87 @@ def test_an_unacknowledged_external_session_still_cannot_write(fixture):
         "packet_id": result["packet"]["id"], "record": {"kind": "fact", "content": "Before the ACK"}})
     assert response.status_code == 409 and "resume_required" in response.text
     assert not fixture.store.query("SELECT FROM records WHERE content='Before the ACK'")
+
+
+def remember(fixture, bound, content, sources, kind="decision"):
+    return post(fixture, "/remember", {"project": fixture.project["id"], "sources": sources, **(bound or {}),
+                                       "record": {"kind": kind, "content": content}})
+
+
+def test_an_external_record_is_never_verified_wherever_its_evidence_state_is_shown(fixture):
+    from cairnmind.evidence import evidence_states, orphans_report
+    from cairnmind.inspector import Inspector
+    from cairnmind.retrieval import public_record
+    from cairnmind.terminal_inspector import EVIDENCE_LABELS
+
+    external = remember(fixture, fixture.session("external"), "Decided in an external editor", [fixture.note["id"]])
+    native = remember(fixture, fixture.session("codex"), "Decided in a native client", [fixture.note["id"]])
+    rows = [fixture.record(external["id"]), fixture.record(native["id"])]
+    # The same current source anchors the native record and not the external one.
+    states = evidence_states(fixture.store, fixture.project["id"], rows)
+    assert states[native["id"]]["evidence_state"] == "anchored"
+    assert states[external["id"]]["evidence_state"] == "degraded"
+    inspector = Inspector(fixture.store)
+    assert inspector.record(fixture.project["id"], external["id"])["evidence"]["evidence_state"] == "degraded"
+    listed = {item["id"]: item["evidence_state"] for item in inspector.page("records", fixture.project["id"])["items"]}
+    assert listed[external["id"]] == "degraded" and listed[native["id"]] == "anchored"
+    assert EVIDENCE_LABELS[("degraded", None)].endswith("never verified")
+    report = orphans_report(fixture.store, fixture.project, fixture.root, rows)
+    assert report["degraded"] == 1 and [row["id"] for row in report["records"]] == [external["id"]]
+    assert "external client's session; never verified (1)" in report["text"]
+    assert public_record(rows[0])["metadata"]["origin_evidence"] == "degraded"
+    # Every later resume packet, also a native one, shows it as degraded, never as anchored.
+    packet = fixture.manager.prepare(fixture.project["id"], "claude", timeout=0)["packet"]
+    shown = {row["id"]: row.get("evidence_state") for row in packet["records"]}
+    assert shown[external["id"]] == "degraded" and shown[native["id"]] is None
+
+
+def test_an_external_source_cannot_anchor_any_record(fixture):
+    from cairnmind.evidence import evidence_states
+
+    checkpoint = post(fixture, "/checkpoint", {"project": fixture.project["id"], **fixture.session("external"),
+                                               "state": {"summary": "Claimed by an external editor"}})
+    statement = checkpoint["source_ids"][0]
+    alone = remember(fixture, None, "A person's note resting on the external checkpoint", [statement], kind="fact")
+    both = remember(fixture, None, "A person's note resting on it and on the note", [statement, fixture.note["id"]],
+                    kind="fact")
+    states = evidence_states(fixture.store, fixture.project["id"], [fixture.record(alone["id"]),
+                                                                    fixture.record(both["id"])])
+    assert states[alone["id"]]["evidence_state"] == "degraded"
+    assert states[both["id"]]["evidence_state"] == "anchored"
+    assert states[both["id"]]["sources_current"] == 1
+
+
+def test_an_external_test_claim_is_reported_never_a_machine_check(fixture):
+    from cairnmind.verification import verification_status
+
+    bound = fixture.session("external")
+    plan = post(fixture, "/plans/save", {"project": fixture.project["id"], **bound, "idempotency_key": "claims",
+                                         "plan": {"title": "Claims", "goal": "Check the claims"}, "activate": True,
+                                         "steps": [{"key": "one", "content": "Tested step",
+                                                    "metadata": {"requires_test": True}}]})
+    task = plan["tasks"][0]
+    bound = fixture.refresh(bound)
+    claim = {"project": fixture.project["id"], "sources": [fixture.note["id"]], **bound,
+             "record": {"id": task["id"], "expected_version": task["version"],
+                        "expected_plan_version": plan["plan"]["version"],
+                        "metadata": {"state": "done", "test_passed": True, "test_source_ids": [fixture.note["id"]]}}}
+    refused = fixture.client.post("/remember", json=claim)
+    assert refused.status_code == 400 and "fresh machine check evidence" in refused.text
+    claim["record"]["metadata"]["state"] = "needs_review"
+    saved = post(fixture, "/remember", claim)
+    status = verification_status(fixture.store, fixture.record(saved["id"]), str(fixture.root))
+    assert status["status"] == "reported" and status["run_ids"] == []
+
+
+def test_the_brief_says_an_external_session_saved_the_latest_checkpoint(fixture):
+    from cairnmind.brief import build_brief
+
+    post(fixture, "/checkpoint", {"project": fixture.project["id"], **fixture.session("external"),
+                                  "state": {"summary": "From an external editor"}})
+    lines = build_brief(fixture.store, fixture.project["id"])["lines"]
+    assert {"basis": "machine", "text": "It was saved by an external client's session (history unarchived, "
+            "evidence degraded); nothing in it is verified."} in lines
+    post(fixture, "/checkpoint", {"project": fixture.project["id"], **fixture.session("codex"),
+                                  "state": {"summary": "From a native client"}})
+    assert not any("external client" in line["text"] for line in build_brief(fixture.store, fixture.project["id"])["lines"])

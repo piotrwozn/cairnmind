@@ -33,13 +33,14 @@ def json_value(value: Any, default: Any = None) -> Any:
     return value if value is not None else default
 
 
+# First, so that a bounded view never drops the mark of an external session's write.
 SOURCE_METADATA_KEYS = (
-    "path", "root", "worktree", "relative_path", "git_commit", "content_hash", "language", "role", "client", "session_id",
+    "origin_client", "origin_session_id", "origin_history", "origin_evidence", "path", "root", "worktree", "relative_path", "git_commit", "content_hash", "language", "role", "client", "session_id",
     "source_timestamp", "timestamp", "import_path", "byte_offset", "citation_view",
     "origin", "plan_id", "run_id", "stream", "raw_bytes", "raw_sha256", "rendered_truncated",
 )
 RECORD_METADATA_KEYS = (
-    "state", "reported_state", "plan_ref", "step_key", "plan_context_hash", "required_profiles", "check_run_ids",
+    "origin_client", "origin_session_id", "origin_history", "origin_evidence", "state", "reported_state", "plan_ref", "step_key", "plan_context_hash", "required_profiles", "check_run_ids",
     "plan_id", "step_index", "requires_test", "requires_review", "test_passed",
     "review_passed", "acceptance_passed", "depends_on", "acceptance_criteria", "scope", "test_source_ids",
     "review_source_ids", "acceptance_source_ids", "possible_conflicts", "unresolved_dependencies",

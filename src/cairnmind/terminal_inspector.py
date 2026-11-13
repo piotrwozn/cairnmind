@@ -21,6 +21,7 @@ EVIDENCE_LABELS = {
     ("evidence_replaced", None): "the source changed; there is no verified quoted passage to compare",
     ("orphaned", None): "orphaned: no supporting source has a current version",
     ("unverified", None): "imported file evidence has not been compared with local files yet",
+    ("degraded", None): "written by an external client's session, or resting only on one; never verified",
 }
 
 def _finding_text(letter, role, item, translate):

@@ -819,7 +819,10 @@ class SessionManager:
         if evidence and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Advisory evidence data yields first: it must never be what makes a packet unready.
             for row in packet["records"]:
-                row.pop("evidence_state", None)
+                # Except "degraded": a record without a state reads as anchored, and an external session's
+                # record must never read so. If even that does not fit, no record is shown below.
+                if row.get("evidence_state") != "degraded":
+                    row.pop("evidence_state", None)
             if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES and evidence_warning in packet.get("warnings", []):
                 packet["warnings"].remove(evidence_warning)
                 if not packet["warnings"]:

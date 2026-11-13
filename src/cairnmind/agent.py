@@ -31,7 +31,9 @@ Task state done preserves historical progress; it does not prove current-code ve
 Legacy/client test_passed, test_source_ids and completion claims are reported evidence, never
 fresh machine proof. check_run_ids are references, not authority. Use the read-only check_status
 tool: only its status=fresh establishes machine verification for the current task definition,
-named profiles and scoped worktree. Report stale/reported/unknown honestly. Tests do not imply
+named profiles and scoped worktree. Report stale/reported/unknown honestly. A record, plan or source
+with origin_evidence=degraded was written by an external client's session whose conversation was
+never archived: report it as an unverified claim, never as confirmed or verified. Tests do not imply
 acceptance or human review. next_task returns a bounded scoped workflow, not a task reservation.
 For current-code questions read the current source; for history use records(include_history=true)
 for replaced records, record_history(record_id) for revisions, and read_source(current=false).
