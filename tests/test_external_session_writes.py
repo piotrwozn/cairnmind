@@ -224,7 +224,7 @@ def test_the_brief_says_an_external_session_saved_the_latest_checkpoint(fixture)
     assert not any("external client" in line["text"] for line in build_brief(fixture.store, fixture.project["id"])["lines"])
 
 
-def test_a_full_native_packet_drops_advisory_states_but_never_the_degraded_one(fixture, monkeypatch):
+def test_a_full_native_packet_stays_ready_and_never_shows_an_external_record_unmarked(fixture, monkeypatch):
     import cairnmind.sessions as sessions_module
 
     external = remember(fixture, fixture.session("external"), "Decided in an external editor", [fixture.note["id"]])
@@ -233,10 +233,12 @@ def test_a_full_native_packet_drops_advisory_states_but_never_the_degraded_one(f
     full = fixture.manager.prepare(fixture.project["id"], "codex", timeout=0)["packet"]
     states = {row["id"]: row.get("evidence_state") for row in full["records"]}
     assert states == {external["id"]: "degraded", changed["id"]: "evidence_replaced"}
-    # Over the budget before its hash and status are added: the advisory data and warning yield, the degraded
-    # state stays and the packet is still ready.
+    # Over the budget before its hash and status are added: the advisory data and warning yield, the external
+    # record leaves the preview list (counted as omitted) rather than being shown unmarked, and the packet is
+    # still ready, so a native launch is never blocked by it.
     monkeypatch.setattr(sessions_module, "MAX_PACKET_BYTES", len(sessions_module._json(full).encode()) - 120)
     trimmed = fixture.manager.prepare(fixture.project["id"], "claude", timeout=0)
     assert trimmed["status"] == "ready", trimmed["unknowns"]
     states = {row["id"]: row.get("evidence_state") for row in trimmed["packet"]["records"]}
-    assert states == {external["id"]: "degraded", changed["id"]: None}
+    assert states == {changed["id"]: None}
+    assert trimmed["packet"]["omitted_records"] == full["omitted_records"] + 1

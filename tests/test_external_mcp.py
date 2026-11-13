@@ -196,3 +196,35 @@ async def test_an_unknown_native_transcript_keeps_the_external_client_from_writi
                 rejected(await client.call_tool("checkpoint", {"project": project["id"], "state": {"x": 1}}))
     assert not store.query("SELECT FROM resume_acks")
     assert not store.query("SELECT FROM records WHERE kind='checkpoint'")
+
+
+def test_relative_paths_are_resolved_by_the_bridge(tmp_path, clean_env, monkeypatch):
+    settings = Settings.load(tmp_path / "memory", create=True)
+    (tmp_path / "editor").mkdir()
+    monkeypatch.chdir(tmp_path / "editor")
+    bridge = ServiceClient(settings, external={"project": "../repo", "worktree": "../repo/."})
+    assert bridge.external == {"project": str(tmp_path / "repo"), "worktree": str(tmp_path / "repo")}
+    named = ServiceClient(settings, external={"project": "external-mcp", "worktree": None})
+    assert named.external == {"project": "external-mcp", "worktree": None}
+
+
+async def test_a_relative_project_names_the_project_seen_from_the_editor(tmp_path, clean_env):
+    root = repository(tmp_path / "repo")
+    (tmp_path / "editor").mkdir()
+    settings = Settings.load(tmp_path / "memory", create=True)
+    store = Store(settings.data_dir)
+    store.add_project("external-relative", root)
+    # The bridge runs in the editor's directory, the service in the test's own: "../repo" means the former.
+    assert os.getcwd() != str(tmp_path / "editor")
+    parameters = StdioServerParameters(
+        command=sys.executable, cwd=str(tmp_path / "editor"),
+        args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp", "--client", "external",
+              "--project", "../repo"],
+        env=clean_environment())
+    with local_service(settings):
+        async with stdio_client(parameters) as (reader, writer):
+            async with ClientSession(reader, writer) as client:
+                await client.initialize()
+                context = tool_result(await client.call_tool("resume_context", {}))
+    assert context["packet"]["worktree"] == str(root.resolve())
+    assert store.query("SELECT client FROM sessions")[0]["client"] == "external"

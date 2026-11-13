@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .store import _clean, _insert, _json, _now, _one, _set
+from .store import ORIGIN_METADATA, _clean, _insert, _json, _now, _one, _set
 
 MAX_PACKET_BYTES = 24576
 MAX_RECORDS = 20
@@ -151,9 +151,15 @@ def format_packet(packet: dict) -> str:
     """Small hook/launcher bootstrap; the complete bounded packet is an MCP read."""
     plan, task = packet.get("active_plan"), packet.get("active_task")
     external = packet.get("history") == "unarchived"
+    # A plan or task an external session wrote is never presented as verified, not even to a native client.
+    unverified_plan = bool(plan) and plan.get("origin_evidence") == "degraded"
+    unverified_task = bool(task) and task.get("origin_evidence") == "degraded"
+    note = " [written by an external client's session; not verified]"
     result = [
         ("Cairnmind external-client resume bootstrap: history unarchived, evidence degraded "
          "(receipt is not proof of understanding)." if external else
+         "Cairnmind resume bootstrap: the active plan or task was written by an external client's session "
+         "and is not verified (receipt is not proof of understanding)." if unverified_plan or unverified_task else
          "Cairnmind verified resume bootstrap (receipt is not proof of understanding)."),
         f"Logical session: {packet['session_id']}; epoch: {packet['epoch']}.",
         f"Packet: {packet['id']}; SHA-256: {packet['hash']}.",
@@ -165,13 +171,14 @@ def format_packet(packet: dict) -> str:
         "Native CLI permissions still apply to all native actions.",
     ]
     if plan:
-        result.extend([f"Active plan v{plan['version']}: {plan.get('title', '')[:300]}",
+        result.extend([f"Active plan v{plan['version']}{note if unverified_plan else ''}: "
+                       f"{plan.get('title', '')[:300]}",
                        f"Goal: {plan.get('goal', '')[:1200]}"])
         for constraint in plan.get("constraints", [])[:8]:
             result.append("Constraint: " + constraint[:240])
     if task:
-        result.append(f"Active task {task['id']} v{task['version']} [{task.get('state', 'todo')}]: "
-                      + task.get("content", "")[:1000])
+        result.append(f"Active task {task['id']} v{task['version']} [{task.get('state', 'todo')}]"
+                      f"{note if unverified_task else ''}: " + task.get("content", "")[:1000])
     else:
         result.append("Active task: none; use the explicit reason in the complete packet.")
     if packet.get("no_history"):
@@ -764,6 +771,11 @@ class SessionManager:
                       "required_profiles": task.get("metadata", {}).get("required_profiles", []),
                       "requires_test": task.get("metadata", {}).get("requires_test", False),
                       "requires_review": task.get("metadata", {}).get("requires_review", False)} if task else None)
+        # The mark of an external session's plan or task, only where there is one: native packets are unchanged.
+        if plan_view:
+            plan_view.update({key: plan[key] for key in ORIGIN_METADATA if key in plan})
+        if task_view:
+            task_view.update({key: task["metadata"][key] for key in ORIGIN_METADATA if key in task.get("metadata", {})})
         if task and isinstance(task.get("metadata", {}).get("scope"), list) and task["metadata"]["scope"]:
             # Only for a task that declares one, so every other packet stays byte for byte what it was.
             task_view["scope"] = [str(pattern)[:500] for pattern in task["metadata"]["scope"][:64]]
@@ -818,11 +830,13 @@ class SessionManager:
             packet["warnings"] = [EXTERNAL_WARNING, *packet.get("warnings", [])]
         if evidence and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Advisory evidence data yields first: it must never be what makes a packet unready.
-            for row in packet["records"]:
-                # Except "degraded": a record without a state reads as anchored, and an external session's
-                # record must never read so. If even that does not fit, no record is shown below.
-                if row.get("evidence_state") != "degraded":
-                    row.pop("evidence_state", None)
+            # A record without a state reads as anchored, which an external session's record must never do:
+            # one that needs "degraded" leaves the preview list and is counted as omitted instead.
+            shown = [row for row in packet["records"] if row.get("evidence_state") != "degraded"]
+            packet["omitted_records"] += len(packet["records"]) - len(shown)
+            packet["records"] = shown
+            for row in shown:
+                row.pop("evidence_state", None)
             if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES and evidence_warning in packet.get("warnings", []):
                 packet["warnings"].remove(evidence_warning)
                 if not packet["warnings"]:
@@ -837,7 +851,8 @@ class SessionManager:
             packet["omitted_records"] = len(state["records"])
             for key in ("active_plan", "active_task"):
                 if packet[key]:
-                    packet[key] = {field: packet[key][field] for field in ("id", "version")}
+                    packet[key] = {field: packet[key][field] for field in ("id", "version", *ORIGIN_METADATA)
+                                   if field in packet[key]}
             packet["blockers"] = []
             packet["archive_watermarks"] = [{key: row.get(key) for key in
                                               ("path", "size", "archived_offset", "status", "sha256")}

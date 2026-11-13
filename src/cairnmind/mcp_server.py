@@ -17,6 +17,9 @@ from mcp.server.fastmcp import FastMCP
 
 from .config import Settings, env_names, session_value
 
+# store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
+ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
+
 
 def _plan_header(plan: Any) -> dict[str, Any] | None:
     if not isinstance(plan, dict):
@@ -24,7 +27,9 @@ def _plan_header(plan: Any) -> dict[str, Any] | None:
     return {"id": plan.get("id"), "version": plan.get("version"),
             "title": str(plan.get("title", ""))[:300],
             "step_count": len(plan.get("step_ids", [])),
-            "source_ids": plan.get("source_ids", [])[-8:]}
+            "source_ids": plan.get("source_ids", [])[-8:],
+            # Only an external session's plan has these; a native plan's header is unchanged.
+            **{key: plan[key] for key in ORIGIN_KEYS if key in plan}}
 
 
 def _saved_plan_view(result: dict[str, Any]) -> dict[str, Any]:
@@ -49,7 +54,7 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
     task_view = None
     if isinstance(task, dict):
         metadata = task.get("metadata") or {}
-        fields = ("plan_ref", "step_key", "state", "requires_test", "requires_review",
+        fields = (*ORIGIN_KEYS, "plan_ref", "step_key", "state", "requires_test", "requires_review",
                   "required_profiles", "depends_on", "acceptance_criteria", "scope", "worktree", "check_run_ids")
         limited = {}
         truncated = []
@@ -101,6 +106,12 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
     return view
 
 
+def _looks_like_path(value: str) -> bool:
+    """A project given as a path ("." or "../app"), not as an id or a name."""
+    return (value.startswith((".", "~", os.sep)) or os.sep in value
+            or Path(value).expanduser().exists())
+
+
 class ServiceClient:
     WRITES = {"/remember", "/checkpoint", "/plans/save"}
     BOOTSTRAP = {"/sessions/context", "/sessions/ack"}
@@ -118,6 +129,13 @@ class ServiceClient:
                                  "CAIRNMIND_SESSION_ID or CAIRNMIND_PACKET_ID; use `cairnmind mcp` without --client")
             if session_id is not None or packet_id is not None:
                 raise ValueError("An external MCP session prepares its own session")
+            # The service resolves paths against its own working directory: send only absolute ones.
+            project, worktree = external.get("project"), external.get("worktree")
+            if isinstance(project, str) and _looks_like_path(project):
+                project = str(Path(project).expanduser().resolve())
+            if worktree is not None:
+                worktree = str(Path(worktree).expanduser().resolve())
+            self.external = {"project": project, "worktree": worktree}
             self.session_id = self.packet_id = None
             self._starting = asyncio.Lock()
             return

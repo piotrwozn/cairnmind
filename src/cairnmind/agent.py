@@ -15,7 +15,8 @@ from jsonschema import Draft202012Validator
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
 from .ollama import Ollama, OllamaUnavailable
-from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata
+from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata,
+                        with_source_origin)
 from .store import TASK_STATES, validate_task_state
 
 
@@ -452,7 +453,8 @@ class KnowledgeAgent:
             value["source_sha256"] = source["sha256"]
             if isinstance(value.get("text"), str) and value["text"] in source_text(source):
                 source["_catalog_excerpt"] = value["text"]
-            result.append(value)
+            # The source checked just above, not the chunk, says whether an external session wrote it.
+            result.append(with_source_origin(value, source))
         return result
 
     def _workflow(self, project_id, evidence, worktree=None, plan_id=None):
