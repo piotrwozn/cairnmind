@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -59,7 +60,9 @@ def test_a_bad_since_fails_with_its_message(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)
     bad = run(settings, "demo", "--since", "1w")
-    assert bad.exit_code != 0 and "--since must be a number of days or hours" in bad.output
+    # Where a terminal is assumed, the error is drawn in a coloured box and wrapped: compare the words only.
+    words = " ".join(re.sub(r"[^\w\s-]", " ", re.sub(r"\x1b\[[0-9;]*m", "", bad.output)).split())
+    assert bad.exit_code != 0 and "--since must be a number of days or hours such as 7d or 36h" in words, bad.output
 
 
 def test_an_unknown_project_is_reported_by_the_entrypoint_as_a_message(tmp_path, monkeypatch, capsys):
