@@ -104,7 +104,8 @@ def _turns(path: Path, counts: dict) -> list[dict]:
     call, so summing the events would count early calls again. ``provider_started`` is written before every
     model call (API and Copilot paths) and ``usage`` only after a call returned, so a turn with fewer usage
     events than started calls lost a report. A skipped line inside a turn also makes it not complete.
-    Usage after an end event (its ``turn_started`` line was lost) forms a turn of its own, run unknown.
+    Usage after an end event (its ``turn_started`` line was lost) forms a turn of its own, run unknown; it can
+    never be complete or priced, because its started calls cannot be counted.
     """
     turns, current, skipped = [], None, counts["lines_skipped"]
 
@@ -126,7 +127,9 @@ def _turns(path: Path, counts: dict) -> list[dict]:
         elif kind == "provider_started" and current is not None:
             current["calls"] += 1
         elif kind == "usage":
-            current = current or new(None, at)
+            if current is None:
+                current = new(None, at)
+                current["damaged"] = True
             current["usage"], current["at"] = data, at
             current["reports"] += 1
     if current is not None and counts["lines_skipped"] != skipped:
@@ -230,6 +233,14 @@ def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
     for folder in folders:
         if not _ID.fullmatch(folder.name):
             continue
+        # A journal untouched since before the period cannot hold a turn of it, so it is neither read nor
+        # counted as skipped or as another client's: an old stray folder must not make every report partial.
+        path = Path(folder.path) / "events.jsonl"
+        try:
+            if datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) < start:
+                continue
+        except (OSError, OverflowError, ValueError):
+            continue
         rows = [row for row in runs if row.get("session_id") == folder.name]
         projects = {row.get("project_id") for row in rows}
         if len(projects) != 1 or None in projects:
@@ -239,12 +250,6 @@ def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
             continue
         if not any(row.get("client") == "api" for row in rows):
             counts["sessions_not_api"] += 1
-            continue
-        path = Path(folder.path) / "events.jsonl"
-        try:
-            if datetime.fromtimestamp(path.stat().st_mtime, timezone.utc) < start:
-                continue
-        except (OSError, OverflowError, ValueError):
             continue
         counts["sessions_read"] += 1
         for turn in _turns(path, counts):

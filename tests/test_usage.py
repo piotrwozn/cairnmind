@@ -143,18 +143,22 @@ def test_a_skipped_line_inside_a_turn_or_after_its_last_report_makes_it_incomple
 def test_usage_after_a_lost_turn_start_is_its_own_turn_not_an_overwrite(data):
     data.run("r1", "s1")
     data.journal("s1", turn("r1", stamp(2), done(1000, 200)) + "{lost turn_started\n"
-                 + line("usage", done(50, 10), stamp(1)))
+                 + line("usage", done(50, 10, 0.5), stamp(1)))
     result = data.build()
     seen = {(g["day"], g["profile"]): g["input_tokens"] for g in result["groups"]}
     assert seen == {("2026-11-11", "cheap"): 1000, ("2026-11-12", "unknown"): 50}
     assert result["data"]["turns_seen"] == 2 and result["data"]["lines_skipped"] == 1
+    # Its started calls cannot be counted, so the turn without a start line is never complete or priced.
+    orphan = next(g for g in result["groups"] if g["profile"] == "unknown")
+    assert (orphan["complete"], orphan["estimated_cost"]) == (False, None)
 
 
 def test_usage_before_any_turn_start_counts_under_unknown_profile_and_model(data):
     data.run("r1", "s1")
-    data.journal("s1", line("usage", done(8, 2), stamp(1)))
+    data.journal("s1", line("usage", done(8, 2, 0.5), stamp(1)))
     group = data.build()["groups"][0]
     assert (group["profile"], group["model"], group["input_tokens"]) == ("unknown", "unknown", 8)
+    assert (group["complete"], group["estimated_cost"]) == (False, None)
 
 
 def test_cost_needs_complete_usage_and_a_recorded_estimate_in_every_turn(data):
@@ -267,6 +271,22 @@ def test_a_timestamp_with_an_offset_is_grouped_by_its_utc_day(data):
     data.run("r1", "s1")
     data.journal("s1", turn("r1", "2026-11-12T00:30:00+02:00", done(1, 1)))
     assert data.build()["groups"][0]["day"] == "2026-11-11"
+
+
+def test_an_old_stray_journal_does_not_make_the_report_partial_but_a_recent_one_does(data):
+    data.run("r1", "s1")
+    data.journal("s1", turn("r1", stamp(1), done(1, 1)))
+    data.journal("stray", turn("rx", stamp(1), done(1, 1)), mtime=NOW - timedelta(days=30))
+    data.journal("pilot", turn("rp", stamp(1), done(1, 1)), mtime=NOW - timedelta(days=30))
+    data.runs.append({"id": "rp", "session_id": "pilot", "project_id": "p1", "client": "copilot"})
+    data.registry(json.dumps({"version": 1, "runs": data.runs}))
+    old = data.build()
+    assert old["partial"] is False and old["data"]["sessions_skipped"] == 0 and old["data"]["sessions_not_api"] == 0
+    data.journal("stray", turn("rx", stamp(1), done(1, 1)))
+    data.journal("pilot", turn("rp", stamp(1), done(1, 1)))
+    recent = data.build()
+    assert recent["partial"] is True and recent["data"]["sessions_skipped"] == 1
+    assert recent["data"]["sessions_not_api"] == 1
 
 
 def test_a_journal_untouched_since_before_the_period_is_not_opened(data):

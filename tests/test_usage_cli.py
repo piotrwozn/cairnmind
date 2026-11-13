@@ -4,8 +4,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 
+import pytest
 from typer.testing import CliRunner
 
+from cairnmind import cli
 from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.store import Store
@@ -53,10 +55,19 @@ def test_the_command_prints_the_report_and_json(tmp_path, monkeypatch):
     assert payload["partial"] is False and payload["data"]["registry"] == "ok"
 
 
-def test_a_bad_since_and_an_unknown_project_fail(tmp_path, monkeypatch):
+def test_a_bad_since_fails_with_its_message(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)
     bad = run(settings, "demo", "--since", "1w")
     assert bad.exit_code != 0 and "--since must be a number of days or hours" in bad.output
-    missing = run(settings, "no-such-project")
-    assert missing.exit_code != 0 and "Traceback" not in missing.output
+
+
+def test_an_unknown_project_is_reported_by_the_entrypoint_as_a_message(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    # Run it the way a user does: the entrypoint turns the store's error into a message and exit code 1.
+    monkeypatch.setattr("sys.argv", ["cairnmind", "--data-dir", str(settings.data_dir), "usage", "no-such-project"])
+    with pytest.raises(SystemExit) as stopped:
+        cli.entrypoint()
+    assert stopped.value.code == 1
+    assert "Cairnmind: Unknown project: no-such-project" in capsys.readouterr().err
