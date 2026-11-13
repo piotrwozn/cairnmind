@@ -71,11 +71,20 @@ def _mcp_server(event) -> str | None:
 
 
 def _third_party_result(event) -> bool:
-    """A third-party tool's result: its completed action or its tool message."""
+    """Whether an event carries text that came from a server: a completed call whose result holds the
+    server's content (a result or a tool error it reported). A call refused before it reached a server, a
+    fixed failure code, a result too large to deliver or a made-up ``mcp_`` name carries none."""
     data = event.get("data") if isinstance(event, dict) else None
-    return (isinstance(data, dict) and _mcp_server(event) is not None
-            and (event.get("type") == "action_completed"
-                 or (event.get("type") == "message" and data.get("role") == "tool")))
+    result = data.get("result") if isinstance(data, dict) else None
+    return (event.get("type") == "action_completed" and _mcp_server(event) is not None
+            and isinstance(result, dict) and isinstance(result.get("content"), list))
+
+
+def _persons(event) -> bool:
+    """The person's own words: their messages and their resolution notes."""
+    data = event.get("data") if isinstance(event, dict) else None
+    return ((event.get("type") == "message" and isinstance(data, dict) and data.get("role") == "user")
+            or event.get("type") == "action_resolved")
 
 
 def third_party_origin(store, project_id, session_id) -> dict | None:
@@ -275,9 +284,10 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                         "archive_view": "public-agent-event-v1",
                         "normalized_text": normalized, "source_timestamp": event.get("created_at")}
             server = _mcp_server(event)
-            if server is None and tainted and event.get("type") == "message" and role == "assistant":
-                # After a third-party result the session's own words may restate it: they are archived
-                # like the result itself (degraded, not chunked, not extracted), from then on.
+            if server is None and tainted and not _persons(event):
+                # After a third-party result anything the agent says or does may restate it: its messages,
+                # tool requests and their arguments, tool results and approvals are archived like the result
+                # itself (degraded, not chunked, not extracted), from then on. The person's words are not.
                 server = tainted
             if _third_party_result(event):
                 metadata["third_party_result"] = True

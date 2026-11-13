@@ -16,7 +16,7 @@ import json
 from uuid import uuid4
 
 from .mcp_host import MAX_ARGUMENT_BYTES, McpHost, _canonical
-from .mcp_schema import valid_arguments
+from .mcp_schema import affordable, valid_arguments
 from .terminal_safe import safe_text
 
 # The approval dialog prints the whole request; a request whose text would be longer is refused, so what
@@ -56,6 +56,7 @@ class McpTools:
     def __init__(self, servers, *, run, journal, worktree, reserved, approve=None):
         self.run, self.journal, self.approve = run, journal, approve
         self.results = 0  # third-party results journaled in this run
+        self.withdrawn = set()  # tools whose argument check ran out of time
         redact = getattr(journal, "redact", None)
         self.host = McpHost(servers, worktree=worktree, reserved=reserved, redact=redact)
 
@@ -98,8 +99,18 @@ class McpTools:
             return {"ok": False, "error_code": "invalid_tool_arguments", **base}
         if size > MAX_ARGUMENT_BYTES:
             return {"ok": False, "error_code": "arguments_too_large", "bytes": size, **base}
-        # The server's schema is evaluated off the event loop with a time bound (mcp_schema).
-        if not await valid_arguments(entry["schema"]["parameters"], arguments):
+        schema = entry["schema"]["parameters"]
+        if not affordable(schema, arguments):
+            return {"ok": False, "error_code": "arguments_too_costly", **base}
+        # Evaluated on a dedicated thread with a time limit (mcp_schema). A tool whose check ran out of time
+        # once is withdrawn for the run: its schema is not evaluated again.
+        valid = await valid_arguments(schema, arguments)
+        if valid is None:
+            self.withdrawn.add(name)
+            self.journal.append("mcp_tool_withdrawn", {"name": name, "server_id": entry["server_id"],
+                                                       "tool": entry["tool"], "reason": "validation_timeout"})
+            return {"ok": False, "error_code": "tool_withdrawn", **base}
+        if not valid:
             return {"ok": False, "error_code": "invalid_tool_arguments", **base}
         action_id = uuid4().hex
         request = {"kind": "mcp_tool", "action_id": action_id, "server_id": entry["server_id"],

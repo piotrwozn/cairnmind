@@ -139,6 +139,7 @@ class AgentEngine:
                             worktree=run["worktree"], reserved=set(self._schemas),
                             approve=self._approve_command if approve is not None else None)
         self._mcp_started = False
+        self._emitted = False
         self._prepared = False
         self._acknowledged = False
         self._last_packet = None
@@ -209,6 +210,7 @@ class AgentEngine:
     async def _emit_stream(self, text):
         if not text:
             return
+        self._emitted = True  # shown text: a failed request is then never made again (#126)
         self._stream_buffer += text
         if len(self._stream_buffer) >= 2048:
             self._flush_stream()
@@ -519,6 +521,8 @@ class AgentEngine:
             if name in self.mcp.catalogue:
                 called = self.mcp.results
                 result = await self.mcp.call(name, arguments, call_id, self.tools.command_timeout_seconds)
+                if name in self.mcp.withdrawn and self._schemas.pop(name, None) is not None:
+                    await self._notify("mcp_tool_withdrawn", {"name": name})
                 if self.mcp.results != called:
                     # Archived at once: the service then marks this session's later memory writes degraded.
                     await self._checked_archive()
@@ -863,24 +867,38 @@ class AgentEngine:
             await self._notify("mcp_server_failed", {"server_id": server_id, "code": code})
 
     async def _complete(self):
-        """One model call. If the provider refuses a request that offers third-party tools, those tools are
-        withdrawn for the rest of the run, reported, and the call is made once more without them (#126)."""
+        """One model call (#126). When the provider refuses a request that offered third-party tools, either
+        naming the tool definitions (``tools_rejected``) or with no usable cause (``provider_error``,
+        ``unsupported_request``), and nothing was shown yet, the call is made once more without them. If that
+        succeeds they are withdrawn for the run and reported; if it fails, they stay and the original error
+        stands. Any other refusal, a context overflow included, is not retried."""
         from .api_providers import ProviderError
         tools = self._available_tools()
         messages = [{"role": "system", "content": SYSTEM}, *deepcopy(self._context)]
+        self._emitted = False
         try:
             return await self.provider.complete(messages, tools, on_delta=self._delta)
         except ProviderError as error:
             offered = sorted({self.mcp.catalogue[t["name"]]["server_id"] for t in tools if t["name"] in self.mcp.catalogue})
-            if not offered or error.code not in {"provider_error", "unsupported_request", "context_limit"}:
+            if (not offered or self._emitted
+                    or error.code not in {"tools_rejected", "provider_error", "unsupported_request"}):
                 raise
-            code = error.code
+            first = error
+        self._stream_buffer = self._display_pending = ""
+        without = [tool for tool in tools if tool["name"] not in self.mcp.catalogue]
+        try:
+            reply = await self.provider.complete(messages, without, on_delta=self._delta)
+        except ProviderError:
+            # Not the third-party tools: they stay offered, and the person sees the original refusal.
+            self._record("mcp_tools_kept", {"code": first.code, "servers": offered})
+            await self._notify("mcp_tools_kept", {"code": first.code, "servers": offered})
+            raise first from None
         for name in list(self.mcp.catalogue):
             self._schemas.pop(name, None)
-        self._record("mcp_tools_withdrawn", {"code": code, "servers": offered})
-        await self._notify("mcp_tools_withdrawn", {"code": code, "servers": offered})
-        self._stream_buffer = self._display_pending = ""
-        return await self.provider.complete(messages, self._available_tools(), on_delta=self._delta)
+        data = {"code": first.code, "servers": offered, "named_by_provider": first.code == "tools_rejected"}
+        self._record("mcp_tools_withdrawn", data)
+        await self._notify("mcp_tools_withdrawn", data)
+        return reply
 
     async def _stop_tools(self):
         stop = getattr(self.tools, "interrupt", None)

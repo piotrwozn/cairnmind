@@ -93,8 +93,9 @@ async def test_a_provider_that_refuses_third_party_tools_costs_them_and_not_the_
         result = await engine.turn("Work")
         assert result["status"] == "completed" and result["text"] == "Done without them."
         assert [row["data"] for row in events(engine, "mcp_tools_withdrawn")] == [
-            {"code": "provider_error", "servers": ["files"]}]
-        assert {"type": "mcp_tools_withdrawn", "data": {"code": "provider_error", "servers": ["files"]}} in seen
+            {"code": "provider_error", "servers": ["files"], "named_by_provider": False}]
+        assert {"type": "mcp_tools_withdrawn", "data": {"code": "provider_error", "servers": ["files"],
+                                                   "named_by_provider": False}} in seen
         assert any(n.startswith("mcp_") for n in names(provider.requests[2]))
         assert not any(n.startswith("mcp_") for n in names(provider.requests[3]))
     finally:
@@ -230,7 +231,7 @@ async def test_after_a_third_party_result_the_sessions_own_words_and_writes_are_
         ("message", {"role": "user", "content": "Thanks, note pelicanlantern."}),
         ("message", {"role": "assistant", "content": "Noted zebrafinch."})])
     before, completed, tool, restated, user, later = sources[1], sources[2], sources[3], sources[4], sources[5], sources[6]
-    assert completed["metadata"]["third_party_result"] is True and tool["metadata"]["third_party_result"] is True
+    assert completed["metadata"]["third_party_result"] is True and "third_party_result" not in tool["metadata"]
     for source in (restated, later):
         assert source["metadata"]["origin_evidence"] == "degraded"
         assert source["metadata"]["origin_client"] == "mcp:tracker" and chunks_of(store, source["id"]) == []

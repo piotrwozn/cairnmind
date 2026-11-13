@@ -53,6 +53,11 @@ CATALOG = {
     "and the agent works without them.":
         "Dostawca odrzucił żądanie z narzędziami zewnętrznych serwerów MCP ({code}); zostały wycofane do końca "
         "tego uruchomienia, a agent pracuje bez nich.",
+    "The provider refused the request ({code}) also without the third-party MCP tools; they stay offered.":
+        "Dostawca odrzucił żądanie ({code}) także bez narzędzi zewnętrznych serwerów MCP; pozostają dostępne.",
+    "A third-party MCP tool took too long to check its arguments and is withdrawn for this run.":
+        "Sprawdzenie argumentów narzędzia zewnętrznego serwera MCP trwało za długo; narzędzie wycofano do końca "
+        "tego uruchomienia.",
 }
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",

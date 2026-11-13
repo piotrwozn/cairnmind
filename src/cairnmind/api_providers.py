@@ -41,6 +41,7 @@ _MESSAGES = {
     "policy_refused": "Dostawca odmówił wykonania żądania.",
     "request_conflict": "Dostawca odrzucił żądanie z powodu konfliktu.",
     "provider_error": "Dostawca odrzucił żądanie.",
+    "tools_rejected": "Dostawca odrzucił definicje narzędzi.",
 }
 
 
@@ -200,7 +201,7 @@ def _error_code(status, raw=None):
     if isinstance(raw, dict):
         detail = raw.get("error", raw)
         if isinstance(detail, dict):
-            observed = " ".join(str(detail.get(k, ""))[:2000] for k in ("type", "code", "message")).casefold()
+            observed = " ".join(str(detail.get(k, ""))[:2000] for k in ("type", "code", "message", "param")).casefold()
         elif isinstance(detail, str):
             observed = detail[:2000].casefold()
     if any(term in observed for term in ("insufficient_quota", "credit balance", "quota_exhausted",
@@ -209,6 +210,12 @@ def _error_code(status, raw=None):
     if any(term in observed for term in ("context_length_exceeded", "maximum context length", "prompt is too long",
                                          "input is too long", "model_context_window_exceeded")):
         return "context_limit"
+    # A refusal that names the tool definitions: OpenAI's param "tools[0].parameters" or "Invalid schema for
+    # function", Anthropic's "tools.0.custom.input_schema: ...", a compatible server's "tools" field.
+    if status in (400, 422) and "does not support tools" not in observed and any(term in observed for term in (
+            "tools[", "tools.", "'tools'", '"tools"', "input_schema", "invalid schema for function",
+            "function.parameters", "tool definition")):
+        return "tools_rejected"
     return {401: "auth_rejected", 402: "quota_exhausted", 403: "access_denied",
             404: "model_or_endpoint_missing", 408: "network_timeout", 409: "request_conflict",
             413: "context_limit", 422: "unsupported_request", 429: "rate_limited"}.get(

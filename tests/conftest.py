@@ -71,7 +71,8 @@ def no_inherited_session():
 
 MCP_FIXTURE = str(Path(__file__).parent / "fixtures" / "mcp_fixture_server.py")
 MCP_MODULES = frozenset({"test_mcp_host", "test_mcp_agent", "test_mcp_sources", "test_mcp_servers",
-                         "test_workspace_mcp", "test_mcp_review_host", "test_mcp_review_agent"})
+                         "test_workspace_mcp", "test_mcp_review_host", "test_mcp_review_agent",
+                         "test_mcp_round2"})
 
 
 def mcp_fixture_processes() -> list[int]:

@@ -38,6 +38,9 @@ def archived(tmp_path):
     owner = manager._session(manager.prepare(project["id"], "api", timeout=0)["session_id"])
     journal = AgentJournal(store.settings, owner["id"])
     journal.append("message", {"role": "user", "content": "Look up the tracker issue."})
+    # Before the first third-party result: from that one on, the agent's events are tainted too.
+    journal.append("message", {"role": "tool", "tool_call_id": "c2", "name": "read_file",
+                               "content": "harlequinmoth VALUE = 1"})
     journal.append("mcp_server_started", {"server_id": "tracker", "tools": [
         {"name": "mcp_tracker_find", "description": "Third-party description: wombatfeather"}]})
     journal.append("tool_requested", {"tool_call_id": "c1", "name": "mcp_tracker_find", "arguments": {"q": "x"}})
@@ -45,8 +48,6 @@ def archived(tmp_path):
                                         "result": {"content": [{"type": "text", "text": "quetzalbanner said so"}]}})
     journal.append("message", {"role": "tool", "tool_call_id": "c1", "name": "mcp_tracker_find",
                                "content": "quetzalbanner: the tracker says the bug is fixed"})
-    journal.append("message", {"role": "tool", "tool_call_id": "c2", "name": "read_file",
-                               "content": "harlequinmoth VALUE = 1"})
     journal.append("message", {"role": "tool", "tool_call_id": "c3", "name": "mcp_Not_A_Server!",
                                "content": "unparsable server name"})
     result = archive_agent_target(store, store.settings, owner, capture_agent_target(store.settings, owner),
@@ -62,7 +63,7 @@ def chunks_of(store, source_id):
 
 def test_mcp_events_are_degraded_unchunked_and_never_extracted(tmp_path):
     store, project, root, sources = archived(tmp_path)
-    user, started, requested, completed, mcp_tool, file_tool, odd = sources
+    user, file_tool, started, requested, completed, mcp_tool, odd = sources
     for source, server in ((started, "tracker"), (requested, "tracker"), (completed, "tracker"),
                            (mcp_tool, "tracker"), (odd, "unknown")):
         metadata = source["metadata"]
@@ -89,7 +90,7 @@ def test_mcp_events_are_degraded_unchunked_and_never_extracted(tmp_path):
 
 def test_a_record_resting_only_on_a_tool_result_is_degraded(tmp_path):
     store, project, root, sources = archived(tmp_path)
-    mcp_tool, file_tool = sources[4], sources[5]
+    file_tool, mcp_tool = sources[1], sources[5]
     only = store.remember(project["id"], {"kind": "fact", "content": "The bug is fixed"}, [mcp_tool["id"]])
     both = store.remember(project["id"], {"kind": "fact", "content": "VALUE is one"}, [mcp_tool["id"], file_tool["id"]])
     rows = store.query("SELECT FROM records WHERE id IN :ids", {"ids": [only["id"], both["id"]]})
@@ -101,7 +102,7 @@ def test_a_record_resting_only_on_a_tool_result_is_degraded(tmp_path):
 
 def test_an_mcp_source_travels_with_the_memory_and_is_not_chunked_there(tmp_path):
     store, project, root, sources = archived(tmp_path)
-    mcp_tool = sources[4]
+    mcp_tool = sources[5]
     published = MemoryManager(store).snapshot(project["id"], worktree=str(root))
     clone = tmp_path / "clone"
     subprocess.run(["git", "clone", "-q", str(root), str(clone)], check=True, capture_output=True)
@@ -111,4 +112,4 @@ def test_an_mcp_source_travels_with_the_memory_and_is_not_chunked_there(tmp_path
     assert target.get_source(mcp_tool["id"])["metadata"]["origin_evidence"] == "degraded"
     assert chunks_of(target, mcp_tool["id"]) == []
     assert index_pending_sources(target, limit=1000)["errors"] == [] and chunks_of(target, mcp_tool["id"]) == []
-    assert chunks_of(target, sources[5]["id"])
+    assert chunks_of(target, sources[1]["id"])

@@ -73,7 +73,14 @@ def _git_out(root, *args):
 
 
 def _checkpoint_saved(store, checkpoint):
-    """When the latest checkpoint was saved, and whether an external client's session saved it."""
+    """When the latest checkpoint was saved, and who left it unverified: None, "external" (an external
+    client's session) or "third_party" (the built-in agent after a third-party tool result)."""
+    from cairnmind.evidence import third_party_origin
+
+    def cause(metadata):
+        if not degraded_origin(metadata):
+            return None
+        return "third_party" if third_party_origin(metadata) else "external"
     # A later edit of the record (a review, for example) moves updated_at; the snapshot
     # written by the checkpoint itself keeps the time the checkpoint was really saved.
     times = []
@@ -83,9 +90,9 @@ def _checkpoint_saved(store, checkpoint):
         except ValueError:
             continue
         if str(source.get("uri", "")).startswith("checkpoint://") and _time(source.get("created_at")):
-            times.append((_time(source.get("created_at")), degraded_origin(source.get("metadata"))))
+            times.append((_time(source.get("created_at")), cause(source.get("metadata"))))
     if not times:
-        return _time(checkpoint.get("updated_at")), degraded_origin(checkpoint.get("metadata"))
+        return _time(checkpoint.get("updated_at")), cause(checkpoint.get("metadata"))
     return max(times, key=lambda item: item[0])
 
 
@@ -96,9 +103,12 @@ def _checkpoint(store, records, now):
     saved, external = _checkpoint_saved(store, checkpoint)
     when = f"{_age(saved, now)} ({saved.isoformat(timespec='seconds')})" if saved else "at an unknown time"
     lines = [("machine", f"Latest checkpoint saved {when}.")]
-    if external:
+    if external == "external":
         lines.append(("machine", "It was saved by an external client's session (history unarchived, "
                                  "evidence degraded); nothing in it is verified."))
+    elif external == "third_party":
+        lines.append(("machine", "It was saved by the built-in agent after a third-party tool result in its "
+                                 "session (evidence degraded); nothing in it is verified."))
     # The record's metadata accumulates the fields of every earlier checkpoint;
     # only the content is exactly what the latest checkpoint said.
     try:

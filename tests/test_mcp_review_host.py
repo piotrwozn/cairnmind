@@ -190,7 +190,8 @@ async def test_argument_validation_is_bounded_and_never_blocks_the_loop(monkeypa
     monkeypatch.setattr(mcp_schema, "Draft202012Validator", Slow)
     started = time.monotonic()
     results = await asyncio.gather(valid_arguments({"type": "object"}, {}), ticker())
-    assert results[0] is False and time.monotonic() - started < 1 and len(ticks) == 5
+    assert results[0] is None and time.monotonic() - started < 1 and len(ticks) == 5
+    await asyncio.sleep(1.6)  # the one validation thread finishes the slow check first
     monkeypatch.setattr(mcp_schema, "Draft202012Validator", Broken)
     assert await valid_arguments({"type": "object"}, {}) is False
 

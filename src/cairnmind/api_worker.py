@@ -259,10 +259,16 @@ class AgentApp(App):
             self.set_status(data.get("message", data.get("status", data.get("code", json.dumps(data, ensure_ascii=False)))))
         elif kind == "mcp_server_failed":
             self.mcp_server_off(data.get("server_id"), data.get("code"))
-        elif kind == "mcp_tools_withdrawn":
+        elif kind == "mcp_tool_withdrawn":
+            text = self.t("A third-party MCP tool took too long to check its arguments and is withdrawn for this run.")
+            self.set_status(text)
+            self.query_one("#agent-history", RichLog).write(self.display_text(text))
+        elif kind in {"mcp_tools_withdrawn", "mcp_tools_kept"}:
             code = data.get("code") if isinstance(data.get("code"), str) and _CODE.fullmatch(data["code"]) else "unknown"
             text = self.t("The provider refused the request with third-party MCP tools ({code}); they are withdrawn "
-                          "for this run and the agent works without them.", code=code)
+                          "for this run and the agent works without them." if kind == "mcp_tools_withdrawn" else
+                          "The provider refused the request ({code}) also without the third-party MCP tools; they "
+                          "stay offered.", code=code)
             self.set_status(text)
             self.query_one("#agent-history", RichLog).write(self.display_text(text))
         elif kind in {"tool_start", "tool_result"}:

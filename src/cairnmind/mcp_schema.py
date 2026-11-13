@@ -37,6 +37,11 @@ from .terminal_safe import safe_text
 MAX_SCHEMA_BYTES = 16 * 1024
 MAX_DEPTH = 6
 MAX_PROPERTIES = 64
+# Bounds on the work of checking arguments, not only on the wait (measured in tests/test_mcp_review_host.py).
+MAX_NODES = 128
+MAX_BRANCHES = 16
+MAX_ENUM_VALUES = 256
+MAX_COST = 200_000
 VALIDATION_SECONDS = 2
 TYPES = {"object", "string", "number", "integer", "boolean", "array", "null"}
 PROPERTY = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -124,8 +129,10 @@ def _types(value):
     return value
 
 
-def _schema(value, depth, top=False):
-    if not isinstance(value, dict) or depth > MAX_DEPTH:
+def _schema(value, depth, top=False, budget=None, in_any=False):
+    budget = budget if budget is not None else {"nodes": 0, "branches": 0, "enum": 0}
+    budget["nodes"] += 1
+    if not isinstance(value, dict) or depth > MAX_DEPTH or budget["nodes"] > MAX_NODES:
         raise Unsupported()
     result = {}
     for key, item in value.items():
@@ -143,22 +150,27 @@ def _schema(value, depth, top=False):
             if not isinstance(item, dict) or len(item) > MAX_PROPERTIES or any(
                     not isinstance(name, str) or not PROPERTY.fullmatch(name) for name in item):
                 raise Unsupported()
-            result[key] = {name: _schema(sub, depth + 1) for name, sub in item.items()}
+            result[key] = {name: _schema(sub, depth + 1, budget=budget, in_any=in_any) for name, sub in item.items()}
         elif key == "required":
             if not isinstance(item, list) or any(not isinstance(name, str) or not PROPERTY.fullmatch(name)
                                                  for name in item):
                 raise Unsupported()
             result[key] = list(item)
         elif key == "additionalProperties":
-            result[key] = item if type(item) is bool else _schema(item, depth + 1)
+            result[key] = item if type(item) is bool else _schema(item, depth + 1, budget=budget, in_any=in_any)
         elif key == "items":
-            result[key] = _schema(item, depth + 1)
+            result[key] = _schema(item, depth + 1, budget=budget, in_any=in_any)
         elif key == "anyOf":
-            if not isinstance(item, list) or not 1 <= len(item) <= 8:
+            # Every failing branch is evaluated in full, so branches multiply the cost of a call: never
+            # nested in another anyOf, and few in all.
+            budget["branches"] += len(item) if isinstance(item, list) else 0
+            if (in_any or not isinstance(item, list) or not 1 <= len(item) <= 8
+                    or budget["branches"] > MAX_BRANCHES):
                 raise Unsupported()
-            result[key] = [_schema(sub, depth + 1) for sub in item]
+            result[key] = [_schema(sub, depth + 1, budget=budget, in_any=True) for sub in item]
         elif key == "enum":
-            if (not isinstance(item, list) or not 1 <= len(item) <= 64 or any(
+            budget["enum"] += len(item) if isinstance(item, list) else 0
+            if (not isinstance(item, list) or not 1 <= len(item) <= 64 or budget["enum"] > MAX_ENUM_VALUES or any(
                     not (item_value is None or type(item_value) in (bool, int, float)
                          or (isinstance(item_value, str) and len(item_value) <= 256)) for item_value in item)):
                 raise Unsupported()
@@ -194,10 +206,58 @@ def admit(schema) -> tuple[dict | None, str | None]:
     return admitted, None
 
 
-async def valid_arguments(schema, arguments) -> bool:
-    """Evaluated off the event loop with a time bound; any failure counts as invalid."""
+def weight(schema) -> int:
+    """Schema nodes plus enum values: what one argument node can at most be checked against."""
+    total, stack = 0, [schema]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            total += 1 + (len(value["enum"]) if isinstance(value.get("enum"), list) else 0)
+            stack.extend(item for key, item in value.items() if key != "enum")
+        elif isinstance(value, list):
+            stack.extend(value)
+    return total
+
+
+def nodes(value, limit) -> int:
+    """JSON nodes of an argument, counted up to ``limit``."""
+    count, stack = 0, [value]
+    while stack and count <= limit:
+        item = stack.pop()
+        count += 1
+        if isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return count
+
+
+def affordable(schema, arguments) -> bool:
+    """Whether checking these arguments stays within MAX_COST basic checks. Without nested anyOf, every
+    argument node is checked against at most every schema node and enum value once."""
+    cost = weight(schema)
+    return nodes(arguments, MAX_COST // max(cost, 1) + 1) * cost <= MAX_COST
+
+
+_EXECUTOR = None
+
+
+def _executor():
+    # One dedicated thread: a validation past its time limit occupies this one, never the default pool.
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cairnmind-mcp-validate")
+    return _EXECUTOR
+
+
+async def valid_arguments(schema, arguments):
+    """True or False, evaluated off the event loop; None when the time limit ran out. Any failure is False."""
+    loop = asyncio.get_running_loop()
     try:
-        return await asyncio.wait_for(asyncio.to_thread(Draft202012Validator(schema).is_valid, arguments),
-                                      VALIDATION_SECONDS)
+        return await asyncio.wait_for(loop.run_in_executor(_executor(), Draft202012Validator(schema).is_valid,
+                                                           arguments), VALIDATION_SECONDS)
+    except asyncio.TimeoutError:
+        return None
     except Exception:
         return False
