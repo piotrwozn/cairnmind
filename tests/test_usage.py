@@ -728,3 +728,15 @@ def test_codex_weeks_use_the_same_iso_weeks(data):
              record(2, (25, 3), (15, 2), "2025-01-01T10:00:00+00:00")]
     result = with_codex(data, lines, "30d", now=year_end, by="week")
     assert [(g["period"], g["input_tokens"]) for g in codex_rows(result)] == [("2024-W52", 10), ("2025-W01", 15)]
+
+
+def test_a_parked_line_that_comes_back_on_a_later_page_is_counted_once(monkeypatch):
+    # Import parks a line again under the same id with a new time, so paging by time can return it twice.
+    from cairnmind import codex_usage
+    line = json.dumps({"type": "token_usage_record", "payload": {}})
+    rows = [{"id": "a", "created_at": "2026-01-01T00:00:00", "cwd": None, "raw": line},
+            {"id": "b", "created_at": "2026-01-01T00:00:01", "cwd": None, "raw": line},
+            {"id": "a", "created_at": "2026-01-01T00:00:02", "cwd": None, "raw": line}]
+    monkeypatch.setattr(codex_usage, "_pages", lambda store, sql, params: iter(rows))
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert codex_usage.waiting_in_inbox(SimpleNamespace(), "project", start) == 2

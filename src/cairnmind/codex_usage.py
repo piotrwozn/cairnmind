@@ -43,8 +43,9 @@ def _pages(store, sql, params):
     """The rows of ``sql`` (a SELECT with id and created_at, ending in its conditions), in pages by created_at, id.
 
     A page starts after the last row of the one before, not at an offset. The store is read without a lock, so
-    rows may be added or removed between pages: a row that stays the whole time is still read exactly once,
-    where with SKIP a removed earlier row would shift an unread one out of every page.
+    rows may be added or removed between pages: a row that stays unchanged the whole time is still read exactly
+    once, where with SKIP a removed earlier row would shift an unread one out of every page. A row whose
+    created_at is rewritten meanwhile can be read twice; a caller that counts must tell rows apart by id.
     """
     last = {}
     while True:
@@ -65,10 +66,14 @@ def waiting_in_inbox(store, project_id: str, start) -> int:
     a usage record (a message that merely mentions the name is not) and whose directory resolves to this
     project, or is unknown. Rows of directories of other projects, or of none we know, are not ours.
     """
-    waiting, ours = 0, {}
+    waiting, ours, seen = 0, {}, set()
     for row in _pages(store, "SELECT id,created_at,cwd,raw FROM ingestion_inbox WHERE client=:client "
                              "AND created_at>=:start AND raw LIKE :marker",
                       {"client": "codex", "marker": f"%{_MARKER}%", "start": start.isoformat(timespec="microseconds")}):
+        # Import parks a line again under the same id with a new time; such a row can come back on a later page.
+        if row.get("id") in seen:
+            continue
+        seen.add(row.get("id"))
         try:
             event = json.loads(row.get("raw"))
             if not isinstance(event, dict) or event.get("type") != _MARKER:
