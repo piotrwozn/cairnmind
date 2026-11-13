@@ -46,8 +46,10 @@ from .ollama import Ollama, OllamaUnavailable
 
 PASS_SHARE = 0.8  # complete and right, of all questions
 # Never indexed: the questions and the document that reports the runs (the question file given
-# on the command line is left out too, wherever it lies).
-NOT_INDEXED = ("docs/evaluation/",)
+# on the command line is left out too, wherever it lies), and the tests of this evaluation and of
+# the definition lookup, whose fixtures imitate the evaluated questions (a settings class with a
+# port and a cockpit port, a default timeout, answer tokens) with other values.
+NOT_INDEXED = ("docs/evaluation/", "tests/test_definitions.py", "tests/test_repository_evaluation.py")
 _NUMBER_WORDS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
                  "fifteen sixteen seventeen eighteen nineteen twenty").split()
 
