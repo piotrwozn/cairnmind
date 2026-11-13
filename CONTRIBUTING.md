@@ -36,6 +36,16 @@ uv run pytest -n 4                           # the same full suite in 4 parallel
 - Tests that drive a real tmux server are listed in `TMUX_MODULES` in the same file.
 - Keyboard latency budgets target a developer workstation. On slow or shared machines, set `CAIRNMIND_LATENCY_SCALE`, as CI does.
 
+### Coverage
+
+Coverage is measured only when you ask for it. The same two numbers CI shows on a pull request, the coverage of all of `src/cairnmind` and of the lines your branch adds or changes since it left `origin/main`:
+
+```bash
+uv run pytest -n 4 --cov --cov-report=xml && uv run python scripts/coverage_summary.py
+```
+
+`--compare-branch` names another base; `--no-patch` prints the total only. Run `git fetch origin` first so that `origin/main` is current. Python processes that the tests start are measured too; a process ended by a signal, such as a terminal pane closed with its tmux server, records nothing, so the terminal modules read lower than they are exercised. Coverage adds about a third to the run time. Without `--cov` nothing is measured and no coverage file is written.
+
 ## Where to start
 
 Looking for a first task? Issues labelled [`good first issue`](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) touch a small part of the code and can be verified without models.

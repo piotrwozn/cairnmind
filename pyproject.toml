@@ -27,7 +27,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-xdist>=3.6,<4", "ruff>=0.11,<1"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-xdist>=3.6,<4", "pytest-cov>=7,<8",
+       "coverage>=7.10,<8", "diff-cover>=9,<11", "ruff>=0.11,<1"]
 
 [project.urls]
 Homepage = "https://github.com/piotrwozn/cairnmind"
@@ -58,6 +59,21 @@ testpaths = ["tests"]
 filterwarnings = [
     # Raised on import by FastAPI's test client, not by this code; removing it is issue #61.
     "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]
+
+# Coverage is off unless asked for: `uv run pytest -n 4 --cov --cov-report=xml` (see CONTRIBUTING.md).
+[tool.coverage.run]
+source = ["src/cairnmind"]
+branch = true
+relative_files = true
+# Also measure the Python processes the tests start (python -m cairnmind, workers, bridges).
+# A process ended by a signal, such as a pane killed with its tmux server, saves nothing.
+patch = ["subprocess"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
 ]
 
 [tool.ruff]
