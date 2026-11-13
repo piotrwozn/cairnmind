@@ -493,9 +493,12 @@ def usage(ctx: typer.Context, project: str,
     from cairnmind.usage import build_usage
     # Resolving the project name opens the store (it starts the database engine if stopped and may create the
     # data directory); the usage itself is read from the session journals and nothing is written to them.
-    found = store_for(ctx.obj).resolve_project(project)
+    store = store_for(ctx.obj)
+    found = store.resolve_project(project)
+    # The cursors of history import name the Codex transcript files; the files themselves are read read-only.
+    cursors = store.query("SELECT path,project_id,client FROM import_cursors WHERE client=:client", {"client": "codex"})
     try:
-        result = build_usage(ctx.obj.data_dir, found, since, by=by.value)
+        result = build_usage(ctx.obj.data_dir, found, since, by=by.value, transcripts=cursors)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--since")
     if as_json:
