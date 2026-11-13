@@ -144,7 +144,7 @@ def test_a_native_stage_never_looks_at_agent_credentials():
 @pytest.mark.parametrize("slot,credential,runtime,problem", [
     ("helper", "credential_missing", None, "credential_missing"),
     ("helper", None, None, "credential_unavailable"),
-    ("pilot", "credential_missing", "ready", "credential_missing"),
+    ("pilot", "credential_missing", "ready", "copilot_credential_unavailable"),
     ("pilot", "not_required", "copilot_sdk_missing", "runtime_missing"),
     ("pilot", "not_required", "copilot_runtime_invalid", "runtime_missing")])
 def test_an_agent_that_cannot_start_is_shown_as_such_and_never_replaced(slot, credential, runtime, problem):
@@ -159,7 +159,9 @@ def test_an_agent_that_cannot_start_is_shown_as_such_and_never_replaced(slot, cr
 describe_problem = {
     "credential_missing": "The mapped assistant has no credential. Add its key in Connections; nothing was started.",
     "credential_unavailable": "credential cannot be read. Check it in Connections; nothing was started.",
-    "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started."}
+    "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.",
+    "copilot_credential_unavailable": ("Provide it, or clear the credential reference in the profile so the stage "
+                                       "uses the signed-in GitHub account; nothing was started.")}
 
 
 def test_without_an_observation_the_launcher_decides():

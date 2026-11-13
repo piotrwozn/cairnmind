@@ -412,6 +412,10 @@ CATALOG.update({
         "Ten etap przypisano, zanim mógł wskazywać wbudowanego agenta lub Copilota. Potwierdź go w "
         "Więcej → Etapy planu; nic nie zostało uruchomione.",
     "not confirmed; save it to confirm": "niepotwierdzony; zapisz, aby potwierdzić",
+    "This Copilot profile names a credential that is not available. Provide it, or clear the credential "
+    "reference in the profile so the stage uses the signed-in GitHub account; nothing was started.":
+        "Ten profil Copilota wskazuje poświadczenia, które nie są dostępne. Udostępnij je albo usuń odwołanie "
+        "do poświadczeń z profilu, aby etap użył zalogowanego konta GitHub; nic nie zostało uruchomione.",
     "The mapped assistant has no credential. Add its key in Connections; nothing was started.":
         "Przypisany asystent nie ma poświadczeń. Dodaj jego klucz w Połączeniach; nic nie zostało uruchomione.",
     "The mapped assistant's credential cannot be read. Check it in Connections; nothing was started.":

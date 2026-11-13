@@ -90,7 +90,9 @@ def agent_problem(profile: dict, readiness: dict | None) -> str | None:
     if credential is None:
         return "credential_unavailable"
     if credential == "credential_missing":
-        return "credential_missing"
+        # A Copilot profile without a credential reference runs as the signed-in GitHub account;
+        # one that names a credential is not started without it.
+        return "copilot_credential_unavailable" if profile.get("client") == "copilot" else "credential_missing"
     if profile.get("client") == "copilot" and readiness.get("runtime") not in {"ready", "unknown"}:
         return "runtime_missing"
     return None
@@ -205,13 +207,17 @@ _PROBLEMS = {
     "credential_unavailable": ("The mapped assistant's credential cannot be read. Check it in Connections; "
                                "nothing was started."),
     "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.",
+    "copilot_credential_unavailable": (
+        "This Copilot profile names a credential that is not available. Provide it, or clear the credential "
+        "reference in the profile so the stage uses the signed-in GitHub account; nothing was started."),
     "assistant_changed": ("The assistant of this stage changed since it was mapped. Confirm it in More → Plan stages; "
                           "nothing was started."),
     "assistant_unconfirmed": ("This stage was mapped before it could name the built-in agent or Copilot. Confirm it "
                               "in More → Plan stages; nothing was started."),
 }
 # Problems whose text already says what to do: the connection, or confirming the stage again.
-CONNECTION_PROBLEMS = ("credential_missing", "credential_unavailable", "runtime_missing")
+CONNECTION_PROBLEMS = ("credential_missing", "credential_unavailable", "runtime_missing",
+                       "copilot_credential_unavailable")
 CONFIRM_PROBLEMS = ("assistant_changed", "assistant_unconfirmed")
 _REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Every step of the plan is done.",
             "blocked": "Every remaining step is blocked."}
