@@ -155,6 +155,59 @@ def test_codex_records_of_no_known_directory_wait_in_the_inbox_for_every_project
     assert codex is None and payload["partial"] is True and payload["data"]["codex_waiting"] == 3
 
 
+def park(store, name, raw, created):
+    """A row of the ingestion inbox as import writes it (ingest.py), with a chosen import time."""
+    store.command(
+        "UPDATE ingestion_inbox SET id=:id,path=:path,source_offset=0,sha256=:id,raw=:raw,client='codex',cwd=null,"
+        "reason='parked',created_at=:created UPSERT WHERE id=:id",
+        {"id": name, "path": f"/tmp/{name}.jsonl", "raw": raw, "created": created.isoformat(timespec="microseconds")})
+
+
+def test_only_usage_records_of_the_period_in_the_inbox_make_the_report_partial(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    store, now = Store(settings.data_dir), datetime.now(timezone.utc)
+    record = json.dumps({"type": "token_usage_record", "payload": {}})
+    park(store, "old", record, now - timedelta(days=60))
+    park(store, "chat", json.dumps({"type": "event_msg", "payload": {"type": "user_message",
+                                                                     "message": "see token_usage_record"}}), now)
+    park(store, "broken", '{"type": "token_usage_record"', now)
+    # A usage record from long ago and lines that only mention the name leave the report complete.
+    payload, _ = codex_totals(settings, "demo")
+    assert payload["partial"] is False and payload["data"]["codex_waiting"] == 0
+    assert codex_totals(settings, "demo", "--since", "30d")[0]["partial"] is False
+    # The same old record is inside a longer period.
+    assert codex_totals(settings, "demo", "--since", "90d")[0]["data"]["codex_waiting"] == 1
+    park(store, "fresh", record, now - timedelta(hours=1))
+    waiting, _ = codex_totals(settings, "demo", "--since", "1d")
+    assert waiting["partial"] is True and waiting["data"]["codex_waiting"] == 1
+
+
+def test_inbox_pages_are_all_read(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    settings, _ = workspace(tmp_path)
+    store = Store(settings.data_dir)
+    for number in range(5):
+        park(store, f"p{number}", json.dumps({"type": "token_usage_record"}), datetime.now(timezone.utc))
+    assert codex_totals(settings, "demo")[0]["data"]["codex_waiting"] == 5
+
+
+def test_a_deeply_nested_checks_file_does_not_stop_the_report(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    config = tmp_path / "repo" / ".cairnmind" / "checks.toml"
+    config.parent.mkdir()
+    # tomllib raises RecursionError, not a TOML error, for a deeply nested array.
+    config.write_text("a = " + "[" * 500 + "]" * 500 + "\n")
+    shown = run(settings, "demo")
+    assert shown.exit_code == 0, shown.output or repr(shown.exception)
+    assert shown.output.startswith("Warning threshold not read: the checks file is nested too deeply")
+    assert "Usage of the built-in API agent for demo" in shown.output
+    assert "warning_unavailable" in json.loads(run(settings, "demo", "--json").output)
+    assert "Warning threshold not read" not in run(settings, "demo", "--warn-over", "5").output
+
+
 def test_warn_over_adds_a_warning_and_never_changes_the_exit_code(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)

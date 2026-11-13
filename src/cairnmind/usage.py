@@ -251,14 +251,14 @@ def _render(report: dict) -> str:
     return "\n".join(lines)
 
 
-def build_usage(data_dir, project: dict, since="7d", *, by="day", codex_records=None, codex_waiting=0,
+def build_usage(data_dir, project: dict, since="7d", *, by="day", codex_records=None, codex_waiting=None,
                 warn_over=None, warn_unavailable=None, now=None) -> dict:
     """Sum the usage of this project's API agent turns inside the period; reads files only.
 
     ``codex_records``: a function from the start of the period to the raw ``token_usage_record`` lines that
     import stored for this project (see ``codex_usage``); this module cannot query the store, so without it
-    Codex is not looked at. ``codex_waiting``: such records still in the ingestion inbox, which makes the
-    report partial. ``warn_over``: a number of tokens; when the observed total (input plus output) is above it
+    Codex is not looked at. ``codex_waiting``: a function from the start of the period to the number of such
+    records of the period still in the ingestion inbox, which makes the report partial. ``warn_over``: a number of tokens; when the observed total (input plus output) is above it
     the result has a ``warning`` and the text starts with ``WARNING:``; it never blocks anything.
     ``warn_unavailable``: why a default threshold could not be read, shown as a line and a JSON key.
     """
@@ -316,7 +316,7 @@ def build_usage(data_dir, project: dict, since="7d", *, by="day", codex_records=
             profile, model = (_line(run[key], 60) if isinstance(run.get(key), str) and _line(run[key], 60)
                               else "unknown" for key in ("profile_id", "model"))
             add(turn["at"], "api", profile, model, _summary(turn))
-    codex = {"codex_records": 0, "codex_unreadable": 0, "codex_waiting": codex_waiting if codex_records else 0}
+    codex = {"codex_records": 0, "codex_unreadable": 0, "codex_waiting": codex_waiting(start) if codex_records and codex_waiting else 0}
     for at, incoming, outgoing, complete in codex_units(
             codex_records(start) if codex_records else [], start, now, _time, codex):
         # The cost stays None: Codex is a subscription client and its transcripts hold no price.

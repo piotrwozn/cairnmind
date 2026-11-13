@@ -505,13 +505,16 @@ def usage(ctx: typer.Context, project: str,
     if warn_over is None:
         try:
             warn_over = usage_warn_threshold(store, found["id"])
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RecursionError) as exc:
             # A report must not depend on the checks file: say why there is no default threshold and go on.
-            unavailable = str(exc)
+            # (tomllib raises RecursionError, not a TOML error, on a deeply nested array.)
+            unavailable = ("the checks file is nested too deeply to read" if isinstance(exc, RecursionError)
+                           else str(exc))
     try:
         result = build_usage(ctx.obj.data_dir, found, since, by=by.value, warn_over=warn_over,
                              codex_records=lambda start: stored_records(store, found["id"], start),
-                             codex_waiting=waiting_in_inbox(store, found["id"]), warn_unavailable=unavailable)
+                             codex_waiting=lambda start: waiting_in_inbox(store, found["id"], start),
+                             warn_unavailable=unavailable)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--since")
     if as_json:

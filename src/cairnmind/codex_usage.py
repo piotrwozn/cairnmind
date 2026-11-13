@@ -46,23 +46,38 @@ def stored_records(store, project_id: str, start):
         skip += PAGE
 
 
-def waiting_in_inbox(store, project_id: str) -> int:
-    """Codex usage records in the ingestion inbox that belong, or may belong, to this project.
+def waiting_in_inbox(store, project_id: str, start) -> int:
+    """Codex usage records of the period in the ingestion inbox that belong, or may belong, to this project.
 
     Import parks an event there when no project matched its working directory or the directory belongs to
-    another project than the one requested. Counted: records whose directory resolves to this project, and
-    records of no known directory. Records of directories of other projects, or of none we know, are not ours.
+    another project than the one requested; ``created_at`` is the time of that import, so like
+    ``stored_records`` only rows from ``start`` on are looked at, in pages. Counted: rows whose line really is
+    a usage record (a message that merely mentions the name is not) and whose directory resolves to this
+    project, or is unknown. Rows of directories of other projects, or of none we know, are not ours.
     """
-    waiting = 0
-    for row in store.query("SELECT cwd,count(*) AS n FROM ingestion_inbox WHERE client=:client AND raw LIKE :marker "
-                           "GROUP BY cwd", {"client": "codex", "marker": f"%{_MARKER}%"}):
-        cwd = row.get("cwd")
-        try:
-            ours = cwd is None or store.resolve_project(cwd)["id"] == project_id
-        except ValueError:
-            ours = False
-        waiting += int(row["n"]) if ours else 0
-    return waiting
+    waiting, skip, ours = 0, 0, {}
+    while True:
+        rows = store.query(
+            "SELECT cwd,raw FROM ingestion_inbox WHERE client=:client AND created_at>=:start AND raw LIKE :marker "
+            f"ORDER BY created_at,id SKIP {skip} LIMIT {PAGE}",
+            {"client": "codex", "marker": f"%{_MARKER}%", "start": start.isoformat(timespec="microseconds")})
+        for row in rows:
+            try:
+                event = json.loads(row.get("raw"))
+                if not isinstance(event, dict) or event.get("type") != _MARKER:
+                    continue
+            except (ValueError, TypeError, RecursionError):
+                continue
+            cwd = row.get("cwd")
+            if cwd not in ours:
+                try:
+                    ours[cwd] = cwd is None or store.resolve_project(cwd)["id"] == project_id
+                except ValueError:
+                    ours[cwd] = False
+            waiting += ours[cwd]
+        if len(rows) < PAGE:
+            return waiting
+        skip += PAGE
 
 
 def codex_units(records, start, now, parse_time, counts: dict) -> list[tuple]:

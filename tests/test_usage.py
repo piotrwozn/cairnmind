@@ -642,14 +642,16 @@ def test_damaged_codex_records_are_counted_and_make_the_rows_incomplete(data):
 
 
 def test_records_waiting_in_the_inbox_make_the_report_partial_and_are_counted(data):
-    result = with_codex(data, three_reports(), codex_waiting=4)
+    asked = []
+    result = with_codex(data, three_reports(), codex_waiting=lambda start: asked.append(start) or 4)
+    assert asked == [NOW - timedelta(days=2)]  # the count is asked for the period only
     assert result["partial"] is True and result["data"]["codex_waiting"] == 4
     assert result["text"].splitlines()[3].startswith(
         "PARTIAL REPORT: 4 Codex usage records are waiting in the ingestion inbox, not yet attributed")
     assert result["totals"]["tokens_are_lower_bound"] is True and codex_rows(result)[0]["complete"] is True
     assert result["totals_by_client"]["codex"]["complete"] is False
     # Without a Codex reader the number means nothing and is not reported.
-    ignored = data.build("2d", codex_waiting=4)
+    ignored = data.build("2d", codex_waiting=lambda start: 4)
     assert ignored["partial"] is False and ignored["data"]["codex_waiting"] == 0
 
 
@@ -683,7 +685,7 @@ def test_a_lower_bound_total_over_the_threshold_says_at_least(data):
     # A report that cannot see everything (here: Codex records still in the inbox) makes a complete-looking
     # total a lower bound too, and the warning keeps saying so.
     data.journal("s1", turn("r1", stamp(1), done(60, 50)))
-    partial = data.build(warn_over=100, codex_records=lambda start: [], codex_waiting=1)
+    partial = data.build(warn_over=100, codex_records=lambda start: [], codex_waiting=lambda start: 1)
     assert partial["warning"]["tokens_are_lower_bound"] is True
     assert partial["text"].startswith("WARNING: at least 110 tokens")
 
