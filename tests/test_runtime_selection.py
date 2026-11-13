@@ -77,6 +77,73 @@ def test_failed_or_old_java_probe_never_launches_server(tmp_path, monkeypatch, r
         engine.start_engine(settings)
 
 
+def fake_java(tmp_path, body):
+    """A shell script standing in for Java. ``exec sleep`` so that no orphan keeps the output pipe open."""
+    path = tmp_path / "fake-jdk" / "bin" / "java"
+    path.parent.mkdir(parents=True)
+    path.write_text("#!/bin/sh\n" + body)
+    path.chmod(0o700)
+    return path
+
+
+def prepare_start(settings, monkeypatch):
+    (engine.runtime_dir(settings) / "lib").mkdir(parents=True)
+    monkeypatch.setattr(engine, "engine_status", lambda settings: {"available": False})
+
+    real_popen = subprocess.Popen
+
+    def launched(argv, *a, **k):
+        # subprocess.run is built on Popen, so only the server launch is replaced, not the version probe.
+        if "-version" in argv:
+            return real_popen(argv, *a, **k)
+        raise RuntimeError("probe accepted, server launch reached")
+    monkeypatch.setattr(engine.subprocess, "Popen", launched)
+
+
+def test_a_slow_first_java_start_is_retried_and_accepted(tmp_path, monkeypatch):
+    marker = tmp_path / "first-call-done"
+    binary = fake_java(tmp_path, f'if [ ! -e "{marker}" ]; then touch "{marker}"; exec sleep 5; fi\n'
+                                 'sleep 0.1\necho \'openjdk version "21.0.13"\' >&2\n')
+    settings = Settings(tmp_path, java_executable=str(binary))
+    prepare_start(settings, monkeypatch)
+    monkeypatch.setattr(engine, "JAVA_PROBE_TIMEOUT", 0.6)
+    with pytest.raises(RuntimeError, match="server launch reached"):
+        engine.start_engine(settings)
+    assert marker.exists()
+
+
+def test_java_that_never_answers_is_an_arcade_error_not_a_timeout(tmp_path, monkeypatch):
+    binary = fake_java(tmp_path, "exec sleep 5\n")
+    settings = Settings(tmp_path, java_executable=str(binary))
+    prepare_start(settings, monkeypatch)
+    monkeypatch.setattr(engine, "JAVA_PROBE_TIMEOUT", 0.3)
+    with pytest.raises(ArcadeError, match=r"Java did not answer .* -version within 0\.3 seconds, 2 times"):
+        engine.start_engine(settings)
+
+
+def test_java_older_than_21_is_still_refused_with_the_existing_message(tmp_path, monkeypatch):
+    binary = fake_java(tmp_path, 'echo \'openjdk version "17.0.1"\' >&2\n')
+    settings = Settings(tmp_path, java_executable=str(binary))
+    prepare_start(settings, monkeypatch)
+    with pytest.raises(ArcadeError, match="^ArcadeDB requires Java 21 or newer$"):
+        engine.start_engine(settings)
+
+
+def test_command_line_shows_a_message_when_java_never_answers(tmp_path, monkeypatch, capsys):
+    from cairnmind import cli
+    binary = fake_java(tmp_path, "exec sleep 5\n")
+    data = tmp_path / "data"
+    monkeypatch.setenv("CAIRNMIND_JAVA_EXECUTABLE", str(binary))
+    settings = Settings.load(data, create=True)
+    prepare_start(settings, monkeypatch)
+    monkeypatch.setattr(engine, "JAVA_PROBE_TIMEOUT", 0.3)
+    monkeypatch.setattr("sys.argv", ["cairnmind", "--data-dir", str(data), "engine", "start"])
+    with pytest.raises(SystemExit) as stopped:
+        cli.entrypoint()
+    assert stopped.value.code == 1
+    assert "Cairnmind: Java did not answer" in capsys.readouterr().err
+
+
 def test_start_uses_selected_binary_and_records_it(tmp_path, monkeypatch):
     binary = executable(tmp_path)
     settings = Settings(tmp_path, java_executable=str(binary), arcade_database="runtime_test")

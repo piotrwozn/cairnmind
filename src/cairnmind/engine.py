@@ -115,6 +115,26 @@ def engine_status(settings: Settings) -> dict:
     return result
 
 
+# The same 30 seconds that start_engine gives the server to come up: a JVM that cannot print its
+# version in that time would not get the server up in it either.
+JAVA_PROBE_TIMEOUT = 30
+
+
+def probe_java(java: str) -> subprocess.CompletedProcess:
+    """Run ``java -version``, twice at most, because the first start of a cold or busy JVM can be slow."""
+    attempts = 2
+    for attempt in range(attempts):
+        try:
+            return subprocess.run([java, "-version"], capture_output=True, text=True, timeout=JAVA_PROBE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            if attempt == attempts - 1:
+                raise ArcadeError(f"Java did not answer {java} -version within {JAVA_PROBE_TIMEOUT} seconds, "
+                                  f"{attempts} times. The machine may be busy; try again.") from None
+        except OSError as exc:
+            raise ArcadeError(f"Java could not be run ({java}): {exc.strerror or type(exc).__name__}") from None
+    raise AssertionError("unreachable")
+
+
 def start_engine(settings: Settings) -> dict:
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "engine.lock").open("a") as lock:
@@ -130,7 +150,7 @@ def start_engine(settings: Settings) -> dict:
         java = resolve_java(settings)
         if not java:
             raise ArcadeError("Install Java 21 or newer in WSL (openjdk-21-jre-headless)")
-        probe = subprocess.run([java, "-version"], capture_output=True, text=True, timeout=5)
+        probe = probe_java(java)
         import re
         version = re.search(r'version "(\d+)', probe.stderr + probe.stdout)
         if probe.returncode != 0 or not version or int(version[1]) < 21:
