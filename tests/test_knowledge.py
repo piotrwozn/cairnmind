@@ -233,6 +233,42 @@ async def test_final_protocol_repairs_once_with_inspected_source_schema(workspac
     assert schema["properties"]["citations"]["maxItems"] == 8
 
 
+async def test_final_repair_sees_the_excerpt_the_first_call_showed(workspace):
+    store, project, settings = workspace
+    quote = "The retry budget is five attempts per request."
+    text = "\n".join([f"Retry note {index}: background about earlier retry experiments." for index in range(12)]
+                     + [quote])
+    assert 600 < len(text) < 900 and text.index(quote) > 600
+    source, _ = document(store, project, text)
+    model = FakeOllama([{"content": "not JSON"}, final(source["id"], quote, "Five attempts.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "retry budget")
+    assert result["status"] == "complete" and len(model.calls) == 2
+    first = json.loads(model.calls[0]["messages"][1]["content"])
+    shown = next(hit["text"] for hit in first["initial_evidence"] if hit["source_id"] == source["id"])
+    assert quote in shown
+    # The first call keeps its short catalog; the evidence itself is shown in full.
+    assert first["citation_catalog"][0]["excerpt_truncated"] is True
+    assert quote not in first["citation_catalog"][0]["quote_excerpt"]
+    repair = json.loads(model.calls[1]["messages"][1]["content"])
+    entry = next(item for item in repair["citation_catalog"] if item["source_id"] == source["id"])
+    assert entry["quote_excerpt"] == shown and entry["excerpt_truncated"] is False
+
+
+def test_repair_catalog_keeps_its_budget_with_whole_excerpts(workspace):
+    store, project, settings = workspace
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    evidence = {}
+    for index in range(6):
+        text = f"Excerpt {index}: " + "literal evidence line\n" * 70
+        source = store.snapshot(project["id"], f"note://budget-{index}", text, "note")
+        source["_catalog_excerpt"] = text
+        evidence[source["id"]] = source
+    catalog = agent._citation_catalog(project["id"], evidence)
+    assert catalog and all(not item["excerpt_truncated"] for item in catalog)
+    assert sum(len(json.dumps(item, ensure_ascii=False)) + 2 for item in catalog) + 2 <= 6000
+    assert len(catalog) < 6
+
+
 @pytest.mark.parametrize("failure", ["source_id", "quote"])
 async def test_final_protocol_repair_still_rejects_invalid_evidence(workspace, failure):
     store, project, settings = workspace

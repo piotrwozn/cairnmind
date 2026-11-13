@@ -298,8 +298,14 @@ class KnowledgeAgent:
         self.retriever = retriever or Retriever(store, settings, self.ollama)
 
     def _citation_catalog(self, project_id: str, evidence: dict, candidate: str = "", *,
-                          worktree=None, budget: int = 6000) -> list[dict]:
-        """Use model-visible excerpts, never expand hydrated source pointers into content."""
+                          worktree=None, budget: int = 6000, excerpt_chars: int | None = None) -> list[dict]:
+        """Use model-visible excerpts, never expand hydrated source pointers into content.
+
+        Each entry carries the excerpt the model was shown for that source, whole by default,
+        so a repair works from the same evidence as the answer it corrects. ``excerpt_chars``
+        shortens the excerpts to a prefix (the first call, which also shows the excerpts in
+        full as initial evidence). Entries that do not fit the budget are left out.
+        """
         sources = {source["id"]: source for source in evidence.values()
                    if source.get("project_id") == project_id
                    and isinstance(source.get("_catalog_excerpt"), str) and source["_catalog_excerpt"].strip()
@@ -322,8 +328,9 @@ class KnowledgeAgent:
         for identifier in identifiers:
             source = sources[identifier]
             text = source["_catalog_excerpt"]
+            shown = text if excerpt_chars is None else text[:excerpt_chars]
             item = {"source_id": identifier, "uri": str(source["uri"])[:240],
-                    "quote_excerpt": text[:600], "excerpt_truncated": len(text) > 600,
+                    "quote_excerpt": shown, "excerpt_truncated": len(text) > len(shown),
                     "historical": bool(source.get("_historical_requested"))}
             size = len(json.dumps(item, ensure_ascii=False)) + 2
             if used + size > budget:
@@ -834,7 +841,7 @@ class KnowledgeAgent:
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
                           "citation_catalog": self._citation_catalog(project_id, evidence, worktree=worktree,
-                                                                     budget=4000)}
+                                                                     budget=4000, excerpt_chars=600)}
                 if answer_schema is not None:
                     prompt["answer_schema"] = answer_schema
                 messages = [
