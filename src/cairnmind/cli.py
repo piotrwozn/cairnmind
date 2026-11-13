@@ -910,8 +910,15 @@ def memory_inspect(ctx: typer.Context, path: Path):
 def memory_show(ctx: typer.Context, path: Path,
                 kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
                 status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None,
-                grep: Annotated[str | None, typer.Option("--grep", help="Case-insensitive text to look for.")] = None):
-    """Read a snapshot's records and plans as text. Writes nothing; outside a coding session needs no engine or service."""
+                grep: Annotated[str | None, typer.Option(
+                    "--grep", help="Case-insensitive text to look for, also in the acceptance criteria and check names "
+                                     "shown for tasks; with --sources also in the source texts shown.")] = None,
+                sources: Annotated[bool, typer.Option(
+                    "--sources", help="Print the text of each record's sources, up to 1,200 characters each and 60,000 "
+                                      "in all. A source that supports several records is printed under each.")] = False):
+    """Read a snapshot's records and plans as text. Writes nothing; outside a coding session needs no engine or service.
+
+    Tasks show their acceptance criteria and the check each is linked to; a record that replaced another, or was replaced, names it."""
     from cairnmind.memory_view import show_snapshot
     # Preserve symlink components for the package validator to reject them.
     selected = str(path.expanduser().absolute())
@@ -920,7 +927,8 @@ def memory_show(ctx: typer.Context, path: Path,
         # A coding session may read only its own project's memory; the service decides.
         expected = request(ctx.obj, "POST", "/memory/inspect", start_service=False,
                            json={"path": selected})["snapshot_id"]
-    typer.echo(show_snapshot(selected, kind=kind, status=status, grep=grep, expected_snapshot_id=expected))
+    typer.echo(show_snapshot(selected, kind=kind, status=status, grep=grep, sources_text=sources,
+                             expected_snapshot_id=expected))
 
 
 @memory_app.command("orphans")
