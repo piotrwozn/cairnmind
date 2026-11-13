@@ -65,7 +65,12 @@ async def test_client_stage_is_start_work_for_exactly_the_mapped_assistant(tmp_p
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
+        # The menu entry only shows the project and focuses the button, like Start work.
         assert app.open_command("next_stage") is True
+        await settle(app, pilot)
+        assert app.page == "project" and app.focused.id == "stage-next" and asked == []
+        assert all(intent == "inspect" for _, _, intent in workspace.selections)
+        await pilot.press("enter")
         await settle(app, pilot)
         notice = str(app.query_one("#panel-notice", Static).render())
     assert asked == [{"project": project["id"], "worktree": project["root"]}]

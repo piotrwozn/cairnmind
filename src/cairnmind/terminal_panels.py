@@ -533,7 +533,7 @@ class SidebarApp(BasePanel):
         await self._poll_workspace()
 
     @work(group="sidebar-select", exclusive=True, exit_on_error=False)
-    async def select_project(self, intent, *, focus_start=False, resume_identity=None):
+    async def select_project(self, intent, *, focus_start=False, resume_identity=None, focus_id="project-work"):
         try:
             returning = resume_identity if intent == "work" else None
             if returning:
@@ -575,7 +575,7 @@ class SidebarApp(BasePanel):
                 await self.load_state()
             self.show_page("project")
             if focus_start:
-                self.query_one("#project-work", Button).focus()
+                self.query_one("#" + focus_id, Button).focus()
             current = await asyncio.to_thread(self.workspace.read)
             latest_run = self.reusable_run() if returning else None
             reused = returning and latest_run and all(returning.get(key) == latest_run.get(key)
@@ -609,6 +609,10 @@ class SidebarApp(BasePanel):
         # A queued palette request may outlive its original project selection.
         # Always show the current project and require a fresh local activation.
         self.select_project("inspect", focus_start=True)
+
+    def action_prepare_next_stage(self):
+        # The same rule for Run next stage: a menu request only shows the current project.
+        self.select_project("inspect", focus_start=True, focus_id="stage-next")
 
     def action_inspect(self):
         self.select_project("inspect")

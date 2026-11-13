@@ -329,8 +329,8 @@ CATALOG.update({
     "Start requested. Review the workspace.": "Zlecono rozpoczęcie pracy. Sprawdź przestrzeń pracy.",
     # Plan stages (#10)
     "Run next stage": "Uruchom następny etap",
-    "Start the assistant or check mapped to the next plan step":
-        "Uruchom asystenta lub test przypisany do następnego kroku planu",
+    "Show the project, then start what is mapped to the next plan step":
+        "Pokaż projekt, potem uruchom to, co przypisano do następnego kroku planu",
     "Plan stages": "Etapy planu", "implement": "implementacja", "review": "przegląd", "test": "test",
     "Plan": "Plan", "Step": "Krok", "Stage": "Etap", "Check profile": "Profil testu",
     "Required checks": "Wymagane testy", "Not set": "Nieustawione", "Unknown assistant": "Nieznany asystent",
