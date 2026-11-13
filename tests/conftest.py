@@ -13,6 +13,10 @@ Parallel run: ``uv run pytest -n 4`` (pytest-xdist). All workers share one engin
 worker that needs it starts it under a file lock in the run's temporary directory, each worker
 keeps its own database namespace, and the controlling process stops the engine at the end.
 An engine whose pytest process was killed is stopped by the next run (see reap_orphan_engines).
+
+A new test database starts as a file copy of an empty one whose types and indexes the real
+Store.init built once per process (see SchemaTemplate); Store.init then runs in full on the copy.
+CAIRNMIND_TEST_SCHEMA_TEMPLATE=0 builds every database from nothing instead.
 """
 from __future__ import annotations
 
@@ -21,7 +25,10 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
+import threading
+from urllib.parse import quote
 import uuid
 
 import pytest
@@ -56,6 +63,7 @@ SHARED_ENGINE = "arcade-engine-shared"
 def pytest_configure(config):
     config.addinivalue_line("markers", "arcade: needs the real pinned ArcadeDB engine (Java 21)")
     config.addinivalue_line("markers", "tmux: drives a real tmux server")
+    config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -166,6 +174,71 @@ def start_test_engine(settings):
     pytest.exit(f"The test engine did not start, twice: {error}", returncode=1)
 
 
+class SchemaTemplate:
+    """Give each new test database the schema by copying files instead of some 200 DDL statements.
+
+    Store.init sends about 200 schema statements to a new database, each saved to disk by the engine:
+    some 3 s for every Store a test opens, three quarters of the suite's time. Once per process the
+    real Store.init builds a database; its two rows (devbrain_meta, journal_state) are deleted, so
+    only types and indexes remain, and the closed database is kept as a template. When a Store of
+    this process asks for a database that does not exist, the template's files are copied under the
+    new name and opened. Store.init then runs exactly as on a new database: the same statements
+    (each "IF NOT EXISTS" now finds its type or index), and it writes the schema version, the index
+    set and a new journal epoch itself. Built by the code under test in every run, the template
+    cannot fall behind a change to the schema. Only databases of this process's prefix are copied.
+    """
+
+    def __init__(self, settings: Settings, prefix: str, scratch: Path):
+        self.databases = settings.data_dir / "arcade" / "databases"
+        self.prefix = prefix
+        self.name = None
+        self.paused = False  # set for a test marked no_schema_template
+        self.lock = threading.Lock()
+        if env_value("TEST_SCHEMA_TEMPLATE") == "0" or not self.databases.is_dir():
+            return
+        from cairnmind.store import Store
+        template_prefix = "devbrain_tpl_" + uuid.uuid4().hex[:8]
+        os.environ["CAIRNMIND_ARCADE_DB_PREFIX"] = template_prefix
+        try:
+            store = Store(scratch)
+        finally:
+            os.environ["CAIRNMIND_ARCADE_DB_PREFIX"] = prefix
+        client = store.client
+        client.command("DELETE FROM devbrain_meta")
+        client.command("DELETE FROM journal_state")
+        types = [row["name"] for row in client.query("SELECT name FROM schema:types")]
+        rows = sum(client.query(f"SELECT count(*) AS n FROM `{name}`")[0]["n"] for name in types)
+        client.server_command(f"close database {client.database}")
+        if rows:  # Store.init wrote more than the two rows above: build every database from nothing.
+            shutil.rmtree(self.databases / client.database, ignore_errors=True)
+            return
+        self.name = client.database
+
+    def ensure_database(self, original):
+        template = self
+
+        def ensure_database(client):
+            name = client.database
+            if template.name is None or template.paused or not name.startswith(template.prefix + "_"):
+                return original(client)
+            with template.lock:
+                if client._request("GET", f"/api/v1/exists/{quote(name)}").json().get("result") is True:
+                    return
+                staging = template.databases / f".copy-{name}"
+                shutil.copytree(template.databases / template.name, staging)
+                staging.rename(template.databases / name)
+                try:
+                    client.server_command(f"open database {name}")
+                except ArcadeError:
+                    shutil.rmtree(template.databases / name, ignore_errors=True)
+                    return original(client)
+        return ensure_database
+
+    def remove(self):
+        if self.name:
+            shutil.rmtree(self.databases / self.name, ignore_errors=True)
+
+
 @pytest.fixture(scope="session")
 def arcade_test_engine(tmp_path_factory, request):
     # Both spellings: a developer's exported earlier name must not reach the test engine either.
@@ -198,9 +271,14 @@ def arcade_test_engine(tmp_path_factory, request):
                "CAIRNMIND_ARCADE_PASSWORD": settings.arcade_password,
                "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
     os.environ.update(changes)
+    template = SchemaTemplate(settings, prefix, tmp_path_factory.mktemp("schema-template"))
+    original_ensure = ArcadeClient.ensure_database
+    ArcadeClient.ensure_database = template.ensure_database(original_ensure)
     try:
-        yield settings, prefix
+        yield settings, prefix, template
     finally:
+        ArcadeClient.ensure_database = original_ensure
+        template.remove()
         if owns:
             stop_engine(settings)
         for name, value in original.items():
@@ -216,8 +294,12 @@ def release_test_databases(request):
     if request.node.get_closest_marker("arcade") is None:
         yield
         return
-    settings, prefix = request.getfixturevalue("arcade_test_engine")
-    yield
+    settings, prefix, template = request.getfixturevalue("arcade_test_engine")
+    template.paused = request.node.get_closest_marker("no_schema_template") is not None
+    try:
+        yield
+    finally:
+        template.paused = False
     client = ArcadeClient(settings)
     try:
         names = client._request("GET", "/api/v1/databases").json().get("result", [])
