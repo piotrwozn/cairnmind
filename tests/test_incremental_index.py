@@ -112,9 +112,10 @@ def test_after_one_edit_only_rows_of_that_file_are_written_to_the_graph(workspac
     monkeypatch.setattr(store, "upsert_edge", lambda item, tx=None: edges.append(item["kind"]) or upsert_edge(item, tx=tx))
     edited = index_project_if_changed(store, pid)
     monkeypatch.undo()
-    # The file's own node and its new snapshot node, joined by one edge: the file defines nothing.
-    assert sorted(nodes) == ["file", "source"] and edges == ["snapshot_of"]
-    assert edited["graph_written"] == {"nodes": 2, "edges": 1}
+    # The file's own node, its new snapshot node and the one constant it defines, which now names
+    # the new snapshot: the snapshot edge and the edge that defines the constant.
+    assert sorted(nodes) == ["file", "source", "symbol"] and sorted(edges) == ["defines", "snapshot_of"]
+    assert edited["graph_written"] == {"nodes": 3, "edges": 2}
     assert (edited["nodes"], edited["edges"]) == (first["nodes"], first["edges"])
     assert_same_as_a_full_run(store, pid)
 
@@ -276,7 +277,7 @@ def test_a_stored_graph_is_remembered_only_after_it_was_compared(workspace):
     cold = index_project(store, pid)
     assert cold["graph_unchanged"] is True and cold["read"] == first["read"]
     (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
-    assert index_project(store, pid)["graph_written"] == {"nodes": 2, "edges": 1}  # the compared graph was trusted
+    assert index_project(store, pid)["graph_written"] == {"nodes": 3, "edges": 2}  # the compared graph was trusted
     assert_same_as_a_full_run(store, pid)
 
 
@@ -296,7 +297,7 @@ def test_a_stored_graph_that_differs_from_its_fingerprint_is_replaced(workspace,
     assert repaired["graph_unchanged"] is False
     assert repaired["graph_written"] == {"nodes": first["nodes"], "edges": first["edges"]}
     (root / "pkg" / "module_04.py").write_text("VALUE_4 = 44\n")
-    assert index_project(store, pid)["graph_written"] == {"nodes": 2, "edges": 1}
+    assert index_project(store, pid)["graph_written"] == {"nodes": 3, "edges": 2}
     assert_same_as_a_full_run(store, pid)
 
 

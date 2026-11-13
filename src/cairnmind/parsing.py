@@ -13,7 +13,8 @@ from typing import Any
 
 
 # Bump when syntax-to-fact semantics change, independently of grammar upgrades.
-PARSER_VERSION = "syntax-v1"
+# syntax-v2: Python module constants and class fields are symbols too.
+PARSER_VERSION = "syntax-v2"
 
 
 @lru_cache(maxsize=1)
@@ -84,6 +85,47 @@ def _string_value(node: Any | None) -> str:
     if fragment is not None:
         return _text(fragment)
     return _text(node).strip("\"'`")
+
+
+def _python_assignments(root: Any) -> list[dict[str, Any]]:
+    """Module constants and class fields: assignments to one identifier, annotated or not.
+
+    Only statements directly in the module or directly in a class body count; an assignment
+    inside a function or an if/try/with/for block, an augmented assignment, a tuple, attribute
+    or subscript target and a dunder name do not. Each assignment is its own symbol, so a name
+    assigned twice in one scope yields two, each with the lines of its whole statement.
+
+    A field is named ``Owner.name``, with ``owner`` and ``member`` kept apart. Calls are resolved
+    by bare name within a file, and a field is never called by its bare name; the qualified name
+    is also how a field is written in prose (``Settings.cockpit_port``).
+    """
+    found: list[dict[str, Any]] = []
+
+    def scan(block: Any, owner: str | None) -> None:
+        for statement in block.named_children:
+            if statement.type != "expression_statement" or len(statement.named_children) != 1:
+                continue
+            assignment = statement.named_children[0]
+            target = assignment.child_by_field_name("left") if assignment.type == "assignment" else None
+            if target is None or target.type != "identifier":
+                continue
+            member = _text(target)
+            if not member or (member.startswith("__") and member.endswith("__")):
+                continue
+            item: dict[str, Any] = {"name": member, "kind": "constant",
+                                    "line_start": statement.start_point.row + 1,
+                                    "line_end": statement.end_point.row + 1}
+            if owner:
+                item.update(name=f"{owner}.{member}", kind="field", owner=owner, member=member)
+            found.append(item)
+
+    scan(root, None)
+    for node in _walk(root):
+        if node.type == "class_definition":
+            owner, body = _text(node.child_by_field_name("name")), node.child_by_field_name("body")
+            if owner and body is not None:
+                scan(body, owner)
+    return found
 
 
 def analyze_code(path: Path, content: str) -> dict[str, Any]:
@@ -201,6 +243,8 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
                             "module": _string_value(first), "names": [], "aliases": {},
                             "line": node.start_point.row + 1,
                         })
+    if name == "python":
+        result["symbols"].extend(_python_assignments(tree.root_node))
     if tree.root_node.has_error and not result["errors"]:
         # Missing punctuation can be an unnamed node, outside the fact walk.
         result["errors"].append("Syntax tree contains missing or invalid tokens")

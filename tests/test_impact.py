@@ -105,6 +105,21 @@ def test_a_changed_function_points_at_the_records_that_name_it_and_not_at_its_ne
     assert [entry["symbols"] for entry in report["changed_files"]] == [{"refresh_token": "modified"}]
 
 
+def test_a_changed_constant_points_at_the_records_that_name_it_through_its_own_definition(workspace):
+    store, pid, root, records = workspace
+    constant = store.query("SELECT id FROM nodes WHERE project_id=:project AND kind='symbol' AND label='SESSION_MINUTES'",
+                           {"project": pid})[0]["id"]
+    link(store, pid, records["rule"], constant, records["rule"]["source_ids"][0])
+    (root / "src" / "auth.py").write_text(AUTH.replace("= 30", "= 45"))
+    report = build_impact(store, pid, "HEAD")
+    # The functions in the same file did not change, so the records naming them are not listed.
+    assert titles(report) == ["Sessions last 30 minutes.", "Rotate refresh tokens."]
+    assert report["records"][0]["links"] == [{
+        "via": "relates_to", "path": "src/auth.py", "change": "modified", "link_status": "proposed",
+        "symbol": "SESSION_MINUTES", "symbol_change": "modified"}]
+    assert [entry["symbols"] for entry in report["changed_files"]] == [{"SESSION_MINUTES": "modified"}]
+
+
 def test_a_changed_document_points_at_the_records_that_cite_it_with_the_state_of_the_quote(workspace):
     store, pid, root, records = workspace
     (root / "docs" / "login.md").write_text("# Login\n\nA session lasts 60 minutes.\n")
@@ -312,7 +327,8 @@ def test_carriage_returns_do_not_make_untouched_definitions_look_changed(workspa
     git(root, "add", ".")
     git(root, "commit", "-qm", "crlf")
     (root / "src" / "auth.py").write_bytes(AUTH.replace("= 30", "= 45").replace("\n", "\r\n").encode())
-    assert build_impact(store, pid, "HEAD")["changed_files"][-1]["symbols"] == {}
+    # The constant whose value changed is a definition of its own; nothing else looks changed.
+    assert build_impact(store, pid, "HEAD")["changed_files"][-1]["symbols"] == {"SESSION_MINUTES": "modified"}
     (root / "src" / "auth.py").write_bytes(AUTH.replace('":refreshed"', '":renewed"').replace("\n", "\r\n").encode())
     assert build_impact(store, pid, "HEAD")["changed_files"][-1]["symbols"] == {"refresh_token": "modified"}
 
