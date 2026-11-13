@@ -153,8 +153,9 @@ CATALOG = {
         "źródło się zmieniło; brak zweryfikowanego cytatu do porównania",
     "orphaned: no supporting source has a current version":
         "osierocone: żadne źródło nie ma aktualnej wersji",
-    "written by an external client's session, or resting only on one; never verified":
-        "zapisane przez sesję zewnętrznego klienta albo oparte tylko na niej; nigdy niezweryfikowane",
+    "written by an external client's session, or resting only on one or on a third-party tool result; never verified":
+        "zapisane przez sesję zewnętrznego klienta albo oparte tylko na niej lub na wyniku narzędzia zewnętrznego; "
+        "nigdy niezweryfikowane",
     "Brief": "Skrót",
     "Where work stopped: checkpoint, next task, checks and commits":
         "Gdzie przerwano pracę: punkt kontrolny, następne zadanie, testy i commity",

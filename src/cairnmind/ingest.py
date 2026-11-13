@@ -23,6 +23,7 @@ import pathspec
 
 from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
+from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.memory_paths import bound_metadata, imported_source_ids, is_memory_path, memory_bindings
 
@@ -216,7 +217,7 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                                {"source": source_id})
             if not sources or sources[0]["project_id"] != project_id:
                 raise ValueError("Chunk source does not belong to the requested project")
-            if is_verdict_source(sources[0]):
+            if is_verdict_source(sources[0]) or is_mcp_source(sources[0]):
                 return 0  # a person's verdict on an impact list is never searchable text
             existing = tx.query("SELECT id FROM chunks WHERE source_id=:source", {"source": source_id})
             ids = []
@@ -257,7 +258,7 @@ def _write_new_files(store, project_id: str, batch: list[dict]) -> list:
         for item in batch:
             source = store.snapshot_new(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
             sources.append(source)
-            if source is None or is_verdict_source(source):
+            if source is None or is_verdict_source(source) or is_mcp_source(source):
                 continue
             for number, (content, first, last) in enumerate(item["chunks"]):
                 chunk_id = _identifier(project_id, source["id"], number, first, last, content)
@@ -320,7 +321,7 @@ def index_pending_sources(store, limit: int = 100) -> dict:
     )
     counts = {"sources": 0, "chunks": 0, "errors": []}
     for row in rows:
-        if is_verdict_source(row):
+        if is_verdict_source(row) or is_mcp_source(row):
             continue  # an audit note on an impact list: kept and exported, never chunked
         metadata = _metadata(row["metadata"])
         normalized = metadata.get("normalized_text")

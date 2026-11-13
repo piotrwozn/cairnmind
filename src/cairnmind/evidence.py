@@ -17,8 +17,9 @@ go stale, change the portable state hash and travel wrongly to another machine.
 - ``unverified``: the record rests on file snapshots imported from another machine,
   and the local files have not been indexed yet, so nothing can be said.
 - ``degraded``: an external client's session (whose conversation Cairnmind cannot read)
-  wrote the record, or the record rests only on sources such a session wrote. It is never
-  ``anchored``, whatever its sources: nothing it says has been verified.
+  wrote the record, or the record rests only on sources such a session wrote, or on the archived
+  result of a third-party MCP tool the built-in agent called. It is never ``anchored``, whatever
+  its sources: nothing it says has been verified.
 
 The state is only as fresh as the last indexing of the project's files.
 """

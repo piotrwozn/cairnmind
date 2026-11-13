@@ -47,6 +47,42 @@ def _public(event):
     return visible
 
 
+MCP_PREFIX = "mcp_"
+_MCP_EVENTS = {"mcp_server_started", "mcp_server_failed", "mcp_server_stopped"}
+_MCP_SERVER = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+
+
+def _mcp_server(event) -> str | None:
+    """The server of an event that carries a third-party MCP server's text or names its tool, else None.
+
+    Decided from the host-written event type and tool name only. The name of a tool the engine offers is
+    ``mcp_<server>_<tool>``; a built-in tool never starts with the prefix.
+    """
+    data = event.get("data") if isinstance(event, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if event.get("type") in _MCP_EVENTS:
+        server = data.get("server_id")
+    elif isinstance(data.get("name"), str) and data["name"].startswith(MCP_PREFIX):
+        server = data["name"][len(MCP_PREFIX):].partition("_")[0]
+    else:
+        return None
+    return server if isinstance(server, str) and _MCP_SERVER.fullmatch(server) else "unknown"
+
+
+def is_mcp_source(row) -> bool:
+    """Whether an archived agent event holds third-party MCP text: kept and readable by id, never chunked."""
+    metadata = row.get("metadata")
+    if isinstance(metadata, (str, bytes)):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            return False
+    return (row.get("kind") == "agent_transcript" and isinstance(metadata, dict)
+            and str(metadata.get("origin_client", "")).startswith("mcp:")
+            and metadata.get("origin_evidence") == "degraded")
+
+
 def _journal_events(settings, session_id):
     from .agent_journal import AgentJournal
     events = AgentJournal(settings, session_id).events()
@@ -213,6 +249,12 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                         "origin": "agent_runtime", "archive_parser_revision": 1,
                         "archive_view": "public-agent-event-v1",
                         "normalized_text": normalized, "source_timestamp": event.get("created_at")}
+            server = _mcp_server(event)
+            if server is not None:
+                # Third-party text (store.ORIGIN_METADATA, as for an external session): it never makes a
+                # record anchored, and is not chunked, so search and resume never surface it later.
+                metadata.update(origin_client="mcp:" + server, origin_session_id=sid,
+                                origin_history="archived", origin_evidence="degraded")
             with store.transaction():
                 # Forgetting or rebinding the project during ingestion cannot
                 # publish a source into an unregistered scope.
@@ -224,8 +266,9 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                 source = store.snapshot(session["project_id"], uri, content, "agent_transcript", metadata)
             # Match scanner lock ordering: ingestion lock precedes DB writer.
             # The exact source is already durable if interruption happens here.
-            _write_chunks(store, session["project_id"], source["id"], normalized, {"role": role})
-            if (event.get("type") == "message" and role in {"user", "assistant"}
+            if server is None:
+                _write_chunks(store, session["project_id"], source["id"], normalized, {"role": role})
+            if (server is None and event.get("type") == "message" and role in {"user", "assistant"}
                     and isinstance(data, dict) and isinstance(data.get("content"), str)
                     and data["content"].strip()):
                 store.enqueue("extract", session["project_id"], {"source_id": source["id"]},
