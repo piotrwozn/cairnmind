@@ -14,6 +14,7 @@ from cairnmind.cockpit_state import CockpitState
 from cairnmind.config import Settings
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
+from cairnmind.terminal_client import BrokerClient as RealBrokerClient
 from test_cockpit_server import ORIGIN, Runtime, login
 
 STAGES = {"implement": "codex", "review": "claude", "test": "unit"}
@@ -99,6 +100,67 @@ def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says
     assert value["plan"]["id"] == other["plan"]["id"] and value["action"] == "start_slot"
     assert (value["command"], value["command_reason"]) == (None, "inactive_plan")
     assert json.loads(ask("--plan-id", saved["plan"]["id"], "--json"))["command"][:2] == ["cairnmind", "run"]
+
+
+def running_cockpit(monkeypatch, answer):
+    """`stage next` while a cockpit runs: the real broker client, its answers from `answer`."""
+    from cairnmind import terminal_client
+    seen, real = [], RealBrokerClient
+
+    def handler(request):
+        seen.append(request)
+        if answer == "unreachable":
+            raise httpx.ConnectError("refused", request=request)
+        if request.url.path == "/_control/ticket":
+            return httpx.Response(200, json={"ticket": "ticket"})
+        if request.url.path == "/auth/exchange":
+            return httpx.Response(200, json={"csrf": "csrf"})
+        if answer == "timeout":
+            raise httpx.ReadTimeout("slow", request=request)
+        return answer(request)
+    monkeypatch.setattr("cairnmind.cockpit.cockpit_status", lambda settings: {
+        "available": True, "url": "http://127.0.0.1:9", "version_matches": True})
+    monkeypatch.setattr(terminal_client, "BrokerClient",
+                        lambda settings, **kwargs: real(settings, transport=httpx.MockTransport(handler)))
+    return seen
+
+
+@pytest.mark.parametrize("answer,credential", [
+    (lambda request: httpx.Response(200, json={"code": "configured_unchecked", "configured": True}),
+     "configured_unchecked"),
+    (lambda request: httpx.Response(200, json={"code": "credential_missing", "configured": False}),
+     "credential_missing"),
+    (lambda request: httpx.Response(422, json={"detail": "unreadable credential store"}), None),
+    (lambda request: httpx.Response(500, text="Internal Server Error"), None),
+    (lambda request: httpx.Response(200, json={"configured": True}), None),
+    ("timeout", "unknown"), ("unreachable", "unknown")])
+def test_cli_readiness_asks_the_running_cockpit_and_an_error_answer_is_not_startable(
+        tmp_path, monkeypatch, answer, credential):
+    from cairnmind.api_runtime import STATUS_TIMEOUT, cli_stage_readiness
+    settings = Settings.load(tmp_path / "data", create=True)
+    seen = running_cockpit(monkeypatch, answer)
+    profile = {"id": "api-cloud", "client": "api", "label": "Cloud API", "credential_ref": "profile:api-cloud"}
+    assert cli_stage_readiness(settings)(profile)["credential"] == credential
+    assert seen and all(request.extensions["timeout"]["read"] <= STATUS_TIMEOUT for request in seen)
+    assert STATUS_TIMEOUT <= 5
+
+
+def test_cli_says_when_readiness_could_not_be_checked_and_when_the_cockpit_refused(planned, monkeypatch):
+    settings, store, project, plans, saved = planned
+    CockpitState(settings).update({"profiles": AGENT_PROFILES, "project_slots": {project["id"]: [
+        {"id": "cloud", "profile_id": "api-cloud"}]}, "project_stages": {project["id"]: {"implement": CLOUD}}})
+
+    def ask():
+        shown = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo"])
+        assert shown.exit_code == 0, shown.output or repr(shown.exception)
+        return " ".join(shown.output.split())
+    running_cockpit(monkeypatch, "timeout")
+    output = ask()
+    assert "Its key and runtime could not be checked here" in output
+    assert "Start this stage from the workspace with Run next stage." in output
+    running_cockpit(monkeypatch, lambda request: httpx.Response(422, json={"detail": "unreadable"}))
+    output = ask()
+    assert "credential cannot be read" in output and "Start this stage from the workspace" not in output
 
 
 def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monkeypatch):

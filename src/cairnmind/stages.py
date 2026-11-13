@@ -253,4 +253,10 @@ def describe(decision: dict, translate=lambda text: text) -> str:
         lines.append(translate(_REASONS.get(decision.get("reason"), _PROBLEMS["no_task"])))
     elif problem:
         lines.append(translate(_PROBLEMS[problem]))
+    elif decision.get("action") == "start_slot" and "unknown" in (decision.get("credential"), decision.get("runtime")):
+        lines.append(translate(NOT_CHECKED))
     return "\n".join(lines)
+
+
+NOT_CHECKED = ("Its key and runtime could not be checked here; they are checked again when the stage "
+               "starts in the workspace.")

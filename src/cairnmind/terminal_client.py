@@ -22,6 +22,10 @@ class BrokerError(ValueError):
         super().__init__(f"Broker {status_code}: {detail}")
 
 
+class BrokerUnreachable(BrokerError):
+    """The request got no answer (connection lost, timeout): nothing is known about its outcome."""
+
+
 class BrokerClient:
     def __init__(self, settings, ensure=False, *, transport=None, async_transport=None):
         self.settings = settings
@@ -131,7 +135,7 @@ class BrokerClient:
                 except httpx.HTTPError:
                     # Never retry a mutation after a transport error: its
                     # outcome may already have committed on the server.
-                    raise BrokerError(503, "Połączenie z lokalnym brokerem zostało przerwane.") from None
+                    raise BrokerUnreachable(503, "Połączenie z lokalnym brokerem zostało przerwane.") from None
                 if response.status_code == 401 and attempt == 0:
                     self._authenticate()
                     continue

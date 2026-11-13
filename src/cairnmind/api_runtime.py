@@ -264,9 +264,19 @@ def stage_readiness(settings: Settings, credentials):
     return observe
 
 
+STATUS_TIMEOUT = 5  # Seconds for each request to the cockpit; `stage next` never waits longer per request.
+_NOT_CHECKED = {"credential": "unknown", "runtime": "unknown"}
+_ERROR_ANSWER = {"credential": None, "runtime": None}
+
+
 def cli_stage_readiness(settings: Settings):
     """The same observation from the command line: a key saved only for the cockpit's session
-    lives in the cockpit, so it is asked when it runs; otherwise the local store answers."""
+    lives in the cockpit, so it is asked when it runs; otherwise the local store answers.
+
+    An error answer of the cockpit means the credential is not usable (None, as an unreadable
+    store). "unknown" is kept for no answer at all (not reachable, a timeout): then `stage
+    next` says that readiness could not be checked.
+    """
     from .api_credentials import CredentialStore
     from .cockpit import cockpit_status
     local = stage_readiness(settings, CredentialStore(settings))
@@ -274,16 +284,27 @@ def cli_stage_readiness(settings: Settings):
     def observe(profile):
         if not cockpit_status(settings).get("available"):
             return local(profile)
-        from .terminal_client import BrokerClient
+        from .terminal_client import BrokerClient, BrokerError, BrokerUnreachable
         broker = None
         try:
             broker = BrokerClient(settings)
-            status = broker.request("GET", "/api/profiles/" + profile["id"] + "/status", timeout=5)
+            try:
+                broker.connect()  # Its own requests are bounded to STATUS_TIMEOUT too.
+            except (BrokerError, OSError, httpx.HTTPError):
+                return dict(_NOT_CHECKED)
+            try:
+                status = broker.request("GET", "/api/profiles/" + profile["id"] + "/status",
+                                        timeout=STATUS_TIMEOUT)
+            except BrokerUnreachable:
+                return dict(_NOT_CHECKED)
+            except BrokerError:
+                return dict(_ERROR_ANSWER)
+            if not isinstance(status, dict):
+                return dict(_ERROR_ANSWER)
+            code = status.get("code")
             runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
-            return {"credential": status.get("code") if status.get("code") else None,
+            return {"credential": code if isinstance(code, str) and code else None,
                     "runtime": runtime.get("code") if profile.get("client") == "copilot" else None}
-        except (ValueError, OSError, httpx.HTTPError):
-            return {"credential": "unknown", "runtime": "unknown"}
         finally:
             if broker is not None:
                 broker.close()
