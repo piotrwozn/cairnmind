@@ -44,6 +44,13 @@ CATALOG = {
         "Wybierz rodzaj: decision, fact, constraint, question lub preference.",
     "Choose a status: proposed or confirmed.": "Wybierz stan: proposed lub confirmed.",
     "Finding saved to memory: {kind}, {status}.": "Ustalenie zapisane w pamięci: {kind}, {status}.",
+    "A finding needs a registered project worktree": "Ustalenie wymaga zarejestrowanego katalogu roboczego projektu",
+    "Invalid finding key": "Niepoprawny klucz ustalenia",
+    "This project is no longer registered.": "Ten projekt nie jest już zarejestrowany.",
+    "No clear answer from the memory service. The finding may have been saved; saving again "
+    "from this form is safe and will not store it twice.":
+        "Brak jednoznacznej odpowiedzi usługi pamięci. Ustalenie mogło zostać zapisane; ponowny zapis "
+        "z tego formularza jest bezpieczny i nie utworzy go drugi raz.",
     "Question answered from project memory with sources": "Odpowiedź z pamięci projektu ze źródłami",
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":

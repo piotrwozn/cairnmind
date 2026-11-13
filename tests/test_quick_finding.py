@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import threading
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -21,12 +22,14 @@ from cairnmind.store import Store
 from cairnmind.terminal_client import BrokerClient, BrokerError
 from cairnmind.terminal_commands import CommandPaletteApp
 from cairnmind.workspace import WorkspaceManager
-from cairnmind.workspace_finding import ERROR_LIMIT, FindingApp, confirmation
+from cairnmind.workspace_finding import ERROR_LIMIT, FindingApp, confirmation, run_finding_form
 from cairnmind.workspace_state import WorkspaceState
 from test_cockpit_server import ORIGIN, Runtime, cockpit as cockpit, login
 from test_service import LocalModelFixture
 
 ROOT = Path(__file__).resolve().parents[1]
+KEY = "0b5d2a52-8f8e-4b8e-9d55-0d7c1c3b6f01"
+INTERRUPTED = "Połączenie z lokalnym brokerem zostało przerwane."
 
 
 def text_of(app, selector):
@@ -219,15 +222,16 @@ async def test_saved_finding_reaches_store_byte_for_byte_and_is_visible_in_the_i
     [record] = store.list_records(project["id"])
     assert (record["id"], record["kind"], record["status"], record["content"]) == (
         result["id"], "constraint", "confirmed", content)
-    assert record["metadata"]["origin"] == "workspace_form"
-    assert record["metadata"]["worktree"] == str(root.resolve())
+    assert record["metadata"]["origin"] == "workspace_form" and record["key"] == app.key
     [source_id] = record["source_ids"]
     source = store.get_source(source_id)
     assert source["content"] == content and source["kind"] == "manual"
-    assert source["uri"].startswith("workspace://finding/") and source["project_id"] == project["id"]
-    assert {key: source["metadata"][key] for key in ("role", "origin", "worktree")} == {
-        "role": "user", "origin": "workspace_form", "worktree": str(root.resolve())}
+    assert source["uri"] == "workspace://finding/" + app.key and source["project_id"] == project["id"]
+    assert {key: source["metadata"][key] for key in ("role", "origin")} == {
+        "role": "user", "origin": "workspace_form"}
     assert source["metadata"]["source_timestamp"]
+    for metadata in (record["metadata"], source["metadata"]):
+        assert not {"root", "worktree", "worktree_root", "path"} & set(metadata)
     seen = broker.request("GET", "/api/inspector/records",
                           params={"project": project["id"], "worktree": str(root)})
     assert [item["id"] for item in seen["items"]] == [record["id"]]
@@ -237,30 +241,213 @@ def test_service_keeps_the_resume_gate_and_its_own_validation(stack, tmp_path):
     from cairnmind.sessions import SessionManager
     settings, store, project, root, _, service = stack
     headers = {"Authorization": f"Bearer {settings.token}"}
-    body = {"project": project["id"], "content": "Agents must not skip ACK.", "kind": "fact"}
+    body = {"project": project["id"], "content": "Agents must not skip ACK.", "kind": "fact", "key": KEY}
     session = SessionManager(store, settings).prepare(project["id"], "codex", timeout=0)
     gated = service.post("/findings", json={**body, "session_id": session["session_id"]}, headers=headers)
     assert gated.status_code == 409 and "resume_required" in gated.json()["detail"]
     for change in ({"kind": "task"}, {"status": "superseded"}, {"content": "   "},
-                   {"worktree": str(tmp_path)}):
+                   {"worktree": str(tmp_path)}, {"key": "not-a-uuid"}, {"key": KEY.upper()}):
         assert service.post("/findings", json={**body, **change}, headers=headers).status_code == 400
     assert service.post("/findings", json=body).status_code == 401
     assert not [row for row in store.list_records(project["id"]) if row["kind"] != "checkpoint"]
     saved = service.post("/findings", json=body, headers=headers)
     assert saved.status_code == 200 and saved.json()["record"]["status"] == "proposed"
+    assert saved.json()["already_saved"] is False
+    again = service.post("/findings", json={**body, "content": "Different text."}, headers=headers)
+    assert again.status_code == 200 and again.json()["already_saved"] is True
+    assert again.json()["record"]["id"] == saved.json()["record"]["id"]
+    assert again.json()["record"]["content"] == body["content"]
+    assert len([row for row in store.list_records(project["id"]) if row["kind"] != "checkpoint"]) == 1
 
 
 def test_broker_forwards_only_the_form_fields_and_never_a_session(cockpit):
     settings, app, client, runtime, project, requests, _ = cockpit
     headers = login(app, client)
     body = {"project": project["id"], "worktree": "/repo", "content": "Line one\n$(id)", "kind": "decision",
-            "status": "proposed"}
+            "status": "proposed", "key": KEY}
     assert client.post("/api/findings", json=body, headers=headers).status_code == 200
     method, path, content = requests[-1]
     assert (method, path) == ("POST", "/findings") and json.loads(content) == body
     sent = len(requests)
     for change in ({"session_id": "forged"}, {"packet_id": "forged"}, {"kind": "task"},
-                   {"status": "disputed"}, {"content": "  "}, {"project": 5}, {"worktree": ["/repo"]}):
+                   {"status": "disputed"}, {"content": "  "}, {"project": 5}, {"worktree": ["/repo"]},
+                   {"key": "../x"}, {"key": KEY.upper()}, {"key": 7}):
         assert client.post("/api/findings", json={**body, **change}, headers=headers).status_code == 422
+    keyless = {name: value for name, value in body.items() if name != "key"}
+    assert client.post("/api/findings", json=keyless, headers=headers).status_code == 422
     assert client.post("/api/findings", json=body, headers={"Origin": ORIGIN}).status_code in {401, 403}
     assert len(requests) == sent
+
+
+class BlockingBroker:
+    def __init__(self):
+        self.release, self.calls = threading.Event(), []
+
+    def request(self, method, path, **kwargs):
+        self.calls.append(kwargs["json"])
+        self.release.wait(10)
+        return {"record": {"id": "record-1", "kind": kwargs["json"]["kind"], "status": "proposed"}}
+
+
+@pytest.mark.asyncio
+async def test_presses_during_a_save_send_nothing_more_and_do_not_close_the_form(tmp_path):
+    settings, state = selected_workspace(tmp_path)
+    broker = BlockingBroker()
+    app = FindingApp(settings, broker=broker, workspace=state)
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.press(*"Use", "space", *"WAL", "ctrl+s")
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.press("ctrl+s", "escape", "ctrl+q")
+            await pilot.pause()
+            assert app.is_running and app.saving and len(broker.calls) == 1
+            broker.release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+    finally:
+        broker.release.set()
+    assert app.return_value["id"] == "record-1" and len(broker.calls) == 1
+    assert broker.calls[0]["key"] == app.key
+
+
+@pytest.mark.asyncio
+async def test_ctrl_q_closes_an_idle_form_without_saving(tmp_path):
+    settings, state = selected_workspace(tmp_path)
+    broker = FakeBroker()
+    app = FindingApp(settings, broker=broker, workspace=state)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press(*"draft", "ctrl+q")
+    assert app.return_value is None and broker.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("language", "error", "expected"), [
+    ("en", BrokerError(503, INTERRUPTED), "No clear answer from the memory service. The finding may have "
+     "been saved; saving again from this form is safe and will not store it twice. The connection to the "
+     "local broker was interrupted."),
+    ("pl", BrokerError(503, INTERRUPTED), "Brak jednoznacznej odpowiedzi usługi pamięci. Ustalenie mogło "
+     "zostać zapisane; ponowny zapis z tego formularza jest bezpieczny i nie utworzy go drugi raz. "
+     + INTERRUPTED),
+    ("en", BrokerError(422, "Niepoprawne pola żądania."), "Could not save. Your entries were kept. "
+     "Invalid request fields."),
+    ("pl", BrokerError(400, "A finding needs a registered project worktree"), "Nie udało się zapisać. "
+     "Wpisane wartości zachowano. Ustalenie wymaga zarejestrowanego katalogu roboczego projektu"),
+    ("pl", BrokerError(404, "Unknown project: gone"), "Nie udało się zapisać. Wpisane wartości zachowano. "
+     "Ten projekt nie jest już zarejestrowany."),
+])
+async def test_an_unclear_answer_is_not_called_a_failure_and_messages_follow_the_language(
+        tmp_path, language, error, expected):
+    settings, state = selected_workspace(tmp_path)
+    CockpitState(settings).update({"language": language})
+    broker = FakeBroker(error)
+    app = FindingApp(settings, broker=broker, workspace=state)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.press(*"note", "ctrl+s")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert text_of(app, "#finding-error") == expected and app.is_running
+
+
+class LostReplyBroker:
+    """Delivers the first request, then loses its answer, as a timeout after the commit would."""
+
+    def __init__(self, broker):
+        self.broker, self.calls = broker, []
+
+    def request(self, method, path, **kwargs):
+        self.calls.append(kwargs["json"])
+        result = self.broker.request(method, path, **kwargs)
+        if len(self.calls) == 1:
+            raise BrokerError(503, INTERRUPTED)
+        return result
+
+
+@pytest.mark.asyncio
+async def test_saving_again_after_a_lost_answer_returns_the_first_write(stack):
+    settings, store, project, root, broker, _ = stack
+    state = WorkspaceState(settings)
+    state.select_project(project)
+    lossy = LostReplyBroker(broker)
+    app = FindingApp(settings, broker=lossy, workspace=state)
+    async with app.run_test(size=(120, 30)) as pilot:
+        app.query_one("#finding-content", TextArea).insert("Keep one writer.")
+        await pilot.press("ctrl+s")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert text_of(app, "#finding-error").startswith("No clear answer from the memory service.")
+        await pilot.press("ctrl+s")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+    assert [call["key"] for call in lossy.calls] == [app.key, app.key]
+    [record] = [row for row in store.list_records(project["id"]) if row["kind"] != "checkpoint"]
+    assert app.return_value == {"id": record["id"], "kind": "decision", "status": "proposed",
+                                "already_saved": True}
+
+
+@pytest.mark.asyncio
+async def test_a_finding_saved_in_one_worktree_is_found_from_another(stack, tmp_path):
+    from cairnmind.retrieval import Retriever
+    settings, store, project, root, broker, _ = stack
+    linked = tmp_path / "linked"
+    linked.mkdir()
+    store.add_project_root(project["id"], linked)
+    state = WorkspaceState(settings)
+    state.select_project(project, str(linked.resolve()))
+    app = FindingApp(settings, broker=broker, workspace=state)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#finding-content", TextArea).insert("Both worktrees share this decision.")
+        await pilot.press("ctrl+s")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+    retriever = Retriever(store, settings, ollama=LocalModelFixture())
+    for worktree in (root, linked):
+        [found] = [row for row in retriever.records(project["id"], worktree=str(worktree))
+                   if row["kind"] == "decision"]
+        assert found["id"] == app.return_value["id"]
+        source = store.get_source(found["source_ids"][0])
+        assert retriever.source_in_scope(source, project["id"], str(worktree))
+        seen = broker.request("GET", "/api/inspector/records",
+                              params={"project": project["id"], "worktree": str(worktree)})
+        assert found["id"] in [item["id"] for item in seen["items"]]
+
+
+def test_an_acknowledged_session_saves_once_under_its_own_origin(stack):
+    from cairnmind.sessions import SessionManager
+    settings, store, project, root, _, service = stack
+    manager = SessionManager(store, settings)
+    ready = manager.prepare(project["id"], "codex", timeout=0)
+    packet = ready["packet"]
+    manager.ack(ready["session_id"], packet["id"], packet["hash"], {"plan": None, "task": None})
+    body = {"project": project["id"], "content": "The ACK gate stays.", "kind": "decision", "key": KEY,
+            "session_id": ready["session_id"], "packet_id": packet["id"]}
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    saved = service.post("/findings", json=body, headers=headers)
+    assert saved.status_code == 200 and saved.json()["already_saved"] is False
+    record = saved.json()["record"]
+    assert record["metadata"]["origin"] == "session_finding"
+    source = store.get_source(record["source_ids"][0])
+    assert source["uri"] == "session://finding/" + KEY
+    assert source["metadata"]["origin"] == "session_finding" and "role" not in source["metadata"]
+    assert source["metadata"]["session_id"] == ready["session_id"]
+    stored = [row["id"] for row in store.list_records(project["id"]) if row["kind"] != "checkpoint"]
+    assert stored == [record["id"]]
+
+
+def test_confirmation_reaches_the_status_line_with_kind_and_status_only(tmp_path, monkeypatch):
+    settings = Settings.load(tmp_path / "data", create=True)
+    CockpitState(settings).update({"language": "pl"})
+    calls = []
+    manager = SimpleNamespace(settings=settings, workspace_id="default",
+                              tmux=lambda *args, **kwargs: calls.append((args, kwargs)))
+    results = iter([{"id": "r", "kind": "decision", "status": "confirmed", "content": "secret #{pid}"},
+                    {"id": "r", "kind": "#(touch x)", "status": "#[fg=red]"}, None])
+    monkeypatch.setattr("cairnmind.workspace_finding.FindingApp",
+                        lambda *args, **kwargs: SimpleNamespace(run=lambda: next(results)))
+    for _ in range(3):
+        run_finding_form(manager, "/dev/pts/1")
+    prefix = ("display-message", "-c", "/dev/pts/1", "-d", "5000")
+    assert [args for args, _ in calls] == [prefix + ("Ustalenie zapisane w pamięci: decision, confirmed.",),
+                                           prefix + ("Ustalenie zapisane w pamięci: ?, ?.",)]
+    assert all(kwargs == {"check": False} for _, kwargs in calls)

@@ -6,6 +6,7 @@ placed on a command line, in a tmux command or in a shell. Nothing is read from 
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -16,14 +17,53 @@ from .findings import FINDING_KINDS, FINDING_STATUSES, finding_error
 from .terminal_safe import plain, safe_text
 
 ERROR_LIMIT = 300
+# Messages the broker client and the broker answer this form with are Polish in the code. They are
+# translated here, for this form only, so that other screens showing them keep their behaviour.
+BROKER_MESSAGES = {
+    "Lokalny broker jest niedostępny lub wymaga ponownego uruchomienia.":
+        "The local broker is unavailable or needs a restart.",
+    "Niepoprawny adres lokalnego brokera.": "The local broker address is invalid.",
+    "Niepoprawna odpowiedź lokalnego brokera.": "The local broker gave an invalid answer.",
+    "Żądanie zostało odrzucone.": "The request was refused.",
+    "Nie można uwierzytelnić lokalnej sesji.": "The local session could not be authenticated.",
+    "Niepoprawny bilet lokalnej sesji.": "The local session ticket is invalid.",
+    "Niepoprawna lokalna sesja.": "The local session is invalid.",
+    "Połączenie z lokalnym brokerem zostało przerwane.":
+        "The connection to the local broker was interrupted.",
+    "Sesja kokpitu wygasła. Uruchom cairnmind.": "The broker session expired. Run cairnmind.",
+    "Niepoprawny Host.": "Invalid Host.", "Niepoprawny Origin.": "Invalid Origin.",
+    "Niepoprawny token CSRF.": "Invalid CSRF token.",
+    "Żądanie przekracza limit.": "The request is too large.",
+    "Niepoprawny JSON.": "Invalid JSON.", "Oczekiwano obiektu JSON.": "A JSON object was expected.",
+    "Niepoprawne pola żądania.": "Invalid request fields.",
+    "Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind.":
+        "The memory service is unavailable. Restart cairnmind.",
+    "Usługa pamięci zwróciła niepoprawną odpowiedź.": "The memory service gave an invalid answer.",
+}
 
 
-def error_text(exc, translate) -> str:
-    """One bounded line of literal text: a broker detail may quote anything, including control bytes."""
+def outcome_unknown(exc) -> bool:
+    """A 5xx or a transport error can come after the service committed; a 4xx was refused before writing."""
+    status = getattr(exc, "status_code", None)
+    return not isinstance(status, int) or status >= 500
+
+
+def detail_text(exc, translate, language) -> str:
     detail = getattr(exc, "detail", None)
-    detail = str(detail if detail is not None else exc)
-    return translate("Could not save. Your entries were kept.") + " " + safe_text(
-        " ".join(translate(detail).split()), limit=ERROR_LIMIT)
+    detail = " ".join(str(detail if detail is not None else exc).split())
+    if detail in BROKER_MESSAGES:
+        return detail if language == "pl" else BROKER_MESSAGES[detail]
+    if detail.startswith("Unknown project: "):
+        return translate("This project is no longer registered.")
+    return translate(detail)
+
+
+def error_text(exc, translate, language="en") -> str:
+    """One bounded line of literal text: a broker detail may quote anything, including control bytes."""
+    lead = ("No clear answer from the memory service. The finding may have been saved; saving again "
+            "from this form is safe and will not store it twice." if outcome_unknown(exc)
+            else "Could not save. Your entries were kept.")
+    return translate(lead) + " " + safe_text(detail_text(exc, translate, language), limit=ERROR_LIMIT)
 
 
 class FindingApp(App):
@@ -54,6 +94,8 @@ class FindingApp(App):
         localize_bindings(self, self.language)
         self.scope = {}
         self.saving = False
+        # One key for every save of this form: a retry after an unclear answer returns the first write.
+        self.key = str(uuid4())
 
     def compose(self) -> ComposeResult:
         t = self.translate
@@ -84,15 +126,16 @@ class FindingApp(App):
         self.query_one("#finding-content", TextArea).focus()
 
     def show_error(self, exc):
-        self.query_one("#finding-error", Static).update(plain(error_text(exc, self.translate)))
+        self.query_one("#finding-error", Static).update(plain(error_text(exc, self.translate, self.language)))
 
     def values(self):
         return {"content": self.query_one("#finding-content", TextArea).text,
                 "kind": self.query_one("#finding-kind", Select).value,
                 "status": self.query_one("#finding-status", Select).value}
 
-    @work(group="finding-save", exclusive=True, exit_on_error=False)
-    async def action_save(self):
+    def action_save(self):
+        # Synchronous up to the guard: no await separates the check from setting it, and a running
+        # save is never cancelled by a second press, so one form sends at most one request at a time.
         if self.saving:
             return
         values = self.values()
@@ -105,10 +148,14 @@ class FindingApp(App):
             return
         self.saving = True
         self.query_one("#finding-error", Static).update(plain(self.translate("Saving…")))
+        payload = {"project": self.scope["project"], "key": self.key, **values}
+        if self.scope.get("worktree"):
+            payload["worktree"] = self.scope["worktree"]
+        self.send(payload)
+
+    @work(group="finding-save", exit_on_error=False)
+    async def send(self, payload):
         try:
-            payload = {"project": self.scope["project"], **values}
-            if self.scope.get("worktree"):
-                payload["worktree"] = self.scope["worktree"]
             result = await asyncio.to_thread(self.broker.request, "POST", "/api/findings", json=payload)
         except (OSError, ValueError, RuntimeError) as exc:
             # The typed text and choices stay in their widgets; only a deliberate Ctrl+S retries.
@@ -117,13 +164,20 @@ class FindingApp(App):
         finally:
             self.saving = False
         record = result.get("record") if isinstance(result, dict) else None
-        self.exit({"id": record.get("id") if isinstance(record, dict) else None,
-                   "kind": values["kind"], "status": values["status"]})
+        record = record if isinstance(record, dict) else {}
+        # After a retry the stored record is the earlier write: confirm what it holds.
+        self.exit({"id": record.get("id"), "kind": record.get("kind", payload["kind"]),
+                   "status": record.get("status", payload["status"]),
+                   "already_saved": bool(isinstance(result, dict) and result.get("already_saved"))})
 
     def action_cancel(self):
         # A save in flight settles first: closing must not suggest that a sent write was undone.
         if not self.saving:
             self.exit(None)
+
+    async def action_quit(self) -> None:
+        # Textual's own Ctrl+Q closes like Escape, never past a save in flight.
+        self.action_cancel()
 
 
 def confirmation(result, language="en") -> str:
