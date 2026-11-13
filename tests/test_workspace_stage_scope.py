@@ -185,8 +185,16 @@ async def test_a_click_in_the_same_project_keeps_the_check_result_visible(tmp_pa
         release.set()
         expected = ("The check could not run: unit · cannot start the check runner" if ending == "oserror"
                     else "Check finished: unit · Check did not pass.")
-        await wait_until(pilot, lambda: expected in notice_of(app))
+        # Read what was shown, in order, not the panel at one instant: the assistant stage's own
+        # notice may arrive just after the check result and replace it on the single notice line.
+        started_notice = "Stage started. The assistant must acknowledge its resume packet."
+        await wait_until(pilot, lambda: any(expected in text for text in shown)
+                         and any(started_notice in text for text in shown))
         assert not isinstance(app.screen, MessageModal)
+    refused = next(i for i, text in enumerate(shown) if "A check is still running" in text)
+    delivered = [i for i, text in enumerate(shown) if expected in text]
+    assert len(delivered) == 1 and delivered[0] > refused
+    assert not any("Project changed" in text for text in shown)
     assert len(calls) == 1
 
 
