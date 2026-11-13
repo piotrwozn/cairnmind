@@ -277,6 +277,7 @@ class SidebarApp(BasePanel):
                 yield Static(self.t("Browsing memory does not start an assistant."), id="project-state", markup=False)
                 yield Button(self.t("Choose assistant"), id="assistant-select")
                 yield Button(self.t("Start work"), id="project-work", variant="primary", disabled=True)
+                yield Button(self.t("Run next stage"), id="stage-next")
                 yield Button(self.t("Memory"), id="memory-open")
                 yield Button(self.t("Add assistant"), id="assistant-add")
             with Horizontal(classes="sidebar-actions", id="project-list-actions"):
@@ -766,6 +767,23 @@ class SidebarApp(BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
+    @work(group="sidebar-stage", exit_on_error=False)
+    async def action_next_stage(self):
+        """Start the assistant or run the check mapped to the next plan step; changes no task."""
+        from .workspace_stage import run_next_stage
+        try:
+            await run_next_stage(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
+    @work(group="sidebar-stages", exclusive=True, exit_on_error=False)
+    async def edit_stages(self):
+        from .workspace_stage import edit_stages
+        try:
+            await edit_stages(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
     @work(group="sidebar-profiles", exclusive=True, exit_on_error=False)
     async def edit_profiles(self, identifier=None, *, advanced=False):
         try:
@@ -930,11 +948,13 @@ class SidebarApp(BasePanel):
     @work(group="sidebar-more", exclusive=True, exit_on_error=False)
     async def action_more(self):
         action = await self.push_screen_wait(ChoiceModal("More", [
-            ("Sessions", "sessions"), ("Manage assistants", "assistants"), ("Find folders", "scan"),
+            ("Sessions", "sessions"), ("Manage assistants", "assistants"), ("Plan stages", "stages"),
+            ("Find folders", "scan"),
             ("Queue", "queue"),
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
             ("Settings", "settings"), ("Technical details", "details")]))
-        actions = {"sessions": self.sessions, "assistants": self.edit_slots, "scan": self.scan_projects,
+        actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
+                   "scan": self.scan_projects,
                    "queue": self.action_queue,
                    "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings}
         if action == "details":
@@ -997,7 +1017,7 @@ class SidebarApp(BasePanel):
         localize_bindings(self, self.language)
         labels = {"project-back": "Return to projects", "assistant-add": "Add assistant", "project-work": "Start work",
                   "project-add": "Add folder", "project-inspect": "Open", "auth-open": "Connections", "more-open": "More",
-                  "memory-open": "Memory"}
+                  "memory-open": "Memory", "stage-next": "Run next stage"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.render_project()
@@ -1144,7 +1164,8 @@ class SidebarApp(BasePanel):
                    "sessions-open": self.sessions, "auth-open": self.login,
                    "memory-open": self.action_memory, "memory-import": self.import_memory,
                    "project-back": self.action_projects, "assistant-select": self.choose_assistant,
-                   "assistant-add": self.add_assistant, "more-open": self.action_more}
+                   "assistant-add": self.add_assistant, "more-open": self.action_more,
+                   "stage-next": self.action_next_stage}
         action = actions.get(event.button.id)
         if action:
             action()

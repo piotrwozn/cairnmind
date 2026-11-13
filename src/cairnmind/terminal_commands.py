@@ -20,6 +20,7 @@ COMMANDS = (
     ("Search projects", "Find a registered project", "command", "search"),
     ("Add folder", "Register a project folder", "command", "add_project"),
     ("Start work", "Review your assistant before starting", "command", "start_work"),
+    ("Run next stage", "Start the assistant or check mapped to the next plan step", "command", "next_stage"),
     ("Connections", "Accounts, assistants and models", "command", "connections"),
     ("Sessions", "Return to or manage an existing session", "command", "sessions"),
     ("More", "Snapshots, import and advanced tools", "command", "more"),

@@ -327,6 +327,37 @@ CATALOG.update({
     "Assistant": "Asystent",
     "Assistant started.": "Asystent uruchomiony.",
     "Start requested. Review the workspace.": "Zlecono rozpoczęcie pracy. Sprawdź przestrzeń pracy.",
+    # Plan stages (#10)
+    "Run next stage": "Uruchom następny etap",
+    "Start the assistant or check mapped to the next plan step":
+        "Uruchom asystenta lub test przypisany do następnego kroku planu",
+    "Plan stages": "Etapy planu", "implement": "implementacja", "review": "przegląd", "test": "test",
+    "Plan": "Plan", "Step": "Krok", "Stage": "Etap", "Check profile": "Profil testu",
+    "Required checks": "Wymagane testy", "Not set": "Nieustawione", "Unknown assistant": "Nieznany asystent",
+    "There is no next plan step to route.": "Brak następnego kroku planu do przekazania.",
+    "This step's state has no stage.": "Stan tego kroku nie ma etapu.",
+    "No assistant or check is mapped to this stage.": "Do tego etapu nie przypisano asystenta ani testu.",
+    "The mapped assistant is not configured for this project.":
+        "Przypisany asystent nie jest skonfigurowany w tym projekcie.",
+    "The mapped assistant cannot be launched for a plan step.":
+        "Przypisanego asystenta nie można uruchomić dla kroku planu.",
+    "No active plan in this folder.": "Brak aktywnego planu w tym katalogu.",
+    "Every step of the plan is done.": "Wszystkie kroki planu są wykonane.",
+    "Every remaining step is blocked.": "Wszystkie pozostałe kroki są zablokowane.",
+    "Check passed.": "Test zaliczony.", "Check did not pass.": "Test niezaliczony.",
+    "Outcome": "Wynik", "Error": "Błąd", "Check run": "Uruchomienie testu", "Check result": "Wynik testu",
+    "The task state is unchanged. Update it after you review the result.":
+        "Stan zadania się nie zmienił. Zaktualizuj go po sprawdzeniu wyniku.",
+    "A stage is already running.": "Etap już trwa.",
+    "The assistant did not start": "Asystent nie wystartował",
+    "Stage started. The assistant must acknowledge its resume packet.":
+        "Etap rozpoczęty. Asystent musi potwierdzić swój pakiet wznowienia.",
+    "Running check": "Trwa test",
+    "Map stages in More → Plan stages.": "Przypisz etapy w Więcej → Etapy planu.",
+    "Check profile for the test stage (empty: not set)": "Profil testu dla etapu test (puste: nieustawione)",
+    "The profile is read from this folder's checks.toml when it runs.":
+        "Profil jest odczytywany z checks.toml tego katalogu podczas uruchomienia.",
+    "Plan stages saved. Nothing was started.": "Etapy planu zapisane. Nic nie zostało uruchomione.",
 })
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
