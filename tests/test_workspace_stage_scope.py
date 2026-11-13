@@ -187,6 +187,27 @@ async def test_a_click_in_the_same_project_keeps_the_check_result_visible(tmp_pa
     assert len(calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeypatch):
+    # Keyboard paths (and tests) reach existing entries by position; new ones are appended.
+    from cairnmind.terminal_commands import COMMANDS
+    from cairnmind.terminal_ui import ChoiceModal
+    assert [row[3] for row in COMMANDS] == [
+        "search", "client1", "client2", "inspector", "ask", "brief", "graph", "search", "add_project", "start_work",
+        "connections", "sessions", "more", "settings", "focus", "cockpit", "", "next_stage"]
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_more()
+        await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
+        assert [value for _, value in app.screen.choices] == [
+            "sessions", "assistants", "scan", "queue", "snapshot", "import", "settings", "details", "stages"]
+        await pilot.press("escape")
+        buttons = [button.id for button in app.query("#project-page Button")]
+    assert buttons == ["project-back", "assistant-select", "project-work", "memory-open", "assistant-add", "stage-next"]
+
+
 def test_every_text_stages_can_show_has_a_polish_entry():
     tree = ast.parse(open(stages.__file__, encoding="utf-8").read())
     raised = [node.args[0].value for node in ast.walk(tree)

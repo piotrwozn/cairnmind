@@ -277,9 +277,10 @@ class SidebarApp(BasePanel):
                 yield Static(self.t("Browsing memory does not start an assistant."), id="project-state", markup=False)
                 yield Button(self.t("Choose assistant"), id="assistant-select")
                 yield Button(self.t("Start work"), id="project-work", variant="primary", disabled=True)
-                yield Button(self.t("Run next stage"), id="stage-next")
                 yield Button(self.t("Memory"), id="memory-open")
                 yield Button(self.t("Add assistant"), id="assistant-add")
+                # Last, so the Tab order of the existing buttons is unchanged.
+                yield Button(self.t("Run next stage"), id="stage-next")
             with Horizontal(classes="sidebar-actions", id="project-list-actions"):
                 yield Button(self.t("Add folder"), id="project-add", variant="primary")
                 yield Button(self.t("Open"), id="project-inspect", disabled=True)
@@ -953,11 +954,12 @@ class SidebarApp(BasePanel):
     @work(group="sidebar-more", exclusive=True, exit_on_error=False)
     async def action_more(self):
         action = await self.push_screen_wait(ChoiceModal("More", [
-            ("Sessions", "sessions"), ("Manage assistants", "assistants"), ("Plan stages", "stages"),
+            ("Sessions", "sessions"), ("Manage assistants", "assistants"),
             ("Find folders", "scan"),
             ("Queue", "queue"),
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
-            ("Settings", "settings"), ("Technical details", "details")]))
+            # New entries go last: keyboard paths to the existing ones keep their positions.
+            ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages")]))
         actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
                    "scan": self.scan_projects,
                    "queue": self.action_queue,
