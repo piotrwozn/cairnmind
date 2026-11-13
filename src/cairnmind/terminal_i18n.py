@@ -36,6 +36,26 @@ CATALOG = {
     "Start work": "Rozpocznij pracę", "Open": "Otwórz", "Back": "Wróć",
     "Connections": "Połączenia", "Memory": "Pamięć", "More": "Więcej",
     "Ask memory": "Zapytaj pamięć",
+    "Save a finding": "Zapisz ustalenie", "Finding": "Ustalenie",
+    "Open a project first.": "Najpierw otwórz projekt.",
+    "Write the finding first.": "Najpierw wpisz ustalenie.",
+    "The finding is longer than 16000 characters.": "Ustalenie ma więcej niż 16000 znaków.",
+    "Choose a kind: decision, fact, constraint, question or preference.":
+        "Wybierz rodzaj: decision, fact, constraint, question lub preference.",
+    "Choose a status: proposed or confirmed.": "Wybierz stan: proposed lub confirmed.",
+    "Finding saved to memory: {kind}, {status}.": "Ustalenie zapisane w pamięci: {kind}, {status}.",
+    "A finding needs a registered project worktree": "Ustalenie wymaga zarejestrowanego katalogu roboczego projektu",
+    "Invalid finding key": "Niepoprawny klucz ustalenia",
+    "Could not read the workspace state.": "Nie udało się odczytać stanu środowiska.",
+    "This form already saved a different text, kind or status; the first one is in memory. "
+    "Open a new form to save the changed one.":
+        "Ten formularz zapisał już inny tekst, rodzaj lub stan; pierwszy jest w pamięci. "
+        "Otwórz nowy formularz, aby zapisać zmieniony.",
+    "This project is no longer registered.": "Ten projekt nie jest już zarejestrowany.",
+    "No clear answer from the memory service. The finding may have been saved; saving again "
+    "from this form is safe and will not store it twice.":
+        "Brak jednoznacznej odpowiedzi usługi pamięci. Ustalenie mogło zostać zapisane; ponowny zapis "
+        "z tego formularza jest bezpieczny i nie utworzy go drugi raz.",
     "Question answered from project memory with sources": "Odpowiedź z pamięci projektu ze źródłami",
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
@@ -184,6 +204,7 @@ CATALOG = {
     "Ctrl+B, then Space: search all commands\n"
     "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
     "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
+    "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
     "Ctrl+B, then [: scroll and copy terminal history (q to leave)\n"
     "Ctrl+B, then d: detach; run cairnmind to return\n"
     "Ctrl+B, then Ctrl+B: send Ctrl+B to the native assistant\n\n"
@@ -195,6 +216,7 @@ CATALOG = {
     "Ctrl+B, potem Spacja: wyszukaj polecenie\n"
     "Ctrl+B, potem p / 1 / 2 / i / g: projekty / asystent / drugi asystent / pamięć / graf\n"
     "Ctrl+B, potem Tab: następny widok\nCtrl+B, potem z: powiększ lub przywróć panele\n"
+    "Ctrl+B, potem n: zapisz ustalenie w pamięci (Ctrl+S zapisuje, Esc zamyka)\n"
     "Ctrl+B, potem [: przewijaj i kopiuj historię terminala (q wraca)\n"
     "Ctrl+B, potem d: odłącz; uruchom cairnmind, aby wrócić\n"
     "Ctrl+B, potem Ctrl+B: przekaż Ctrl+B do natywnego asystenta\n\n"

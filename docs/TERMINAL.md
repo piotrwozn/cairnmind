@@ -73,6 +73,7 @@ Press the `Ctrl+B` prefix first, then the listed key:
 | `2` | Second visible client |
 | `i` | Memory inspector |
 | `g` | Memory graph |
+| `n` | Save a finding to the memory of the open project |
 | `Tab` | Next view |
 | `z` | Zoom the active pane / return to the layout |
 | `[` | Scroll and copy terminal history; `q` returns |
@@ -82,6 +83,8 @@ Press the `Ctrl+B` prefix first, then the listed key:
 A double `Ctrl+B` is needed when Codex, Claude or a program running in their terminal uses that shortcut itself. All other input, pasting, `Ctrl+C` and approval dialogs in the active client pane go to its real CLI. Use `Tab`, `Shift+Tab`, the arrow keys and `Enter` for Cairnmind buttons and fields; `Esc` closes a dialog or goes back. Save forms with `Ctrl+S`. A field or save error keeps the values you entered and shows the problem; retrying requires a deliberate save.
 
 In the project list, `Enter` opens the project screen for inspection. It does not start an assistant. On that screen, **Start work** starts only the indicated assistant. Outside text fields, `w` selects that action, `p` opens the preview, `r` refreshes and `m` opens memory. In the list, `w` first opens the project screen. Empty search results stay empty; actions never fall back to a previously active project. In the inspector, `h` opens history, `m` opens memory, `r` refreshes and `Esc` returns to the list. Letter shortcuts work only in the focused Cairnmind pane.
+
+`Ctrl+B n` opens a small form over the workspace to write down a finding without leaving it: the text (several lines are fine), a kind (`decision`, `fact`, `constraint`, `question` or `preference`) and a status (`proposed`, the default, or `confirmed`). `Ctrl+S` saves it to the open project and closes the form; the finding belongs to the whole project, so it is found from every worktree of it. The status line then confirms the kind and status for a few seconds. `Esc` or `Ctrl+Q` closes the form without saving, but not while a save is under way; pressing `Ctrl+S` again during a save does nothing. An empty text cannot be saved. If the service refuses the finding, the form stays open with your text and choices and shows the reason. If no clear answer comes back (the form waits 20 seconds), the finding may have been saved: saving again from the same form is safe, because each form sends one key and the service stores at most one finding per key. If you changed the text, kind or status before saving again, the form refuses and keeps your edit: the first version is already in memory, and the changed one needs a new form. The finding is written by the memory service like any other record, with a source of its own: a `workspace://finding/…` address, the time it was saved and the origin `workspace_form`, so the memory inspector shows where it came from. The form never reads or attaches what is on a terminal pane, and the text goes to the service as data, never through a shell.
 
 **Start work** in the global menu first shows the project and moves focus to the start button. Check the visible assistant name and press `Enter` to begin. This prevents a delayed menu command from starting an assistant after the project has changed.
 

@@ -82,6 +82,17 @@ class RememberBody(BaseModel):
     packet_id: str | None = None
 
 
+class FindingBody(BaseModel):
+    project: str
+    content: str
+    kind: str
+    key: str
+    status: str = "proposed"
+    worktree: str | None = None
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
 class CheckpointBody(BaseModel):
     project: str
     state: dict
@@ -838,6 +849,34 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     raise ValueError("resume_required: completion scope differs from session")
                 record["worktree"] = scope
             return store.remember(pid, record, body.sources)
+        result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
+        cache.clear()
+        return result
+
+    @app.post("/findings", dependencies=auth)
+    async def finding(body: FindingBody):
+        """A finding with a source created here, so it cannot claim another origin's id.
+
+        Without a session it is a person's own write (origin workspace_form); with one, it is the
+        session's (origin session_finding), after the same resume gate as /remember.
+        """
+        from cairnmind.findings import finding_error, key_error, save_finding
+        selected = project(body.project)
+        pid = selected["id"]
+        error = finding_error(body.content, body.kind, body.status) or key_error(body.key)
+        if error:
+            raise ValueError(error)
+
+        def save(scope):
+            # write_scoped calls this only after an acknowledged session check when a session is named.
+            # The worktree only checks that the caller's view is genuine; the finding is project-wide.
+            requested = selected_memory_scope(pid, body.worktree, scope) or selected["root"]
+            root = str(Path(requested).expanduser().resolve())
+            if not store.query("SELECT path FROM project_roots WHERE project_id=:project AND path=:root",
+                               {"project": pid, "root": root}):
+                raise ValueError("A finding needs a registered project worktree")
+            return save_finding(store, pid, body.key, body.content, body.kind, body.status,
+                                session_id=body.session_id or None)
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
         cache.clear()
         return result

@@ -58,7 +58,7 @@ def test_focus_view_and_next_key_preserve_panes(manager):
     assert workspace.state.read()["focus"] == "client1"
     assert workspace.panes() == before
     keys = workspace.tmux("list-keys", "-T", "prefix").stdout
-    assert "--palette" in keys and "--help-popup" in keys and "--next-view" in keys
+    assert "--palette" in keys and "--help-popup" in keys and "--next-view" in keys and "--finding" in keys
     assert "copy-mode" in keys and "send-prefix" in keys
 
 

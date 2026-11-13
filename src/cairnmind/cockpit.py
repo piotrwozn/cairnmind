@@ -802,6 +802,22 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             raise HTTPException(422, "Niepoprawne pola żądania.")
         return forward(await upstream("POST", "/ask", data=value))
 
+    @app.post("/api/findings")
+    async def save_finding(request: Request):
+        # A person's own write from the workspace form. No session field is accepted, so this
+        # route cannot speak for a coding session; the service still validates every field.
+        from .findings import finding_error, key_error
+        session_for(request)
+        value = await body(request)
+        required = ("project", "content", "kind", "status", "key")
+        fields(value, {*required, "worktree"}, required)
+        if not isinstance(value["project"], str) or not isinstance(value.get("worktree", ""), str):
+            raise HTTPException(422, "Niepoprawne pola żądania.")
+        error = finding_error(value["content"], value["kind"], value["status"]) or key_error(value["key"])
+        if error:
+            raise HTTPException(422, error)
+        return forward(await upstream("POST", "/findings", data=value))
+
     @app.get("/api/brief")
     async def brief(request: Request):
         session_for(request)

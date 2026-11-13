@@ -144,7 +144,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         raise typer.BadParameter("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
-            "/remember", "/checkpoint", "/plans/save", "/plans/activate",
+            "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
             "/memory/snapshot", "/memory/import"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
