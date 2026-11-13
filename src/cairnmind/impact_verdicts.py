@@ -3,53 +3,94 @@
 A verdict is an audit note, stored the way a review or a conflict decision stores its own: a ``review://``
 source of kind ``manual`` with the origin ``local_user_review``. It is not cited by the record, so the
 record, its revisions, its status and a task's state stay exactly as they were, and it is never evidence
-(``evidence._is_audit``).
+(``evidence._is_audit``). Unlike those notes it is never chunked or embedded either (``is_verdict_source``):
+it judges a list, it says nothing an answer should quote. It does travel with the project memory.
 
-A verdict holds for one fingerprint of the listed entry: the record's content and, for every link, the
-current worktree text of the linked definition or file. Editing either changes the fingerprint and the
-entry is unreviewed again. The commit compared with is not part of it, so a verdict stays valid whatever
-base the list was made from. Only a person writes one: the inspector route takes no session and the
-command refuses to run inside a coding session.
+A verdict holds for the entry as it was listed: the record's content, its links to the changed code and
+the current worktree content of that code (the linked definition, or the file). Editing either makes the
+entry unreviewed again. The links depend on the commit the list is compared with, so against a base that
+links the record to other changes the entry is unreviewed too: that list asks a different question.
+Only a person writes one: the inspector route takes no session and the command refuses to run inside a
+coding session.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 VERDICTS = {"still_valid": "still valid", "needs_update": "needs update", "not_related": "not related"}
 MAX_NOTE_CHARS = 4000
 PREFIX = "review://impact/"
-STALE = ("Impact conflict: the code or the record changed since this list was shown; "
-         "read the current list and decide again")
+STALE = "The code or the record changed since this list was shown; read the current list and decide again"
+
+
+class StaleVerdict(ValueError):
+    """The entry the person saw is no longer the entry the list shows."""
 
 
 def _sha(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def is_verdict_source(row):
+    """Whether a source row is an impact verdict: the one test for reading verdicts and for keeping them out
+    of chunks. Reviews and conflict notes share the address scheme and origin but are not verdicts."""
+    metadata = row.get("metadata")
+    if isinstance(metadata, (str, bytes)):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            return False
+    return (str(row.get("uri", "")).startswith(PREFIX) and row.get("kind") == "manual"
+            and isinstance(metadata, dict) and metadata.get("origin") == "local_user_review"
+            and metadata.get("impact_verdict") is True)
+
+
+def _on_disk(root, name):
+    """``(marker, text or None)`` for what is at ``name`` now, read without following a link or leaving root.
+
+    A regular file is known by a digest of all its bytes, so a file too large, binary or not UTF-8 still
+    changes the fingerprint when edited; a link by its target text; "removed" only when nothing is there.
+    """
+    from cairnmind.impact import _new_text
+    path = root / name
+    try:
+        if not path.parent.resolve().is_relative_to(root.resolve()):
+            return "outside", None
+        if path.is_symlink():
+            return "link:" + _sha(os.readlink(path)), None
+        if not os.path.lexists(path):
+            return "removed", None
+        if not path.is_file():
+            return "not-a-file", None
+        digest = hashlib.sha256()
+        with os.fdopen(os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return "unreadable", None
+    return "bytes:" + digest.hexdigest(), _new_text(root, name)
+
+
 def fingerprints(root, changed, records, rows):
     """``{record id: fingerprint}`` from the worktree as it is now; reads files, writes nothing."""
-    from cairnmind.impact import _definitions, _new_text
+    from cairnmind.impact import _definitions
     from cairnmind.store import _json
-    texts, definitions = {}, {}
-
-    def text(name):
-        if name not in texts:
-            texts[name] = _new_text(root, name)
-        return texts[name]
+    seen, definitions = {}, {}
 
     def current(link):
         name = changed.get(link["path"], {}).get("renamed_to", link["path"])
-        body = text(name)
-        if body is None:
-            return "removed"
-        if "symbol" not in link:
-            return _sha(body)
+        if name not in seen:
+            seen[name] = _on_disk(root, name)
+        marker, body = seen[name]
+        if "symbol" not in link or body is None:
+            return marker  # a file link, or a definition in a file that cannot be read as text
         if name not in definitions:
             definitions[name] = _definitions(name, body)
         found = definitions[name]
         if found is None:  # the file cannot be compared by symbol: any change of it counts
-            return "file:" + _sha(body)
+            return "file:" + marker
         return _sha(_json(found[link["symbol"]])) if link["symbol"] in found else "removed"
 
     result = {}
@@ -67,16 +108,15 @@ def _uri(record_id, fingerprint):
 
 def current_verdicts(store, project_id):
     """``{uri: (source, verdict document)}`` for the project's current verdicts, in one query."""
-    from cairnmind.evidence import _metadata
     found = {}
     for row in store.query("SELECT id,uri,kind,content,metadata,created_at FROM sources "
                            "WHERE project_id=:project AND is_current=true AND kind='manual' "
                            "AND metadata.impact_verdict=true",
                            {"project": project_id}):
-        metadata = _metadata(row)
-        # Only the shape this module writes counts; no other writer produces a review:// address.
-        if (not str(row.get("uri", "")).startswith(PREFIX) or metadata.get("origin") != "local_user_review"
-                or metadata.get("impact_verdict") is not True):
+        # Only the shape this module writes counts. A local writer other than this module produces no
+        # review://impact/ address, but an imported memory package can carry a verdict written elsewhere,
+        # as it carries review notes; such a verdict counts where its fingerprint matches.
+        if not is_verdict_source(row):
             continue
         try:
             document = json.loads(row["content"])
@@ -113,9 +153,10 @@ def verdict_line(row, line):
 def record_verdict(store, project_id, record_id, fingerprint, verdict, since, worktree=None, note=None):
     """Store a person's verdict on one listed record, if the entry is still what the person saw.
 
-    The impact is recomputed: a record that is not in the list, or whose fingerprint differs from the one
-    shown, is refused. The same verdict and note again writes nothing; another verdict replaces the current
-    one under the same address and the earlier stays as a non-current source.
+    The impact is recomputed: a record that is not in the list is refused (LookupError), and so is one
+    whose fingerprint differs from the one shown (StaleVerdict). The same verdict and note again writes
+    nothing; another verdict replaces the current one under the same address and the earlier stays as a
+    non-current source.
     """
     from cairnmind.impact import build_impact
     from cairnmind.store import _json, _now
@@ -133,7 +174,7 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
     if row is None:
         raise LookupError("This record is not in the impact list of that project and commit")
     if row["fingerprint"] != fingerprint:
-        raise ValueError(STALE)
+        raise StaleVerdict(STALE)
     project_id, uri = report["project"]["id"], _uri(record_id, fingerprint)
     document = {"actor": "local_user", "action": "impact_verdict", "verdict": verdict, "record_id": record_id,
                 "fingerprint": fingerprint, "note": note, "at": _now(), "since": since,

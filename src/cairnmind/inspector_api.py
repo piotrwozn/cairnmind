@@ -186,8 +186,19 @@ def create_inspector_router(store, settings):
 
     @router.post("/inspector/impact/verdict")
     async def impact_verdict(body: ImpactVerdictBody):
-        return await call(impact_verdicts.resolve, inspector, body.project, body.worktree, body.since,
-                          body.record_id, body.fingerprint, body.verdict, body.note)
+        # Mapped by type, not by text: a commit name or a path in a message must not turn 400 into 409.
+        try:
+            return await asyncio.to_thread(impact_verdicts.resolve, inspector, body.project, body.worktree,
+                                           body.since, body.record_id, body.fingerprint, body.verdict,
+                                           body.note)
+        except InspectorNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except impact_verdicts.StaleVerdict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except ArcadeError:
+            raise HTTPException(status_code=503, detail="Memory storage is unavailable") from None
 
     @router.post("/inspector/records/{record_id}/review")
     async def review(record_id: str, body: ReviewBody):
