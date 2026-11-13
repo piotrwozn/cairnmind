@@ -3,20 +3,24 @@ from __future__ import annotations
 
 import pytest
 
+from cairnmind import memory_view
 from cairnmind.memory_view import render_snapshot
 
 
 def _record(identifier, kind, content, *, status="confirmed", sources=("s1",), updated="2026-11-01T10:00:00+00:00",
-            **metadata):
+            supersedes=None, **metadata):
     return {"id": identifier, "project_id": "p", "kind": kind, "status": status, "key": f"key-{identifier}",
-            "content": content, "version": 2, "updated_at": updated, "source_ids": list(sources), "metadata": metadata}
+            "content": content, "version": 2, "updated_at": updated, "source_ids": list(sources),
+            "supersedes": supersedes, "metadata": metadata}
 
 
 @pytest.fixture
 def snapshot():
     payload = {
-        "sources": [{"id": "s1", "uri": "chat://session/1", "kind": "conversation"},
-                    {"id": "s2", "uri": "file://src/login.py", "kind": "code"}],
+        "sources": [{"id": "s1", "uri": "chat://session/1", "kind": "conversation",
+                     "content": "Meeting, 1 November: keep login errors in one module.\nOwner: Mira."},
+                    {"id": "s2", "uri": "file://src/login.py", "kind": "code",
+                     "content": "def login():\n    return None"}],
         "records": [
             _record("d1", "decision", "Login errors are handled in auth/errors.py.", sources=("s1", "s2")),
             _record("f1", "fact", "The release identifier is zephyr_214.", status="proposed"),
@@ -150,3 +154,135 @@ def test_empty_snapshot_says_so():
     payload["sources"] = [{"id": "s1", "uri": "file://a.py", "kind": "code"}]
     manifest["counts"]["sources"] = 1
     assert render_snapshot(manifest, payload).endswith("This snapshot has no records or plans yet (1 source).")
+
+
+def _block(text, identifier):
+    """The lines printed for one record, from its [kind] line to the blank line after it."""
+    for block in text.split("\n\n"):
+        if f"  id: {identifier}" in block:
+            return block
+    raise AssertionError(f"{identifier} is not in the output")
+
+
+def test_sources_prints_the_text_of_a_source_under_the_record_it_supports(snapshot):
+    manifest, payload = snapshot
+    block = _block(render_snapshot(manifest, payload, kind="decision", sources_text=True), "d1")
+    lines = block.splitlines()
+    heading = lines.index("  source chat://session/1:")
+    assert lines[heading - 1] == "  sources: chat://session/1, file://src/login.py"
+    assert lines[heading + 1:heading + 3] == ["    | Meeting, 1 November: keep login errors in one module.", "    | Owner: Mira."]
+    assert "  source file://src/login.py:" in lines and "    |     return None" in lines
+    # Without the option nothing of a source is printed but its address.
+    plain = render_snapshot(manifest, payload, kind="decision")
+    assert "Meeting, 1 November" not in plain and "return None" not in plain and "  source chat" not in plain
+    # A source that supports several records is printed under each.
+    text = render_snapshot(manifest, payload, sources_text=True)
+    assert text.count("    | Owner: Mira.") == 4 and text.count("  source chat://session/1:") == 4
+
+
+def test_a_long_source_is_cut_at_a_line_boundary_and_says_how_much_was_left_out(snapshot):
+    manifest, payload = snapshot
+    assert (memory_view.SOURCE_TEXT_LIMIT, memory_view.TOTAL_TEXT_LIMIT) == (1200, 60000)
+    payload["sources"][0]["content"] = "abcdefghi\n" * 300
+    block = _block(render_snapshot(manifest, payload, kind="decision", sources_text=True), "d1")
+    printed = [line for line in block.splitlines() if line.startswith("    | abcdefghi")]
+    # 120 whole lines of 9 characters fit in 1,200 characters; the other 1,800 are left out.
+    assert len(printed) == 120 and all(line == "    | abcdefghi" for line in printed)
+    assert "    (1800 more characters left out)" in block
+
+
+def test_the_total_of_source_text_is_bounded_and_the_note_comes_once(snapshot, monkeypatch):
+    manifest, payload = snapshot
+    monkeypatch.setattr(memory_view, "TOTAL_TEXT_LIMIT", 1500)
+    payload["sources"][0]["content"], payload["sources"][1]["content"] = "a" * 1000, "b" * 1000
+    text = render_snapshot(manifest, payload, sources_text=True)
+    assert "a" * 1000 in text and "b" * 500 in text and "b" * 501 not in text
+    assert "    (500 more characters left out)" in text
+    assert text.count("Source texts are limited to 1,500 characters in all; further texts are not shown.") == 1
+    # The later records that rest on the same source get no text at all once the bound is reached.
+    assert text.count("a" * 1000) == 1
+    assert "Source texts are limited" not in render_snapshot(manifest, payload, kind="decision", grep="zzz",
+                                                             sources_text=True)
+
+
+def test_source_text_cannot_carry_terminal_escapes_or_forged_lines(snapshot):
+    manifest, payload = snapshot
+    payload["sources"][0]["content"] = "safe\x1b[2J\x1b]0;title\x07 ‮gnp.exe\r\n\x1b[31mforged: line more\rend"
+    text = render_snapshot(manifest, payload, kind="decision", sources_text=True)
+    assert not any(ch in text for ch in "\x1b\x07\r‮ ")
+    assert "    | safe\\x1b[2J\\x1b]0;title\\x07 \\u202egnp.exe" in text
+    assert "    | \\x1b[31mforged: line\\u2028more\\x0dend" in text
+    assert "\nforged: line" not in text
+
+
+@pytest.mark.parametrize("content, reason", [("binary\x00data", "not text"), (None, "not text"), (7, "not text"),
+                                             ("  \n\t", "empty")])
+def test_a_source_that_is_not_text_or_empty_is_named_and_not_printed(snapshot, content, reason):
+    manifest, payload = snapshot
+    payload["sources"][0]["content"] = content
+    text = render_snapshot(manifest, payload, kind="decision", sources_text=True)
+    assert f"  source chat://session/1: {reason}, not shown" in text
+    assert "binary" not in text and "    | 7" not in text
+    assert "    | def login():" in text
+
+
+def test_a_source_missing_from_the_package_is_named_by_its_identifier(snapshot):
+    manifest, payload = snapshot
+    payload["records"][0]["source_ids"] = ["s1", "ghost"]
+    text = render_snapshot(manifest, payload, kind="decision", sources_text=True)
+    assert "  source ghost: missing from this package, not shown" in text
+    assert "  sources: chat://session/1" in text and "ghost" not in text.split("  source ghost")[0]
+
+
+def test_a_task_shows_its_acceptance_criteria_and_the_check_each_is_linked_to(snapshot):
+    manifest, payload = snapshot
+    payload["records"][2]["metadata"].update(
+        acceptance_criteria=["The unit check passes.", "An old file\nstill loads."],
+        criterion_checks={"The unit check passes.": "unit"})
+    text = render_snapshot(manifest, payload, kind="task")
+    block = _block(text, "t1")
+    assert "  acceptance criteria:\n    - The unit check passes. (check: unit)\n" \
+           "    - An old file still loads. (no check)\n" in block
+    # A task without criteria says nothing about them.
+    assert "acceptance criteria" not in _block(text, "t2")
+    payload["records"][2]["metadata"]["acceptance_criteria"] = []
+    assert "acceptance criteria" not in render_snapshot(manifest, payload, kind="task")
+
+
+def test_a_record_names_the_record_it_replaced_and_the_one_that_replaced_it(snapshot):
+    manifest, payload = snapshot
+    payload["records"][0]["status"] = "superseded"
+    payload["records"].append(_record("d2", "decision", "Login errors live in auth/login.py.", supersedes="d1"))
+    text = render_snapshot(manifest, payload, kind="decision")
+    assert "  replaced by: d2 (key-d2)\n" in _block(text, "d1") and "replaces" not in _block(text, "d1")
+    assert "  replaces: d1 (key-d1)\n" in _block(text, "d2") and "replaced by" not in _block(text, "d2")
+    # Only a record that is marked superseded says that something replaced it.
+    payload["records"][0]["status"] = "confirmed"
+    assert "replaced by" not in render_snapshot(manifest, payload, kind="decision")
+    # The replacing record is not in the package: nothing to name.
+    payload["records"][0]["status"] = "superseded"
+    del payload["records"][-1]
+    assert "replaced by" not in render_snapshot(manifest, payload, kind="decision")
+
+
+def test_grep_reads_source_text_only_when_it_is_shown(snapshot):
+    manifest, payload = snapshot
+    payload["sources"][1]["content"] = "def login():\n    return quokka_77\n" + "x\n" * 700 + "hidden_tail_88\n"
+    assert "Nothing in this snapshot matches" in render_snapshot(manifest, payload, grep="quokka_77")
+    text = render_snapshot(manifest, payload, grep="quokka_77", sources_text=True)
+    assert "Records (1 shown of 4)" in text and "    |     return quokka_77" in text
+    # Text beyond the bound is not on the screen, so it does not match; neither does text of a non-text source.
+    assert "Nothing in this snapshot matches" in render_snapshot(manifest, payload, grep="hidden_tail_88",
+                                                                 sources_text=True)
+    payload["sources"][0]["content"] = "binary\x00quokka_99"
+    assert "Nothing in this snapshot matches" in render_snapshot(manifest, payload, grep="quokka_99",
+                                                                 sources_text=True)
+
+
+def test_output_without_the_new_option_does_not_depend_on_source_text(snapshot):
+    manifest, payload = snapshot
+    with_text = render_snapshot(manifest, payload, sources_text=False)
+    for row in payload["sources"]:
+        del row["content"]
+    assert render_snapshot(manifest, payload) == with_text
+    assert "replaces" not in with_text and "replaced by" not in with_text and "acceptance criteria" not in with_text

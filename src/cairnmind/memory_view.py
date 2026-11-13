@@ -50,7 +50,52 @@ def _check_run(run):
             f"recorded by {_line(run.get('origin', 'unknown'))}, run {_line(run['id'])}")
 
 
-def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
+SOURCE_TEXT_LIMIT = 1200  # characters printed per source
+TOTAL_TEXT_LIMIT = 60000  # characters of source text per run
+
+
+def _cut(text, limit):
+    """Keep at most `limit` characters, ending at a line boundary when one falls in the second half."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    boundary = head.rfind("\n")
+    return head[:boundary] if boundary >= limit // 2 else head
+
+
+def _source_lines(ids, sources, left):
+    """Lines that print the text of a record's sources.
+
+    Returns the lines, the text they show (the only text --grep may match), the characters used and whether
+    the total bound cut or skipped a text. A source is named, not printed, when it is missing, not text or empty.
+    """
+    lines, seen, used, limited = [], [], 0, False
+    for identifier in dict.fromkeys(ids):
+        row = sources.get(identifier)
+        name = _line(row["uri"]) if row else _line(identifier)
+        text = row.get("content") if row else None
+        if row is None:
+            lines.append(f"  source {name}: missing from this package, not shown")
+        elif not isinstance(text, str) or "\x00" in text:
+            lines.append(f"  source {name}: not text, not shown")
+        elif not text.strip():
+            lines.append(f"  source {name}: empty, not shown")
+        elif left - used <= 0:
+            limited = True
+        else:
+            # Bound the text as it will be printed, so that escapes cannot make a line longer than it looks.
+            whole, allowed = _block(text).strip("\n"), min(SOURCE_TEXT_LIMIT, left - used)
+            kept = _cut(whole, allowed)
+            limited = limited or (allowed < SOURCE_TEXT_LIMIT and len(kept) < len(whole))
+            lines += [f"  source {name}:", *_indented(kept, "    | ")]
+            if len(kept) < len(whole):
+                lines.append(f"    ({len(whole) - len(kept)} more characters left out)")
+            seen.append(kept)
+            used += len(kept)
+    return lines, seen, used, limited
+
+
+def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sources_text=False):
     """Return the text view of an already validated snapshot."""
     if kind is not None and kind not in SHOW_KINDS:
         raise ValueError(f"Unknown kind {kind!r}; choose one of: {', '.join(SHOW_KINDS)}")
@@ -71,13 +116,27 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
     def found(*texts):
         return needle is None or any(needle in str(text).casefold() for text in texts)
 
-    shown_records = [
-        row for row in records.values()
-        if kind in (None, row["kind"]) and status in (None, row["status"])
-        and found(row["content"], row["key"], *uris(row["source_ids"]))]
+    candidates = [row for row in records.values() if kind in (None, row["kind"]) and status in (None, row["status"])]
     order = {name: index for index, name in enumerate(RECORD_KINDS)}
-    shown_records.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
-    shown_records.sort(key=lambda row: order.get(row["kind"], len(order)))
+    candidates.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+    candidates.sort(key=lambda row: order.get(row["kind"], len(order)))
+    # Source texts are laid out in the order they will be printed, so that the total bound falls where the
+    # reader sees it and --grep can match only text that is on the screen.
+    shown_records, texts, left, limited = [], {}, TOTAL_TEXT_LIMIT, False
+    for row in candidates:
+        lines, seen, used, hit = _source_lines(row["source_ids"], sources, left) if sources_text else ([], [], 0, False)
+        if found(row["content"], row["key"], *uris(row["source_ids"]), *seen):
+            shown_records.append(row)
+            texts[row["id"]] = lines
+            left, limited = left - used, limited or hit
+    replacing = {}
+    for row in records.values():
+        if isinstance(row.get("supersedes"), str):
+            replacing.setdefault(row["supersedes"], row)  # the first of several is named
+
+    def named(identifier):
+        other = records.get(identifier)
+        return _line(identifier) + (f" ({_line(other['key'])})" if other else "")
     shown_plans = [] if kind not in (None, "plan") or status is not None else [
         row for row in sorted(payload["plans"], key=lambda row: (row["title"], row["id"]))
         if found(row["title"], row["goal"], *row["constraints"],
@@ -107,11 +166,21 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
         out += ["", f"[{row['kind']}] {row['status']}, version {row['version']}, "
                     f"updated {_line(row.get('updated_at') or 'unknown')}",
                 f"  id: {_line(row['id'])}" + ("" if row["key"] == row["id"] else f"  key: {_line(row['key'])}"),
-                *_indented(row["content"], "  | "),
-                "  sources: " + ", ".join(_line(uri) for uri in uris(row["source_ids"]))]
+                *_indented(row["content"], "  | ")]
+        if isinstance(row.get("supersedes"), str):
+            out.append(f"  replaces: {named(row['supersedes'])}")
+        if row["status"] == "superseded" and row["id"] in replacing:
+            out.append(f"  replaced by: {named(replacing[row['id']]['id'])}")
+        out += ["  sources: " + ", ".join(_line(uri) for uri in uris(row["source_ids"])), *texts[row["id"]]]
         if row["kind"] != "task":
             continue
         out.append(f"  state: {_line(metadata.get('state', 'todo'))}")
+        criteria, links = metadata.get("acceptance_criteria"), metadata.get("criterion_checks")
+        if isinstance(criteria, list) and criteria:
+            links = links if isinstance(links, dict) else {}
+            out.append("  acceptance criteria:")
+            out += [f"    - {_line(text)} ({'check: ' + _line(links[text]) if text in links else 'no check'})"
+                    for text in criteria]
         if metadata.get("depends_on"):
             out.append("  depends on: " + ", ".join(_line(i) for i in metadata["depends_on"]))
         claims = [label for flag, label in _TASK_CLAIMS if metadata.get(flag) is True]
@@ -121,6 +190,9 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
             out.append("  historical check runs (carried in this snapshot; not fresh evidence for your checkout):")
             out += [_check_run(run) for run in sorted(runs[row["id"]], key=lambda r: str(r.get("ended_at") or ""),
                                                       reverse=True)]
+
+    if limited:
+        out += ["", f"Source texts are limited to {TOTAL_TEXT_LIMIT:,} characters in all; further texts are not shown."]
 
     if kind in (None, "plan") and status is None:
         out += ["", f"Plans ({len(shown_plans)} shown of {len(payload['plans'])})"]
@@ -146,9 +218,9 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None):
     return "\n".join(out)
 
 
-def show_snapshot(path, *, kind=None, status=None, grep=None, expected_snapshot_id=None):
+def show_snapshot(path, *, kind=None, status=None, grep=None, sources_text=False, expected_snapshot_id=None):
     """Validate the package exactly as ``inspect_snapshot`` does, then render it."""
     _, _, manifest, payload = _load_snapshot(path)
     if expected_snapshot_id is not None and manifest["snapshot_id"] != expected_snapshot_id:
         raise ValueError("Memory package changed while it was being authorized")
-    return render_snapshot(manifest, payload, kind=kind, status=status, grep=grep)
+    return render_snapshot(manifest, payload, kind=kind, status=status, grep=grep, sources_text=sources_text)
