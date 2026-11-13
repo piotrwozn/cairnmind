@@ -60,6 +60,65 @@ CATALOG = {
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
+    "Impact": "Wpływ zmian", "Compare with": "Porównaj z", "Pending only": "Tylko bez oceny",
+    "Kind / status": "Rodzaj / stan", "Record": "Ustalenie", "Linked to": "Powiązane z", "Checked": "Sprawdzone",
+    "Verdict": "Ocena", "Save verdict": "Zapisz ocenę", "not checked": "nie sprawdzone",
+    "still valid": "nadal aktualne", "needs update": "wymaga zmiany", "not related": "niezwiązane",
+    "Still valid": "Nadal aktualne", "Not related": "Niezwiązane",
+    "Needs update: say what to update": "Wymaga zmiany: napisz, co zmienić",
+    "What should be updated": "Co trzeba zmienić", "Note (optional)": "Notatka (opcjonalnie)",
+    "Not checked yet.": "Jeszcze nie sprawdzone.", "checked: {verdict} ({day})": "sprawdzone: {verdict} ({day})",
+    "Linked to what changed": "Powiązania ze zmianami", "names the file": "wskazuje plik",
+    "names {symbol} in": "wskazuje {symbol} w", "(link {status})": "(powiązanie {status})",
+    "rests on a snapshot from {day} of": "opiera się na kopii z {day} pliku",
+    "rests on a snapshot of": "opiera się na kopii pliku",
+    "its definition changed": "jego definicja się zmieniła",
+    "it is no longer defined there": "nie jest już tam zdefiniowany",
+    "it is newly defined there": "jest tam nowo zdefiniowany",
+    "it is now defined in the renamed file": "jest teraz zdefiniowany w pliku o nowej nazwie",
+    "its definition could not be compared": "nie można porównać jego definicji",
+    "A link means \"worth checking\", not that the record is wrong.":
+        "Powiązanie znaczy „warto sprawdzić”, a nie że ustalenie jest błędne.",
+    "Compared with {since} ({commit}).": "Porównano z {since} ({commit}).",
+    "Comparing the worktree with {since}…": "Porównywanie katalogu roboczego z {since}…",
+    "Could not read the impact list.": "Nie udało się odczytać listy wpływu zmian.",
+    "Nothing in this worktree differs from {since} ({commit}). Enter another commit to compare with, "
+    "for example main or HEAD~3.":
+        "Nic w tym katalogu roboczym nie różni się od {since} ({commit}). Wpisz inny commit do porównania, "
+        "na przykład main albo HEAD~3.",
+    "No entry without a verdict since {since} ({commit}).": "Brak wpisów bez oceny od {since} ({commit}).",
+    "No record is linked to what changed since {since} ({commit}).":
+        "Żadne ustalenie nie jest powiązane ze zmianami od {since} ({commit}).",
+    "{count} records worth re-checking since {since} ({commit}). A link means \"worth checking\", not that the "
+    "record is wrong.":
+        "Ustalenia warte ponownego sprawdzenia od {since} ({commit}): {count}. Powiązanie znaczy „warto "
+        "sprawdzić”, a nie że ustalenie jest błędne.",
+    "{count} documentation pages mention a changed definition (cairnmind impact lists them).":
+        "Strony dokumentacji wspominające zmienioną definicję: {count} (wypisuje je cairnmind impact).",
+    "Verdict saves your judgement of this entry as an audit note. It changes no record, no status and no task.":
+        "Ocena zapisuje Twój osąd tego wpisu jako notatkę audytową. Nie zmienia żadnego ustalenia, stanu ani "
+        "zadania.",
+    "Open an entry of the list first.": "Najpierw otwórz wpis z listy.",
+    "This entry cannot be judged as shown. Press r to read the list again.":
+        "Tego wpisu nie można ocenić w tej postaci. Naciśnij r, aby wczytać listę ponownie.",
+    "Saved as an audit note for this entry as listed. No record, status or task is changed.":
+        "Zapisywana jako notatka audytowa dla wpisu w tej postaci. Żadne ustalenie, stan ani zadanie się nie zmienia.",
+    "Needs update requires a note on what to update. Nothing was saved.":
+        "Ocena „wymaga zmiany” wymaga notatki, co zmienić. Niczego nie zapisano.",
+    "The code or the record changed, the list was reloaded. Nothing was saved.":
+        "Kod lub ustalenie się zmieniły, wczytano listę ponownie. Niczego nie zapisano.",
+    "The verdict was not saved.": "Ocena nie została zapisana.",
+    "The impact list is not available here.": "Lista wpływu zmian nie jest tu dostępna.",
+    "A verdict is being saved. Wait for its answer.": "Ocena jest zapisywana. Poczekaj na odpowiedź.",
+    "This record is no longer in the list, the list was reloaded. Nothing was saved.":
+        "Tego ustalenia nie ma już na liście, wczytano listę ponownie. Niczego nie zapisano.",
+    "No clear answer from the memory service. The verdict may have been saved; the list was reloaded and shows it "
+    "if so. Saving the same verdict again is safe and stores nothing twice.":
+        "Brak jednoznacznej odpowiedzi usługi pamięci. Ocena mogła zostać zapisana; wczytano listę ponownie i jeśli "
+        "tak, pokazuje ją. Ponowny zapis tej samej oceny jest bezpieczny i niczego nie powtórzy.",
+    "This verdict was already saved.": "Ta ocena była już zapisana.",
+    "Verdict saved: {verdict}. No record, status or task was changed.":
+        "Ocena zapisana: {verdict}. Żadne ustalenie, stan ani zadanie się nie zmieniło.",
     "Conflicts": "Sprzeczności", "Resolve": "Rozstrzygnij", "Resolve conflict": "Rozstrzygnij sprzeczność",
     "Possible conflict": "Możliwa sprzeczność", "new finding": "nowe ustalenie",
     "existing finding": "dotychczasowe ustalenie", "Scope": "Zakres", "whole project": "cały projekt",
