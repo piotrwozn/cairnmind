@@ -488,17 +488,26 @@ class UsageBy(str, Enum):
 def usage(ctx: typer.Context, project: str,
           since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
           by: Annotated[UsageBy, typer.Option("--by", help="Group by UTC day or by ISO week.")] = UsageBy.day,
+          warn_over: Annotated[int | None, typer.Option(
+              "--warn-over", min=1, help="Warn when input plus output tokens of the period exceed this; blocks "
+              "nothing. Default: warn_over_tokens under [usage] in .cairnmind/checks.toml.")] = None,
           as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
     """Sum the token usage of the built-in API agent per day or week, profile and model. Asks no model."""
     from cairnmind.usage import build_usage
+    from cairnmind.verification import usage_warn_threshold
     # Resolving the project name opens the store (it starts the database engine if stopped and may create the
     # data directory); the usage itself is read from the session journals and nothing is written to them.
     store = store_for(ctx.obj)
     found = store.resolve_project(project)
     # The cursors of history import name the Codex transcript files; the files themselves are read read-only.
     cursors = store.query("SELECT path,project_id,client FROM import_cursors WHERE client=:client", {"client": "codex"})
+    if warn_over is None:
+        try:
+            warn_over = usage_warn_threshold(store, found["id"])
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="usage settings")
     try:
-        result = build_usage(ctx.obj.data_dir, found, since, by=by.value, transcripts=cursors)
+        result = build_usage(ctx.obj.data_dir, found, since, by=by.value, transcripts=cursors, warn_over=warn_over)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--since")
     if as_json:

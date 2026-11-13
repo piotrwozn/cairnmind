@@ -207,11 +207,23 @@ def _row(label, row):
             f"  output {_cell(row['output_tokens'], row)}  cost {cost}")
 
 
+def _warning(totals: dict, threshold, since: str):
+    """A notice, never a limit, when the observed tokens of the period (input plus output) pass ``threshold``."""
+    observed = (totals["input_tokens"] or 0) + (totals["output_tokens"] or 0)
+    if threshold is None or observed <= threshold:
+        return None
+    bound = totals["tokens_are_lower_bound"]
+    return {"threshold_tokens": threshold, "observed_tokens": observed, "tokens_are_lower_bound": bound,
+            "message": f"{'at least ' if bound else ''}{observed} tokens (input plus output, all clients) in the "
+                       f"last {since}, over the warning threshold of {threshold}; nothing is blocked."}
+
+
 def _render(report: dict) -> str:
     groups, data, by = report["groups"], report["data"], report["by"]
     unit = "days are UTC" if by == "day" else "weeks are ISO weeks (Monday to Sunday) in UTC"
-    lines = [f"Usage of the built-in API agent for {report['project']['name']}, last {report['since']} "
-             f"(from {report['from']}); {unit}", COST_NOTE]
+    lines = [f"WARNING: {report['warning']['message']}"] if "warning" in report else []
+    lines += [f"Usage of the built-in API agent for {report['project']['name']}, last {report['since']} "
+              f"(from {report['from']}); {unit}", COST_NOTE]
     if data["codex_covered"]:
         lines.append(CODEX_NOTE)
     if report["partial"]:
@@ -240,14 +252,20 @@ def _render(report: dict) -> str:
     return "\n".join(lines)
 
 
-def build_usage(data_dir, project: dict, since="7d", *, by="day", transcripts=None, now=None) -> dict:
+def build_usage(data_dir, project: dict, since="7d", *, by="day", transcripts=None, warn_over=None,
+                now=None) -> dict:
     """Sum the usage of this project's API agent turns inside the period; reads files only.
+
+    ``warn_over``: a number of tokens; when the observed total (input plus output) is above it the result has
+    a ``warning`` and the text starts with ``WARNING:``. It never blocks anything.
 
     ``transcripts`` are the import cursors (dicts with path, project_id, client) that name the Codex rollout
     files of history import; the module cannot query the store, so without them Codex is not looked at.
     """
     if by not in ("day", "week"):
         raise ValueError("by must be day or week")
+    if warn_over is not None and (type(warn_over) is not int or warn_over < 1):
+        raise ValueError("warn_over must be a whole number of tokens, at least 1")
     span, data_dir = parse_since(since), Path(data_dir)
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -317,4 +335,6 @@ def build_usage(data_dir, project: dict, since="7d", *, by="day", transcripts=No
               "to": now.isoformat(timespec="seconds"), "partial": partial, "groups": rows, "totals": final,
               "totals_by_client": {client: _final(acc, partial_by[client]) for client, acc in sorted(clients.items())},
               "data": data, "cost_note": COST_NOTE, "by": by}
+    warning = _warning(final, warn_over, report["since"])
+    report = {**report, **({"warning": warning} if warning else {})}
     return {**report, "text": _render(report)}

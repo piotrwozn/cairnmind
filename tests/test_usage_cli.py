@@ -113,6 +113,53 @@ def test_codex_usage_comes_from_the_rollouts_that_import_follows(tmp_path, monke
     assert run(settings, "demo").output.splitlines()[3].startswith("PARTIAL REPORT: 1 Codex transcripts are gone")
 
 
+def test_warn_over_adds_a_warning_and_never_changes_the_exit_code(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    warned = run(settings, "demo", "--warn-over", "10")
+    assert warned.exit_code == 0, warned.output or repr(warned.exception)
+    assert warned.output.splitlines()[0].startswith("WARNING: 34 tokens (input plus output, all clients)")
+    assert "over the warning threshold of 10; nothing is blocked." in warned.output.splitlines()[0]
+    payload = json.loads(run(settings, "demo", "--warn-over", "10", "--json").output)
+    assert payload["warning"]["observed_tokens"] == 34 and payload["warning"]["threshold_tokens"] == 10
+    for quiet in (run(settings, "demo", "--warn-over", "34"), run(settings, "demo")):
+        assert quiet.exit_code == 0 and "WARNING" not in quiet.output
+    assert "warning" not in json.loads(run(settings, "demo", "--warn-over", "34", "--json").output)
+    assert run(settings, "demo", "--warn-over", "0").exit_code != 0
+    assert run(settings, "demo", "--warn-over", "many").exit_code != 0
+
+
+def test_the_default_threshold_comes_from_the_checks_file_and_the_option_wins(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, pid = workspace(tmp_path)
+    config = tmp_path / "repo" / ".cairnmind" / "checks.toml"
+    config.parent.mkdir()
+    config.write_text('[checks.unit]\nargv = ["true"]\n\n[usage]\nwarn_over_tokens = 20\n')
+    from_file = run(settings, "demo")
+    assert from_file.exit_code == 0 and from_file.output.startswith("WARNING: 34 tokens")
+    assert "over the warning threshold of 20" in from_file.output.splitlines()[0]
+    assert "WARNING" not in run(settings, "demo", "--warn-over", "1000").output
+    over = json.loads(run(settings, "demo", "--warn-over", "5", "--json").output)
+    assert over["warning"]["threshold_tokens"] == 5
+    # The check profiles beside it are read as before.
+    from cairnmind.verification import load_profiles
+    assert list(load_profiles(Store(settings.data_dir), pid)) == ["unit"]
+
+
+@pytest.mark.parametrize("text", ["[usage]\nwarn_over_tokens = 0\n", '[usage]\nwarn_over_tokens = "many"\n',
+                                  "[usage]\nwarn_over_tokens = 5\nlimit = 1\n", "[usage]\nwarn_over_tokens = true\n",
+                                  "usage = 3\n", "[usage\n"])
+def test_a_bad_checks_file_setting_is_an_error_unless_the_option_is_given(tmp_path, monkeypatch, text):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    config = tmp_path / "repo" / ".cairnmind" / "checks.toml"
+    config.parent.mkdir()
+    config.write_text(text)
+    bad = run(settings, "demo")
+    assert bad.exit_code != 0 and "WARNING" not in bad.output
+    assert run(settings, "demo", "--warn-over", "1000").exit_code == 0
+
+
 def test_a_bad_since_fails_with_its_message(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)

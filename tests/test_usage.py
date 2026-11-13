@@ -692,6 +692,59 @@ def test_damaged_codex_records_are_counted_and_other_lines_are_not_parsed(data, 
     assert "3 usage records unreadable" in result["text"]
 
 
+def test_a_complete_total_over_the_threshold_warns_first_in_text_and_in_json(data):
+    data.run("r1", "s1")
+    data.journal("s1", turn("r1", stamp(1), done(60, 50)))
+    result = data.build(warn_over=100)
+    assert result["warning"] == {"threshold_tokens": 100, "observed_tokens": 110, "tokens_are_lower_bound": False,
+                                 "message": "110 tokens (input plus output, all clients) in the last 7d, over the "
+                                            "warning threshold of 100; nothing is blocked."}
+    assert result["text"].splitlines()[0] == f"WARNING: {result['warning']['message']}"
+    assert list(result)[-2:] == ["warning", "text"] and result["partial"] is False
+    # A warning changes nothing else in the report.
+    plain = data.build()
+    assert {k: v for k, v in result.items() if k not in ("warning", "text")} == {
+        k: v for k, v in plain.items() if k != "text"}
+    assert result["text"].splitlines()[1:] == plain["text"].splitlines()
+
+
+def test_a_lower_bound_total_over_the_threshold_says_at_least(data):
+    data.run("r1", "s1")
+    data.journal("s1", turn("r1", stamp(1), {"usage_complete": False, "input_tokens": 150}))
+    result = data.build(warn_over=100)
+    assert result["warning"]["tokens_are_lower_bound"] is True and result["warning"]["observed_tokens"] == 150
+    assert result["text"].startswith("WARNING: at least 150 tokens (input plus output, all clients)")
+    # A report that cannot see everything (here: a Codex rollout that is gone) makes a complete-looking total a
+    # lower bound too, and the warning keeps saying so.
+    data.journal("s1", turn("r1", stamp(1), done(60, 50)))
+    gone = {"path": str(data.root / "gone.jsonl"), "project_id": "p1", "client": "codex"}
+    partial = data.build(warn_over=100, transcripts=[gone])
+    assert partial["warning"]["tokens_are_lower_bound"] is True
+    assert partial["text"].startswith("WARNING: at least 110 tokens")
+
+
+def test_no_warning_at_or_below_the_threshold_or_without_one(data):
+    data.run("r1", "s1")
+    data.journal("s1", turn("r1", stamp(1), done(60, 50)))
+    for result in (data.build(warn_over=110), data.build(warn_over=10**9), data.build(), data.build(by="week")):
+        assert "warning" not in result and "WARNING" not in result["text"]
+    assert "warning" not in data.build("1h", warn_over=1)  # no usage in the period: nothing observed
+
+
+def test_codex_tokens_count_towards_the_threshold(data):
+    data.run("r1", "s1")
+    data.journal("s1", turn("r1", stamp(1), done(1, 1)))
+    cursor = rollout(data, "a", *three_reports())
+    assert data.build("2d", warn_over=100, transcripts=[cursor])["warning"]["observed_tokens"] == 112
+    assert "warning" not in data.build("2d", warn_over=112, transcripts=[cursor])
+
+
+@pytest.mark.parametrize("bad", [0, -5, "100", 1.5, True])
+def test_a_threshold_must_be_a_positive_whole_number(data, bad):
+    with pytest.raises(ValueError, match="warn_over must be a whole number of tokens"):
+        data.build(warn_over=bad)
+
+
 def test_codex_weeks_use_the_same_iso_weeks(data):
     year_end = datetime(2025, 1, 5, 12, 0, tzinfo=timezone.utc)
     cursor = rollout(data, "a", record(1, (10, 1), (10, 1), "2024-12-29T23:30:00+00:00"),
