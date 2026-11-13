@@ -120,6 +120,59 @@ def test_cockpit_stage_is_read_only_and_never_starts_an_assistant(cockpit):
                       headers={"Origin": ORIGIN}).status_code in {401, 403}
 
 
+def test_two_step_plan_hands_implement_to_codex_and_review_to_claude_each_with_its_own_ack(tmp_path):
+    """The acceptance scenario with a fake runner: the router picks, the launcher's packet is ACKed."""
+    from cairnmind.sessions import SessionManager
+    from cairnmind.stages import project_routing, resolve_stage
+    from test_brief import repository
+    root = repository(tmp_path / "repo")
+    store = Store(tmp_path / "memory")
+    settings = Settings.load(store.data_dir)
+    project = store.add_project("demo", root)
+    plans, sessions = PlanManager(store), SessionManager(store, settings)
+    saved = plans.save(project["id"], {"title": "Two steps"},
+                       [{"key": "build", "content": "Build it"},
+                        {"key": "polish", "content": "Polish it", "depends_on": ["build"]}], "initial", activate=True)
+    CockpitState(settings).update({"project_stages": {project["id"]: STAGES}})
+    preferences = CockpitState(settings).load()
+
+    def route():
+        return resolve_stage(plans.next_task(project["id"], None, str(root)),
+                             *project_routing(preferences, project["id"]))
+
+    def launch_and_ack(decision):
+        # What the launcher does for the chosen client: prepare a packet; the assistant ACKs it.
+        prepared = sessions.prepare(project["id"], decision["client"], worktree=str(root), timeout=0)
+        assert prepared["status"] == "ready"
+        packet = prepared["packet"]
+        readback = {key: ({"id": packet[field]["id"], "version": packet[field]["version"]} if packet.get(field) else None)
+                    for key, field in (("plan", "active_plan"), ("task", "active_task"))}
+        assert readback["task"] == {"id": decision["task"]["id"], "version": decision["task"]["version"]}
+        sessions.ack(prepared["session_id"], packet["id"], packet["hash"], readback)
+        sessions.require_ack(prepared["session_id"])
+        return prepared["session_id"], readback
+
+    first = route()
+    assert (first["stage"], first["client"], first["task"]["state"]) == ("implement", "codex", "todo")
+    codex, codex_readback = launch_and_ack(first)
+    assert route() == first  # Routing again changes nothing.
+    # The implementing assistant (not the router) hands the step on to review.
+    move(store, plans, project, saved, "needs_review")
+    second = route()
+    assert (second["stage"], second["client"], second["task"]["id"]) == ("review", "claude", first["task"]["id"])
+    with pytest.raises(ValueError, match="resume_required"):
+        sessions.require_ack(codex)  # The task changed: the earlier ACK no longer covers it.
+    claude, claude_readback = launch_and_ack(second)
+    # Both ACK the same plan. Its version is not the same: recording the task's new state is a
+    # plan change (plans.py bumps the version with every task edit), so each session ACKs the
+    # version current at its own launch. Nothing but that one state edit happened in between.
+    assert codex_readback["plan"] == {"id": saved["plan"]["id"], "version": saved["plan"]["version"]}
+    assert claude_readback["plan"] == {"id": saved["plan"]["id"], "version": saved["plan"]["version"] + 1}
+    assert claude_readback["task"]["version"] == codex_readback["task"]["version"] + 1
+    steps = [(t["content"], t["metadata"].get("depends_on")) for t in plans.get(project["id"], saved["plan"]["id"])["tasks"]]
+    assert steps == [(t["content"], t["metadata"].get("depends_on")) for t in saved["tasks"]]
+
+
 def test_cockpit_stage_reports_an_unknown_assistant_instead_of_another(cockpit):
     settings, app, client, runtime, project, requests = cockpit
     CockpitState(settings).update({"project_stages": {project["id"]: {"review": "removed-slot"}}})
