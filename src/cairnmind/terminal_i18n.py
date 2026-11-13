@@ -404,6 +404,14 @@ CATALOG.update({
         "Przypisanego asystenta nie można uruchomić dla kroku planu.",
     # Plan stages for the built-in API agent and Copilot (#125)
     "default model": "model domyślny",
+    "The assistant of this stage changed since it was mapped. Confirm it in More → Plan stages; nothing was started.":
+        "Asystent tego etapu zmienił się od przypisania. Potwierdź go w Więcej → Etapy planu; "
+        "nic nie zostało uruchomione.",
+    "This stage was mapped before it could name the built-in agent or Copilot. Confirm it in More → Plan stages; "
+    "nothing was started.":
+        "Ten etap przypisano, zanim mógł wskazywać wbudowanego agenta lub Copilota. Potwierdź go w "
+        "Więcej → Etapy planu; nic nie zostało uruchomione.",
+    "not confirmed; save it to confirm": "niepotwierdzony; zapisz, aby potwierdzić",
     "The mapped assistant has no credential. Add its key in Connections; nothing was started.":
         "Przypisany asystent nie ma poświadczeń. Dodaj jego klucz w Połączeniach; nic nie zostało uruchomione.",
     "The mapped assistant's credential cannot be read. Check it in Connections; nothing was started.":

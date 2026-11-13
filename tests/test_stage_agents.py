@@ -38,6 +38,12 @@ SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": 
          {"id": "cloud", "profile_id": "api-cloud"}, {"id": "pilot", "profile_id": "copilot"}]
 
 
+def chosen(slot):
+    """The stage as Plan stages saves it: the slot with the profile and client it names."""
+    profile_id = next(s["profile_id"] for s in SLOTS if s["id"] == slot)
+    return {"slot": slot, "profile_id": profile_id, "client": next(p["client"] for p in PROFILES if p["id"] == profile_id)}
+
+
 class ServiceTransport(httpx.BaseTransport):
     """The launcher's synchronous client, answered by the real memory service app."""
     def __init__(self, app):
@@ -201,8 +207,8 @@ def agent_session(stack, decision):
 def test_two_step_plan_with_an_api_or_copilot_stage_each_session_acks_the_same_plan(stack, implement, review):
     project, plans, saved = stack["project"], stack["plans"], stack["saved"]
     CockpitState(stack["settings"]).update({"profiles": PROFILES, "project_slots": {project["id"]: SLOTS},
-                                            "project_stages": {project["id"]: {"implement": implement,
-                                                                               "review": review}}})
+                                            "project_stages": {project["id"]: {"implement": chosen(implement),
+                                                                               "review": chosen(review)}}})
 
     def launch(decision):
         return (agent_session if decision["client"] in {"api", "copilot"} else native_session)(stack, decision)
@@ -237,7 +243,7 @@ def test_an_api_stage_without_a_credential_says_so_and_starts_nothing(stack):
     project = stack["project"]
     stack["environment"].clear()
     CockpitState(stack["settings"]).update({"profiles": PROFILES, "project_slots": {project["id"]: SLOTS},
-                                            "project_stages": {project["id"]: {"implement": "cloud"}}})
+                                            "project_stages": {project["id"]: {"implement": chosen("cloud")}}})
     sessions_before = stack["store"].query("SELECT FROM sessions")
     decision = route(stack)
     assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", "credential_missing", "cloud")

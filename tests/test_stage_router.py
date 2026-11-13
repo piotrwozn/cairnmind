@@ -114,7 +114,7 @@ def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monk
                 for row in AGENT_PROFILES]
     CockpitState(settings).update({"profiles": profiles, "project_slots": {project["id"]: [
         {"id": "cloud", "profile_id": "api-cloud"}, {"id": "pilot", "profile_id": "copilot"}]},
-        "project_stages": {project["id"]: {"implement": "cloud"}}})
+        "project_stages": {project["id"]: {"implement": CLOUD}}})
     before = plans.get(project["id"], saved["plan"]["id"])
     output = ask()
     assert "Assistant: Cloud API (cloud)" in output and "Model: openai · gpt-x" in output
@@ -130,7 +130,7 @@ def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monk
         "start_slot", "api", None, "agent_client")
     assert value["credential"] == "configured_unchecked" and "fixture-not-a-real-key" not in output
 
-    CockpitState(settings).update({"project_stages": {project["id"]: {"implement": "pilot"}}})
+    CockpitState(settings).update({"project_stages": {project["id"]: {"implement": PILOT}}})
     monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
         "available": False, "code": "copilot_sdk_missing"})
     output = ask()
@@ -244,6 +244,9 @@ def test_two_step_plan_hands_implement_to_codex_and_review_to_claude_each_with_i
     assert steps == [(t["content"], t["metadata"].get("depends_on")) for t in saved["tasks"]]
 
 
+# Agent stages as Plan stages saves them: the slot with the profile and client chosen for it.
+CLOUD = {"slot": "cloud", "profile_id": "api-cloud", "client": "api"}
+PILOT = {"slot": "pilot", "profile_id": "copilot", "client": "copilot"}
 AGENT_PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
                   {"id": "claude", "client": "claude", "label": "Claude"},
                   {"id": "api-cloud", "client": "api", "label": "Cloud API", "provider": "openai", "model": "gpt-x"},
@@ -254,7 +257,7 @@ def test_cockpit_stage_reads_an_agent_credential_and_runtime_without_starting_an
     settings, app, client, runtime, project, requests = cockpit
     CockpitState(settings).update({"profiles": AGENT_PROFILES, "project_slots": {project["id"]: [
         {"id": "codex", "profile_id": "codex"}, {"id": "cloud", "profile_id": "api-cloud"},
-        {"id": "pilot", "profile_id": "copilot"}]}, "project_stages": {project["id"]: {"review": "cloud"}}})
+        {"id": "pilot", "profile_id": "copilot"}]}, "project_stages": {project["id"]: {"review": CLOUD}}})
     headers = login(app, client)
 
     def stage():
@@ -272,7 +275,7 @@ def test_cockpit_stage_reads_an_agent_credential_and_runtime_without_starting_an
     assert (value["action"], value["problem"], value["credential"]) == ("start_slot", None, "configured_unchecked")
     assert "FIXTURE-SESSION-KEY" not in json.dumps(value)
 
-    CockpitState(settings).update({"project_stages": {project["id"]: {"review": "pilot"}}})
+    CockpitState(settings).update({"project_stages": {project["id"]: {"review": PILOT}}})
     monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
         "available": False, "code": "copilot_sdk_missing"})
     value = stage()

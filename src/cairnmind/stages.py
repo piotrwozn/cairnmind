@@ -22,20 +22,37 @@ _SLOT = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
+def _valid_choice(target) -> bool:
+    """A slot id (maps saved before #125), or the slot with the profile and client it named when saved."""
+    if isinstance(target, str):
+        return bool(_SLOT.fullmatch(target))
+    return (isinstance(target, dict) and set(target) == {"slot", "profile_id", "client"}
+            and all(isinstance(target[key], str) and _SLOT.fullmatch(target[key]) for key in ("slot", "profile_id"))
+            and target["client"] in LAUNCHABLE_CLIENTS)
+
+
+def stage_slot(target) -> str:
+    """The slot id a client stage names, in either shape."""
+    return target["slot"] if isinstance(target, dict) else target
+
+
 def validate_stage_map(value) -> dict:
     """The stage map of one project: implement/review name an assistant slot, test a check profile.
 
     Only the shape is checked here. Whether a slot or a profile exists is decided when the router
     runs, so that removing an assistant never makes the preferences unreadable, and a map that
-    names a missing one is shown as such instead of being repaired or replaced.
+    names a missing one is shown as such instead of being repaired or replaced. Plan stages saves
+    a client stage as the slot with the profile and client it named then; a plain slot id is an
+    older map, still read.
     """
     if not isinstance(value, dict) or set(value) - set(STAGES):
         raise ValueError("Unknown plan stage; use implement, review or test.")
     result = {}
     for stage, target in value.items():
         if stage in CLIENT_STAGES:
-            if not isinstance(target, str) or not _SLOT.fullmatch(target):
+            if not _valid_choice(target):
                 raise ValueError("A stage must name an assistant slot.")
+            target = dict(target) if isinstance(target, dict) else target
         elif (not isinstance(target, str) or not 1 <= len(target) <= 160 or target.startswith("-")
                 or _CONTROL.search(target)):
             raise ValueError("The test stage must name a check profile.")
@@ -113,21 +130,32 @@ def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: lis
     if stage == "test":
         decision.update(action="run_check", check_profile=target)
         return decision
-    decision["slot_id"] = target
-    slot = next((row for row in slots if isinstance(row, dict) and row.get("id") == target), None)
+    slot_id = stage_slot(target)
+    decision["slot_id"] = slot_id
+    slot = next((row for row in slots if isinstance(row, dict) and row.get("id") == slot_id), None)
     profile = next((row for row in profiles if slot and isinstance(row, dict) and row.get("id") == slot.get("profile_id")), None)
     if slot is None or profile is None:
         # Never fall back to another assistant: the owner chose this one.
         decision["problem"] = "unknown_assistant"
         return decision
     decision.update(profile_id=profile["id"], client=profile.get("client"), label=profile.get("label"))
+    if profile.get("client") in AGENT_CLIENTS:
+        decision.update(provider=profile.get("provider"), model=profile.get("model"))
+    # A slot keeps its id when its connection is replaced or the default slots change: the stage
+    # starts only the profile that was chosen for it, never what the slot points to now.
+    if isinstance(target, dict) and (target["profile_id"], target["client"]) != (profile["id"], profile.get("client")):
+        decision["problem"] = "assistant_changed"
+        return decision
+    if not isinstance(target, dict) and profile.get("client") in AGENT_CLIENTS:
+        # A map saved before #125 named only the slot, when it could hold Codex or Claude Code only.
+        decision["problem"] = "assistant_unconfirmed"
+        return decision
     if profile.get("client") not in LAUNCHABLE_CLIENTS:
         decision["problem"] = "unavailable_assistant"
         return decision
     if profile["client"] in AGENT_CLIENTS:
         observed = readiness(profile) if readiness else {"credential": "unknown", "runtime": "unknown"}
-        decision.update(provider=profile.get("provider"), model=profile.get("model"),
-                        credential=observed.get("credential"),
+        decision.update(credential=observed.get("credential"),
                         runtime=observed.get("runtime") if profile["client"] == "copilot" else None)
         problem = agent_problem(profile, observed)
         if problem:
@@ -177,9 +205,14 @@ _PROBLEMS = {
     "credential_unavailable": ("The mapped assistant's credential cannot be read. Check it in Connections; "
                                "nothing was started."),
     "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.",
+    "assistant_changed": ("The assistant of this stage changed since it was mapped. Confirm it in More → Plan stages; "
+                          "nothing was started."),
+    "assistant_unconfirmed": ("This stage was mapped before it could name the built-in agent or Copilot. Confirm it "
+                              "in More → Plan stages; nothing was started."),
 }
-# Problems the person fixes in the assistant's connection, not in the stage map.
+# Problems whose text already says what to do: the connection, or confirming the stage again.
 CONNECTION_PROBLEMS = ("credential_missing", "credential_unavailable", "runtime_missing")
+CONFIRM_PROBLEMS = ("assistant_changed", "assistant_unconfirmed")
 _REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Every step of the plan is done.",
             "blocked": "Every remaining step is blocked."}
 

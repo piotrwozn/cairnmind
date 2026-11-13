@@ -12,7 +12,8 @@ import json
 import subprocess
 import sys
 
-from .stages import AGENT_CLIENTS, CLIENT_STAGES, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES, describe, validate_stage_map
+from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
+                     describe, stage_slot, validate_stage_map)
 
 _UNSET = ":unset"
 
@@ -172,8 +173,8 @@ async def run_next_stage(app):
             return
         app.notice("")
         await app.push_screen_wait(MessageModal("Check result", text + "\n\n" + check_summary(result, app.t)))
-    elif decision.get("problem") in CONNECTION_PROBLEMS:
-        # The mapped assistant stays mapped; its connection is what needs the person.
+    elif decision.get("problem") in CONNECTION_PROBLEMS + CONFIRM_PROBLEMS:
+        # The text says what to do: fix the connection, or confirm the stage in Plan stages.
         await app.push_screen_wait(MessageModal("Run next stage", text))
     else:
         await app.push_screen_wait(MessageModal("Run next stage", text + "\n\n"
@@ -197,9 +198,20 @@ async def edit_stages(app):
             return app.t(stage) + " · " + app.t("Not set")
         if stage == "test":
             return app.t(stage) + " · " + target
-        slot = next((s for s in slots if s["id"] == target), None)
+        slot_id = stage_slot(target)
+        slot = next((s for s in slots if s["id"] == slot_id), None)
         name = profiles.get(slot["profile_id"], {}).get("label") if slot else None
-        return app.t(stage) + " · " + (name or app.t("Unknown assistant")) + " (" + target + ")"
+        text = app.t(stage) + " · " + (name or app.t("Unknown assistant")) + " (" + slot_id + ")"
+        unconfirmed = slot and (choice(slot) != target if isinstance(target, dict)
+                                else choice(slot)["client"] in AGENT_CLIENTS)
+        if unconfirmed:
+            text += " · " + app.t("not confirmed; save it to confirm")
+        return text
+
+    def choice(slot):
+        # What a stage stores: the slot and the profile and client it names at this moment.
+        return {"slot": slot["id"], "profile_id": slot["profile_id"],
+                "client": profiles.get(slot["profile_id"], {}).get("client")}
 
     stage = await app.push_screen_wait(ChoiceModal("Plan stages", [(shown(s), s) for s in STAGES]))
     if stage is None:
@@ -210,6 +222,10 @@ async def edit_stages(app):
         value = await app.push_screen_wait(ChoiceModal(app.t(stage), choices + [("Not set", _UNSET)]))
         if value is None:
             return
+        if value != _UNSET:
+            # Saving binds the stage to the assistant chosen now; a later change of the slot's
+            # connection is shown, never started, until the stage is saved again.
+            value = choice(next(s for s in slots if s["id"] == value))
     else:
         def valid(text):
             try:

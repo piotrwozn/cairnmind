@@ -276,8 +276,41 @@ async def test_plan_stages_offer_only_launchable_assistants_and_save_in_preferen
     # Every assistant the workspace can start is offered, GitHub Copilot included (#125).
     assert offered == ["slot-native", "slot-github", ":unset"]
     saves = [body for method, path, _, body in broker.calls if (method, path) == ("PUT", "/api/settings")]
-    assert saves == [{"project_stages": {"project-keyboard": {"review": "slot-native"}}},
-                     {"project_stages": {"project-keyboard": {"review": "slot-native", "test": "unit"}}}]
+    chosen = {"slot": "slot-native", "profile_id": "native-private-1", "client": "codex"}
+    assert saves == [{"project_stages": {"project-keyboard": {"review": chosen}}},
+                     {"project_stages": {"project-keyboard": {"review": chosen, "test": "unit"}}}]
+
+
+@pytest.mark.asyncio
+async def test_saving_a_stage_again_confirms_the_assistant_its_slot_now_names(tmp_path, monkeypatch):
+    from cairnmind.stages import project_routing, resolve_stage
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    # A map saved before #125: the slot only. Its slot holds Copilot, which was never confirmed.
+    broker.preferences["project_stages"] = {"project-keyboard": {"review": "slot-github"}}
+    step = {"plan": {"id": "plan-1", "version": 1, "title": "P"}, "reason": "needs_review",
+            "task": {"id": "task-1", "version": 2, "content": "Review", "metadata": {"state": "needs_review"}}}
+
+    def route():
+        preferences = {**broker.preferences, "profiles": broker.profiles}
+        return resolve_stage(step, *project_routing(preferences, "project-keyboard"),
+                             readiness=lambda profile: {"credential": "not_required", "runtime": "ready"})
+    assert route()["problem"] == "assistant_unconfirmed"
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.edit_stages()
+        await wait_for(app, pilot, ChoiceModal)
+        await pilot.pause()
+        listed = screen_text(app)
+        await pilot.press("down", "enter")  # review
+        await wait_for(app, pilot, ChoiceModal)
+        await pilot.press("down", "enter")  # slot-github
+        await settle(app, pilot)
+    assert "not confirmed; save it to confirm" in " ".join(listed.split())
+    assert broker.preferences["project_stages"]["project-keyboard"]["review"] == {
+        "slot": "slot-github", "profile_id": "copilot-private-2", "client": "copilot"}
+    decision = route()
+    assert (decision["action"], decision["problem"], decision["client"]) == ("start_slot", None, "copilot")
 
 
 def test_palette_routes_run_next_stage_through_the_workspace_state(tmp_path):
