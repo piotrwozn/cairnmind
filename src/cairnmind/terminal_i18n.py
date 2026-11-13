@@ -438,6 +438,9 @@ CATALOG.update({
     "The profile is read from this folder's checks.toml when it runs.":
         "Profil jest odczytywany z checks.toml tego katalogu podczas uruchomienia.",
     "Plan stages saved. Nothing was started.": "Etapy planu zapisane. Nic nie zostało uruchomione.",
+    # Notice history (#130)
+    "Notices": "Komunikaty", "No notices yet.": "Brak komunikatów.", "No project": "Brak projektu",
+    "Read the notices that were replaced on the notice line": "Przeczytaj komunikaty zastąpione w wierszu komunikatów",
 })
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)

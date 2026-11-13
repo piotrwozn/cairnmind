@@ -194,7 +194,7 @@ async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeyp
     from cairnmind.terminal_ui import ChoiceModal
     assert [row[3] for row in COMMANDS] == [
         "search", "client1", "client2", "inspector", "ask", "brief", "graph", "search", "add_project", "start_work",
-        "connections", "sessions", "more", "settings", "focus", "cockpit", "", "next_stage"]
+        "connections", "sessions", "more", "settings", "focus", "cockpit", "", "next_stage", "notices"]
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
@@ -202,7 +202,7 @@ async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeyp
         app.action_more()
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         assert [value for _, value in app.screen.choices] == [
-            "sessions", "assistants", "scan", "queue", "snapshot", "import", "settings", "details", "stages"]
+            "sessions", "assistants", "scan", "queue", "snapshot", "import", "settings", "details", "stages", "notices"]
         await pilot.press("escape")
         buttons = [button.id for button in app.query("#project-page Button")]
     assert buttons == ["project-back", "assistant-select", "project-work", "memory-open", "assistant-add", "stage-next"]

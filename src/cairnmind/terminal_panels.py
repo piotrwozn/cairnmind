@@ -288,6 +288,7 @@ class SidebarApp(BasePanel):
                 yield Button(self.t("Connections"), id="auth-open")
                 yield Button(self.t("More"), id="more-open")
             yield Static("", id="panel-notice", markup=False)
+            yield Static("", id="notice-mark", markup=False)
             yield Static(self.t("Ctrl+B then Space: menu · Tab: next · Esc: back"), id="sidebar-help", markup=False)
         yield Footer()
 
@@ -959,15 +960,25 @@ class SidebarApp(BasePanel):
             ("Queue", "queue"),
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
             # New entries go last: keyboard paths to the existing ones keep their positions.
-            ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages")]))
+            ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages"),
+            ("Notices", "notices")]))
         actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
                    "scan": self.scan_projects,
                    "queue": self.action_queue,
-                   "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings}
+                   "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings,
+                   "notices": self.action_notices}
         if action == "details":
             await self.push_screen_wait(MessageModal("Status", self.workspace_data))
         elif action in actions:
             actions[action]()
+
+    @work(group="sidebar-notices", exclusive=True, exit_on_error=False)
+    async def action_notices(self):
+        """The notices this sidebar showed, newest first; opening clears the mark on the notice line."""
+        self.notice_history.mark_seen()
+        self.show_notice_mark()
+        text = self.notice_history.lines(self.workspace_data, self.t)
+        await self.push_screen_wait(MessageModal("Notices", text or self.t("No notices yet.")))
 
     @work(group="sidebar-process-memory", exclusive=True, exit_on_error=False)
     async def action_queue(self):
