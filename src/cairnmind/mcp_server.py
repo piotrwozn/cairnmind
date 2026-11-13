@@ -107,9 +107,12 @@ def _next_task_view(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _looks_like_path(value: str) -> bool:
-    """A project given as a path ("." or "../app"), not as an id or a name."""
-    return (value.startswith((".", "~", os.sep)) or os.sep in value
-            or Path(value).expanduser().exists())
+    """A project given as a path ("." or "../app", "~/app", "/abs/app"); anything else is an id or a name.
+
+    A name is never guessed from the working directory: a local folder of that name, or a "/" in it,
+    does not make it a path.
+    """
+    return value.startswith((".", "~")) or os.path.isabs(value)
 
 
 class ServiceClient:
@@ -171,8 +174,8 @@ class ServiceClient:
 
     async def _containing_root(self, project: str) -> str | None:
         """The most specific registered root containing the project path (or the working directory)."""
-        base = Path(project).expanduser()
-        base = (base if base.is_dir() else Path.cwd()).resolve()
+        # A path was made absolute at start; a name or id is never read as a local folder.
+        base = (Path(project) if os.path.isabs(project) and Path(project).is_dir() else Path.cwd()).resolve()
         roots = (await self._send("GET", "/project-roots", None, {"project": project})).get("roots") or []
         inside = [str(Path(root).resolve()) for root in roots if isinstance(root, str)
                   and base.is_relative_to(Path(root).resolve())]

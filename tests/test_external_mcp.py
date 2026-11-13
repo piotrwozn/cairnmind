@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -42,7 +43,7 @@ class FixtureModel:
 
 
 def repository(root):
-    root.mkdir()
+    root.mkdir(parents=True)
     (root / "app.py").write_text("VALUE = 1\n")
     for args in (("init",), ("config", "user.email", "fixture@example.invalid"),
                  ("config", "user.name", "Fixture"), ("add", "."), ("commit", "-m", "fixture")):
@@ -206,6 +207,39 @@ def test_relative_paths_are_resolved_by_the_bridge(tmp_path, clean_env, monkeypa
     assert bridge.external == {"project": str(tmp_path / "repo"), "worktree": str(tmp_path / "repo")}
     named = ServiceClient(settings, external={"project": "external-mcp", "worktree": None})
     assert named.external == {"project": "external-mcp", "worktree": None}
+    home = ServiceClient(settings, external={"project": "~", "worktree": None})
+    assert home.external["project"] == str(Path.home().resolve())
+
+
+def test_a_project_name_is_sent_as_given_even_when_it_looks_local(tmp_path, clean_env, monkeypatch):
+    settings = Settings.load(tmp_path / "memory", create=True)
+    # The editor's directory is project "mono", which has a web/ folder; project "web" lives elsewhere.
+    (tmp_path / "mono" / "web").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "mono")
+    for name in ("web", "team/web"):
+        assert ServiceClient(settings, external={"project": name, "worktree": None}).external["project"] == name
+
+
+async def test_a_name_equal_to_a_local_folder_binds_the_named_project(tmp_path, clean_env):
+    web = repository(tmp_path / "elsewhere" / "web-root")
+    mono = repository(tmp_path / "mono")
+    (mono / "web").mkdir()
+    settings = Settings.load(tmp_path / "memory", create=True)
+    store = Store(settings.data_dir)
+    store.add_project("mono", mono)
+    named = store.add_project("web", web)
+    parameters = StdioServerParameters(
+        command=sys.executable, cwd=str(mono),
+        args=["-m", "cairnmind", "--data-dir", str(settings.data_dir), "mcp", "--client", "external",
+              "--project", "web"],
+        env=clean_environment())
+    with local_service(settings):
+        async with stdio_client(parameters) as (reader, writer):
+            async with ClientSession(reader, writer) as client:
+                await client.initialize()
+                context = tool_result(await client.call_tool("resume_context", {}))
+    assert context["packet"]["project_id"] == named["id"]
+    assert context["packet"]["worktree"] == str(web.resolve())
 
 
 async def test_a_relative_project_names_the_project_seen_from_the_editor(tmp_path, clean_env):
