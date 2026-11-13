@@ -56,6 +56,10 @@ TMUX_MODULES = frozenset({
     "test_terminal_workspace_e2e", "test_workspace",
 })
 
+# Modules whose tests measure time against a budget. Under xdist each of their tests runs while no
+# other test of the run does (see run_slot); a serial run is unchanged.
+EXCLUSIVE_MODULES = frozenset({"test_terminal_latency080"})
+
 # The directory, under the run's temporary root, of the engine that parallel workers share.
 SHARED_ENGINE = "arcade-engine-shared"
 
@@ -64,6 +68,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "arcade: needs the real pinned ArcadeDB engine (Java 21)")
     config.addinivalue_line("markers", "tmux: drives a real tmux server")
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
+    config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -73,6 +78,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.arcade)
         if module in TMUX_MODULES:
             item.add_marker(pytest.mark.tmux)
+        if module in EXCLUSIVE_MODULES:
+            item.add_marker(pytest.mark.exclusive)
 
 
 def is_xdist_worker(config) -> bool:
@@ -144,6 +151,34 @@ def pytest_unconfigure(config):
     root = factory.getbasetemp() / SHARED_ENGINE
     if (root / "arcade" / "process.json").exists():
         stop_engine(Settings.load(root))
+
+
+@pytest.fixture(autouse=True)
+def run_slot(request, tmp_path_factory):
+    """Under xdist, an ``exclusive`` test waits until the tests running in other workers end, and
+    no other test starts until it ends; every other test holds a shared slot.
+
+    Two locks in the run's shared directory: a new test first passes the gate, which an exclusive
+    test holds while it waits, so that a stream of new shared slots cannot keep it waiting forever.
+    Defined first so that it is set up before, and torn down after, every other fixture of the test.
+    """
+    if not is_xdist_worker(request.config):
+        yield
+        return
+    run_root = tmp_path_factory.getbasetemp().parent
+    exclusive = request.node.get_closest_marker("exclusive") is not None
+    with (run_root / "test-slot.gate").open("a") as gate, (run_root / "test-slot.lock").open("a") as slot:
+        fcntl.flock(gate, fcntl.LOCK_EX)
+        if exclusive:
+            fcntl.flock(slot, fcntl.LOCK_EX)
+        else:
+            fcntl.flock(slot, fcntl.LOCK_SH)
+            fcntl.flock(gate, fcntl.LOCK_UN)
+        try:
+            yield
+        finally:
+            fcntl.flock(slot, fcntl.LOCK_UN)
+            fcntl.flock(gate, fcntl.LOCK_UN)
 
 
 @pytest.fixture(autouse=True)
