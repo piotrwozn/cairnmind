@@ -17,6 +17,7 @@ from .config import Settings
 from .ollama import Ollama, OllamaUnavailable
 from .retrieval import Retriever, json_value, public_metadata, public_record, public_source_metadata, terms
 from .store import TASK_STATES, validate_task_state
+from .support import SUPPORT_SCHEMA, SUPPORT_TOKENS, support_messages, support_verdict
 
 
 SYSTEM = """You are the local evidence-grounded knowledge agent for a programming workspace.
@@ -833,6 +834,38 @@ class KnowledgeAgent:
         diagnostics["budget"]["elapsed_seconds"] = round(time.monotonic() - started, 3)
         return {**result, "diagnostics": diagnostics}
 
+    async def _support_gate(self, question: str, result: dict, evidence: dict, started: float,
+                            diagnostics: dict) -> dict:
+        """Keep a complete answer complete only if one judge call finds that its quotes state it.
+
+        Anything else (not complete, so no call) passes unchanged. A "no", an unparsed reply or a
+        failed call yields the result of a failed citation validation: partial, citation_invalid,
+        the answer withheld, the verified quotes kept as sources, the judge's reason in unknowns.
+        A timeout is left to the caller's ask_timeout handling, which never returns complete.
+        """
+        if result.get("status") != "complete":
+            return result
+        try:
+            response = await self.ollama.chat(
+                support_messages(question, result["answer"], result["sources"]), tools=None,
+                format=deepcopy(SUPPORT_SCHEMA), options={"num_predict": SUPPORT_TOKENS})
+        except OllamaUnavailable:
+            supported, reason = False, None
+            diagnostics["support_check"] = "failed"
+        else:
+            diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
+                                          _model_diagnostics(response, "support")]
+            supported, reason = support_verdict(response)
+            diagnostics["support_check"] = ("supported" if supported else
+                                            "unsupported" if reason else "failed")
+        if supported:
+            return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
+        gap = ("Cytaty nie potwierdzają odpowiedzi: " + reason if reason else
+               "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.")
+        return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.",
+                            evidence, [*result.get("unknowns", []), gap], started, result["sources"],
+                            code="citation_invalid")
+
     def _compact_repair(self, question: str, state: dict, candidate: str, errors: list[str],
                         catalog: list[dict], answer_schema: dict | None, context_chars: int) -> tuple[list, dict] | None:
         """Reuse inspected evidence without replaying an unbounded tool transcript."""
@@ -911,7 +944,7 @@ class KnowledgeAgent:
                             self._validate_final, candidate, project_id, evidence, started, worktree, answer_schema,
                         )
                         if not repairable:
-                            return validated
+                            return await self._support_gate(question, validated, evidence, started, diagnostics)
                         repair_fallback = validated
                         diagnostics["validation_codes"] = [validated["diagnostics"]["code"]]
                         if _step + 1 >= self.settings.max_steps:
@@ -946,7 +979,7 @@ class KnowledgeAgent:
                             project_id, evidence, started, worktree, answer_schema)
                         diagnostics["repair_outcome"] = ("failed" if still_repairable or
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
-                        return result
+                        return await self._support_gate(question, result, evidence, started, diagnostics)
                     if not isinstance(calls, list) or len(calls) > 6:
                         return self._result("partial", "Model zwrócił niepoprawną listę narzędzi.", evidence,
                                             ["Niepoprawny protokół narzędzi modelu."], started,

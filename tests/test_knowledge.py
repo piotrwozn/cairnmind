@@ -16,16 +16,28 @@ from cairnmind.config import Settings
 from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.retrieval import Retriever, public_record
 from cairnmind.store import Store
+from cairnmind.support import SUPPORT_SYSTEM
 
 
 class FakeOllama:
-    def __init__(self, replies=None, vector=None):
+    """Replies in order. Support-check calls are kept apart: they go to support_calls and are
+    answered from ``support`` (default: supported), so call counts of the answer stay as they were."""
+
+    def __init__(self, replies=None, vector=None, support=None):
         self.replies = list(replies or [])
         self.vector = vector or [0.0, 1.0, 0.0]
         self.calls = []
+        self.support_calls = []
+        self.support = support
         self.embedding_calls = []
 
     async def chat(self, messages, tools=None, **kwargs):
+        if messages and messages[0].get("content") == SUPPORT_SYSTEM:
+            self.support_calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
+            if isinstance(self.support, Exception):
+                raise self.support
+            reply = self.support or {"content": json.dumps({"supported": True, "reason": "Stated."})}
+            return {"message": {"role": "assistant", **reply}, "done_reason": "stop"}
         self.calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
         if not self.replies:
             raise OllamaUnavailable("No local test response installed")
@@ -201,6 +213,92 @@ def test_citation_passage_named_quote_excerpt_is_checked_like_quote(workspace, l
     else:
         assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
         assert "Five attempts." not in result["answer"] and not result["sources"]
+
+
+SUPPORTED_QUOTE = "The retry budget is five attempts per request."
+
+
+async def _judged(workspace, support, reply=None, relative_path=None):
+    store, project, settings = workspace
+    metadata = {"relative_path": relative_path} if relative_path else None
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry", metadata=metadata)
+    model = FakeOllama([reply or final(source["id"], SUPPORTED_QUOTE, "Five attempts.")], support=support)
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    return result, model
+
+
+async def test_answer_the_support_check_accepts_stays_complete(workspace):
+    result, model = await _judged(workspace, None)
+    assert result["status"] == "complete" and result["answer"] == "Five attempts."
+    assert len(model.calls) == 1 and len(model.support_calls) == 1
+    judge = model.support_calls[0]
+    assert judge["tools"] is None and set(judge["kwargs"]["format"]["required"]) == {"supported", "reason"}
+    payload = json.loads(judge["messages"][1]["content"])
+    assert payload["question"] == "What is the retry budget?" and payload["answer"] == "Five attempts."
+    assert payload["citations"][0]["quote"] == SUPPORTED_QUOTE
+    assert payload["citations"][0]["secondary_file"] is False and payload["citations"][0]["line_start"] == 1
+    assert result["diagnostics"]["support_check"] == "supported"
+    assert result["diagnostics"]["model_calls"][-1]["phase"] == "support"
+
+
+async def test_answer_the_support_check_rejects_is_not_complete(workspace):
+    verdict = {"content": json.dumps({"supported": False, "reason": "The quote sets the value\nin a test."})}
+    result, model = await _judged(workspace, verdict)
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+    assert "Five attempts." not in result["answer"]
+    assert any("The quote sets the value in a test." in gap for gap in result["unknowns"])
+    assert result["sources"][0]["quote"] == SUPPORTED_QUOTE  # verified quotes are kept, not changed
+    assert result["diagnostics"]["support_check"] == "unsupported"
+    assert result["diagnostics"]["model_calls"][-1]["phase"] == "support"
+
+
+@pytest.mark.parametrize("support", [
+    {"content": "yes, supported"},
+    {"content": json.dumps({"supported": "yes", "reason": "Stated."})},
+    {"content": json.dumps({"supported": True})},
+    OllamaUnavailable("judge down"),
+])
+async def test_unreadable_or_failed_support_check_counts_as_no(workspace, support):
+    result, model = await _judged(workspace, support)
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+    assert "Five attempts." not in result["answer"]
+    assert any("Nie udało się sprawdzić" in gap for gap in result["unknowns"])
+    assert result["diagnostics"]["support_check"] == "failed" and len(model.support_calls) == 1
+
+
+async def test_support_check_timeout_is_never_complete(workspace):
+    store, project, settings = workspace
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    settings.ask_timeout = 2
+
+    class SlowJudge(FakeOllama):
+        async def chat(self, messages, tools=None, **kwargs):
+            if messages[0].get("content") == SUPPORT_SYSTEM:
+                await asyncio.sleep(10)
+            return await super().chat(messages, tools, **kwargs)
+
+    model = SlowJudge([final(source["id"], SUPPORTED_QUOTE, "Five attempts.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert result["status"] != "complete" and result["diagnostics"]["code"] == "timeout"
+    assert "Five attempts." not in result["answer"]
+
+
+@pytest.mark.parametrize("reply", ["unknown", "invalid"])
+async def test_unknown_answers_and_failed_validation_never_reach_the_support_check(workspace, reply):
+    store, project, settings = workspace
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    answer = (final(source["id"], SUPPORTED_QUOTE, "unknown", ["The budget is not stated."]) if reply == "unknown"
+              else final(source["id"], "An invented passage.", "Six attempts."))
+    model = FakeOllama([answer, answer])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    assert result["status"] == "partial" and model.support_calls == []
+    assert "support_check" not in result["diagnostics"]
+
+
+async def test_support_check_is_told_when_a_quote_comes_from_a_test(workspace):
+    result, model = await _judged(workspace, None, relative_path="tests/test_retry.py")
+    citation = json.loads(model.support_calls[0]["messages"][1]["content"])["citations"][0]
+    assert citation["path"] == "tests/test_retry.py" and citation["secondary_file"] is True
 
 
 @pytest.mark.parametrize("failure", ["json", "record_id", "quote"])
