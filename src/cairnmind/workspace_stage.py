@@ -62,9 +62,35 @@ ALREADY_RUNNING = ("This assistant is already running here. No process was resta
                    "resume packet. For the next stage, end that session or map another assistant to the stage.")
 
 
+CHECK_CONTINUES = "The check keeps running; its result will appear here when it ends."
+
+
 async def _shown(app, scope) -> bool:
     current = await asyncio.to_thread(app.workspace.read)
     return (current.get("project_id"), current.get("worktree")) == scope
+
+
+def _late_result(app, scope, profile):
+    """After the stage worker was cancelled: the outcome as a notice, never a dialog over other work."""
+    def done(future):
+        if future.cancelled():
+            return
+        try:
+            current = app.workspace.read()
+        except (OSError, ValueError):
+            return
+        if (current.get("project_id"), current.get("worktree")) != scope:
+            return  # Recorded for that project; it is not this one's result.
+        error = future.exception()
+        if error is not None:
+            app.notice(app.t("The check could not run") + ": " + profile + " · " + str(error))
+            return
+        result = future.result()
+        verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
+        app.notice(app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
+                   + (" " + app.t("Outcome") + ": " + str(result["outcome"]) if result.get("outcome") else "")
+                   + (" · " + str(result["error"]) if result.get("error") else ""))
+    return done
 
 
 async def run_next_stage(app):
@@ -76,10 +102,6 @@ async def run_next_stage(app):
     """
     from .terminal_ui import MessageModal
     from .workspace import reusable_native_run
-    running = getattr(app, "_stage_check", None)
-    if running is not None and not running.done():
-        app.notice("A check of an earlier stage is still running.")
-        return
     project = app.chosen_project()
     scope = (app.workspace_data.get("project_id"), app.workspace_data.get("worktree"))
     if scope[0] != project["id"] or not scope[1]:
@@ -117,14 +139,26 @@ async def run_next_stage(app):
         else:
             app.notice(app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
     elif decision.get("action") == "run_check":
-        app.notice(app.t("Running check") + ": " + decision["check_profile"])
-        # The check process is not stopped when the worker is cancelled; it finishes and is
-        # recorded, and no second check can start from here meanwhile.
-        app._stage_check = asyncio.ensure_future(asyncio.to_thread(run_stage_check, app.settings, decision))
+        profile = decision["check_profile"]
+        running = getattr(app, "_stage_check", None)
+        if running is not None and not running[0].done():
+            # One check at a time from here; an assistant stage is never held back by it.
+            app.notice(app.t("A check is still running") + ": " + running[1])
+            return
+        app.notice(app.t("Running check") + ": " + profile)
+        # The check process is not stopped when the worker is cancelled; it finishes and is recorded.
+        future = asyncio.ensure_future(asyncio.to_thread(run_stage_check, app.settings, decision))
+        app._stage_check = (future, profile + " · " + str(app.workspace_data.get("project_name") or project["name"])
+                            + " · " + str(decision["task"]["id"]))
         try:
-            result = await asyncio.shield(app._stage_check)
+            result = await asyncio.shield(future)
         except asyncio.CancelledError:
-            app.notice(CHECK_MOVED)
+            # Another click in the same group cancelled the worker: say "project changed" only
+            # when it did, and let the outcome reach this project once the check ends.
+            future.add_done_callback(_late_result(app, scope, profile))
+            current = app.workspace.read()
+            same = (current.get("project_id"), current.get("worktree")) == scope
+            app.notice(app.t(CHECK_CONTINUES) + " " + profile if same else CHECK_MOVED)
             raise
         if not await _shown(app, scope):
             app.notice(CHECK_MOVED)

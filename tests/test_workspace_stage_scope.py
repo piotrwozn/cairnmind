@@ -122,18 +122,67 @@ async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_sec
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
         app.action_next_stage()
-        for _ in range(100):
-            await pilot.pause(.02)
-            if started.is_set():
-                break
-        app.select_project("inspect")  # Start work's exclusive group: the stage worker is cancelled.
+        await wait_until(pilot, started.is_set)
+        app.action_inspect()  # Start work's exclusive group: the stage worker is cancelled.
         await pilot.pause(.3)
-        app.action_next_stage()  # The first check is still running in its thread.
-        await pilot.pause(.2)
-        assert "A check of an earlier stage is still running." in notice_of(app)
+        workspace.update({"project_id": "project-other", "worktree": "/elsewhere"})  # Then another project opens.
         release.set()
         for _ in range(25):
             await pilot.pause(.02)
+        assert not isinstance(app.screen, MessageModal)
+        assert "Check finished" not in notice_of(app)
+    assert len(calls) == 1
+
+
+async def wait_until(pilot, condition):
+    for _ in range(150):
+        await pilot.pause(.02)
+        if condition():
+            return
+    raise AssertionError("condition not reached")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["failed", "oserror"])
+async def test_a_click_in_the_same_project_keeps_the_check_result_visible(tmp_path, monkeypatch, ending):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    project = broker.projects[0]
+    stage = decision("run_check", project, stage="test", check_profile="unit")
+    answer_stage(broker, stage)
+    started, release, calls = threading.Event(), threading.Event(), []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        started.set()
+        release.wait(10)
+        if ending == "oserror":
+            raise OSError("cannot start the check runner")
+        run = {"id": "run-1", "passed": False, "outcome": "completed", "returncode": 1, "reasons": []}
+        return subprocess.CompletedProcess(argv, 1, stdout=json.dumps(run), stderr="")
+    real = workspace_stage.run_stage_check
+    monkeypatch.setattr(workspace_stage, "run_stage_check", lambda s, d: real(s, d, runner=runner))
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    shown, notice = [], app.notice
+    app.notice = lambda value: (shown.append(str(value)), notice(value))[1]
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_next_stage()
+        await wait_until(pilot, started.is_set)
+        app.select_project("inspect")  # Same project: cancels the worker, not the check.
+        await pilot.pause(.3)
+        assert not any("Project changed" in text for text in shown)
+        assert any(workspace_stage.CHECK_CONTINUES in text for text in shown)
+        app.action_next_stage()  # Another check stage is refused and names the running one.
+        await wait_until(pilot, lambda: "A check is still running" in notice_of(app))
+        assert "unit · Keyboard project · task-1" in notice_of(app)
+        # An assistant stage is not held back by a running check.
+        stage.update(action="start_slot", stage="implement", slot_id="slot-native", client="codex", check_profile=None)
+        app.action_next_stage()
+        await wait_until(pilot, lambda: workspace.read().get("requested_slot_ids") == ["slot-native"])
+        release.set()
+        expected = ("The check could not run: unit · cannot start the check runner" if ending == "oserror"
+                    else "Check finished: unit · Check did not pass.")
+        await wait_until(pilot, lambda: expected in notice_of(app))
         assert not isinstance(app.screen, MessageModal)
     assert len(calls) == 1
 
@@ -145,5 +194,6 @@ def test_every_text_stages_can_show_has_a_polish_entry():
               and node.args and isinstance(node.args[0], ast.Constant)]
     assert raised
     shown = [*raised, *stages._PROBLEMS.values(), *stages._REASONS.values(), *stages.STAGES, stages.FROM_WORKSPACE,
-             workspace_stage.PROJECT_CHANGED, workspace_stage.CHECK_MOVED, workspace_stage.ALREADY_RUNNING]
+             workspace_stage.PROJECT_CHANGED, workspace_stage.CHECK_MOVED, workspace_stage.ALREADY_RUNNING,
+             workspace_stage.CHECK_CONTINUES, "A check is still running", "The check could not run", "Check finished"]
     assert [text for text in shown if text not in CATALOG] == []

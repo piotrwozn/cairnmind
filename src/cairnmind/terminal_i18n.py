@@ -348,7 +348,10 @@ CATALOG.update({
     "Outcome": "Wynik", "Error": "Błąd", "Check run": "Uruchomienie testu", "Check result": "Wynik testu",
     "The task state is unchanged. Update it after you review the result.":
         "Stan zadania się nie zmienił. Zaktualizuj go po sprawdzeniu wyniku.",
-    "A check of an earlier stage is still running.": "Test wcześniejszego etapu nadal trwa.",
+    "A check is still running": "Test nadal trwa",
+    "The check keeps running; its result will appear here when it ends.":
+        "Test nadal trwa; jego wynik pojawi się tutaj, gdy się zakończy.",
+    "The check could not run": "Nie udało się uruchomić testu", "Check finished": "Test zakończony",
     "Project changed. Run next stage was not carried out; press it again for this project.":
         "Projekt się zmienił. Następny etap nie został uruchomiony; naciśnij ponownie dla tego projektu.",
     "Project changed while the check ran. Its result was recorded for the earlier project and is not shown here.":
