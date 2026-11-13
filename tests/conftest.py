@@ -44,7 +44,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
     "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
     "test_copilot_adapter", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_view", "test_module_alias",
-    "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parsing", "test_readonly_cli",
+    "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parallel_isolation", "test_parsing", "test_readonly_cli",
     "test_runtime_pane", "test_runtime_selection", "test_sample_memory", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
     "test_terminal_ux080", "test_usage", "test_workspace","test_workspace_cli", "test_workspace_locale",
@@ -64,11 +64,18 @@ EXCLUSIVE_MODULES = frozenset({"test_terminal_latency080"})
 SHARED_ENGINE = "arcade-engine-shared"
 
 
+@pytest.hookimpl(trylast=True)  # after the tmp_path plugin has set up the base directory
 def pytest_configure(config):
+    global MCP_FIXTURE
     config.addinivalue_line("markers", "arcade: needs the real pinned ArcadeDB engine (Java 21)")
     config.addinivalue_line("markers", "tmux: drives a real tmux server")
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
     config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
+    # A worker's base directory is its own (<run root>/popen-gwN); a serial run's is the run root.
+    copy = config._tmp_path_factory.getbasetemp() / "mcp-fixture" / MCP_FIXTURE_SOURCE.name
+    copy.parent.mkdir(exist_ok=True)
+    shutil.copyfile(MCP_FIXTURE_SOURCE, copy)
+    MCP_FIXTURE = str(copy)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -209,7 +216,12 @@ def no_inherited_session():
     os.environ.update(removed)
 
 
-MCP_FIXTURE = str(Path(__file__).parent / "fixtures" / "mcp_fixture_server.py")
+MCP_FIXTURE_SOURCE = Path(__file__).parent / "fixtures" / "mcp_fixture_server.py"
+# The path every test starts the fixture server by. pytest_configure replaces it with this pytest
+# process's own copy, so that the servers and children of one xdist worker can be told from those of
+# another by their command line: mcp_fixture_processes, and the leak check that uses it, see only
+# their own process's servers, never those another worker has running at the same moment.
+MCP_FIXTURE = str(MCP_FIXTURE_SOURCE)
 MCP_MODULES = frozenset({"test_mcp_host", "test_mcp_agent", "test_mcp_sources", "test_mcp_servers",
                          "test_workspace_mcp", "test_mcp_review_host", "test_mcp_review_agent",
                          "test_mcp_round2"})
