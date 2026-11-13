@@ -295,8 +295,9 @@ def _compare(store, task: dict, scope: list[str], root: Path, note: dict, *, ref
     outside = [name for name in changed if not spec.match_file(name)]
     result.update(status="out_of_scope" if outside else "in_scope", changed=len(changed),
                   out_of_scope=[_shown(name) for name in outside[:MAX_REPORTED]], out_of_scope_total=len(outside))
-    if refresh:
+    if refresh and not getattr(store, "read_only", False):
         # A file that was rewritten with the same content keeps being read until its new times are noted.
+        # A command that only reads leaves the note as it is: such a file is read again next time.
         moved = {name: after[name] for name in before.keys() & after.keys()
                  if before[name] != after[name] and before[name][2:4] == after[name][2:4] and _settled(after[name], now_ns)}
         if moved:

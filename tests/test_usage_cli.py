@@ -193,6 +193,51 @@ def test_inbox_pages_are_all_read(tmp_path, monkeypatch):
     assert codex_totals(settings, "demo")[0]["data"]["codex_waiting"] == 5
 
 
+class RemovingAfterFirstPage:
+    """A store whose first page of ``table`` is followed by a change made by another writer."""
+
+    def __init__(self, store, table, change):
+        self.store, self.table, self.change, self.pages = store, table, change, 0
+
+    def query(self, sql, params=None):
+        rows = self.store.query(sql, params)
+        if f"FROM {self.table}" in sql:
+            self.pages += 1
+            if self.pages == 1:
+                self.change()
+        return rows
+
+    def resolve_project(self, value):
+        return self.store.resolve_project(value)
+
+
+def test_a_row_leaving_the_inbox_between_pages_hides_no_later_row(tmp_path, monkeypatch):
+    # usage reads without a lock; import may assign a parked row to a project while the pages are read.
+    from cairnmind.codex_usage import waiting_in_inbox
+    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    settings, pid = workspace(tmp_path)
+    store, now = Store(settings.data_dir), datetime.now(timezone.utc)
+    for number in range(5):
+        park(store, f"p{number}", json.dumps({"type": "token_usage_record"}), now - timedelta(minutes=5 - number))
+    reader = RemovingAfterFirstPage(store, "ingestion_inbox",
+                                    lambda: store.command("DELETE FROM ingestion_inbox WHERE id='p0'"))
+    # p0 was read before it left; p1 to p4 stayed the whole time: each is counted once.
+    assert waiting_in_inbox(reader, pid, now - timedelta(hours=1)) == 5
+
+
+def test_a_stored_line_that_stops_being_current_between_pages_hides_no_later_line(tmp_path, monkeypatch):
+    from cairnmind.codex_usage import stored_records
+    monkeypatch.setattr("cairnmind.codex_usage.PAGE", 2)
+    settings, pid = workspace(tmp_path)
+    store = Store(settings.data_dir)
+    ids = [store.snapshot(pid, f"transcript://codex/r/{number}", json.dumps({"type": "token_usage_record", "n": number}),
+                          "transcript")["id"] for number in range(5)]
+    reader = RemovingAfterFirstPage(store, "sources", lambda: store.command(
+        "UPDATE sources SET is_current=false WHERE id=:id", {"id": ids[0]}))
+    lines = list(stored_records(reader, pid, datetime.now(timezone.utc) - timedelta(hours=1)))
+    assert sorted(json.loads(line)["n"] for line in lines) == [0, 1, 2, 3, 4]
+
+
 def test_a_deeply_nested_checks_file_does_not_stop_the_report(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)

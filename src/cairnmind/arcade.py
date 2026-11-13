@@ -164,6 +164,9 @@ class ArcadeClient:
     def server_command(self, command: str) -> dict:
         return self._request("POST", "/api/v1/server", json={"command": command}).json()
 
+    def database_exists(self) -> bool:
+        return self._request("GET", f"/api/v1/exists/{quote(self.database)}").json().get("result") is True
+
     def ensure_database(self) -> None:
         response = self._request("GET", f"/api/v1/exists/{quote(self.database)}")
         if response.json().get("result") is True:
@@ -175,7 +178,8 @@ class ArcadeClient:
                 raise
 
     @contextmanager
-    def transaction(self) -> Iterator[ArcadeClient]:
+    def transaction(self, *, commit: bool = True) -> Iterator[ArcadeClient]:
+        """A server transaction, committed at the end; with ``commit=False`` it is always rolled back."""
         if self.session_id:
             yield self
             return
@@ -188,7 +192,7 @@ class ArcadeClient:
                              _connections=self._connections)
         try:
             yield child
-            child._request("POST", f"/api/v1/commit/{quote(self.database)}")
+            child._request("POST", f"/api/v1/{'commit' if commit else 'rollback'}/{quote(self.database)}")
         except BaseException:
             try:
                 child._request("POST", f"/api/v1/rollback/{quote(self.database)}")
