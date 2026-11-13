@@ -307,8 +307,10 @@ def test_two_step_plan_hands_implement_to_codex_and_review_to_claude_each_with_i
 
 
 # Agent stages as Plan stages saves them: the slot with the profile and client chosen for it.
-CLOUD = {"slot": "cloud", "profile_id": "api-cloud", "client": "api"}
-PILOT = {"slot": "pilot", "profile_id": "copilot", "client": "copilot"}
+CLOUD = {"slot": "cloud", "profile_id": "api-cloud", "client": "api",
+         "provider": "openai", "model": "gpt-x", "base_url": "https://api.openai.com/v1"}
+PILOT = {"slot": "pilot", "profile_id": "copilot", "client": "copilot", "provider": None, "model": None,
+         "base_url": None}
 AGENT_PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
                   {"id": "claude", "client": "claude", "label": "Claude"},
                   {"id": "api-cloud", "client": "api", "label": "Cloud API", "provider": "openai", "model": "gpt-x"},

@@ -39,9 +39,10 @@ SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": 
 
 
 def chosen(slot):
-    """The stage as Plan stages saves it: the slot with the profile and client it names."""
-    profile_id = next(s["profile_id"] for s in SLOTS if s["id"] == slot)
-    return {"slot": slot, "profile_id": profile_id, "client": next(p["client"] for p in PROFILES if p["id"] == profile_id)}
+    """The stage as Plan stages saves it: the slot and what it names (profiles are stored normalised)."""
+    from cairnmind.stages import confirmed_choice
+    row = next(s for s in SLOTS if s["id"] == slot)
+    return confirmed_choice(row, normalize_profile(next(p for p in PROFILES if p["id"] == row["profile_id"])))
 
 
 class ServiceTransport(httpx.BaseTransport):

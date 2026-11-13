@@ -22,13 +22,48 @@ _SLOT = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
+_CHOICE = ("slot", "profile_id", "client")
+# What a person confirms for the built-in agent or Copilot besides the profile: where it sends the
+# work and which model does it. Never the credential reference or anything derived from a key.
+AGENT_TARGET = ("provider", "model", "base_url")
+# In words, for the message that says what changed.
+CHANGED_WORDS = {"profile_id": "the profile", "client": "the assistant type", "provider": "the provider",
+                 "model": "the model", "base_url": "the address"}
+
+
 def _valid_choice(target) -> bool:
-    """A slot id (maps saved before #125), or the slot with the profile and client it named when saved."""
+    """A slot id (maps saved before #125), or the slot with what it named when saved."""
     if isinstance(target, str):
         return bool(_SLOT.fullmatch(target))
-    return (isinstance(target, dict) and set(target) == {"slot", "profile_id", "client"}
+    if not (isinstance(target, dict) and set(_CHOICE) <= set(target) <= {*_CHOICE, *AGENT_TARGET}
             and all(isinstance(target[key], str) and _SLOT.fullmatch(target[key]) for key in ("slot", "profile_id"))
-            and target["client"] in LAUNCHABLE_CLIENTS)
+            and target["client"] in LAUNCHABLE_CLIENTS):
+        return False
+    return all(target[key] is None or (isinstance(target[key], str) and 1 <= len(target[key]) <= 2048
+                                       and not _CONTROL.search(target[key]))
+               for key in AGENT_TARGET if key in target)
+
+
+def confirmed_choice(slot: dict, profile: dict) -> dict:
+    """What Plan stages stores for a client stage: the slot, its profile and client, and for the
+    built-in agent or Copilot the provider, model and (normalised) address it points at."""
+    choice = {"slot": slot["id"], "profile_id": profile["id"], "client": profile.get("client")}
+    if profile.get("client") in AGENT_CLIENTS:
+        choice.update({key: profile.get(key) for key in AGENT_TARGET})
+    return choice
+
+
+def changed_since_confirmed(target, slot: dict, profile: dict) -> list[str] | None:
+    """The fields that differ from what was confirmed; None when nothing was confirmed for an agent."""
+    current = confirmed_choice(slot, profile)
+    if not isinstance(target, dict):
+        # A plain slot id: Codex and Claude Code follow the slot as under #122; an agent was never confirmed.
+        return None if current["client"] in AGENT_CLIENTS else []
+    if target["profile_id"] != current["profile_id"] or target["client"] != current["client"]:
+        return [key for key in ("profile_id", "client") if target[key] != current[key]]
+    if current["client"] in AGENT_CLIENTS and any(key not in target for key in AGENT_TARGET):
+        return None
+    return [key for key in AGENT_TARGET if key in current and target.get(key) != current[key]]
 
 
 def stage_slot(target) -> str:
@@ -109,7 +144,7 @@ def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: lis
     decision = {"stage": None, "action": "none", "problem": None, "reason": next_result.get("reason"),
                 "plan": {"id": plan.get("id"), "version": plan.get("version"), "title": plan.get("title")} if plan else None,
                 "task": None, "slot_id": None, "profile_id": None, "client": None, "label": None,
-                "provider": None, "model": None, "credential": None, "runtime": None,
+                "provider": None, "model": None, "credential": None, "runtime": None, "changed": [],
                 "check_profile": None, "required_profiles": []}
     if not task:
         decision["problem"] = "no_task"
@@ -143,14 +178,15 @@ def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: lis
     decision.update(profile_id=profile["id"], client=profile.get("client"), label=profile.get("label"))
     if profile.get("client") in AGENT_CLIENTS:
         decision.update(provider=profile.get("provider"), model=profile.get("model"))
-    # A slot keeps its id when its connection is replaced or the default slots change: the stage
-    # starts only the profile that was chosen for it, never what the slot points to now.
-    if isinstance(target, dict) and (target["profile_id"], target["client"]) != (profile["id"], profile.get("client")):
-        decision["problem"] = "assistant_changed"
-        return decision
-    if not isinstance(target, dict) and profile.get("client") in AGENT_CLIENTS:
-        # A map saved before #125 named only the slot, when it could hold Codex or Claude Code only.
+    # A slot keeps its id when its connection is replaced or the default slots change, and a
+    # profile keeps its id when its model or address is edited: the stage starts only what was
+    # confirmed for it, never what the slot or profile points to now.
+    changed = changed_since_confirmed(target, slot, profile)
+    if changed is None:
         decision["problem"] = "assistant_unconfirmed"
+        return decision
+    if changed:
+        decision.update(problem="assistant_changed", changed=changed)
         return decision
     if profile.get("client") not in LAUNCHABLE_CLIENTS:
         decision["problem"] = "unavailable_assistant"
@@ -253,6 +289,10 @@ def describe(decision: dict, translate=lambda text: text) -> str:
         lines.append(translate(_REASONS.get(decision.get("reason"), _PROBLEMS["no_task"])))
     elif problem:
         lines.append(translate(_PROBLEMS[problem]))
+        if decision.get("changed"):
+            # In words only; a stored value (an address, a model, never a key) is not shown.
+            lines.append(translate("What changed") + ": "
+                         + ", ".join(translate(CHANGED_WORDS[key]) for key in decision["changed"]))
     elif decision.get("action") == "start_slot" and "unknown" in (decision.get("credential"), decision.get("runtime")):
         lines.append(translate(NOT_CHECKED))
     return "\n".join(lines)

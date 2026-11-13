@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
-                     describe, stage_slot, validate_stage_map)
+                     changed_since_confirmed, confirmed_choice, describe, stage_slot, validate_stage_map)
 
 _UNSET = ":unset"
 
@@ -202,16 +202,16 @@ async def edit_stages(app):
         slot = next((s for s in slots if s["id"] == slot_id), None)
         name = profiles.get(slot["profile_id"], {}).get("label") if slot else None
         text = app.t(stage) + " · " + (name or app.t("Unknown assistant")) + " (" + slot_id + ")"
-        unconfirmed = slot and (choice(slot) != target if isinstance(target, dict)
-                                else choice(slot)["client"] in AGENT_CLIENTS)
-        if unconfirmed:
+        profile = profiles.get(slot["profile_id"]) if slot else None
+        # The same comparison as Run next stage: profile, client and, for an agent, its provider,
+        # model and address.
+        if profile and changed_since_confirmed(target, slot, profile) != []:
             text += " · " + app.t("not confirmed; save it to confirm")
         return text
 
     def choice(slot):
-        # What a stage stores: the slot and the profile and client it names at this moment.
-        return {"slot": slot["id"], "profile_id": slot["profile_id"],
-                "client": profiles.get(slot["profile_id"], {}).get("client")}
+        # What a stage stores: the slot and what it names at this moment.
+        return confirmed_choice(slot, profiles[slot["profile_id"]])
 
     stage = await app.push_screen_wait(ChoiceModal("Plan stages", [(shown(s), s) for s in STAGES]))
     if stage is None:

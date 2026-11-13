@@ -219,6 +219,6 @@ def test_every_text_stages_can_show_has_a_polish_entry():
     assert raised
     shown = [*raised, *stages._PROBLEMS.values(), *stages._REASONS.values(), *stages.STAGES, stages.FROM_WORKSPACE,
              workspace_stage.PROJECT_CHANGED, workspace_stage.CHECK_MOVED, workspace_stage.ALREADY_RUNNING,
-             workspace_stage.CHECK_CONTINUES, workspace_stage.AGENT_STARTED, "Model", "default model", "not confirmed; save it to confirm", stages.NOT_CHECKED,
+             workspace_stage.CHECK_CONTINUES, workspace_stage.AGENT_STARTED, "Model", "default model", "not confirmed; save it to confirm", stages.NOT_CHECKED, "What changed", *stages.CHANGED_WORDS.values(),
              "A check is still running", "The check could not run", "Check finished"]
     assert [text for text in shown if text not in CATALOG] == []

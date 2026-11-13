@@ -1,7 +1,8 @@
 import pytest
 
 from cairnmind.plans import PlanManager
-from cairnmind.stages import describe, project_routing, resolve_stage, validate_project_stages, validate_stage_map
+from cairnmind.stages import (confirmed_choice, describe, project_routing, resolve_stage, validate_project_stages,
+                              validate_stage_map)
 from cairnmind.store import Store
 
 SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": "claude"},
@@ -58,10 +59,9 @@ def test_unknown_or_unlaunchable_assistant_is_shown_and_never_replaced(slot, pro
 
 
 def chosen(slot):
-    """A client stage as Plan stages saves it: the slot and the profile and client it names now."""
-    profile_id = next(s["profile_id"] for s in SLOTS if s["id"] == slot)
-    client = next(p["client"] for p in PROFILES if p["id"] == profile_id)
-    return {"slot": slot, "profile_id": profile_id, "client": client}
+    """A client stage as Plan stages saves it: the slot and what it names now."""
+    row = next(s for s in SLOTS if s["id"] == slot)
+    return confirmed_choice(row, next(p for p in PROFILES if p["id"] == row["profile_id"]))
 
 
 def test_a_repointed_project_slot_never_starts_the_profile_it_points_to_now():
@@ -69,7 +69,8 @@ def test_a_repointed_project_slot_never_starts_the_profile_it_points_to_now():
     repointed = [{"id": "claude", "profile_id": "api-helper"}]  # "Replace connection" keeps the slot id.
     decision = resolve_stage(step("todo"), stage_map, repointed, PROFILES, readiness=observed())
     assert (decision["action"], decision["problem"], decision["client"]) == ("none", "assistant_changed", "api")
-    assert describe(decision).endswith("Confirm it in More → Plan stages; nothing was started.")
+    assert describe(decision).endswith("Confirm it in More → Plan stages; nothing was started.\n"
+                                       "What changed: the profile, the assistant type")
     assert resolve_stage(step("todo"), stage_map, SLOTS, PROFILES)["action"] == "start_slot"
 
 
@@ -78,6 +79,51 @@ def test_a_repointed_default_slot_never_starts_the_profile_it_points_to_now():
                    "default_slots": [{"id": "claude", "profile_id": "copilot"}], "profiles": PROFILES}
     decision = resolve_stage(step("needs_review"), *project_routing(preferences, "p"), readiness=observed())
     assert (decision["action"], decision["problem"], decision["client"]) == ("none", "assistant_changed", "copilot")
+
+
+LOCAL = {"id": "local", "client": "api", "label": "Local server", "provider": "openai_compatible",
+         "model": "qwen-local", "base_url": "http://127.0.0.1:8080/v1", "credential_ref": "env:LOCAL_KEY"}
+LOCAL_SLOT = {"id": "local", "profile_id": "local"}
+
+
+@pytest.mark.parametrize("edit,words", [
+    ({"model": "gpt-expensive"}, "the model"),
+    ({"base_url": "https://api.paid.example/v1"}, "the address"),
+    ({"provider": "openai", "base_url": "https://api.openai.com/v1"}, "the provider, the address")])
+def test_an_agent_profile_edited_in_place_is_not_started_until_confirmed(edit, words):
+    stage_map = {"implement": confirmed_choice(LOCAL_SLOT, LOCAL)}
+    edited = {**LOCAL, **edit}  # The profile editor keeps the id and the client.
+    decision = resolve_stage(step("todo"), stage_map, [LOCAL_SLOT], [edited], readiness=observed())
+    assert (decision["action"], decision["problem"]) == ("none", "assistant_changed")
+    text = describe(decision)
+    assert text.splitlines()[-1] == "What changed: " + words
+    # In words only: neither the old nor the new address is shown (the model line names the current one).
+    assert "127.0.0.1" not in text and "paid.example" not in text
+    # Saving the stage again (what Plan stages stores now) accepts the edited profile.
+    saved = {"implement": confirmed_choice(LOCAL_SLOT, edited)}
+    assert resolve_stage(step("todo"), saved, [LOCAL_SLOT], [edited], readiness=observed())["action"] == "start_slot"
+
+
+def test_a_credential_change_is_not_part_of_what_is_confirmed():
+    stage_map = {"implement": confirmed_choice(LOCAL_SLOT, LOCAL)}
+    assert "credential_ref" not in stage_map["implement"]
+    edited = {**LOCAL, "credential_ref": "env:OTHER_KEY"}
+    assert resolve_stage(step("todo"), stage_map, [LOCAL_SLOT], [edited], readiness=observed())["action"] == "start_slot"
+
+
+def test_a_native_stage_is_unaffected_by_model_edits():
+    stage_map = {"implement": chosen("codex")}
+    assert set(stage_map["implement"]) == {"slot", "profile_id", "client"}
+    edited = [{**PROFILES[0], "model": "gpt-other"}, *PROFILES[1:]]
+    decision = resolve_stage(step("todo"), stage_map, SLOTS, edited)
+    assert (decision["action"], decision["problem"]) == ("start_slot", None)
+
+
+def test_an_agent_stage_saved_without_its_target_is_unconfirmed():
+    # The {slot, profile_id, client} shape saved earlier on this branch, without provider/model/address.
+    stage_map = {"implement": {"slot": "local", "profile_id": "local", "client": "api"}}
+    decision = resolve_stage(step("todo"), stage_map, [LOCAL_SLOT], [LOCAL], readiness=observed())
+    assert (decision["action"], decision["problem"]) == ("none", "assistant_unconfirmed")
 
 
 def test_an_old_map_follows_a_native_slot_as_before():

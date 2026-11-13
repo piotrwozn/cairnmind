@@ -308,9 +308,32 @@ async def test_saving_a_stage_again_confirms_the_assistant_its_slot_now_names(tm
         await settle(app, pilot)
     assert "not confirmed; save it to confirm" in " ".join(listed.split())
     assert broker.preferences["project_stages"]["project-keyboard"]["review"] == {
-        "slot": "slot-github", "profile_id": "copilot-private-2", "client": "copilot"}
+        "slot": "slot-github", "profile_id": "copilot-private-2", "client": "copilot",
+        "provider": None, "model": "auto", "base_url": None}
     decision = route()
     assert (decision["action"], decision["problem"], decision["client"]) == ("start_slot", None, "copilot")
+
+
+@pytest.mark.asyncio
+async def test_the_editor_marks_an_agent_stage_whose_model_was_edited_in_place(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    native = {"slot": "slot-native", "profile_id": "native-private-1", "client": "codex"}
+    agent = {"slot": "slot-github", "profile_id": "copilot-private-2", "client": "copilot",
+             "provider": None, "model": "auto", "base_url": None}
+    broker.preferences["project_stages"] = {"project-keyboard": {"implement": native, "review": agent}}
+
+    async def listed():
+        app = SidebarApp(settings, broker=broker, workspace=workspace)
+        async with app.run_test(size=(120, 35)) as pilot:
+            await settle(app, pilot)
+            app.edit_stages()
+            await wait_for(app, pilot, ChoiceModal)
+            await pilot.pause()
+            return [label for label, _ in app.screen.choices]
+    assert not any("not confirmed" in str(label) for label in await listed())
+    broker.profiles = [{**row, "model": "premium-model"} for row in broker.profiles]  # Same ids, edited in place.
+    labels = [str(label) for label in await listed()]
+    assert "not confirmed" in labels[1] and "not confirmed" not in labels[0]
 
 
 def test_palette_routes_run_next_stage_through_the_workspace_state(tmp_path):

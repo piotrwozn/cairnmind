@@ -412,6 +412,8 @@ CATALOG.update({
         "Ten etap przypisano, zanim mógł wskazywać wbudowanego agenta lub Copilota. Potwierdź go w "
         "Więcej → Etapy planu; nic nie zostało uruchomione.",
     "not confirmed; save it to confirm": "niepotwierdzony; zapisz, aby potwierdzić",
+    "What changed": "Co się zmieniło", "the profile": "profil", "the assistant type": "rodzaj asystenta",
+    "the provider": "dostawca", "the model": "model", "the address": "adres",
     "Its key and runtime could not be checked here; they are checked again when the stage starts in the workspace.":
         "Nie udało się tu sprawdzić jego klucza i środowiska; zostaną sprawdzone ponownie, gdy etap ruszy "
         "w przestrzeni pracy.",
