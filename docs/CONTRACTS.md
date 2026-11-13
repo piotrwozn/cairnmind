@@ -13,6 +13,9 @@ read-only `check_status`. Task progress (`metadata.state`) is separate from know
 Updates require `id` and `expected_version`; task completion checks its declared
 acceptance/test/review requirements. New test-gated completion requires fresh local
 runner evidence; reported text and legacy booleans alone cannot satisfy it.
+The same tools serve an external MCP client (`cairnmind mcp --client external`) in an
+evidence-degraded session: its packet says `history: unarchived` and `evidence: degraded`,
+and its writes carry a server-set `origin_*` mark and are never verified (V03_CONTRACTS.md).
 
 `Store` owns native transactions, project isolation, source snapshots, record
 revisions, task validation, durable job leases, native graph identity, export and

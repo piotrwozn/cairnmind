@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import unicodedata
 
-from cairnmind.store import DERIVED_RECORD_METADATA
+from cairnmind.store import DERIVED_RECORD_METADATA, degraded_origin
 from cairnmind.terminal_safe import safe_text
 
 MAX_LINES = 40
@@ -73,6 +73,7 @@ def _git_out(root, *args):
 
 
 def _checkpoint_saved(store, checkpoint):
+    """When the latest checkpoint was saved, and whether an external client's session saved it."""
     # A later edit of the record (a review, for example) moves updated_at; the snapshot
     # written by the checkpoint itself keeps the time the checkpoint was really saved.
     times = []
@@ -81,19 +82,23 @@ def _checkpoint_saved(store, checkpoint):
             source = store.get_source(source_id)
         except ValueError:
             continue
-        if str(source.get("uri", "")).startswith("checkpoint://"):
-            times.append(_time(source.get("created_at")))
-    times = [time for time in times if time is not None]
-    return max(times) if times else _time(checkpoint.get("updated_at"))
+        if str(source.get("uri", "")).startswith("checkpoint://") and _time(source.get("created_at")):
+            times.append((_time(source.get("created_at")), degraded_origin(source.get("metadata"))))
+    if not times:
+        return _time(checkpoint.get("updated_at")), degraded_origin(checkpoint.get("metadata"))
+    return max(times, key=lambda item: item[0])
 
 
 def _checkpoint(store, records, now):
     checkpoint = next((r for r in records if r["kind"] == "checkpoint" and r.get("key") == "latest"), None)
     if checkpoint is None:
         return None, [("machine", "No checkpoint has been saved for this project.")]
-    saved = _checkpoint_saved(store, checkpoint)
+    saved, external = _checkpoint_saved(store, checkpoint)
     when = f"{_age(saved, now)} ({saved.isoformat(timespec='seconds')})" if saved else "at an unknown time"
     lines = [("machine", f"Latest checkpoint saved {when}.")]
+    if external:
+        lines.append(("machine", "It was saved by an external client's session (history unarchived, "
+                                 "evidence degraded); nothing in it is verified."))
     # The record's metadata accumulates the fields of every earlier checkpoint;
     # only the content is exactly what the latest checkpoint said.
     try:

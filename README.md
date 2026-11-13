@@ -129,6 +129,37 @@ cairnmind status --project my-app
 
 `ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer.
 
+### Cursor, Cline, Zed and other MCP clients
+
+A client the launcher cannot start uses the same memory through an **external session**. Cairnmind cannot read or archive such a client's conversation, so its session is evidence-degraded: it can ask, read the resume packet, acknowledge it and write, but nothing it writes is ever shown or counted as verified. Start the service first (`cairnmind serve`, or the workspace), then give the client this stdio MCP server:
+
+```bash
+cairnmind mcp --client external --project /path/to/my-app
+```
+
+`--project` takes the project id, its name or a path inside it. A relative path is read from the editor's working directory, not the service's, and a registered name wins over a folder of the same name. Without it the client's working directory is used, which an editor does not always set to the project. `--worktree` picks a registered worktree; by default it is the one containing the project path. Use the absolute path of the `cairnmind` command (`command -v cairnmind`), since an editor may not read your shell's `PATH`. For Cursor (`.cursor/mcp.json`) and Cline (its MCP settings file):
+
+```json
+{
+  "mcpServers": {
+    "cairnmind": {
+      "command": "/home/me/.local/bin/cairnmind",
+      "args": ["mcp", "--client", "external", "--project", "/path/to/my-app"]
+    }
+  }
+}
+```
+
+Zed takes the same command and arguments as a custom context server in its settings; see Zed's documentation for the current form. An editor running on Windows reaches Cairnmind in WSL with `"command": "wsl.exe"` and the arguments `["-d", "Ubuntu", "--", "/home/me/.local/bin/cairnmind", "mcp", ...]`. None of these editors was connected in Cairnmind's own tests, which drive the server with the MCP SDK's client.
+
+What the session does:
+
+- The first `resume_context` creates the session. Its packet has `"client": "external"`, `"history": "unarchived"` and `"evidence": "degraded"`, with a warning saying so. The ACK works as for any client: until `ack_resume` with the exact packet id, hash and readback, `remember`, `checkpoint` and `save_plan` are refused, and a change of plan, task, decisions or code asks for a new packet and ACK.
+- `--client external` refuses to start where the launcher set `CAIRNMIND_SESSION_ID` or `CAIRNMIND_PACKET_ID`: a verified native session is never replaced by a degraded one.
+- Transcripts of Codex or Claude Code in the same worktree that are not yet archived, or that hold a record Cairnmind cannot parse, keep the packet `partial`, exactly as for a native client.
+- Everything the session writes (records, checkpoints, plans and tasks) carries `origin_client: external`, `origin_session_id`, `origin_history: unarchived` and `origin_evidence: degraded`, set by the service and never by the client. A record keeps this mark when anyone edits it later; the one checkpoint record is the exception, since every checkpoint replaces it, so its mark follows whoever saved the latest checkpoint, and a checkpoint by anyone else that replaces an external one keeps none of the external one's fields. It starts from its own state alone, so fields that earlier native checkpoints set and neither of the last two repeats are dropped as well: that is the price of never carrying external text unmarked. A plan save marks the steps whose stored definition it adds or changes (content, dependencies, order, profiles, criteria and their links) and the plan when anything in it changed. Its evidence state is `degraded`, never `anchored`, in resume packets, the inspector, `cairnmind memory orphans` and `cairnmind impact`, and a source it wrote cannot anchor another record; search hits from such a source carry the mark too. An active plan or task it wrote is marked in every later resume packet, also a native client's, whose bootstrap then does not call itself verified. Its test and acceptance claims stay `reported`; only a check run by `cairnmind check run` is machine evidence.
+- The mark exists only for writes made through the MCP tools. If the editor's agent runs the `cairnmind` command in its shell, that process has no session: its writes are stored as a person's, unmarked and without the ACK gate, as for any process without a session. Let the editor write through the MCP tools, not through the command line.
+
 ## Plans, tasks and evidence
 
 Saving a plan writes the header, the steps and the final dependency graph in a single transaction. Codex and Claude see the same versions. An active plan is bound to a specific registered worktree. The launcher shows plans, the next step, blockers, evidence freshness and session package readiness.
@@ -273,6 +304,8 @@ Syntax analysis covers Python, JavaScript and TypeScript. Other languages remain
 `ask` answers and the startup context still consume Codex or Claude tokens. Local memory reduces the need to carry the whole history along; it does not remove context limits or the cost of model work. API and Copilot connections use their own account billing and permissions.
 
 The launcher blocks a client from starting when the resume package is partial or unavailable. An ACK confirms receipt and reading of specific versions, not the model's understanding. Cairnmind's write controls do not replace the native tool permissions of Codex and Claude.
+
+An external MCP session (Cursor, Cline, Zed) has no archived conversation to quote or verify against. Its packet says `history: unarchived` and `evidence: degraded`, and what it writes is never verified. Nothing stops a person from configuring Codex or Claude Code as an external client; such a session is then marked external and degraded like any other. The mark is applied where the service receives a session's write: a `cairnmind` command that the editor's agent runs in its shell carries no session, so what it writes is stored as a person's, unmarked and without the ACK gate. This holds for any process without a session and cannot be told apart; keep an external client's writes to its MCP tools.
 
 ## Documentation
 
