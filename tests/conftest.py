@@ -69,6 +69,21 @@ def no_inherited_session():
     os.environ.update(removed)
 
 
+def start_test_engine(settings):
+    """Start the engine, once more after a failure, so that one slow start does not fail the session.
+
+    When it fails twice the whole run stops with the cause named once: a fixture that raises is raised
+    again for every test that uses it, which would be a thousand identical setup errors.
+    """
+    for attempt in range(2):
+        try:
+            start_engine(settings)
+            return
+        except ArcadeError as exc:
+            error = exc
+    pytest.exit(f"The test engine did not start, twice: {error}", returncode=1)
+
+
 @pytest.fixture(scope="session")
 def arcade_test_engine(tmp_path_factory):
     # Both spellings: a developer's exported earlier name must not reach the test engine either.
@@ -87,7 +102,7 @@ def arcade_test_engine(tmp_path_factory):
         settings.save()
         distribution = env_value("ARCADE_DIST")
         install_engine(settings, Path(distribution) if distribution else None)
-    start_engine(settings)
+    start_test_engine(settings)
     prefix = "devbrain_test_" + uuid.uuid4().hex[:8]
     changes = {"CAIRNMIND_ARCADE_URL": settings.arcade_url,
                "CAIRNMIND_ARCADE_USER": settings.arcade_user,

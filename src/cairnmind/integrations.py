@@ -228,6 +228,9 @@ def doctor(settings: Settings) -> dict[str, Any]:
             major = int(version.group(1)) if version else None
             result["java"].update({"version": text.splitlines()[0] if text else "unknown", "major": major,
                                    "compatible": probe.returncode == 0 and major is not None and major >= 21})
+        except subprocess.TimeoutExpired:
+            result["java"]["error"] = ("Java did not answer -version within 4 seconds (a first start can be "
+                                       "slow); cairnmind engine start waits longer, 30 seconds, twice")
         except (OSError, subprocess.SubprocessError) as exc:
             result["java"]["error"] = type(exc).__name__
     with httpx.Client(timeout=1.5, trust_env=False) as client:
