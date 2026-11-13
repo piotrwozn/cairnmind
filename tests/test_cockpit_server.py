@@ -409,3 +409,25 @@ def test_ask_proxy_forwards_only_bounded_question_fields(cockpit):
     assert len(requests) == sent
     assert client.post("/api/ask", json={"project": project["id"], "question": "Why?"},
                        headers={"Origin": ORIGIN}).status_code in {401, 403}
+
+
+def test_only_the_person_route_writes_mcp_servers(cockpit):
+    """The settings route needs the cookie, the exact Origin and the CSRF token; the service bearer is not one (#126)."""
+    from cairnmind.cockpit_state import CockpitState
+    settings, app, client, runtime, project, requests, _ = cockpit
+    body = {"project_mcp_servers": {project["id"]: [{"id": "tracker", "command": "/usr/bin/env",
+                                                     "args": ["tracker-mcp"], "env": {}}]}}
+    state = CockpitState(settings)
+    bearer = {"Authorization": "Bearer " + settings.token}
+    assert client.put("/api/settings", json=body).status_code in {401, 403}
+    assert client.put("/api/settings", json=body, headers={"Origin": ORIGIN, **bearer}).status_code in {401, 403}
+    assert client.put("/api/settings", json=body, headers=bearer).status_code in {401, 403}
+    headers = login(app, client)
+    assert client.put("/api/settings", json=body, headers={"Origin": ORIGIN}).status_code == 403
+    assert client.put("/api/settings", json=body, headers={**headers, "Origin": "https://evil.invalid"}).status_code == 403
+    assert state.load()["project_mcp_servers"] == {}
+    assert client.put("/api/settings", json=body, headers=headers).status_code == 200
+    assert state.load()["project_mcp_servers"] == body["project_mcp_servers"]
+    refused = {"project_mcp_servers": {project["id"]: [{"id": "x", "command": "/bin/x", "env": {"API_KEY": "k"}}]}}
+    assert client.put("/api/settings", json=refused, headers=headers).status_code >= 400
+    assert state.load()["project_mcp_servers"] == body["project_mcp_servers"]

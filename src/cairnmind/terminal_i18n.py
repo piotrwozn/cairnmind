@@ -153,8 +153,9 @@ CATALOG = {
         "źródło się zmieniło; brak zweryfikowanego cytatu do porównania",
     "orphaned: no supporting source has a current version":
         "osierocone: żadne źródło nie ma aktualnej wersji",
-    "written by an external client's session, or resting only on one; never verified":
-        "zapisane przez sesję zewnętrznego klienta albo oparte tylko na niej; nigdy niezweryfikowane",
+    "written by an external client's session, or resting only on one or on a third-party tool result; never verified":
+        "zapisane przez sesję zewnętrznego klienta albo oparte tylko na niej lub na wyniku narzędzia zewnętrznego; "
+        "nigdy niezweryfikowane",
     "Brief": "Skrót",
     "Where work stopped: checkpoint, next task, checks and commits":
         "Gdzie przerwano pracę: punkt kontrolny, następne zadanie, testy i commity",
@@ -476,6 +477,67 @@ CATALOG.update({
     # Notice history (#130)
     "Notices": "Komunikaty", "No notices yet.": "Brak komunikatów.", "No project": "Brak projektu",
     "Read the notices that were replaced on the notice line": "Przeczytaj komunikaty zastąpione w wierszu komunikatów",
+    # MCP servers of the built-in agent (#126)
+    "MCP servers": "Serwery MCP", "Add server": "Dodaj serwer", "Add MCP server": "Dodaj serwer MCP",
+    "Remove MCP server": "Usuń serwer MCP", "Server": "Serwer", "Program": "Program",
+    "Arguments": "Argumenty", "Environment names": "Nazwy zmiennych środowiska",
+    "Server id (lowercase letters, digits, hyphens)": "Identyfikator serwera (małe litery, cyfry, łączniki)",
+    "Program (absolute path)": "Program (ścieżka bezwzględna)",
+    "Arguments, one per line": "Argumenty, po jednym w wierszu",
+    "Environment values, NAME=value per line (no secrets)":
+        "Zmienne środowiska, NAZWA=wartość w wierszu (bez sekretów)",
+    "A server is a program you choose to run under your own account. Cairnmind is not a sandbox for it: "
+    "it can read and change what your account can. Only the built-in API agent of this project offers its "
+    "tools, and every call needs your approval of the exact arguments. Text a server returns can still "
+    "steer the agent into editing files in this folder, as text in the repository can. Do not enter "
+    "secrets: values are stored as plain text and names that look like secrets are refused. The change "
+    "applies from the next agent run.":
+        "Serwer to program, który uruchamiasz na własnym koncie. Cairnmind nie jest dla niego piaskownicą: "
+        "może czytać i zmieniać to, co Twoje konto. Jego narzędzia oferuje tylko wbudowany agent API tego "
+        "projektu, a każde wywołanie wymaga Twojej zgody na dokładne argumenty. Tekst zwrócony przez serwer "
+        "może nadal skłonić agenta do edycji plików w tym katalogu, tak jak tekst w repozytorium. Nie wpisuj "
+        "sekretów: wartości są zapisywane jawnym tekstem, a nazwy wyglądające na sekrety są odrzucane. Zmiana "
+        "obowiązuje od następnego uruchomienia agenta.",
+    "MCP server saved. The built-in agent of this project uses it from its next run.":
+        "Zapisano serwer MCP. Wbudowany agent tego projektu użyje go od następnego uruchomienia.",
+    "MCP server removed. The built-in agent of this project stops using it from its next run.":
+        "Usunięto serwer MCP. Wbudowany agent tego projektu przestanie go używać od następnego uruchomienia.",
+    "Write each environment value as NAME=value.": "Zapisz każdą zmienną środowiska jako NAZWA=wartość.",
+    # Messages of mcp_servers.validate_server / validate_servers
+    "A server has an id and an absolute command, and may have args and env.":
+        "Serwer ma identyfikator i bezwzględną ścieżkę programu, może mieć argumenty i zmienne środowiska.",
+    "A server id has 1 to 24 lowercase letters, digits or hyphens.":
+        "Identyfikator serwera ma od 1 do 24 małych liter, cyfr lub łączników.",
+    "A server command must be an absolute path.": "Program serwera musi być ścieżką bezwzględną.",
+    "A server has at most 32 arguments of at most 4096 characters.":
+        "Serwer ma najwyżej 32 argumenty po najwyżej 4096 znaków.",
+    "A server has at most 16 environment values.": "Serwer ma najwyżej 16 zmiennych środowiska.",
+    "An environment name has letters, digits and underscores.":
+        "Nazwa zmiennej środowiska składa się z liter, cyfr i podkreśleń.",
+    "A server gets no secrets: this environment name is refused.":
+        "Serwer nie dostaje sekretów: ta nazwa zmiennej jest odrzucona.",
+    "An environment value is literal text of at most 4096 characters.":
+        "Wartość zmiennej środowiska to dosłowny tekst do 4096 znaków.",
+    "A project has at most 4 MCP servers.": "Projekt ma najwyżej 4 serwery MCP.",
+    "Server ids of a project must be unique.": "Identyfikatory serwerów projektu muszą być unikalne.",
+    "The server list of a project is too large.": "Lista serwerów projektu jest za duża.",
+    "Invalid MCP server lists.": "Niepoprawne listy serwerów MCP.",
+    "This environment name changes which code a program loads and is not allowed.":
+        "Ta nazwa zmiennej zmienia kod, który program wczytuje, i jest niedozwolona.",
+    "The MCP servers of this project changed meanwhile. Open the list again.":
+        "Serwery MCP tego projektu zmieniły się w międzyczasie. Otwórz listę ponownie.",
+    "Not allowed as environment names, since they change which code a program loads: PATH, HOME, SHELL, "
+    "LD_* and DYLD_*, PYTHONPATH, PYTHONSTARTUP, PYTHONHOME, PYTHONUSERBASE, PYTHONPLATLIBDIR, "
+    "NODE_PATH, NODE_OPTIONS, PERL5LIB, PERL5OPT, PERLLIB, RUBYLIB, RUBYOPT, GEM_HOME, GEM_PATH, "
+    "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
+    "XDG_DATA_HOME. A server whose program, an argument or a value names a path inside this project "
+    "folder is not started.":
+        "Niedozwolone nazwy zmiennych, bo zmieniają kod wczytywany przez program: PATH, HOME, SHELL, "
+        "LD_* i DYLD_*, PYTHONPATH, PYTHONSTARTUP, PYTHONHOME, PYTHONUSERBASE, PYTHONPLATLIBDIR, "
+        "NODE_PATH, NODE_OPTIONS, PERL5LIB, PERL5OPT, PERLLIB, RUBYLIB, RUBYOPT, GEM_HOME, GEM_PATH, "
+        "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
+        "XDG_DATA_HOME. Serwer, którego program, argument lub wartość wskazuje ścieżkę w katalogu tego "
+        "projektu, nie zostanie uruchomiony.",
 })
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)

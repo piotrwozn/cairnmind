@@ -43,12 +43,13 @@ What can be added is added outside those processes, through the surfaces below. 
 
 **Another model for the built-in agent.** A connection profile of the API agent names a provider from a fixed list (`openai`, `anthropic`, `openai_compatible` for any server that speaks Chat Completions at a base URL of its own, and `ollama`) and a model id (`api_profiles.py`, `PROVIDERS`, `normalize_profile`). It is created in the workspace under **Connections** ([API.md](API.md)). A server that speaks one of those four protocols can be used; a fifth protocol needs a change to Cairnmind, and nothing loads one from outside.
 
+**Tools from MCP servers for the built-in agent.** A person adds up to four stdio MCP servers per project under **More → MCP servers** in the workspace; they are stored in the owner-local cockpit preferences (`project_mcp_servers`, `mcp_servers.py`) and copied into the configuration of the next API agent run of that project (`api_runtime.py`). Each server runs as a separate child process of the agent worker, never inside a Cairnmind process: with a minimal environment built from scratch and no Cairnmind variable or credential, a private working directory, no stderr and its own process group, stopped when the run ends (`mcp_host.py`). Its tools are offered only after the resume acknowledgement, every call needs the person's one-use approval, and what it returns is archived as degraded third-party text that is never chunked or anchored; after a third-party result, nothing the agent says or does in that session counts as evidence (`mcp_agent.py`, `agent_memory.py`). A server is a program the person chose to run under their own account, so it can read what that account can, including `config.json`; Cairnmind is not a sandbox for it. See [API.md](API.md#third-party-mcp-tools).
+
 ### Planned, not yet there
 
-- Tools for the built-in agent from MCP servers that the person configures: issue #126. Today the agent has only its built-in tools.
 - History of a client whose transcripts Cairnmind does not read, through a converter command that a person registers and runs from the command line outside any coding session: issue #127, later slices. Converted history would be marked as never verified. None of it exists yet; history import reads Codex and Claude Code only.
 
-No date is promised for either.
+No date is promised for it.
 
 ### Not supported
 

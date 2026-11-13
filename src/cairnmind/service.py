@@ -463,6 +463,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 # Derived from the session row, never from the payload: an external session's writes are
                 # stamped as such, and nothing a client sends can add, change or remove that stamp.
                 mark = origin_mark(row[0])
+                if mark is None and row[0].get("client") in {"api", "copilot"}:
+                    # An own-agent session that received a third-party MCP result writes as unverified (#126).
+                    from cairnmind.agent_memory import third_party_origin
+                    mark = third_party_origin(store, pid, session_id)
             with store.write_origin(mark):
                 return operation(scope)
 

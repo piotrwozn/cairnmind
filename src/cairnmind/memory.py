@@ -802,8 +802,9 @@ class MemoryManager:
             from .ingest import _chunks, _identifier
             from .agent import source_text
             from .impact_verdicts import is_verdict_source
+            from .agent_memory import is_mcp_source
             for source in payload["sources"]:
-                if is_verdict_source(source):
+                if is_verdict_source(source) or is_mcp_source(source):
                     continue  # imported with the memory, never searchable text
                 if tx.query("SELECT id FROM chunks WHERE source_id=:source LIMIT 1", {"source": source["id"]}):
                     continue

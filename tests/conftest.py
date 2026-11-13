@@ -69,6 +69,55 @@ def no_inherited_session():
     os.environ.update(removed)
 
 
+MCP_FIXTURE = str(Path(__file__).parent / "fixtures" / "mcp_fixture_server.py")
+MCP_MODULES = frozenset({"test_mcp_host", "test_mcp_agent", "test_mcp_sources", "test_mcp_servers",
+                         "test_workspace_mcp", "test_mcp_review_host", "test_mcp_review_agent",
+                         "test_mcp_round2"})
+
+
+def mcp_fixture_processes() -> list[int]:
+    """Live processes of this checkout's fixture MCP server, and the children it marks with its path."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            arguments = (entry / "cmdline").read_bytes().split(b"\0")
+            state = (entry / "stat").read_text().rsplit(")", 1)[1].split()[0]
+        except (OSError, IndexError):
+            continue
+        if state != "Z" and any(MCP_FIXTURE.encode() in argument for argument in arguments):
+            found.append(int(entry.name))
+    return found
+
+
+@pytest.fixture(autouse=True)
+def no_mcp_server_outlives_its_test(request):
+    """In the MCP modules a fixture server, or a child in its group, still alive after a test fails the run.
+
+    It is killed first, so one leak cannot hide the next.
+    """
+    module = Path(str(request.node.fspath)).stem
+    yield
+    if module not in MCP_MODULES or not Path("/proc").is_dir():
+        return
+    import signal
+    import time
+    deadline = time.monotonic() + 2
+    left = mcp_fixture_processes()
+    while left and time.monotonic() < deadline:
+        time.sleep(.05)
+        left = mcp_fixture_processes()
+    for pid in left:
+        for kill in (lambda: os.killpg(pid, signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
+            try:
+                kill()
+            except OSError:
+                pass
+    if left:
+        pytest.fail(f"A fixture MCP server outlived its test and was killed: {left}")
+
+
 def start_test_engine(settings):
     """Start the engine, once more after a failure, so that one slow start does not fail the session.
 

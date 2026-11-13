@@ -41,6 +41,23 @@ CATALOG = {
     "Cannot restore this run. Check the profile status in Cairnmind.": "Nie można odtworzyć tego uruchomienia. Sprawdź stan profilu w Cairnmind.",
     "Working": "Praca w toku", "Interrupted": "Przerwano", "Failed": "Niepowodzenie",
     "Blocked": "Zablokowano", "Ready": "Gotowy", "Awaiting approval": "Oczekuje na zgodę",
+    # Third-party MCP tools (#126)
+    "Approve one third-party tool call": "Zgoda na jedno wywołanie narzędzia zewnętrznego",
+    "This sends exactly these arguments to a program you configured. Its answer is untrusted third-party text.":
+        "To wysyła dokładnie te argumenty do programu, który skonfigurowałeś. Jego odpowiedź jest niezaufanym "
+        "tekstem z zewnątrz.",
+    "Call once": "Wywołaj raz",
+    "Third-party MCP server {server} is off ({code}); the agent works without its tools.":
+        "Serwer MCP {server} jest wyłączony ({code}); agent pracuje bez jego narzędzi.",
+    "The provider refused the request with third-party MCP tools ({code}); they are withdrawn for this run "
+    "and the agent works without them.":
+        "Dostawca odrzucił żądanie z narzędziami zewnętrznych serwerów MCP ({code}); zostały wycofane do końca "
+        "tego uruchomienia, a agent pracuje bez nich.",
+    "The provider refused the request ({code}) also without the third-party MCP tools; they stay offered.":
+        "Dostawca odrzucił żądanie ({code}) także bez narzędzi zewnętrznych serwerów MCP; pozostają dostępne.",
+    "A third-party MCP tool took too long to check its arguments and is withdrawn for this run.":
+        "Sprawdzenie argumentów narzędzia zewnętrznego serwera MCP trwało za długo; narzędzie wycofano do końca "
+        "tego uruchomienia.",
 }
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",
