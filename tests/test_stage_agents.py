@@ -239,18 +239,24 @@ def test_two_step_plan_with_an_api_or_copilot_stage_each_session_acks_the_same_p
     assert states == ["needs_review", "todo"]  # Nobody but the implementing assistant moved a step.
 
 
-def test_an_api_stage_without_a_credential_says_so_and_starts_nothing(stack):
+@pytest.mark.parametrize("value,problem", [(None, "credential_missing"), ("not a valid key", "credential_invalid")])
+def test_an_api_stage_without_a_usable_credential_says_so_and_starts_nothing(stack, value, problem):
     project = stack["project"]
     stack["environment"].clear()
+    if value is not None:
+        stack["environment"]["FIXTURE_STAGE_KEY"] = value  # Set, but text the launcher refuses.
     CockpitState(stack["settings"]).update({"profiles": PROFILES, "project_slots": {project["id"]: SLOTS},
                                             "project_stages": {project["id"]: {"implement": chosen("cloud")}}})
     sessions_before = stack["store"].query("SELECT FROM sessions")
     decision = route(stack)
-    assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", "credential_missing", "cloud")
+    assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", problem, "cloud")
+    assert value is None or value not in json.dumps(decision)
     # Even when it is started by hand, the launcher refuses before a session or a process exists.
     profile = next(p for p in PROFILES if p["id"] == "api-cloud")
     started = stack["runner"].start_project({**project, "root": str(stack["root"])}, worktree=str(stack["root"]),
                                             slots=[{**normalize_profile(profile), "id": "cloud",
                                                     "profile_id": "api-cloud"}])
-    assert started["runs"] == [] and [e["code"] for e in started["errors"]] == ["credential_missing"]
+    # The launcher agrees: it refuses the missing key by name and the invalid one as a failed launch.
+    assert started["runs"] == [] and [e["code"] for e in started["errors"]] == [
+        "credential_missing" if value is None else "agent_launch_failed"]
     assert stack["spawned"] == [] and stack["store"].query("SELECT FROM sessions") == sessions_before

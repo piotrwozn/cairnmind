@@ -89,10 +89,10 @@ def agent_problem(profile: dict, readiness: dict | None) -> str | None:
     credential = readiness.get("credential")
     if credential is None:
         return "credential_unavailable"
-    if credential == "credential_missing":
+    if credential in {"credential_missing", "credential_invalid"}:
         # A Copilot profile without a credential reference runs as the signed-in GitHub account;
-        # one that names a credential is not started without it.
-        return "copilot_credential_unavailable" if profile.get("client") == "copilot" else "credential_missing"
+        # one that names a credential is not started without a usable one.
+        return "copilot_credential_unavailable" if profile.get("client") == "copilot" else credential
     if profile.get("client") == "copilot" and readiness.get("runtime") not in {"ready", "unknown"}:
         return "runtime_missing"
     return None
@@ -207,6 +207,8 @@ _PROBLEMS = {
     "credential_unavailable": ("The mapped assistant's credential cannot be read. Check it in Connections; "
                                "nothing was started."),
     "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.",
+    "credential_invalid": ("The mapped assistant's key is set but is not a valid key. Correct it in Connections or "
+                           "in its environment variable; nothing was started."),
     "copilot_credential_unavailable": (
         "This Copilot profile names a credential that is not available. Provide it, or clear the credential "
         "reference in the profile so the stage uses the signed-in GitHub account; nothing was started."),
@@ -217,7 +219,7 @@ _PROBLEMS = {
 }
 # Problems whose text already says what to do: the connection, or confirming the stage again.
 CONNECTION_PROBLEMS = ("credential_missing", "credential_unavailable", "runtime_missing",
-                       "copilot_credential_unavailable")
+                       "copilot_credential_unavailable", "credential_invalid")
 CONFIRM_PROBLEMS = ("assistant_changed", "assistant_unconfirmed")
 _REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Every step of the plan is done.",
             "blocked": "Every remaining step is blocked."}
