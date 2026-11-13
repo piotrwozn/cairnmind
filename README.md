@@ -57,6 +57,21 @@ Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot
 
 The way memory and agents are organized is inspired by SynapCores. Cairnmind is an independent implementation of the knowledge layer; it is not a copy of that product or of its database engine.
 
+## Built with
+
+Cairnmind stands on other people's work. In one place:
+
+- [ArcadeDB](https://github.com/ArcadeData/arcadedb): the one engine behind the documents, the code graph, full-text search and the vector index.
+- [Ollama](https://ollama.com) with the Qwen models `qwen3.5:9b` and `qwen3-embedding:0.6b`: the local knowledge agent and the embeddings.
+- [tree-sitter](https://tree-sitter.github.io/tree-sitter/): the analysis of Python, JavaScript and TypeScript for the code graph.
+- [Textual](https://github.com/Textualize/textual) and [tmux](https://github.com/tmux/tmux): the terminal workspace and the panes the assistants run in.
+- [Model Context Protocol](https://modelcontextprotocol.io) and its [Python SDK](https://github.com/modelcontextprotocol/python-sdk): how coding assistants reach the memory.
+- [FastAPI](https://fastapi.tiangolo.com), [Uvicorn](https://www.uvicorn.org), [HTTPX](https://www.python-httpx.org) and [Typer](https://typer.tiangolo.com): the local service, its clients and the command line.
+- [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/): the Copilot connection of the built-in agent.
+- [uv](https://github.com/astral-sh/uv), [pytest](https://pytest.org) and [Ruff](https://github.com/astral-sh/ruff): installation, tests and linting.
+
+The coding assistants it works with, Codex CLI and Claude Code among them, are not part of Cairnmind; it starts them and keeps their project memory.
+
 ## Measured results
 
 Measured on 9 November 2026 on release 0.8.0 with `qwen3.5:9b` on an RTX 4080 Super, in isolated databases with synthetic fixtures. They were not repeated for 0.9.0, and they are not proof of behaviour on every real project.
