@@ -52,7 +52,10 @@ NOTES = {
 
 
 def git(*args):
-    subprocess.run(["git", "-C", str(NEUTRAL), *args], check=True, capture_output=True)
+    # Without the builder's own Git configuration: no signing, no hooks, no templates.
+    subprocess.run(["git", "-C", str(NEUTRAL), "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args],
+                   check=True, capture_output=True,
+                   env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
 
 
 def free_port() -> int:
@@ -134,31 +137,47 @@ def main() -> int:
     distribution = Path(os.environ.get("CAIRNMIND_ARCADE_DIST") or os.environ.get("DEVBRAIN_ARCADE_DIST") or runtime_dir(user))
     if not (distribution / "lib").is_dir():
         raise SystemExit(f"No database engine distribution at {distribution}.")
-    shutil.rmtree(NEUTRAL.parent, ignore_errors=True)
-    shutil.copytree(SAMPLE, NEUTRAL, ignore=shutil.ignore_patterns(".memory", "__pycache__", "README.md"))
-    git("init", "-q", "-b", "main")
-    git("add", "-A")
-    git("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid", "commit", "-qm", "Trail Notes")
+    try:
+        # The path is fixed, so that it can be neutral, and lies where every user may write. It is taken
+        # only when nothing is there, and only what this run created is removed afterwards.
+        os.mkdir(NEUTRAL.parent, 0o700)
+    except FileExistsError:
+        raise SystemExit(f"{NEUTRAL.parent} exists: another build is running, or one was interrupted. "
+                         "Look at it, remove it and run again.") from None
     temporary = Path(tempfile.mkdtemp(prefix="cairnmind-sample-build-"))
-    settings = replace(user, data_dir=temporary / "data", arcade_url=f"http://127.0.0.1:{free_port()}",
+    settings = replace(user, data_dir=temporary / "data", arcade_url=f"http://127.0.0.1:{free_port()}", arcade_user="root",
                        arcade_password=secrets.token_urlsafe(32), arcade_database="cairnmind_sample_" + uuid4().hex,
                        token=secrets.token_urlsafe(32), port=free_port(), cockpit_port=free_port())
-    started = False
+    failed = True
     try:
+        shutil.copytree(SAMPLE, NEUTRAL, ignore=shutil.ignore_patterns(".memory", "__pycache__", "README.md"))
+        git("init", "-q", "-b", "main")
+        git("add", "-A")
+        git("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid", "commit", "-qm", "Trail Notes")
         settings.save()
         install_engine(settings, distribution)
         start_engine(settings)
-        started = True
         package = build(Store(settings.data_dir, settings=settings), settings)
         target = SAMPLE / ".memory" / "cairnmind"
+        # Built whole beside the committed package and put in its place at the end.
+        staged = target.with_name("cairnmind.new")
+        shutil.rmtree(staged, ignore_errors=True)
+        shutil.copytree(package, staged, ignore=shutil.ignore_patterns(".publish.lock", "*.lock"))
         shutil.rmtree(target, ignore_errors=True)
-        shutil.copytree(package, target, ignore=shutil.ignore_patterns(".publish.lock", "*.lock"))
+        staged.rename(target)
         print(f"written {target}: {sum(1 for item in target.rglob('*') if item.is_file())} files")
+        failed = False
     finally:
-        if started:
-            stop_engine(settings)
-        shutil.rmtree(temporary, ignore_errors=True)
-        shutil.rmtree(NEUTRAL.parent, ignore_errors=True)
+        try:
+            stop_engine(settings)  # harmless when the engine never started
+        except Exception as exc:  # noqa: BLE001 - the engine may have gone by itself
+            print(f"The build engine could not be stopped cleanly: {exc}", file=sys.stderr)
+        if failed:
+            print(f"The build failed. Kept for a look: {temporary} (engine log under data/arcade) and {NEUTRAL.parent}. "
+                  "Remove both before the next run.", file=sys.stderr)
+        else:
+            shutil.rmtree(temporary, ignore_errors=True)
+            shutil.rmtree(NEUTRAL.parent, ignore_errors=True)
     return 0
 
 

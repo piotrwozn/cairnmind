@@ -51,7 +51,7 @@ cairnmind memory show examples/sample-project/.memory/cairnmind
 cairnmind memory show examples/sample-project/.memory/cairnmind --grep network
 ```
 
-And the proof that the package is whole, every file matching the hash in its manifest:
+And the proof that what you just read is intact: the manifest and every row it lists match their hashes.
 
 ```bash
 cairnmind memory inspect examples/sample-project/.memory/cairnmind
