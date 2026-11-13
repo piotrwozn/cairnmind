@@ -474,8 +474,12 @@ def impact(ctx: typer.Context, project: str,
     """List records linked to the files and symbols changed since a commit. Read-only; asks no model."""
     from cairnmind.impact import build_impact
     store = store_for_read(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    result = build_impact(store, pid, since, actor_scope(store, pid, worktree))
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        return build_impact(store, pid, since, actor_scope(store, pid, worktree))
+
+    result = store.read_consistently(read)
     if as_json:
         output(result)
     else:
@@ -490,7 +494,8 @@ def usage(ctx: typer.Context, project: str,
     from cairnmind.usage import build_usage
     # Resolving the project name reads the store, which needs the running engine but never starts it;
     # the usage itself is read from the session journals and nothing is written to them.
-    found = store_for_read(ctx.obj).resolve_project(project)
+    store = store_for_read(ctx.obj)
+    found = store.read_consistently(lambda: store.resolve_project(project))
     try:
         result = build_usage(ctx.obj.data_dir, found, since)
     except ValueError as exc:
@@ -544,7 +549,8 @@ def jobs_retry(ctx: typer.Context, project: str, job_id: str,
 @app.command()
 def records(ctx: typer.Context, project: str, history: bool = False):
     store = store_for_read(ctx.obj)
-    output(store.list_records(store.resolve_project(project)["id"], include_history=history))
+    output(store.read_consistently(
+        lambda: store.list_records(store.resolve_project(project)["id"], include_history=history)))
 
 
 @app.command()
@@ -581,10 +587,14 @@ def checkpoint(ctx: typer.Context, project: str, state_file: Path):
 def task_list(ctx: typer.Context, project: str, worktree: Path | None = None):
     from cairnmind.verification import verification_status
     store = store_for_read(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    scope = actor_scope(store, pid, worktree)
-    tasks = [r for r in store.list_records(pid) if r["kind"] == "task"]
-    output([{**task, "verification": verification_status(store, task, scope)} for task in tasks])
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        scope = actor_scope(store, pid, worktree)
+        tasks = [r for r in store.list_records(pid) if r["kind"] == "task"]
+        return [{**task, "verification": verification_status(store, task, scope)} for task in tasks]
+
+    output(store.read_consistently(read))
 
 
 @tasks_app.command("add")
@@ -678,31 +688,35 @@ def plan_save(ctx: typer.Context, project: str, input_json: Path,
 def plan_list(ctx: typer.Context, project: str):
     from cairnmind.plans import PlanManager
     store = store_for_read(ctx.obj)
-    output(PlanManager(store).list(store.resolve_project(project)["id"]))
+    output(store.read_consistently(lambda: PlanManager(store).list(store.resolve_project(project)["id"])))
 
 
 @plans_app.command("show")
 def plan_show(ctx: typer.Context, project: str, plan_id: str):
     from cairnmind.plans import PlanManager
     store = store_for_read(ctx.obj)
-    output(PlanManager(store).get(store.resolve_project(project)["id"], plan_id))
+    output(store.read_consistently(lambda: PlanManager(store).get(store.resolve_project(project)["id"], plan_id)))
 
 
 @plans_app.command("next")
 def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None):
     from cairnmind.plans import PlanManager
     store = store_for_read(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    scope = actor_scope(store, pid, worktree)
-    result = PlanManager(store).next_task(pid, plan_id, scope)
-    if result.get("task"):
-        from cairnmind.scope import drift_warning
-        from cairnmind.verification import verification_status
-        result["verification"] = verification_status(store, result["task"], scope)
-        warning = drift_warning(result["verification"].get("scope_drift"))
-        if warning:
-            result["warnings"] = [warning]
-    output(result)
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        scope = actor_scope(store, pid, worktree)
+        result = PlanManager(store).next_task(pid, plan_id, scope)
+        if result.get("task"):
+            from cairnmind.scope import drift_warning
+            from cairnmind.verification import verification_status
+            result["verification"] = verification_status(store, result["task"], scope)
+            warning = drift_warning(result["verification"].get("scope_drift"))
+            if warning:
+                result["warnings"] = [warning]
+        return result
+
+    output(store.read_consistently(read))
 
 
 @plans_app.command("activate")
@@ -744,9 +758,14 @@ def plan_contract(ctx: typer.Context, project: str,
         # Writing the profile file prepares the store as every writing command does.
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     store = store_for(ctx.obj) if write else store_for_read(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    scope = actor_scope(store, pid, worktree)
-    result = write_contract(store, pid, write, plan_id, scope) if write else build_contract(store, pid, plan_id, scope)
+
+    def run_contract():
+        pid = store.resolve_project(project)["id"]
+        scope = actor_scope(store, pid, worktree)
+        return write_contract(store, pid, write, plan_id, scope) if write else build_contract(store, pid, plan_id, scope)
+
+    # Repeated only for a read-only store, never for --write: Store(path) runs it once.
+    result = store.read_consistently(run_contract)
     if as_json:
         output(result)
     else:
@@ -757,8 +776,12 @@ def plan_contract(ctx: typer.Context, project: str,
 def check_profiles(ctx: typer.Context, project: str, worktree: Path | None = None):
     from cairnmind.verification import load_profiles
     store = store_for_read(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    output(load_profiles(store, pid, actor_scope(store, pid, worktree)))
+
+    def read():
+        pid = store.resolve_project(project)["id"]
+        return load_profiles(store, pid, actor_scope(store, pid, worktree))
+
+    output(store.read_consistently(read))
 
 
 @checks_app.command("run")
@@ -904,9 +927,13 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
     from cairnmind.evidence import orphans_report
     from cairnmind.verification import _root
     store = store_for_read(ctx.obj)
-    selected = store.resolve_project(project)
-    root = _root(store, selected["id"], actor_scope(store, selected["id"], worktree))
-    report = orphans_report(store, selected, root, _scoped_records(store, selected["id"], root))
+
+    def read():
+        selected = store.resolve_project(project)
+        root = _root(store, selected["id"], actor_scope(store, selected["id"], worktree))
+        return orphans_report(store, selected, root, _scoped_records(store, selected["id"], root))
+
+    report = store.read_consistently(read)
     if as_json:
         output(report)
     else:

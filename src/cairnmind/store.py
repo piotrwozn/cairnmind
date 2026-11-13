@@ -290,6 +290,16 @@ class Store:
         from .store_readonly import open_readonly
         return open_readonly(cls, settings)
 
+    def read_consistently(self, read):
+        """``read()``; for a read-only store, repeated until no commit landed while it ran (else StoreBusy).
+
+        A store opened with Store(path) reads behind the writer lock where it needs to, so ``read`` runs once.
+        """
+        if not self.read_only:
+            return read()
+        from .store_readonly import read_consistently
+        return read_consistently(self, read)
+
     def __init__(self, data_dir: Path, *, settings: Settings | None = None):
         from .arcade import ArcadeClient
         from .engine import ensure_engine
@@ -339,7 +349,8 @@ class Store:
             yield active
             return
         if self.read_only:
-            # A consistent read: no writer lock and no journal, and the server transaction is rolled back.
+            # No writer lock and no journal, and the server transaction is rolled back. Not a snapshot:
+            # a read of several queries is made consistent by read_consistently, not by this transaction.
             with self.client.transaction() as reader:
                 self._local.transaction = reader
                 try:

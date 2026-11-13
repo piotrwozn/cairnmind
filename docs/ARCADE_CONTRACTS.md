@@ -29,7 +29,10 @@ ensure_engine then client.ensure_database. Diagnostics never autostart/download.
 database and runs no DDL: it requires config.json, a reachable engine of the pinned
 release, the database, schema_version 4 and the journal_state row, else StoreNotReady
 names the command to run. Its commands and non-SELECT queries are refused and its
-transactions take no writer lock and are rolled back.
+transactions take no writer lock and are rolled back. Such a transaction is not a
+snapshot (REPEATABLE_READ is per page), so a read of several queries goes through
+`Store.read_consistently(read)`: journal head before and after, repeated up to 3 times
+while a commit lands in between, then StoreBusy instead of a mixed result.
 
 ## Store (storage agent owns)
 

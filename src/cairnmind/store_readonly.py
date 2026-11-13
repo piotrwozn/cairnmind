@@ -13,6 +13,13 @@ What a store opened this way refuses:
   that changes data on its query endpoint as well;
 - a commit: ``Store.transaction`` opens a server transaction that is always rolled back, takes no
   writer lock, and whose ``command`` is refused like the store's.
+
+Without the writer lock a read is not a snapshot: ArcadeDB keeps REPEATABLE_READ per page, so a
+page read for the first time late in a transaction shows the latest commit. A read made of several
+queries therefore goes through ``Store.read_consistently``: it notes the head of the change journal,
+reads, and notes the head again. Every commit that changes a journaled table moves the head in the
+same commit, so an unchanged head means no such change landed in between. Otherwise the read is
+repeated, a few times at most, and then refused with one sentence instead of a mixed result.
 """
 from __future__ import annotations
 
@@ -29,6 +36,10 @@ _READ = re.compile(r"^\s*\(*\s*(SELECT|MATCH|TRAVERSE)\b", re.I)
 
 class StoreNotReady(ValueError):
     """The store cannot be read as it is now; the message names the command that makes it ready."""
+
+
+class StoreBusy(ValueError):
+    """The store changed during every attempt to read it."""
 
 
 class ReadOnlyStoreError(RuntimeError):
@@ -94,8 +105,26 @@ def check_ready(client: ArcadeClient, settings: Settings) -> None:
         raise StoreNotReady(f"Database schema version is incompatible: the database has version {version!r} "
                             f"and this release reads version {SCHEMA_VERSION}.")
     if "journal_state" not in types or not client.query("SELECT id FROM journal_state WHERE id='current'"):
-        raise StoreNotReady("The Cairnmind database has no journal state; restore a backup with "
-                            "`cairnmind restore FILE`, which starts a new journal.")
+        raise StoreNotReady("The Cairnmind database has no journal state; any ordinary write, for example "
+                            "`cairnmind remember`, recreates it, and `cairnmind restore FILE` is for when the "
+                            "data itself is damaged.")
+
+
+READ_ATTEMPTS = 3
+
+
+def read_consistently(store, read, attempts: int = READ_ATTEMPTS):
+    """``read()`` repeated until no committed change landed while it ran, else StoreBusy."""
+    from .journal import Journal
+    journal = Journal(store)
+    for _ in range(attempts):
+        # Through the client, outside any transaction: the head is always the latest commit.
+        before = journal.cursor(store.client)
+        result = read()
+        if journal.cursor(store.client) == before:
+            return result
+    raise StoreBusy(f"The store changed during each of {attempts} attempts to read it; "
+                    "run the command again when the current work is done.")
 
 
 def open_readonly(store_class, settings: Settings):

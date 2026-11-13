@@ -210,12 +210,76 @@ def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, 
     assert files(store.data_dir) == before
 
 
+def plan_fixture(tmp_path):
+    from cairnmind.plans import PlanManager
+    store, project = ready(tmp_path)
+    first = PlanManager(store).save(project["id"], {"title": "Ship"}, [{"key": "one", "content": "Do it"}], "first")
+    return store, project, first
+
+
+def save_second_version(store, project, first):
+    from cairnmind.plans import PlanManager
+    PlanManager(store).save(project["id"], {"id": first["plan"]["id"], "title": "Ship again"},
+                            [{"key": "one", "content": "Do it better"}], "second", expected_version=1,
+                            task_versions={task["id"]: task["version"] for task in first["tasks"]})
+
+
+def test_a_commit_between_the_queries_of_plan_show_is_never_shown_half(tmp_path, monkeypatch):
+    import json
+    from typer.testing import CliRunner
+    import cairnmind.plans as plans
+    from cairnmind.cli import app
+    store, project, first = plan_fixture(tmp_path)
+    real, calls = plans._tasks, []
+
+    def tasks_after_a_commit(tx, project_id, plan):
+        if getattr(tx, "changes", None) is not None:
+            return real(tx, project_id, plan)  # the writer's own transaction, inside the save below
+        calls.append(plan["version"])
+        if len(calls) == 1:  # the plan row was read; the service saves version 2 before the tasks are read
+            save_second_version(store, project, first)
+        return real(tx, project_id, plan)
+
+    monkeypatch.setattr(plans, "_tasks", tasks_after_a_commit)
+    shown = CliRunner().invoke(app, ["--data-dir", str(store.data_dir), "plan", "show", "demo", first["plan"]["id"]])
+    assert shown.exit_code == 0, (shown.output, repr(shown.exception))
+    result = json.loads(shown.output)
+    assert (result["plan"]["version"], result["plan"]["title"]) == (2, "Ship again")
+    assert [task["content"] for task in result["tasks"]] == ["Do it better"]
+    assert calls == [1, 2]
+
+
+def test_a_store_that_keeps_changing_is_refused_with_one_sentence(tmp_path, monkeypatch, capsys):
+    import cairnmind.plans as plans
+    from cairnmind import cli
+    store, project, first = plan_fixture(tmp_path)
+    real, saved = plans._tasks, []
+
+    def tasks_after_a_commit(tx, project_id, plan):
+        saved.append(True)
+        source = store.snapshot(project["id"], f"manual://{len(saved)}", "x", "manual")
+        store.remember(project["id"], {"kind": "fact", "content": f"change {len(saved)}"}, [source["id"]])
+        return real(tx, project_id, plan)
+
+    monkeypatch.setattr(plans, "_tasks", tasks_after_a_commit)
+    monkeypatch.setattr("sys.argv", ["cairnmind", "--data-dir", str(store.data_dir), "plan", "show", "demo",
+                                     first["plan"]["id"]])
+    with pytest.raises(SystemExit) as stopped:
+        cli.entrypoint()
+    assert stopped.value.code == 1 and len(saved) == 3
+    shown = capsys.readouterr()
+    assert " ".join(shown.err.split()) == ("Cairnmind: The store changed during each of 3 attempts to read it; "
+                                           "run the command again when the current work is done.")
+    assert shown.out == ""
+
+
 def test_a_missing_journal_row_is_refused(tmp_path, monkeypatch):
     store, _ = ready(tmp_path)
     ArcadeClient(store.settings).command("DELETE FROM journal_state")
     forbid_starting(monkeypatch)
     sent = record_requests(monkeypatch)
-    with pytest.raises(StoreNotReady, match="has no journal state; restore a backup with `cairnmind restore FILE`"):
+    with pytest.raises(StoreNotReady, match="has no journal state; any ordinary write, for example `cairnmind "
+                                            "remember`, recreates it, and `cairnmind restore FILE` is for when"):
         Store.open_readonly(store.settings)
     assert changes(sent) == []
     assert not ArcadeClient(store.settings).query("SELECT FROM journal_state")
