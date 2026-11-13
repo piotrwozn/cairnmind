@@ -102,7 +102,7 @@ def frozen_servers(preferences: dict, project_id: str, worktree) -> tuple[list[d
     try:
         stored = preferences.get("project_mcp_servers", {})
         if not isinstance(stored, dict):
-            raise ValueError("invalid")
+            raise ValueError("Invalid MCP server lists.")
         servers = validate_servers(stored.get(project_id, []))
     except (ValueError, TypeError, AttributeError):
         return [], [{"code": "configuration_invalid"}]
