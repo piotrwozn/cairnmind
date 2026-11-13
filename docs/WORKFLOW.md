@@ -84,7 +84,7 @@ After a change to the code, the profile or the task content, a result can become
 
 ## MCP calls
 
-Connected clients get `ask`, `remember`, `checkpoint`, `save_plan`, `next_task`, `resume_context`, `ack_resume` and the read-only `check_status`. Updating a step of a managed plan passes the real versions:
+Connected clients get `ask`, `remember`, `checkpoint`, `save_plan`, `next_task`, `resume_context`, `ack_resume` and the read-only `check_status`. A client started with `cairnmind mcp --client external` (Cursor, Cline, Zed) gets the same tools in an evidence-degraded session: what it saves is marked as written by an external session and never counts as verified (see the README). Updating a step of a managed plan passes the real versions:
 
 ```json
 {
