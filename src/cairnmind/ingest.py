@@ -316,6 +316,9 @@ def index_pending_sources(store, limit: int = 100) -> dict:
     rows = store.query(
         "SELECT FROM sources WHERE is_current=true AND project_id IS NOT NULL "
         "AND kind NOT IN :excluded AND (kind IN :known OR metadata.path IS NULL) "
+        # Third-party MCP events (agent_memory.is_mcp_source) are never chunked: not even loaded here.
+        "AND (kind <> 'agent_transcript' OR metadata.origin_evidence IS NULL "
+        "OR metadata.origin_evidence <> 'degraded') "
         "AND id NOT IN (SELECT source_id FROM chunks) ORDER BY created_at,id",
         {"excluded": list(excluded_kinds), "known": list(known_kinds)},
     )

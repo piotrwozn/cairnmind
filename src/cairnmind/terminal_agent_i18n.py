@@ -49,6 +49,10 @@ CATALOG = {
     "Call once": "Wywołaj raz",
     "Third-party MCP server {server} is off ({code}); the agent works without its tools.":
         "Serwer MCP {server} jest wyłączony ({code}); agent pracuje bez jego narzędzi.",
+    "The provider refused the request with third-party MCP tools ({code}); they are withdrawn for this run "
+    "and the agent works without them.":
+        "Dostawca odrzucił żądanie z narzędziami zewnętrznych serwerów MCP ({code}); zostały wycofane do końca "
+        "tego uruchomienia, a agent pracuje bez nich.",
 }
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",

@@ -70,6 +70,30 @@ def _mcp_server(event) -> str | None:
     return server if isinstance(server, str) and _MCP_SERVER.fullmatch(server) else "unknown"
 
 
+def _third_party_result(event) -> bool:
+    """A third-party tool's result: its completed action or its tool message."""
+    data = event.get("data") if isinstance(event, dict) else None
+    return (isinstance(data, dict) and _mcp_server(event) is not None
+            and (event.get("type") == "action_completed"
+                 or (event.get("type") == "message" and data.get("role") == "tool")))
+
+
+def third_party_origin(store, project_id, session_id) -> dict | None:
+    """The mark of a write made by an own-agent session after it received a third-party tool result.
+
+    The engine archives at once after such a result, so the archive holds it before any later write.
+    Derived from archived host metadata, never from a payload (store.ORIGIN_METADATA).
+    """
+    rows = store.query(
+        "SELECT metadata.origin_client AS client FROM sources WHERE project_id=:project AND kind='agent_transcript' "
+        "AND metadata.agent_session_id=:session AND metadata.third_party_result=true LIMIT 1",
+        {"project": project_id, "session": session_id})
+    if not rows or not str(rows[0].get("client", "")).startswith("mcp:"):
+        return None
+    return {"origin_client": rows[0]["client"], "origin_session_id": session_id,
+            "origin_history": "archived", "origin_evidence": "degraded"}
+
+
 def is_mcp_source(row) -> bool:
     """Whether an archived agent event holds third-party MCP text: kept and readable by id, never chunked."""
     metadata = row.get("metadata")
@@ -223,6 +247,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
             raise ValueError("Own-agent journal captured prefix changed")
         by_sequence = {row.get("metadata", {}).get("agent_sequence"): row for row in rows}
         source_rows = []
+        tainted = None  # the server of the first third-party result in this session, once there is one
         from .ingest import _write_chunks
         for event in events:
             if time.monotonic() > deadline:
@@ -250,6 +275,13 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                         "archive_view": "public-agent-event-v1",
                         "normalized_text": normalized, "source_timestamp": event.get("created_at")}
             server = _mcp_server(event)
+            if server is None and tainted and event.get("type") == "message" and role == "assistant":
+                # After a third-party result the session's own words may restate it: they are archived
+                # like the result itself (degraded, not chunked, not extracted), from then on.
+                server = tainted
+            if _third_party_result(event):
+                metadata["third_party_result"] = True
+                tainted = tainted or server
             if server is not None:
                 # Third-party text (store.ORIGIN_METADATA, as for an external session): it never makes a
                 # record anchored, and is not chunked, so search and resume never surface it later.

@@ -12,14 +12,50 @@ from __future__ import annotations
 
 from copy import deepcopy
 import inspect
+import json
 from uuid import uuid4
 
 from .mcp_host import MAX_ARGUMENT_BYTES, McpHost, _canonical
+from .mcp_schema import valid_arguments
+from .terminal_safe import safe_text
+
+# The approval dialog prints the whole request; a request whose text would be longer is refused, so what
+# runs is always exactly what was shown, never a cut view of it.
+MAX_SHOWN_CHARS = 60_000
+PROJECTION_TEXT_CHARS = 10_000
+_HOST_KEYS = ("ok", "server_id", "tool", "third_party_untrusted", "is_error", "error_code", "notice")
+
+
+def approval_text(request) -> str:
+    """The request exactly as the approval dialog prints it."""
+    return safe_text(json.dumps(request, ensure_ascii=False, indent=2))
+
+
+def projection(result: dict) -> dict:
+    """A large third-party result for the model's context: the host's marking always kept, server text
+    only inside ``content``, cut to a bound. The complete result is in the journal and the archive."""
+    value = {key: result[key] for key in _HOST_KEYS if key in result}
+    value["third_party_untrusted"] = True
+    budget, content = PROJECTION_TEXT_CHARS, []
+    for block in result.get("content") or []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "text" or not isinstance(block.get("text"), str):
+            content.append({key: block[key] for key in ("type", "omitted", "bytes") if key in block})
+            continue
+        piece = block["text"][:budget]
+        while piece and len(json.dumps(piece, ensure_ascii=False)) > budget:
+            piece = piece[:len(piece) // 2]
+        budget -= len(json.dumps(piece, ensure_ascii=False))
+        content.append({"type": "text", "text": piece, "truncated": piece != block["text"]})
+    value.update(content=content, content_truncated=True, structured_omitted="structured" in result)
+    return value
 
 
 class McpTools:
     def __init__(self, servers, *, run, journal, worktree, reserved, approve=None):
         self.run, self.journal, self.approve = run, journal, approve
+        self.results = 0  # third-party results journaled in this run
         redact = getattr(journal, "redact", None)
         self.host = McpHost(servers, worktree=worktree, reserved=reserved, redact=redact)
 
@@ -31,10 +67,20 @@ class McpTools:
         return self.host.schemas()
 
     async def start(self, record):
-        """Start the servers once; returns the failures as (server_id, code) for the status line."""
+        """Start the servers once; returns the failures as (server_id, code) for the status line.
+
+        A server whose start cannot be journaled is stopped and reported, the others keep their tools.
+        """
         failures = []
         for event_type, data in await self.host.start():
-            record(event_type, data)
+            try:
+                record(event_type, data)
+            except Exception:
+                if event_type != "mcp_server_started":
+                    raise
+                await self.host.withdraw(data["server_id"], "catalogue_invalid")
+                event_type, data = "mcp_server_failed", {"server_id": data["server_id"], "code": "catalogue_invalid"}
+                record(event_type, data)
             if event_type == "mcp_server_failed":
                 failures.append((data["server_id"], data["code"]))
         return failures
@@ -52,10 +98,16 @@ class McpTools:
             return {"ok": False, "error_code": "invalid_tool_arguments", **base}
         if size > MAX_ARGUMENT_BYTES:
             return {"ok": False, "error_code": "arguments_too_large", "bytes": size, **base}
+        # The server's schema is evaluated off the event loop with a time bound (mcp_schema).
+        if not await valid_arguments(entry["schema"]["parameters"], arguments):
+            return {"ok": False, "error_code": "invalid_tool_arguments", **base}
         action_id = uuid4().hex
         request = {"kind": "mcp_tool", "action_id": action_id, "server_id": entry["server_id"],
                    "tool": entry["tool"], "name": name, "arguments": deepcopy(arguments),
                    "timeout_seconds": timeout, **self._binding(call_id)}
+        shown = len(approval_text(request))
+        if shown > MAX_SHOWN_CHARS:
+            return {"ok": False, "error_code": "arguments_too_long_to_show", "shown_chars": shown, **base}
         self.journal.append("approval_requested", request)
         if self.approve is None:
             return {"ok": False, "error_code": "approval_required", **base,
@@ -79,6 +131,7 @@ class McpTools:
             raise
         result = self.journal.redact(result) if hasattr(self.journal, "redact") else result
         self.journal.append("action_completed", {**action, "result": result})
+        self.results += 1
         return result
 
     async def close(self, record):

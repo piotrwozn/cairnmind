@@ -263,7 +263,12 @@ class AgentEngine:
                 value = json.loads(message["content"])
             except (ValueError, TypeError):
                 value = {"content": message["content"]}
-            projection = self._bounded_projection(value)
+            if message.get("name") in self.mcp.catalogue and isinstance(value, dict):
+                # A third-party result keeps its marking; its text stays apart from host keys (#126).
+                from .mcp_agent import projection as third_party_projection
+                projection = third_party_projection(value)
+            else:
+                projection = self._bounded_projection(value)
             if not isinstance(projection, dict):
                 projection = {"result": projection}
             projection.update(host_context_truncated=True, full_result_archived=True,
@@ -495,7 +500,8 @@ class AgentEngine:
         schema = self._schemas.get(name)
         if not schema or not isinstance(arguments, dict):
             return self._error("invalid_tool_call")
-        if not Draft202012Validator(schema["parameters"]).is_valid(arguments):
+        # A third-party schema is checked by McpTools.call, off the event loop and with a time bound.
+        if name not in self.mcp.catalogue and not Draft202012Validator(schema["parameters"]).is_valid(arguments):
             return self._error("invalid_tool_arguments")
         if self._redact(arguments) != arguments:
             return self._error("credential_in_tool_arguments")
@@ -511,7 +517,12 @@ class AgentEngine:
             if name in self._memory_tools:
                 return await self._memory_tool(name, arguments)
             if name in self.mcp.catalogue:
-                return await self.mcp.call(name, arguments, call_id, self.tools.command_timeout_seconds)
+                called = self.mcp.results
+                result = await self.mcp.call(name, arguments, call_id, self.tools.command_timeout_seconds)
+                if self.mcp.results != called:
+                    # Archived at once: the service then marks this session's later memory writes degraded.
+                    await self._checked_archive()
+                return result
             self.tools.current_tool_call_id = call_id
             try:
                 return await self.tools.execute(name, arguments)
@@ -653,9 +664,7 @@ class AgentEngine:
             self._display_pending = ""
             self._record("provider_started", {"request_id": self._request_id, "call": self._model_calls,
                                                "provider": self.profile.get("provider", "api")})
-            reply = await self.provider.complete(
-                [{"role": "system", "content": SYSTEM}, *deepcopy(self._context)],
-                self._available_tools(), on_delta=self._delta)
+            reply = await self._complete()
             await self._finish_stream()
             message, calls = self._reply(reply)
             await self._message(message)
@@ -845,11 +854,33 @@ class AgentEngine:
         """Start the run's MCP servers once, before the first model call; failures are reported, not fatal."""
         if self._mcp_started:
             return
+        # An interrupted start has stopped what it started; it is tried again on the next turn.
+        failures = await self.mcp.start(self._record)
         self._mcp_started = True
-        for server_id, code in await self.mcp.start(self._record):
-            await self._notify("mcp_server_failed", {"server_id": server_id, "code": code})
         for schema in self.mcp.schemas():
             self._schemas[schema["name"]] = deepcopy(schema)
+        for server_id, code in failures:
+            await self._notify("mcp_server_failed", {"server_id": server_id, "code": code})
+
+    async def _complete(self):
+        """One model call. If the provider refuses a request that offers third-party tools, those tools are
+        withdrawn for the rest of the run, reported, and the call is made once more without them (#126)."""
+        from .api_providers import ProviderError
+        tools = self._available_tools()
+        messages = [{"role": "system", "content": SYSTEM}, *deepcopy(self._context)]
+        try:
+            return await self.provider.complete(messages, tools, on_delta=self._delta)
+        except ProviderError as error:
+            offered = sorted({self.mcp.catalogue[t["name"]]["server_id"] for t in tools if t["name"] in self.mcp.catalogue})
+            if not offered or error.code not in {"provider_error", "unsupported_request", "context_limit"}:
+                raise
+            code = error.code
+        for name in list(self.mcp.catalogue):
+            self._schemas.pop(name, None)
+        self._record("mcp_tools_withdrawn", {"code": code, "servers": offered})
+        await self._notify("mcp_tools_withdrawn", {"code": code, "servers": offered})
+        self._stream_buffer = self._display_pending = ""
+        return await self.provider.complete(messages, self._available_tools(), on_delta=self._delta)
 
     async def _stop_tools(self):
         stop = getattr(self.tools, "interrupt", None)

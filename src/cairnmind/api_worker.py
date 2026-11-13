@@ -259,6 +259,12 @@ class AgentApp(App):
             self.set_status(data.get("message", data.get("status", data.get("code", json.dumps(data, ensure_ascii=False)))))
         elif kind == "mcp_server_failed":
             self.mcp_server_off(data.get("server_id"), data.get("code"))
+        elif kind == "mcp_tools_withdrawn":
+            code = data.get("code") if isinstance(data.get("code"), str) and _CODE.fullmatch(data["code"]) else "unknown"
+            text = self.t("The provider refused the request with third-party MCP tools ({code}); they are withdrawn "
+                          "for this run and the agent works without them.", code=code)
+            self.set_status(text)
+            self.query_one("#agent-history", RichLog).write(self.display_text(text))
         elif kind in {"tool_start", "tool_result"}:
             # Results are visible as literal data, never terminal control codes.
             label = self.t("Tool started" if kind == "tool_start" else "Tool result")
@@ -281,12 +287,18 @@ class AgentApp(App):
             return False
         if request.get("session_id") != self.run_record.get("session_id"):
             return False
+        body = self.display_text(json.dumps(request, ensure_ascii=False, indent=2)).plain
         if request.get("kind") == "mcp_tool":
             # One call of a third-party tool: server, tool and the exact arguments, approved once (#126).
+            from .mcp_agent import MAX_SHOWN_CHARS, approval_text
             if (not request.get("action_id") or not isinstance(request.get("server_id"), str)
                     or not isinstance(request.get("tool"), str) or not isinstance(request.get("name"), str)
                     or not isinstance(request.get("arguments"), dict)):
                 return False
+            shown = approval_text(request)
+            if len(shown) > MAX_SHOWN_CHARS:
+                return False  # never a cut view of what would run
+            body = self.display_text(shown, limit=None).plain
             title, note, button = ("Approve one third-party tool call",
                                    "This sends exactly these arguments to a program you configured. Its answer "
                                    "is untrusted third-party text.", "Call once")
@@ -295,7 +307,7 @@ class AgentApp(App):
         else:
             title, note, button = ("Approve one command", "This command runs with your user account permissions.",
                                    "Run once")
-        self._approval_screen = ConfirmModal(self.t(title), self.display_text(json.dumps(request, ensure_ascii=False, indent=2)).plain + "\n\n" + self.t(note), approve=self.t(button))
+        self._approval_screen = ConfirmModal(self.t(title), body + "\n\n" + self.t(note), approve=self.t(button))
         try:
             return await self.push_screen_wait(self._approval_screen) is True
         finally:
