@@ -403,6 +403,7 @@ CATALOG.update({
     "The mapped assistant cannot be launched for a plan step.":
         "Przypisanego asystenta nie można uruchomić dla kroku planu.",
     # Plan stages for the built-in API agent and Copilot (#125)
+    "default model": "model domyślny",
     "The mapped assistant has no credential. Add its key in Connections; nothing was started.":
         "Przypisany asystent nie ma poświadczeń. Dodaj jego klucz w Połączeniach; nic nie zostało uruchomione.",
     "The mapped assistant's credential cannot be read. Check it in Connections; nothing was started.":

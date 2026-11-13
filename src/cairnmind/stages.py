@@ -153,6 +153,9 @@ def next_command(decision: dict, project_id: str, worktree: str, *, slots: list,
                 "--task", decision["task"]["id"], "--worktree", worktree], None
     if decision.get("action") != "start_slot":
         return None, None
+    if decision.get("client") in AGENT_CLIENTS:
+        # `cairnmind run` launches only Codex and Claude Code; the agent runs in a workspace panel.
+        return None, "agent_client"
     by_id = {row.get("id"): row for row in profiles if isinstance(row, dict)}
     same_client = [row for row in slots if by_id.get(row.get("profile_id"), {}).get("client") == decision["client"]]
     if by_id.get(decision.get("profile_id"), {}).get("model"):
@@ -197,6 +200,9 @@ def describe(decision: dict, translate=lambda text: text) -> str:
     if decision.get("slot_id"):
         lines.append(translate("Assistant") + ": " + str(decision.get("label") or decision["slot_id"])
                      + " (" + str(decision["slot_id"]) + ")")
+    if decision.get("client") in AGENT_CLIENTS:
+        named = " · ".join(str(value) for value in (decision.get("provider"), decision.get("model")) if value)
+        lines.append(translate("Model") + ": " + (named or translate("default model")))
     if decision.get("check_profile"):
         lines.append(translate("Check profile") + ": " + decision["check_profile"])
     if decision.get("required_profiles"):

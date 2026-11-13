@@ -101,6 +101,47 @@ def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says
     assert json.loads(ask("--plan-id", saved["plan"]["id"], "--json"))["command"][:2] == ["cairnmind", "run"]
 
 
+def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monkeypatch):
+    settings, store, project, plans, saved = planned
+    runner = CliRunner()
+    monkeypatch.delenv("FIXTURE_STAGE_KEY", raising=False)
+
+    def ask(*extra):
+        shown = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo", *extra])
+        assert shown.exit_code == 0, shown.output or repr(shown.exception)
+        return shown.output
+    profiles = [{**row, "credential_ref": "env:FIXTURE_STAGE_KEY"} if row["client"] == "api" else row
+                for row in AGENT_PROFILES]
+    CockpitState(settings).update({"profiles": profiles, "project_slots": {project["id"]: [
+        {"id": "cloud", "profile_id": "api-cloud"}, {"id": "pilot", "profile_id": "copilot"}]},
+        "project_stages": {project["id"]: {"implement": "cloud"}}})
+    before = plans.get(project["id"], saved["plan"]["id"])
+    output = ask()
+    assert "Assistant: Cloud API (cloud)" in output and "Model: openai · gpt-x" in output
+    assert "The mapped assistant has no credential. Add its key in Connections" in output
+    assert "Next:" not in output and "Start this stage from the workspace" not in output
+    assert json.loads(ask("--json"))["problem"] == "credential_missing"
+
+    monkeypatch.setenv("FIXTURE_STAGE_KEY", "fixture-not-a-real-key")
+    output = ask()
+    assert "Next:" not in output and "Start this stage from the workspace with Run next stage." in output
+    value = json.loads(ask("--json"))
+    assert (value["action"], value["client"], value["command"], value["command_reason"]) == (
+        "start_slot", "api", None, "agent_client")
+    assert value["credential"] == "configured_unchecked" and "fixture-not-a-real-key" not in output
+
+    CockpitState(settings).update({"project_stages": {project["id"]: {"implement": "pilot"}}})
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": False, "code": "copilot_sdk_missing"})
+    output = ask()
+    assert "GitHub Copilot is not prepared on this computer." in output and "Model: default model" in output
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": True, "code": "ready"})
+    value = json.loads(ask("--json"))
+    assert (value["action"], value["command"], value["command_reason"]) == ("start_slot", None, "agent_client")
+    assert plans.get(project["id"], saved["plan"]["id"]) == before
+
+
 @pytest.fixture
 def cockpit(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
