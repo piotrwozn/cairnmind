@@ -14,6 +14,7 @@ from cairnmind.cockpit_state import CockpitState
 from cairnmind.config import Settings
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
+from cairnmind.terminal_client import BrokerClient as RealBrokerClient
 from test_cockpit_server import ORIGIN, Runtime, login
 
 STAGES = {"implement": "codex", "review": "claude", "test": "unit"}
@@ -99,6 +100,108 @@ def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says
     assert value["plan"]["id"] == other["plan"]["id"] and value["action"] == "start_slot"
     assert (value["command"], value["command_reason"]) == (None, "inactive_plan")
     assert json.loads(ask("--plan-id", saved["plan"]["id"], "--json"))["command"][:2] == ["cairnmind", "run"]
+
+
+def running_cockpit(monkeypatch, answer):
+    """`stage next` while a cockpit runs: the real broker client, its answers from `answer`."""
+    from cairnmind import terminal_client
+    seen, real = [], RealBrokerClient
+
+    def handler(request):
+        seen.append(request)
+        if answer == "unreachable":
+            raise httpx.ConnectError("refused", request=request)
+        if request.url.path == "/_control/ticket":
+            return httpx.Response(200, json={"ticket": "ticket"})
+        if request.url.path == "/auth/exchange":
+            return httpx.Response(200, json={"csrf": "csrf"})
+        if answer == "timeout":
+            raise httpx.ReadTimeout("slow", request=request)
+        return answer(request)
+    monkeypatch.setattr("cairnmind.cockpit.cockpit_status", lambda settings: {
+        "available": True, "url": "http://127.0.0.1:9", "version_matches": True})
+    monkeypatch.setattr(terminal_client, "BrokerClient",
+                        lambda settings, **kwargs: real(settings, transport=httpx.MockTransport(handler)))
+    return seen
+
+
+@pytest.mark.parametrize("answer,credential", [
+    (lambda request: httpx.Response(200, json={"code": "configured_unchecked", "configured": True}),
+     "configured_unchecked"),
+    (lambda request: httpx.Response(200, json={"code": "credential_missing", "configured": False}),
+     "credential_missing"),
+    (lambda request: httpx.Response(422, json={"detail": "unreadable credential store"}), None),
+    (lambda request: httpx.Response(500, text="Internal Server Error"), None),
+    (lambda request: httpx.Response(200, json={"configured": True}), None),
+    ("timeout", "unknown"), ("unreachable", "unknown")])
+def test_cli_readiness_asks_the_running_cockpit_and_an_error_answer_is_not_startable(
+        tmp_path, monkeypatch, answer, credential):
+    from cairnmind.api_runtime import STATUS_TIMEOUT, cli_stage_readiness
+    settings = Settings.load(tmp_path / "data", create=True)
+    seen = running_cockpit(monkeypatch, answer)
+    profile = {"id": "api-cloud", "client": "api", "label": "Cloud API", "credential_ref": "profile:api-cloud"}
+    assert cli_stage_readiness(settings)(profile)["credential"] == credential
+    assert seen and all(request.extensions["timeout"]["read"] <= STATUS_TIMEOUT for request in seen)
+    assert STATUS_TIMEOUT <= 5
+
+
+def test_cli_says_when_readiness_could_not_be_checked_and_when_the_cockpit_refused(planned, monkeypatch):
+    settings, store, project, plans, saved = planned
+    CockpitState(settings).update({"profiles": AGENT_PROFILES, "project_slots": {project["id"]: [
+        {"id": "cloud", "profile_id": "api-cloud"}]}, "project_stages": {project["id"]: {"implement": CLOUD}}})
+
+    def ask():
+        shown = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo"])
+        assert shown.exit_code == 0, shown.output or repr(shown.exception)
+        return " ".join(shown.output.split())
+    running_cockpit(monkeypatch, "timeout")
+    output = ask()
+    assert "Its key and runtime could not be checked here" in output
+    assert "Start this stage from the workspace with Run next stage." in output
+    running_cockpit(monkeypatch, lambda request: httpx.Response(422, json={"detail": "unreadable"}))
+    output = ask()
+    assert "credential cannot be read" in output and "Start this stage from the workspace" not in output
+
+
+def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monkeypatch):
+    settings, store, project, plans, saved = planned
+    runner = CliRunner()
+    monkeypatch.delenv("FIXTURE_STAGE_KEY", raising=False)
+
+    def ask(*extra):
+        shown = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo", *extra])
+        assert shown.exit_code == 0, shown.output or repr(shown.exception)
+        return shown.output
+    profiles = [{**row, "credential_ref": "env:FIXTURE_STAGE_KEY"} if row["client"] == "api" else row
+                for row in AGENT_PROFILES]
+    CockpitState(settings).update({"profiles": profiles, "project_slots": {project["id"]: [
+        {"id": "cloud", "profile_id": "api-cloud"}, {"id": "pilot", "profile_id": "copilot"}]},
+        "project_stages": {project["id"]: {"implement": CLOUD}}})
+    before = plans.get(project["id"], saved["plan"]["id"])
+    output = ask()
+    assert "Assistant: Cloud API (cloud)" in output and "Model: openai · gpt-x" in output
+    assert "The mapped assistant has no credential. Add its key in Connections" in output
+    assert "Next:" not in output and "Start this stage from the workspace" not in output
+    assert json.loads(ask("--json"))["problem"] == "credential_missing"
+
+    monkeypatch.setenv("FIXTURE_STAGE_KEY", "fixture-not-a-real-key")
+    output = ask()
+    assert "Next:" not in output and "Start this stage from the workspace with Run next stage." in output
+    value = json.loads(ask("--json"))
+    assert (value["action"], value["client"], value["command"], value["command_reason"]) == (
+        "start_slot", "api", None, "agent_client")
+    assert value["credential"] == "configured_unchecked" and "fixture-not-a-real-key" not in output
+
+    CockpitState(settings).update({"project_stages": {project["id"]: {"implement": PILOT}}})
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": False, "code": "copilot_sdk_missing"})
+    output = ask()
+    assert "GitHub Copilot is not prepared on this computer." in output and "Model: default model" in output
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": True, "code": "ready"})
+    value = json.loads(ask("--json"))
+    assert (value["action"], value["command"], value["command_reason"]) == ("start_slot", None, "agent_client")
+    assert plans.get(project["id"], saved["plan"]["id"]) == before
 
 
 @pytest.fixture
@@ -201,6 +304,54 @@ def test_two_step_plan_hands_implement_to_codex_and_review_to_claude_each_with_i
     assert claude_readback["task"]["version"] == codex_readback["task"]["version"] + 1
     steps = [(t["content"], t["metadata"].get("depends_on")) for t in plans.get(project["id"], saved["plan"]["id"])["tasks"]]
     assert steps == [(t["content"], t["metadata"].get("depends_on")) for t in saved["tasks"]]
+
+
+# Agent stages as Plan stages saves them: the slot with the profile and client chosen for it.
+CLOUD = {"slot": "cloud", "profile_id": "api-cloud", "client": "api",
+         "provider": "openai", "model": "gpt-x", "base_url": "https://api.openai.com/v1"}
+PILOT = {"slot": "pilot", "profile_id": "copilot", "client": "copilot", "provider": None, "model": None,
+         "base_url": None}
+AGENT_PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
+                  {"id": "claude", "client": "claude", "label": "Claude"},
+                  {"id": "api-cloud", "client": "api", "label": "Cloud API", "provider": "openai", "model": "gpt-x"},
+                  {"id": "copilot", "client": "copilot", "label": "GitHub Copilot"}]
+
+
+def test_cockpit_stage_reads_an_agent_credential_and_runtime_without_starting_anything(cockpit, monkeypatch):
+    settings, app, client, runtime, project, requests = cockpit
+    CockpitState(settings).update({"profiles": AGENT_PROFILES, "project_slots": {project["id"]: [
+        {"id": "codex", "profile_id": "codex"}, {"id": "cloud", "profile_id": "api-cloud"},
+        {"id": "pilot", "profile_id": "copilot"}]}, "project_stages": {project["id"]: {"review": CLOUD}}})
+    headers = login(app, client)
+
+    def stage():
+        answer = client.get("/api/stage", params={"project": project["id"]}, headers=headers)
+        assert answer.status_code == 200, answer.text
+        return answer.json()
+    value = stage()
+    # A stage mapped to an API profile without a credential says so and starts nothing.
+    assert (value["action"], value["problem"], value["slot_id"], value["client"]) == (
+        "none", "credential_missing", "cloud", "api")
+    assert (value["provider"], value["model"], value["credential"]) == ("openai", "gpt-x", "credential_missing")
+    saved = client.post("/api/profiles/api-cloud/credential", json={"key": "FIXTURE-SESSION-KEY"}, headers=headers)
+    assert saved.status_code == 200, saved.text
+    value = stage()  # A key kept only in this cockpit's session counts.
+    assert (value["action"], value["problem"], value["credential"]) == ("start_slot", None, "configured_unchecked")
+    assert "FIXTURE-SESSION-KEY" not in json.dumps(value)
+
+    CockpitState(settings).update({"project_stages": {project["id"]: {"review": PILOT}}})
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": False, "code": "copilot_sdk_missing"})
+    value = stage()
+    assert (value["action"], value["problem"], value["runtime"]) == ("none", "runtime_missing", "copilot_sdk_missing")
+    monkeypatch.setattr("cairnmind.copilot_adapter.runtime_status", lambda settings=None: {
+        "available": True, "code": "ready"})
+    value = stage()
+    assert (value["action"], value["client"], value["credential"], value["runtime"]) == (
+        "start_slot", "copilot", "not_required", "ready")
+    # Reading the stage never starts an assistant, prepares a session or calls a provider.
+    assert runtime.starts == []
+    assert {row[1] for row in requests} <= {"/projects", "/project-roots", "/plans/next"}
 
 
 def test_cockpit_stage_reports_an_unknown_assistant_instead_of_another(cockpit):

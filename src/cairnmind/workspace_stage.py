@@ -13,7 +13,8 @@ import subprocess
 import sys
 
 from .terminal_notices import about
-from .stages import CLIENT_STAGES, LAUNCHABLE_CLIENTS, STAGES, describe, validate_stage_map
+from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
+                     changed_since_confirmed, confirmed_choice, describe, stage_slot, validate_stage_map)
 
 _UNSET = ":unset"
 
@@ -64,6 +65,8 @@ ALREADY_RUNNING = ("This assistant is already running here. No process was resta
 
 
 CHECK_CONTINUES = "The check keeps running; its result will appear here when it ends."
+AGENT_STARTED = ("Stage started. Nothing is sent to the model until you write to the assistant in its panel; "
+                 "it must read and acknowledge its resume packet before it changes anything.")
 
 
 async def _shown(app, scope) -> bool:
@@ -119,11 +122,14 @@ async def run_next_stage(app):
             app.notice_for(subject, PROJECT_CHANGED)
             return
         # The launcher returns a live process of this slot unchanged: no new session, no packet.
+        # The built-in agent's launcher (start_agent) reuses a live run by the same identity.
         if reusable_native_run(app.data.get("runs", []), scope[0], scope[1], decision["client"], decision["slot_id"]):
             app.notice_for(subject, app.t(ALREADY_RUNNING) + "\n" + text)
             return
         # Exactly Start work for one assistant: the supervisor posts /api/client-runs once
-        # and the launcher prepares a fresh resume packet that the assistant must ACK.
+        # and the launcher prepares a fresh resume packet that the assistant must ACK. For
+        # the built-in agent and Copilot that launcher is start_agent, with the profile's
+        # limits and credential, in a panel of this workspace.
         await asyncio.to_thread(app.workspace.select_project, project, scope[1], intent="work",
                                 requested_slot_ids=[decision["slot_id"]])
         await asyncio.to_thread(app.workspace.update, {"focus": "client1"})
@@ -138,6 +144,8 @@ async def run_next_stage(app):
             app.notice_for(subject, app.t("The assistant did not start") + ": " + ", ".join(map(str, failed)) + "\n" + text)
         elif current.get("last_error"):
             app.notice_for(subject, app.launch_notice(current))
+        elif decision["client"] in AGENT_CLIENTS:
+            app.notice_for(subject, app.t(AGENT_STARTED) + "\n" + text)
         else:
             app.notice_for(subject, app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
     elif decision.get("action") == "run_check":
@@ -167,6 +175,9 @@ async def run_next_stage(app):
             return
         app.notice_for(subject, "")
         await app.push_screen_wait(MessageModal("Check result", text + "\n\n" + check_summary(result, app.t)))
+    elif decision.get("problem") in CONNECTION_PROBLEMS + CONFIRM_PROBLEMS:
+        # The text says what to do: fix the connection, or confirm the stage in Plan stages.
+        await app.push_screen_wait(MessageModal("Run next stage", text))
     else:
         await app.push_screen_wait(MessageModal("Run next stage", text + "\n\n"
                                                 + app.t("Map stages in More → Plan stages.")))
@@ -190,9 +201,20 @@ async def edit_stages(app):
             return app.t(stage) + " · " + app.t("Not set")
         if stage == "test":
             return app.t(stage) + " · " + target
-        slot = next((s for s in slots if s["id"] == target), None)
+        slot_id = stage_slot(target)
+        slot = next((s for s in slots if s["id"] == slot_id), None)
         name = profiles.get(slot["profile_id"], {}).get("label") if slot else None
-        return app.t(stage) + " · " + (name or app.t("Unknown assistant")) + " (" + target + ")"
+        text = app.t(stage) + " · " + (name or app.t("Unknown assistant")) + " (" + slot_id + ")"
+        profile = profiles.get(slot["profile_id"]) if slot else None
+        # The same comparison as Run next stage: profile, client and, for an agent, its provider,
+        # model and address.
+        if profile and changed_since_confirmed(target, slot, profile) != []:
+            text += " · " + app.t("not confirmed; save it to confirm")
+        return text
+
+    def choice(slot):
+        # What a stage stores: the slot and what it names at this moment.
+        return confirmed_choice(slot, profiles[slot["profile_id"]])
 
     stage = await app.push_screen_wait(ChoiceModal("Plan stages", [(shown(s), s) for s in STAGES]))
     if stage is None:
@@ -203,6 +225,10 @@ async def edit_stages(app):
         value = await app.push_screen_wait(ChoiceModal(app.t(stage), choices + [("Not set", _UNSET)]))
         if value is None:
             return
+        if value != _UNSET:
+            # Saving binds the stage to the assistant chosen now; a later change of the slot's
+            # connection is shown, never started, until the stage is saved again.
+            value = choice(next(s for s in slots if s["id"] == value))
     else:
         def valid(text):
             try:
