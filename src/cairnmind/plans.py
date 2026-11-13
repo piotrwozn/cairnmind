@@ -5,6 +5,7 @@ memory-record mutation, with a compare-and-swap on both task and plan versions.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from copy import deepcopy
 import hashlib
 import heapq
@@ -279,7 +280,7 @@ class PlanManager:
                     fields["metadata"] = {key: value for key, value in task["metadata"].items()
                                           if key != "worktree"}
                 _set(tx, "records", fields, "id=:id", {"id": task["id"]})
-            saved = {}
+            saved, changed_steps = {}, False
             for key in order:
                 definition = definitions[key]
                 step, existing = definition["step"], definition["existing"]
@@ -300,11 +301,21 @@ class PlanManager:
                 if existing:
                     record["expected_version"] = existing["version"]
                 sources = list(dict.fromkeys([source["id"]] + (existing["source_ids"] if existing else [])))
-                saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True)
+                # Only a step this save defines anew carries the writer's mark; an unchanged step keeps its own.
+                # The plan-level context hash is the plan row's, which is marked below.
+                changed = not existing or bool(adoption) or record["key"] != existing["key"] or (
+                    step["content"] != existing["content"] or any(
+                        existing["metadata"].get(name) != value for name, value in metadata.items()
+                        if name not in ("plan_context_hash", "plan_archived", "state")))
+                changed_steps |= changed
+                with nullcontext() if changed else self.store.write_origin(None):
+                    saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True)
             for task_id, task in removed.items():
-                self.store._remember(tx, project_id, {"id": task_id, "expected_version": task["version"],
-                    "status": "superseded", "metadata": {"plan_archived": True}},
-                    list(dict.fromkeys(task["source_ids"] + [source["id"]])), managed_batch=True)
+                # Archiving a step changes nothing it says; its own mark, or none, stays.
+                with self.store.write_origin(None):
+                    self.store._remember(tx, project_id, {"id": task_id, "expected_version": task["version"],
+                        "status": "superseded", "metadata": {"plan_archived": True}},
+                        list(dict.fromkeys(task["source_ids"] + [source["id"]])), managed_batch=True)
             tasks = [saved[key] for key in definitions]
             # All vertices now exist; rebuild batch dependency edges as a final pass.
             for task in tasks:
@@ -315,9 +326,12 @@ class PlanManager:
                            "step_ids": [task["id"] for task in tasks], "context_hash": context_hash,
                            "source_ids": list(dict.fromkeys((old.get("source_ids", []) if old else []) + [source["id"]])),
                            "created_at": old["created_at"] if old else now, "updated_at": now}
-            # Like a record, a plan an external session ever wrote keeps that mark; a native plan has none.
-            origin = self.store.current_origin() or {key: old[key] for key in ORIGIN_METADATA if old and key in old}
-            result_plan.update(origin)
+            # Like a record, a plan an external session ever changed keeps that mark; a native plan has none.
+            plan_changed = (not old or changed_steps or bool(removed)
+                            or (title, goal, constraints, result_plan["step_ids"])
+                            != (old["title"], old["goal"], old["constraints"], old["step_ids"]))
+            kept = {key: old[key] for key in ORIGIN_METADATA if old and key in old}
+            result_plan.update((plan_changed and self.store.current_origin()) or kept)
             if old:
                 _set(tx, "plans", result_plan, "id=:id AND version=:version", {"id": plan_id, "version": expected_version})
             else:
