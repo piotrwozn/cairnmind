@@ -56,6 +56,21 @@ def test_the_command_prints_the_report_and_json(tmp_path, monkeypatch):
     assert payload["partial"] is False and payload["data"]["registry"] == "ok"
 
 
+def test_by_week_groups_by_iso_week_and_a_bad_value_fails(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
+    settings, _ = workspace(tmp_path)
+    year, number, _ = (datetime.now(timezone.utc) - timedelta(hours=1)).isocalendar()
+    expected = f"{year}-W{number:02d}"
+    shown = run(settings, "demo", "--by", "week")
+    assert shown.exit_code == 0, shown.output or repr(shown.exception)
+    assert f"{expected}  cheap  m1  turns 1/1 complete" in shown.output and "ISO weeks" in shown.output
+    payload = json.loads(run(settings, "demo", "--by", "week", "--json").output)
+    assert payload["by"] == "week" and payload["groups"][0]["period"] == expected
+    assert "day" not in payload["groups"][0]
+    bad = run(settings, "demo", "--by", "month")
+    assert bad.exit_code != 0 and "month" in re.sub(r"\x1b\[[0-9;]*m", "", bad.output)
+
+
 def test_a_bad_since_fails_with_its_message(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_SESSION_ID", raising=False)
     settings, _ = workspace(tmp_path)

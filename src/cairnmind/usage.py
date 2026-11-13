@@ -38,6 +38,14 @@ def parse_since(text) -> timedelta:
     return span
 
 
+def _period(at: datetime, by: str) -> str:
+    """The day (``2026-11-13``) or ISO week (``2026-W46``, Monday to Sunday) of a UTC time."""
+    if by == "week":
+        year, week, _ = at.isocalendar()
+        return f"{year}-W{week:02d}"
+    return at.date().isoformat()
+
+
 def _time(value):
     try:
         parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
@@ -194,9 +202,10 @@ def _row(label, row):
             f"  output {_cell(row['output_tokens'], row)}  cost {cost}")
 
 
-def _render(name, since, start, groups, totals, data, partial) -> str:
+def _render(name, since, start, groups, totals, data, partial, by) -> str:
+    unit = "days are UTC" if by == "day" else "weeks are ISO weeks (Monday to Sunday) in UTC"
     lines = [f"Usage of the built-in API agent for {name}, last {since} "
-             f"(from {start.isoformat(timespec='seconds')}); days are UTC", COST_NOTE]
+             f"(from {start.isoformat(timespec='seconds')}); {unit}", COST_NOTE]
     if partial:
         why = ([f"the run registry is {data['registry']}"] if data["registry"] != "ok" else []) + (
             [f"{data['sessions_skipped']} sessions were skipped because their project is unknown"]
@@ -204,7 +213,7 @@ def _render(name, since, start, groups, totals, data, partial) -> str:
         lines.append("PARTIAL REPORT: " + "; ".join(why) + ", so turns of this project may be missing.")
     if len(groups) > MAX_ROWS:
         lines.append(f"{len(groups) - MAX_ROWS} older rows are only in the JSON output.")
-    lines += [_row(f"{g['day']}  {g['profile']}  {g['model']}", g) for g in groups[-MAX_ROWS:]]
+    lines += [_row(f"{g['period']}  {g['profile']}  {g['model']}", g) for g in groups[-MAX_ROWS:]]
     lines.append(_row("Total", totals) if groups else "No turns of the built-in API agent were found in this period.")
     lines.append(f"Data: {data['turns_complete']} of {data['turns_seen']} turns had complete usage; "
                  f"{data['lines_skipped']} journal lines skipped as unreadable; "
@@ -213,8 +222,10 @@ def _render(name, since, start, groups, totals, data, partial) -> str:
     return "\n".join(lines)
 
 
-def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
+def build_usage(data_dir, project: dict, since="7d", *, by="day", now=None) -> dict:
     """Sum the usage of this project's API agent turns inside the period; reads files only."""
+    if by not in ("day", "week"):
+        raise ValueError("by must be day or week")
     span, data_dir = parse_since(since), Path(data_dir)
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -259,12 +270,13 @@ def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
             profile, model = (_line(run[key], 60) if isinstance(run.get(key), str) and _line(run[key], 60)
                               else "unknown" for key in ("profile_id", "model"))
             summary = _summary(turn)
-            _fold(groups.setdefault((turn["at"].date().isoformat(), profile, model), _new()), summary)
+            _fold(groups.setdefault((_period(turn["at"], by), profile, model), _new()), summary)
             _fold(totals, summary)
             seen += 1
     partial = registry != "ok" or counts["sessions_skipped"] > 0
-    rows = [{"day": day, "profile": profile, "model": model, **_final(acc)}
-            for (day, profile, model), acc in sorted(groups.items())]
+    # ``day`` stays in day rows for readers of earlier versions; a week is not a day, so week rows have none.
+    rows = [{"period": period, **({"day": period} if by == "day" else {}), "profile": profile, "model": model,
+             **_final(acc)} for (period, profile, model), acc in sorted(groups.items())]
     final = _final(totals, partial)
     data = {"turns_seen": seen, "turns_complete": final["complete_turns"], **counts, "registry": registry}
     since = str(since).strip()
@@ -272,4 +284,4 @@ def build_usage(data_dir, project: dict, since="7d", *, now=None) -> dict:
     return {"project": {"id": project["id"], "name": name}, "since": since, "timezone": "UTC",
             "from": start.isoformat(timespec="seconds"), "to": now.isoformat(timespec="seconds"),
             "partial": partial, "groups": rows, "totals": final, "data": data, "cost_note": COST_NOTE,
-            "text": _render(name, since, start, rows, final, data, partial)}
+            "by": by, "text": _render(name, since, start, rows, final, data, partial, by)}

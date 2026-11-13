@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 from contextlib import contextmanager
+from enum import Enum
 from functools import wraps
 import subprocess
 import sys
@@ -477,18 +478,24 @@ def impact(ctx: typer.Context, project: str,
         typer.echo(result["text"])
 
 
+class UsageBy(str, Enum):
+    day = "day"
+    week = "week"
+
+
 @app.command()
 @initialized
 def usage(ctx: typer.Context, project: str,
           since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
+          by: Annotated[UsageBy, typer.Option("--by", help="Group by UTC day or by ISO week.")] = UsageBy.day,
           as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
-    """Sum the token usage of the built-in API agent per day, profile and model. Asks no model, starts no service."""
+    """Sum the token usage of the built-in API agent per day or week, profile and model. Asks no model."""
     from cairnmind.usage import build_usage
     # Resolving the project name opens the store (it starts the database engine if stopped and may create the
     # data directory); the usage itself is read from the session journals and nothing is written to them.
     found = store_for(ctx.obj).resolve_project(project)
     try:
-        result = build_usage(ctx.obj.data_dir, found, since)
+        result = build_usage(ctx.obj.data_dir, found, since, by=by.value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--since")
     if as_json:

@@ -64,8 +64,8 @@ class Data:
         path.write_bytes(text if isinstance(text, bytes) else text.encode())
         os.utime(path, (mtime.timestamp(), mtime.timestamp()))
 
-    def build(self, since="7d", now=NOW):
-        return build_usage(self.root, PROJECT, since, now=now)
+    def build(self, since="7d", now=NOW, **options):
+        return build_usage(self.root, PROJECT, since, now=now, **options)
 
 
 @pytest.fixture
@@ -432,8 +432,8 @@ def test_json_has_stable_keys_and_text_and_json_are_printable(data):
     data.journal("s1", turn("r1", stamp(1), done(10, 1)))
     result = build_usage(data.root, {"id": "p1", "name": "bad\u009bname "}, "7d", now=NOW)
     assert list(result) == ["project", "since", "timezone", "from", "to", "partial", "groups", "totals", "data",
-                            "cost_note", "text"]
-    assert list(result["groups"][0]) == ["day", "profile", "model", "turns", "complete_turns", "complete",
+                            "cost_note", "by", "text"]
+    assert list(result["groups"][0]) == ["period", "day", "profile", "model", "turns", "complete_turns", "complete",
                                          "tokens_are_lower_bound", "input_tokens", "output_tokens",
                                          "estimated_cost", "cost_currency"]
     assert list(result["data"]) == ["turns_seen", "turns_complete", "lines_skipped", "sessions_skipped",
@@ -484,3 +484,55 @@ def test_turns_built_with_the_real_engine_usage_method(tmp_path):
     assert (groups["lost"]["input_tokens"], groups["lost"]["complete"], groups["lost"]["estimated_cost"]) == (
         10, False, None)
     assert result["data"]["lines_skipped"] == 0 and result["data"]["registry"] == "ok"
+
+
+def test_weeks_are_iso_weeks_in_utc_and_follow_the_year_boundary(data):
+    data.run("r1", "s1")
+    year_end = datetime(2025, 1, 5, 12, 0, tzinfo=timezone.utc)
+    # Sunday 29 Dec 2024 ends 2024-W52; Monday 30 Dec and Wednesday 1 Jan are both in 2025-W01.
+    data.journal("s1", turn("r1", "2024-12-29T23:30:00+00:00", done(1, 1))
+                 + turn("r1", "2024-12-30T00:30:00+00:00", done(2, 2))
+                 + turn("r1", "2025-01-01T10:00:00+00:00", done(4, 4)))
+    result = data.build("30d", now=year_end, by="week")
+    assert [(g["period"], g["input_tokens"], g["turns"]) for g in result["groups"]] == [
+        ("2024-W52", 1, 1), ("2025-W01", 6, 2)]
+    assert all("day" not in g for g in result["groups"]) and result["by"] == "week"
+    assert "weeks are ISO weeks (Monday to Sunday) in UTC" in result["text"] and "days are UTC" not in result["text"]
+    assert "2025-W01  cheap  m1  turns 2/2 complete  input 6" in result["text"]
+    assert result["totals"]["input_tokens"] == 7 and result["totals"]["turns"] == 3
+
+
+def test_a_week_is_numbered_by_the_year_of_its_thursday(data):
+    data.run("r1", "s1")
+    new_year = datetime(2027, 1, 3, tzinfo=timezone.utc)
+    # 31 Dec 2026 is a Thursday: week 53 of 2026, which also holds Friday 1 Jan 2027.
+    data.journal("s1", turn("r1", "2026-12-31T10:00:00+00:00", done(1, 1))
+                 + turn("r1", "2027-01-01T10:00:00+00:00", done(1, 1)), mtime=new_year)
+    result = data.build("30d", now=new_year, by="week")
+    assert [(g["period"], g["turns"]) for g in result["groups"]] == [("2026-W53", 2)]
+
+
+def test_days_stay_the_default_and_keep_their_day_key(data):
+    data.run("r1", "s1")
+    data.journal("s1", turn("r1", stamp(1), done(1, 1)))
+    for result in (data.build(), data.build(by="day")):
+        assert result["by"] == "day" and result["groups"][0]["day"] == result["groups"][0]["period"] == "2026-11-12"
+        assert "days are UTC" in result["text"]
+    with pytest.raises(ValueError, match="by must be day or week"):
+        data.build(by="month")
+
+
+def test_the_row_cap_and_the_lower_bound_rule_hold_for_weeks(data):
+    for number in (1, 2, 3):
+        data.run(f"r{number}", "s1", model=f"m{number}")
+    # 25 weeks of three models are 75 rows; one more, older week of the first model lacks an output counter.
+    text = "".join(turn(f"r{number}", stamp(7 * week + 1), done(1, 1)) for week in range(25) for number in (1, 2, 3))
+    data.journal("s1", text + turn("r1", stamp(7 * 25 + 1), {"usage_complete": False, "input_tokens": 5}))
+    result = data.build("200d", by="week")
+    assert len(result["groups"]) == 76 and result["totals"]["turns"] == 76
+    assert "16 older rows are only in the JSON output." in result["text"]
+    shown = [row for row in result["text"].splitlines() if "  turns " in row and not row.startswith("Total")]
+    assert len(shown) == 60 and shown[-1].startswith(result["groups"][-1]["period"])
+    assert result["groups"][0]["tokens_are_lower_bound"] is True
+    assert (result["groups"][0]["input_tokens"], result["groups"][0]["output_tokens"]) == (5, None)
+    assert "Total  turns 75/76 incomplete  input at least 80  output at least 75" in result["text"]
