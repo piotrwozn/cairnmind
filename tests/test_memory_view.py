@@ -365,3 +365,20 @@ def test_grep_also_finds_the_criteria_and_check_names_printed_for_a_task(snapsho
         text = render_snapshot(manifest, payload, grep=word)
         assert "Records (1 shown of 4)" in text and "  id: t1" in text
     assert "Nothing in this snapshot matches" in render_snapshot(manifest, payload, kind="decision", grep="unit_retry")
+
+
+def test_a_text_of_which_no_character_fits_is_not_printed_as_an_empty_block(snapshot, monkeypatch):
+    manifest, payload = snapshot
+    monkeypatch.setattr(memory_view, "TOTAL_TEXT_LIMIT", 3)
+    payload["sources"][0]["content"] = "\x1b[31mred"
+    text = render_snapshot(manifest, payload, sources_text=True)
+    assert "  source chat://session/1:" not in text and "  source file://src/login.py:" not in text
+    assert "    | \n" not in text and "more characters left out" not in text and "    | def login" not in text
+    assert text.count("Source texts are limited to 3 characters in all; further texts are not shown.") == 1
+
+
+def test_grep_matches_a_criterion_as_it_is_printed(snapshot):
+    manifest, payload = snapshot
+    payload["records"][2]["metadata"].update(acceptance_criteria=["Retries stop\nafter  five tries."])
+    text = render_snapshot(manifest, payload, grep="stop after five")
+    assert "    - Retries stop after five tries. (no check)" in text and "  id: t1" in text

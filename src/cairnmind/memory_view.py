@@ -137,6 +137,10 @@ def _source_lines(ids, sources, left, cache):
         else:
             allowed = min(SOURCE_TEXT_LIMIT, left - used)
             kept = _cut(whole, allowed)
+            if not kept:
+                # Not even one whole character fits: the total bound is reached, so later texts get nothing either.
+                limited, used = True, left
+                continue
             limited = limited or (allowed < SOURCE_TEXT_LIMIT and len(kept) < len(whole))
             lines += [f"  source {name}:", *_indented(kept, "    | ")]
             if len(kept) < len(whole):
@@ -179,7 +183,7 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
                                   else ([], [], 0, False))
         # A text the bound hid can hide a match as well, so the note does not depend on the record being shown.
         limited = limited or hit
-        criteria = [part for pair in _criteria(row) for part in pair if part]
+        criteria = [_line(part) for pair in _criteria(row) for part in pair if part]  # as printed
         if found(row["content"], row["key"], *uris(row["source_ids"]), *seen, *criteria):
             shown_records.append(row)
             texts[row["id"]] = lines
