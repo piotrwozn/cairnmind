@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 
+from .terminal_notices import about
 from .stages import CLIENT_STAGES, LAUNCHABLE_CLIENTS, STAGES, describe, validate_stage_map
 
 _UNSET = ":unset"
@@ -70,7 +71,7 @@ async def _shown(app, scope) -> bool:
     return (current.get("project_id"), current.get("worktree")) == scope
 
 
-def _late_result(app, scope, profile):
+def _late_result(app, scope, profile, subject=None):
     """After the stage worker was cancelled: the outcome as a notice, never a dialog over other work."""
     def done(future):
         if future.cancelled():
@@ -83,11 +84,11 @@ def _late_result(app, scope, profile):
             return  # Recorded for that project; it is not this one's result.
         error = future.exception()
         if error is not None:
-            app.notice(app.t("The check could not run") + ": " + profile + " · " + str(error))
+            app.notice_for(subject, app.t("The check could not run") + ": " + profile + " · " + str(error))
             return
         result = future.result()
         verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
-        app.notice(app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
+        app.notice_for(subject, app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
                    + (" " + app.t("Outcome") + ": " + str(result["outcome"]) if result.get("outcome") else "")
                    + (" · " + str(result["error"]) if result.get("error") else ""))
     return done
@@ -104,21 +105,22 @@ async def run_next_stage(app):
     from .workspace import reusable_native_run
     project = app.chosen_project()
     scope = (app.workspace_data.get("project_id"), app.workspace_data.get("worktree"))
+    subject = about(scope[0], project.get("name"), scope[1])  # what these notices are about, whatever is shown later
     if scope[0] != project["id"] or not scope[1]:
         raise ValueError(app.t("Select a visible project first."))
     decision = await app.request("GET", "/api/stage", params={"project": scope[0], "worktree": scope[1]})
     if not await _shown(app, scope):
-        app.notice(PROJECT_CHANGED)
+        app.notice_for(subject, PROJECT_CHANGED)
         return
     text = describe(decision, app.t)
     if decision.get("action") == "start_slot":
         await app.load_state()
         if not await _shown(app, scope):
-            app.notice(PROJECT_CHANGED)
+            app.notice_for(subject, PROJECT_CHANGED)
             return
         # The launcher returns a live process of this slot unchanged: no new session, no packet.
         if reusable_native_run(app.data.get("runs", []), scope[0], scope[1], decision["client"], decision["slot_id"]):
-            app.notice(app.t(ALREADY_RUNNING) + "\n" + text)
+            app.notice_for(subject, app.t(ALREADY_RUNNING) + "\n" + text)
             return
         # Exactly Start work for one assistant: the supervisor posts /api/client-runs once
         # and the launcher prepares a fresh resume packet that the assistant must ACK.
@@ -128,24 +130,24 @@ async def run_next_stage(app):
         await app.reconcile()
         current = await asyncio.to_thread(app.workspace.read)
         if (current.get("project_id"), current.get("worktree")) != scope:
-            app.notice(PROJECT_CHANGED)
+            app.notice_for(subject, PROJECT_CHANGED)
             return
         failed = [row.get("code") for row in current.get("launch_errors", [])
                   if row.get("slot_id") == decision["slot_id"]]
         if failed:
-            app.notice(app.t("The assistant did not start") + ": " + ", ".join(map(str, failed)) + "\n" + text)
+            app.notice_for(subject, app.t("The assistant did not start") + ": " + ", ".join(map(str, failed)) + "\n" + text)
         elif current.get("last_error"):
-            app.notice(app.launch_notice(current))
+            app.notice_for(subject, app.launch_notice(current))
         else:
-            app.notice(app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
+            app.notice_for(subject, app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
     elif decision.get("action") == "run_check":
         profile = decision["check_profile"]
         running = getattr(app, "_stage_check", None)
         if running is not None and not running[0].done():
             # One check at a time from here; an assistant stage is never held back by it.
-            app.notice(app.t("A check is still running") + ": " + running[1])
+            app.notice_for(subject, app.t("A check is still running") + ": " + running[1])
             return
-        app.notice(app.t("Running check") + ": " + profile)
+        app.notice_for(subject, app.t("Running check") + ": " + profile)
         # The check process is not stopped when the worker is cancelled; it finishes and is recorded.
         future = asyncio.ensure_future(asyncio.to_thread(run_stage_check, app.settings, decision))
         app._stage_check = (future, profile + " · " + str(app.workspace_data.get("project_name") or project["name"])
@@ -155,15 +157,15 @@ async def run_next_stage(app):
         except asyncio.CancelledError:
             # Another click in the same group cancelled the worker: say "project changed" only
             # when it did, and let the outcome reach this project once the check ends.
-            future.add_done_callback(_late_result(app, scope, profile))
+            future.add_done_callback(_late_result(app, scope, profile, subject))
             current = app.workspace.read()
             same = (current.get("project_id"), current.get("worktree")) == scope
-            app.notice(app.t(CHECK_CONTINUES) + " " + profile if same else CHECK_MOVED)
+            app.notice_for(subject, app.t(CHECK_CONTINUES) + " " + profile if same else CHECK_MOVED)
             raise
         if not await _shown(app, scope):
-            app.notice(CHECK_MOVED)
+            app.notice_for(subject, CHECK_MOVED)
             return
-        app.notice("")
+        app.notice_for(subject, "")
         await app.push_screen_wait(MessageModal("Check result", text + "\n\n" + check_summary(result, app.t)))
     else:
         await app.push_screen_wait(MessageModal("Run next stage", text + "\n\n"
@@ -174,6 +176,7 @@ async def edit_stages(app):
     """Map implement and review to an assistant of this project and test to a check profile."""
     from .terminal_ui import ChoiceModal, Field, FormModal
     project_id = app.workspace_data.get("project_id")
+    subject = about(project_id, app.workspace_data.get("project_name"))
     if not project_id:
         raise ValueError(app.t("Select a visible project first."))
     stored = app.data.get("settings", {}).get("project_stages", {})
@@ -224,4 +227,4 @@ async def edit_stages(app):
         mapping[project_id] = current
     await app.request("PUT", "/api/settings", json={"project_stages": mapping})
     await app.load_state()
-    app.notice("Plan stages saved. Nothing was started.")
+    app.notice_for(subject, "Plan stages saved. Nothing was started.")

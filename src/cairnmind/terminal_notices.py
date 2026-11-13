@@ -74,22 +74,35 @@ class NoticeHistory:
         return f"[{translate('Notices')}: {count}]" if count else ""
 
     def lines(self, scope: dict | None, translate) -> str:
-        """Newest first: time, the project when it is not the one shown now, the text."""
+        """Newest first: time, the project when it is not the one shown now, the text.
+
+        The head of an entry (time, project, folder, count) is one line; a stored text can never start a
+        line of its own, because every continuation line of a notice is indented.
+        """
+        from .brief import _line  # the one-line helper of the other panels; imported when the list is opened
         scope = scope if isinstance(scope, dict) else {}
         now = _now()
         out = []
         for entry in reversed(self.entries):
             stamp = entry.when.strftime("%H:%M:%S" if entry.when.date() == now.date() else "%Y-%m-%d %H:%M:%S")
             label = ""
-            if (entry.project_id, entry.worktree) != (scope.get("project_id"), scope.get("worktree")):
+            shown_folder = scope.get("worktree")
+            differs = (entry.project_id != scope.get("project_id")
+                       or bool(entry.worktree and shown_folder and entry.worktree != shown_folder))
+            if differs:
                 if entry.project_id is None:
                     label = translate("No project")
                 else:
-                    label = entry.project_name or entry.project_id
+                    label = _line(entry.project_name or entry.project_id, 120)
                     if entry.worktree:
-                        label += " · " + entry.worktree
-                label = "[" + safe_text(label, limit=300) + "] "
+                        label += " · " + _line(entry.worktree, 200)
+                label = "[" + label + "] "
             repeat = f" (×{entry.count})" if entry.count > 1 else ""
-            body = entry.text.replace("\n", "\n    ")
+            body = entry.text.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029").replace("\n", "\n    ")
             out.append(f"{stamp}  {label}{body}{repeat}")
         return "\n".join(out)
+
+
+def about(project_id, name=None, worktree=None) -> dict:
+    """What a notice is about, when that is not the project the panel shows at the moment of the call."""
+    return {"project_id": project_id, "project_name": name, "worktree": worktree}

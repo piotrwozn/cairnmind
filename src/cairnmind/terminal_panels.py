@@ -17,6 +17,7 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Sta
 from .config import Settings
 from .terminal_safe import plain
 from .terminal_i18n import native_failure_notice
+from .terminal_notices import about as notice_about
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
                           LocalizedModal, MessageModal, summary_text)
 
@@ -722,8 +723,10 @@ class SidebarApp(BasePanel):
     async def action_ask(self):
         """Ask the chosen project's memory; read-only, nothing is saved."""
         from .terminal_commands import ask_summary
+        subject = None  # the project asked about, which may not be the one shown when the answer or error comes
         try:
             project = self.chosen_project()
+            subject = notice_about(project["id"], project.get("name"))
             values = await self.push_screen_wait(FormModal(
                 "Ask memory", [Field("question", "Question", required=True, multiline=True)],
                 note="Answers come only from this project's memory, with cited sources. Nothing is saved.",
@@ -733,7 +736,8 @@ class SidebarApp(BasePanel):
             payload = {"project": project["id"], "question": values["question"]}
             if self.workspace_data.get("project_id") == project["id"] and self.workspace_data.get("worktree"):
                 payload["worktree"] = self.workspace_data["worktree"]
-            self.notice("Asking memory…")
+                subject = notice_about(project["id"], project.get("name"), payload["worktree"])
+            self.notice_for(subject, "Asking memory…")
             from .terminal_client import BrokerClient
             if isinstance(self.broker, BrokerClient):
                 # A slow answer must not hold the shared client's lock and stall refreshes.
@@ -748,16 +752,19 @@ class SidebarApp(BasePanel):
             self.notice("")
             await self.push_screen_wait(MessageModal("Memory answer", ask_summary(result, self.t)))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice_for(subject, exc)
 
     @work(group="sidebar-brief", exclusive=True, exit_on_error=False)
     async def action_brief(self):
         """Show where work stopped in the chosen project; read-only and without a model."""
+        subject = None
         try:
             project = self.chosen_project()
             params = {"project": project["id"]}
+            subject = notice_about(project["id"], project.get("name"))
             if self.workspace_data.get("project_id") == project["id"] and self.workspace_data.get("worktree"):
                 params["worktree"] = self.workspace_data["worktree"]
+                subject = notice_about(project["id"], project.get("name"), params["worktree"])
             # Check evidence hashes the worktree: allow more than the default 20 s, and use a
             # separate client so a slow brief does not hold the shared client's lock.
             from .terminal_client import BrokerClient
@@ -771,7 +778,7 @@ class SidebarApp(BasePanel):
             text = result.get("text") if isinstance(result, dict) else None
             await self.push_screen_wait(MessageModal("Brief", text or self.t("The memory service returned no brief.")))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice_for(subject, exc)
 
     # The group of Start work: choosing another project cancels a stage in flight, and back.
     @work(group="sidebar-select", exclusive=True, exit_on_error=False)
@@ -982,11 +989,13 @@ class SidebarApp(BasePanel):
 
     @work(group="sidebar-process-memory", exclusive=True, exit_on_error=False)
     async def action_queue(self):
+        subject = None
         try:
             selected = await asyncio.to_thread(self.workspace.read)
             if not selected.get("project_id"):
                 raise ValueError(self.t("Select a visible project first."))
             scope = (selected["project_id"], selected.get("worktree"))
+            subject = notice_about(scope[0], selected.get("project_name"), scope[1])
             approved = await self.push_screen_wait(ConfirmModal("Queue",
                 self.t("Use local models to process pending memory for this project only. No assistant is started.")
                 + "\n\n" + str(selected.get("project_name") or scope[0]), approve="Process memory"))
@@ -1004,10 +1013,10 @@ class SidebarApp(BasePanel):
                 await asyncio.to_thread(self.workspace.update, {"launch_errors": [
                     row for row in current.get("launch_errors", []) if row.get("code") != "background_inference_deferred"]},
                     expected_revision=current["revision"])
-                self.notice("Memory processing enabled for this project." if result.get("worker_running") else
-                            "Background memory processing is disabled in this service.")
+                self.notice_for(subject, "Memory processing enabled for this project." if result.get("worker_running") else
+                                "Background memory processing is disabled in this service.")
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice_for(subject, exc)
 
     @work(group="sidebar-settings", exclusive=True, exit_on_error=False)
     async def action_settings(self):

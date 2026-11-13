@@ -277,6 +277,7 @@ class BasePanel(App):
         self.workspace_data = {}
         from .terminal_notices import NoticeHistory
         self.notice_history = NoticeHistory()  # memory only, for the life of this panel (#130)
+        self._notice_about, self._mark_text = None, ""
         self._scope_version = 0
         self._workspace_revision = None
         self.language = language_for(settings)
@@ -311,16 +312,30 @@ class BasePanel(App):
             self.query_one("#panel-notice", Static).update(shown)
         if shown is not None:
             with suppress(Exception):
-                self.notice_history.add(shown.plain, self.workspace_data)
+                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data)
                 self.show_notice_mark()
+
+    def notice_for(self, about, value) -> None:
+        """A notice about a project of its own (see terminal_notices.about), not the one shown now.
+
+        It goes through `notice`, so the line and its timing are those of every other notice.
+        """
+        self._notice_about = about
+        try:
+            self.notice(value)
+        finally:
+            self._notice_about = None
 
     def show_notice_mark(self) -> None:
         """A small mark in its own line, so the notice text itself is never changed."""
         with suppress(Exception):
-            mark = self.query_one("#notice-mark", Static)
             text = self.notice_history.mark(self.t)
+            if text == self._mark_text:
+                return  # nothing to repaint: most notices leave the mark as it was
+            mark = self.query_one("#notice-mark", Static)
             mark.update(plain(text))
             mark.display = bool(text)
+            self._mark_text = text
 
     async def workspace_changed(self, value: dict) -> None:
         """Subclass refreshes its projection when the local view changes."""
