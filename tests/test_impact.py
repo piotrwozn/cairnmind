@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import time
 
@@ -524,8 +525,7 @@ def test_a_failure_to_list_the_files_is_said_and_not_taken_for_an_empty_answer(w
     store, pid, root, records = workspace
     touch_auth(root)
     from cairnmind import impact_docs
-    original = impact_docs._git_out
-    monkeypatch.setattr(impact_docs, "_git_out", lambda base, *args: None if args[0] == "ls-files" else original(base, *args))
+    monkeypatch.setattr(impact_docs, "_git_bytes", lambda base, *args: None)
     report = build_impact(store, pid, "HEAD")
     assert report["documentation"]["unavailable"] is True and report["documentation"]["documents"] == []
     assert "The documentation files could not be listed" in report["text"] and titles(report)
@@ -650,3 +650,55 @@ def test_looking_for_mentions_writes_nothing(workspace):
     first = build_impact(store, pid, "HEAD")
     assert sorted(mentions(first)) == ["docs/login.md", "docs/more.md"]
     assert build_impact(store, pid, "HEAD") == first and everything() == before
+
+
+def test_files_opened_but_not_usable_count_against_the_budgets(workspace, monkeypatch):
+    store, pid, root, records = workspace
+    commit_files(root, {f"docs/nul{number}.txt": b"refresh_token\0" for number in range(6)})
+    touch_auth(root)
+    from cairnmind import impact_docs
+    monkeypatch.setattr(impact_docs, "MAX_FILES", 3)
+    report = build_impact(store, pid, "HEAD")
+    assert report["documentation"]["not_scanned"] == 4 and report["documentation"]["skipped_documents"] == 2
+
+
+def test_a_file_that_grew_after_the_size_check_is_read_with_a_cap(workspace, monkeypatch):
+    store, pid, root, records = workspace
+    from types import SimpleNamespace
+    from cairnmind import impact_docs
+
+    class Liar(type(root)):
+        """A path whose stat claims that the page is tiny, as if it had grown since."""
+        def stat(self, **kwargs):
+            real = super().stat(**kwargs)
+            return SimpleNamespace(st_size=5, st_mode=real.st_mode) if self.name == "login.md" else real
+
+    monkeypatch.setattr(impact_docs, "MAX_DOC_BYTES", 40)
+    (root / "docs" / "login.md").write_text("refresh_token " * 20)
+    assert impact_docs._doc_text(Liar(root), root.resolve(), "docs/login.md") == (None, 41)
+
+
+def test_a_link_that_points_at_itself_is_skipped_and_does_not_stop_the_report(workspace):
+    store, pid, root, records = workspace
+    (root / "docs" / "loop.md").symlink_to("loop.md")
+    touch_auth(root)
+    report = build_impact(store, pid, "HEAD")
+    assert report["documentation"]["skipped_documents"] == 1 and mentions(report) == {"docs/login.md": {"refresh_token": [3]}}
+
+
+def test_fences_need_to_start_a_line_after_at_most_three_spaces_and_code_spans_end_with_the_line(workspace):
+    store, pid, root, records = workspace
+    api_changed(root, {"docs/three.md": "   ```\nlogin\n   ```\n", "docs/indent.md": "    ```\n    login\n    ```\n",
+                       "docs/quote.md": "> ```\n> login\n> ```\n", "docs/span.md": "`call\nlogin`\n"})
+    assert mentions(build_impact(store, pid, "HEAD")) == {"docs/three.md": {"login": [2]}}
+
+
+def test_a_file_name_with_a_leading_blank_or_bytes_that_are_not_utf8_is_still_read(workspace):
+    store, pid, root, records = workspace
+    (root / " lead.md").write_text("refresh_token\n")
+    (root / "docs" / os.fsdecode(b"caf\xe9.md")).write_text("refresh_token\n")
+    touch_auth(root)
+    report = build_impact(store, pid, "HEAD")
+    assert [entry["path"] for entry in report["documentation"]["documents"]] == [
+        "lead.md", "docs/caf\\xe9.md", "docs/login.md"]
+    json.dumps(report["documentation"], ensure_ascii=False).encode("utf-8")  # no lone surrogate reaches the output
