@@ -63,18 +63,22 @@ RECORD_STATUS_PENALTY = {"confirmed": 0, "proposed": 1, "disputed": 3}
 SECONDARY_SOURCE_PENALTY = 5
 _TEST_DIRECTORIES = {"test", "tests"}
 _LOCK_FILES = {"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml"}
-# Text, not code: a document is never a test, wherever it lies and whatever its name says.
-_DOCUMENT_SUFFIXES = {".md", ".mdx", ".rst", ".txt", ".adoc", ".yaml", ".yml", ".json", ".toml",
-                      ".ini", ".cfg", ".csv", ".html", ".htm", ".xml"}
+# Prose is never a test, wherever it lies and whatever its name says.
+_PROSE_SUFFIXES = {".md", ".mdx", ".rst", ".txt", ".adoc"}
+# Data and configuration are tests only in a test directory (fixtures); a name with .spec. or
+# .test. marks only code (openapi.spec.yaml is a specification, not a test).
+_DATA_SUFFIXES = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".csv", ".xml", ".html", ".htm"}
 
 
 def secondary_source(path: str) -> bool:
     """True for a test file, a lock file or minified text, by its path within the project.
 
-    Lock files: ``*.lock`` and the npm/pnpm lock files. Minified: ``*.min.*``. Tests, for files
-    that are not documents (Markdown, reStructuredText, plain text, YAML, JSON, TOML and the
-    like): a file in a directory named ``test`` or ``tests``, ``test_*.py``, ``*_test.*``,
-    ``*.test.*`` and ``*.spec.*``. So ``tests/README.md`` or ``openapi.spec.yaml`` is primary.
+    Lock files: ``*.lock`` and the npm/pnpm lock files. Minified: ``*.min.*``. Prose (Markdown,
+    reStructuredText, plain text, AsciiDoc) is never a test. A data or configuration file
+    (JSON, YAML, TOML, INI, CSV, XML, HTML) is a test only in a directory named ``test`` or
+    ``tests``. A code file is a test in such a directory or when named ``test_*.py``,
+    ``*_test.*``, ``*.test.*`` or ``*.spec.*``. So ``tests/README.md`` and ``openapi.spec.yaml``
+    are primary, ``tests/fixtures/settings.toml`` is secondary.
     """
     parts = [part.casefold() for part in re.split(r"[\\/]", path) if part]
     if not parts:
@@ -83,10 +87,13 @@ def secondary_source(path: str) -> bool:
     stem, dot, suffix = name.rpartition(".")
     if name.endswith(".lock") or name in _LOCK_FILES or ".min." in name:
         return True
-    if dot and "." + suffix in _DOCUMENT_SUFFIXES:
+    in_tests = bool(_TEST_DIRECTORIES.intersection(parts[:-1]))
+    if dot and "." + suffix in _PROSE_SUFFIXES:
         return False
+    if dot and "." + suffix in _DATA_SUFFIXES:
+        return in_tests
     return bool(
-        _TEST_DIRECTORIES.intersection(parts[:-1])
+        in_tests
         or (name.startswith("test_") and name.endswith(".py"))
         or (dot and stem.endswith("_test"))
         or any(marker in name for marker in (".test.", ".spec."))

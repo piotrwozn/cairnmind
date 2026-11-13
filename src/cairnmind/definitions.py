@@ -6,12 +6,14 @@ for every definition (constant, field, function, class) but no link from a use t
 are resolved by exact name:
 
 - code names are the identifiers written as code (with "_", "." or an inner capital) in the
-  text of the initial hits and in the question; word names are the question's search terms,
-  alone and adjacent pairs joined by "_" (``schema version`` -> ``schema_version``), each also
-  upper-cased (``SCHEMA_VERSION``);
+  text of the initial hits and in the question, whatever their case (``claim_job``,
+  ``SCHEMA_VERSION``); word names are the question's other search terms, alone and adjacent
+  pairs joined by "_" (``schema version`` -> ``schema_version``), each also upper-cased;
 - a candidate is a current symbol node of the project whose label equals a name, or, for a
-  field, whose member (the bare name after ``Owner.``) does; a word name finds constants and
-  fields only, since a plain word such as "version" or "write" names many functions;
+  field, whose member (the bare name after ``Owner.``) does; a code name finds any kind of
+  definition, a word name constants and fields only, since a plain word such as "version" or
+  "write" names many functions; code-name matches are read first, word-name matches fill up
+  the rest of the bound;
 - candidates are ranked by how many search terms of the question occur among the words of the
   name, its owner and its file name; a candidate sharing none is dropped; then a primary file
   before a test, lock or minified file; a name defined in a primary file is never shown from a
@@ -41,19 +43,24 @@ def _code_like(name: str) -> bool:
 
 
 def candidate_names(question: str, texts: list[str]) -> tuple[list[str], list[str]]:
-    """(code names, word names) to look up, together at most MAX_NAMES, word names first."""
-    words = terms(question)
-    plain: list[str] = []
-    for word in [*words, *("_".join(pair) for pair in zip(words, words[1:]))]:
-        plain += [word, word.upper()]
+    """(code names, word names) to look up, together at most MAX_NAMES.
+
+    A name written as code in the question or the hits is a code name, also when a search term
+    of the question has the same spelling; the question's names come first, then the hits' in
+    their order. Word names are the remaining search terms and their joined pairs.
+    """
     code: list[str] = []
     for text in [question, *texts]:
         for match in _IDENTIFIER.findall(text):
             parts = [match, *match.split(".")[1:]] if "." in match else [match]
             code += [part for part in parts if _code_like(part)]
-    plain = [name for name in dict.fromkeys(plain) if len(name) >= 2][:MAX_NAMES]
-    code = [name for name in dict.fromkeys(code) if name not in plain][:MAX_NAMES - len(plain)]
-    return code, plain
+    code = list(dict.fromkeys(code))[:MAX_NAMES // 2]
+    words = terms(question)
+    plain: list[str] = []
+    for word in [*words, *("_".join(pair) for pair in zip(words, words[1:]))]:
+        plain += [word, word.upper()]
+    plain = [name for name in dict.fromkeys(plain) if len(name) >= 2 and name not in code]
+    return code, plain[:MAX_NAMES - len(code)]
 
 
 def _words(text: str) -> set[str]:
@@ -107,9 +114,11 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
     """Ranked definition rows of this worktree for the names in ``question`` and ``texts``.
 
-    The worktree's current sources are read first (as search reads them), and the node query
-    keeps only symbols of those sources, ordered by label, path and line, at most MAX_ROWS: the
-    bound applies after the worktree filter, and the same index gives the same rows. A row is
+    The worktree's current sources are read first (as search reads them), and the node queries
+    keep only symbols of those sources, ordered by label, path and line: first the matches of
+    code names (any kind), at most MAX_ROWS, then word-name matches (constants and fields) up to
+    MAX_ROWS in all. Every bound applies after the worktree filter, a common word cannot crowd
+    out a name the question writes as code, and the same index gives the same rows. A row is
     ``{"node_id", "source_id", "symbol", "path", "named", "relevance", ...}`` with ``path``
     relative to the worktree root.
     """
@@ -120,12 +129,19 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
     eligible = sorted(retriever._source_ids(project_id, root, roots))
     if not eligible:
         return []
+    select = ("SELECT id,label,source_id,metadata FROM nodes WHERE project_id=:project AND is_current=true "
+              "AND kind='symbol' AND source_id IN :eligible AND ")
+    order = "ORDER BY label, metadata.path, metadata.line_start, id"
     rows = store.query(
-        "SELECT id,label,source_id,metadata FROM nodes WHERE project_id=:project AND is_current=true "
-        "AND kind='symbol' AND source_id IN :eligible AND (label IN :code OR metadata.member IN :code "
-        "OR ((label IN :plain OR metadata.member IN :plain) AND metadata.kind IN ['constant', 'field'])) "
-        f"ORDER BY label, metadata.path, metadata.line_start, id LIMIT {MAX_ROWS}",
-        {"project": project_id, "eligible": eligible, "code": code or [""], "plain": plain or [""]})
+        select + f"(label IN :names OR metadata.member IN :names) {order} LIMIT {MAX_ROWS}",
+        {"project": project_id, "eligible": eligible, "names": code}) if code else []
+    if plain and len(rows) < MAX_ROWS:
+        known = {row["id"] for row in rows}
+        rows += [row for row in store.query(
+            select + "(label IN :names OR metadata.member IN :names) AND metadata.kind IN ['constant', 'field'] "
+            f"{order} LIMIT {MAX_ROWS}",
+            {"project": project_id, "eligible": eligible, "names": plain}) if row["id"] not in known
+        ][:MAX_ROWS - len(rows)]
     found = []
     for row in rows:
         symbol = json_value(row.get("metadata"), {})

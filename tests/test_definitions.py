@@ -65,9 +65,10 @@ def test_candidate_names_take_code_names_and_joined_question_terms():
     code, plain = candidate_names("What is the database schema version?",
                                   ['if version != SCHEMA_VERSION:\n    getattr(settings, "cockpit_port", 1)',
                                    "plain words only, self.retry_budget"])
-    assert {"schema_version", "SCHEMA_VERSION", "database_schema", "version"} <= set(plain)
-    assert {"cockpit_port", "retry_budget", "self.retry_budget"} <= set(code)
-    assert not {"settings", "plain", "self", "SCHEMA_VERSION"} & set(code)
+    assert {"schema_version", "database_schema", "version", "VERSION"} <= set(plain)
+    # Written as code in a hit: a code name, whatever its case, and so not also a word name.
+    assert {"SCHEMA_VERSION", "cockpit_port", "retry_budget", "self.retry_budget"} <= set(code)
+    assert not {"settings", "plain", "self"} & set(code) and "SCHEMA_VERSION" not in plain
 
 
 def test_ranking_drops_unrelated_names_and_tests_that_a_primary_file_defines():
@@ -221,6 +222,27 @@ def test_a_hit_and_a_definition_of_one_file_both_reach_the_repair_catalog(worksp
     assert any("cockpit_port: int = 8766" in passage for passage in passages) and len(passages) == 2
 
 
+def test_a_function_the_question_names_in_snake_case_is_shown(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "jobs.py").write_text("def claim_job(worker, lease_seconds=60):\n    return worker, lease_seconds\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "What does claim_job do by default?", [], {})
+    assert found and found[0]["definition"] == "claim_job" and found[0]["definition_kind"] == "function"
+    assert "lease_seconds=60" in found[0]["text"]
+
+
+def test_a_named_definition_is_not_crowded_out_by_a_common_word(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "models.py").write_text("".join(
+        f"class Model{index:03d}:\n    name: str = 'm{index}'\n\n\n" for index in range(MAX_ROWS + 10)))
+    (root / "pkg" / "profiles.py").write_text("PROFILE_NAME = 'local'\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "What is the default name in PROFILE_NAME?", [], {})
+    assert found and found[0]["definition"] == "PROFILE_NAME"
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
@@ -234,5 +256,6 @@ def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # 
         store.query, store.command = real_query, real_command
     assert found and len(found) <= MAX_DEFINITIONS
     print(f"definitions={len(found)} queries={len(counted)}")
-    # Project, roots, the worktree's sources (two), the nodes; then one freshness check per definition.
-    assert len(counted) <= 6 + 12 * len(found)
+    # Project, roots, the worktree's sources (two), code names, word names; then one freshness
+    # check per definition.
+    assert len(counted) <= 7 + 12 * len(found)

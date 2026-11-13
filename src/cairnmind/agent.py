@@ -297,7 +297,8 @@ def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[
 
 # Order in which passages were shown: the initial evidence takes its positions (0..), anything
 # shown later (a search or a read during the question) takes a number after them.
-_LATER = itertools.count(1000)
+LATER_RANKS = 1000
+_LATER = itertools.count(LATER_RANKS)
 REPAIR_CATALOG_CHARS = 12000
 
 
@@ -364,12 +365,16 @@ class KnowledgeAgent:
                           excerpt_chars: int | None = None) -> list[dict]:
         """Use model-visible excerpts, never expand hydrated source pointers into content.
 
-        One entry per passage the model was shown, whole by default, so a repair works from the
-        same evidence as the answer it corrects; a source shown twice (a hit and a definition)
-        has two entries. Order: passages of sources the draft cites, then every other passage in
-        the order the model was shown it (initial evidence first, top hit first). ``excerpt_chars``
-        shortens the passages to a prefix (the first call, which also shows them in full as
-        initial evidence). At most 8 entries; entries that do not fit the budget are left out.
+        One entry per passage registered with ``_show``, whole by default, so a repair works from
+        the same evidence as the answer it corrects; a source shown twice (a hit and a definition)
+        has two entries. Registered are the initial evidence as the model got it and what a tool
+        call returned to the model later (search hits, read_source), never the lexical hits that
+        the hybrid search replaced. Order: passages of sources the draft cites; then what the
+        model got through tools, newest first, since an answer often rests on the last read; then
+        the initial evidence in the order shown (top hit first, definitions in their places).
+        ``excerpt_chars`` shortens the passages to a prefix (the first call, which also shows them
+        in full as initial evidence). At most 8 entries; entries that do not fit the budget are
+        left out.
         """
         sources = {source["id"]: source for source in evidence.values()
                    if source.get("project_id") == project_id
@@ -386,15 +391,20 @@ class KnowledgeAgent:
                     preferred.append(identifier)
         except (ValueError, TypeError):
             pass
-        # Existing candidate references get priority only when already inspected; then the order
-        # in which the model saw the passages. The catalog does not import other source IDs.
+        # Existing candidate references get priority only when already inspected; then later
+        # reads newest first, then the initial evidence. The catalog does not import other IDs.
+        def place(rank) -> tuple:
+            if rank == float("inf"):
+                return 2, 0  # an excerpt set without _show: after everything that was ranked
+            return (0, -rank) if rank >= LATER_RANKS else (1, rank)
+
         passages = []
         for order, identifier in enumerate(reversed(sources)):
             source = sources[identifier]
             for rank, text in source.get("_catalog_passages") or [[float("inf"), source["_catalog_excerpt"]]]:
                 if isinstance(text, str) and text.strip():
                     passages.append((identifier not in preferred, preferred.index(identifier)
-                                     if identifier in preferred else 0, rank, order, identifier, text))
+                                     if identifier in preferred else 0, place(rank), order, identifier, text))
         catalog, used = [], 2
         for *_, identifier, text in sorted(passages, key=lambda item: item[:4]):
             source = sources[identifier]
@@ -510,10 +520,13 @@ class KnowledgeAgent:
         evidence[source["id"]] = source
         return source
 
-    def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "") -> list[dict]:
+    def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "",
+              register: bool = True) -> list[dict]:
         """Model-visible hits: each text is the excerpt of its chunk that matches ``query``.
 
-        ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk.
+        ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk. With
+        ``register`` each excerpt is registered as shown now (a search the model asked for); the
+        initial evidence is registered by ``ask`` once it is known which hits the model gets.
         """
         result = []
         for hit in hits:
@@ -534,7 +547,7 @@ class KnowledgeAgent:
                 if value["text"] != text and isinstance(hit.get("line_start"), int):
                     value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
-            if isinstance(value.get("text"), str) and value["text"] in source_text(source):
+            if register and isinstance(value.get("text"), str) and value["text"] in source_text(source):
                 _show(source, value["text"])
             result.append(value)
         return result
@@ -996,19 +1009,23 @@ class KnowledgeAgent:
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
                 lexical = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
                                                   worktree=worktree)
-                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree, question)
+                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree, question,
+                                                  False)
                 hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
-                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree, question)
+                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree, question,
+                                                      False)
                 # Definitions of names the question and the hits use take the places of the
                 # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
                 definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
                                                       evidence, worktree)
                 if definitions:
                     initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
+                # Only now is it known which hits the model gets: register those, in their order.
                 for position, item in enumerate(initial):
-                    if item["source_id"] in evidence and isinstance(item.get("text"), str):
-                        _show(evidence[item["source_id"]], item["text"], position)
+                    source = evidence.get(item["source_id"])
+                    if source is not None and isinstance(item.get("text"), str) and item["text"] in source_text(source):
+                        _show(source, item["text"], position)
                 context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,

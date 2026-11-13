@@ -453,6 +453,23 @@ async def test_repair_catalog_starts_with_the_hits_the_model_saw_first(workspace
     assert [item["source_id"] for item in repair] == [hit["source_id"] for hit in shown[:len(repair)]]
 
 
+async def test_repair_catalog_keeps_a_passage_read_after_the_initial_evidence(workspace):
+    store, project, settings = workspace
+    for index in range(INITIAL_HITS):
+        body = "\n".join(f"Retry budget note {index}, line {line}: background on retries." for line in range(14))
+        document(store, project, ("retry budget " * (INITIAL_HITS - index)) + "\n" + body, uri=f"notes://budget-{index}")
+    read, _ = document(store, project, "LIMITS = {'attempts': 5}  # how often a request is tried", uri="notes://limits")
+    model = FakeOllama([calls(("read_source", {"source_id": read["id"]})),
+                        {"content": "The budget is five, as limits.py says."}, {"content": "still not JSON"}])
+    await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
+    shown = json.loads(model.calls[0]["messages"][1]["content"])["initial_evidence"]
+    assert read["id"] not in {hit["source_id"] for hit in shown}
+    repair = json.loads(model.calls[2]["messages"][1]["content"])["citation_catalog"]
+    ids = [item["source_id"] for item in repair]
+    # What the model read last comes first, then the initial evidence from its top hit.
+    assert ids[0] == read["id"] and ids[1] == shown[0]["source_id"]
+
+
 def test_repair_catalog_keeps_its_budget_with_whole_excerpts(workspace):
     store, project, settings = workspace
     agent = KnowledgeAgent(store, settings, FakeOllama())
@@ -1521,9 +1538,11 @@ def test_strong_disputed_record_is_not_buried_under_weak_confirmed_matches(works
     ("web/app.spec.ts", True), ("web/app.test.js", True), ("uv.lock", True), ("web/package-lock.json", True),
     ("static/app.min.js", True), ("src/pkg/config.py", False), ("docs/testing.md", False),
     ("src/pkg/contest.py", False), ("src/latest/config.py", False), ("README.md", False),
-    # Documents are never tests, wherever they lie and whatever their name says.
+    # Prose is never a test; data and configuration are tests only in a test directory, and a
+    # .spec./.test. name marks only code.
     ("docs/tests/strategy.md", False), ("tests/README.md", False), ("docs/auth.spec.md", False),
-    ("api/openapi.spec.yaml", False), ("tests/fixtures/data.json", False), ("pnpm-lock.yaml", True),
+    ("api/openapi.spec.yaml", False), ("tests/fixtures/data.json", True), ("pnpm-lock.yaml", True),
+    ("tests/fixtures/settings.toml", True), ("config/app.yaml", False), ("web/app.test.json", False),
 ])
 def test_secondary_source_recognises_tests_lock_files_and_minified_text(path, secondary):
     from cairnmind.retrieval import secondary_source
