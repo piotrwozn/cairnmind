@@ -55,45 +55,85 @@ def check_summary(result: dict, translate) -> str:
     return "\n".join(lines)
 
 
+PROJECT_CHANGED = "Project changed. Run next stage was not carried out; press it again for this project."
+CHECK_MOVED = ("Project changed while the check ran. Its result was recorded for the earlier project "
+               "and is not shown here.")
+ALREADY_RUNNING = ("This assistant is already running here. No process was restarted and it received no new "
+                   "resume packet. For the next stage, end that session or map another assistant to the stage.")
+
+
+async def _shown(app, scope) -> bool:
+    current = await asyncio.to_thread(app.workspace.read)
+    return (current.get("project_id"), current.get("worktree")) == scope
+
+
 async def run_next_stage(app):
-    """One action: start the mapped assistant or run the mapped check for the next plan step."""
+    """One action: start the mapped assistant or run the mapped check for the next plan step.
+
+    It runs in the same exclusive worker group as Start work, so choosing another project
+    cancels it, and after every wait it drops its result when the workspace no longer shows
+    the project and folder it was pressed for.
+    """
     from .terminal_ui import MessageModal
-    if getattr(app, "_stage_running", False):
-        app.notice("A stage is already running.")
+    from .workspace import reusable_native_run
+    running = getattr(app, "_stage_check", None)
+    if running is not None and not running.done():
+        app.notice("A check of an earlier stage is still running.")
         return
-    app._stage_running = True
-    try:
-        project = app.chosen_project()
-        same = app.workspace_data.get("project_id") == project["id"] and app.workspace_data.get("worktree")
-        worktree = app.workspace_data["worktree"] if same else project["root"]
-        decision = await app.request("GET", "/api/stage", params={"project": project["id"], "worktree": worktree})
-        text = describe(decision, app.t)
-        if decision.get("action") == "start_slot":
-            # Exactly Start work for one assistant: the supervisor posts /api/client-runs once
-            # and the launcher prepares a fresh resume packet that the assistant must ACK.
-            await asyncio.to_thread(app.workspace.select_project, project, decision["worktree"], intent="work",
-                                    requested_slot_ids=[decision["slot_id"]])
-            await asyncio.to_thread(app.workspace.update, {"focus": "client1"})
-            await app.reconcile()
-            current = await asyncio.to_thread(app.workspace.read)
-            failed = [row.get("code") for row in current.get("launch_errors", [])
-                      if row.get("slot_id") == decision["slot_id"]]
-            if failed:
-                app.notice(app.t("The assistant did not start") + ": " + ", ".join(map(str, failed)) + "\n" + text)
-            elif current.get("last_error"):
-                app.notice(app.launch_notice(current))
-            else:
-                app.notice(app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
-        elif decision.get("action") == "run_check":
-            app.notice(app.t("Running check") + ": " + decision["check_profile"])
-            result = await asyncio.to_thread(run_stage_check, app.settings, decision)
-            app.notice("")
-            await app.push_screen_wait(MessageModal("Check result", text + "\n\n" + check_summary(result, app.t)))
+    project = app.chosen_project()
+    scope = (app.workspace_data.get("project_id"), app.workspace_data.get("worktree"))
+    if scope[0] != project["id"] or not scope[1]:
+        raise ValueError(app.t("Select a visible project first."))
+    decision = await app.request("GET", "/api/stage", params={"project": scope[0], "worktree": scope[1]})
+    if not await _shown(app, scope):
+        app.notice(PROJECT_CHANGED)
+        return
+    text = describe(decision, app.t)
+    if decision.get("action") == "start_slot":
+        await app.load_state()
+        if not await _shown(app, scope):
+            app.notice(PROJECT_CHANGED)
+            return
+        # The launcher returns a live process of this slot unchanged: no new session, no packet.
+        if reusable_native_run(app.data.get("runs", []), scope[0], scope[1], decision["client"], decision["slot_id"]):
+            app.notice(app.t(ALREADY_RUNNING) + "\n" + text)
+            return
+        # Exactly Start work for one assistant: the supervisor posts /api/client-runs once
+        # and the launcher prepares a fresh resume packet that the assistant must ACK.
+        await asyncio.to_thread(app.workspace.select_project, project, scope[1], intent="work",
+                                requested_slot_ids=[decision["slot_id"]])
+        await asyncio.to_thread(app.workspace.update, {"focus": "client1"})
+        await app.reconcile()
+        current = await asyncio.to_thread(app.workspace.read)
+        if (current.get("project_id"), current.get("worktree")) != scope:
+            app.notice(PROJECT_CHANGED)
+            return
+        failed = [row.get("code") for row in current.get("launch_errors", [])
+                  if row.get("slot_id") == decision["slot_id"]]
+        if failed:
+            app.notice(app.t("The assistant did not start") + ": " + ", ".join(map(str, failed)) + "\n" + text)
+        elif current.get("last_error"):
+            app.notice(app.launch_notice(current))
         else:
-            await app.push_screen_wait(MessageModal("Run next stage", text + "\n\n"
-                                                    + app.t("Map stages in More → Plan stages.")))
-    finally:
-        app._stage_running = False
+            app.notice(app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
+    elif decision.get("action") == "run_check":
+        app.notice(app.t("Running check") + ": " + decision["check_profile"])
+        # The check process is not stopped when the worker is cancelled; it finishes and is
+        # recorded, and no second check can start from here meanwhile.
+        app._stage_check = asyncio.ensure_future(asyncio.to_thread(run_stage_check, app.settings, decision))
+        try:
+            result = await asyncio.shield(app._stage_check)
+        except asyncio.CancelledError:
+            app.notice(CHECK_MOVED)
+            raise
+        if not await _shown(app, scope):
+            app.notice(CHECK_MOVED)
+            return
+        app.notice("")
+        await app.push_screen_wait(MessageModal("Check result", text + "\n\n" + check_summary(result, app.t)))
+    else:
+        await app.push_screen_wait(MessageModal("Run next stage", text + "\n\n"
+                                                + app.t("Map stages in More → Plan stages.")))
 
 
 async def edit_stages(app):

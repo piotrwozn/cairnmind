@@ -71,6 +71,36 @@ def test_cli_stage_next_prints_the_existing_command_and_changes_nothing(planned)
     assert "Next:" not in unmapped.output
 
 
+def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says(planned):
+    settings, store, project, plans, saved = planned
+    runner = CliRunner()
+
+    def ask(*extra):
+        shown = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo", *extra])
+        assert shown.exit_code == 0, shown.output or repr(shown.exception)
+        return shown.output
+
+    state = CockpitState(settings)
+    plain = [{"id": "codex", "client": "codex", "label": "Codex"}, {"id": "claude", "client": "claude", "label": "Claude"}]
+    state.update({"profiles": [{**plain[0], "model": "gpt-6.1"}, plain[1]]})
+    output = ask()
+    assert "Assistant: Codex (codex)" in output and "Next:" not in output
+    assert "Start this stage from the workspace with Run next stage." in output
+    value = json.loads(ask("--json"))
+    assert (value["command"], value["command_reason"]) == (None, "profile_model")
+
+    state.update({"profiles": plain, "project_slots": {project["id"]: [
+        {"id": "codex", "profile_id": "codex"}, {"id": "codex-two", "profile_id": "codex"}]}})
+    assert json.loads(ask("--json"))["command_reason"] == "shared_client"
+
+    state.update({"project_slots": {}})
+    other = plans.save(project["id"], {"title": "Not active"}, [{"key": "x", "content": "Other"}], "other")
+    value = json.loads(ask("--plan-id", other["plan"]["id"], "--json"))
+    assert value["plan"]["id"] == other["plan"]["id"] and value["action"] == "start_slot"
+    assert (value["command"], value["command_reason"]) == (None, "inactive_plan")
+    assert json.loads(ask("--plan-id", saved["plan"]["id"], "--json"))["command"][:2] == ["cairnmind", "run"]
+
+
 @pytest.fixture
 def cockpit(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)

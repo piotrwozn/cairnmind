@@ -35,14 +35,19 @@ def decision(action, project, **extra):
     return value
 
 
-def answer_stage(broker, value):
+def answer_stage(broker, value, *, runs=(), during=None):
     original, asked = broker.request, []
 
     def request(method, path, *, params=None, json=None, timeout=20):
         if path == "/api/stage":
             asked.append(deepcopy(params))
+            if during is not None:
+                during()
             return deepcopy(value)
-        return original(method, path, params=params, json=json, timeout=timeout)
+        result = original(method, path, params=params, json=json, timeout=timeout)
+        if path == "/api/state" and runs:
+            result = {**result, "runs": deepcopy(list(runs))}
+        return result
     broker.request = request
     return asked
 

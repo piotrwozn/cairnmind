@@ -348,7 +348,23 @@ CATALOG.update({
     "Outcome": "Wynik", "Error": "Błąd", "Check run": "Uruchomienie testu", "Check result": "Wynik testu",
     "The task state is unchanged. Update it after you review the result.":
         "Stan zadania się nie zmienił. Zaktualizuj go po sprawdzeniu wyniku.",
-    "A stage is already running.": "Etap już trwa.",
+    "A check of an earlier stage is still running.": "Test wcześniejszego etapu nadal trwa.",
+    "Project changed. Run next stage was not carried out; press it again for this project.":
+        "Projekt się zmienił. Następny etap nie został uruchomiony; naciśnij ponownie dla tego projektu.",
+    "Project changed while the check ran. Its result was recorded for the earlier project and is not shown here.":
+        "Projekt zmienił się w trakcie testu. Wynik zapisano dla poprzedniego projektu i nie jest tu pokazany.",
+    "This assistant is already running here. No process was restarted and it received no new resume packet. "
+    "For the next stage, end that session or map another assistant to the stage.":
+        "Ten asystent już tu działa. Proces nie został uruchomiony ponownie i nie dostał nowego pakietu "
+        "wznowienia. Aby przejść do następnego etapu, zakończ tę sesję albo przypisz do etapu innego asystenta.",
+    # Messages of stages.validate_stage_map / validate_project_stages
+    "Unknown plan stage; use implement, review or test.": "Nieznany etap planu; użyj implement, review lub test.",
+    "A stage must name an assistant slot.": "Etap musi wskazywać asystenta.",
+    "The test stage must name a check profile.": "Etap test musi wskazywać profil testu.",
+    "Invalid plan stages.": "Niepoprawne etapy planu.",
+    "Invalid project identifier.": "Niepoprawny identyfikator projektu.",
+    "Start this stage from the workspace with Run next stage.":
+        "Uruchom ten etap w przestrzeni pracy przyciskiem Uruchom następny etap.",
     "The assistant did not start": "Asystent nie wystartował",
     "Stage started. The assistant must acknowledge its resume packet.":
         "Etap rozpoczęty. Asystent musi potwierdzić swój pakiet wznowienia.",

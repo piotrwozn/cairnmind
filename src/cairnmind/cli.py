@@ -787,20 +787,26 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
     import shlex
     from cairnmind.cockpit_state import CockpitState
     from cairnmind.plans import PlanManager
-    from cairnmind.stages import describe, next_command, project_routing, resolve_stage
+    from cairnmind.stages import FROM_WORKSPACE, describe, next_command, project_routing, resolve_stage
     from cairnmind.terminal_safe import safe_text
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
     scope = actor_scope(store, selected["id"], worktree)
-    decision = resolve_stage(PlanManager(store).next_task(selected["id"], plan_id, scope),
-                             *project_routing(CockpitState(ctx.obj).load(), selected["id"]))
-    decision["command"] = next_command(decision, selected["id"], scope or str(Path(selected["root"]).resolve()))
+    plans = PlanManager(store)
+    stages, slots, profiles = project_routing(CockpitState(ctx.obj).load(), selected["id"])
+    decision = resolve_stage(plans.next_task(selected["id"], plan_id, scope), stages, slots, profiles)
+    active = decision["plan"] if plan_id is None else plans.next_task(selected["id"], None, scope)["plan"]
+    decision["command"], decision["command_reason"] = next_command(
+        decision, selected["id"], scope or str(Path(selected["root"]).resolve()),
+        slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
     if as_json:
         output(decision)
         return
     typer.echo(safe_text(describe(decision)))
     if decision["command"]:
         typer.echo("Next: " + safe_text(shlex.join(decision["command"])))
+    elif decision["command_reason"]:
+        typer.echo(FROM_WORKSPACE)
 
 
 @checks_app.command("list")

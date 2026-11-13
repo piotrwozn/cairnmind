@@ -101,14 +101,30 @@ def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: lis
     return decision
 
 
-def next_command(decision: dict, project_id: str, worktree: str) -> list[str] | None:
-    """The existing command that performs the suggested action, as an argument list."""
+FROM_WORKSPACE = "Start this stage from the workspace with Run next stage."
+
+
+def next_command(decision: dict, project_id: str, worktree: str, *, slots: list, profiles: list,
+                 active_plan_id: str | None) -> tuple[list[str] | None, str | None]:
+    """The existing command that does exactly what the stage map says, or why there is none.
+
+    `cairnmind run` launches a client by name for the worktree's active plan: it carries no
+    slot, profile or model. It is offered only when that is all the mapped assistant is.
+    """
     if decision.get("action") == "run_check":
         return ["cairnmind", "check", "run", project_id, decision["check_profile"],
-                "--task", decision["task"]["id"], "--worktree", worktree]
-    if decision.get("action") == "start_slot":
-        return ["cairnmind", "run", project_id, decision["client"], "--worktree", worktree]
-    return None
+                "--task", decision["task"]["id"], "--worktree", worktree], None
+    if decision.get("action") != "start_slot":
+        return None, None
+    by_id = {row.get("id"): row for row in profiles if isinstance(row, dict)}
+    same_client = [row for row in slots if by_id.get(row.get("profile_id"), {}).get("client") == decision["client"]]
+    if by_id.get(decision.get("profile_id"), {}).get("model"):
+        return None, "profile_model"
+    if len(same_client) != 1:
+        return None, "shared_client"
+    if not decision.get("plan") or decision["plan"].get("id") != active_plan_id:
+        return None, "inactive_plan"
+    return ["cairnmind", "run", project_id, decision["client"], "--worktree", worktree], None
 
 
 _PROBLEMS = {

@@ -88,17 +88,17 @@ The state of the next step names the work it waits for: `todo` and `in_progress`
 
 **Run next stage** reads the next step of the active plan for the open folder and does what is mapped to its stage:
 
-- for `implement` or `review`, it starts that one assistant exactly as **Start work** does. The assistant gets a fresh resume packet and must acknowledge it before it writes; an assistant already running in that slot is returned to, not started twice. If it cannot start (not installed, signed out), the reason is shown;
+- for `implement` or `review`, it starts that one assistant exactly as **Start work** does. The assistant gets a fresh resume packet and must acknowledge it before it writes. If that assistant is already running (or starting) in this folder, for example because `implement` and `review` name the same one, nothing is started or restarted and it receives no new packet; the message says so, and the next stage needs that session ended or another assistant mapped. If it cannot start (not installed, signed out), the reason is shown;
 - for `test`, it runs `cairnmind check run PROJECT PROFILE --task TASK --worktree DIR` and shows the result. The run is recorded like any other check run, under the same rules for fresh and stale evidence, and with the same session rule: inside a coding session the command refuses until that session has acknowledged its packet.
 
-When nothing is mapped to the stage, when the mapped assistant is no longer configured for the project, or when it cannot be launched for a step, this is shown and nothing else is started in its place. The router never changes a task, a plan or an acknowledgement: after a stage, the assistant or you move the step on with `task update` or through MCP, and completing a step that requires tests still needs fresh check evidence. Because recording a step's new state raises the plan version, the session that reviews a step acknowledges the same plan at a later version than the session that implemented it.
+When nothing is mapped to the stage, when the mapped assistant is no longer configured for the project, or when it cannot be launched for a step, this is shown and nothing else is started in its place. Opening another project while a stage is being prepared cancels it, and a check result that arrives after that is recorded for the earlier project but not shown as the current one's. The router never changes a task, a plan or an acknowledgement: after a stage, the assistant or you move the step on with `task update` or through MCP, and completing a step that requires tests still needs fresh check evidence. Because recording a step's new state raises the plan version, the session that reviews a step acknowledges the same plan at a later version than the session that implemented it.
 
 ```bash
 cairnmind stage next shop
 cairnmind stage next shop --worktree ~/src/shop-worktree --json
 ```
 
-`cairnmind stage next` shows the same decision and the existing command that carries it out (`cairnmind run …` or `cairnmind check run …`). It starts nothing.
+`cairnmind stage next` shows the same decision and starts nothing. For the `test` stage it prints the `cairnmind check run …` command. For an assistant it prints `cairnmind run …` only when that command does exactly what the map says: the assistant's profile sets no model, no other assistant of the project uses the same client, and the step belongs to the folder's active plan (`cairnmind run` knows no slot, profile or model, and a session reads the active plan). Otherwise it names the assistant and says to start the stage from the workspace with **Run next stage**; in `--json`, `command` is then `null` and `command_reason` is `profile_model`, `shared_client` or `inactive_plan`.
 
 ## MCP calls
 

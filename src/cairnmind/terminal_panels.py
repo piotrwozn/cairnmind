@@ -771,7 +771,8 @@ class SidebarApp(BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
-    @work(group="sidebar-stage", exit_on_error=False)
+    # The group of Start work: choosing another project cancels a stage in flight, and back.
+    @work(group="sidebar-select", exclusive=True, exit_on_error=False)
     async def action_next_stage(self):
         """Start the assistant or run the check mapped to the next plan step; changes no task."""
         from .workspace_stage import run_next_stage
