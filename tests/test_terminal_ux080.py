@@ -1196,3 +1196,94 @@ async def test_workspace_poll_after_shutdown_does_not_touch_removed_widgets(tmp_
     seen = app._workspace_revision
     await app._poll_workspace()
     assert app._workspace_revision == seen
+
+
+def menu_row(action):
+    from cairnmind.terminal_commands import COMMANDS
+    return next(row for row in COMMANDS if row[3] == action)
+
+
+@pytest.mark.asyncio
+async def test_brief_chosen_in_the_menu_reaches_what_the_project_page_reaches(tmp_path, monkeypatch):
+    from test_workspace_state import menu_request
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    asked = []
+    original = broker.request
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        if path == "/api/brief":
+            asked.append((method, deepcopy(params)))
+            return {"text": "Brief for Keyboard project\n[machine]  Latest checkpoint saved.", "lines": []}
+        return original(method, path, params=params, json=json, timeout=timeout)
+
+    broker.request = request
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        workspace.update({"command_request": menu_request(tmp_path, menu_row("brief"))})
+        await app._poll_workspace()
+        for _ in range(100):
+            await pilot.pause(.02)
+            if isinstance(app.screen, MessageModal):
+                break
+        assert isinstance(app.screen, MessageModal)
+        await pilot.pause()
+        assert "[machine]  Latest checkpoint saved." in screen_text(app)
+        await pilot.press("escape")
+        await settle(app, pilot)
+    assert asked == [("GET", {"project": "project-keyboard", "worktree": workspace.value["worktree"]})]
+
+
+@pytest.mark.asyncio
+async def test_ask_memory_chosen_in_the_menu_reaches_what_the_project_page_reaches(tmp_path, monkeypatch):
+    from test_workspace_state import menu_request
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    asked = []
+    original = broker.request
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        if path == "/api/ask":
+            asked.append((method, deepcopy(json)))
+            return {"status": "complete", "answer": "Graph and vectors together.", "sources": [],
+                    "unknowns": [], "coverage": {}}
+        return original(method, path, params=params, json=json, timeout=timeout)
+
+    broker.request = request
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        workspace.update({"command_request": menu_request(tmp_path, menu_row("ask"))})
+        await app._poll_workspace()
+        for _ in range(100):
+            await pilot.pause(.02)
+            if isinstance(app.screen, FormModal):
+                break
+        assert isinstance(app.screen, FormModal)
+        await pilot.press(*"Why", "ctrl+s")
+        for _ in range(100):
+            await pilot.pause(.02)
+            if isinstance(app.screen, MessageModal):
+                break
+        assert isinstance(app.screen, MessageModal)
+        await pilot.pause()
+        assert "Graph and vectors together." in screen_text(app)
+        await pilot.press("escape")
+        await settle(app, pilot)
+    assert [(method, payload["project"], payload["question"]) for method, payload in asked] \
+        == [("POST", "project-keyboard", "Why")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,language", [("ask", "en"), ("brief", "en"), ("ask", "pl"), ("brief", "pl")])
+async def test_menu_ask_and_brief_say_so_when_no_project_is_shown(tmp_path, monkeypatch, action, language):
+    from test_workspace_state import menu_request
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language=language, empty=True)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        workspace.update({"command_request": menu_request(tmp_path, menu_row(action))})
+        await app._poll_workspace()
+        await settle(app, pilot)
+        assert not isinstance(app.screen, (FormModal, MessageModal))
+        assert str(app.query_one("#panel-notice", Static).render()) == tr("Select a visible project first.", language)
+    assert not any(path in {"/api/ask", "/api/brief"} for _, path, _, _ in broker.calls)
