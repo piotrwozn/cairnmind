@@ -801,7 +801,10 @@ class MemoryManager:
             # Search is usable without GPU; chunks are derived locally, never imported claims.
             from .ingest import _chunks, _identifier
             from .agent import source_text
+            from .impact_verdicts import is_verdict_source
             for source in payload["sources"]:
+                if is_verdict_source(source):
+                    continue  # imported with the memory, never searchable text
                 if tx.query("SELECT id FROM chunks WHERE source_id=:source LIMIT 1", {"source": source["id"]}):
                     continue
                 saved = _one(tx, "SELECT is_current FROM sources WHERE id=:id", {"id": source["id"]})
