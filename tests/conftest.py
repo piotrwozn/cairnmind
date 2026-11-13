@@ -153,6 +153,16 @@ def pytest_unconfigure(config):
         stop_engine(Settings.load(root))
 
 
+# True while this xdist worker's current test holds its slot (set and cleared by run_slot only).
+_slot_held = False
+
+
+def require_slot(config, work: str) -> None:
+    """Fail when engine work of a test starts outside its slot under xdist; outside xdist there is none."""
+    if is_xdist_worker(config) and not _slot_held:
+        raise AssertionError(f"{work} outside the test's slot: the fixture doing it must request run_slot")
+
+
 @pytest.fixture(autouse=True)
 def run_slot(request, tmp_path_factory):
     """Under xdist, an ``exclusive`` test waits until the tests running in other workers end, and
@@ -160,24 +170,29 @@ def run_slot(request, tmp_path_factory):
 
     Two locks in the run's shared directory: a new test first passes the gate, which an exclusive
     test holds while it waits, so that a stream of new shared slots cannot keep it waiting forever.
-    Defined first so that it is set up before, and torn down after, every other fixture of the test.
+    Being autouse does not put it first: pytest orders a conftest's autouse fixtures by name. Every
+    fixture that does engine work therefore requests it, which sets the slot up before that work
+    and tears it down after it, and calls require_slot, which fails if the slot is not held.
     """
+    global _slot_held
     if not is_xdist_worker(request.config):
         yield
         return
     run_root = tmp_path_factory.getbasetemp().parent
     exclusive = request.node.get_closest_marker("exclusive") is not None
-    with (run_root / "test-slot.gate").open("a") as gate, (run_root / "test-slot.lock").open("a") as slot:
+    with (run_root / "test-slot.gate").open("a") as gate, (run_root / "test-slot.lock").open("a") as lock:
         fcntl.flock(gate, fcntl.LOCK_EX)
         if exclusive:
-            fcntl.flock(slot, fcntl.LOCK_EX)
+            fcntl.flock(lock, fcntl.LOCK_EX)
         else:
-            fcntl.flock(slot, fcntl.LOCK_SH)
+            fcntl.flock(lock, fcntl.LOCK_SH)
             fcntl.flock(gate, fcntl.LOCK_UN)
+        _slot_held = True
         try:
             yield
         finally:
-            fcntl.flock(slot, fcntl.LOCK_UN)
+            _slot_held = False
+            fcntl.flock(lock, fcntl.LOCK_UN)
             fcntl.flock(gate, fcntl.LOCK_UN)
 
 
@@ -324,17 +339,19 @@ def arcade_test_engine(tmp_path_factory, request):
 
 
 @pytest.fixture(autouse=True)
-def release_test_databases(request):
-    """Start the engine for ``arcade`` tests and drop their databases afterwards."""
+def release_test_databases(request, run_slot):
+    """Start the engine for ``arcade`` tests and drop their databases afterwards, inside the slot."""
     if request.node.get_closest_marker("arcade") is None:
         yield
         return
+    require_slot(request.config, "Starting the engine")
     settings, prefix, template = request.getfixturevalue("arcade_test_engine")
     template.paused = request.node.get_closest_marker("no_schema_template") is not None
     try:
         yield
     finally:
         template.paused = False
+    require_slot(request.config, "Dropping the test's databases")
     client = ArcadeClient(settings)
     try:
         names = client._request("GET", "/api/v1/databases").json().get("result", [])
