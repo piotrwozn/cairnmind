@@ -82,6 +82,16 @@ class RememberBody(BaseModel):
     packet_id: str | None = None
 
 
+class FindingBody(BaseModel):
+    project: str
+    content: str
+    kind: str
+    status: str = "proposed"
+    worktree: str | None = None
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
 class CheckpointBody(BaseModel):
     project: str
     state: dict
@@ -838,6 +848,28 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     raise ValueError("resume_required: completion scope differs from session")
                 record["worktree"] = scope
             return store.remember(pid, record, body.sources)
+        result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
+        cache.clear()
+        return result
+
+    @app.post("/findings", dependencies=auth)
+    async def finding(body: FindingBody):
+        """A finding typed by a person: its source is created here, so it cannot claim another origin's id."""
+        from cairnmind.findings import finding_error, save_finding
+        selected = project(body.project)
+        pid = selected["id"]
+        error = finding_error(body.content, body.kind, body.status)
+        if error:
+            raise ValueError(error)
+
+        def save(scope):
+            # The same gate as /remember: a session must be acknowledged and its worktree wins.
+            requested = selected_memory_scope(pid, body.worktree, scope) or selected["root"]
+            root = str(Path(requested).expanduser().resolve())
+            if not store.query("SELECT path FROM project_roots WHERE project_id=:project AND path=:root",
+                               {"project": pid, "root": root}):
+                raise ValueError("A finding needs a registered project worktree")
+            return save_finding(store, pid, root, body.content, body.kind, body.status)
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
         cache.clear()
         return result
