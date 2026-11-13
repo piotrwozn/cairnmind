@@ -193,12 +193,22 @@ def start_engine(settings: Settings) -> dict:
                                        "started_at": time.time()}))
         for _ in range(120):
             if process.poll() is not None:
+                pid_file.unlink(missing_ok=True)
                 raise ArcadeError(f"ArcadeDB exited during startup. See {state / 'engine.log'}")
             status = engine_status(settings)
             if status["available"]:
                 return status
             time.sleep(0.25)
+        # Wait until the process is really gone: a second start right after must not meet a JVM that
+        # is still shutting down on the same port and files. The record goes too, so that
+        # stop_engine does not look for a process that no longer exists.
         process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        pid_file.unlink(missing_ok=True)
         raise ArcadeError(f"ArcadeDB startup timed out. See {state / 'engine.log'}")
 
 
