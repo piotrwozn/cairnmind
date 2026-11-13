@@ -26,7 +26,7 @@ from cairnmind.engine import install_engine, start_engine, stop_engine
 NO_ARCADE_MODULES = frozenset({
     "test_agent_journal", "test_agent_tools", "test_answer_contract", "test_api_broker",
     "test_api_credentials", "test_api_panels", "test_api_profiles", "test_api_providers",
-    "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth",
+    "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
     "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
     "test_copilot_adapter", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_view", "test_module_alias",
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parsing",

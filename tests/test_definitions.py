@@ -24,8 +24,8 @@ TIMEOUT_SECONDS = 60
 class Settings:
     data_dir: str = "data"
     host: str = "127.0.0.1"
-    port: int = 8765
-    cockpit_port: int = 8766
+    port: int = 5101
+    cockpit_port: int = 5102
     workers: int = 4
 
     def url(self):
@@ -37,7 +37,7 @@ COCKPIT = '''import socket
 def serve(settings, port=None):
     listener = socket.socket()
     # the cockpit listens where it is told, or on the configured cockpit port
-    listener.bind(("127.0.0.1", port if port is not None else getattr(settings, "cockpit_port", 8766)))
+    listener.bind(("127.0.0.1", port if port is not None else getattr(settings, "cockpit_port", 5102)))
     return listener
 '''
 TEST = '''TIMEOUT_SECONDS = 5
@@ -92,11 +92,11 @@ def test_a_field_is_shown_with_the_fields_around_it_and_its_class_header():
     lines = CONFIG.split("\n")
     first, last = definition_lines(lines, 12, 12, EXCERPT_CHARS)
     shown = lines[first - 1:last]
-    assert shown[0] == "class Settings:" and "    cockpit_port: int = 8766" in shown
-    assert "    port: int = 8765" in shown and "    workers: int = 4" in shown
+    assert shown[0] == "class Settings:" and "    cockpit_port: int = 5102" in shown
+    assert "    port: int = 5101" in shown and "    workers: int = 4" in shown
     assert "TIMEOUT_SECONDS = 60" not in shown  # the header ends the scope upwards
     first, last = definition_lines(lines, 12, 12, 60)
-    assert "    cockpit_port: int = 8766" in lines[first - 1:last] and len("\n".join(lines[first - 1:last])) <= 60
+    assert "    cockpit_port: int = 5102" in lines[first - 1:last] and len("\n".join(lines[first - 1:last])) <= 60
     # A definition longer than the excerpt is shown from its first line.
     assert definition_lines(lines, 8, 17, 40) == (8, 8)
 
@@ -113,11 +113,11 @@ async def test_the_definition_of_a_used_setting_is_shown_and_citable(workspace):
         shown = json.loads(messages[1]["content"])["initial_evidence"]
         definition = next(item for item in shown if item.get("kind") == "definition"
                           and item["definition"] == "Settings.cockpit_port")
-        return final(definition["source_id"], "    cockpit_port: int = 8766", "8766.")
+        return final(definition["source_id"], "    cockpit_port: int = 5102", "5102.")
 
     model = FakeOllama([answer])
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], "On which port does the cockpit listen by default?")
-    assert result["status"] == "complete" and result["answer"] == "8766."
+    assert result["status"] == "complete" and result["answer"] == "5102."
     assert result["sources"][0]["uri"] == str(root / "pkg" / "config.py") and result["sources"][0]["line_start"] == 12
     shown = json.loads(model.calls[0]["messages"][1]["content"])["initial_evidence"]
     definitions = [item for item in shown if item.get("kind") == "definition"]
@@ -166,7 +166,7 @@ def test_definitions_come_from_the_asked_worktree_only_and_in_a_stable_order(wor
     # bound on candidate rows: a bound applied before the worktree filter would leave only these.
     second = tmp_path / "a-second-worktree"
     (second / "pkg").mkdir(parents=True)
-    (second / "pkg" / "config.py").write_text(CONFIG.replace("8766", "9766"))
+    (second / "pkg" / "config.py").write_text(CONFIG.replace("5102", "6102"))
     for index in range(MAX_ROWS + 10):
         (second / "pkg" / f"copy_{index:03d}.py").write_text(f"class Settings:\n    cockpit_port: int = {index}\n")
     store.add_project_root(project["id"], second)
@@ -178,10 +178,10 @@ def test_definitions_come_from_the_asked_worktree_only_and_in_a_stable_order(wor
     again = agent._definitions(project["id"], question, hits, {}, worktree=str(second))
     assert first and [item["text"] for item in first] == [item["text"] for item in again]
     assert all(item["uri"].startswith(str(second)) for item in first)
-    assert any("9766" in item["text"] for item in first)
+    assert any("6102" in item["text"] for item in first)
     main = agent._definitions(project["id"], question, hits, {})
     assert main and all(item["uri"].startswith(str(root)) for item in main)
-    assert any("8766" in item["text"] for item in main)
+    assert any("5102" in item["text"] for item in main)
 
 
 def test_files_changed_since_indexing_cost_a_bounded_number_of_checks(workspace):  # noqa: F811
@@ -219,7 +219,7 @@ def test_a_hit_and_a_definition_of_one_file_both_reach_the_repair_catalog(worksp
     catalog = agent._citation_catalog(project["id"], evidence, "not JSON")
     passages = [item["quote_excerpt"] for item in catalog if item["source_id"] == source]
     assert hit[0]["text"] in passages
-    assert any("cockpit_port: int = 8766" in passage for passage in passages) and len(passages) == 2
+    assert any("cockpit_port: int = 5102" in passage for passage in passages) and len(passages) == 2
 
 
 def test_a_function_the_question_names_in_snake_case_is_shown(workspace):  # noqa: F811
@@ -247,7 +247,7 @@ def test_a_name_made_of_question_words_outranks_a_one_word_overlap():
     rows = [{"symbol": {"name": "SUPPORT_TOKENS", "kind": "constant"}, "path": "pkg/support.py"},
             {"symbol": {"name": "Settings.answer_tokens", "kind": "field", "owner": "Settings",
                         "member": "answer_tokens"}, "path": "pkg/config.py"},
-            {"symbol": {"name": "MAX_REPORTED", "kind": "constant"}, "path": "pkg/scope.py"}]
+            {"symbol": {"name": "MAX_LISTED", "kind": "constant"}, "path": "pkg/summary.py"}]
     ranked = rank_definitions("How many tokens may an answer have by default?", rows)
     assert [row["symbol"]["name"] for row in ranked] == ["Settings.answer_tokens", "SUPPORT_TOKENS"]
     # Two shared words and a file named after the question do not outrank a name made only of
@@ -255,15 +255,15 @@ def test_a_name_made_of_question_words_outranks_a_one_word_overlap():
     longer = {"symbol": {"name": "SUPPORT_ANSWER_TOKENS_LIMIT", "kind": "constant"}, "path": "pkg/answers.py"}
     ranked = rank_definitions("How many tokens may an answer have by default?", [longer, *rows])
     assert [row["symbol"]["name"] for row in ranked][:2] == ["Settings.answer_tokens", "SUPPORT_ANSWER_TOKENS_LIMIT"]
-    # Filler words (max) are left out and words compare by stem: reported is report.
-    ranked = rank_definitions("How many files does a drift report list at most?", rows)
-    assert [row["symbol"]["name"] for row in ranked] == ["MAX_REPORTED"]
+    # Filler words (max) are left out and words compare by stem: listed is list.
+    ranked = rank_definitions("How many entries does a summary list at most?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["MAX_LISTED"]
 
 
 def test_a_one_word_name_is_never_a_full_match():
     from cairnmind.definitions import relevance
-    question = "What is the default timeout of a question, in seconds?"
-    field = {"name": "AskBody.question", "kind": "field", "owner": "AskBody", "member": "question"}
+    question = "What is the default delay of a retry, in seconds?"
+    field = {"name": "RequestBody.retry", "kind": "field", "owner": "RequestBody", "member": "retry"}
     assert relevance(question, field, "pkg/service.py") == (0, 0, 1, 0)
     assert relevance("How many tokens may an answer have?", {"name": "ANSWER_TOKENS"}, "pkg/a.py")[1] == 1
 
@@ -278,20 +278,20 @@ def test_of_two_one_word_matches_the_one_whose_file_shares_a_word_ranks_first():
 def test_settings_named_only_by_their_words_are_found_in_the_project(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     (root / "pkg" / "limits.py").write_text(
-        "SUPPORT_TOKENS = 256\n\n\nclass Limits:\n    answer_tokens: int = 1200\n    retries: int = 3\n")
-    (root / "pkg" / "scope.py").write_text("MAX_REPORTED = 50\n")
+        "SUPPORT_TOKENS = 999\n\n\nclass Limits:\n    answer_tokens: int = 2048\n    retries: int = 3\n")
+    (root / "pkg" / "summary.py").write_text("MAX_LISTED = 40\n")
     index_project(store, project["id"])
     agent = KnowledgeAgent(store, settings, FakeOllama())
     found = agent._definitions(project["id"], "How many tokens may an answer have by default?", [], {})
     assert found and found[0]["definition"] == "Limits.answer_tokens"
-    found = agent._definitions(project["id"], "How many files does a drift report list at most?", [], {})
-    assert found and found[0]["definition"] == "MAX_REPORTED"
+    found = agent._definitions(project["id"], "How many entries does a summary list at most?", [], {})
+    assert found and found[0]["definition"] == "MAX_LISTED"
 
 
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
-    hits = [{"source_id": "none", "text": 'getattr(settings, "cockpit_port", 8766)\nTIMEOUT_SECONDS'}]
+    hits = [{"source_id": "none", "text": 'getattr(settings, "cockpit_port", 5102)\nTIMEOUT_SECONDS'}]
     counted, real_query, real_command = [], store.query, store.command
     store.query = lambda *args, **kwargs: counted.append(args[0]) or real_query(*args, **kwargs)
     store.command = lambda *args, **kwargs: counted.append(args[0]) or real_command(*args, **kwargs)

@@ -1,11 +1,12 @@
 # Evaluation
 
-Cairnmind ships three explicit evaluations. They use real local models and, optionally, real coding clients, so they are not part of the automated test suite.
+Cairnmind ships four explicit evaluations. They use real local models and, optionally, real coding clients, so they are not part of the automated test suite.
 
 | Command | What it checks | Needs |
 | --- | --- | --- |
 | `cairnmind eval run` | 20 golden recall questions in a disposable Git worktree and database. Pass: factual accuracy ≥ 0.9, every critical fact correct, every deterministic check true. | Ollama with the configured models |
 | `cairnmind eval run --clients` | Adds a hand-off through a fresh Codex, Claude Code and a fresh Codex again, each reading and acknowledging the same memory. | Codex CLI and Claude Code signed in; uses their quotas |
+| `cairnmind eval repository ROOT` | 20 questions with known answers about a real repository (for Cairnmind: `docs/evaluation/repository-questions.json`), asked in a copy indexed into a throwaway data directory and database. Counts complete, complete and right, complete and wrong. Pass: at least 80% complete and right. | Ollama with the configured models, a running engine |
 | `cairnmind eval memory` | Extraction of a fact, a decision and a task; portable snapshot transfer between two isolated databases; cited recall in the new database; refusal to answer about a neighbouring project. | Ollama |
 
 Exit codes are 0 for passed, 1 for failed and 3 when a required model or client is unavailable (`not_run`). A missing model never counts as a pass.
