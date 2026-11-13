@@ -318,7 +318,7 @@ An external MCP session (Cursor, Cline, Zed) has no archived conversation to quo
 - [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.
 - [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations and the 0.8.0 results.
 - [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing installation.
-- [docs/CONTRACTS.md](docs/CONTRACTS.md): implementation contracts for the backend and its components.
+- [docs/CONTRACTS.md](docs/CONTRACTS.md): implementation contracts for the backend and its components, and the [extension surfaces](docs/CONTRACTS.md#extension-surfaces): what can be added (checks, reactions to events, MCP clients, model connections), what is planned, and why there are no plugins.
 - [CHANGELOG.md](CHANGELOG.md): release history.
 
 ## Repository layout
