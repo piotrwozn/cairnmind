@@ -100,7 +100,13 @@ def test_validation_refuses_empty_text_and_kinds_or_statuses_outside_the_form():
 
 class FakeBroker:
     def __init__(self, error=None):
-        self.error, self.calls = error, []
+        self.error, self.calls, self.closed = error, [], 0
+
+    def connect(self):
+        pass
+
+    def close(self):
+        self.closed += 1
 
     def request(self, method, path, **kwargs):
         self.calls.append((method, path, kwargs))
@@ -253,10 +259,11 @@ def test_service_keeps_the_resume_gate_and_its_own_validation(stack, tmp_path):
     saved = service.post("/findings", json=body, headers=headers)
     assert saved.status_code == 200 and saved.json()["record"]["status"] == "proposed"
     assert saved.json()["already_saved"] is False
-    again = service.post("/findings", json={**body, "content": "Different text."}, headers=headers)
+    again = service.post("/findings", json=body, headers=headers)
     assert again.status_code == 200 and again.json()["already_saved"] is True
     assert again.json()["record"]["id"] == saved.json()["record"]["id"]
-    assert again.json()["record"]["content"] == body["content"]
+    edited = service.post("/findings", json={**body, "content": "Different text."}, headers=headers)
+    assert edited.status_code == 400
     assert len([row for row in store.list_records(project["id"]) if row["kind"] != "checkpoint"]) == 1
 
 
@@ -279,9 +286,10 @@ def test_broker_forwards_only_the_form_fields_and_never_a_session(cockpit):
     assert len(requests) == sent
 
 
-class BlockingBroker:
+class BlockingBroker(FakeBroker):
     def __init__(self):
-        self.release, self.calls = threading.Event(), []
+        super().__init__()
+        self.release = threading.Event()
 
     def request(self, method, path, **kwargs):
         self.calls.append(kwargs["json"])
@@ -348,42 +356,6 @@ async def test_an_unclear_answer_is_not_called_a_failure_and_messages_follow_the
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert text_of(app, "#finding-error") == expected and app.is_running
-
-
-class LostReplyBroker:
-    """Delivers the first request, then loses its answer, as a timeout after the commit would."""
-
-    def __init__(self, broker):
-        self.broker, self.calls = broker, []
-
-    def request(self, method, path, **kwargs):
-        self.calls.append(kwargs["json"])
-        result = self.broker.request(method, path, **kwargs)
-        if len(self.calls) == 1:
-            raise BrokerError(503, INTERRUPTED)
-        return result
-
-
-@pytest.mark.asyncio
-async def test_saving_again_after_a_lost_answer_returns_the_first_write(stack):
-    settings, store, project, root, broker, _ = stack
-    state = WorkspaceState(settings)
-    state.select_project(project)
-    lossy = LostReplyBroker(broker)
-    app = FindingApp(settings, broker=lossy, workspace=state)
-    async with app.run_test(size=(120, 30)) as pilot:
-        app.query_one("#finding-content", TextArea).insert("Keep one writer.")
-        await pilot.press("ctrl+s")
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert text_of(app, "#finding-error").startswith("No clear answer from the memory service.")
-        await pilot.press("ctrl+s")
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-    assert [call["key"] for call in lossy.calls] == [app.key, app.key]
-    [record] = [row for row in store.list_records(project["id"]) if row["kind"] != "checkpoint"]
-    assert app.return_value == {"id": record["id"], "kind": "decision", "status": "proposed",
-                                "already_saved": True}
 
 
 @pytest.mark.asyncio

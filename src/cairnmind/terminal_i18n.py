@@ -46,6 +46,11 @@ CATALOG = {
     "Finding saved to memory: {kind}, {status}.": "Ustalenie zapisane w pamięci: {kind}, {status}.",
     "A finding needs a registered project worktree": "Ustalenie wymaga zarejestrowanego katalogu roboczego projektu",
     "Invalid finding key": "Niepoprawny klucz ustalenia",
+    "Could not read the workspace state.": "Nie udało się odczytać stanu środowiska.",
+    "This form already saved a different text, kind or status; the first one is in memory. "
+    "Open a new form to save the changed one.":
+        "Ten formularz zapisał już inny tekst, rodzaj lub stan; pierwszy jest w pamięci. "
+        "Otwórz nowy formularz, aby zapisać zmieniony.",
     "This project is no longer registered.": "Ten projekt nie jest już zarejestrowany.",
     "No clear answer from the memory service. The finding may have been saved; saving again "
     "from this form is safe and will not store it twice.":

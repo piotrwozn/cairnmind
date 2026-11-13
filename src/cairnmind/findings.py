@@ -12,6 +12,8 @@ MAX_FINDING_CHARS = 16000
 ORIGIN = "workspace_form"
 # A coding session that passed the resume gate may use the same endpoint; it is not a person typing.
 SESSION_ORIGIN = "session_finding"
+DIFFERENT = ("This form already saved a different text, kind or status; the first one is in memory. "
+             "Open a new form to save the changed one.")
 
 
 def finding_error(content, kind, status) -> str | None:
@@ -43,7 +45,9 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
     Runs inside the caller's write transaction, which holds the store's writer lock, so a second
     request with the same key sees the first one's rows. The earlier write is found by the record
     whose own key is the save key, and by the source whose URI is derived from it; both are then
-    returned unchanged. The text is kept exactly as typed: it is both the record and its evidence.
+    returned unchanged, but only for the same request: a retry with edited text or other choices is
+    refused rather than confirmed. The text is kept exactly as typed: it is both the record and its
+    evidence.
     """
     error = finding_error(content, kind, status) or key_error(key)
     if error:
@@ -54,11 +58,18 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
         uri, metadata = f"workspace://finding/{key}", {"origin": ORIGIN, "role": "user"}
     earlier = store.query("SELECT FROM records WHERE project_id=:project AND `key`=:key",
                           {"project": project_id, "key": key})
-    sources = store.query("SELECT id,uri,kind,metadata FROM sources WHERE project_id=:project AND uri=:uri",
-                          {"project": project_id, "uri": uri})
+    sources = store.query("SELECT id,uri,kind,metadata,content FROM sources "
+                          "WHERE project_id=:project AND uri=:uri", {"project": project_id, "uri": uri})
     if earlier and sources:
         record = {name: value for name, value in earlier[0].items() if not name.startswith("@")}
         source = {name: value for name, value in sources[0].items() if not name.startswith("@")}
+        # The status the first request asked for is in the record's first revision: a later review
+        # (confirm or dispute) changes the record's current status, never that revision.
+        first = store.query("SELECT snapshot FROM record_revisions WHERE id=:id",
+                            {"id": f"{record['id']}:1"})
+        asked = (first[0].get("snapshot") or {}).get("status") if first else record.get("status")
+        if source.pop("content") != content or record.get("kind") != kind or asked != status:
+            raise ValueError(DIFFERENT)
         return {"record": record, "source": source, "already_saved": True}
     if earlier or sources:
         # The key names a record or source that is not this kind of finding: never reuse or overwrite it.

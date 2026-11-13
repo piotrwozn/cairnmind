@@ -14,6 +14,7 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, Label, Select, Static, TextArea
 
 from .findings import FINDING_KINDS, FINDING_STATUSES, finding_error
+from .terminal_client import BrokerError
 from .terminal_safe import plain, safe_text
 
 ERROR_LIMIT = 300
@@ -42,10 +43,12 @@ BROKER_MESSAGES = {
 }
 
 
-def outcome_unknown(exc) -> bool:
-    """A 5xx or a transport error can come after the service committed; a 4xx was refused before writing."""
+def outcome_unknown(exc, sent) -> bool:
+    """Only a request that was sent can have been committed: a 5xx or a transport error, which the
+    client reports as a 503, may come after the service wrote. A 4xx was refused before writing, and
+    any other exception from the client is local and happens before or instead of sending."""
     status = getattr(exc, "status_code", None)
-    return not isinstance(status, int) or status >= 500
+    return bool(sent) and isinstance(exc, BrokerError) and isinstance(status, int) and status >= 500
 
 
 def detail_text(exc, translate, language) -> str:
@@ -58,11 +61,11 @@ def detail_text(exc, translate, language) -> str:
     return translate(detail)
 
 
-def error_text(exc, translate, language="en") -> str:
+def error_text(exc, translate, language="en", *, sent=False, lead=None) -> str:
     """One bounded line of literal text: a broker detail may quote anything, including control bytes."""
-    lead = ("No clear answer from the memory service. The finding may have been saved; saving again "
-            "from this form is safe and will not store it twice." if outcome_unknown(exc)
-            else "Could not save. Your entries were kept.")
+    lead = lead or ("No clear answer from the memory service. The finding may have been saved; saving again "
+                    "from this form is safe and will not store it twice." if outcome_unknown(exc, sent)
+                    else "Could not save. Your entries were kept.")
     return translate(lead) + " " + safe_text(detail_text(exc, translate, language), limit=ERROR_LIMIT)
 
 
@@ -116,8 +119,9 @@ class FindingApp(App):
         try:
             selected = self.workspace.read()
         except (OSError, ValueError) as exc:
+            # Nothing was sent, so this must never read like an unclear save.
             selected = {}
-            self.show_error(exc)
+            self.show_error(exc, lead="Could not read the workspace state.")
         self.scope = {"project": selected.get("project_id"), "worktree": selected.get("worktree")}
         name = selected.get("project_name") or selected.get("project_id")
         text = (self.translate("Project") + ": " + str(name) + " · " + str(selected.get("worktree") or "")
@@ -125,8 +129,9 @@ class FindingApp(App):
         self.query_one("#finding-scope", Static).update(plain(text, limit=ERROR_LIMIT))
         self.query_one("#finding-content", TextArea).focus()
 
-    def show_error(self, exc):
-        self.query_one("#finding-error", Static).update(plain(error_text(exc, self.translate, self.language)))
+    def show_error(self, exc, *, sent=False, lead=None):
+        text = error_text(exc, self.translate, self.language, sent=sent, lead=lead)
+        self.query_one("#finding-error", Static).update(plain(text))
 
     def values(self):
         return {"content": self.query_one("#finding-content", TextArea).text,
@@ -148,18 +153,32 @@ class FindingApp(App):
             return
         self.saving = True
         self.query_one("#finding-error", Static).update(plain(self.translate("Saving…")))
-        payload = {"project": self.scope["project"], "key": self.key, **values}
-        if self.scope.get("worktree"):
-            payload["worktree"] = self.scope["worktree"]
-        self.send(payload)
+        self.send(values)
 
     @work(group="finding-save", exit_on_error=False)
-    async def send(self, payload):
+    async def send(self, values):
+        sent = False
         try:
+            payload = {"project": self.scope["project"], "key": self.key, **values}
+            if self.scope.get("worktree"):
+                payload["worktree"] = self.scope["worktree"]
+            # Finding and authenticating the broker first separates "never sent" from "sent, no answer".
+            await asyncio.to_thread(self.broker.connect)
+            sent = True
             result = await asyncio.to_thread(self.broker.request, "POST", "/api/findings", json=payload)
-        except (OSError, ValueError, RuntimeError) as exc:
-            # The typed text and choices stay in their widgets; only a deliberate Ctrl+S retries.
-            self.show_error(exc)
+        except Exception as exc:
+            # Every failure replaces "Saving…" with its reason. The typed text and choices stay in
+            # their widgets; only a deliberate Ctrl+S retries.
+            status = getattr(exc, "status_code", None)
+            refused = isinstance(exc, BrokerError) and isinstance(status, int) and status < 500
+            if not refused:
+                # A broker that restarted elsewhere, or a half-made connection, is found and
+                # authenticated again on the next Ctrl+S; the form's key keeps that retry to one write.
+                try:
+                    await asyncio.to_thread(self.broker.close)
+                except Exception:
+                    pass
+            self.show_error(exc, sent=sent)
             return
         finally:
             self.saving = False
