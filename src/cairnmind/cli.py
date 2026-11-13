@@ -983,10 +983,25 @@ def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = N
 
 @app.command()
 @initialized
-def mcp(ctx: typer.Context):
+def mcp(ctx: typer.Context,
+        client: Annotated[str, typer.Option("--client", help=(
+            "native: started by the Cairnmind launcher (Codex, Claude Code). external: any other MCP client "
+            "(Cursor, Cline, Zed, ...); its session is evidence-degraded and never verified."))] = "native",
+        project: Annotated[str | None, typer.Option("--project", help=(
+            "With --client external: the project id, name or a path inside it (default: the working directory)."))] = None,
+        worktree: Annotated[Path | None, typer.Option("--worktree", help=(
+            "With --client external: the registered worktree (default: the one containing the project path)."))] = None):
     """MCP over stdio; prints no logs or CLI messages to stdout."""
+    if client not in {"native", "external"}:
+        raise typer.BadParameter("--client must be native or external")
+    if client == "native" and (project is not None or worktree is not None):
+        raise typer.BadParameter("--project and --worktree are only for --client external")
     from cairnmind.mcp_server import run
-    run(ctx.obj)
+    if client == "native":
+        run(ctx.obj)
+        return
+    run(ctx.obj, external={"project": project or str(Path.cwd()),
+                           "worktree": str(worktree.expanduser().resolve()) if worktree is not None else None})
 
 
 @app.command()
