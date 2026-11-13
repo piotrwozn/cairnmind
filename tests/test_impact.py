@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import time
 
 import pytest
 from typer.testing import CliRunner
@@ -409,7 +410,7 @@ def test_ignored_and_reserved_directories_are_not_read(workspace, monkeypatch):
     from cairnmind import impact_docs
     read = []
     original = impact_docs._doc_text
-    monkeypatch.setattr(impact_docs, "_doc_text", lambda base, name: read.append(name) or original(base, name))
+    monkeypatch.setattr(impact_docs, "_doc_text", lambda *args: read.append(args[2]) or original(*args))
     touch_auth(root)
     report = build_impact(store, pid, "HEAD")
     assert sorted(mentions(report)) == ["docs/login.md", "notes/page.mdx", "notes/page.rst", "notes/plain.txt",
@@ -458,11 +459,165 @@ def test_a_removed_definition_counts_and_an_added_or_unchanged_one_does_not(work
 
 def test_dunder_names_are_not_looked_up(workspace):
     store, pid, root, records = workspace
-    klass = "class Box:\n    def __init__(self):\n        self.items = []\n"
+    klass = "class Box:\n    def __init__(self):\n        self.items = []\n\n    def render_box(self):\n        return []\n"
     (root / "src" / "box.py").write_text(klass)
-    commit_files(root, {"docs/box.md": "Every class has __init__ and `__init__()`.\n"})
+    commit_files(root, {"docs/box.md": "Every class has __init__ and `__init__()`; render_box draws it.\n"})
     (root / "src" / "box.py").write_text(klass.replace("[]", "()"))
-    assert build_impact(store, pid, "HEAD")["documentation"]["documents"] == []
+    report = build_impact(store, pid, "HEAD")
+    assert set(report["changed_files"][0]["symbols"]) == {"Box", "__init__", "render_box"}
+    assert mentions(report) == {"docs/box.md": {"render_box": [1]}}  # the positive control: only __init__ is skipped
+
+
+def api_changed(root, docs):
+    """Commit ``src/api.py`` (get, login, renew_all) and ``docs``, then change the body of all three functions."""
+    api = "def get(key):\n    return {}\n\n\ndef login(user):\n    return user\n\n\ndef renew_all():\n    return 1\n"
+    (root / "src" / "api.py").write_text(api)
+    commit_files(root, docs)
+    (root / "src" / "api.py").write_text(api.replace("return {}", "return None").replace("return user", "return 0")
+                                         .replace("return 1\n", "return 2\n"))
+
+
+def test_fences_are_markdown_only_and_are_tracked_by_the_marker_that_opened_them(workspace):
+    store, pid, root, records = workspace
+    api_changed(root, {
+        "docs/usage.rst": "Sessions\n~~~~~~~~\n\nPlease login to continue.\n",
+        "docs/plain.txt": "```\nlogin\n```\n",
+        "docs/nested.md": "```\n~~~\nlogin in code\n```\nlogin in prose\n",
+        "docs/long.md": "````\n```\nlogin in code\n```\nstill code login\n````\nlogin in prose\n",
+        "docs/inline.md": "```renew_all``` renews it\nthen login again\n",
+        "docs/tilde.md": "~~~\nlogin\n~~~\n"})
+    assert mentions(build_impact(store, pid, "HEAD")) == {
+        "docs/inline.md": {"renew_all": [1]}, "docs/long.md": {"login": [3, 5]}, "docs/nested.md": {"login": [3]},
+        "docs/tilde.md": {"login": [2]}}
+
+
+def test_double_backticks_mark_code_as_in_restructuredtext(workspace):
+    store, pid, root, records = workspace
+    api_changed(root, {"docs/api.rst": "Call ``login`` to start a session.\nPlain login is not code.\n",
+                       "docs/two.md": "Use ``login`` and `login` then login.\n"})
+    assert mentions(build_impact(store, pid, "HEAD")) == {"docs/api.rst": {"login": [1]}, "docs/two.md": {"login": [1]}}
+
+
+def test_a_long_line_is_scanned_in_linear_time(workspace):
+    store, pid, root, records = workspace
+    api_changed(root, {"docs/long.txt": "`login` x " * 50000 + "\n"})
+    started = time.monotonic()
+    assert mentions(build_impact(store, pid, "HEAD")) == {"docs/long.txt": {"login": [1]}}
+    assert time.monotonic() - started < 5
+
+
+def test_files_that_were_not_read_are_counted_and_said_even_when_no_page_is_listed(workspace):
+    store, pid, root, records = workspace
+    (root / "docs" / "login.md").unlink()  # a tracked page that is gone is not a skipped one
+    (root / "docs" / "link.md").symlink_to(root / "README-missing.md")
+    (root / "docs" / "nul.txt").write_bytes(b"refresh_token\0")
+    commit_files(root, {"docs/big.md": b"refresh_token\n" * 100000})
+    touch_auth(root)
+    report = build_impact(store, pid, "HEAD")
+    assert report["documentation"]["documents"] == [] and report["documentation"]["skipped_documents"] == 3
+    assert "3 documentation file(s) were not read (a link or not a plain file, over 1 MB, or not UTF-8 text)." \
+        in report["text"]
+    assert "Documentation that mentions" not in report["text"]
+
+
+def test_a_failure_to_list_the_files_is_said_and_not_taken_for_an_empty_answer(workspace, monkeypatch):
+    store, pid, root, records = workspace
+    touch_auth(root)
+    from cairnmind import impact_docs
+    original = impact_docs._git_out
+    monkeypatch.setattr(impact_docs, "_git_out", lambda base, *args: None if args[0] == "ls-files" else original(base, *args))
+    report = build_impact(store, pid, "HEAD")
+    assert report["documentation"]["unavailable"] is True and report["documentation"]["documents"] == []
+    assert "The documentation files could not be listed" in report["text"] and titles(report)
+
+
+def test_javascript_names_with_a_dollar_are_looked_up_and_private_and_constructor_names_are_not(workspace):
+    store, pid, root, records = workspace
+    script = ("class Box {\n  constructor() { this.n = 1; }\n  #hidden_part() { return 1; }\n}\n"
+              "function $fetch_user(id) { return id; }\n")
+    (root / "src" / "box.js").write_text(script)
+    commit_files(root, {"docs/js.md": "Call `$fetch_user()` or $fetch_user, not foo$fetch_user.\n`constructor()` and "
+                                      "#hidden_part and hidden_part.\n"})
+    (root / "src" / "box.js").write_text(script.replace("= 1", "= 2").replace("return 1", "return 2")
+                                         .replace("return id", "return 0"))
+    report = build_impact(store, pid, "HEAD")
+    assert {"constructor", "$fetch_user"} <= set(report["changed_files"][0]["symbols"])
+    assert mentions(report) == {"docs/js.md": {"$fetch_user": [1]}}
+
+
+def test_a_page_behind_a_link_or_outside_the_worktree_is_not_read(workspace, tmp_path):
+    store, pid, root, records = workspace
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    git(root, "mv", "docs/login.md", "docs/keep.md")
+    git(root, "commit", "-qm", "move")
+    (root / "docs" / "keep.md").unlink()
+    (root / "docs").rmdir()
+    (root / "docs").symlink_to(outside)
+    (outside / "keep.md").write_text("Also refresh_token.\n")
+    touch_auth(root)
+    report = build_impact(store, pid, "HEAD")
+    assert report["documentation"]["documents"] == [] and report["documentation"]["skipped_documents"] == 1
+
+
+def test_directories_and_files_the_indexer_skips_are_not_read(workspace, monkeypatch):
+    store, pid, root, records = workspace
+    text = "refresh_token is here.\n"
+    commit_files(root, {"vendor/x.md": text, "node_modules/pkg/y.md": text, ".claude/commands/c.md": text,
+                        ".env.local.md": text, "notes/.env.txt": text, "notes/ok.md": text})
+    from cairnmind import impact_docs
+    read = []
+    original = impact_docs._doc_text
+    monkeypatch.setattr(impact_docs, "_doc_text", lambda *args: read.append(args[2]) or original(*args))
+    touch_auth(root)
+    assert sorted(mentions(build_impact(store, pid, "HEAD"))) == ["docs/login.md", "notes/ok.md"]
+    assert sorted(read) == ["docs/login.md", "notes/ok.md"]
+
+
+def test_the_scan_has_work_bounds_and_says_so(workspace, monkeypatch):
+    store, pid, root, records = workspace
+    commit_files(root, {f"docs/p{number}.md": "refresh_token\n" for number in range(8)})
+    from cairnmind import impact_docs
+    touch_auth(root)
+    monkeypatch.setattr(impact_docs, "MAX_FILES", 4)
+    report = build_impact(store, pid, "HEAD")
+    assert len(report["documentation"]["documents"]) == 4 and report["documentation"]["not_scanned"] == 5
+    assert "5 documentation file(s) were not scanned: at most 4 files" in report["text"]
+    monkeypatch.setattr(impact_docs, "MAX_FILES", 2000)
+    monkeypatch.setattr(impact_docs, "MAX_TOTAL_BYTES", 30)
+    assert build_impact(store, pid, "HEAD")["documentation"]["not_scanned"] > 0
+    monkeypatch.setattr(impact_docs, "MAX_TOTAL_BYTES", 20 * 1024 * 1024)
+    (root / "src" / "auth.py").write_text(AUTH.replace('":refreshed"', '":renewed"').replace("return None", "return 0"))
+    monkeypatch.setattr(impact_docs, "MAX_NAMES", 1)
+    report = build_impact(store, pid, "HEAD")
+    assert report["documentation"]["names_not_searched"] == 1
+    assert "1 changed name(s) were not searched for: at most 1 names are looked up." in report["text"]
+
+
+def test_paths_in_the_json_are_made_printable(workspace):
+    store, pid, root, records = workspace
+    (root / "docs" / "bi‮di\x9b.md").write_text("refresh_token\n")
+    touch_auth(root)
+    paths = [entry["path"] for entry in build_impact(store, pid, "HEAD")["documentation"]["documents"]]
+    assert len(paths) == 2 and not any(char in "".join(paths) for char in "‮\x9b")
+
+
+def test_a_changed_name_that_is_the_start_of_another_is_found_on_its_own_terms(workspace):
+    store, pid, root, records = workspace
+    code = "def renew(a):\n    return a\n\n\ndef renew_session(a):\n    return a\n"
+    (root / "src" / "pair.py").write_text(code)
+    commit_files(root, {"docs/both.md": "Use `renew` then renew_session.\n", "docs/long.md": "Only renew_session.\n"})
+    (root / "src" / "pair.py").write_text(code.replace("return a", "return 0"))
+    assert mentions(build_impact(store, pid, "HEAD")) == {"docs/both.md": {"renew": [1], "renew_session": [1]},
+                                                          "docs/long.md": {"renew_session": [1]}}
+
+
+def test_a_page_with_windows_line_endings_has_right_line_numbers_and_no_carriage_return(workspace):
+    store, pid, root, records = workspace
+    commit_files(root, {"docs/win.md": b"one\r\n```\r\ncode\r\n```\r\nSee refresh_token here\r\n"})
+    touch_auth(root)
+    report = build_impact(store, pid, "HEAD")
+    assert mentions(report)["docs/win.md"] == {"refresh_token": [5]} and "\r" not in report["text"]
 
 
 def test_the_json_has_a_documentation_key_after_the_existing_ones(workspace, monkeypatch):
@@ -474,7 +629,9 @@ def test_the_json_has_a_documentation_key_after_the_existing_ones(workspace, mon
     data = json.loads(result.output)
     assert list(data) == ["project", "worktree", "since", "commit", "changed_files", "records", "text", "documentation"]
     assert data["documentation"]["documents"][0]["path"] == "docs/login.md"
-    assert set(data["documentation"]) == {"documents", "omitted_documents", "omitted_lines", "skipped_documents"}
+    assert data["documentation"] == {"documents": data["documentation"]["documents"], "omitted_documents": 0,
+                                     "omitted_lines": 0, "skipped_documents": 0, "not_scanned": 0,
+                                     "names_not_searched": 0, "unavailable": False}
 
 
 def test_looking_for_mentions_writes_nothing(workspace):
