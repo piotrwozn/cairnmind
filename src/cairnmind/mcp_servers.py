@@ -59,6 +59,26 @@ def validate_server(value) -> dict:
     return {"id": identifier, "command": command, "args": list(args), "env": dict(env)}
 
 
+def inside_worktree(definition: dict, worktree) -> bool:
+    """Whether the program or a path argument of a server lies in the worktree.
+
+    A coding session edits the worktree without an approval, so a server program or script there
+    would let it choose code that runs at the next start. Such a server is not started.
+    """
+    from pathlib import Path
+    root = Path(worktree).resolve()
+    for text in (definition["command"], *definition.get("args", [])):
+        if str(root) in text:
+            return True
+        if text.startswith("/"):
+            try:
+                if Path(text).resolve().is_relative_to(root):
+                    return True
+            except (OSError, RuntimeError, ValueError):
+                return True
+    return False
+
+
 def validate_servers(value) -> list[dict]:
     if not isinstance(value, list) or len(value) > MAX_SERVERS:
         raise ValueError("A project has at most 4 MCP servers.")
