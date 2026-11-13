@@ -23,6 +23,12 @@ MAX_PACKET_BYTES = 24576
 MAX_RECORDS = 20
 RESUME_REASONS = {"startup", "resume", "compact", "clear", "fork", "refresh"}
 AGENT_CLIENTS = {"api", "copilot"}
+# Any MCP client whose conversation Cairnmind cannot read (Cursor, Cline, Zed and others).
+EXTERNAL_CLIENT = "external"
+EXTERNAL_WARNING = (
+    "External client: Cairnmind cannot read or archive this client's own conversation (history: unarchived), "
+    "so nothing said in it can be verified (evidence: degraded). What this session records is kept as reported "
+    "by an external session and is never shown or counted as verified.")
 
 
 def _hash(value: Any) -> str:
@@ -136,8 +142,11 @@ def _readback(packet: dict) -> dict:
 def format_packet(packet: dict) -> str:
     """Small hook/launcher bootstrap; the complete bounded packet is an MCP read."""
     plan, task = packet.get("active_plan"), packet.get("active_task")
+    external = packet.get("history") == "unarchived"
     result = [
-        "Cairnmind verified resume bootstrap (receipt is not proof of understanding).",
+        ("Cairnmind external-client resume bootstrap: history unarchived, evidence degraded "
+         "(receipt is not proof of understanding)." if external else
+         "Cairnmind verified resume bootstrap (receipt is not proof of understanding)."),
         f"Logical session: {packet['session_id']}; epoch: {packet['epoch']}.",
         f"Packet: {packet['id']}; SHA-256: {packet['hash']}.",
         f"Project: {packet['project_id']}; worktree: {packet['worktree']}.",
@@ -159,6 +168,9 @@ def format_packet(packet: dict) -> str:
         result.append("Active task: none; use the explicit reason in the complete packet.")
     if packet.get("no_history"):
         result.append("No prior conversation history is known for this project scope.")
+    if external:
+        result.append("This client's own conversation is not archived; what this session records is kept "
+                      "as reported by an external session and never counts as verified.")
     if packet.get("baseline_unverified"):
         result.append("New empty project: the code baseline is unverified. Initialize Git and commit "
                       "before relying on code-bound test completion.")
@@ -789,6 +801,13 @@ class SessionManager:
             packet["warnings"] = ["New empty project: no code/history baseline is verified. "
                                   "Initialize Git and commit before relying on code-bound check completion.",
                                   *state["code"].get("unknowns", []), *packet.get("warnings", [])]
+        if session["client"] == EXTERNAL_CLIENT:
+            # Only for an external client, so every other packet stays byte for byte what it was. The
+            # history exists but cannot be read: it is unarchived, not absent, and the archive status
+            # describes only the other clients' transcripts captured in this worktree.
+            packet.update(history="unarchived", evidence="degraded", no_history=False)
+            packet["archive"]["scope"] = "captured EOFs only; this client's own conversation is not archived"
+            packet["warnings"] = [EXTERNAL_WARNING, *packet.get("warnings", [])]
         if evidence and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Advisory evidence data yields first: it must never be what makes a packet unready.
             for row in packet["records"]:
@@ -831,8 +850,8 @@ class SessionManager:
 
     def prepare(self, project_id: str, client: str, worktree: str | None = None,
                 session_id: str | None = None, reason: str = "startup", timeout: float = 30) -> dict:
-        if client not in {"codex", "claude", *AGENT_CLIENTS}:
-            raise ValueError("Session client must be codex, claude, api or copilot")
+        if client not in {"codex", "claude", EXTERNAL_CLIENT, *AGENT_CLIENTS}:
+            raise ValueError("Session client must be codex, claude, external, api or copilot")
         if client in AGENT_CLIENTS and session_id is not None:
             from .agent_memory import _journal_path
             _journal_path(self.settings, session_id)
@@ -1161,6 +1180,9 @@ class SessionManager:
         result = {**self._result(session, packet), "client": session["client"],
                   "worktree": session["worktree"], "project_id": session["project_id"],
                   "native_session_id": session.get("native_session_id"), "acknowledged": False, "stale": False}
+        if session["client"] == EXTERNAL_CLIENT:
+            # An acknowledged external session is still not a verified one.
+            result.update(history="unarchived", evidence="degraded")
         try:
             self.require_ack(session_id)
             result["acknowledged"] = True
