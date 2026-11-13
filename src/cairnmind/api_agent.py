@@ -88,7 +88,7 @@ class AgentEngine:
     """One explicit user turn at a time; process/UI restarts grant no authority."""
 
     def __init__(self, settings, run, profile, *, key=None, provider=None, memory=None,
-                 journal=None, approve=None, on_delta=None, on_event=None, tools=None):
+                 journal=None, approve=None, on_delta=None, on_event=None, tools=None, mcp_servers=None):
         from .agent_journal import AgentJournal
         from .agent_memory import AgentMemoryClient, MEMORY_TOOLS, READ_MEMORY_TOOLS
         from .agent_tools import FILE_TOOLS, ToolExecutor
@@ -129,6 +129,16 @@ class AgentEngine:
         self._read_memory = set(READ_MEMORY_TOOLS) | _BOOTSTRAP_TOOLS
         self._schemas = {row["name"]: deepcopy(row)
                          for row in [*MEMORY_TOOLS, *FILE_TOOLS, COMPACT_TOOL]}
+        from .mcp_agent import McpTools
+        from .mcp_host import PREFIX
+        if any(name.startswith(PREFIX) for name in self._schemas):
+            raise ValueError("The mcp_ prefix is reserved for third-party tools")
+        # Third-party MCP tools (#126): API runs only. Their names are never read-memory names, so the
+        # ACK gate below offers and admits them like every other effect.
+        self.mcp = McpTools(mcp_servers if run["client"] == "api" else [], run=self.run, journal=self.journal,
+                            worktree=run["worktree"], reserved=set(self._schemas),
+                            approve=self._approve_command if approve is not None else None)
+        self._mcp_started = False
         self._prepared = False
         self._acknowledged = False
         self._last_packet = None
@@ -500,6 +510,8 @@ class AgentEngine:
                 return await self._compact(arguments)
             if name in self._memory_tools:
                 return await self._memory_tool(name, arguments)
+            if name in self.mcp.catalogue:
+                return await self.mcp.call(name, arguments, call_id, self.tools.command_timeout_seconds)
             self.tools.current_tool_call_id = call_id
             try:
                 return await self.tools.execute(name, arguments)
@@ -758,6 +770,7 @@ class AgentEngine:
                     "An earlier action has no confirmed outcome. Resolve it explicitly before continuing."],
                     pending_actions=self.pending_actions())
             try:
+                await self._start_mcp()
                 if not self._prepared:
                     previous = bool(self.journal.events())
                     prepared = await self._prepare(reason="resume" if previous else "startup", archive=previous)
@@ -828,6 +841,16 @@ class AgentEngine:
             finally:
                 self._turn_task = None
 
+    async def _start_mcp(self):
+        """Start the run's MCP servers once, before the first model call; failures are reported, not fatal."""
+        if self._mcp_started:
+            return
+        self._mcp_started = True
+        for server_id, code in await self.mcp.start(self._record):
+            await self._notify("mcp_server_failed", {"server_id": server_id, "code": code})
+        for schema in self.mcp.schemas():
+            self._schemas[schema["name"]] = deepcopy(schema)
+
     async def _stop_tools(self):
         stop = getattr(self.tools, "interrupt", None)
         if stop is not None:
@@ -861,6 +884,13 @@ class AgentEngine:
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
             except (TimeoutError, asyncio.CancelledError):
+                pass
+        # No server process and no command outlives the run.
+        for closer in (lambda: self.mcp.close(self._record), getattr(self.tools, "close", None)):
+            try:
+                if closer is not None:
+                    await _await(closer())
+            except Exception:
                 pass
         for target in (self.provider, self.memory):
             closer = getattr(target, "aclose", None) or getattr(target, "close", None)

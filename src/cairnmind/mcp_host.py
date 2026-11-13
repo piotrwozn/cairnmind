@@ -441,6 +441,8 @@ class McpHost:
         return await server.call(entry["tool"], arguments, timeout)
 
     async def close(self):
+        """Stop every server; returns the ids of those that still had a process."""
         servers = list(self.servers.values())
+        running = [server.id for server in servers if server.process is not None]
         await asyncio.gather(*(server.stop() for server in servers), return_exceptions=True)
-        return [server.id for server in servers]
+        return running
