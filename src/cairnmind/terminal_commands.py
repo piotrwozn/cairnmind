@@ -29,6 +29,7 @@ COMMANDS = (
     ("Keyboard help", "Navigation and native client shortcuts", "help", ""),
     # New entries go last: the position of every existing command stays the same.
     ("Run next stage", "Show the project, then start what is mapped to the next plan step", "command", "next_stage"),
+    ("Notices", "Read the notices that were replaced on the notice line", "command", "notices"),
 )
 
 

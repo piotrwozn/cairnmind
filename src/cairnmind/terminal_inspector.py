@@ -11,6 +11,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static
 
 from .terminal_impact import ImpactView
+from .terminal_notices import about
 from .terminal_safe import plain, safe_text
 from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, summary_text
 
@@ -490,7 +491,7 @@ class InspectorApp(ImpactView, BasePanel):
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice(self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
             return
         payload = {"project": project_id, "action": action,
                    "expected_version": record["version"], "reason": form["reason"]}
@@ -533,7 +534,7 @@ class InspectorApp(ImpactView, BasePanel):
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice(self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
             return
         payload = {"project": project_id, "record_id": first["id"], "other_id": second["id"], "action": action,
                    "expected_version": first["version"], "other_expected_version": second["version"],
