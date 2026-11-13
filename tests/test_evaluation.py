@@ -17,6 +17,7 @@ from cairnmind.evaluation import (
 )
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.store import Store
+from cairnmind.support import SUPPORT_SYSTEM
 
 
 class FixtureOllama:
@@ -32,6 +33,14 @@ class FixtureOllama:
 
     async def chat(self, messages, **kwargs):
         prompt = json.loads(messages[1]["content"])
+        if messages[0]["content"] == SUPPORT_SYSTEM:
+            # The support check of a complete answer; this fixture always agrees, so a wrong
+            # value is left for the evaluation's own grading to catch.
+            response = {"message": {"content": json.dumps({"supported": True, "reason": "Stated."})},
+                        "done_reason": "stop"}
+            if self.tokens:
+                response.update(prompt_eval_count=40, eval_count=12)
+            return response
         key = re.search(r"recall\d+_\w+", prompt["question"])[0]
         if "initial_evidence" in prompt:
             hits = list(prompt["initial_evidence"])
@@ -125,8 +134,9 @@ def test_critical_id_error_fails_even_above_ninety_percent(tmp_path):
     assert all(case["completion_tokens"] is None for case in report["scenarios"])
     diagnostic = next(case for case in report["scenarios"] if case["id"] == "recall04_task_id")
     assert diagnostic["model_call_count"] == len(diagnostic["model_calls"])
-    assert "invented-id" in diagnostic["model_calls"][-1]["candidate"]["content"]
-    assert diagnostic["model_calls"][-1]["transport_status"] == "completed"
+    # The last call is the support check of the complete answer; the answer is the one before it.
+    assert "invented-id" in diagnostic["model_calls"][-2]["candidate"]["content"]
+    assert all(call["transport_status"] == "completed" for call in diagnostic["model_calls"])
 
 
 @pytest.mark.parametrize("unavailable_model", [MissingModels(), MissingEmbeddings()], ids=["model", "embedding"])
@@ -220,7 +230,8 @@ def test_replay_nested_unknown_answer_repairs_shape_with_real_citation_and_no_go
         async def chat(self, messages, **kwargs):
             response = await super().chat(messages, **kwargs)
             prompt = json.loads(messages[1]["content"])
-            if "recall18_isolation" not in prompt["question"] or not response["message"].get("content"):
+            if (messages[0]["content"] == SUPPORT_SYSTEM or "recall18_isolation" not in prompt["question"]
+                    or not response["message"].get("content")):
                 return response
             contract = prompt["answer_schema"]
             assert contract == {"type": "object", "properties": {"answer": {"type": "string"}},
