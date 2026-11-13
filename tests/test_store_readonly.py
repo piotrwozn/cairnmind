@@ -219,7 +219,13 @@ def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, 
         if key is not None:
             queried = {table for _, path, command in sent[start:] if path.startswith("/api/v1/query/")
                        for table in re.findall(r"\bFROM\s+`?([a-z_]+)", command or "")} - BOOKKEEPING
-            assert {TABLE_TYPES[table] for table in queried} <= READ_KINDS[key], (key, queried)
+            kinds = {TABLE_TYPES[table] for table in queried}
+            if key == "usage":
+                # Only the project is read consistently; the Codex lines (sources) and the inbox are counted
+                # after it, in pages by key, without being repeated (cli.usage, codex_usage._pages).
+                assert queried == {"projects", "project_roots", "sources", "ingestion_inbox"}, queried
+                kinds -= {"source", "inbox"}
+            assert kinds <= READ_KINDS[key], (key, queried)
     assert changes(sent) == []
     assert files(store.data_dir) == before
 
