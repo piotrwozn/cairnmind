@@ -536,3 +536,22 @@ def test_the_service_gives_the_warning_to_a_model_and_the_resume_packet_carries_
         packet = prepared["packet"]
         assert packet["active_plan"]["id"] == long["plan"]["id"] and packet["active_plan"]["goal"] == "the goal stays"
         assert packet["active_task"]["scope_omitted"] == 64 and "scope" not in packet["active_task"]
+
+
+def test_a_command_that_only_reads_leaves_the_note_as_it_is(workspace, monkeypatch):
+    store, pid, root, settings = workspace
+    for item in root.rglob("*"):
+        if item.is_file() and ".git" not in item.parts:
+            os.utime(item, (1000, 1000))
+    saved, task = scoped_plan(store, pid, root)
+    start(store, pid, root, saved, task)
+    (root / "docs/login.md").write_text("# Login\n")  # the same content with new times: a store that writes notes them
+    os.utime(root / "docs/login.md", (2000, 2000))
+    note = next((store.data_dir / "scope-baselines").glob("*.json"))
+    before = (note.read_bytes(), note.stat().st_mtime_ns)
+    for name in ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID"):
+        monkeypatch.delenv(name, raising=False)
+    shown = CliRunner().invoke(app, ["--data-dir", str(store.data_dir), "plan", "next", "drift"])
+    assert shown.exit_code == 0, shown.output
+    assert json.loads(shown.output)["verification"]["scope_drift"]["status"] == "in_scope"
+    assert (note.read_bytes(), note.stat().st_mtime_ns) == before

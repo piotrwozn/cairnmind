@@ -176,6 +176,40 @@ def test_another_schema_version_is_refused_and_not_migrated(tmp_path, monkeypatc
     assert SCHEMA_VERSION == 4
 
 
+def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from typer.testing import CliRunner
+    from cairnmind.cli import app
+    from cairnmind.plans import PlanManager
+    store, project = ready(tmp_path)
+    root = tmp_path / "repo"
+    (root / "app.py").write_text("def run():\n    return 1\n")
+    for arguments in (("init",), ("config", "user.email", "fixture@example.invalid"),
+                      ("config", "user.name", "Fixture"), ("add", "."), ("commit", "-qm", "fixture")):
+        subprocess.run(["git", "-C", str(root), *arguments], check=True, capture_output=True)
+    source = store.snapshot(project["id"], "manual://note", "A note", "manual")
+    plan = PlanManager(store).save(project["id"], {"title": "Ship"}, [{"key": "one", "content": "Do it"}],
+                                   "plan-key", activate=True)
+    before = files(store.data_dir)
+    # Git runs as a process here, so only the engine start and the full store are forbidden.
+    for name in ("cairnmind.engine.start_engine", "cairnmind.engine.ensure_engine", "cairnmind.cli.ensure_service"):
+        monkeypatch.setattr(name, lambda *a, **k: pytest.fail("A read command started the engine or service"))
+    monkeypatch.setattr(Store, "__init__", lambda *a, **k: pytest.fail("A read command prepared the store"))
+    sent = record_requests(monkeypatch)
+    runner = CliRunner()
+    for arguments in (["project", "list"], ["records", "demo", "--history"], ["source", source["id"]],
+                      ["task", "list", "demo"], ["plan", "list", "demo"], ["plan", "show", "demo", plan["plan"]["id"]],
+                      ["plan", "next", "demo"], ["plan", "contract", "demo", "--json"], ["check", "profiles", "demo"],
+                      ["memory", "orphans", "demo", "--json"], ["impact", "demo", "--since", "HEAD", "--json"],
+                      ["usage", "demo", "--json"]):
+        result = runner.invoke(app, ["--data-dir", str(store.data_dir), *arguments])
+        assert result.exit_code == 0, (arguments, result.output, repr(result.exception))
+        json.loads(result.output)
+    assert changes(sent) == []
+    assert files(store.data_dir) == before
+
+
 def test_a_missing_journal_row_is_refused(tmp_path, monkeypatch):
     store, _ = ready(tmp_path)
     ArcadeClient(store.settings).command("DELETE FROM journal_state")

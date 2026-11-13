@@ -25,6 +25,11 @@ not JSON strings. Clients open short HTTP calls, local trust_env=False; HTTPBasi
 `server_info()` authenticated server status. `ensure_engine(settings)` root autostarts
 already-installed local managed engine; no automatic downloads. Store constructor calls
 ensure_engine then client.ensure_database. Diagnostics never autostart/download.
+`Store.open_readonly(settings)` (read-only CLI commands) starts no engine, creates no
+database and runs no DDL: it requires config.json, a reachable engine of the pinned
+release, the database, schema_version 4 and the journal_state row, else StoreNotReady
+names the command to run. Its commands and non-SELECT queries are refused and its
+transactions take no writer lock and are rolled back.
 
 ## Store (storage agent owns)
 
