@@ -93,3 +93,26 @@ def test_preferences_refuse_symlink_or_shared_runtime_directory(tmp_path):
     directory.chmod(0o755)
     with pytest.raises(ValueError):
         CockpitState(settings).update({"last_project": None})
+
+
+def test_plan_stage_map_is_a_validated_owner_preference(tmp_path):
+    settings = Settings.load(tmp_path / "data")
+    state = CockpitState(settings)
+    assert state.load()["project_stages"] == {}
+    state.path.parent.mkdir(parents=True, mode=0o700)
+    # A preferences file written before stages existed still loads and keeps working.
+    state.path.write_text('{"version": 2, "language": "pl"}')
+    assert state.load()["project_stages"] == {} and state.load()["language"] == "pl"
+    stages = {"project": {"implement": "codex", "review": "claude", "test": "unit tests"}}
+    saved = state.update({"project_stages": stages})
+    assert saved["project_stages"] == stages == state.load()["project_stages"]
+    assert state.update({"view": "cockpit"})["project_stages"] == stages
+    before = state.path.read_bytes()
+    for bad in ({"project": {"deploy": "codex"}}, {"project": {"implement": "two words"}},
+                {"project": {"review": None}}, {"project": {"test": "--all"}}, {"": {}}, ["project"]):
+        with pytest.raises(ValueError):
+            state.update({"project_stages": bad})
+        assert state.path.read_bytes() == before
+    # Removing the assistant a stage names keeps the map: the router reports it as unknown.
+    kept = state.update({"project_slots": {"project": [{"id": "codex", "profile_id": "codex"}]}})
+    assert kept["project_stages"] == stages

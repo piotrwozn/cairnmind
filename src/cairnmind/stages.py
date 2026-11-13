@@ -1,0 +1,166 @@
+"""Stage router: which assistant or check the next plan step goes to.
+
+The router reads `next_task` and the owner's stage map and suggests one action. It never
+changes a task, a plan or a session: launching still goes through the normal launcher with its
+resume packet and ACK, a check still goes through `cairnmind check run`, and moving a task to
+its next state stays an explicit action of the person or the assistant.
+"""
+from __future__ import annotations
+
+import re
+
+STAGES = ("implement", "review", "test")
+# A task state names the work it waits for. Only the state decides the stage.
+STATE_STAGES = {"todo": "implement", "in_progress": "implement", "needs_review": "review", "needs_test": "test"}
+CLIENT_STAGES = ("implement", "review")
+# Only the assistants the workspace can launch for a plan step.
+LAUNCHABLE_CLIENTS = ("codex", "claude")
+_SLOT = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def validate_stage_map(value) -> dict:
+    """The stage map of one project: implement/review name an assistant slot, test a check profile.
+
+    Only the shape is checked here. Whether a slot or a profile exists is decided when the router
+    runs, so that removing an assistant never makes the preferences unreadable, and a map that
+    names a missing one is shown as such instead of being repaired or replaced.
+    """
+    if not isinstance(value, dict) or set(value) - set(STAGES):
+        raise ValueError("Unknown plan stage; use implement, review or test.")
+    result = {}
+    for stage, target in value.items():
+        if stage in CLIENT_STAGES:
+            if not isinstance(target, str) or not _SLOT.fullmatch(target):
+                raise ValueError("A stage must name an assistant slot.")
+        elif (not isinstance(target, str) or not 1 <= len(target) <= 160 or target.startswith("-")
+                or _CONTROL.search(target)):
+            raise ValueError("The test stage must name a check profile.")
+        result[stage] = target
+    return result
+
+
+def validate_project_stages(value) -> dict:
+    if not isinstance(value, dict) or len(value) > 1000:
+        raise ValueError("Invalid plan stages.")
+    result = {}
+    for project_id, mapping in value.items():
+        if not isinstance(project_id, str) or not 1 <= len(project_id) <= 160 or "\0" in project_id:
+            raise ValueError("Invalid project identifier.")
+        result[project_id] = validate_stage_map(mapping)
+    return result
+
+
+def project_routing(preferences: dict, project_id: str) -> tuple[dict, list, list]:
+    """The stage map, the effective assistant slots and the profiles of one project."""
+    stages = preferences.get("project_stages", {}).get(project_id, {})
+    slots = preferences.get("project_slots", {}).get(project_id, preferences.get("default_slots", []))
+    return stages, slots, preferences.get("profiles", [])
+
+
+def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: list) -> dict:
+    """Pure: the next step's stage and the single action the owner mapped to it."""
+    task, plan = next_result.get("task"), next_result.get("plan")
+    decision = {"stage": None, "action": "none", "problem": None, "reason": next_result.get("reason"),
+                "plan": {"id": plan.get("id"), "version": plan.get("version"), "title": plan.get("title")} if plan else None,
+                "task": None, "slot_id": None, "profile_id": None, "client": None, "label": None,
+                "check_profile": None, "required_profiles": []}
+    if not task:
+        decision["problem"] = "no_task"
+        return decision
+    metadata = task.get("metadata", {})
+    state = metadata.get("state", "todo")
+    required = metadata.get("required_profiles", [])
+    decision["task"] = {"id": task.get("id"), "version": task.get("version"), "state": state,
+                        "content": str(task.get("content", ""))[:300]}
+    decision["required_profiles"] = [p for p in required if isinstance(p, str)] if isinstance(required, list) else []
+    stage = STATE_STAGES.get(state)
+    decision["stage"] = stage
+    if stage is None:
+        decision["problem"] = "no_stage"
+        return decision
+    target = (stage_map or {}).get(stage)
+    if not target:
+        decision["problem"] = "not_mapped"
+        return decision
+    if stage == "test":
+        decision.update(action="run_check", check_profile=target)
+        return decision
+    decision["slot_id"] = target
+    slot = next((row for row in slots if isinstance(row, dict) and row.get("id") == target), None)
+    profile = next((row for row in profiles if slot and isinstance(row, dict) and row.get("id") == slot.get("profile_id")), None)
+    if slot is None or profile is None:
+        # Never fall back to another assistant: the owner chose this one.
+        decision["problem"] = "unknown_assistant"
+        return decision
+    decision.update(profile_id=profile["id"], client=profile.get("client"), label=profile.get("label"))
+    if profile.get("client") not in LAUNCHABLE_CLIENTS:
+        decision["problem"] = "unavailable_assistant"
+        return decision
+    decision["action"] = "start_slot"
+    return decision
+
+
+FROM_WORKSPACE = "Start this stage from the workspace with Run next stage."
+
+
+def next_command(decision: dict, project_id: str, worktree: str, *, slots: list, profiles: list,
+                 active_plan_id: str | None) -> tuple[list[str] | None, str | None]:
+    """The existing command that does exactly what the stage map says, or why there is none.
+
+    `cairnmind run` launches a client by name for the worktree's active plan: it carries no
+    slot, profile or model. It is offered only when that is all the mapped assistant is.
+    """
+    if decision.get("action") == "run_check":
+        return ["cairnmind", "check", "run", project_id, decision["check_profile"],
+                "--task", decision["task"]["id"], "--worktree", worktree], None
+    if decision.get("action") != "start_slot":
+        return None, None
+    by_id = {row.get("id"): row for row in profiles if isinstance(row, dict)}
+    same_client = [row for row in slots if by_id.get(row.get("profile_id"), {}).get("client") == decision["client"]]
+    if by_id.get(decision.get("profile_id"), {}).get("model"):
+        return None, "profile_model"
+    if len(same_client) != 1:
+        return None, "shared_client"
+    if not decision.get("plan") or decision["plan"].get("id") != active_plan_id:
+        return None, "inactive_plan"
+    return ["cairnmind", "run", project_id, decision["client"], "--worktree", worktree], None
+
+
+_PROBLEMS = {
+    "no_task": "There is no next plan step to route.",
+    "no_stage": "This step's state has no stage.",
+    "not_mapped": "No assistant or check is mapped to this stage.",
+    "unknown_assistant": "The mapped assistant is not configured for this project.",
+    "unavailable_assistant": "The mapped assistant cannot be launched for a plan step.",
+}
+_REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Every step of the plan is done.",
+            "blocked": "Every remaining step is blocked."}
+
+
+def describe(decision: dict, translate=lambda text: text) -> str:
+    """Readable lines. Fixed text is translated; stored names are appended, never formatted in."""
+    lines = []
+    if decision.get("plan"):
+        plan = decision["plan"]
+        lines.append(translate("Plan") + ": " + str(plan.get("title") or plan.get("id"))
+                     + " (v" + str(plan.get("version")) + ")")
+    task = decision.get("task")
+    if task:
+        lines.append(translate("Step") + ": " + task["content"] + " [" + str(task["state"]) + ", v"
+                     + str(task.get("version")) + "]")
+    if decision.get("stage"):
+        lines.append(translate("Stage") + ": " + translate(decision["stage"]))
+    if decision.get("slot_id"):
+        lines.append(translate("Assistant") + ": " + str(decision.get("label") or decision["slot_id"])
+                     + " (" + str(decision["slot_id"]) + ")")
+    if decision.get("check_profile"):
+        lines.append(translate("Check profile") + ": " + decision["check_profile"])
+    if decision.get("required_profiles"):
+        lines.append(translate("Required checks") + ": " + ", ".join(decision["required_profiles"]))
+    problem = decision.get("problem")
+    if problem == "no_task":
+        lines.append(translate(_REASONS.get(decision.get("reason"), _PROBLEMS["no_task"])))
+    elif problem:
+        lines.append(translate(_PROBLEMS[problem]))
+    return "\n".join(lines)

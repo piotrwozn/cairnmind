@@ -30,6 +30,7 @@ models_app = typer.Typer(help="Local Ollama models.")
 engine_app = typer.Typer(help="The native ArcadeDB engine (Java 21+).")
 plans_app = typer.Typer(help="Versioned plans and a deterministic next step.")
 checks_app = typer.Typer(help="Named project checks and how current their evidence is.")
+stage_app = typer.Typer(help="Which assistant or check the next plan step goes to. Starts nothing.")
 sessions_app = typer.Typer(help="Resume packets, the scope of history and acknowledgements.")
 eval_app = typer.Typer(help="Isolated evaluation of the real memory.")
 jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's jobs.")
@@ -42,6 +43,7 @@ app.add_typer(models_app, name="models")
 app.add_typer(engine_app, name="engine")
 app.add_typer(plans_app, name="plan")
 app.add_typer(checks_app, name="check")
+app.add_typer(stage_app, name="stage")
 app.add_typer(sessions_app, name="session")
 app.add_typer(eval_app, name="eval")
 app.add_typer(jobs_app, name="jobs")
@@ -891,6 +893,36 @@ def check_run(ctx: typer.Context, project: str, profile: str,
     output(result)
     if not result.get("passed"):
         raise typer.Exit(1)
+
+
+@stage_app.command("next")
+@initialized
+def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None,
+               as_json: Annotated[bool, typer.Option("--json", help="Print the decision as JSON.")] = False):
+    """Show the next plan step's stage and what is mapped to it. Changes no task and starts nothing."""
+    import shlex
+    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.plans import PlanManager
+    from cairnmind.stages import FROM_WORKSPACE, describe, next_command, project_routing, resolve_stage
+    from cairnmind.terminal_safe import safe_text
+    store = store_for(ctx.obj)
+    selected = store.resolve_project(project)
+    scope = actor_scope(store, selected["id"], worktree)
+    plans = PlanManager(store)
+    stages, slots, profiles = project_routing(CockpitState(ctx.obj).load(), selected["id"])
+    decision = resolve_stage(plans.next_task(selected["id"], plan_id, scope), stages, slots, profiles)
+    active = decision["plan"] if plan_id is None else plans.next_task(selected["id"], None, scope)["plan"]
+    decision["command"], decision["command_reason"] = next_command(
+        decision, selected["id"], scope or str(Path(selected["root"]).resolve()),
+        slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
+    if as_json:
+        output(decision)
+        return
+    typer.echo(safe_text(describe(decision)))
+    if decision["command"]:
+        typer.echo("Next: " + safe_text(shlex.join(decision["command"])))
+    elif decision["command_reason"]:
+        typer.echo(FROM_WORKSPACE)
 
 
 @checks_app.command("list")

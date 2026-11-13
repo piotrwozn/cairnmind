@@ -279,6 +279,8 @@ class SidebarApp(BasePanel):
                 yield Button(self.t("Start work"), id="project-work", variant="primary", disabled=True)
                 yield Button(self.t("Memory"), id="memory-open")
                 yield Button(self.t("Add assistant"), id="assistant-add")
+                # Last, so the Tab order of the existing buttons is unchanged.
+                yield Button(self.t("Run next stage"), id="stage-next")
             with Horizontal(classes="sidebar-actions", id="project-list-actions"):
                 yield Button(self.t("Add folder"), id="project-add", variant="primary")
                 yield Button(self.t("Open"), id="project-inspect", disabled=True)
@@ -532,7 +534,7 @@ class SidebarApp(BasePanel):
         await self._poll_workspace()
 
     @work(group="sidebar-select", exclusive=True, exit_on_error=False)
-    async def select_project(self, intent, *, focus_start=False, resume_identity=None):
+    async def select_project(self, intent, *, focus_start=False, resume_identity=None, focus_id="project-work"):
         try:
             returning = resume_identity if intent == "work" else None
             if returning:
@@ -574,7 +576,7 @@ class SidebarApp(BasePanel):
                 await self.load_state()
             self.show_page("project")
             if focus_start:
-                self.query_one("#project-work", Button).focus()
+                self.query_one("#" + focus_id, Button).focus()
             current = await asyncio.to_thread(self.workspace.read)
             latest_run = self.reusable_run() if returning else None
             reused = returning and latest_run and all(returning.get(key) == latest_run.get(key)
@@ -608,6 +610,10 @@ class SidebarApp(BasePanel):
         # A queued palette request may outlive its original project selection.
         # Always show the current project and require a fresh local activation.
         self.select_project("inspect", focus_start=True)
+
+    def action_prepare_next_stage(self):
+        # The same rule for Run next stage: a menu request only shows the current project.
+        self.select_project("inspect", focus_start=True, focus_id="stage-next")
 
     def action_inspect(self):
         self.select_project("inspect")
@@ -763,6 +769,24 @@ class SidebarApp(BasePanel):
                 result = await asyncio.to_thread(self.broker.request, "GET", "/api/brief", params=params, timeout=120)
             text = result.get("text") if isinstance(result, dict) else None
             await self.push_screen_wait(MessageModal("Brief", text or self.t("The memory service returned no brief.")))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
+    # The group of Start work: choosing another project cancels a stage in flight, and back.
+    @work(group="sidebar-select", exclusive=True, exit_on_error=False)
+    async def action_next_stage(self):
+        """Start the assistant or run the check mapped to the next plan step; changes no task."""
+        from .workspace_stage import run_next_stage
+        try:
+            await run_next_stage(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
+
+    @work(group="sidebar-stages", exclusive=True, exit_on_error=False)
+    async def edit_stages(self):
+        from .workspace_stage import edit_stages
+        try:
+            await edit_stages(self)
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
@@ -930,11 +954,14 @@ class SidebarApp(BasePanel):
     @work(group="sidebar-more", exclusive=True, exit_on_error=False)
     async def action_more(self):
         action = await self.push_screen_wait(ChoiceModal("More", [
-            ("Sessions", "sessions"), ("Manage assistants", "assistants"), ("Find folders", "scan"),
+            ("Sessions", "sessions"), ("Manage assistants", "assistants"),
+            ("Find folders", "scan"),
             ("Queue", "queue"),
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
-            ("Settings", "settings"), ("Technical details", "details")]))
-        actions = {"sessions": self.sessions, "assistants": self.edit_slots, "scan": self.scan_projects,
+            # New entries go last: keyboard paths to the existing ones keep their positions.
+            ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages")]))
+        actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
+                   "scan": self.scan_projects,
                    "queue": self.action_queue,
                    "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings}
         if action == "details":
@@ -997,7 +1024,7 @@ class SidebarApp(BasePanel):
         localize_bindings(self, self.language)
         labels = {"project-back": "Return to projects", "assistant-add": "Add assistant", "project-work": "Start work",
                   "project-add": "Add folder", "project-inspect": "Open", "auth-open": "Connections", "more-open": "More",
-                  "memory-open": "Memory"}
+                  "memory-open": "Memory", "stage-next": "Run next stage"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.render_project()
@@ -1144,7 +1171,8 @@ class SidebarApp(BasePanel):
                    "sessions-open": self.sessions, "auth-open": self.login,
                    "memory-open": self.action_memory, "memory-import": self.import_memory,
                    "project-back": self.action_projects, "assistant-select": self.choose_assistant,
-                   "assistant-add": self.add_assistant, "more-open": self.action_more}
+                   "assistant-add": self.add_assistant, "more-open": self.action_more,
+                   "stage-next": self.action_next_stage}
         action = actions.get(event.button.id)
         if action:
             action()
