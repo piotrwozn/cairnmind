@@ -263,6 +263,7 @@ class BasePanel(App):
     .heading { color: #a6d8ff; text-style: bold; height: auto; }
     .actions { height: auto; min-height: 3; }
     #panel-notice { height: auto; max-height: 5; color: #dcb78c; padding: 0 1; }
+    #notice-mark { display: none; height: auto; color: #8fa3b8; padding: 0 1; }
     """
 
     def __init__(self, settings, workspace_id="default", *, broker=None, workspace=None):
@@ -274,6 +275,9 @@ class BasePanel(App):
         self.broker = broker if broker is not None else BrokerClient(settings, ensure=False)
         self.workspace = workspace if workspace is not None else WorkspaceState(settings, workspace_id)
         self.workspace_data = {}
+        from .terminal_notices import NoticeHistory
+        self.notice_history = NoticeHistory()  # memory only, for the life of this panel (#130)
+        self._notice_about, self._mark_text = None, ""
         self._scope_version = 0
         self._workspace_revision = None
         self.language = language_for(settings)
@@ -288,7 +292,7 @@ class BasePanel(App):
         actions = {"search": "action_search", "add_project": "add_project", "start_work": "action_prepare_work",
                    "connections": "login", "sessions": "sessions", "memory": "action_memory", "ask": "action_ask",
                    "brief": "action_brief", "next_stage": "action_prepare_next_stage",
-                   "more": "action_more", "settings": "action_settings"}
+                   "more": "action_more", "settings": "action_settings", "notices": "action_notices"}
         method = getattr(self, actions.get(action, ""), None)
         if callable(method):
             method()
@@ -302,8 +306,36 @@ class BasePanel(App):
         return await asyncio.to_thread(self.broker.request, method, path, params=params, json=json)
 
     def notice(self, value) -> None:
+        shown = None
         with suppress(Exception):
-            self.query_one("#panel-notice", Static).update(plain(self.t(value)))
+            shown = plain(self.t(value))
+            self.query_one("#panel-notice", Static).update(shown)
+        if shown is not None:
+            with suppress(Exception):
+                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data)
+                self.show_notice_mark()
+
+    def notice_for(self, about, value) -> None:
+        """A notice about a project of its own (see terminal_notices.about), not the one shown now.
+
+        It goes through `notice`, so the line and its timing are those of every other notice.
+        """
+        self._notice_about = about
+        try:
+            self.notice(value)
+        finally:
+            self._notice_about = None
+
+    def show_notice_mark(self) -> None:
+        """A small mark in its own line, so the notice text itself is never changed."""
+        with suppress(Exception):
+            text = self.notice_history.mark(self.t)
+            if text == self._mark_text:
+                return  # nothing to repaint: most notices leave the mark as it was
+            mark = self.query_one("#notice-mark", Static)
+            mark.update(plain(text))
+            mark.display = bool(text)
+            self._mark_text = text
 
     async def workspace_changed(self, value: dict) -> None:
         """Subclass refreshes its projection when the local view changes."""
