@@ -771,7 +771,9 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         session_for(request)
         if not re.fullmatch(r"[A-Za-z0-9_:/-]+", path) or ".." in path:
             raise HTTPException(404)
-        if request.method == "POST" and not (path.endswith("/review") or path == "conflicts/resolve"):
+        # The person's decisions are the only writes: a review, a conflict decision, an impact verdict.
+        if request.method == "POST" and not (path.endswith("/review")
+                                             or path in ("conflicts/resolve", "impact/verdict")):
             raise HTTPException(405)
         return forward(await upstream(request.method, "/inspector/" + path, params=request.query_params,
                                       data=await body(request) if request.method == "POST" else None))

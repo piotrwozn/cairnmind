@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import conflicts
+from . import conflicts, impact_verdicts
 from .arcade import ArcadeError
 from .inspector import Inspector, InspectorNotFound
 
@@ -36,6 +36,18 @@ class ConflictBody(BaseModel):
     other_expected_version: int = Field(strict=True, ge=1)
     keep: str | None = Field(default=None, max_length=200)
     reason: str | None = Field(default=None, max_length=4000)
+
+
+class ImpactVerdictBody(BaseModel):
+    # No session field: a verdict is a person's, and a coding session has no way to send one.
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    worktree: str | None = Field(default=None, max_length=4096)
+    since: str = Field(min_length=1, max_length=200)
+    record_id: str = Field(min_length=1, max_length=200)
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verdict: Literal["still_valid", "needs_update", "not_related"]
+    note: str | None = Field(default=None, max_length=4000)
 
 
 def _event_id(cursor):
@@ -171,6 +183,11 @@ def create_inspector_router(store, settings):
     async def resolve_conflict(body: ConflictBody):
         return await call(conflicts.resolve, inspector, body.project, body.record_id, body.other_id, body.action,
                           body.expected_version, body.other_expected_version, keep=body.keep, reason=body.reason)
+
+    @router.post("/inspector/impact/verdict")
+    async def impact_verdict(body: ImpactVerdictBody):
+        return await call(impact_verdicts.resolve, inspector, body.project, body.worktree, body.since,
+                          body.record_id, body.fingerprint, body.verdict, body.note)
 
     @router.post("/inspector/records/{record_id}/review")
     async def review(record_id: str, body: ReviewBody):

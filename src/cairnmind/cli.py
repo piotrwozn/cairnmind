@@ -465,16 +465,42 @@ def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
 def impact(ctx: typer.Context, project: str,
            since: Annotated[str, typer.Option("--since", help="Commit, tag or branch to compare the worktree with.")],
            worktree: Path | None = None,
-           as_json: Annotated[bool, typer.Option("--json", help="Print the linked records as JSON.")] = False):
+           as_json: Annotated[bool, typer.Option("--json", help="Print the linked records as JSON.")] = False,
+           pending: Annotated[bool, typer.Option(
+               "--pending", help="List only records without a current verdict.")] = False):
     """List records linked to the files and symbols changed since a commit. Read-only; asks no model."""
     from cairnmind.impact import build_impact
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    result = build_impact(store, pid, since, actor_scope(store, pid, worktree))
+    result = build_impact(store, pid, since, actor_scope(store, pid, worktree), pending=pending)
     if as_json:
         output(result)
     else:
         typer.echo(result["text"])
+
+
+@app.command("impact-verdict")
+@initialized
+def impact_verdict(ctx: typer.Context, project: str, record_id: str,
+                   fingerprint: Annotated[str, typer.Option(help="The entry's fingerprint, from --json.")],
+                   verdict: Annotated[str, typer.Option(help="still_valid, needs_update or not_related.")],
+                   since: Annotated[str, typer.Option(help="The commit the list was made against.")],
+                   note: Annotated[str | None, typer.Option(help="Required for needs_update.")] = None,
+                   worktree: Path | None = None):
+    """Record your verdict on one record listed by `impact`. Changes no record and no task."""
+    from cairnmind.impact_verdicts import record_verdict
+    # A verdict is a person's judgement, as `retry-jobs` is a person's act: a coding session cannot give one.
+    if session_value("SESSION_ID"):
+        raise typer.BadParameter("A coding session cannot record an impact verdict; only a person can, "
+                                 "outside the session.")
+    store = store_for(ctx.obj)
+    pid = store.resolve_project(project)["id"]
+    try:
+        result = record_verdict(store, pid, record_id, fingerprint, verdict, since,
+                                str(worktree.expanduser().resolve()) if worktree else None, note)
+    except LookupError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    output(result)
 
 
 @app.command()
