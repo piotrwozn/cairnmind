@@ -184,6 +184,25 @@ async def test_agent_rejects_invented_quote_and_plain_prose(workspace):
         assert result["status"] == "partial"
 
 
+@pytest.mark.parametrize("literal", [True, False])
+def test_citation_passage_named_quote_excerpt_is_checked_like_quote(workspace, literal):
+    # The catalog names its passages quote_excerpt and models answer with that name.
+    store, project, settings = workspace
+    text = "The retry budget is five attempts per request."
+    source = store.snapshot(project["id"], "note://retry", text, "note")
+    passage = "retry budget is five attempts" if literal else "retry budget is six attempts"
+    output = json.dumps({"answer": "Five attempts.", "unknowns": [],
+                         "citations": [{"source_id": source["id"], "quote_excerpt": passage}]})
+    result = KnowledgeAgent(store, settings, FakeOllama())._final(
+        output, project["id"], {source["id"]: source}, time.monotonic())
+    if literal:
+        assert result["status"] == "complete" and result["answer"] == "Five attempts."
+        assert result["sources"][0]["quote"] == passage
+    else:
+        assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+        assert "Five attempts." not in result["answer"] and not result["sources"]
+
+
 @pytest.mark.parametrize("failure", ["json", "record_id", "quote"])
 async def test_final_protocol_repairs_once_with_inspected_source_schema(workspace, failure):
     store, project, settings = workspace
