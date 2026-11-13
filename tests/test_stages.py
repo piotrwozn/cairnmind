@@ -1,14 +1,19 @@
 import pytest
 
 from cairnmind.plans import PlanManager
-from cairnmind.stages import describe, resolve_stage, validate_project_stages, validate_stage_map
+from cairnmind.stages import (confirmed_choice, describe, project_routing, resolve_stage, validate_project_stages,
+                              validate_stage_map)
 from cairnmind.store import Store
 
 SLOTS = [{"id": "codex", "profile_id": "codex"}, {"id": "claude", "profile_id": "claude"},
-         {"id": "helper", "profile_id": "api-helper"}, {"id": "orphan", "profile_id": "gone"}]
+         {"id": "helper", "profile_id": "api-helper"}, {"id": "orphan", "profile_id": "gone"},
+         {"id": "pilot", "profile_id": "copilot"}, {"id": "odd", "profile_id": "odd"}]
 PROFILES = [{"id": "codex", "client": "codex", "label": "Codex"},
             {"id": "claude", "client": "claude", "label": "Claude"},
-            {"id": "api-helper", "client": "api", "label": "API helper"}]
+            {"id": "api-helper", "client": "api", "label": "API helper", "provider": "openai", "model": "gpt-x",
+             "credential_ref": "profile:api-helper"},
+            {"id": "copilot", "client": "copilot", "label": "GitHub Copilot"},
+            {"id": "odd", "client": "cursor", "label": "Not launchable"}]
 MAP = {"implement": "codex", "review": "claude", "test": "unit"}
 
 
@@ -46,11 +51,177 @@ def test_missing_mapping_does_nothing_and_says_so():
 
 
 @pytest.mark.parametrize("slot,problem", [("missing", "unknown_assistant"), ("orphan", "unknown_assistant"),
-                                          ("helper", "unavailable_assistant")])
+                                          ("odd", "unavailable_assistant")])
 def test_unknown_or_unlaunchable_assistant_is_shown_and_never_replaced(slot, problem):
     decision = resolve_stage(step("todo"), {"implement": slot, "review": "claude"}, SLOTS, PROFILES)
     assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", problem, slot)
-    assert decision["client"] in {None, "api"}
+    assert decision["client"] in {None, "cursor"}
+
+
+def chosen(slot):
+    """A client stage as Plan stages saves it: the slot and what it names now."""
+    row = next(s for s in SLOTS if s["id"] == slot)
+    return confirmed_choice(row, next(p for p in PROFILES if p["id"] == row["profile_id"]))
+
+
+def test_a_repointed_project_slot_never_starts_the_profile_it_points_to_now():
+    stage_map = {"implement": chosen("claude")}
+    repointed = [{"id": "claude", "profile_id": "api-helper"}]  # "Replace connection" keeps the slot id.
+    decision = resolve_stage(step("todo"), stage_map, repointed, PROFILES, readiness=observed())
+    assert (decision["action"], decision["problem"], decision["client"]) == ("none", "assistant_changed", "api")
+    assert describe(decision).endswith("Confirm it in More → Plan stages; nothing was started.\n"
+                                       "What changed: the profile, the assistant type")
+    assert resolve_stage(step("todo"), stage_map, SLOTS, PROFILES)["action"] == "start_slot"
+
+
+def test_a_repointed_default_slot_never_starts_the_profile_it_points_to_now():
+    preferences = {"project_stages": {"p": {"review": chosen("claude")}}, "project_slots": {},
+                   "default_slots": [{"id": "claude", "profile_id": "copilot"}], "profiles": PROFILES}
+    decision = resolve_stage(step("needs_review"), *project_routing(preferences, "p"), readiness=observed())
+    assert (decision["action"], decision["problem"], decision["client"]) == ("none", "assistant_changed", "copilot")
+
+
+LOCAL = {"id": "local", "client": "api", "label": "Local server", "provider": "openai_compatible",
+         "model": "qwen-local", "base_url": "http://127.0.0.1:8080/v1", "credential_ref": "env:LOCAL_KEY"}
+LOCAL_SLOT = {"id": "local", "profile_id": "local"}
+
+
+@pytest.mark.parametrize("edit,words", [
+    ({"model": "gpt-expensive"}, "the model"),
+    ({"base_url": "https://api.paid.example/v1"}, "the address"),
+    ({"provider": "openai", "base_url": "https://api.openai.com/v1"}, "the provider, the address")])
+def test_an_agent_profile_edited_in_place_is_not_started_until_confirmed(edit, words):
+    stage_map = {"implement": confirmed_choice(LOCAL_SLOT, LOCAL)}
+    edited = {**LOCAL, **edit}  # The profile editor keeps the id and the client.
+    decision = resolve_stage(step("todo"), stage_map, [LOCAL_SLOT], [edited], readiness=observed())
+    assert (decision["action"], decision["problem"]) == ("none", "assistant_changed")
+    text = describe(decision)
+    assert text.splitlines()[-1] == "What changed: " + words
+    # In words only: neither the old nor the new address is shown (the model line names the current one).
+    assert "127.0.0.1" not in text and "paid.example" not in text
+    # Saving the stage again (what Plan stages stores now) accepts the edited profile.
+    saved = {"implement": confirmed_choice(LOCAL_SLOT, edited)}
+    assert resolve_stage(step("todo"), saved, [LOCAL_SLOT], [edited], readiness=observed())["action"] == "start_slot"
+
+
+def test_a_credential_change_is_not_part_of_what_is_confirmed():
+    stage_map = {"implement": confirmed_choice(LOCAL_SLOT, LOCAL)}
+    assert "credential_ref" not in stage_map["implement"]
+    edited = {**LOCAL, "credential_ref": "env:OTHER_KEY"}
+    assert resolve_stage(step("todo"), stage_map, [LOCAL_SLOT], [edited], readiness=observed())["action"] == "start_slot"
+
+
+def test_a_native_stage_is_unaffected_by_model_edits():
+    stage_map = {"implement": chosen("codex")}
+    assert set(stage_map["implement"]) == {"slot", "profile_id", "client"}
+    edited = [{**PROFILES[0], "model": "gpt-other"}, *PROFILES[1:]]
+    decision = resolve_stage(step("todo"), stage_map, SLOTS, edited)
+    assert (decision["action"], decision["problem"]) == ("start_slot", None)
+
+
+def test_an_agent_stage_saved_without_its_target_is_unconfirmed():
+    # The {slot, profile_id, client} shape saved earlier on this branch, without provider/model/address.
+    stage_map = {"implement": {"slot": "local", "profile_id": "local", "client": "api"}}
+    decision = resolve_stage(step("todo"), stage_map, [LOCAL_SLOT], [LOCAL], readiness=observed())
+    assert (decision["action"], decision["problem"]) == ("none", "assistant_unconfirmed")
+
+
+def test_an_old_map_follows_a_native_slot_as_before():
+    # #122 followed the slot for a Codex/Claude Code swap; a plain slot id still does.
+    swapped = [{"id": "codex", "profile_id": "claude"}]
+    decision = resolve_stage(step("todo"), {"implement": "codex"}, swapped, PROFILES)
+    assert (decision["action"], decision["client"], decision["problem"]) == ("start_slot", "claude", None)
+
+
+@pytest.mark.parametrize("slot", ["helper", "pilot"])
+def test_an_old_map_with_an_agent_slot_must_be_confirmed(slot):
+    decision = resolve_stage(step("todo"), {"implement": slot}, SLOTS, PROFILES, readiness=observed())
+    assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", "assistant_unconfirmed", slot)
+    decision = resolve_stage(step("todo"), {"implement": chosen(slot)}, SLOTS, PROFILES, readiness=observed())
+    assert (decision["action"], decision["problem"]) == ("start_slot", None)
+
+
+def test_both_shapes_of_a_client_stage_are_valid_and_old_preferences_load(tmp_path):
+    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.config import Settings
+    both = {"implement": "codex", "review": chosen("helper"), "test": "unit"}
+    assert validate_stage_map(both) == both
+    for bad in ({"implement": {"slot": "codex"}}, {"implement": {**chosen("codex"), "client": "cursor"}},
+                {"implement": {**chosen("codex"), "extra": 1}}, {"implement": {**chosen("codex"), "slot": "bad slot"}}):
+        with pytest.raises(ValueError):
+            validate_stage_map(bad)
+    settings = Settings.load(tmp_path / "data", create=True)
+    state = CockpitState(settings)
+    state.update({"project_stages": {"p": {"implement": "codex"}}})  # A file saved before #125.
+    assert CockpitState(settings).load()["project_stages"] == {"p": {"implement": "codex"}}
+    state.update({"project_stages": {"p": both}})
+    assert state.load()["project_stages"] == {"p": both}
+
+
+def observed(credential="configured_unchecked", runtime="ready", seen=None):
+    def readiness(profile):
+        if seen is not None:
+            seen.append(profile["id"])
+        return {"credential": credential, "runtime": runtime if profile["client"] == "copilot" else None}
+    return readiness
+
+
+@pytest.mark.parametrize("slot,client", [("helper", "api"), ("pilot", "copilot")])
+def test_an_api_or_copilot_slot_starts_with_the_facts_the_workspace_needs(slot, client):
+    seen = []
+    decision = resolve_stage(step("needs_review"), {"review": chosen(slot)}, SLOTS, PROFILES,
+                             readiness=observed(seen=seen))
+    assert (decision["action"], decision["problem"], decision["slot_id"], decision["client"]) == (
+        "start_slot", None, slot, client)
+    profile = next(p for p in PROFILES if p["client"] == client)
+    assert (decision["profile_id"], decision["provider"], decision["model"]) == (
+        profile["id"], profile.get("provider"), profile.get("model"))
+    assert decision["credential"] == "configured_unchecked"
+    assert decision["runtime"] == ("ready" if client == "copilot" else None)
+    assert seen == [profile["id"]]  # Only the mapped profile is looked at.
+
+
+def test_a_native_stage_never_looks_at_agent_credentials():
+    decision = resolve_stage(step("todo"), MAP, SLOTS, PROFILES,
+                             readiness=lambda profile: pytest.fail("read a credential for a native client"))
+    assert (decision["action"], decision["credential"], decision["provider"]) == ("start_slot", None, None)
+
+
+@pytest.mark.parametrize("slot,credential,runtime,problem", [
+    ("helper", "credential_missing", None, "credential_missing"),
+    ("helper", None, None, "credential_unavailable"),
+    ("pilot", "credential_missing", "ready", "copilot_credential_unavailable"),
+    ("helper", "credential_invalid", None, "credential_invalid"),
+    ("pilot", "credential_invalid", "ready", "copilot_credential_unavailable"),
+    ("pilot", "not_required", "copilot_sdk_missing", "runtime_missing"),
+    ("pilot", "not_required", "copilot_runtime_invalid", "runtime_missing")])
+def test_an_agent_that_cannot_start_is_shown_as_such_and_never_replaced(slot, credential, runtime, problem):
+    decision = resolve_stage(step("todo"), {"implement": chosen(slot), "review": "claude"}, SLOTS, PROFILES,
+                             readiness=observed(credential, runtime))
+    assert (decision["action"], decision["problem"], decision["slot_id"]) == ("none", problem, slot)
+    assert decision["client"] in {"api", "copilot"}
+    text = describe(decision)
+    assert text.endswith(describe_problem[problem])
+
+
+describe_problem = {
+    "credential_missing": "The mapped assistant has no credential. Add its key in Connections; nothing was started.",
+    "credential_unavailable": "credential cannot be read. Check it in Connections; nothing was started.",
+    "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.",
+    "credential_invalid": "is set but is not a valid key. Correct it in Connections or in its environment variable; "
+                          "nothing was started.",
+    "copilot_credential_unavailable": ("Provide it, or clear the credential reference in the profile so the stage "
+                                       "uses the signed-in GitHub account; nothing was started.")}
+
+
+def test_without_an_observation_the_launcher_decides():
+    decision = resolve_stage(step("todo"), {"implement": chosen("helper")}, SLOTS, PROFILES)
+    assert (decision["action"], decision["credential"]) == ("start_slot", "unknown")
+
+
+def test_no_stage_is_mapped_by_default_even_to_a_configured_agent():
+    decision = resolve_stage(step("todo"), {}, SLOTS, PROFILES, readiness=observed())
+    assert (decision["action"], decision["problem"], decision["client"]) == ("none", "not_mapped", None)
 
 
 def test_test_stage_names_only_the_mapped_profile_and_shows_required_ones():

@@ -183,8 +183,16 @@ class CredentialStore:
             if kind is None:
                 return {"configured": True, "storage": "none", "code": "not_required"}
             if kind == "env":
-                configured = bool(self._environ.get(name))
+                value = self._environ.get(name)
+                configured = bool(value)
                 storage = "environment" if configured else "none"
+                if configured:
+                    # The same check resolve() applies, so a status never says "configured" for a
+                    # value the launcher refuses. The value is neither returned nor logged.
+                    try:
+                        self._key(value)
+                    except ValueError:
+                        return {"configured": False, "storage": storage, "code": "credential_invalid"}
             else:
                 configured = name in self._ephemeral
                 storage = "session" if configured else "local" if name in self._read() else "none"
