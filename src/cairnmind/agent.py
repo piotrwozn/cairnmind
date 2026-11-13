@@ -711,6 +711,10 @@ class KnowledgeAgent:
                 invalid.append("Niepoprawne cytowanie.")
                 continue
             source_id, quote = citation.get("source_id"), citation.get("quote")
+            if quote is None:
+                # The catalog the model is shown names its passages "quote_excerpt", and the model
+                # often answers with that name. The passage is checked against the source all the same.
+                quote = citation.get("quote_excerpt")
             if not isinstance(source_id, str) or source_id not in evidence:
                 invalid.append("Model wskazał źródło, którego nie odczytał.")
                 continue
