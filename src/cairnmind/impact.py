@@ -197,8 +197,13 @@ def _count(number, noun):
     return f"{number} {noun}{'' if number == 1 else 's'}"
 
 
-def build_impact(store, project_id, since, worktree=None):
-    """The records linked to what changed in the worktree since commit ``since``, as rows and as text."""
+def build_impact(store, project_id, since, worktree=None, *, pending=False):
+    """The records linked to what changed in the worktree since commit ``since``, as rows and as text.
+
+    Each row carries the ``fingerprint`` of the entry and a person's ``verdict`` on it, or None
+    (see ``cairnmind.impact_verdicts``). ``pending`` leaves out the rows that have a verdict.
+    """
+    from cairnmind.impact_verdicts import annotate, verdict_line
     from cairnmind.memory_paths import bound_metadata, memory_bindings
     from cairnmind.verification import _root
     project = store.resolve_project(project_id)
@@ -302,6 +307,8 @@ def build_impact(store, project_id, since, worktree=None):
             row.update(evidence_state=states[record_id]["evidence_state"],
                        quote_survives=states[record_id]["quote_survives"])
         rows.append(row)
+    annotate(store, project["id"], root, changed, records, rows)
+    shown = [row for row in rows if not (pending and row["verdict"])]
     # A rename is one changed file, known under two names.
     files = {name for name, entry in changed.items() if "renamed_to" not in entry}
     linked_files = {changed[link["path"]].get("renamed_to", link["path"]) for row in rows for link in row["links"]}
@@ -313,7 +320,7 @@ def build_impact(store, project_id, since, worktree=None):
         lines.append("Nothing in this worktree differs from that commit.")
     elif not rows:
         lines.append(f"No record is linked to the {_count(len(files), 'changed file')}.")
-    for row in rows:
+    for row in shown:
         state = f", {_line(row['task_state'], 30)}" if "task_state" in row else ""
         lines += ["", f"[{row['kind']}] {row['status']}{state}: {row['title']} ({_line(row['id'], 60)})"]
         for link in row["links"]:
@@ -335,6 +342,9 @@ def build_impact(store, project_id, since, worktree=None):
                     evidence = "; written by, or resting only on, an external client's session, never verified"
                 snapshot = f" from {_line(link['snapshot'], 10)}" if link["snapshot"] else ""
                 lines.append(f"  - rests on a snapshot{snapshot} of {where}{evidence}")
+        checked = verdict_line(row, _line)
+        if checked:
+            lines.append(checked)
     # Pages no record points at: documentation that mentions a definition changed in this range.
     documentation = documentation_mentions(root, changed, symbols)
     lines += documentation_lines(documentation)
@@ -343,8 +353,10 @@ def build_impact(store, project_id, since, worktree=None):
         lines += ["", f"{_count(len(rows), 'record')} linked to {len(linked_files)} of "
                       f"{_count(len(files), 'changed file')}"
                       + (f"; {_count(rest, 'changed file')} with no linked record" if rest else "")]
+    if len(shown) < len(rows):
+        lines.append(f"{_count(len(rows) - len(shown), 'record')} already checked and not shown (--pending)")
     return {"project": {"id": project["id"], "name": project["name"]}, "worktree": str(root), "since": since,
             "commit": commit,
             "changed_files": [{"path": name, **entry, "symbols": symbols.get(name)}
                               for name, entry in sorted(changed.items(), key=lambda item: PurePosixPath(item[0]).parts)],
-            "records": rows, "text": "\n".join(lines), "documentation": documentation}
+            "records": shown, "text": "\n".join(lines), "documentation": documentation}
