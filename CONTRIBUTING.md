@@ -28,8 +28,10 @@ Ollama and the coding clients are needed only for the explicit evaluations, neve
 uv run ruff check src tests
 uv run pytest -m "not arcade and not tmux"   # fast tier: no database, no tmux
 uv run pytest                                # full suite with the real ArcadeDB engine
+uv run pytest -n 4                           # the same full suite in 4 parallel processes
 ```
 
+- `-n N` (pytest-xdist) runs the tests in N processes that share one ArcadeDB engine; each process uses its own databases. Use at most 4 on a workstation or in WSL, so that the run does not hold every core for its whole length; `-n auto` takes one process per core. Without `-n` the suite runs in one process, as before.
 - Tests that need the real engine are marked `arcade`. New test modules get the marker by default. Add a module to `NO_ARCADE_MODULES` in `tests/conftest.py` only after it passes with no engine running.
 - Tests that drive a real tmux server are listed in `TMUX_MODULES` in the same file.
 - Keyboard latency budgets target a developer workstation. On slow or shared machines, set `CAIRNMIND_LATENCY_SCALE`, as CI does.

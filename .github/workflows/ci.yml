@@ -14,7 +14,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Shared 2-core runners: keyboard latency budgets x4 (still below the 3 s blocked-UI case).
+  # Shared runners whose every core runs a test process: keyboard latency budgets x4 (still below
+  # the 3 s blocked-UI case).
   CAIRNMIND_LATENCY_SCALE: "4"
 
 jobs:
@@ -64,4 +65,6 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a") as env:
               env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
           PY
-      - run: uv run pytest -q
+      # The standard Linux runner of a public repository has 4 vCPUs: one test process for each,
+      # all sharing one ArcadeDB engine (see tests/conftest.py).
+      - run: uv run pytest -n 4 -q

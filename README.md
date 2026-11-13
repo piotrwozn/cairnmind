@@ -299,6 +299,7 @@ uv sync --locked --extra dev
 uv run ruff check src tests
 uv run pytest -m "not arcade and not tmux"   # fast tier, no database or tmux
 uv run pytest                                # full suite, needs Java 21 and tmux
+uv run pytest -n 4                           # the full suite in 4 parallel processes
 ```
 
 The automated tests need no Ollama, no models and no signed-in coding clients; those are used only by the explicit evaluations. Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier and the full suite on every pull request and on every push to `main`.
