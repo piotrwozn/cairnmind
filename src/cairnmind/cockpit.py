@@ -828,6 +828,27 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             raise HTTPException(422, "Niepoprawne pola żądania.")
         return forward(await upstream("GET", "/brief", params=request.query_params))
 
+    @app.get("/api/stage")
+    async def next_stage(request: Request):
+        # Read-only: the next step and what the owner mapped to its stage. Starting it is a
+        # separate request through /api/client-runs; a check runs only through `check run`.
+        session_for(request)
+        query = request.query_params
+        if set(query) - {"project", "worktree"} or "project" not in query:
+            raise HTTPException(422, "Niepoprawne pola żądania.")
+        selected = await project(query["project"])
+        worktree = str(normalize_path(query.get("worktree") or selected["root"]))
+        response = await upstream("GET", "/project-roots", params={"project": selected["id"]})
+        roots = response.json().get("roots", [selected["root"]]) if response.is_success else [selected["root"]]
+        if worktree not in roots:
+            raise HTTPException(409, "Wybierz zarejestrowany katalog tego projektu.")
+        response = await upstream("POST", "/plans/next", data={"project": selected["id"], "worktree": worktree})
+        if response.is_error:
+            return forward(response)
+        from .stages import project_routing, resolve_stage
+        result = resolve_stage(response.json(), *project_routing(state.load(), selected["id"]))
+        return {**result, "project_id": selected["id"], "worktree": worktree}
+
     @app.get("/api/plans")
     async def list_plans(request: Request):
         session_for(request)
