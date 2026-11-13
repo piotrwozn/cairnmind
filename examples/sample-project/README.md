@@ -57,18 +57,22 @@ And the proof that what you just read is intact: the manifest and every row it l
 cairnmind memory inspect examples/sample-project/.memory/cairnmind
 ```
 
-## What this view does not show
+## What this view shows, and what it leaves out
 
-`memory show` reads the package and prints it. It starts nothing and writes nothing. It also leaves things out:
+`memory show` reads the package and prints it. It starts nothing and writes nothing. Some things are always shown:
 
-- **The text of a source.** You see its address, such as `note://trail-notes/2026-03-19-identifiers-revisited`. The text is in the package, one JSON file per row under `objects/`:
+- **Acceptance criteria and the check each one is linked to.** The first step has two: "The unit check passes.", linked to the check `unit`, and "A note written before tags existed still loads.", which says `no check` because only a person can confirm it.
+- **Which decision replaced which.** The newer decision says `replaces:` and the old one, which is `superseded`, says `replaced by:`, each with the other's identifier and key.
 
-  ```
-  grep -l "Two phones wrote note 14" examples/sample-project/.memory/cairnmind/objects/*.json
-  ```
+And one thing only when you ask for it. The text of a source is in the package, one JSON file per row under `objects/`; by default you see only its address, such as `note://trail-notes/2026-03-19-identifiers-revisited`. Add `--sources` to print the text of each source under the record it supports:
 
-- **Acceptance criteria and the check each one is linked to.** The first step has two: "The unit check passes.", linked to the check `unit`, and "A note written before tags existed still loads.", which only a person can confirm. They are in the task's row under `objects/`.
-- **Which decision replaced which.** The view shows the word `superseded`; the link itself is in the row of the newer decision.
+```bash
+cairnmind memory show examples/sample-project/.memory/cairnmind --kind decision --sources
+```
+
+You now read the meeting note of 2 March under the storage decision. A source that supports two decisions is printed under both. Each text is cut after 1,200 characters, with a note of how many were left out, and a run prints at most 60,000 characters of source text. A source whose text is empty or binary is named and not printed. `--grep` also searches the criteria and check names you see under a task, and with `--sources` the source text you see, and only that.
+
+What it leaves out even then: the earlier versions of a record. A plan is listed with the addresses of its sources only, but the request that created it is a source too, so its text is printed under each task that cites it.
 
 Searching, asking questions, the workspace and the briefing all need the full installation, where this package can be imported into a project. See the [main README](../../README.md).
 

@@ -10,6 +10,7 @@ import shlex
 from pathlib import Path
 
 import pytest
+import typer.main
 from typer.testing import CliRunner
 
 from cairnmind import cli
@@ -42,6 +43,37 @@ def test_the_sample_shows_what_the_walkthrough_says_it_shows():
         assert line in everything
     assert "historical check runs" in everything and "      unit: passed, ended " in everything
     assert "reported by an agent, not verified by this view: acceptance passed" in everything
+
+
+def _block(text, needle):
+    return next(block for block in text.split("\n\n") if needle in block)
+
+
+def test_the_sample_shows_source_text_replacement_and_criteria():
+    decisions = show_snapshot(PACKAGE, kind="decision", sources_text=True)
+    storage = _block(decisions, "key: storage-format")
+    assert "  source note://trail-notes/2026-03-02-storage:\n    | Meeting notes, 2 March." in storage
+    # Identifiers change with every build of the sample, so the new decision is found through the old one.
+    replaced = _block(decisions, "[decision] superseded")
+    new_id = re.search(r"  replaced by: (\S+) \(note-identifiers\)", replaced).group(1)
+    replacing = _block(decisions, f"  id: {new_id}")
+    assert "[decision] confirmed" in replacing and "  replaces: " in replacing
+    assert "Meeting notes, 2 March." not in show_snapshot(PACKAGE, kind="decision")
+    first = _block(show_snapshot(PACKAGE, kind="task"), "| Store a list of tags with each note")
+    assert ("  acceptance criteria:\n    - The unit check passes. (check: unit)\n"
+            "    - A note written before tags existed still loads. (no check)\n") in first
+
+
+def test_the_command_has_the_sources_option_and_prints_the_note_under_its_decision(monkeypatch):
+    for name in ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID"):
+        monkeypatch.delenv(name, raising=False)
+    result = CliRunner().invoke(cli.app, ["memory", "show", str(PACKAGE), "--kind", "decision", "--sources"])
+    assert result.exit_code == 0, result.output
+    assert "    | Meeting notes, 2 March." in result.output
+    # The help text is read from the command itself: a narrow, coloured terminal wraps "--sources" in the box.
+    show = typer.main.get_command(cli.app).commands["memory"].commands["show"]
+    option = next(param for param in show.params if param.name == "sources")
+    assert option.opts == ["--sources"] and "printed under each" in option.help
 
 
 def test_the_sample_names_no_machine_and_holds_only_what_its_manifest_lists():
