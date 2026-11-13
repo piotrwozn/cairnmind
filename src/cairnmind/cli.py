@@ -482,9 +482,10 @@ def impact(ctx: typer.Context, project: str,
 def usage(ctx: typer.Context, project: str,
           since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
           as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
-    """Sum the token usage of the built-in API agent per day, profile and model. Read-only; asks no model."""
+    """Sum the token usage of the built-in API agent per day, profile and model. Asks no model, starts no service."""
     from cairnmind.usage import build_usage
-    # The project name is resolved in the store; the usage itself comes from the session journals.
+    # Resolving the project name opens the store (it starts the database engine if stopped and may create the
+    # data directory); the usage itself is read from the session journals and nothing is written to them.
     found = store_for(ctx.obj).resolve_project(project)
     try:
         result = build_usage(ctx.obj.data_dir, found, since)
