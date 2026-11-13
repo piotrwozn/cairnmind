@@ -171,6 +171,9 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             name for name in dirs
             if name not in EXCLUDED_DIRS and not (folder / name).is_symlink()
             and not is_memory_path(folder / name, root)
+            # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
+            # and not text of this project: its rows are not indexed as sources.
+            and not (folder.name == ".memory" and name in ("cairnmind", "devbrain"))
             and not any((folder / name).is_relative_to(base) for base in excluded)
             and not ignored(folder / name, True)
         )
