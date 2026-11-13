@@ -84,33 +84,82 @@ def validate_server(value) -> dict:
     return {"id": identifier, "command": command, "args": list(args), "env": dict(env)}
 
 
-def _paths(text: str):
-    """The absolute paths a value names: itself, an option's value after '=', and ':'-separated parts."""
-    pieces = [text]
-    if "=" in text:
-        pieces.append(text.split("=", 1)[1])
-    for piece in list(pieces):
-        if ":" in piece:
-            pieces.extend(piece.split(":"))
-    return [piece for piece in pieces if piece.startswith("/")]
+_SEPARATORS = re.compile(r"[=:,;\s]+")
+_PATH_CHARACTER = re.compile(r"[A-Za-z0-9._-]")
+
+
+def server_directory():
+    """What a relative path in a server definition is relative to: the server's working directory, a private
+    directory created directly under the system temporary directory when it starts (mcp_host)."""
+    import tempfile
+    from pathlib import Path
+    return Path(tempfile.gettempdir()) / "cairnmind-mcp-server"
+
+
+def _normal(text: str) -> str:
+    text = re.sub(r"/+", "/", text.replace("\\", "/"))
+    while "/./" in text:
+        text = text.replace("/./", "/")
+    return text
+
+
+def _tokens(text: str):
+    """Every piece of a value that can be a path: split on '=', ':', ',', ';' and whitespace, and in each
+    piece also the part from its first '/' on (an option such as '-f/path')."""
+    for token in _SEPARATORS.split(text):
+        token = token.strip("'\"()[]{}")
+        if token:
+            yield token
+            slash = token.find("/")
+            if slash > 0:
+                yield token[slash:]
+
+
+def _names_root(text: str, roots) -> bool:
+    """Whether a spelling of the worktree root appears in a value as a path prefix: followed by the end, a
+    '/' or a character that cannot continue a file name, so 'app-mcp' or 'app.venv' next to 'app' do not."""
+    value = _normal(text)
+    for root in roots:
+        start = value.find(root)
+        while start >= 0:
+            after = value[start + len(root):start + len(root) + 1]
+            if not after or not _PATH_CHARACTER.match(after):
+                return True
+            start = value.find(root, start + 1)
+    return False
 
 
 def inside_worktree(definition: dict, worktree) -> bool:
     """Whether the program, an argument or an environment value of a server names a path in the worktree.
 
     A coding session edits the worktree without an approval, so code there would let it choose what runs
-    at the next start. Every absolute path a value names (the value itself, an option's value after '=',
-    each ':'-separated part) is resolved, so links and aliases of the worktree are seen, and compared
-    component by component, so a sibling that merely shares a name prefix is not. A value that only
-    becomes a path inside the server (a relative name, a configuration file it reads) cannot be seen.
+    at the next start. Two checks, either refuses:
+
+    - every token of every value that can be a path is resolved (a relative one against the server's
+      working directory, ``server_directory``; links are followed, so a link outside that points in is
+      seen) and compared with the worktree component by component;
+    - the worktree root, as given and as its real path, must not appear as a path prefix anywhere in a
+      value once separators are normalised, which also catches a path inside a shell command, a link inside
+      the worktree that points out (a virtual environment's interpreter) and an alias spelled in full.
+
+    A sibling that merely shares a name prefix is not inside. A value that only becomes a path inside the
+    server (a name it looks up, a configuration file it reads, ``$HOME`` expanded by a shell) cannot be seen.
     """
+    import os
     from pathlib import Path
-    root = Path(worktree).resolve()
+    given = Path(os.path.abspath(worktree))
+    root = given.resolve()
+    roots = {_normal(str(given)), _normal(str(root))}
+    base = server_directory()
     values = (definition["command"], *definition.get("args", []), *(definition.get("env") or {}).values())
     for text in values:
-        for path in _paths(text):
+        if _names_root(text, roots):
+            return True
+        for token in _tokens(text):
             try:
-                if Path(path).resolve().is_relative_to(root):
+                path = Path(os.path.expanduser(token))
+                path = (path if path.is_absolute() else base / path).resolve()
+                if path.is_relative_to(root):
                     return True
             except (OSError, RuntimeError, ValueError):
                 return True

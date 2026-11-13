@@ -77,6 +77,7 @@ class McpServer:
         self.workdir = None
         self._reader = None
         self._stopping = None
+        self._spawning = None
         self._pending = {}
         self._next_id = 0
         self._lock = asyncio.Lock()
@@ -181,20 +182,24 @@ class McpServer:
                 future.exception()  # retrieved: never logged by the loop
 
     async def _spawn(self):
-        spawn = asyncio.ensure_future(asyncio.create_subprocess_exec(
+        # The spawn is kept on the server from the moment it is created: whatever happens to the caller,
+        # a stop awaits it and signals the process it produced (_owned).
+        self._spawning = asyncio.ensure_future(asyncio.create_subprocess_exec(
             self.definition["command"], *self.definition.get("args", []), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=self._environment(),
             cwd=self.workdir, start_new_session=True, limit=MAX_LINE_BYTES))
-        try:
-            # A process that exec'd before a cancellation is still owned and stopped.
-            self.process = await asyncio.shield(spawn)
-        except asyncio.CancelledError:
-            if not spawn.cancelled():
-                self.process = await asyncio.shield(spawn)
-            raise
-        finally:
-            if self.process is not None:
+        await asyncio.shield(self._spawning)
+        self._owned()
+
+    def _owned(self):
+        """Take the process of a finished spawn; True when there is one."""
+        spawn = self._spawning
+        if self.process is None and spawn is not None and spawn.done():
+            self._spawning = None
+            if not spawn.cancelled() and spawn.exception() is None:
+                self.process = spawn.result()
                 self.birth = process_start(self.process.pid)
+        return self.process is not None
 
     async def start(self, deadline):
         """Spawn, initialize and list tools; returns the raw tool rows. Raises McpFailure on any failure.
@@ -262,9 +267,13 @@ class McpServer:
     async def stop(self):
         """Stop the server; once begun this completes even when the caller is cancelled, and close() waits."""
         self.state = "off"
-        if self._stopping is None or (self._stopping.done() and self.process is not None):
+        if self._stopping is None or (self._stopping.done() and self.alive()):
             self._stopping = asyncio.ensure_future(self._halt())
         await asyncio.shield(self._stopping)
+
+    def alive(self) -> bool:
+        """Whether there is, or may soon be, a process to stop."""
+        return self.process is not None or self._spawning is not None
 
     def _signal(self, process, sent):
         current = process_start(process.pid)
@@ -285,6 +294,10 @@ class McpServer:
         return process.returncode is not None
 
     async def _halt(self):
+        if self._spawning is not None:
+            # A spawn still in flight: its process is waited for and stopped like any other.
+            await asyncio.gather(self._spawning, return_exceptions=True)
+            self._owned()
         process = self.process
         if process is not None:
             self._fail_pending("mcp_server_unavailable")
@@ -404,6 +417,10 @@ class McpHost:
         """
         if self.started:
             return []
+        if self.servers:
+            # What an interrupted start could not finish stopping is stopped before anything starts again.
+            await asyncio.shield(self._stop_all())
+            self.servers, self.catalogue = {}, {}
         deadline = asyncio.get_running_loop().time() + START_SECONDS
         tasks = [asyncio.ensure_future(self._one(row, deadline)) for row in self.definitions]
         try:
@@ -447,6 +464,6 @@ class McpHost:
 
     async def close(self):
         """Stop every server whatever its state; returns the ids of those that still had a process."""
-        running = [server.id for server in self.servers.values() if server.process is not None]
+        running = [server.id for server in self.servers.values() if server.alive()]
         await asyncio.shield(self._stop_all())
         return running
