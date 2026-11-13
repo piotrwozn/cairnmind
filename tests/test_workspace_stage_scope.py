@@ -22,19 +22,21 @@ def notice_of(app):
     return str(app.query_one("#panel-notice", Static).render())
 
 
-def live_run(project, lifecycle):
+def live_run(project, lifecycle, client="codex", slot="slot-native"):
     return {"id": "run-live", "generation": 1, "project_id": project["id"], "worktree": project["root"],
-            "client": "codex", "slot_id": "slot-native", "purpose": "coding", "lifecycle": lifecycle}
+            "client": client, "slot_id": slot, "purpose": "coding", "lifecycle": lifecycle}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lifecycle", ["running", "starting"])
-async def test_a_live_mapped_assistant_is_not_restarted_and_gets_no_new_packet(tmp_path, monkeypatch, lifecycle):
+@pytest.mark.parametrize("client,slot", [("codex", "slot-native"), ("api", "slot-api"), ("copilot", "slot-github")])
+async def test_a_live_mapped_assistant_is_not_restarted_and_gets_no_new_packet(tmp_path, monkeypatch, lifecycle,
+                                                                               client, slot):
     # implement and review mapped to the same slot: the review stage finds the implementing process.
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     project = broker.projects[0]
-    answer_stage(broker, decision("start_slot", project, stage="review", slot_id="slot-native", client="codex"),
-                 runs=[live_run(project, lifecycle)])
+    answer_stage(broker, decision("start_slot", project, stage="review", slot_id=slot, client=client),
+                 runs=[live_run(project, lifecycle, client, slot)])
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
@@ -61,13 +63,14 @@ async def test_an_exited_run_of_the_slot_does_not_block_a_new_stage(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_a_project_switch_during_the_stage_request_drops_the_launch(tmp_path, monkeypatch):
+@pytest.mark.parametrize("client,slot", [("codex", "slot-native"), ("api", "slot-api"), ("copilot", "slot-github")])
+async def test_a_project_switch_during_the_stage_request_drops_the_launch(tmp_path, monkeypatch, client, slot):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     project = broker.projects[0]
     other = tmp_path / "other"
     other.mkdir()
     switch = lambda: workspace.update({"project_id": "project-other", "worktree": str(other)})  # noqa: E731
-    answer_stage(broker, decision("start_slot", project, slot_id="slot-native", client="codex"), during=switch)
+    answer_stage(broker, decision("start_slot", project, slot_id=slot, client=client), during=switch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
@@ -216,5 +219,5 @@ def test_every_text_stages_can_show_has_a_polish_entry():
     assert raised
     shown = [*raised, *stages._PROBLEMS.values(), *stages._REASONS.values(), *stages.STAGES, stages.FROM_WORKSPACE,
              workspace_stage.PROJECT_CHANGED, workspace_stage.CHECK_MOVED, workspace_stage.ALREADY_RUNNING,
-             workspace_stage.CHECK_CONTINUES, "A check is still running", "The check could not run", "Check finished"]
+             workspace_stage.CHECK_CONTINUES, workspace_stage.AGENT_STARTED, "A check is still running", "The check could not run", "Check finished"]
     assert [text for text in shown if text not in CATALOG] == []

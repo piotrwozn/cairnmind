@@ -88,6 +88,106 @@ async def test_client_stage_is_start_work_for_exactly_the_mapped_assistant(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("client,slot", [("copilot", "slot-github"), ("api", "slot-api")])
+async def test_an_agent_stage_is_start_work_for_exactly_the_mapped_assistant(tmp_path, monkeypatch, client, slot):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    project = broker.projects[0]
+    asked = answer_stage(broker, decision("start_slot", project, stage="review", slot_id=slot, client=client,
+                                          profile_id=client + "-profile", label="Agent", model="tool-model",
+                                          credential="configured_unchecked"))
+    monkeypatch.setattr(workspace_stage, "run_stage_check", lambda *a: pytest.fail("an agent stage ran a check"))
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_next_stage()
+        await settle(app, pilot)
+        notice = str(app.query_one("#panel-notice", Static).render())
+    assert asked == [{"project": project["id"], "worktree": project["root"]}]
+    # The same workspace request as Start work for that one assistant (see the keyboard test of
+    # test_terminal_ux080): the supervisor posts it once to /api/client-runs, whose launcher
+    # for api and copilot is start_agent.
+    assert workspace.selections[-1] == (project["id"], project["root"], "work")
+    assert workspace.read()["requested_slot_ids"] == [slot] and workspace.read()["focus"] == "client1"
+    assert workspace_stage.AGENT_STARTED in notice
+    assert not any(path == "/api/client-runs" for _, path, _, _ in broker.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("problem", ["credential_missing", "credential_unavailable", "runtime_missing"])
+async def test_an_agent_that_cannot_start_is_shown_and_nothing_starts(tmp_path, monkeypatch, problem):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    project = broker.projects[0]
+    answer_stage(broker, decision("none", project, problem=problem, slot_id="slot-github", client="copilot",
+                                  label="GitHub Copilot"))
+    monkeypatch.setattr(workspace_stage, "run_stage_check", lambda *a: pytest.fail("ran a check"))
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_next_stage()
+        await wait_for(app, pilot, MessageModal)
+        await pilot.pause()
+        text = screen_text(app)
+    assert "nothing was started" in " ".join(text.split())
+    assert "Map stages" not in text  # The map is right; the assistant's connection needs the person.
+    assert all(intent != "work" for _, _, intent in workspace.selections)
+    assert workspace.read().get("requested_slot_ids", []) == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_native_stage_never_falls_back_to_another_assistant(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    project = broker.projects[0]
+    answer_stage(broker, decision("start_slot", project, slot_id="slot-native", client="codex"))
+
+    def refused(*args, **kwargs):
+        workspace.update({"launch_errors": [{"slot_id": "slot-native", "client": "codex", "code": "client_missing"}]})
+        return workspace.read()
+    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", refused)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_next_stage()
+        await settle(app, pilot)
+        notice = str(app.query_one("#panel-notice", Static).render())
+    assert "The assistant did not start: client_missing" in notice
+    # The configured Copilot slot (a paid assistant) is never requested in its place.
+    assert workspace.read()["requested_slot_ids"] == ["slot-native"]
+    assert [intent for _, _, intent in workspace.selections].count("work") == 1
+
+
+def test_the_supervisor_posts_exactly_the_requested_agent_slot_once(tmp_path, monkeypatch):
+    """The step after Run next stage, shared with Start work: one launch, of the one slot."""
+    from cairnmind.workspace import WorkspaceManager
+    settings = Settings.load(tmp_path / "data", create=True)
+    project = {"id": "project-a", "name": "Project A", "root": str(tmp_path)}
+    profiles = [{"id": "codex", "client": "codex", "label": "Codex"},
+                {"id": "api-cloud", "client": "api", "label": "Cloud API", "provider": "openai", "model": "gpt-x"},
+                {"id": "copilot", "client": "copilot", "label": "GitHub Copilot"}]
+    slots = [{"id": "codex", "profile_id": "codex"}, {"id": "cloud", "profile_id": "api-cloud"},
+             {"id": "pilot", "profile_id": "copilot"}]
+    posted = []
+
+    class Broker:
+        def request(self, method, path, *, params=None, json=None, timeout=20):
+            if path == "/api/state":
+                return {"projects": [project], "runs": [], "profiles": profiles,
+                        "settings": {"project_slots": {project["id"]: slots}, "default_slots": []}}
+            if (method, path) == ("POST", "/api/client-runs"):
+                posted.append(json)
+                return {"runs": [], "errors": []}
+            raise AssertionError(path)
+    manager = WorkspaceManager(settings, broker=Broker())
+    for name in ("_reconcile_views", "_layout", "_update_status"):
+        monkeypatch.setattr(manager, name, lambda *args: None)
+    monkeypatch.setattr(manager, "exists", lambda: True)
+    manager.state.select_project(project, intent="work", requested_slot_ids=["cloud"])
+    manager.refresh()
+    manager.refresh()
+    assert [body["slots"] for body in posted] == [[{"id": "cloud", "profile_id": "api-cloud"}]]
+    assert posted[0]["project"] == project["id"] and posted[0]["worktree"] == project["root"]
+
+
+@pytest.mark.asyncio
 async def test_client_stage_shows_why_the_assistant_did_not_start(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     project = broker.projects[0]
@@ -173,8 +273,8 @@ async def test_plan_stages_offer_only_launchable_assistants_and_save_in_preferen
         await wait_for(app, pilot, FormModal)
         await pilot.press(*"unit", "ctrl+s")
         await settle(app, pilot)
-    # GitHub Copilot is configured as an assistant but cannot be launched for a plan step.
-    assert offered == ["slot-native", ":unset"]
+    # Every assistant the workspace can start is offered, GitHub Copilot included (#125).
+    assert offered == ["slot-native", "slot-github", ":unset"]
     saves = [body for method, path, _, body in broker.calls if (method, path) == ("PUT", "/api/settings")]
     assert saves == [{"project_stages": {"project-keyboard": {"review": "slot-native"}}},
                      {"project_stages": {"project-keyboard": {"review": "slot-native", "test": "unit"}}}]

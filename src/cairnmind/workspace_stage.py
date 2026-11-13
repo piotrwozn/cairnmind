@@ -12,7 +12,7 @@ import json
 import subprocess
 import sys
 
-from .stages import CLIENT_STAGES, LAUNCHABLE_CLIENTS, STAGES, describe, validate_stage_map
+from .stages import AGENT_CLIENTS, CLIENT_STAGES, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES, describe, validate_stage_map
 
 _UNSET = ":unset"
 
@@ -63,6 +63,8 @@ ALREADY_RUNNING = ("This assistant is already running here. No process was resta
 
 
 CHECK_CONTINUES = "The check keeps running; its result will appear here when it ends."
+AGENT_STARTED = ("Stage started. Nothing is sent to the model until you write to the assistant in its panel; "
+                 "it must read and acknowledge its resume packet before it changes anything.")
 
 
 async def _shown(app, scope) -> bool:
@@ -117,11 +119,14 @@ async def run_next_stage(app):
             app.notice(PROJECT_CHANGED)
             return
         # The launcher returns a live process of this slot unchanged: no new session, no packet.
+        # The built-in agent's launcher (start_agent) reuses a live run by the same identity.
         if reusable_native_run(app.data.get("runs", []), scope[0], scope[1], decision["client"], decision["slot_id"]):
             app.notice(app.t(ALREADY_RUNNING) + "\n" + text)
             return
         # Exactly Start work for one assistant: the supervisor posts /api/client-runs once
-        # and the launcher prepares a fresh resume packet that the assistant must ACK.
+        # and the launcher prepares a fresh resume packet that the assistant must ACK. For
+        # the built-in agent and Copilot that launcher is start_agent, with the profile's
+        # limits and credential, in a panel of this workspace.
         await asyncio.to_thread(app.workspace.select_project, project, scope[1], intent="work",
                                 requested_slot_ids=[decision["slot_id"]])
         await asyncio.to_thread(app.workspace.update, {"focus": "client1"})
@@ -136,6 +141,8 @@ async def run_next_stage(app):
             app.notice(app.t("The assistant did not start") + ": " + ", ".join(map(str, failed)) + "\n" + text)
         elif current.get("last_error"):
             app.notice(app.launch_notice(current))
+        elif decision["client"] in AGENT_CLIENTS:
+            app.notice(app.t(AGENT_STARTED) + "\n" + text)
         else:
             app.notice(app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
     elif decision.get("action") == "run_check":
@@ -165,6 +172,9 @@ async def run_next_stage(app):
             return
         app.notice("")
         await app.push_screen_wait(MessageModal("Check result", text + "\n\n" + check_summary(result, app.t)))
+    elif decision.get("problem") in CONNECTION_PROBLEMS:
+        # The mapped assistant stays mapped; its connection is what needs the person.
+        await app.push_screen_wait(MessageModal("Run next stage", text))
     else:
         await app.push_screen_wait(MessageModal("Run next stage", text + "\n\n"
                                                 + app.t("Map stages in More → Plan stages.")))

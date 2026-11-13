@@ -411,6 +411,10 @@ CATALOG.update({
     "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.":
         "GitHub Copilot nie jest przygotowany na tym komputerze. Przygotuj go w Połączeniach; "
         "nic nie zostało uruchomione.",
+    "Stage started. Nothing is sent to the model until you write to the assistant in its panel; "
+    "it must read and acknowledge its resume packet before it changes anything.":
+        "Etap rozpoczęty. Nic nie trafia do modelu, dopóki nie napiszesz do asystenta w jego panelu; "
+        "zanim cokolwiek zmieni, musi odczytać i potwierdzić swój pakiet wznowienia.",
     "No active plan in this folder.": "Brak aktywnego planu w tym katalogu.",
     "Every step of the plan is done.": "Wszystkie kroki planu są wykonane.",
     "Every remaining step is blocked.": "Wszystkie pozostałe kroki są zablokowane.",

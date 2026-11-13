@@ -175,8 +175,8 @@ _PROBLEMS = {
                                "nothing was started."),
     "runtime_missing": "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.",
 }
-# Problems the person fixes in the stage map, not in the assistant's connection.
-MAP_PROBLEMS = ("not_mapped", "unknown_assistant", "unavailable_assistant")
+# Problems the person fixes in the assistant's connection, not in the stage map.
+CONNECTION_PROBLEMS = ("credential_missing", "credential_unavailable", "runtime_missing")
 _REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Every step of the plan is done.",
             "blocked": "Every remaining step is blocked."}
 
