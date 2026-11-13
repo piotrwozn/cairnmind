@@ -44,8 +44,44 @@ jobs:
     # Real pinned ArcadeDB on Java 21 plus tmux, as on the target WSL host.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/devbrain-arcade
+          key: arcadedb-${{ hashFiles('src/cairnmind/config.py') }}
+      - name: Prepare pinned ArcadeDB
+        run: |
+          uv run python - <<'PY'
+          import os
+          from pathlib import Path
+          from cairnmind.config import Settings
+          from cairnmind.engine import install_engine
+          settings = Settings.load(Path.home() / ".cache/devbrain-arcade", create=True)
+          path = install_engine(settings)
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
+          PY
+      # The standard Linux runner of a public repository has 4 vCPUs: one test process for each,
+      # all sharing one ArcadeDB engine (see tests/conftest.py). No coverage here: this is the
+      # required check, and a hiccup of coverage's tracer must never decide a merge.
+      - run: uv run pytest -n 4 -q
+
+  coverage:
+    # The same suite with coverage, beside full-tests and not a required check: it may go red
+    # without blocking anything. Reported in the log and the job summary only; nothing is posted or
+    # sent anywhere, and no threshold fails the job.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     outputs:
-      badge: ${{ steps.coverage.outputs.badge }}
+      badge: ${{ steps.summary.outputs.badge }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -75,24 +111,23 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a") as env:
               env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
           PY
-      # The standard Linux runner of a public repository has 4 vCPUs: one test process for each,
-      # all sharing one ArcadeDB engine (see tests/conftest.py). Coverage of src/cairnmind is measured
-      # here only; the workers' data is combined into coverage.xml.
-      - run: uv run pytest -n 4 -q --cov --cov-report=xml
-      - name: Coverage
-        id: coverage
+      # Branch coverage of src/cairnmind; the workers' data is combined into coverage.xml.
+      - id: tests
+        run: uv run pytest -n 4 -q --cov --cov-report=xml
+      - name: Coverage summary
+        id: summary
         if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
-        # Reported in the log and the job summary only: nothing is posted or sent anywhere, and no
-        # threshold fails the job. Patch coverage needs a pull request; a push to main reports the total.
+          TESTS: ${{ steps.tests.outcome }}
+        # Still reported when tests failed, marked as numbers from a run with failures. A failed run
+        # fails this job, so its number never reaches the badge.
         run: |
-          if [ "$EVENT" = pull_request ]; then
-            uv run python scripts/coverage_summary.py --compare-branch "origin/$BASE_REF"
-          else
-            uv run python scripts/coverage_summary.py --no-patch
-          fi
+          set -- --no-patch
+          if [ "$EVENT" = pull_request ]; then set -- --compare-branch "origin/$BASE_REF"; fi
+          if [ "$TESTS" != success ]; then set -- "$@" --tests-failed; fi
+          uv run python scripts/coverage_summary.py "$@"
 
   coverage-badge:
     # Publishes the total line coverage for the README badge, after a push to main only: never for a
@@ -101,17 +136,28 @@ jobs:
     # each time). The repository is public, and that public JSON file is the only thing shields.io
     # fetches to draw the badge; nothing else leaves GitHub Actions.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: full-tests
+    needs: coverage
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    # One publication at a time, so that the check of main's tip below and the push stay together.
+    concurrency:
+      group: coverage-badge
+      cancel-in-progress: false
     steps:
       - name: Publish coverage.json to the badges branch
         env:
-          BADGE: ${{ needs.full-tests.outputs.badge }}
+          BADGE: ${{ needs.coverage.outputs.badge }}
           TOKEN: ${{ github.token }}
         run: |
           test -n "$BADGE"
+          remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # A re-run of an older push must not replace the badge of a newer main with its number.
+          tip=$(git ls-remote "$remote" refs/heads/main | cut -f1)
+          if [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "main is at $tip now, not at $GITHUB_SHA: the badge is left as it is."
+            exit 0
+          fi
           mkdir badge && cd badge
           git init -q -b badges
           printf '%s\n' "$BADGE" > coverage.json
@@ -119,4 +165,4 @@ jobs:
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -q -m "Coverage of $GITHUB_SHA"
-          git push -q --force "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/badges
+          git push -q --force "$remote" HEAD:refs/heads/badges

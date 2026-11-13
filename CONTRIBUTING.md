@@ -38,13 +38,13 @@ uv run pytest -n 4                           # the same full suite in 4 parallel
 
 ### Coverage
 
-Coverage is measured only when you ask for it. The same two numbers CI shows on a pull request, the coverage of all of `src/cairnmind` and of the lines your branch adds or changes since it left `origin/main`:
+Coverage is measured only when you ask for it. In CI the required `full-tests` job runs the suite without coverage; a separate `coverage` job, which is not required, runs the same suite with coverage beside it and shows the numbers in its job summary. A failure there blocks nothing. The same two numbers CI shows on a pull request, the coverage of all of `src/cairnmind` and of the lines your branch adds or changes since it left `origin/main`:
 
 ```bash
 uv run pytest -n 4 --cov --cov-report=xml && uv run python scripts/coverage_summary.py
 ```
 
-`--compare-branch` names another base; `--no-patch` prints the total only. Run `git fetch origin` first so that `origin/main` is current. Python processes that the tests start are measured too; a process ended by a signal, such as a terminal pane closed with its tmux server, records nothing, so the terminal modules read lower than they are exercised. Coverage adds about a third to the run time. Without `--cov` nothing is measured and no coverage file is written.
+`--compare-branch` names another base; `--no-patch` prints the total only. Run `git fetch origin` first so that `origin/main` is current. Python processes that the tests start are measured too; a process ended by a signal, such as a terminal pane closed with its tmux server, records nothing, so the terminal modules read lower than they are exercised. Coverage adds about half to the run time. Without `--cov` nothing is measured and no coverage file is written.
 
 ## Where to start
 

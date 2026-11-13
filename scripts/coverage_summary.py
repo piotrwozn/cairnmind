@@ -8,8 +8,9 @@
 Total: line and branch coverage of src/cairnmind. Patch: the lines added or changed since the merge
 base with the compare branch (diff-cover) that the tests executed. Printed as plain lines; when
 GITHUB_STEP_SUMMARY is set, also written there as a Markdown table, and when GITHUB_OUTPUT is set,
-the total and a shields.io endpoint badge are written as step outputs. Nothing is sent anywhere,
-and no threshold fails the run.
+the total and a shields.io endpoint badge are written as step outputs. --tests-failed marks the
+numbers as coming from a test run with failures. Nothing is sent anywhere, and no threshold fails
+the run.
 """
 from __future__ import annotations
 
@@ -24,7 +25,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 MAX_FILES = 30  # uncovered changed lines are listed for at most this many files
-BADGE_COLOURS = ((80, "brightgreen"), (60, "yellow"), (0, "red"))  # from 80 %, from 60 %, below 60 %
+FAILED_RUN = "These numbers come from a test run with failures; a failed test may not have run in full."
+BADGE_COLOURS =((80, "brightgreen"), (60, "yellow"), (0, "red"))  # from 80 %, from 60 %, below 60 %
 
 
 def percent(part: int, whole: int) -> float | None:
@@ -143,19 +145,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--compare-branch", default="origin/main")
     parser.add_argument("--no-patch", action="store_true", help="report the total only")
     parser.add_argument("--badge", type=Path, help="also write a shields.io endpoint JSON file here")
+    parser.add_argument("--tests-failed", action="store_true",
+                        help="say that the numbers come from a test run with failures")
     args = parser.parse_args(argv)
     if not args.xml.is_file():
         print(f"No coverage report at {args.xml}; run the tests with --cov --cov-report=xml first.", file=sys.stderr)
         return 2
     total = totals(args.xml)
     change = None if args.no_patch else patch(args.xml, args.compare_branch)
-    print("\n".join(text_lines(total, change)))
+    note = [FAILED_RUN] if args.tests_failed else []
+    print("\n".join([*note, *text_lines(total, change)]))
     endpoint = badge(total["line_percent"])
     if args.badge:
         args.badge.write_text(json.dumps(endpoint) + "\n")
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a") as handle:
-            handle.write(markdown(total, change))
+            text = markdown(total, change)
+            handle.write(text.replace("## Coverage\n", f"## Coverage\n\n**{FAILED_RUN}**\n", 1) if note else text)
     if output := os.environ.get("GITHUB_OUTPUT"):
         with open(output, "a") as handle:
             handle.write(f"line_percent={shown(total['line_percent'])}\n")
