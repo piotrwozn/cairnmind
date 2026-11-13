@@ -17,8 +17,10 @@ go stale, change the portable state hash and travel wrongly to another machine.
 - ``unverified``: the record rests on file snapshots imported from another machine,
   and the local files have not been indexed yet, so nothing can be said.
 - ``degraded``: an external client's session (whose conversation Cairnmind cannot read)
-  wrote the record, or the record rests only on sources such a session wrote. It is never
-  ``anchored``, whatever its sources: nothing it says has been verified.
+  wrote the record, or the record rests only on sources such a session wrote; or the built-in
+  agent wrote it, or the text it rests on, after a third-party MCP tool result in its session
+  (``degraded_by: third_party_tool``). It is never ``anchored``, whatever its sources: nothing it
+  says has been verified.
 
 The state is only as fresh as the last indexing of the project's files.
 """
@@ -135,7 +137,7 @@ def evidence_states(store, project_id, records, *, quotes=True):
     for record in records:
         cited = [source_id for source_id in dict.fromkeys(record.get("source_ids") or []) if isinstance(source_id, str)]
         counts = {"current": 0, "replaced": 0, "gone": 0, "pending": 0}
-        replaced, external = [], 0
+        replaced, external, third_party = [], 0, 0
         for source_id in cited:
             source = sources.get(source_id)
             if source is not None and _is_audit(source):
@@ -144,6 +146,7 @@ def evidence_states(store, project_id, records, *, quotes=True):
                 # An external session's own statement cannot keep anything anchored, its own records
                 # or a record another session based on it.
                 external += 1
+                third_party += third_party_origin(_metadata(source))
                 continue
             verdict, replacement = (("gone", None) if source is None else verdicts.get(source_id, ("current", None)))
             counts[verdict] += 1
@@ -164,7 +167,21 @@ def evidence_states(store, project_id, records, *, quotes=True):
         result[record["id"]] = {"evidence_state": state, "quote_survives": survives,
                                 "sources_current": counts["current"], "sources_replaced": counts["replaced"],
                                 "sources_gone": counts["gone"], "sources_unverified": counts["pending"]}
+        own = _metadata(record)
+        if state == "degraded" and (third_party_origin(own) if degraded_origin(own) else external == third_party):
+            # Only for this cause, so every other result stays exactly what it was.
+            result[record["id"]]["degraded_by"] = "third_party_tool"
     return result
+
+
+THIRD_PARTY_WRITTEN = ("Written after a third-party tool result in a built-in agent session, or resting only "
+                       "on such text")
+
+
+def third_party_origin(metadata) -> bool:
+    """Whether a degraded mark comes from a built-in agent session after a third-party MCP tool result
+    (origin_client ``mcp:<server>``) rather than from an external client's session."""
+    return isinstance(metadata, dict) and str(metadata.get("origin_client", "")).startswith("mcp:")
 
 
 def unanchored(store, project_id, records, *, quotes=True):
@@ -215,9 +232,14 @@ def orphans_report(store, project, root, records):
         lines += ["", f"Imported file evidence not yet compared with local files ({len(groups['unverified'])}); "
                       "index the project first"]
         lines += [entry(row) for row in groups["unverified"]]
-    if groups["degraded"]:
+    external = [row for row in groups["degraded"] if row.get("degraded_by") != "third_party_tool"]
+    third_party = [row for row in groups["degraded"] if row.get("degraded_by") == "third_party_tool"]
+    if external:
         lines += ["", f"Written by, or resting only on, an external client's session; never verified "
-                      f"({len(groups['degraded'])})"]
-        lines += [entry(row) for row in groups["degraded"]]
+                      f"({len(external)})"]
+        lines += [entry(row) for row in external]
+    if third_party:
+        lines += ["", f"{THIRD_PARTY_WRITTEN}; never verified ({len(third_party)})"]
+        lines += [entry(row) for row in third_party]
     return {"project": {"id": project["id"], "name": project["name"]}, "worktree": str(root),
             **{state: len(groups[state]) for state in STATES[1:]}, "records": rows, "text": "\n".join(lines)}

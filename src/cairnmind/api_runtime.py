@@ -171,7 +171,18 @@ class RuntimeSupervisor(NativeRuntime):
             prepared = self._prepare_session(project, client, root, (previous or {}).get("session_id"))
             run_id = uuid4().hex
             configuration = {"run_id": run_id, "generation": generation, "session_id": prepared["session_id"],
-                             "project_id": project["id"], "worktree": root, "client": client, "profile": profile}
+                             "project_id": project["id"], "worktree": root, "client": client, "profile": profile,
+                             "mcp_servers": [], "mcp_problems": []}
+            if client == "api":
+                # Fixed for this run: an edit of the preferences applies to the next run only (#126).
+                from .cockpit_state import CockpitState
+                from .mcp_servers import frozen_servers
+                try:
+                    preferences = CockpitState(self.settings).load()
+                except (ValueError, OSError):
+                    preferences = {"project_mcp_servers": None}
+                configuration["mcp_servers"], configuration["mcp_problems"] = frozen_servers(
+                    preferences, project["id"], root)
             configs = self.directory / "agent-configs"
             configs.mkdir(mode=0o700, exist_ok=True)
             info = configs.lstat()
@@ -196,7 +207,10 @@ class RuntimeSupervisor(NativeRuntime):
                 raise ValueError("agent_configuration_invalid")
         if config.get("run_id") != run_id:
             raise ValueError("agent_configuration_invalid")
-        return {"run": run, "profile": config["profile"]}
+        servers, problems = config.get("mcp_servers", []), config.get("mcp_problems", [])
+        if run.get("client") != "api" or not isinstance(servers, list) or not isinstance(problems, list):
+            servers, problems = [], []
+        return {"run": run, "profile": config["profile"], "mcp_servers": servers, "mcp_problems": problems}
 
     def _credential_profiles(self, profile=None):
         from .cockpit_state import CockpitState

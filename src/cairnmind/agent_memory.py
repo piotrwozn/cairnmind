@@ -47,6 +47,75 @@ def _public(event):
     return visible
 
 
+MCP_PREFIX = "mcp_"
+_MCP_EVENTS = {"mcp_server_started", "mcp_server_failed", "mcp_server_stopped"}
+_MCP_SERVER = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
+
+
+def _mcp_server(event) -> str | None:
+    """The server of an event that carries a third-party MCP server's text or names its tool, else None.
+
+    Decided from the host-written event type and tool name only. The name of a tool the engine offers is
+    ``mcp_<server>_<tool>``; a built-in tool never starts with the prefix.
+    """
+    data = event.get("data") if isinstance(event, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if event.get("type") in _MCP_EVENTS:
+        server = data.get("server_id")
+    elif isinstance(data.get("name"), str) and data["name"].startswith(MCP_PREFIX):
+        server = data["name"][len(MCP_PREFIX):].partition("_")[0]
+    else:
+        return None
+    return server if isinstance(server, str) and _MCP_SERVER.fullmatch(server) else "unknown"
+
+
+def _third_party_result(event) -> bool:
+    """Whether an event carries text that came from a server: a completed call whose result holds the
+    server's content (a result or a tool error it reported). A call refused before it reached a server, a
+    fixed failure code, a result too large to deliver or a made-up ``mcp_`` name carries none."""
+    data = event.get("data") if isinstance(event, dict) else None
+    result = data.get("result") if isinstance(data, dict) else None
+    return (event.get("type") == "action_completed" and _mcp_server(event) is not None
+            and isinstance(result, dict) and isinstance(result.get("content"), list))
+
+
+def _persons(event) -> bool:
+    """The person's own words: their messages and their resolution notes."""
+    data = event.get("data") if isinstance(event, dict) else None
+    return ((event.get("type") == "message" and isinstance(data, dict) and data.get("role") == "user")
+            or event.get("type") == "action_resolved")
+
+
+def third_party_origin(store, project_id, session_id) -> dict | None:
+    """The mark of a write made by an own-agent session after it received a third-party tool result.
+
+    The engine archives at once after such a result, so the archive holds it before any later write.
+    Derived from archived host metadata, never from a payload (store.ORIGIN_METADATA).
+    """
+    rows = store.query(
+        "SELECT metadata.origin_client AS client FROM sources WHERE project_id=:project AND kind='agent_transcript' "
+        "AND metadata.agent_session_id=:session AND metadata.third_party_result=true LIMIT 1",
+        {"project": project_id, "session": session_id})
+    if not rows or not str(rows[0].get("client", "")).startswith("mcp:"):
+        return None
+    return {"origin_client": rows[0]["client"], "origin_session_id": session_id,
+            "origin_history": "archived", "origin_evidence": "degraded"}
+
+
+def is_mcp_source(row) -> bool:
+    """Whether an archived agent event holds third-party MCP text: kept and readable by id, never chunked."""
+    metadata = row.get("metadata")
+    if isinstance(metadata, (str, bytes)):
+        try:
+            metadata = json.loads(metadata)
+        except ValueError:
+            return False
+    return (row.get("kind") == "agent_transcript" and isinstance(metadata, dict)
+            and str(metadata.get("origin_client", "")).startswith("mcp:")
+            and metadata.get("origin_evidence") == "degraded")
+
+
 def _journal_events(settings, session_id):
     from .agent_journal import AgentJournal
     events = AgentJournal(settings, session_id).events()
@@ -187,6 +256,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
             raise ValueError("Own-agent journal captured prefix changed")
         by_sequence = {row.get("metadata", {}).get("agent_sequence"): row for row in rows}
         source_rows = []
+        tainted = None  # the server of the first third-party result in this session, once there is one
         from .ingest import _write_chunks
         for event in events:
             if time.monotonic() > deadline:
@@ -213,6 +283,20 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                         "origin": "agent_runtime", "archive_parser_revision": 1,
                         "archive_view": "public-agent-event-v1",
                         "normalized_text": normalized, "source_timestamp": event.get("created_at")}
+            server = _mcp_server(event)
+            if server is None and tainted and not _persons(event):
+                # After a third-party result anything the agent says or does may restate it: its messages,
+                # tool requests and their arguments, tool results and approvals are archived like the result
+                # itself (degraded, not chunked, not extracted), from then on. The person's words are not.
+                server = tainted
+            if _third_party_result(event):
+                metadata["third_party_result"] = True
+                tainted = tainted or server
+            if server is not None:
+                # Third-party text (store.ORIGIN_METADATA, as for an external session): it never makes a
+                # record anchored, and is not chunked, so search and resume never surface it later.
+                metadata.update(origin_client="mcp:" + server, origin_session_id=sid,
+                                origin_history="archived", origin_evidence="degraded")
             with store.transaction():
                 # Forgetting or rebinding the project during ingestion cannot
                 # publish a source into an unregistered scope.
@@ -224,8 +308,9 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                 source = store.snapshot(session["project_id"], uri, content, "agent_transcript", metadata)
             # Match scanner lock ordering: ingestion lock precedes DB writer.
             # The exact source is already durable if interruption happens here.
-            _write_chunks(store, session["project_id"], source["id"], normalized, {"role": role})
-            if (event.get("type") == "message" and role in {"user", "assistant"}
+            if server is None:
+                _write_chunks(store, session["project_id"], source["id"], normalized, {"role": role})
+            if (server is None and event.get("type") == "message" and role in {"user", "assistant"}
                     and isinstance(data, dict) and isinstance(data.get("content"), str)
                     and data["content"].strip()):
                 store.enqueue("extract", session["project_id"], {"source_id": source["id"]},
