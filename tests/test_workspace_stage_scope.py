@@ -94,7 +94,10 @@ async def test_a_check_result_is_not_shown_for_another_project(tmp_path, monkeyp
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
         app.action_next_stage()
-        await settle(app, pilot)
+        for _ in range(50):  # Polling, not settle: a wrongly shown result would hold the worker open.
+            await pilot.pause(.02)
+            if isinstance(app.screen, MessageModal) or "not shown here" in notice_of(app):
+                break
         assert not isinstance(app.screen, MessageModal)
         notice = notice_of(app)
     assert "recorded for the earlier project and is not shown here" in notice
