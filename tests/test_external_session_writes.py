@@ -222,3 +222,21 @@ def test_the_brief_says_an_external_session_saved_the_latest_checkpoint(fixture)
     post(fixture, "/checkpoint", {"project": fixture.project["id"], **fixture.session("codex"),
                                   "state": {"summary": "From a native client"}})
     assert not any("external client" in line["text"] for line in build_brief(fixture.store, fixture.project["id"])["lines"])
+
+
+def test_a_full_native_packet_drops_advisory_states_but_never_the_degraded_one(fixture, monkeypatch):
+    import cairnmind.sessions as sessions_module
+
+    external = remember(fixture, fixture.session("external"), "Decided in an external editor", [fixture.note["id"]])
+    changed = remember(fixture, None, "Rests on a note that changed", [fixture.note["id"]])
+    fixture.store.snapshot(fixture.project["id"], "manual://note", "The note was rewritten")
+    full = fixture.manager.prepare(fixture.project["id"], "codex", timeout=0)["packet"]
+    states = {row["id"]: row.get("evidence_state") for row in full["records"]}
+    assert states == {external["id"]: "degraded", changed["id"]: "evidence_replaced"}
+    # Over the budget before its hash and status are added: the advisory data and warning yield, the degraded
+    # state stays and the packet is still ready.
+    monkeypatch.setattr(sessions_module, "MAX_PACKET_BYTES", len(sessions_module._json(full).encode()) - 120)
+    trimmed = fixture.manager.prepare(fixture.project["id"], "claude", timeout=0)
+    assert trimmed["status"] == "ready", trimmed["unknowns"]
+    states = {row["id"]: row.get("evidence_state") for row in trimmed["packet"]["records"]}
+    assert states == {external["id"]: "degraded", changed["id"]: None}
