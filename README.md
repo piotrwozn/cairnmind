@@ -6,7 +6,7 @@
 
 *A cairn is the pile of stones a walker leaves to mark the trail for the next one. Cairnmind is the memory one coding agent leaves for the next. Formerly DevBrain.*
 
-Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped.
+Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped. It is not a plugin for one assistant and not a notes store that a model writes into: it is a separate local service that assistants connect to, and it does not treat a model's statement as evidence.
 
 What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cairnmind treats memory as evidence, not as notes:
 
@@ -14,6 +14,20 @@ What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cai
 - **Resuming is verified, not assumed.** A bound session can write to memory only after the model acknowledges the exact plan and task versions it read. The check happens in the service, not in a prompt.
 - **"Done" requires fresh proof.** For tasks that require tests, completion needs a passing run of each named test profile, bound to the task definition and to a fingerprint of the current code. A later code change marks that evidence stale.
 - **Memory travels with the repository.** A checksummed snapshot in `.memory/cairnmind/` moves one project's knowledge, plans and history to another machine without moving credentials.
+
+## How it compares
+
+| | Instruction file (`CLAUDE.md`, `AGENTS.md`) | Memory built into an assistant | Memory plugin or layer | Cairnmind |
+|---|---|---|---|---|
+| Who writes it | You, by hand | The model | The model | The model and you, each record tied to a source |
+| Checked against the source | No | Usually no | Usually no | An answer's quotes must occur literally in a current source |
+| Works across assistants | Each assistant reads its own file | No | Depends on the plugin | Codex CLI, Claude Code, Copilot, API agents; other MCP clients, marked unverified |
+| "Done" needs proof | No | No | Usually no | For tasks that require tests: a passing check bound to the current code |
+| Setup | None | None | Usually one command | Java, tmux, Ollama and local models |
+
+The columns are kinds of tools, not products; a particular tool may do more than its column says. The last row is the price: Cairnmind is the heaviest of the four to install.
+
+Planned, not there yet: shared project memory for a team and read-only views above a single project. The steps are on the [features board](https://github.com/users/piotrwozn/projects/2).
 
 ## Who it is for
 
@@ -56,6 +70,21 @@ Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot
 - **Plans:** a whole plan and its dependencies are saved atomically, with stable step identifiers and a deterministic next step per project and worktree.
 
 The way memory and agents are organized is inspired by SynapCores. Cairnmind is an independent implementation of the knowledge layer; it is not a copy of that product or of its database engine.
+
+## Built with
+
+Cairnmind stands on other people's work. In one place:
+
+- [ArcadeDB](https://github.com/ArcadeData/arcadedb): the one engine behind the documents, the code graph, full-text search and the vector index.
+- [Ollama](https://ollama.com) with the Qwen models `qwen3.5:9b` and `qwen3-embedding:0.6b`: the local knowledge agent and the embeddings.
+- [tree-sitter](https://tree-sitter.github.io/tree-sitter/): the analysis of Python, JavaScript and TypeScript for the code graph.
+- [Textual](https://github.com/Textualize/textual) and [tmux](https://github.com/tmux/tmux): the terminal workspace and the panes the assistants run in.
+- [Model Context Protocol](https://modelcontextprotocol.io) and its [Python SDK](https://github.com/modelcontextprotocol/python-sdk): how coding assistants reach the memory.
+- [FastAPI](https://fastapi.tiangolo.com), [Uvicorn](https://www.uvicorn.org), [HTTPX](https://www.python-httpx.org) and [Typer](https://typer.tiangolo.com): the local service, its clients and the command line.
+- [GitHub Copilot SDK](https://pypi.org/project/github-copilot-sdk/): the Copilot connection of the built-in agent.
+- [uv](https://github.com/astral-sh/uv), [pytest](https://pytest.org) and [Ruff](https://github.com/astral-sh/ruff): installation, tests and linting.
+
+The coding assistants it works with, Codex CLI and Claude Code among them, are not part of Cairnmind; it starts them and keeps their project memory.
 
 ## Measured results
 
