@@ -977,8 +977,8 @@ class SidebarApp(BasePanel):
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
             # New entries go last: keyboard paths to the existing ones keep their positions.
             ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages"),
-            ("Notices", "notices"),
-            ("MCP servers", "mcp")]))
+            ("MCP servers", "mcp"),
+            ("Notices", "notices")]))
         actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
                    "mcp": self.edit_mcp_servers,
                    "scan": self.scan_projects,

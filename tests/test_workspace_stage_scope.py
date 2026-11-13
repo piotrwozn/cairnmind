@@ -213,7 +213,7 @@ async def test_new_entries_do_not_move_existing_menu_positions(tmp_path, monkeyp
         app.action_more()
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         assert [value for _, value in app.screen.choices] == [
-            "sessions", "assistants", "scan", "queue", "snapshot", "import", "settings", "details", "stages", "notices", "mcp"]
+            "sessions", "assistants", "scan", "queue", "snapshot", "import", "settings", "details", "stages", "mcp", "notices"]
         await pilot.press("escape")
         buttons = [button.id for button in app.query("#project-page Button")]
     assert buttons == ["project-back", "assistant-select", "project-work", "memory-open", "assistant-add", "stage-next"]
