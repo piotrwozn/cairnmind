@@ -478,6 +478,25 @@ def impact(ctx: typer.Context, project: str,
 
 
 @app.command()
+@initialized
+def usage(ctx: typer.Context, project: str,
+          since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
+          as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
+    """Sum the token usage of the built-in API agent per day, profile and model. Read-only; asks no model."""
+    from cairnmind.usage import build_usage
+    # The project name is resolved in the store; the usage itself comes from the session journals.
+    found = store_for(ctx.obj).resolve_project(project)
+    try:
+        result = build_usage(ctx.obj.data_dir, found, since)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--since")
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+
+
+@app.command()
 def status(ctx: typer.Context, project: str | None = None):
     output(request(ctx.obj, "GET", "/status", start_service=False,
                    params={"project": project} if project else {}))
