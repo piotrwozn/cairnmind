@@ -1,14 +1,21 @@
 """Store.open_readonly reads an existing store, and refuses one that is not ready without preparing anything."""
 from __future__ import annotations
 
+import re
 import socket
 
 import pytest
 
 from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.cli import READ_KINDS
 from cairnmind.config import Settings
+from cairnmind.journal import TABLE_TYPES
 from cairnmind.store import SCHEMA_VERSION, Store
 from cairnmind.store_readonly import ReadOnlyStoreError, StoreNotReady
+
+
+# Read by opening the store and by the consistency check itself, not by a command.
+BOOKKEEPING = {"schema", "devbrain_meta", "journal_state", "journal_events"}
 
 
 def forbid_starting(monkeypatch):
@@ -203,9 +210,16 @@ def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, 
                       ["plan", "next", "demo"], ["plan", "contract", "demo", "--json"], ["check", "profiles", "demo"],
                       ["memory", "orphans", "demo", "--json"], ["impact", "demo", "--since", "HEAD", "--json"],
                       ["usage", "demo", "--json"]):
+        start = len(sent)
         result = runner.invoke(app, ["--data-dir", str(store.data_dir), *arguments])
         assert result.exit_code == 0, (arguments, result.output, repr(result.exception))
         json.loads(result.output)
+        # Every table the command queried belongs to a kind its read is repeated for.
+        key = next((name for name in READ_KINDS if " ".join(arguments).startswith(name)), None)
+        if key is not None:
+            queried = {table for _, path, command in sent[start:] if path.startswith("/api/v1/query/")
+                       for table in re.findall(r"\bFROM\s+`?([a-z_]+)", command or "")} - BOOKKEEPING
+            assert {TABLE_TYPES[table] for table in queried} <= READ_KINDS[key], (key, queried)
     assert changes(sent) == []
     assert files(store.data_dir) == before
 
@@ -249,6 +263,36 @@ def test_a_commit_between_the_queries_of_plan_show_is_never_shown_half(tmp_path,
     assert calls == [1, 2]
 
 
+def test_commits_of_other_kinds_or_projects_between_the_queries_do_not_repeat_plan_show(tmp_path, monkeypatch):
+    import json
+    from typer.testing import CliRunner
+    import cairnmind.plans as plans
+    from cairnmind.cli import app
+    store, project, first = plan_fixture(tmp_path)
+    (tmp_path / "other").mkdir()
+    other = store.add_project("other", tmp_path / "other")
+    real, calls = plans._tasks, []
+
+    def tasks_after_unrelated_commits(tx, project_id, plan):
+        calls.append(plan["version"])
+        # A worker's job row in this project, and a record of another project: the head moves twice.
+        store.enqueue("embed", project["id"], {"n": len(calls)}, f"job-{len(calls)}")
+        source = store.snapshot(other["id"], f"manual://other-{len(calls)}", "x", "manual")
+        store.remember(other["id"], {"kind": "fact", "content": f"elsewhere {len(calls)}"}, [source["id"]])
+        return real(tx, project_id, plan)
+
+    monkeypatch.setattr(plans, "_tasks", tasks_after_unrelated_commits)
+    shown = CliRunner().invoke(app, ["--data-dir", str(store.data_dir), "plan", "show", "demo", first["plan"]["id"]])
+    assert shown.exit_code == 0, (shown.output, repr(shown.exception))
+    assert json.loads(shown.output)["plan"]["version"] == 1
+    assert calls == [1]  # read once: nothing it reads changed
+    # More events than are looked at count as a change of the read.
+    monkeypatch.setattr("cairnmind.store_readonly.EVENT_LIMIT", 1)
+    calls.clear()
+    refused = CliRunner().invoke(app, ["--data-dir", str(store.data_dir), "plan", "show", "demo", first["plan"]["id"]])
+    assert refused.exit_code != 0 and calls == [1, 1, 1]
+
+
 def test_a_store_that_keeps_changing_is_refused_with_one_sentence(tmp_path, monkeypatch, capsys):
     import cairnmind.plans as plans
     from cairnmind import cli
@@ -268,8 +312,8 @@ def test_a_store_that_keeps_changing_is_refused_with_one_sentence(tmp_path, monk
         cli.entrypoint()
     assert stopped.value.code == 1 and len(saved) == 3
     shown = capsys.readouterr()
-    assert " ".join(shown.err.split()) == ("Cairnmind: The store changed during each of 3 attempts to read it; "
-                                           "run the command again when the current work is done.")
+    assert " ".join(shown.err.split()) == ("Cairnmind: The project's own data changed during each of 3 attempts to "
+                                           "read it; run the command again when the current work on it is done.")
     assert shown.out == ""
 
 

@@ -18,8 +18,11 @@ Without the writer lock a read is not a snapshot: ArcadeDB keeps REPEATABLE_READ
 page read for the first time late in a transaction shows the latest commit. A read made of several
 queries therefore goes through ``Store.read_consistently``: it notes the head of the change journal,
 reads, and notes the head again. Every commit that changes a journaled table moves the head in the
-same commit, so an unchanged head means no such change landed in between. Otherwise the read is
-repeated, a few times at most, and then refused with one sentence instead of a mixed result.
+same commit, so an unchanged head means no such change landed in between. When it moved, the events
+in between say which project and which kind of data changed: the read is repeated only when one of
+them concerns its project (or no project) and a kind it reads, a few times at most, and is then
+refused with one sentence instead of a mixed result. Job, session, index and other projects' commits
+therefore do not repeat it.
 """
 from __future__ import annotations
 
@@ -111,20 +114,41 @@ def check_ready(client: ArcadeClient, settings: Settings) -> None:
 
 
 READ_ATTEMPTS = 3
+# Events looked at when the head moved during a read; more than this counts as a change of the read.
+EVENT_LIMIT = 500
 
 
-def read_consistently(store, read, attempts: int = READ_ATTEMPTS):
-    """``read()`` repeated until no committed change landed while it ran, else StoreBusy."""
+def _affected(store, before, after, project_id, kinds) -> bool:
+    """Whether a change committed in (before, after] can alter a read of ``kinds`` in ``project_id``."""
+    if before["epoch"] != after["epoch"] or after["seq"] - before["seq"] > EVENT_LIMIT:
+        return True  # a reset journal, or too many changes to look at: count them as affecting
+    rows = store.client.query(
+        f"SELECT seq,project_id,entity_type FROM journal_events WHERE epoch=:epoch AND seq>:position AND seq<=:upto "
+        f"ORDER BY seq LIMIT {EVENT_LIMIT}", {"epoch": before["epoch"], "position": before["seq"], "upto": after["seq"]})
+    if len(rows) != after["seq"] - before["seq"]:
+        return True  # events pruned meanwhile: nothing is known about them
+    # An event without a project (a journal reset, rows shared by every project) concerns every read.
+    return any(row.get("project_id") in (None, project_id)
+               and (row.get("entity_type") in kinds or row.get("entity_type") == "reset") for row in rows)
+
+
+def read_consistently(store, read, kinds, attempts: int = READ_ATTEMPTS):
+    """The result of ``read()``, repeated while a change it depends on landed during it, else StoreBusy.
+
+    ``read()`` returns ``(project_id, result)``; ``kinds`` are the journal entity types it reads.
+    Commits of other kinds or of other projects move the journal head but leave the read as it was.
+    """
     from .journal import Journal
     journal = Journal(store)
     for _ in range(attempts):
         # Through the client, outside any transaction: the head is always the latest commit.
         before = journal.cursor(store.client)
-        result = read()
-        if journal.cursor(store.client) == before:
+        project_id, result = read()
+        after = journal.cursor(store.client)
+        if after == before or not _affected(store, before, after, project_id, kinds):
             return result
-    raise StoreBusy(f"The store changed during each of {attempts} attempts to read it; "
-                    "run the command again when the current work is done.")
+    raise StoreBusy(f"The project's own data changed during each of {attempts} attempts to read it; "
+                    "run the command again when the current work on it is done.")
 
 
 def open_readonly(store_class, settings: Settings):

@@ -290,15 +290,17 @@ class Store:
         from .store_readonly import open_readonly
         return open_readonly(cls, settings)
 
-    def read_consistently(self, read):
-        """``read()``; for a read-only store, repeated until no commit landed while it ran (else StoreBusy).
+    def read_consistently(self, read, kinds):
+        """The result of ``read()``, which returns ``(project_id, result)`` and reads the journal entity ``kinds``.
 
-        A store opened with Store(path) reads behind the writer lock where it needs to, so ``read`` runs once.
+        A read-only store repeats it while a change of those kinds in that project landed during it
+        (else StoreBusy). A store opened with Store(path) reads behind the writer lock where it needs to,
+        so ``read`` runs once.
         """
         if not self.read_only:
-            return read()
+            return read()[1]
         from .store_readonly import read_consistently
-        return read_consistently(self, read)
+        return read_consistently(self, read, kinds)
 
     def __init__(self, data_dir: Path, *, settings: Settings | None = None):
         from .arcade import ArcadeClient
