@@ -402,6 +402,41 @@ CATALOG.update({
         "Przypisany asystent nie jest skonfigurowany w tym projekcie.",
     "The mapped assistant cannot be launched for a plan step.":
         "Przypisanego asystenta nie można uruchomić dla kroku planu.",
+    # Plan stages for the built-in API agent and Copilot (#125)
+    "default model": "model domyślny",
+    "The assistant of this stage changed since it was mapped. Confirm it in More → Plan stages; nothing was started.":
+        "Asystent tego etapu zmienił się od przypisania. Potwierdź go w Więcej → Etapy planu; "
+        "nic nie zostało uruchomione.",
+    "This stage was mapped before it could name the built-in agent or Copilot. Confirm it in More → Plan stages; "
+    "nothing was started.":
+        "Ten etap przypisano, zanim mógł wskazywać wbudowanego agenta lub Copilota. Potwierdź go w "
+        "Więcej → Etapy planu; nic nie zostało uruchomione.",
+    "not confirmed; save it to confirm": "niepotwierdzony; zapisz, aby potwierdzić",
+    "What changed": "Co się zmieniło", "the profile": "profil", "the assistant type": "rodzaj asystenta",
+    "the provider": "dostawca", "the model": "model", "the address": "adres",
+    "Its key and runtime could not be checked here; they are checked again when the stage starts in the workspace.":
+        "Nie udało się tu sprawdzić jego klucza i środowiska; zostaną sprawdzone ponownie, gdy etap ruszy "
+        "w przestrzeni pracy.",
+    "The mapped assistant's key is set but is not a valid key. Correct it in Connections or in its environment "
+    "variable; nothing was started.":
+        "Klucz przypisanego asystenta jest ustawiony, ale nie jest poprawnym kluczem. Popraw go w Połączeniach "
+        "albo w jego zmiennej środowiskowej; nic nie zostało uruchomione.",
+    "This Copilot profile names a credential that is not available. Provide it, or clear the credential "
+    "reference in the profile so the stage uses the signed-in GitHub account; nothing was started.":
+        "Ten profil Copilota wskazuje poświadczenia, które nie są dostępne. Udostępnij je albo usuń odwołanie "
+        "do poświadczeń z profilu, aby etap użył zalogowanego konta GitHub; nic nie zostało uruchomione.",
+    "The mapped assistant has no credential. Add its key in Connections; nothing was started.":
+        "Przypisany asystent nie ma poświadczeń. Dodaj jego klucz w Połączeniach; nic nie zostało uruchomione.",
+    "The mapped assistant's credential cannot be read. Check it in Connections; nothing was started.":
+        "Nie można odczytać poświadczeń przypisanego asystenta. Sprawdź je w Połączeniach; "
+        "nic nie zostało uruchomione.",
+    "GitHub Copilot is not prepared on this computer. Prepare it in Connections; nothing was started.":
+        "GitHub Copilot nie jest przygotowany na tym komputerze. Przygotuj go w Połączeniach; "
+        "nic nie zostało uruchomione.",
+    "Stage started. Nothing is sent to the model until you write to the assistant in its panel; "
+    "it must read and acknowledge its resume packet before it changes anything.":
+        "Etap rozpoczęty. Nic nie trafia do modelu, dopóki nie napiszesz do asystenta w jego panelu; "
+        "zanim cokolwiek zmieni, musi odczytać i potwierdzić swój pakiet wznowienia.",
     "No active plan in this folder.": "Brak aktywnego planu w tym katalogu.",
     "Every step of the plan is done.": "Wszystkie kroki planu są wykonane.",
     "Every remaining step is blocked.": "Wszystkie pozostałe kroki są zablokowane.",
