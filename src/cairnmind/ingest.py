@@ -25,7 +25,9 @@ from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
+from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import bound_metadata, imported_source_ids, is_memory_path, memory_bindings
+from cairnmind.sql import json_text as _json_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 EXCLUDED_DIRS = {
@@ -243,23 +245,139 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
     return 0 if existing else len(ids)
 
 
-NEW_FILES_PER_TRANSACTION = 8
-NEW_FILE_EVENTS_PER_TRANSACTION = 200  # far below the number at which the journal stops naming single rows
+FILES_PER_TRANSACTION = 8
+EVENTS_PER_TRANSACTION = 200  # far below the number at which the journal stops naming single rows
+_KEPT_NODE_KINDS = "['source','decision','task','fact','constraint','question','preference','checkpoint']"
+_KEPT_EDGE_KINDS = "['supported_by','depends_on','supersedes']"
 
 
-def _write_new_files(store, project_id: str, batch: list[dict]) -> list:
-    """Write source, chunks and jobs of files that have no current source, in one transaction.
+class _TooManyEvents(Exception):
+    """A group wrote more journal events than EVENTS_PER_TRANSACTION; raised to roll it back."""
 
-    The rows and the journal events are those of ``snapshot``, ``_write_chunks`` and ``enqueue``.
-    A file is stored whole or not at all, so nothing is left for a later run to repair. Returns one
-    source per file, or None for a file whose URI turned out to have a current source after all:
-    nothing was written for that one and the caller takes the ordinary path.
+
+def _deactivate_together(store, tx, source_ids: list[str]) -> None:
+    """What ``snapshot`` and ``_deactivate_source`` do to one replaced source, for several in one statement each."""
+    params = {"sources": source_ids}
+    tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id IN :sources", params)
+    tx.command("UPDATE chunks SET is_current=false WHERE source_id IN :sources", params)
+    tx.command(f"UPDATE nodes SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_NODE_KINDS}", params)
+    tx.command(f"UPDATE edges SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_EDGE_KINDS}", params)
+    store._delete_old_vectors(tx, source_ids)
+
+
+def _within_limit(tx, limit: int = EVENTS_PER_TRANSACTION) -> None:
+    """What was counted before the write can be out of date by then: checked again, before the commit."""
+    if hasattr(tx, "pending") and len(tx.pending()) > limit:
+        raise _TooManyEvents
+
+
+def _vector_tables(store) -> int:
+    return sum(1 for row in store.query("SELECT type_name FROM vector_indexes")
+               if str(row.get("type_name") or "").startswith("vector_"))
+
+
+def _hanging_events(store, source_ids: list[str], vector_tables: int) -> dict[str, int]:
+    """The journal events that deactivating each of these sources writes, counted before anything is written.
+
+    One for the source, one per chunk, node and edge that ``_deactivate_together`` deactivates, one per
+    vector it deletes. On real code the graph rows of the old source outweigh what the new one writes.
     """
+    weights = dict.fromkeys(source_ids, 1)
+    if not source_ids:
+        return weights
+    live = "(is_current=true OR is_current IS NULL)"
+    for table, condition, times in (
+            ("chunks", live, 1),
+            ("nodes", f"{live} AND kind NOT IN {_KEPT_NODE_KINDS}", 1),
+            ("edges", f"{live} AND kind NOT IN {_KEPT_EDGE_KINDS}", 1),
+            ("embeddings", "true", 1 + vector_tables)):
+        for row in store.query(f"SELECT source_id,count(*) AS n FROM {table} WHERE source_id IN :sources AND {condition} "
+                               "GROUP BY source_id", {"sources": source_ids}):
+            if row.get("source_id") in weights:
+                weights[row["source_id"]] += int(row.get("n") or 0) * times
+    return weights
+
+
+def _groups(items: list, cost) -> list[list]:
+    """Consecutive groups whose costs add up to at most EVENTS_PER_TRANSACTION; a costlier item stands alone."""
+    groups, total = [], 0
+    for item in items:
+        if not groups or total + cost(item) > EVENTS_PER_TRANSACTION:
+            groups.append([])
+            total = 0
+        groups[-1].append(item)
+        total += cost(item)
+    return groups
+
+
+def _deactivate_sources(store, source_ids: list[str]) -> None:
+    """Deactivate the sources of deleted files, up to FILES_PER_TRANSACTION in one transaction.
+
+    The rows and the journal events are those of ``_deactivate_source`` for each. What hangs on each source is
+    counted first, so that no group holds more than EVENTS_PER_TRANSACTION events; a source over it alone is
+    deactivated as before. A group that wrote more all the same is rolled back and written source by source.
+    """
+    vectors = _vector_tables(store) if source_ids else 0
+    for offset in range(0, len(source_ids), FILES_PER_TRANSACTION):
+        part = source_ids[offset:offset + FILES_PER_TRANSACTION]
+        weights = _hanging_events(store, part, vectors)
+        for group in _groups(part, weights.__getitem__):
+            if len(group) == 1:
+                _deactivate_source(store, group[0])
+                continue
+            try:
+                with store.transaction() as tx:
+                    _deactivate_together(store, tx, group)
+                    _within_limit(tx)
+            except _TooManyEvents:
+                for source_id in group:
+                    _deactivate_source(store, source_id)
+
+
+def _write_files(store, project_id: str, batch: list[dict]) -> list:
+    """Write the files of a group, source, chunks and jobs, in one transaction; return what was written.
+
+    A file without a current source is written as ``snapshot_new`` writes it. A file with ``replaces``
+    replaces that source as ``snapshot`` does: the old source and what hangs on it are deactivated and
+    their vectors deleted. The rows and the journal events are those of ``snapshot``, ``_write_chunks``
+    and ``enqueue``. A file is stored whole or not at all, so nothing is left for a later run to repair.
+
+    Returns one source per file for a leading part of the batch, possibly all of it. The caller sizes groups
+    from what it counted before; a group that wrote more journal events than EVENTS_PER_TRANSACTION all
+    the same is rolled back and its first half tried alone, and the caller sends the rest again. A file
+    alone may hold up to the journal's own limit, under which every event is still named, as it was when
+    the file took ``snapshot``. None for a file means nothing was written for it and the caller takes the
+    ordinary path: its URI had a current source other than the one it was to replace, or the file alone
+    writes more events than that.
+    """
+    try:
+        return _write_files_once(store, project_id, batch,
+                                 EVENTS_PER_TRANSACTION if len(batch) > 1 else MAX_TRANSACTION_EVENTS)
+    except _TooManyEvents:
+        if len(batch) == 1:
+            return [None]
+        return _write_files(store, project_id, batch[:len(batch) // 2])
+
+
+def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EVENTS_PER_TRANSACTION) -> list:
     sources = []
     with store.transaction() as tx:
         store._require_project(tx, project_id)
+        keys = {item["uri"]: _json_text([project_id, item["uri"]]) for item in batch if item.get("replaces")}
+        current = {row["current_key"]: row["id"] for row in tx.query(
+            "SELECT id,current_key FROM sources WHERE current_key IN :keys AND is_current=true",
+            {"keys": list(keys.values())})} if keys else {}
+        # Replaced only when the source read before the walk is still the current one.
+        replacing = {item["uri"]: item["replaces"] for item in batch
+                     if item.get("replaces") and current.get(keys[item["uri"]]) == item["replaces"]}
+        if replacing:
+            _deactivate_together(store, tx, list(replacing.values()))
         for item in batch:
-            source = store.snapshot_new(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
+            if item.get("replaces"):
+                source = (store.new_source(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
+                          if item["uri"] in replacing else None)
+            else:
+                source = store.snapshot_new(tx, project_id, item["uri"], item["content"], item["kind"], item["metadata"])
             sources.append(source)
             if source is None or is_verdict_source(source) or is_mcp_source(source):
                 continue
@@ -274,6 +392,7 @@ def _write_new_files(store, project_id: str, batch: list[dict]) -> list:
                 store.enqueue_new(tx, "embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
             if item["extract"]:
                 store.enqueue_new(tx, "extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
+        _within_limit(tx, limit)
     return sources
 
 
@@ -289,16 +408,10 @@ def _deactivate_source(store, source_id: str) -> None:
     with store.transaction() as tx:
         tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id=:source", {"source": source_id})
         tx.command("UPDATE chunks SET is_current=false WHERE source_id=:source", {"source": source_id})
-        tx.command(
-            "UPDATE nodes SET is_current=false WHERE source_id=:source "
-            "AND kind NOT IN ['source','decision','task','fact','constraint','question','preference','checkpoint']",
-            {"source": source_id},
-        )
-        tx.command(
-            "UPDATE edges SET is_current=false WHERE source_id=:source "
-            "AND kind NOT IN ['supported_by','depends_on','supersedes']",
-            {"source": source_id},
-        )
+        tx.command(f"UPDATE nodes SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_NODE_KINDS}",
+                   {"source": source_id})
+        tx.command(f"UPDATE edges SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_EDGE_KINDS}",
+                   {"source": source_id})
         store._delete_old_vectors(tx, [source_id])
 
 
@@ -488,15 +601,16 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     # Read before the walk: a remembered file is reused only while the database still holds
     # the very source that was remembered for it. Sources written below are all in `seen`.
     every = store.query(
-        "SELECT id,uri,kind,metadata.path AS path,metadata.root AS root FROM sources "
+        "SELECT id,uri,kind,sha256,metadata.path AS path,metadata.root AS root FROM sources "
         "WHERE project_id=:project AND is_current=true",
         {"project": project_id},
     )
     rows = [row for row in every if row.get("kind") in ("code", "document")]
     current = {row["uri"]: row["id"] for row in rows}
     # A path with no current source of any kind needs no lookup of its own, and its source, chunks
-    # and jobs can be written together with those of its neighbours.
-    present = {row["uri"] for row in every}
+    # and jobs can be written together with those of its neighbours. So does a path whose current
+    # source has other content: it is replaced in a group, which checks that this source is still current.
+    present = {row["uri"]: (row["id"], row.get("sha256")) for row in every}
     waiting: list[dict] = []
 
     def finish(path, root, name, identity, settled, source, analysis, chunks: int, extract: bool):
@@ -506,7 +620,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         entry = {"source": {"id": source["id"], "uri": source["uri"], "kind": source["kind"]}, "analysis": analysis}
         indexed[resolved] = {**entry, "root": root}
         # The path has a current source from here on: reached again through another root, it is looked up.
-        present.add(name)
+        present[name] = (source["id"], source.get("sha256"))
         # Idempotent enqueue also repairs a crash between source write and
         # queue write. Code facts themselves are already represented by syntax.
         if extract:
@@ -520,17 +634,32 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         written = _write_chunks(store, project_id, source["id"], item["content"], item["chunk_metadata"])
         finish(*item["place"], source, item["analysis"], written, item["extract"])
 
+    vectors: list[int] = []  # how many vector tables there are, read once, when a replacement first needs it
+
     def write_waiting():
         """Everything is written, and remembered, in the order in which the files were walked."""
         batch = waiting[:]
         del waiting[:]
-        if not batch:
-            return
-        for item, source in zip(batch, _write_new_files(store, project_id, batch)):
-            if source is None:
-                one_by_one(item)  # another writer was first: keep or replace what it wrote
-            else:
-                finish(*item["place"], source, item["analysis"], len(item["chunks"]), False)
+        replaced = [item["replaces"] for item in batch if item.get("replaces")]
+        if replaced and not vectors:
+            vectors.append(_vector_tables(store))
+        # What the old sources leave behind is counted before the write, so a group fits on its first attempt.
+        weights = _hanging_events(store, replaced, vectors[0]) if replaced else {}
+
+        def cost(item):
+            return item["cost"] + weights.get(item.get("replaces"), 1) - 1  # the old source is in both
+        for group in _groups(batch, cost):
+            if cost(group[0]) > MAX_TRANSACTION_EVENTS:
+                one_by_one(group[0])  # too large even alone: as before, so its events stay named where they were
+                continue
+            while group:
+                written = _write_files(store, project_id, group)
+                for item, source in zip(group, written):
+                    if source is None:
+                        one_by_one(item)  # another writer was first, or the file is too large to share: as before
+                    else:
+                        finish(*item["place"], source, item["analysis"], len(item["chunks"]), False)
+                group = group[len(written):]  # what a group too large to commit left over
     for root in registered_roots:
         if not root.is_dir():
             counts["errors"].append(f"Project root unavailable: {root}")
@@ -578,9 +707,16 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 continue
             counts["files"] += 1
             digest = hashlib.sha256(content.encode()).hexdigest()
-            before = _source_before(store, project_id, str(path)) if str(path) in present else None
-            if before is not None or str(path) in present:
-                write_waiting()
+            before, replaces = None, None
+            if name in present:
+                known_id, known_digest = present[name]
+                if known_digest is not None and known_digest != digest:
+                    replaces = known_id
+                else:
+                    write_waiting()
+                    before = _source_before(store, project_id, name)
+                    if before and before["sha256"] != digest:
+                        replaces = before["id"]
             if before and before["sha256"] == digest:
                 source = before
                 metadata = _metadata(source["metadata"])
@@ -605,20 +741,25 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                         "chunk_metadata": {"language": analysis["language"]},
                         "extract": path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"},
                         "place": (path, root, name, identity, settled)}
-                if str(path) in present:
-                    one_by_one(item)
+                if name in present and replaces is None:
+                    write_waiting()
+                    one_by_one(item)  # its source vanished since the walk began: the ordinary path decides
                     continue
+                item["replaces"] = replaces
                 item["chunks"] = list(_chunks(content))
-                cost = 2 + 2 * len(item["chunks"])  # journal events: source, chunks, their jobs, an extraction job
-                if cost > NEW_FILE_EVENTS_PER_TRANSACTION:
+                # Journal events known from the file: source, chunks, their jobs, an extraction job and the old
+                # source. What hangs on the old source is counted before the group is written (write_waiting).
+                cost = 2 + 2 * len(item["chunks"]) + (1 if replaces else 0)
+                if cost > EVENTS_PER_TRANSACTION:
                     # Too large to share a transaction: written as before, each part in its own.
                     write_waiting()
                     one_by_one(item)
                     continue
-                if sum(2 + 2 * len(entry["chunks"]) for entry in waiting) + cost > NEW_FILE_EVENTS_PER_TRANSACTION:
+                if sum(entry["cost"] for entry in waiting) + cost > EVENTS_PER_TRANSACTION:
                     write_waiting()
+                item["cost"] = cost
                 waiting.append(item)
-                if len(waiting) >= NEW_FILES_PER_TRANSACTION:
+                if len(waiting) >= FILES_PER_TRANSACTION:
                     write_waiting()
                 continue
             written = _write_chunks(store, project_id, source["id"], content, {"language": analysis["language"]})
@@ -629,14 +770,16 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     counts["errors"].extend(f"Cannot list {error.filename}: {error.strerror or error}" for error in walk_errors)
     seen = {str(p) for p in indexed}
     # A directory that could not be listed says nothing about its files: do not deactivate anything.
+    deleted = []
     for row in rows if not walk_errors else []:
         path = row.get("path")
         if path and path not in seen:
             # Do not call a temporarily unavailable root a project-wide deletion.
             root = Path(row.get("root") or project["root"])
             if root.is_dir():
-                _deactivate_source(store, row["id"])
-                counts["deleted"] += 1
+                deleted.append(row["id"])
+    _deactivate_sources(store, deleted)
+    counts["deleted"] += len(deleted)
     graph: dict = {}
     counts.update(_build_graph(store, project_id, indexed, previous.get("graph") if previous else None, graph))
     if state is not None:
