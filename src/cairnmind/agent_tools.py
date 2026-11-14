@@ -501,17 +501,26 @@ class ToolExecutor:
         Returns True once no process of the group is left running and False when
         that could not be confirmed within the bounds: the caller then reports
         that processes may remain and never claims they are gone (#175). An
-        unexpected failure counts as not confirmed; it never escapes.
+        unexpected failure counts as not confirmed; it never escapes. If the
+        stop itself is cancelled (the event loop ending), SIGKILL is still sent
+        before the cancellation propagates.
         """
         try:
             return await self._signal_group(process.pid, process, birth)
+        except asyncio.CancelledError:
+            self._kill_group(process, birth)
+            raise
         except Exception:
-            try:  # best effort, unless the leader id now names another process
-                if process_start(process.pid) in (None, birth):
-                    os.killpg(process.pid, signal.SIGKILL)
-            except Exception:
-                pass
+            self._kill_group(process, birth)
             return False
+
+    @staticmethod
+    def _kill_group(process, birth):
+        try:  # best effort, unless the leader id now names another process
+            if process_start(process.pid) in (None, birth):
+                os.killpg(process.pid, signal.SIGKILL)
+        except Exception:
+            pass
 
     @staticmethod
     async def _signal_group(pgid, process, birth):
@@ -528,11 +537,11 @@ class ToolExecutor:
         current = process_start(pgid)
         # A still-owned leader proves the group. After it has been reaped, an
         # existing group remains reserved by its children until they exit, so
-        # a reused leader id means the group had already ended.
+        # a reused leader id means the group had already ended, and a missing
+        # leader (reaped, whether or not asyncio has recorded it yet) leaves
+        # the id naming only what remains of this group.
         if current is not None and current != birth:
             return True
-        if current is None and process.returncode is None:
-            return not await asyncio.to_thread(_group_running, pgid)
         if not send(signal.SIGTERM):
             return True
         await _group_ended(pgid, TERM_GRACE_SECONDS)
@@ -620,6 +629,8 @@ class ToolExecutor:
                 # Do not lose ownership of a process which exec'd before its
                 # coroutine returned. Finish setup, terminate, then propagate.
                 await _settle(spawn)  # a further cancellation must not lose it either
+                if spawn.cancelled() or spawn.exception() is not None:
+                    raise  # no process was started: the cancellation is what the caller must see
                 process = spawn.result()
                 stop = asyncio.ensure_future(self._terminate(process, process_start(process.pid)))
                 await _settle(stop)

@@ -160,6 +160,74 @@ async def test_an_unexpected_failure_in_the_stop_is_reported_not_raised(executor
         kill(pid)
 
 
+async def until_gone(pid, seconds=5):
+    deadline = time.monotonic() + seconds
+    while running(pid):
+        assert time.monotonic() < deadline, "the process outlived the stop"
+        await asyncio.sleep(.01)
+
+
+async def test_a_stop_that_is_itself_cancelled_still_sends_sigkill(executor):
+    # The event loop ending cancels every task, the stop in its SIGTERM grace too.
+    task, pid = await started_child(executor)
+    try:
+        task.cancel()
+        await asyncio.sleep(.1)
+        [(_, stop)] = executor._stopping.values()
+        assert not stop.done()
+        stop.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 10)
+        assert stop.cancelled()
+        last = executor.journal.events()[-1]
+        assert last["type"] == "action_interrupted" and last["data"]["processes_remaining"]
+        await until_gone(pid, 2)
+    finally:
+        kill(pid)
+
+
+async def test_a_cancellation_during_a_spawn_that_then_fails_is_not_lost(executor, monkeypatch):
+    gate = asyncio.Event()
+
+    async def failing_spawn(*args, **kwargs):
+        await gate.wait()
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(agent_tools.asyncio, "create_subprocess_exec", failing_spawn)
+    task = asyncio.create_task(executor.execute("run_command", {"command": "true"}))
+    deadline = time.monotonic() + 5
+    while not executor._starting:
+        assert time.monotonic() < deadline
+        await asyncio.sleep(.01)
+    task.cancel()
+    await asyncio.sleep(0)
+    gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    assert not executor._starting and not executor._running and not executor._left_running
+
+
+async def test_a_group_whose_leader_was_reaped_unrecorded_is_still_signalled():
+    # The leader has been reaped but asyncio has not yet set its returncode,
+    # while a member of the group that ignores SIGTERM still runs.
+    leader = subprocess.Popen(["/bin/bash", "-c", "(trap '' TERM; exec sleep 30) & echo $! >&2"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+    pid = int(leader.stderr.readline())
+    leader.stderr.close()
+    leader.wait()
+    try:
+        assert running(pid) and os.getpgid(pid) == leader.pid
+        assert agent_tools.process_start(leader.pid) is None
+
+        class Unrecorded:
+            returncode = None
+
+        assert await ToolExecutor._signal_group(leader.pid, Unrecorded(), 0)
+        await until_gone(pid, 2)
+    finally:
+        kill(pid)
+
+
 async def test_the_group_scan_runs_off_the_event_loop(monkeypatch):
     calls = []
 
