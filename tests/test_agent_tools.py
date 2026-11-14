@@ -33,9 +33,10 @@ def live(pid):
 
 
 def written(path):
-    """The shell creates the file before it writes the pid into it: an empty file is not written yet."""
+    """Whether a file a command writes is there. The shell creates a pid file before it writes the pid
+    into it, so a pid file counts only once it holds a number; a marker file counts as soon as it exists."""
     try:
-        return path.read_text().strip().isdigit()
+        return path.read_text().strip().isdigit() if path.suffix == ".pid" else path.exists()
     except OSError:
         return False
 
