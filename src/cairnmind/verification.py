@@ -22,7 +22,7 @@ import threading
 from uuid import UUID, uuid4
 
 from .sql import clean_row, insert_document, json_text, utc_now
-from .memory_paths import is_reserved_memory
+from .memory_paths import GIT_PATHSPEC, is_reserved_memory
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 # Check profiles are declared in the first file. The second is where versions up to 0.9.0 looked.
@@ -141,7 +141,7 @@ def _entry(root, relative, index_mode, unknowns, inside=None):
 
 def _manifest(root, patterns):
     unknowns, modes = [], {}
-    for item in _git(root, "ls-files", "--stage", "-z").split(b"\0"):
+    for item in _git(root, "ls-files", "--stage", "-z", *GIT_PATHSPEC).split(b"\0"):
         if not item:
             continue
         header, raw_path = item.split(b"\t", 1)
@@ -155,7 +155,8 @@ def _manifest(root, patterns):
         if stage != "0":
             unknowns.append(f"unmerged Git input: {relative}")
     paths = set(modes)
-    paths.update(os.fsdecode(p) for p in _git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    paths.update(os.fsdecode(p) for p in _git(root, "ls-files", "--others", "--exclude-standard", "-z",
+                                              *GIT_PATHSPEC).split(b"\0")
                  if p and not is_reserved_memory(os.fsdecode(p)))
     for pattern in patterns:
         # Path's recursive glob does not descend symlink directories.  glob's
