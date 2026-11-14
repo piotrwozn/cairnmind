@@ -4,6 +4,11 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## 0.10.0
 
+- When the Copilot agent starts a new session, for example after its tool list changes, it must read and acknowledge memory again and read a file whole again before it can replace or delete that file. Before, the engine still counted what the earlier session had read (#157).
+- A file too large to be read whole in one context, or with a line longer than one tool result, is refused with a plain message that points to `apply_patch`, instead of advice to read it in slices that could never succeed. A file read that was cut to fit the context reports the last line it delivered whole (#157).
+- A memory snapshot that reuses objects left by an interrupted attempt makes them durable before it publishes the manifest that names them (#158).
+- `cairnmind memory show` marks a plan step whose task was written by an external client's session or after a third-party tool result as never verified (#158).
+- In Polish, an acknowledged memory reads "Pamięć potwierdzona" in both the Sessions list and the agent pane (#153).
 - Ctrl+Q in a Cairnmind view (projects, memory, graph or activity) now detaches the terminal that pressed it, like Ctrl+B d, and the workspace keeps running. Before, it ended that view and tmux left a dead pane. In an assistant pane the key still goes to the assistant. The built-in API agent no longer ends on Ctrl+Q; it says that Ctrl+B, then d leaves and Ctrl+C interrupts a turn. Ctrl+C in a view names the keys that leave instead of Textual's "press ctrl+q to quit", and this hint is not kept in Notices (#152).
 - A view whose process ended starts again when you ask for it with Ctrl+B p, i, g, Tab or the command menu, and the command that asked for it (for example Projects or Ask memory) is carried out. There is no need to detach and run `cairnmind` again (#152).
 - The command menu lists commands whose name matches the typed text first, so typing "Ask" and pressing Enter opens Ask memory, not Memory (#152).
