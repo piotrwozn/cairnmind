@@ -326,6 +326,16 @@ def test_a_stage_and_its_check_result_name_states_and_outcomes_in_polish():
         "done [odd state, v1]")
 
 
+def test_an_acknowledged_memory_reads_the_same_in_the_sessions_rows_and_the_agent_pane():
+    # #153/#157 review: the agent pane said "Pamięć potwierdzona (ACK)" where Sessions said "Pamięć potwierdzona".
+    from cairnmind.terminal_activity_data import session_label
+    from cairnmind.terminal_agent_i18n import STATUS, tr as agent_tr
+    row = session_label({"client": "api", "id": "run1234", "lifecycle": "running", "memory": {"acknowledged": True},
+                         "worktree": "/src/shop"}, lambda text: tr(text, "pl"))
+    assert agent_tr(STATUS["acknowledged"], "pl") == "Pamięć potwierdzona"
+    assert " · Pamięć potwierdzona · " in row
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize("size", [(80, 24), (72, 24), (90, 34)])

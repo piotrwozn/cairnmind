@@ -63,7 +63,7 @@ CATALOG = {
         "Sprawdzenie argumentów narzędzia zewnętrznego serwera MCP trwało za długo; narzędzie wycofano do końca "
         "tego uruchomienia.",
     # Turn and memory states shown in the status line (#157)
-    "Memory acknowledged": "Pamięć potwierdzona (ACK)", "Memory waits for the model's ACK": "Pamięć czeka na ACK modelu",
+    "Memory acknowledged": "Pamięć potwierdzona", "Memory waits for the model's ACK": "Pamięć czeka na ACK modelu",
     "Memory must be read and acknowledged again": "Pamięć trzeba ponownie odczytać i potwierdzić",
     "Partial result": "Wynik niepełny", "Context limit reached": "Osiągnięto limit kontekstu",
     "Limit reached": "Osiągnięto limit", "Outcome uncertain": "Wynik niepewny", "Busy": "Zajęty",
