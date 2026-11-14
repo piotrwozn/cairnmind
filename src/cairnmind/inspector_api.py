@@ -223,7 +223,8 @@ def create_inspector_router(store, settings):
     @router.post("/inspector/plans/{plan_id}/confirm")
     async def confirm_plan(plan_id: str, body: ConfirmPlanBody):
         # A person confirms a plan and its steps at once (#170); the audit lets them travel as published memory.
-        return await call(inspector.confirm_plan, body.project, plan_id, body.expected_plan_version, reason=body.reason)
+        from .memory_acts import confirm
+        return await call(confirm, inspector, body.project, plan_id, body.expected_plan_version, reason=body.reason)
 
     @router.get("/events")
     async def events(request: Request, after: str | None = None, project: str | None = None, once: bool = False,

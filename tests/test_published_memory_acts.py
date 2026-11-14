@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from cairnmind import cli, conflicts
 from cairnmind.findings import save_finding
 from cairnmind.inspector import Inspector, InspectorNotFound
+from cairnmind.memory_acts import confirm
 from cairnmind.inspector_api import attach_inspector_routes
 from cairnmind.memory_published_format import definition_hash, plan_hash, task_fields
 from cairnmind.plans import PlanManager
@@ -80,10 +81,10 @@ def test_confirm_plan_confirms_the_definition_and_every_step_in_one_act(workspac
                                     "ship", worktree=str(root))
     inspector = Inspector(store)
     with pytest.raises(ValueError, match="plan version conflict"):
-        inspector.confirm_plan(pid, saved["plan"]["id"], saved["plan"]["version"] + 1)
+        confirm(inspector, pid, saved["plan"]["id"], saved["plan"]["version"] + 1)
     with pytest.raises(InspectorNotFound):
-        inspector.confirm_plan(pid, "00000000-0000-4000-8000-000000000000", 1)
-    result = inspector.confirm_plan(pid, saved["plan"]["id"], saved["plan"]["version"], reason="Looks right")
+        confirm(inspector, pid, "00000000-0000-4000-8000-000000000000", 1)
+    result = confirm(inspector, pid, saved["plan"]["id"], saved["plan"]["version"], reason="Looks right")
     assert [task["status"] for task in result["tasks"]] == ["confirmed", "confirmed"]
     assert [task["metadata"]["state"] for task in result["tasks"]] == ["todo", "todo"]
     audit = audit_of(store, result["audit_source_id"])

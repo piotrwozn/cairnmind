@@ -34,6 +34,19 @@ def act_context(store, project_id) -> dict:
     return values
 
 
+def definition_fields(record) -> dict:
+    """What a review of a task hashes besides its text: what the task asks for."""
+    if record["kind"] != "task":
+        return {}
+    return {"definition_sha256": row_definition_hash(record["content"], record.get("metadata"))}
+
+
+def review_refused(tx, record, status, action) -> bool:
+    """A review that changes nothing is refused, except confirming a confirmed record no act here covers."""
+    return record["status"] == "superseded" or (record["status"] == status and (
+        action != "confirm" or covered_by_local_act(tx, record)))
+
+
 def covered_by_local_act(tx, record) -> bool:
     """Whether a person on this machine covered the record's current version (a review, or a confirmed form)."""
     metadata = record.get("metadata") or {}
@@ -52,6 +65,15 @@ def covered_by_local_act(tx, record) -> bool:
         if audit_covers(audit, record["id"], record["kind"], record["status"], record["content"], definition):
             return True
     return False
+
+
+def confirm(inspector, project, plan_id, expected_plan_version, *, reason=None):
+    """The inspector's action: confirm_plan for a project the inspector names."""
+    from .inspector import InspectorNotFound
+    try:
+        return confirm_plan(inspector.store, inspector._project(project)["id"], plan_id, expected_plan_version, reason)
+    except LookupError as exc:
+        raise InspectorNotFound(str(exc)) from None
 
 
 def confirm_plan(store, project_id, plan_id, expected_plan_version, reason=None):

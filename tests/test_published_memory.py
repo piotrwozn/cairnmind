@@ -10,6 +10,7 @@ import pytest
 from cairnmind.evidence import evidence_states
 from cairnmind.findings import save_finding
 from cairnmind.inspector import Inspector
+from cairnmind.memory_acts import confirm_plan
 from cairnmind.memory import MemoryConflict, MemoryManager
 from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
 from cairnmind.memory_published_check import check_directory
@@ -114,7 +115,7 @@ def test_only_acts_of_a_person_are_published_and_publishing_twice_changes_no_fil
                                     [{"key": "format", "content": "Write the format"},
                                      {"key": "import", "content": "Read it back", "depends_on": ["format"]}],
                                     "publication-plan", worktree=str(root))
-    confirmed = Inspector(store).confirm_plan(pid, saved["plan"]["id"], saved["plan"]["version"])
+    confirmed = confirm_plan(store, pid, saved["plan"]["id"], saved["plan"]["version"])
     publisher = Publisher(store)
     preview = publisher.publish(pid, preview=True)
     assert preview["status"] == "preview" and not folder_of(root).exists()
@@ -226,7 +227,7 @@ def test_a_round_trip_keeps_identity_revisions_and_sources(ada):
     edited(store, pid, record, "Use secure HttpOnly cookies.")
     saved = PlanManager(store).save(pid, {"title": "Ship", "goal": "Ship it"}, [{"key": "one", "content": "Step one"}],
                                     "ship-plan", worktree=str(root))
-    Inspector(store).confirm_plan(pid, saved["plan"]["id"], saved["plan"]["version"])
+    confirm_plan(store, pid, saved["plan"]["id"], saved["plan"]["version"])
     Publisher(store).publish(pid)
     commit(root, "Publish")
     bo = teammate(ada, "bo", "Bo Lee")
