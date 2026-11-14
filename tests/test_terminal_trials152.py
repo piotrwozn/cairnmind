@@ -72,6 +72,54 @@ async def test_activity_column_stays_and_its_popup_closes(tmp_path, monkeypatch)
         assert not popup.is_running
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language,typed,expected", [("en", "Ask", "ask"), ("en", "brief", "brief"),
+                                                      ("pl", "Zapytaj", "ask"), ("en", "task", "inspector")])
+async def test_menu_lists_commands_whose_name_matches_first(tmp_path, language, typed, expected):
+    from types import SimpleNamespace
+    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.config import Settings
+    from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp
+    settings = Settings.load(tmp_path / "data", create=True)
+    CockpitState(settings).update({"language": language})
+    app = CommandPaletteApp(SimpleNamespace(settings=settings))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press(*typed)
+        await pilot.pause()
+        names = [row[0] for row in app.rows]
+        await pilot.press("enter")
+    assert app.return_value[3] == expected, names
+    if typed == "task":  # only descriptions match: the menu keeps its order
+        assert names == [row[0] for row in COMMANDS if "task" in (row[0] + " " + row[1]).casefold()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_menu_marks_a_cut_description_with_an_ellipsis_at_80_columns(tmp_path, language):
+    from types import SimpleNamespace
+    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.config import Settings
+    from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp
+    settings = Settings.load(tmp_path / "data", create=True)
+    CockpitState(settings).update({"language": language})
+    app = CommandPaletteApp(SimpleNamespace(settings=settings))
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = screen_text(app)
+    cut = 0
+    for name, description, *_ in COMMANDS:
+        name, description = tr(name, language), tr(description, language)
+        line = next(row for row in screen.splitlines() if (" " + name + " ") in row)
+        if description in line:
+            continue
+        cut += 1
+        shown = line.rstrip().rsplit("  ", 1)[-1].strip()
+        assert shown.endswith("…"), line
+        assert description.startswith(shown[:-1].rstrip()), line
+    assert cut  # at 80 columns some descriptions do not fit
+
+
 def wait_for(predicate, seconds=5):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
