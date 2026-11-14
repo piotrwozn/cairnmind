@@ -14,7 +14,8 @@ import sys
 
 from .terminal_notices import about
 from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
-                     changed_since_confirmed, confirmed_choice, describe, stage_slot, validate_stage_map)
+                     assistant_name, changed_since_confirmed, confirmed_choice, describe, stage_slot,
+                     validate_stage_map)
 
 _UNSET = ":unset"
 
@@ -203,9 +204,10 @@ async def edit_stages(app):
             return app.t(stage) + " · " + target
         slot_id = stage_slot(target)
         slot = next((s for s in slots if s["id"] == slot_id), None)
-        name = profiles.get(slot["profile_id"], {}).get("label") if slot else None
-        text = app.t(stage) + " · " + (name or app.t("Unknown assistant")) + " (" + slot_id + ")"
         profile = profiles.get(slot["profile_id"]) if slot else None
+        # By the configured name; the slot id only names an assistant that is no longer configured (#154).
+        text = app.t(stage) + " · " + (assistant_name(profile, app.t) if profile
+                                       else app.t("Unknown assistant") + " (" + slot_id + ")")
         # The same comparison as Run next stage: profile, client and, for an agent, its provider,
         # model and address.
         if profile and changed_since_confirmed(target, slot, profile) != []:
@@ -220,8 +222,11 @@ async def edit_stages(app):
     if stage is None:
         return
     if stage in CLIENT_STAGES:
-        choices = [(profiles[s["profile_id"]]["label"] + " (" + s["id"] + ")", s["id"]) for s in slots
-                   if profiles.get(s["profile_id"], {}).get("client") in LAUNCHABLE_CLIENTS]
+        launchable = [s for s in slots if profiles.get(s["profile_id"], {}).get("client") in LAUNCHABLE_CLIENTS]
+        names = [assistant_name(profiles[s["profile_id"]], app.t) for s in launchable]
+        # Two slots of one profile read the same; only then does the slot id tell them apart.
+        choices = [(name + (" · " + s["id"] if names.count(name) > 1 else ""), s["id"])
+                   for name, s in zip(names, launchable)]
         value = await app.push_screen_wait(ChoiceModal(app.t(stage), choices + [("Not set", _UNSET)]))
         if value is None:
             return

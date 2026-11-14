@@ -416,7 +416,7 @@ CATALOG.update({
     "The mapped assistant cannot be launched for a plan step.":
         "Przypisanego asystenta nie można uruchomić dla kroku planu.",
     # Plan stages for the built-in API agent and Copilot (#125)
-    "default model": "model domyślny",
+    "default model": "model domyślny", "Built-in agent": "Wbudowany agent",
     "The assistant of this stage changed since it was mapped. Confirm it in More → Plan stages; nothing was started.":
         "Asystent tego etapu zmienił się od przypisania. Potwierdź go w Więcej → Etapy planu; "
         "nic nie zostało uruchomione.",

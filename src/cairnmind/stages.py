@@ -66,6 +66,31 @@ def changed_since_confirmed(target, slot: dict, profile: dict) -> list[str] | No
     return [key for key in AGENT_TARGET if key in current and target.get(key) != current[key]]
 
 
+# How an assistant is named to a person; a slot id is internal and never shown when a name exists (#154).
+CLIENT_WORDS = {"codex": "Codex", "claude": "Claude Code", "api": "Built-in agent", "copilot": "GitHub Copilot"}
+PROVIDER_WORDS = {"openai": "OpenAI", "anthropic": "Anthropic", "openai_compatible": "OpenAI-compatible",
+                  "ollama": "Ollama"}
+
+
+def assistant_name(profile: dict, translate=lambda text: text) -> str:
+    """The profile's label, then what it runs: the client, or for an agent the provider and model.
+
+    Fixed words are translated; the stored label, provider and model are appended, never formatted in.
+    """
+    label = str(profile.get("label") or profile.get("id") or "")
+    client, provider, model = profile.get("client"), profile.get("provider"), profile.get("model")
+    if client in AGENT_CLIENTS:
+        parts = [PROVIDER_WORDS.get(provider, str(provider)) if provider else translate(CLIENT_WORDS[client]),
+                 str(model) if model else translate("default model")]
+    else:
+        parts = [translate(CLIENT_WORDS[client]) if client in CLIENT_WORDS else str(client or ""),
+                 str(model) if model else ""]
+    detail = " · ".join(part for part in parts if part)
+    if not detail or detail.casefold() == label.casefold():
+        return label or detail
+    return label + " (" + detail + ")" if label else detail
+
+
 def stage_slot(target) -> str:
     """The slot id a client stage names, in either shape."""
     return target["slot"] if isinstance(target, dict) else target
@@ -275,8 +300,10 @@ def describe(decision: dict, translate=lambda text: text) -> str:
     if decision.get("stage"):
         lines.append(translate("Stage") + ": " + translate(decision["stage"]))
     if decision.get("slot_id"):
-        lines.append(translate("Assistant") + ": " + str(decision.get("label") or decision["slot_id"])
-                     + " (" + str(decision["slot_id"]) + ")")
+        # By the configured name; the slot id only names an assistant that is no longer configured.
+        named = (assistant_name(decision, translate) if decision.get("label")
+                 else translate("Unknown assistant") + " (" + str(decision["slot_id"]) + ")")
+        lines.append(translate("Assistant") + ": " + named)
     if decision.get("client") in AGENT_CLIENTS:
         named = " · ".join(str(value) for value in (decision.get("provider"), decision.get("model")) if value)
         lines.append(translate("Model") + ": " + (named or translate("default model")))
