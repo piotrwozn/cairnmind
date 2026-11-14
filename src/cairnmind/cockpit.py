@@ -46,7 +46,7 @@ def instance_id(settings):
 
 def _birth(pid):
     try:
-        return Path(f"/proc/{int(pid)}/stat").read_text().rpartition(")")[2].split()[19]
+        return Path(f"/proc/{int(pid)}/stat").read_text(errors="replace").rpartition(")")[2].split()[19]
     except (OSError, ValueError, IndexError, TypeError):
         return None
 

@@ -27,7 +27,7 @@ def alive(pid):
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    return Path(f"/proc/{pid}/stat").exists() and Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0] != "Z"
+    return Path(f"/proc/{pid}/stat").exists() and Path(f"/proc/{pid}/stat").read_text(errors="replace").split(")")[-1].split()[0] != "Z"
 
 
 async def started(tmp_path, *definitions, **options):
