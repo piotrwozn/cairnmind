@@ -54,6 +54,8 @@ done
 
 # ArcadeDB reads the password once, when it creates the root user on the first start; later starts
 # keep the user it stored in $data/config. The copy holds the password alone, with no newline.
+# A restarted container keeps its /tmp, so the copies earlier starts left there are removed first.
+rm -f "${TMPDIR:-/tmp}"/arcadedb-root-password.*
 secret=$(mktemp "${TMPDIR:-/tmp}/arcadedb-root-password.XXXXXX")
 printf '%s' "$password" > "$secret"
 if [ -n "${ARCADEDB_PASSWORD_HANDOFF:-}" ]; then

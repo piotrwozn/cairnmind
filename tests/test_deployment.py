@@ -5,6 +5,7 @@ builds the image and checks the running service.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -55,17 +56,34 @@ def test_image_builds_the_pinned_arcadedb_version():
     assert "sha256sum -c" in DOCKERFILE.read_text()
 
 
+def options_missing_from(script: str, options: list[str], machine: tuple[str, ...]) -> list[str]:
+    """The JVM options that `script` does not pass. Each is looked for exactly as it is, except one whose
+    value is a path, host or port of this machine: that is looked for by its name, with any value."""
+    missing = []
+    for option in options:
+        name, equals, value = option.partition("=")
+        local = equals and (name.endswith("Port") or any(part in value for part in machine))
+        if (name + "=" if local else option) not in script:
+            missing.append(option)
+    return missing
+
+
+def test_the_option_check_wants_every_option_exactly_unless_its_value_belongs_to_the_machine():
+    script = "java -Xmx1024m -Dname.rootPath=\"$data\" -Dname.httpIncomingPort=\"$port\""
+    machine = ("/home/someone/data", "127.0.0.1")
+    assert options_missing_from(script, ["-Xmx1024m", "-Dname.rootPath=/home/someone/data/arcade",
+                                         "-Dname.httpIncomingPort=2481"], machine) == []
+    new = ["-XX:MaxRAMPercentage=50", "-Xlog:gc=info", "--add-opens=java.base/java.lang=ALL-UNNAMED",
+           "-Xmx2048m", "-Dname.other=1"]
+    assert options_missing_from(script, new, machine) == new
+
+
 def test_image_starts_the_server_with_the_options_of_the_local_engine(tmp_path, monkeypatch):
     command = local_engine_command(tmp_path, monkeypatch)
     script = ENTRYPOINT.read_text()
-    assert command[-1] == "com.arcadedb.server.ArcadeDBServer" and command[-1] in script
-    # Options without a path, host or port of this machine are passed exactly as they are.
-    fixed = [option for option in command[1:-3] if "=" not in option or option.startswith(
-        ("--add-modules=", "--enable-native-access=", "-Djava.awt.", "-Dfile.", "-Darcadedb.profile="))]
-    assert fixed and [option for option in fixed if option not in script] == []
-    # Every server setting the local engine gives is given in the image too, with the image's own value.
-    settings = [option.split("=", 1)[0] for option in command if option.startswith("-D") and option not in fixed]
-    assert settings and [name for name in settings if name + "=" not in script] == []
+    assert command[-3] == "-cp" and command[-1] == "com.arcadedb.server.ArcadeDBServer" and command[-1] in script
+    # Every option before the class path, the ones start_engine may add later included.
+    assert options_missing_from(script, command[1:-3], (str(tmp_path), "127.0.0.1")) == []
 
 
 def test_entrypoint_is_a_valid_shell_script_that_refuses_to_start_without_a_password(tmp_path):
@@ -74,6 +92,25 @@ def test_entrypoint_is_a_valid_shell_script_that_refuses_to_start_without_a_pass
         "PATH": "/usr/bin:/bin", "ARCADEDB_HOME": str(tmp_path / "home"), "ARCADEDB_DATA": str(tmp_path / "data"),
         "ARCADEDB_ROOT_PASSWORD_FILE": str(tmp_path / "missing")})
     assert result.returncode != 0 and "root password" in result.stderr
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="the non-root start is checked")
+def test_each_start_leaves_one_copy_of_the_password_in_the_temporary_folder(tmp_path):
+    # A restarted container keeps its /tmp: the copies of earlier starts must not pile up there.
+    bin_dir, temporary = tmp_path / "bin", tmp_path / "tmp"
+    bin_dir.mkdir()
+    temporary.mkdir()
+    (bin_dir / "java").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "java").chmod(0o755)
+    password = tmp_path / "password"
+    password.write_text("a long enough password\n")
+    environment = {"PATH": f"{bin_dir}:/usr/bin:/bin", "TMPDIR": str(temporary), "ARCADEDB_HOME": str(tmp_path / "home"),
+                   "ARCADEDB_DATA": str(tmp_path / "data"), "ARCADEDB_ROOT_PASSWORD_FILE": str(password)}
+    for _ in range(3):
+        subprocess.run(["sh", str(ENTRYPOINT)], check=True, env=environment)
+    copies = list(temporary.glob("arcadedb-root-password.*"))
+    assert len(copies) == 1 and copies[0].read_text() == "a long enough password"
+    assert copies[0].stat().st_mode & 0o077 == 0
 
 
 def test_no_password_is_baked_into_the_image_or_committed_in_the_compose_file():
@@ -111,16 +148,34 @@ def cli_commands() -> set[tuple[str, ...]]:
     return found
 
 
-def test_every_cairnmind_command_in_the_guide_exists():
+def unknown_commands(text: str, commands: set[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """The `cairnmind ...` commands of a Markdown text, at the start of a line or in backticks, that do not exist."""
+    groups = {path[:-1] for path in commands if path}
+    used = re.findall(r"^\s*(?:\$ )?cairnmind ([^`\n]+)", text, re.M) + re.findall(r"`cairnmind ([^`\n]+)`", text)
+    unknown = []
+    for arguments in used:
+        # Comments, options, their values (paths and variables) and file names are left out.
+        words = [word for word in arguments.split("#", 1)[0].split() if re.fullmatch(r"[a-z][a-z-]*", word)]
+        path: tuple[str, ...] = ()
+        for word in words:
+            if path not in groups:
+                break
+            path = (*path, word)
+        # Each word must name a command until one without subcommands is reached.
+        if path not in commands or path in groups:
+            unknown.append(tuple(words[:3]))
+    return unknown
+
+
+def test_the_guide_check_catches_a_wrong_word_at_every_level_and_in_prose():
     commands = cli_commands()
-    used = []
-    for line in GUIDE.read_text().splitlines():
-        match = re.match(r"\s*(?:\$ )?cairnmind (.+)", line)
-        if not match:
-            continue
-        # Options, their values (paths and variables) and file names are left out.
-        words = [word for word in match.group(1).split() if re.fullmatch(r"[a-z][a-z-]*", word)]
-        used.append(tuple(words[:2]))
-    assert used
-    unknown = [words for words in used if words[:2] not in commands and words[:1] not in commands]
-    assert unknown == []
+    assert unknown_commands("cairnmind project list\n`cairnmind engine stop`, `cairnmind doctor --json`", commands) == []
+    text = "cairnmind project lst\n  cairnmind engine strat\nRun `cairnmind projects list`.\n`cairnmind engine`"
+    assert unknown_commands(text, commands) == [("project", "lst"), ("engine", "strat"), ("projects", "list"),
+                                                ("engine",)]
+
+
+def test_every_cairnmind_command_in_the_guide_exists():
+    text = GUIDE.read_text()
+    assert len(re.findall(r"`cairnmind [a-z]", text)) > 5
+    assert unknown_commands(text, cli_commands()) == []
