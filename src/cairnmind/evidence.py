@@ -15,7 +15,9 @@ go stale, change the portable state hash and travel wrongly to another machine.
   was stored or when the stored quote does not occur in the cited version.
 - ``orphaned``: no supporting source has a current version at all.
 - ``unverified``: the record rests on file snapshots imported from another machine,
-  and the local files have not been indexed yet, so nothing can be said.
+  and the local files have not been indexed yet, so nothing can be said; or it rests only on
+  sources imported from a published memory directory (``unverified_by: published_elsewhere``),
+  which were seen on another machine and never here.
 - ``degraded``: an external client's session (whose conversation Cairnmind cannot read)
   wrote the record, or the record rests only on sources such a session wrote; or the built-in
   agent wrote it, or the text it rests on, after a third-party MCP tool result in its session
@@ -46,9 +48,11 @@ def _text(source):
 
 def _is_audit(source):
     # A review adds its own audit note as a source. The note says that someone reviewed
-    # the record, not why the record is true, so it cannot keep a record anchored.
-    return (str(source.get("uri", "")).startswith("review://")
-            and _metadata(source).get("origin") == "local_user_review")
+    # the record, not why the record is true, so it cannot keep a record anchored. A review
+    # published elsewhere (#170) neither anchors a record nor counts against it either.
+    return ((str(source.get("uri", "")).startswith("review://")
+             and _metadata(source).get("origin") == "local_user_review")
+            or (source.get("kind") == "published" and _metadata(source).get("origin") == "publication_review"))
 
 
 def _file_verdicts(store, project_id, stale):
@@ -137,7 +141,7 @@ def evidence_states(store, project_id, records, *, quotes=True):
     for record in records:
         cited = [source_id for source_id in dict.fromkeys(record.get("source_ids") or []) if isinstance(source_id, str)]
         counts = {"current": 0, "replaced": 0, "gone": 0, "pending": 0}
-        replaced, external, third_party = [], 0, 0
+        replaced, external, third_party, published = [], 0, 0, 0
         for source_id in cited:
             source = sources.get(source_id)
             if source is not None and _is_audit(source):
@@ -148,7 +152,13 @@ def evidence_states(store, project_id, records, *, quotes=True):
                 external += 1
                 third_party += third_party_origin(_metadata(source))
                 continue
-            verdict, replacement = (("gone", None) if source is None else verdicts.get(source_id, ("current", None)))
+            if source is not None and source.get("kind") == "published":
+                # A source imported from a published directory (#170) was seen elsewhere, not here: only a
+                # re-check against local files (#172) could anchor it. It never stands on its own.
+                published += 1
+                verdict, replacement = "pending", None
+            else:
+                verdict, replacement = (("gone", None) if source is None else verdicts.get(source_id, ("current", None)))
             counts[verdict] += 1
             if verdict == "replaced":
                 replaced.append((source_id, replacement))
@@ -167,6 +177,8 @@ def evidence_states(store, project_id, records, *, quotes=True):
         result[record["id"]] = {"evidence_state": state, "quote_survives": survives,
                                 "sources_current": counts["current"], "sources_replaced": counts["replaced"],
                                 "sources_gone": counts["gone"], "sources_unverified": counts["pending"]}
+        if state == "unverified" and published:
+            result[record["id"]]["unverified_by"] = "published_elsewhere"
         own = _metadata(record)
         if state == "degraded" and (third_party_origin(own) if degraded_origin(own) else external == third_party):
             # Only for this cause, so every other result stays exactly what it was.
