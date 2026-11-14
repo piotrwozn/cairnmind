@@ -161,7 +161,7 @@ ModalScreen { align: center middle; background: $cm-bg 70%; }
 .cm-stack Button:focus, .-narrow .actions Button:focus, .-narrow .form-actions Button:focus {
     background: $cm-raised; color: $cm-strong; text-style: bold; border-left: thick $cm-accent; }
 .cm-stack Button.-primary:focus, .-narrow .actions Button.-primary:focus, .-narrow .form-actions Button.-primary:focus {
-    background: $cm-select; color: $cm-strong; text-style: bold; border-left: thick $cm-accent; }
+    background: $cm-accent; color: $cm-bg; text-style: bold; border-left: thick $cm-accent; }
 .cm-stack Button:disabled, .-narrow .actions Button:disabled, .-narrow .form-actions Button:disabled {
     background: transparent; color: $cm-dim; text-style: none; border-left: thick $cm-raised; }
 .cm-dialog DataTable { background: $cm-panel; border-left: vkey $cm-panel; }

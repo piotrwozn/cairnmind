@@ -120,6 +120,44 @@ async def test_menu_marks_a_cut_description_with_an_ellipsis_at_80_columns(tmp_p
     assert cut  # at 80 columns some descriptions do not fit
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("container", ["cm-stack", "narrow"])
+async def test_focus_on_a_stacked_primary_button_is_as_clear_as_on_the_others(container):
+    from textual.app import App
+    from textual.containers import Horizontal, Vertical
+    from textual.widgets import Button
+    from cairnmind import terminal_theme
+
+    class Stack(App):
+        CSS = terminal_theme.BASE_CSS
+
+        def compose(self):
+            with Vertical(classes="cm-dialog"):
+                with Horizontal(classes="cm-stack" if container == "cm-stack" else "actions"):
+                    yield Button("Add folder", id="primary", variant="primary")
+                    yield Button("Open", id="other")
+
+    app = Stack()
+    async with app.run_test(size=(30 if container == "narrow" else 80, 24)) as pilot:
+        terminal_theme.size_classes(app)
+        await pilot.pause()
+
+        def look(identifier):
+            styles = app.query_one("#" + identifier).styles
+            return styles.background, styles.color, styles.border_left
+
+        app.query_one("#other").focus()
+        await pilot.pause()
+        primary_idle, other_focused = look("primary"), look("other")
+        app.query_one("#primary").focus()
+        await pilot.pause()
+        primary_focused, other_idle = look("primary"), look("other")
+    assert other_focused[0] != other_idle[0]  # the reference: focus changes the fill
+    assert primary_focused[0] != primary_idle[0] and primary_focused[1] != primary_idle[1]
+    from textual.color import Color
+    assert primary_focused[0] != Color.parse(terminal_theme.TOKENS["select"])  # not the selected-row fill
+
+
 def wait_for(predicate, seconds=5):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
