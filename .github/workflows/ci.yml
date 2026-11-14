@@ -38,12 +38,21 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked --extra dev
+      # One process for now: with four, a test of the agent's command tool fails now and then until
+      # the fix of #175 (a stopped command waits for its process group) is on main.
       - run: uv run pytest -m "not arcade and not tmux" -q
 
-  full-tests:
-    # Real pinned ArcadeDB on Java 21 plus tmux, as on the target WSL host.
+  tests:
+    # The whole suite in four parts that run at the same time, each on a runner of its own: real pinned
+    # ArcadeDB on Java 21 plus tmux, as on the target WSL host. `--shard I/4` picks a part by test id
+    # (tests/conftest.py); the parts are disjoint and together are the whole suite (tests/test_shards.py).
+    name: tests (${{ matrix.shard }} of 4)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -70,25 +79,36 @@ jobs:
               env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
           PY
       # The standard Linux runner of a public repository has 4 vCPUs: one test process for each,
-      # all sharing one ArcadeDB engine (see tests/conftest.py). No coverage here: this is the
+      # all sharing one ArcadeDB engine (see tests/conftest.py). No coverage here: this decides the
       # required check, and a hiccup of coverage's tracer must never decide a merge.
-      - run: uv run pytest -n 4 -q
+      - run: uv run pytest -n 4 -q --shard ${{ matrix.shard }}/4
 
-  coverage:
-    # The same suite with coverage, beside full-tests and not a required check: it may go red
-    # without blocking anything. Reported in the log and the job summary; on a push to main its
-    # `badge` output goes to coverage-badge, which publishes it to the public `badges` branch for the
-    # README badge. No threshold fails the job.
+  full-tests:
+    # The required check. It passes only when every part of `tests` passed; it always runs, because a
+    # skipped required check would count as passed.
+    needs: tests
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      badge: ${{ steps.summary.outputs.badge }}
+    steps:
+      - name: Every part of the suite passed
+        env:
+          RESULT: ${{ needs.tests.result }}
+        run: |
+          echo "tests: $RESULT"
+          test "$RESULT" = success
+
+  coverage-tests:
+    # The same four parts with coverage, beside `tests`. Each part keeps its coverage data as an
+    # artifact; `coverage` below combines them. Not required.
+    name: coverage tests (${{ matrix.shard }} of 4)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
-        with:
-          # Patch coverage needs the merge base with the pull request's target branch; a pull request
-          # checks out its merge commit at depth 1 by default, which has no history to find it in.
-          fetch-depth: 0
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -112,23 +132,66 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a") as env:
               env.write(f"CAIRNMIND_ARCADE_DIST={path}\n")
           PY
-      # Branch coverage of src/cairnmind; the workers' data is combined into coverage.xml.
-      - id: tests
-        run: uv run pytest -n 4 -q --cov --cov-report=xml
+      # Branch coverage of src/cairnmind; the data of the workers and of the processes the tests
+      # start is combined into one file per part.
+      - run: uv run pytest -n 4 -q --cov --cov-report= --shard ${{ matrix.shard }}/4
+        env:
+          COVERAGE_FILE: .coverage.part${{ matrix.shard }}
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-part-${{ matrix.shard }}
+          path: .coverage.part${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
+
+  coverage:
+    # Coverage of the whole suite, combined from the four parts. Not a required check: it may go red
+    # without blocking anything. Reported in the log and the job summary; on a push to main its
+    # `badge` output goes to coverage-badge, which publishes it to the public `badges` branch for the
+    # README badge. No threshold fails the job.
+    needs: coverage-tests
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      badge: ${{ steps.summary.outputs.badge }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Patch coverage needs the merge base with the pull request's target branch; a pull request
+          # checks out its merge commit at depth 1 by default, which has no history to find it in.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-part-*
+          merge-multiple: true
+      - name: Combine the parts
+        run: |
+          ls -la .coverage.part* || true
+          uv run coverage combine --keep .coverage.part*
+          uv run coverage xml
       - name: Coverage summary
         id: summary
         if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
-          TESTS: ${{ steps.tests.outcome }}
-        # Still reported when tests failed, marked as numbers from a run with failures. A failed run
-        # fails this job, so its number never reaches the badge.
+          TESTS: ${{ needs.coverage-tests.result }}
+        # Still reported when tests failed, marked as numbers from a run with failures.
         run: |
           set -- --no-patch
           if [ "$EVENT" = pull_request ]; then set -- --compare-branch "origin/$BASE_REF"; fi
           if [ "$TESTS" != success ]; then set -- "$@" --tests-failed; fi
           uv run python scripts/coverage_summary.py "$@"
+      - name: Every part of the suite passed under coverage
+        # A run with failures fails this job, so its number never reaches the badge.
+        env:
+          TESTS: ${{ needs.coverage-tests.result }}
+        run: test "$TESTS" = success
 
   deployment-image:
     # The database container of docs/DEPLOYMENT.md, beside the other jobs and not a required check,
