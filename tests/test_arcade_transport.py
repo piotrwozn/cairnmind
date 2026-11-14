@@ -77,7 +77,9 @@ def test_external_settings_changes_cannot_redirect_client_or_transaction(tmp_pat
     assert len({request.headers["authorization"] for request in seen}) == 1
 
 
-@pytest.mark.parametrize("url", ["https://127.0.0.1", "http://example.com", "https://example.com",
+# https://127.0.0.1 is allowed since #72 (see test_database_credentials); https://example.com is still
+# refused here because these settings sign in as root, which is refused for a host other than this one.
+@pytest.mark.parametrize("url", ["ftp://127.0.0.1", "http://example.com", "https://example.com",
                                 "http://user:secret@127.0.0.1", "http://127.0.0.1?x=y",
                                 "http://127.0.0.1#fragment"])
 def test_invalid_origins_fail_before_transport(tmp_path, url):

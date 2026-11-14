@@ -135,7 +135,20 @@ def probe_java(java: str) -> subprocess.CompletedProcess:
     raise AssertionError("unreachable")
 
 
+def is_managed_url(url: str) -> bool:
+    """Whether ``url`` is one the managed engine can serve: plain http on this machine (#72).
+
+    Any other address is a server someone else runs: it is never started here, and its user's password
+    is never written to this data directory.
+    """
+    parsed = urlparse(url)
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+
+
 def start_engine(settings: Settings) -> dict:
+    if not is_managed_url(settings.arcade_url):
+        raise ArcadeError(f"ArcadeDB at {settings.arcade_url} is not on this machine; Cairnmind starts only "
+                          "the engine on 127.0.0.1, localhost or ::1 over http.")
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "engine.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -217,6 +230,9 @@ def ensure_engine(settings: Settings) -> None:
     if status["available"] and not status.get("version_matches"):
         raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
     if not status["available"]:
+        if not is_managed_url(settings.arcade_url):
+            # A server on another host: report why it cannot be reached instead of starting one here.
+            raise ArcadeError(status.get("error") or f"ArcadeDB at {settings.arcade_url} is unavailable")
         start_engine(settings)
 
 

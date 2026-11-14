@@ -10,6 +10,20 @@ arcade_password (secret in0600 config), arcade_database (derived per-data-dir ha
 arcade_version26.11.1. Test fixture root sets CAIRNMIND_ARCADE_URL/PASSWORD with an
 actual shared test engine; each temporary data-dir derives its own isolated DB.
 
+Access rules (#72, `database_credentials.py`, checked by `ArcadeClient.__init__`): http only on
+127.0.0.1, localhost and ::1; https on any host, always with certificate and host name verification
+(the PEM file `arcade_ca_file`, or else OpenSSL's default authorities, which SSL_CERT_FILE and
+SSL_CERT_DIR replace when set; there is no switch to turn it off). On a host
+that is not loopback the user root and an empty password are refused. Only plain http on loopback is
+started by Cairnmind (engine.is_managed_url): for any other address ensure_engine reports why the
+server cannot be reached and never writes a password under data_dir/arcade. The release pin applies
+to a server on another host too: Store refuses a server that is not 26.11.1. The password comes from
+CAIRNMIND_ARCADE_PASSWORD (the first spelling that is not empty), then the file `arcade_password_file` (absolute path, regular file of the
+user, mode 0600, not a link), then config.json for loopback only. Settings.save never writes a value
+load took from the environment or a file. `cairnmind db create-user --admin-password-file F` signs in
+once as root, creates the database and the user `arcade_user` in the group admin of that database only.
+The managed local engine keeps root and its config.json password.
+
 ## HTTP DAL (root owns arcade.py and engine.py)
 
 `ArcadeError(RuntimeError)` for API/server failures, no secret-bearing URLs/logs.

@@ -194,6 +194,7 @@ def contract_text(probes: dict[str, dict[str, Any]]) -> str:
 def doctor(settings: Settings) -> dict[str, Any]:
     """Read-only diagnostics. No login, downloads, model sessions or secrets."""
     from .arcade import ArcadeError
+    from .database_credentials import doctor_block
     from .engine import managed_java_executable, resolve_java
     from .client_runtime import NativeRuntime
     import ssl
@@ -204,8 +205,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
         "data_dir": str(settings.data_dir),
         "clients": {name: _probe_cli(name) for name in CLIENTS},
         "ollama": {"available": False}, "service": {"available": False},
-        "arcadedb": {"available": False, "database": settings.arcade_database,
-                     "configured_version": settings.arcade_version},
+        # The database block is read through ArcadeClient, so its rules (#72) apply to doctor too.
+        "arcadedb": doctor_block(settings),
     }
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
     result["tmux"] = NativeRuntime(settings).diagnostics()
@@ -236,23 +237,6 @@ def doctor(settings: Settings) -> dict[str, Any]:
     with httpx.Client(timeout=1.5, trust_env=False) as client:
         # Read-only diagnostics: never construct Store, create a database, start
         # Java or install/download an engine just to report its availability.
-        try:
-            response = client.get(f"{settings.arcade_url.rstrip('/')}/api/v1/server",
-                                  params={"mode": "basic"},
-                                  auth=(settings.arcade_user, settings.arcade_password))
-            response.raise_for_status()
-            info = response.json()
-            result["arcadedb"].update({"available": True, "version": info.get("version"),
-                                       "server_name": info.get("serverName"),
-                                       "version_matches": str(info.get("version", "")).startswith(settings.arcade_version)})
-            response = client.post(f"{settings.arcade_url.rstrip('/')}/api/v1/query/{settings.arcade_database}",
-                                   auth=(settings.arcade_user, settings.arcade_password),
-                                   json={"language": "sql", "command": "SELECT 1 AS ok"})
-            result["arcadedb"]["database_available"] = response.is_success
-            if not response.is_success:
-                result["arcadedb"]["database_status"] = response.status_code
-        except (httpx.HTTPError, ValueError, AttributeError) as exc:
-            result["arcadedb"]["error"] = type(exc).__name__
         try:
             response = client.get(f"{settings.ollama_url.rstrip('/')}/api/tags")
             response.raise_for_status()

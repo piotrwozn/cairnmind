@@ -1,0 +1,356 @@
+"""Database access outside this machine: the password's source, the transport rules and TLS (#72).
+
+No engine: the rules are checked at the client's construction and with a local TLS endpoint made by
+the openssl command, which the test skips when it is missing.
+"""
+from __future__ import annotations
+
+import http.server
+import json
+import os
+from pathlib import Path
+import shutil
+import ssl
+import subprocess
+import threading
+
+import httpx
+import pytest
+
+from cairnmind.agent_journal import AgentJournal
+from cairnmind.arcade import ArcadeClient, ArcadeError
+from cairnmind.config import Settings
+
+SECRET = "Db-secret-7f3a9c41e2b8d6"
+STORED = "Stored-secret-0b1c2d3e4f5a"
+
+
+@pytest.fixture(autouse=True)
+def no_database_environment(monkeypatch):
+    for prefix in ("CAIRNMIND_", "DEVBRAIN_"):
+        for name in ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE", "ARCADE_DB_PREFIX",
+                     "ARCADE_PASSWORD_FILE", "ARCADE_CA_FILE"):
+            monkeypatch.delenv(prefix + name, raising=False)
+
+
+def config(root: Path, **values) -> Path:
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (root / "config.json").write_text(json.dumps({"token": "t" * 43, **values}))
+    os.chmod(root / "config.json", 0o600)
+    return root
+
+
+def private_file(path: Path, text: str, mode: int = 0o600) -> Path:
+    path.write_text(text)
+    os.chmod(path, mode)
+    return path
+
+
+def remote(tmp_path, **values) -> Settings:
+    base = {"data_dir": tmp_path, "arcade_url": "https://db.example.org:2480", "arcade_user": "cairnmind",
+            "arcade_password": SECRET, "arcade_database": "remote_test"}
+    return Settings(**{**base, **values})
+
+
+# --- Transport rules ---------------------------------------------------------------------------------
+
+def test_plain_http_to_a_remote_host_is_refused_and_says_which_rule(tmp_path):
+    with pytest.raises(ValueError, match="https") as refused:
+        ArcadeClient(remote(tmp_path, arcade_url="http://db.example.org:2480"))
+    assert SECRET not in str(refused.value)
+
+
+def test_root_on_a_remote_host_is_refused_and_says_which_rule(tmp_path):
+    with pytest.raises(ValueError, match="root") as refused:
+        ArcadeClient(remote(tmp_path, arcade_user="root"))
+    assert "db create-user" in str(refused.value) and SECRET not in str(refused.value)
+
+
+def test_a_remote_host_needs_a_password_from_outside_the_settings_file(tmp_path):
+    with pytest.raises(ValueError, match="CAIRNMIND_ARCADE_PASSWORD"):
+        ArcadeClient(remote(tmp_path, arcade_password=""))
+
+
+def test_https_to_a_remote_host_verifies_the_certificate(tmp_path):
+    client = ArcadeClient(remote(tmp_path))
+    verify = client._connections._verify
+    assert isinstance(verify, ssl.SSLContext)
+    assert verify.verify_mode == ssl.CERT_REQUIRED and verify.check_hostname
+    assert verify.minimum_version >= ssl.TLSVersion.TLSv1_2
+    # No setting turns it off.
+    assert not any("verify" in name or "insecure" in name for name in Settings.__dataclass_fields__)
+
+
+def test_https_on_loopback_is_allowed_with_the_local_rules(tmp_path):
+    client = ArcadeClient(Settings(data_dir=tmp_path, arcade_url="https://127.0.0.1:2480",
+                                   arcade_password=SECRET, arcade_database="local_test"))
+    assert isinstance(client._connections._verify, ssl.SSLContext)
+
+
+def test_a_certificate_authority_file_that_cannot_be_loaded_is_named(tmp_path):
+    authority = private_file(tmp_path / "ca.pem", "not a certificate", 0o644)
+    with pytest.raises(ValueError, match="arcade_ca_file"):
+        ArcadeClient(remote(tmp_path, arcade_ca_file=str(authority)))
+    with pytest.raises(ValueError, match="arcade_ca_file"):
+        ArcadeClient(remote(tmp_path, arcade_ca_file=str(tmp_path / "absent.pem")))
+
+
+# --- Where the password comes from -------------------------------------------------------------------
+
+def test_an_existing_installation_keeps_its_stored_password_for_the_local_engine(tmp_path):
+    root = config(tmp_path / "data", arcade_password=STORED)
+    settings = Settings.load(root, create=True)
+    assert settings.arcade_password == STORED
+    assert settings._origin["password"] == "config"
+    assert json.loads((root / "config.json").read_text())["arcade_password"] == STORED
+
+
+def test_a_password_from_the_environment_is_never_written_to_the_settings_file(tmp_path, monkeypatch):
+    root = config(tmp_path / "data", arcade_password=STORED)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_PASSWORD", SECRET)
+    settings = Settings.load(root, create=True)
+    assert settings.arcade_password == SECRET
+    settings.save()
+    saved = (root / "config.json").read_text()
+    assert SECRET not in saved and json.loads(saved)["arcade_password"] == STORED
+
+
+def test_a_url_and_user_from_the_environment_are_not_written_either(tmp_path, monkeypatch):
+    root = config(tmp_path / "data", arcade_password=STORED)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_URL", "http://localhost:2999")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_USER", "someone")
+    settings = Settings.load(root)
+    settings.port = 9999
+    settings.save()
+    saved = json.loads((root / "config.json").read_text())
+    assert saved["port"] == 9999 and "arcade_url" not in saved and "arcade_user" not in saved
+
+
+def test_a_password_file_is_read_and_never_written_to_the_settings_file(tmp_path):
+    secret = private_file(tmp_path / "db-password", SECRET + "\n")
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind",
+                  arcade_password_file=str(secret))
+    settings = Settings.load(root, create=True)
+    assert settings.arcade_password == SECRET and settings._origin["password"] == "file"
+    settings.save()
+    assert SECRET not in (root / "config.json").read_text()
+    assert "arcade_password" not in json.loads((root / "config.json").read_text())
+
+
+@pytest.mark.parametrize("problem", ["mode", "link", "missing", "relative", "empty", "spaces"])
+def test_a_password_file_that_breaks_a_rule_is_refused_and_named(tmp_path, problem):
+    target = private_file(tmp_path / "db-password", SECRET)
+    named = str(target)
+    if problem == "mode":
+        os.chmod(target, 0o644)
+    elif problem == "link":
+        (tmp_path / "link").symlink_to(target)
+        named = str(tmp_path / "link")
+    elif problem == "missing":
+        named = str(tmp_path / "absent")
+    elif problem == "relative":
+        named = "db-password"
+    elif problem == "empty":
+        private_file(target, "\n")
+    elif problem == "spaces":
+        private_file(target, SECRET + " " + SECRET)
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind",
+                  arcade_password_file=named)
+    settings = Settings.load(root, create=True)
+    assert settings.arcade_password == ""
+    with pytest.raises(ValueError, match="arcade_password_file") as refused:
+        ArcadeClient(settings)
+    assert SECRET not in str(refused.value) and SECRET not in repr(settings)
+    assert SECRET not in (root / "config.json").read_text()
+
+
+def test_a_stored_password_is_not_used_for_a_remote_host(tmp_path):
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind",
+                  arcade_password=STORED)
+    settings = Settings.load(root, create=True)
+    assert settings.arcade_password == "" and settings._origin["password"] == "config_refused"
+    with pytest.raises(ValueError, match="config.json") as refused:
+        ArcadeClient(settings)
+    assert STORED not in str(refused.value)
+    # The stored value is kept as it was: going back to the local engine still works.
+    assert json.loads((root / "config.json").read_text())["arcade_password"] == STORED
+
+
+def test_no_password_is_generated_for_a_remote_host(tmp_path):
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind")
+    settings = Settings.load(root, create=True)
+    assert settings.arcade_password == ""
+    assert "arcade_password" not in json.loads((root / "config.json").read_text())
+
+
+def test_a_new_local_installation_still_gets_a_generated_password(tmp_path):
+    settings = Settings.load(tmp_path / "data", create=True)
+    assert len(settings.arcade_password) >= 32 and settings._origin["password"] == "config"
+    assert json.loads((tmp_path / "data" / "config.json").read_text())["arcade_password"] == settings.arcade_password
+
+
+def test_the_password_is_not_part_of_the_settings_repr(tmp_path):
+    assert SECRET not in repr(remote(tmp_path))
+
+
+# --- What doctor says, and that no secret reaches it, an error or the journal ---------------------
+
+def doctor_block(settings, monkeypatch, answer):
+    from cairnmind import database_credentials
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda self, request: answer(request))
+    return database_credentials.doctor_block(settings, timeout=1.5)
+
+
+def test_doctor_says_when_the_password_is_stored_in_the_settings_file(tmp_path, monkeypatch):
+    settings = Settings.load(config(tmp_path / "data", arcade_password=STORED), create=True)
+    block = doctor_block(settings, monkeypatch, lambda request: httpx.Response(
+        200, json={"version": settings.arcade_version, "serverName": "t", "result": [{"ok": 1}]}))
+    assert block["user"] == "root" and block["transport"] == "http (loopback, not encrypted)"
+    assert block["password_source"] == "config.json"
+    assert any("config.json" in note for note in block["notes"])
+    assert block["available"] and block["database_available"]
+    assert STORED not in json.dumps(block)
+
+
+def test_doctor_reports_the_user_and_the_encryption_and_refuses_root_on_a_remote_host(tmp_path, monkeypatch):
+    secret = private_file(tmp_path / "db-password", SECRET)
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_password_file=str(secret))
+    settings = Settings.load(root)
+    block = doctor_block(settings, monkeypatch, lambda request: pytest.fail("a refused setup sent a request"))
+    assert block["user"] == "root" and block["transport"] == "https (certificate verification on)"
+    assert block["password_source"] == "file" and not block["available"]
+    assert "root" in block["error"] and SECRET not in json.dumps(block)
+
+
+def test_a_rejected_sign_in_does_not_show_the_password(tmp_path, monkeypatch):
+    secret = private_file(tmp_path / "db-password", SECRET)
+    settings = Settings.load(config(tmp_path / "data", arcade_url="https://db.example.org",
+                                    arcade_user="cairnmind", arcade_password_file=str(secret)))
+    block = doctor_block(settings, monkeypatch,
+                         lambda request: httpx.Response(401, json={"error": "bad password " + SECRET}))
+    assert block["available"] is False and "401" in block["error"]
+    assert SECRET not in json.dumps(block)
+
+
+def test_the_journal_masks_a_password_read_from_a_file(tmp_path):
+    secret = private_file(tmp_path / "db-password", SECRET)
+    settings = Settings.load(config(tmp_path / "data", arcade_password_file=str(secret)), create=True)
+    journal = AgentJournal(settings, "session-72")
+    journal.append("tool_result", {"text": "the database said " + SECRET})
+    assert SECRET not in journal.path.read_text()
+
+
+# --- A local TLS endpoint ----------------------------------------------------------------------------
+
+def _openssl(*args, cwd):
+    subprocess.run(["openssl", *args], cwd=cwd, check=True, capture_output=True, timeout=60)
+
+
+def certificate_authority(folder: Path, address: str = "127.0.0.1") -> Path:
+    """A private authority (ca.pem) and a server certificate for ``address`` signed by it, made by openssl."""
+    if not shutil.which("openssl"):
+        pytest.skip("the openssl command is needed to make a local certificate authority")
+    folder.mkdir()
+    _openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
+             "-subj", "/CN=Cairnmind test authority", "-addext", "basicConstraints=critical,CA:TRUE",
+             "-addext", "keyUsage=critical,keyCertSign,cRLSign", cwd=folder)
+    _openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr",
+             "-subj", "/CN=localhost", cwd=folder)
+    (folder / "server.ext").write_text(f"subjectAltName=IP:{address},DNS:localhost\nbasicConstraints=CA:FALSE\n"
+                                       "keyUsage=critical,digitalSignature,keyEncipherment\n"
+                                       "extendedKeyUsage=serverAuth\n")
+    _openssl("x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
+             "-out", "server.pem", "-days", "2", "-extfile", "server.ext", cwd=folder)
+    return folder
+
+
+@pytest.fixture
+def tls_endpoint(tmp_path):
+    folder = certificate_authority(tmp_path / "tls")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - the name http.server calls
+            body = json.dumps({"version": "26.11.1", "serverName": "tls-test"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(folder / "server.pem", folder / "server.key")
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"https://127.0.0.1:{server.server_address[1]}", folder / "ca.pem"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+def test_a_certificate_from_an_unknown_authority_is_refused(tmp_path, tls_endpoint):
+    url, _ = tls_endpoint
+    client = ArcadeClient(Settings(data_dir=tmp_path, arcade_url=url, arcade_password=SECRET,
+                                   arcade_database="tls_test"))
+    with pytest.raises(ArcadeError, match="certificate") as refused:
+        client.server_info()
+    assert "arcade_ca_file" in str(refused.value) and SECRET not in str(refused.value)
+    client.close()
+
+
+def test_a_private_certificate_authority_is_trusted_by_path(tmp_path, tls_endpoint):
+    url, authority = tls_endpoint
+    client = ArcadeClient(Settings(data_dir=tmp_path, arcade_url=url, arcade_password=SECRET,
+                                   arcade_database="tls_test", arcade_ca_file=str(authority)))
+    assert client.server_info()["serverName"] == "tls-test"
+    client.close()
+
+
+def test_the_authorities_named_by_ssl_cert_file_are_the_system_ones(tmp_path, tls_endpoint, monkeypatch):
+    # Documented in SECURITY.md: without arcade_ca_file, OpenSSL's defaults apply, and SSL_CERT_FILE
+    # replaces them. Verification stays on: the certificate is checked against that file.
+    url, authority = tls_endpoint
+    monkeypatch.setenv("SSL_CERT_FILE", str(authority))
+    client = ArcadeClient(Settings(data_dir=tmp_path, arcade_url=url, arcade_password=SECRET,
+                                   arcade_database="tls_test"))
+    assert client.server_info()["serverName"] == "tls-test"
+    client.close()
+
+
+def test_an_empty_current_spelling_does_not_hide_the_earlier_one(tmp_path, monkeypatch):
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_PASSWORD", "")
+    monkeypatch.setenv("DEVBRAIN_ARCADE_PASSWORD", SECRET)
+    settings = Settings.load(root)
+    assert settings.arcade_password == SECRET and settings._origin["password"] == "environment"
+    monkeypatch.setenv("CAIRNMIND_ARCADE_PASSWORD", STORED)
+    assert Settings.load(root).arcade_password == STORED  # the current spelling still comes first
+
+
+# --- A server on another host is never started here ---------------------------------------------------
+
+def test_an_unreachable_remote_server_is_reported_and_nothing_is_started_or_written(tmp_path, monkeypatch):
+    from cairnmind import engine
+
+    def unreachable(self, request):
+        raise httpx.ConnectError("no route", request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", unreachable)
+    (tmp_path / "runtime" / "lib").mkdir(parents=True)
+    monkeypatch.setattr(engine, "runtime_dir", lambda settings: tmp_path / "runtime")
+    monkeypatch.setattr(engine, "resolve_java", lambda settings: "/usr/bin/java")
+    monkeypatch.setattr(engine, "probe_java", lambda java: pytest.fail("Java was run for a remote server"))
+    settings = remote(tmp_path, arcade_url="https://192.0.2.1:2480")
+    with pytest.raises(ArcadeError, match=r"ArcadeDB at https://192\.0\.2\.1:2480 is unavailable") as refused:
+        engine.ensure_engine(settings)
+    with pytest.raises(ArcadeError, match="not on this machine"):
+        engine.start_engine(settings)
+    assert SECRET not in str(refused.value)
+    assert not (tmp_path / "arcade").exists()
+    assert not any(SECRET in path.read_text(errors="replace") for path in tmp_path.rglob("*") if path.is_file())
