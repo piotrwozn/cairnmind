@@ -166,7 +166,10 @@ class CredentialStore:
         raise ValueError("Invalid credential reference.")
 
     def registered_values(self):
-        """Every key this store holds, saved or for this session: the secrets gate (#171) refuses to publish them."""
+        """Every key this instance holds: the saved ones, and the session ones set on this same instance.
+
+        The secrets gate (#171) builds a new instance in the memory service, so it sees the saved keys only;
+        a key entered for one session lives in the cockpit's own instance and is not registered there."""
         with self._mutex:
             return [*self._read().values(), *self._ephemeral.values()]
 

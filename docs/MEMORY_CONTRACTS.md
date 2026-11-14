@@ -328,13 +328,19 @@ profiles, acceptance criteria, criterion links and scope; each plan definition's
 constraints and step keys; every passage (workspace notes, review audits, releases); and every
 string of a source reference. One hit refuses the whole publication with a non-zero exit. The message
 names each file (and so the record), the field and the kind of hit, never any part of the value or
-its hash. Files of other records already in the directory are scanned too.
+its hash. Files already in the directory that this store does not write (a teammate's records, or
+records held here) are scanned too, but a hit there does not refuse: it is listed under `not_ours`,
+with the advice to fix or release it where it was written, and the file is left as it is. So a rule
+turned on after a publish, or a teammate's file, never blocks this store's own records or a release.
+Format characters (Unicode category Cf, such as zero-width spaces and soft hyphens) are removed
+before the scan, so a secret split by an invisible character is still found.
 
 What is detected:
 
 - the secrets registered with Cairnmind on the publishing machine: the service token and the ArcadeDB
-  password (the values the agent journal redacts), the API keys saved in the credential store and
-  this session's keys, and the values of the credential variables the runtime keeps from child
+  password (the values the agent journal redacts), the API keys saved in the credential store (a
+  key entered for one session only, without saving it, lives in the cockpit and is not registered
+  with the memory service that publishes), and the values of the credential variables the runtime keeps from child
   processes (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN` and the others of
   `api_credentials.credential_environment_names`, and any variable ending in `_API_KEY`,
   `_AUTH_TOKEN` or `_GITHUB_TOKEN`), each at least 8 characters, found exactly as they are. If the
@@ -387,6 +393,13 @@ needs a new release. A registered secret is never released, a release needs a re
 holds no hit, and a release in a plan file, or one that names another record, refuses the file. An
 importer keeps the release as a stub and publishes it again with the record.
 
+A release is a claim the file makes, like a review audit: nothing ties it to a person's act that a
+check can see. Someone writing a file by hand can add a release for their own value, of any kind
+but a registered secret, and `check-published` accepts it. That is why `check-published` prints
+every release in the tree (the file, the name it carries and what it lets through) when the tree is
+valid, so that the pull request's reviewer reads each one; accountability comes from git authorship
+and review, as for audits.
+
 The same scan runs without Cairnmind's store in CI: `cairnmind memory check-published DIR` refuses a
 tree with an unreleased hit, naming the file, the field and the kind, and exits 1. It applies the
 project's `.cairnmind/publication.toml` from the checkout that holds DIR at
@@ -394,6 +407,9 @@ project's `.cairnmind/publication.toml` from the checkout that holds DIR at
 exist only on the machine that publishes, so a pull request whose files were written by hand is
 checked for every other kind. An example workflow is
 [`docs/examples/published-memory-check.yml`](examples/published-memory-check.yml); it runs on the
-pull request's merge commit. `memory import-published` refuses a tree with a hit too.
+pull request's merge commit. `memory import-published` refuses a tree with an unreleased hit too,
+applying the same `.cairnmind/publication.toml` of the checkout and, on the laptop, this machine's
+registered secrets, so that nothing comes in that this store would refuse to publish. A refused
+entry whose file name itself holds a secret is not named by that name.
 
 Budgets of version 1: 1 MiB per file, 100,000 files and 256 MiB per package.
