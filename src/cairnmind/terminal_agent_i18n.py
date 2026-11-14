@@ -58,6 +58,8 @@ CATALOG = {
     "A third-party MCP tool took too long to check its arguments and is withdrawn for this run.":
         "Sprawdzenie argumentów narzędzia zewnętrznego serwera MCP trwało za długo; narzędzie wycofano do końca "
         "tego uruchomienia.",
+    "Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspace; it keeps running. Ctrl+C interrupts a turn.":
+        "Ctrl+Q nie kończy agenta. Ctrl+B, potem d: wyjście ze środowiska; działa ono dalej. Ctrl+C przerywa turę.",
 }
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",

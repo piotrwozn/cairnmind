@@ -456,6 +456,11 @@ class AgentApp(App):
                 self._turn_task.cancel()
             self.set_status("Interrupting the current operation…", kind="running")
 
+    async def action_quit(self) -> None:
+        # Textual's Ctrl+Q would end the agent and tmux would keep its pane dead (#152); the status line is the run's.
+        self.notify(self.t("Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspace; it keeps running. "
+                           "Ctrl+C interrupts a turn."), timeout=8, markup=False)
+
     async def refresh_pending(self):
         pending = self.engine.pending_actions() if self.engine is not None else []
         if inspect.isawaitable(pending):

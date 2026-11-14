@@ -70,6 +70,26 @@ async def test_a_leave_hint_does_not_hide_a_notice_from_the_mark(tmp_path, monke
         assert app.notice_history.replaced_unseen() == 1  # the hint took its place on the line
 
 
+AGENT_LEAVE = ("Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspace; it keeps running. "
+               "Ctrl+C interrupts a turn.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_ctrl_q_never_ends_the_api_agent(tmp_path, monkeypatch, language):
+    from test_api_worker import make_app, settle as settle_agent
+    from cairnmind.terminal_agent_i18n import tr as agent_tr
+    monkeypatch.setattr("cairnmind.api_worker.language_for", lambda settings: language)
+    app = make_app(tmp_path)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle_agent(app, pilot)
+        await pilot.press("ctrl+q")
+        await settle_agent(app, pilot)
+        assert app.is_running and app.return_value is None
+        assert [n.message for n in app._notifications] == [agent_tr(AGENT_LEAVE, language)]
+    assert agent_tr(AGENT_LEAVE, "pl") != AGENT_LEAVE
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("started_for_it", [True, False])
 async def test_a_view_started_again_by_a_menu_request_runs_it(tmp_path, monkeypatch, started_for_it):
