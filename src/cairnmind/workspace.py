@@ -23,6 +23,7 @@ from .cockpit_state import CockpitState, _atomic, _private_directory, _private_l
 from .config import SESSION_NAMES, Settings, drop_env
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
+from .terminal_theme import TMUX
 from .workspace_state import WorkspaceState
 
 SESSION = "cairnmind-ui"
@@ -53,6 +54,38 @@ def _status_text(value, columns):
     return result + "…"
 
 
+def tmux_chrome():
+    """tmux options that only colour the chrome, from the palette the panels use (terminal_theme.TMUX).
+
+    Every option is set quietly, so a tmux that does not know one (popup styles need 3.2 or 3.3)
+    starts as before. The pane badge shows the raw memory word; only exactly `ack` is the good colour.
+    """
+    c = {name: f"colour{cell}" for name, cell in TMUX.items()}
+    badge = ("#{?#{==:#{@cairnmind_memory},ack},#[fg=" + c["ok"] + "],#{?#{==:#{@cairnmind_memory},unavailable},#[fg="
+             + c["danger"] + "],#[fg=" + c["warn"] + "]}}#{@cairnmind_memory}#[default]")
+    border = (" #{?pane_active,#[fg=" + c["accent"] + "]#[bold],#[fg=" + c["label"] + "]}#{@cairnmind_role}#[default] "
+              "#[fg=" + c["label"] + "]#{@cairnmind_control}#[default] " + badge + " ")
+    return [
+        ("status-style", f"bg={c['bg']},fg={c['fg']}"),
+        ("window-status-style", f"fg={c['label']}"),
+        ("window-status-current-style", f"fg={c['accent']},bold"),
+        ("pane-border-lines", "single"),
+        ("pane-border-style", f"fg={c['line']}"),
+        ("pane-active-border-style", f"fg={c['accent']}"),
+        ("pane-border-format", border),
+        ("popup-border-lines", "rounded"),
+        ("popup-border-style", "fg=colour242"),
+        ("popup-style", "bg=colour233"),
+        ("message-style", "bg=colour236,fg=colour253"),
+        ("message-command-style", f"bg=colour236,fg={c['accent']}"),
+        ("mode-style", f"bg={c['select']},fg=colour255"),
+        ("copy-mode-match-style", f"bg={c['line']},fg=colour255"),
+        ("copy-mode-current-match-style", f"bg={c['accent']},fg=colour233"),
+        ("display-panes-active-colour", c["accent"]),
+        ("display-panes-colour", "colour242"),
+    ]
+
+
 def workspace_status_lines(selected, cached, slot, control, language="en"):
     """Two persistent rows fit 80 columns, including Polish and wide names.
 
@@ -60,6 +93,9 @@ def workspace_status_lines(selected, cached, slot, control, language="en"):
     connection. Only allowlisted scalars enter the display, not raw diagnostics.
     """
     from .terminal_i18n import tr
+
+    good, attention, problem, neutral = TMUX["ok"], TMUX["warn"], TMUX["danger"], TMUX["accent"]
+    separator = f"#[fg=colour{TMUX['sep']}] | #[default]"  # the same three cells, quieter than the chips
 
     def chip(label, value, color):
         return f"#[fg=colour{color}]" + tr(label, language) + ":" + value + "#[default]"
@@ -72,44 +108,44 @@ def workspace_status_lines(selected, cached, slot, control, language="en"):
     session = tr(states.get(lifecycle, "Unknown") if run_id else "None", language)
     if run_id:
         session = " ".join((_status_text(slot.get("client"), 7), _status_text(run_id, 8), session))
-    session_color = 114 if lifecycle == "running" else 203 if lifecycle in {"failed", "interrupted"} else 222
-    first = " " + chip("Project", project, 117) + " | " + chip("Session", session, session_color)
+    session_color = good if lifecycle == "running" else problem if lifecycle in {"failed", "interrupted"} else attention
+    first = " " + chip("Project", project, neutral) + separator + chip("Session", session, session_color)
 
     memory = slot.get("memory") or {}
     if selected.get("broker_available") is False or cached.get("memory_available") is False:
-        memory_text, memory_color = "Unavailable", 203
+        memory_text, memory_color = "Unavailable", problem
     elif memory.get("stale"):
-        memory_text, memory_color = "Stale", 222
+        memory_text, memory_color = "Stale", attention
     elif memory.get("status") in {"partial", "unavailable"}:
-        memory_text, memory_color = ("Partial", 222) if memory["status"] == "partial" else ("Unavailable", 203)
+        memory_text, memory_color = ("Partial", attention) if memory["status"] == "partial" else ("Unavailable", problem)
     elif memory.get("acknowledged") is True:
-        memory_text, memory_color = "ACK ready", 114
+        memory_text, memory_color = "ACK ready", good
     else:
-        memory_text, memory_color = ("ACK needed", 222) if run_id else ("Not loaded", 222)
+        memory_text, memory_color = ("ACK needed", attention) if run_id else ("Not loaded", attention)
 
     profile = next((p for p in cached.get("profiles", []) if p.get("id") == slot.get("profile_id")), {})
     auth = cached.get("auth", {}).get(slot.get("client") or profile.get("client"), {})
-    connection, connection_color = ("Configured", 222) if profile else ("Unknown", 222)
+    connection, connection_color = ("Configured", attention) if profile else ("Unknown", attention)
     if selected.get("broker_available") is False:
-        connection, connection_color = "Offline", 203
+        connection, connection_color = "Offline", problem
     elif auth.get("installation") in {"missing", "unsupported"}:
-        connection, connection_color = "Unavailable", 203
+        connection, connection_color = "Unavailable", problem
     elif auth.get("connectivity") == "unavailable":
-        connection, connection_color = "Offline", 203
+        connection, connection_color = "Offline", problem
     elif auth.get("auth") == "expired_or_rejected" or auth.get("login_required") is True:
-        connection, connection_color = "Login needed", 203
+        connection, connection_color = "Login needed", problem
     elif auth.get("usage") in {"quota_exhausted", "rate_limited"}:
-        connection, connection_color = "Limited", 203
+        connection, connection_color = "Limited", problem
     elif auth.get("error_code"):
-        connection, connection_color = "Unknown", 222
+        connection, connection_color = "Unknown", attention
     elif auth.get("auth") == "reported_signed_in" and auth.get("ready_to_launch") is True:
-        connection, connection_color = "Ready(local)", 114
+        connection, connection_color = "Ready(local)", good
 
-    ownership, ownership_color = {"controller": ("You", 114), "readonly": ("Other", 222),
-        "offline": ("Offline", 203)}.get(control, ("Unknown", 222) if run_id else ("UI", 117))
+    ownership, ownership_color = {"controller": ("You", good), "readonly": ("Other", attention),
+        "offline": ("Offline", problem)}.get(control, ("Unknown", attention) if run_id else ("UI", neutral))
     # Evaluated by tmux for EACH attached terminal, even when a pane is zoomed.
-    ownership_format = "#{?client_readonly," + chip("Control", tr("Read only", language), 222) + "," + chip("Control", tr(ownership, language), ownership_color) + "}"
-    second = " " + chip("Memory", tr(memory_text, language), memory_color) + " | " + chip("Connection", tr(connection, language), connection_color) + " | " + ownership_format
+    ownership_format = "#{?client_readonly," + chip("Control", tr("Read only", language), attention) + "," + chip("Control", tr(ownership, language), ownership_color) + "}"
+    second = " " + chip("Memory", tr(memory_text, language), memory_color) + separator + chip("Connection", tr(connection, language), connection_color) + separator + ownership_format
     return first, second
 
 
@@ -173,11 +209,9 @@ class WorkspaceManager:
                 handle.write("set -g prefix C-b\nunbind-key -a\nset -g mouse off\n"
                              "set -g default-terminal tmux-256color\nset -g status on\n"
                              "set -g status-left ' Cairnmind '\nset -g status-right ' C-b p/1/2/i/g · z powiększ · d odłącz '\n"
-                             "set -g status-style 'bg=colour234,fg=colour151'\n"
-                             "set -g pane-border-status top\nset -g pane-border-style 'fg=colour238'\n"
-                             "set -g pane-active-border-style 'fg=colour151'\n"
-                             "set -g pane-border-format ' #{@cairnmind_role} #{@cairnmind_control} #{@cairnmind_memory} '\n"
-                             "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
+                             "set -g pane-border-status top\n"
+                             + "".join(f"set -gq {option} '{value}'\n" for option, value in tmux_chrome())
+                             + "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
                              "set -g allow-passthrough off\nset -g history-limit 5000\n")
         info = self.config.stat()
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
@@ -326,7 +360,9 @@ class WorkspaceManager:
                 self._layout()
             self._recover_ui_panels()
             self._bindings()
-            self.tmux("set-option", "-g", "pane-border-format", " #{@cairnmind_role} #{@cairnmind_control} #{@cairnmind_memory} ")
+            # Live as well as in the config: the config file is written once and is not rewritten.
+            for option, value in tmux_chrome():
+                self.tmux("set-option", "-gq", option, value)
             self.tmux("set-option", "-g", "status-right-length", "90")
             self.tmux("set-option", "-g", "status-right",
                       "#{?client_readonly, READ ONLY · C-b d: detach , C-b Space: commands · C-b ?: help · C-b Tab: next · C-b d: detach }")
@@ -903,9 +939,10 @@ def main():
     elif args.toggle_zoom:
         manager.toggle_zoom()
     elif args.placeholder:
-        print("\033[2J\033[H\033[1;32mCairnmind · Workspace\033[0m\n")
-        print("Open a project, choose your assistant, then select Start work.\n")
-        print("Browsing memory never starts a model.\nC-b Space: commands · C-b p: projects · C-b ?: help · C-b d: detach")
+        title, quiet = f"\033[1;38;5;{TMUX['accent']}m", f"\033[38;5;{TMUX['label']}m"
+        print(f"\033[2J\033[H{title}Cairnmind · Workspace\033[0m\n")
+        print(f"{quiet}Open a project, choose your assistant, then select Start work.\n")
+        print("Browsing memory never starts a model.\nC-b Space: commands · C-b p: projects · C-b ?: help · C-b d: detach\033[0m")
         while True:
             time.sleep(3600)
 
