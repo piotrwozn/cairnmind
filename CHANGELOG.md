@@ -7,6 +7,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
 - More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
 - The key of the view in focus (for example Ctrl+B 1) now moves the keyboard back from the activity column, in Focus and in Cockpit (#149).
+- Memory extraction no longer turns the protocol of a session into proposed records. The launcher's first message, Codex's environment block and a client's tool calls are left out, and conversation messages are told that requests to the assistant, one-off questions and the assistant's narration of its own actions are not project knowledge. On the new evaluation set the share of proposals a person would reject fell from 65% to 29%, with no kept record lost (#160).
+- New command `cairnmind eval extraction` measures, with the local model, what extraction proposes from built-in agent, Claude Code and Codex conversations against the records a person would keep (#160).
 
 ## 0.10.0
 
