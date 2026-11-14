@@ -24,7 +24,7 @@ from .config import SESSION_NAMES, Settings, drop_env
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
 from .terminal_theme import TMUX
-from .workspace_state import WorkspaceState
+from .workspace_state import UI_COMMANDS, WorkspaceState
 
 SESSION = "cairnmind-ui"
 MINIMUM = (140, 42)
@@ -912,7 +912,7 @@ def main():
     parser.add_argument("--finding", action="store_true")
     parser.add_argument("--finding-ui", action="store_true")
     parser.add_argument("--next-view", action="store_true")
-    parser.add_argument("--ui-command", choices=("search", "add_project", "start_work", "connections", "sessions", "memory", "more", "settings"))
+    parser.add_argument("--ui-command", choices=UI_COMMANDS)
     parser.add_argument("--client-pid", type=int)
     parser.add_argument("--client-tty")
     args = parser.parse_args()
