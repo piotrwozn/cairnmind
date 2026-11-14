@@ -182,7 +182,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
-            "/memory/snapshot", "/memory/import"})
+            "/memory/snapshot", "/memory/import", "/memory/publish", "/memory/import-published"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
         if session_id:
@@ -1186,6 +1186,12 @@ def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None
     if worktree is not None:
         params["worktree"] = str(worktree.expanduser().resolve())
     output(request(ctx.obj, "GET", "/memory/status", start_service=False, params=params))
+
+
+# Published team memory (#170): publish, check-published, import-published, show-published, confirm-plan.
+from cairnmind.cli_published import register as _register_published  # noqa: E402
+
+_register_published(memory_app, initialized)
 
 
 @app.command()

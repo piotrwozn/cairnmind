@@ -76,6 +76,11 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
         raise ValueError("Invalid finding key")
     # No scope-bearing key (root, worktree, worktree_root, path): a finding belongs to the whole project.
     metadata["source_timestamp"] = (now or datetime.now(timezone.utc)).isoformat()
+    if not session_id:
+        # Who typed it, on which branch and commit, read when it is saved: a confirmed form travels with
+        # published memory (#170) under this name, never under one read at publish time.
+        from .memory_acts import act_context
+        metadata.update(act_context(store, project_id))
     source = store.snapshot(project_id, uri, content, "manual", metadata)
     record = {"kind": kind, "status": status, "content": content, "key": key,
               "metadata": {"origin": metadata["origin"]}}

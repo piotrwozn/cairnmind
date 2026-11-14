@@ -148,6 +148,8 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         raise ValueError("Superseding requires the ID of the finding to keep")
     if action != "supersede" and keep is not None:
         raise ValueError("Only superseding takes a finding to keep")
+    from .memory_acts import act_context, row_definition_hash
+    context = act_context(store, project_id)  # Who decided, on which branch and commit (#170).
     with store.transaction() as tx:
         rows = {identifier: one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
                                  {"id": identifier, "project": project_id}, False) for identifier in (record_id, other_id)}
@@ -168,13 +170,16 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
                  "conflict_decisions": [*_ids(metadata.get("conflict_decisions")), f"{other_id}:{action}"]}
         if action == "different_scopes":
             notes["conflict_scope_note"] = reason[:500]
-        audit = {"actor": "local_user", "action": "resolve_conflict", "decision": action, "record_id": record_id,
+        audit = {"actor": "local_user", **context, "action": "resolve_conflict", "decision": action, "record_id": record_id,
                  "other_record_id": other_id, "marked_as": marked, "kept_record_id": keep, "reason": reason, "at": utc_now(),
                  "versions": {record_id: expected_version, other_id: other_expected_version},
                  "previous_status": {record_id: candidate["status"], other_id: existing["status"]},
                  "status": "confirmed" if action == "supersede" else None,
                  "content_sha256": {identifier: hashlib.sha256(row["content"].encode()).hexdigest()
                                     for identifier, row in rows.items()}}
+        if any(row["kind"] == "task" for row in rows.values()):
+            audit["definition_sha256"] = {identifier: row_definition_hash(row["content"], row.get("metadata"))
+                                          for identifier, row in rows.items() if row["kind"] == "task"}
         # The same address and origin as a review note: it documents a decision and never
         # counts as evidence that a finding is true, nor as the time of its evidence.
         source = store.snapshot(project_id, "review://" + str(uuid4()), json_text(audit), "manual",

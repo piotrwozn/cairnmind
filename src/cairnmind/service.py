@@ -205,6 +205,22 @@ class MemoryImportBody(MemoryInspectBody):
     packet_id: str | None = None
 
 
+class MemoryPublishBody(MemorySnapshotBody):
+    model_config = {"extra": "forbid"}
+    preview: bool = Field(default=False, strict=True)
+
+
+class MemoryImportPublishedBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    path: str = Field(min_length=1, max_length=4096)
+    project: str = Field(min_length=1)
+    dry_run: bool = Field(default=False, strict=True)
+    bind: bool = Field(default=False, strict=True)
+    take_published: list[str] = Field(default_factory=list, max_length=1000)
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
 class MemorySettingsBody(MemorySnapshotBody):
     enabled: bool = Field(strict=True)
     interval_minutes: int = Field(default=15, ge=1, le=10080, strict=True)
@@ -614,11 +630,43 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         forget_index_signature(store, pid)
         return result
 
+    @app.post("/memory/publish", dependencies=auth)
+    async def memory_publish(body: MemoryPublishBody):
+        # Team memory (#170): one file per confirmed record, written into the worktree; never committed.
+        from cairnmind.memory_published import Publisher
+        pid = project(body.project)["id"]
+        if body.preview:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+            return await asyncio.to_thread(Publisher(store).publish, pid, scope, preview=True)
+        scope, authorize = await asyncio.to_thread(
+            memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
+        return await asyncio.to_thread(Publisher(store).publish, pid, scope, authorize=authorize)
+
+    @app.post("/memory/import-published", dependencies=auth)
+    async def memory_import_published(body: MemoryImportPublishedBody):
+        from cairnmind.memory_published_import import PublishedImporter
+        pid = project(body.project)["id"]
+        authorize = None
+        if body.dry_run:
+            await asyncio.to_thread(read_scope, pid, None, body.session_id)
+        else:
+            _, authorize = await asyncio.to_thread(memory_write_authorization, pid, None, body.session_id,
+                                                   body.packet_id)
+        result = await asyncio.to_thread(PublishedImporter(store).import_published, body.path, pid,
+                                         dry_run=body.dry_run, bind=body.bind, take_published=body.take_published,
+                                         authorize=authorize)
+        if not body.dry_run:
+            cache.clear()
+        return result
+
     @app.get("/memory/status", dependencies=auth)
     async def memory_status(project: str, worktree: str | None = None, session_id: str | None = None):
         pid = store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, worktree, session_id)
-        return await asyncio.to_thread(memory.status, pid, scope)
+        result = await asyncio.to_thread(memory.status, pid, scope)
+        from cairnmind.memory_published import publication_status
+        result["published"] = await asyncio.to_thread(publication_status, store, pid, scope)
+        return result
 
     @app.patch("/memory/settings", dependencies=auth)
     async def memory_settings(body: MemorySettingsBody):
