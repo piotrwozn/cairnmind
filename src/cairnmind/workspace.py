@@ -628,18 +628,34 @@ class WorkspaceManager:
             return
         selected = self.state.read()
         dimensions = self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_width} #{window_height} #{window_zoomed_flag}").stdout.split()
-        width, height, zoomed = map(int, dimensions)
-        preference = CockpitState(self.settings).load().get("view", "focus")
+        window_size = tuple(map(int, dimensions[:2]))
+        zoomed = int(dimensions[2])
+        width, height = column.terminal_size(self, SESSION, panes["sidebar"], *window_size)
+        preferences = CockpitState(self.settings).load()
+        preference = preferences.get("view", "focus")
+        beside = column.beside(preferences, width)  # Focus with the activity column (#149)
+        if not beside and column.narrow(self, panes["sidebar"], width, height):
+            self._last_layout = None
         # window_height excludes the two persistent status rows; MINIMUM is
         # the user's complete terminal geometry, not just the pane area.
         compact = preference == "focus" or width < MINIMUM[0] or height + 2 < MINIMUM[1]
-        activity = self._reconcile_activity(panes["sidebar"], current, dead, column.wanted(compact, width))
+        activity = self._reconcile_activity(panes["sidebar"], current, dead, column.wanted(compact, width, beside))
         if activity != current:  # adding or removing a pane unzooms the window
             zoomed = int(self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_zoomed_flag}").stdout.strip() or 0)
         focus = panes.get(selected["focus"], panes.get("client1", panes["sidebar"]))
-        layout = (width, height, len(panes), compact, activity)
+        layout = (width, height, len(panes), compact, activity, beside)
         changed_focus = selected["focus"] != self._last_focus
-        if compact:
+        if beside and activity:
+            if zoomed:
+                self.tmux("resize-pane", "-Z", "-t", panes["sidebar"])
+            spread = window_size != (column.spread_width(width, len(panes)), height)
+            if changed_focus or zoomed or spread or layout != self._last_layout:
+                # Only then: between two switches the person may have moved to the column (Ctrl+B a).
+                if column.spread(self, panes["sidebar"], focus, activity, list(panes.values()), width, height):
+                    self.tmux("select-pane", "-t", focus)
+                else:
+                    layout = None  # a pane this code does not know is in the window: try again later
+        elif compact:
             if changed_focus and zoomed:
                 self.tmux("resize-pane", "-Z", "-t", focus)
                 zoomed = False

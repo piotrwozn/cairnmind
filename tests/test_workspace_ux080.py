@@ -53,7 +53,9 @@ def test_focus_view_and_next_key_preserve_panes(manager):
     workspace.create(start_supervisor=False)
     before = workspace.panes()
     assert workspace.state.read()["layout"] == "compact"
-    assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == "1"
+    # At the created 180 columns the activity column is beside the focused view (#149), not zoomed.
+    assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == "0"
+    assert workspace.activity_pane() is not None
     workspace.next_view()
     assert workspace.state.read()["focus"] == "client1"
     assert workspace.panes() == before
@@ -202,12 +204,19 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
         while len(workspace.clients()) != 2 and time.monotonic() < deadline:
             time.sleep(.02)
         assert len(workspace.clients()) == 2
-        identities = workspace.tmux("list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}").stdout
+        # The layout follows the attached terminal first, as the supervisor does: the workspace was created
+        # at 180 columns, where the activity column is beside the focused view (#149), and a narrower
+        # terminal removes it. Views then change places in the window, so the identities are compared as a set.
+        workspace._layout()
+        identities = sorted(workspace.tmux("list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}").stdout.splitlines())
         for role in ("client1", "sidebar", "inspector", "graph"):
             workspace.focus(role)
             workspace._update_status(workspace.state.read())
             assert workspace.tmux("show-options", "-gv", "status").stdout.strip() == "2"
-            assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == "1"
+            # From 160 columns the activity column is beside the focused view instead of a zoom (#149).
+            beside = size[0] >= 160
+            assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == ("0" if beside else "1")
+            assert (workspace.activity_pane() is not None) == beside
             for terminal, control in ((writer, "You"), (observer, "Read only")):
                 tty = os.ttyname(terminal.slave)
                 rows = [workspace.tmux("display-message", "-p", "-c", tty,
@@ -245,7 +254,7 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
         workspace.refresh()
         line = workspace.tmux("show-options", "-gv", "status-format[1]").stdout
         assert tr("Unavailable", language) in line and tr("Offline", language) in line
-        assert workspace.tmux("list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}").stdout == identities
+        assert sorted(workspace.tmux("list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}").stdout.splitlines()) == identities
         assert all(method == "GET" and path == "/api/state" for method, path, _ in broker.calls)
     finally:
         import sys
