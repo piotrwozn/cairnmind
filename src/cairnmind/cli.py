@@ -1261,6 +1261,9 @@ def model_set(ctx: typer.Context,
                   "--credential-ref", help="env:NAME or profile:ID naming the key; never the key itself.")] = None,
               context_window: Annotated[int | None, typer.Option(
                   "--context-window", help="Chat only: the model's context in tokens.")] = None,
+              reasoning_effort: Annotated[str | None, typer.Option(
+                  "--reasoning-effort", help="Chat on an OpenAI-compatible server only: none, low, medium or high; "
+                                             "none turns thinking off where the server supports it.")] = None,
               allow_remote: Annotated[bool, typer.Option(
                   "--allow-remote", help="Consent to send memory content to a server on another computer.")] = False):
     """Choose the knowledge agent's chat or embedding model and server, after a test call to it."""
@@ -1268,7 +1271,7 @@ def model_set(ctx: typer.Context,
     try:
         result = asyncio.run(configure_role(
             ctx.obj, role, provider=provider, model=model, base_url=base_url, credential_ref=credential_ref,
-            context_window=context_window, allow_remote=allow_remote))
+            context_window=context_window, reasoning_effort=reasoning_effort, allow_remote=allow_remote))
     except (ValueError, OllamaUnavailable) as exc:
         raise typer.BadParameter(str(exc)) from None
     output(result)

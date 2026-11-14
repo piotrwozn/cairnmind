@@ -111,6 +111,7 @@ class OpenAICompatible(Ollama):
         self.role = role
         self.label = "Model server" if self.label == "Ollama" else "Local model server"
         self.tag = server_tag(profile["base_url"])
+        self.reasoning_effort = profile.get("reasoning_effort")
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
         options = {"num_predict": self.settings.answer_tokens, "temperature": 0}
@@ -121,6 +122,8 @@ class OpenAICompatible(Ollama):
         payload: dict[str, Any] = {"model": self.settings.chat_model, "messages": request_messages(messages),
                                    "stream": False, "temperature": options.get("temperature", 0),
                                    "max_tokens": options["num_predict"]}
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
         if tools:
             payload["tools"] = tools
         if schema is not None:

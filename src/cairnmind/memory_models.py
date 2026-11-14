@@ -29,6 +29,7 @@ from .ollama import Ollama, OllamaUnavailable
 
 ROLES = ("chat", "embedding")
 PROVIDERS = ("ollama", "openai_compatible")
+REASONING_EFFORTS = ("none", "low", "medium", "high")
 FIELDS = {"chat": "memory_chat", "embedding": "memory_embedding"}
 MODEL_FIELDS = {"chat": "chat_model", "embedding": "embedding_model"}
 EVALUATIONS = ("recall", "memory", "repository")
@@ -51,7 +52,7 @@ def normalize_memory_model(row: Any, role: str) -> dict:
         raise ValueError("The role is chat or embedding.")
     if not isinstance(row, dict):
         raise ValueError("Invalid memory model profile.")
-    if set(row) - {"provider", "base_url", "credential_ref", "context_window", "allow_remote"}:
+    if set(row) - {"provider", "base_url", "credential_ref", "context_window", "allow_remote", "reasoning_effort"}:
         raise ValueError("The memory model profile has unsupported fields; keys are named by a credential reference.")
     provider = row.get("provider")
     if provider not in PROVIDERS:
@@ -78,6 +79,13 @@ def normalize_memory_model(row: Any, role: str) -> dict:
         if type(window) is not int or not 4096 <= window <= 262144:
             raise ValueError("The context window is a number of tokens from 4096 to 262144.")
         result["context_window"] = window
+    effort = row.get("reasoning_effort")
+    if effort is not None:
+        if role != "chat" or provider != "openai_compatible":
+            raise ValueError("A reasoning effort is set only for the chat role on an OpenAI-compatible server.")
+        if effort not in REASONING_EFFORTS:
+            raise ValueError("The reasoning effort is none, low, medium or high.")
+        result["reasoning_effort"] = effort
     return result
 
 
@@ -342,7 +350,7 @@ async def _check(settings: Settings, role: str) -> tuple[dict, str]:
 
 async def configure_role(settings: Settings, role: str, *, provider: str, model: str, base_url: str | None = None,
                          credential_ref: str | None = None, context_window: int | None = None,
-                         allow_remote: bool = False) -> dict:
+                         reasoning_effort: str | None = None, allow_remote: bool = False) -> dict:
     """Check one role on its server, then save it. Nothing is saved when the check fails."""
     if role not in ROLES:
         raise ValueError("The role is chat or embedding.")
@@ -350,7 +358,7 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
         raise ValueError("Invalid model identifier.")
     row: dict[str, Any] = {"provider": provider}
     for key, value in (("base_url", base_url), ("credential_ref", credential_ref),
-                       ("context_window", context_window)):
+                       ("context_window", context_window), ("reasoning_effort", reasoning_effort)):
         if value is not None:
             row[key] = value
     if allow_remote:

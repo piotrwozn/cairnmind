@@ -106,6 +106,28 @@ async def test_chat_speaks_chat_completions_and_answers_in_the_ollama_shape(tmp_
     assert reply["prompt_eval_count"] == 11 and reply["eval_count"] == 3
 
 
+async def test_a_reasoning_effort_in_the_chat_profile_is_sent_with_every_chat_request(tmp_path):
+    # Ollama's /v1 endpoint thinks by default (its native think:false has no effect there); answers
+    # through it match the native path only with reasoning_effort "none".
+    settings = settings_with(tmp_path, memory_chat={**LMSTUDIO, "reasoning_effort": "none"})
+    bodies = []
+
+    def server(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=chat_reply({"role": "assistant", "content": "x"}))
+
+    async with httpx.AsyncClient(base_url=LMSTUDIO["base_url"], transport=httpx.MockTransport(server)) as http:
+        await OpenAICompatible(settings, "chat", memory_models.profile(settings, "chat"), http).chat([])
+    assert bodies[0]["reasoning_effort"] == "none"
+    for row, message in (({**LMSTUDIO, "reasoning_effort": "max"}, "reasoning"),):
+        with pytest.raises(ValueError, match=message):
+            memory_models.normalize_memory_model(row, "chat")
+    with pytest.raises(ValueError, match="chat"):
+        memory_models.normalize_memory_model({**LMSTUDIO, "reasoning_effort": "none"}, "embedding")
+    with pytest.raises(ValueError, match="OpenAI-compatible"):
+        memory_models.normalize_memory_model({"provider": "ollama", "reasoning_effort": "none"}, "chat")
+
+
 async def test_tool_calls_round_trip_with_ids_and_json_arguments(tmp_path):
     settings = settings_with(tmp_path, memory_chat=dict(LMSTUDIO))
     bodies = []
