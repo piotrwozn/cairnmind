@@ -130,6 +130,17 @@ def _distinctive(name):
     return "_" in name or any(char.isupper() for char in name[1:])
 
 
+def written_as_code(name, text):
+    """Whether ``text`` (a record's evidence) names the definition ``name`` the way a page must to count.
+
+    The same rule as for documentation: a distinctive name anywhere, any other only as code. A record
+    without a quote keeps its link, since there is nothing to judge it by.
+    """
+    if not isinstance(text, str) or not text.strip() or _distinctive(name):
+        return True
+    return name in _mentions(text, re.compile(r"(?<![\w$])(" + re.escape(name) + r")(?![\w$])"))
+
+
 def _closes(fence, opened):
     """True when the fence match ``opened`` ends the block that ``fence`` began."""
     return bool(opened) and opened.group(1)[0] == fence[0] and len(opened.group(1)) >= len(fence) \
