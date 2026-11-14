@@ -2,6 +2,16 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+- The workspace keys are shown again, on the right of the active view's top border in the panels' language: all of them where the pane is wide enough, `C-b ?: help` at 80 columns, and `Read only · C-b d: detach` on a read-only terminal; the two status rows are unchanged (#161).
+- When another project is shown, from the sidebar or from anywhere else, a notice about the earlier project leaves the notice line; it stays in Notices under its project and the mark counts it. The memory inspector's import confirmation belongs to the project it imported into and stays on the line (#161).
+- The memory badge on an assistant's pane border says why an acknowledged packet no longer holds, for example `stale: memory changed after ACK` after a tool result or checkpoint changed memory (#161).
+- `cairnmind memory status` checks only the newest manifest, so it answers quickly for a large project; its `latest` reads `manifest_valid` with `objects_checked: false`, and `memory inspect` and import still check every object (#161).
+- `cairnmind workspace stop --clients` lists a run the client service no longer knows under `clients_unknown` and forgets it, instead of reporting `client_stop_unavailable`; the broker answers 404 for such a run, and an assistant pane whose run it no longer knows now ends with "The session changed." instead of showing offline and retrying (#161).
+- Two memory inspector texts that showed in Polish in an English panel, the source view's raw record choice and the refusal to review a historical version, are now translated (#161).
+- The panels' labels and messages, the stale workspace message and the synthetic preview's answers are written in English and translated to Polish; nothing displayed changed (#161).
+
 ## 0.10.0
 
 - When the Copilot agent starts a new session, for example after its tool list changes, it must read and acknowledge memory again and read a file whole again before it can replace or delete that file. Before, the engine still counted what the earlier session had read (#157).
