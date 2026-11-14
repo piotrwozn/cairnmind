@@ -271,6 +271,24 @@ def test_unrecognized_or_invalid_rows_still_block_ready(workspace, tmp_path, mon
     assert not store.query("SELECT id FROM resume_acks")
 
 
+def test_ack_of_the_exact_partial_packet_says_it_is_partial_and_names_the_unknown(workspace, tmp_path, monkeypatch):
+    store, _, _, manager = workspace
+    line = '{"type":"future-claude-record","sessionId":"fixture","arbitrary":"data"}\n'
+    _, blocked = seed_legacy(workspace, tmp_path, monkeypatch, suffix=line)
+    result = manager.resume_context(blocked["session_id"])
+    packet = result["packet"]
+    assert result["status"] == "partial" and packet["unknowns"]
+    readback = {"plan": None, "task": None}
+    with pytest.raises(ValueError) as refused:
+        manager.ack(blocked["session_id"], packet["id"], packet["hash"], readback)
+    message = str(refused.value)
+    assert message.startswith("resume_required: ") and "partial" in message
+    assert "does not match" not in message and packet["unknowns"][0][:200] in message
+    with pytest.raises(ValueError, match="resume_required: ACK does not match"):
+        manager.ack(blocked["session_id"], packet["id"], "0" * 64, readback)
+    assert not store.query("SELECT id FROM resume_acks")
+
+
 @pytest.mark.parametrize("damage", ["hash", "uri", "cwd", "other_warning"])
 def test_repair_never_clears_provenance_or_scope_conflicts(workspace, tmp_path, monkeypatch, damage):
     store, _, _, manager = workspace
