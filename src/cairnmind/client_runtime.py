@@ -168,6 +168,10 @@ class NativeRuntime:
         # tmux 3.8 clears pane_pid after exit. Preserve empty fields, including
         # the trailing exit status, so absence cannot shift identity columns.
         fields = result.stdout.rstrip("\r\n").split("\t")
+        if not fields[0]:
+            # No session answered: it ended after has-session. Gone, not another process
+            # (tmux never names a session "").
+            return None
         if len(fields) != 7 or fields[:3] != [row["tmux_session"], row["id"], str(row["generation"])]:
             raise ValueError("Native terminal identity does not match its registry")
         if not re.fullmatch(r"%[0-9]+", fields[3]) or fields[5] not in {"0", "1"}:
@@ -411,6 +415,12 @@ class NativeRuntime:
     def stop(self, run_id, generation=None):
         row = self._guard(run_id, generation, live=False)
         pane = self._pane(row)
+        if row["lifecycle"] not in LIVE:
+            # Already ended: its own end (exited, failed, interrupted) stays, so it never reads as stopped by a
+            # person. A dead pane kept by tmux is still cleared.
+            if pane:
+                self._tmux("kill-session", "-t", row["tmux_session"], check=False)
+            return dict(row)
         if pane and not pane["dead"]:
             pid = pane["pid"]
             # Pane ownership plus Linux process start identity prevents PID reuse
