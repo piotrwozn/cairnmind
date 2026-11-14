@@ -20,29 +20,6 @@ from .terminal_i18n_messages import display_word
 from .terminal_safe import plain, safe_text
 
 ERROR_LIMIT = 300
-# Messages the broker client and the broker answer this form with are Polish in the code. They are
-# translated here, for this form only, so that other screens showing them keep their behaviour.
-BROKER_MESSAGES = {
-    "Lokalny broker jest niedostępny lub wymaga ponownego uruchomienia.":
-        "The local broker is unavailable or needs a restart.",
-    "Niepoprawny adres lokalnego brokera.": "The local broker address is invalid.",
-    "Niepoprawna odpowiedź lokalnego brokera.": "The local broker gave an invalid answer.",
-    "Żądanie zostało odrzucone.": "The request was refused.",
-    "Nie można uwierzytelnić lokalnej sesji.": "The local session could not be authenticated.",
-    "Niepoprawny bilet lokalnej sesji.": "The local session ticket is invalid.",
-    "Niepoprawna lokalna sesja.": "The local session is invalid.",
-    "Połączenie z lokalnym brokerem zostało przerwane.":
-        "The connection to the local broker was interrupted.",
-    "Sesja kokpitu wygasła. Uruchom cairnmind.": "The broker session expired. Run cairnmind.",
-    "Niepoprawny Host.": "Invalid Host.", "Niepoprawny Origin.": "Invalid Origin.",
-    "Niepoprawny token CSRF.": "Invalid CSRF token.",
-    "Żądanie przekracza limit.": "The request is too large.",
-    "Niepoprawny JSON.": "Invalid JSON.", "Oczekiwano obiektu JSON.": "A JSON object was expected.",
-    "Niepoprawne pola żądania.": "Invalid request fields.",
-    "Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind.":
-        "The memory service is unavailable. Restart cairnmind.",
-    "Usługa pamięci zwróciła niepoprawną odpowiedź.": "The memory service gave an invalid answer.",
-}
 
 
 def outcome_unknown(exc, sent) -> bool:
@@ -54,10 +31,9 @@ def outcome_unknown(exc, sent) -> bool:
 
 
 def detail_text(exc, translate, language) -> str:
+    """The broker's detail; its fixed sentences (terminal_i18n_messages) read in the form's language."""
     detail = getattr(exc, "detail", None)
     detail = " ".join(str(detail if detail is not None else exc).split())
-    if detail in BROKER_MESSAGES:
-        return detail if language == "pl" else BROKER_MESSAGES[detail]
     if detail.startswith("Unknown project: "):
         return translate("This project is no longer registered.")
     return translate(detail)

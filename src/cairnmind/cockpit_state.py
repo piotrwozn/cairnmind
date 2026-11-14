@@ -38,7 +38,7 @@ def normalize_path(value: str | Path) -> Path:
     """Translate an explicit Windows drive path, never invoke a shell."""
     text = str(value).strip()
     if not text or "\0" in text or len(text) > 4096:
-        raise ValueError("Podaj poprawną ścieżkę katalogu.")
+        raise ValueError("Give a valid folder path.")
     if re.match(r"^[A-Za-z]:[\\/]", text):
         try:
             result = subprocess.run(["wslpath", "-u", text], capture_output=True, text=True, timeout=3, check=True)
@@ -53,7 +53,7 @@ def _private_directory(path: Path) -> None:
     info = path.lstat()
     if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
             or stat.S_IMODE(info.st_mode) != 0o700):
-        raise ValueError("Katalog kokpitu musi należeć do użytkownika i mieć uprawnienia 0700.")
+        raise ValueError("The cockpit folder must belong to the user and have permissions 0700.")
 
 
 @contextmanager
@@ -63,7 +63,7 @@ def _private_lock(path: Path, *, blocking=True):
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
-            raise ValueError("Blokada kokpitu musi być prywatnym plikiem użytkownika.")
+            raise ValueError("The cockpit lock must be a private file of the user.")
         fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         yield
     finally:
@@ -102,10 +102,10 @@ class CockpitState:
         if not self.path.exists():
             return defaults
         if self.path.is_symlink():
-            raise ValueError("Plik ustawień kokpitu nie może być dowiązaniem.")
+            raise ValueError("The cockpit settings file must not be a link.")
         value = json.loads(self.path.read_text())
         if not isinstance(value, dict) or value.get("version") not in {1, 2}:
-            raise ValueError("Nieobsługiwana wersja ustawień kokpitu.")
+            raise ValueError("Unsupported version of the cockpit settings.")
         defaults.update(value)
         if (not isinstance(defaults["language"], str) or defaults["language"] not in {"en", "pl"}
                 or not isinstance(defaults["view"], str) or defaults["view"] not in {"focus", "cockpit"}
@@ -113,30 +113,30 @@ class CockpitState:
             raise ValueError("Invalid display preferences")
         rows = defaults["profiles"]
         if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
-            raise ValueError("Niepoprawna lista profili.")
+            raise ValueError("Invalid list of profiles.")
         defaults["profiles"] = [normalize_profile(row) for row in rows]
         if len({row["id"] for row in defaults["profiles"]}) != len(rows):
-            raise ValueError("Identyfikatory profili muszą być unikalne.")
+            raise ValueError("Profile identifiers must be unique.")
         return defaults
 
     @staticmethod
     def _slots(value, profiles):
         if not isinstance(value, list) or not 1 <= len(value) <= 32:
-            raise ValueError("Zestaw paneli musi zawierać od 1 do 32 paneli.")
+            raise ValueError("A set of panes has 1 to 32 panes.")
         result, seen = [], set()
         for row in value:
             if (not isinstance(row, dict) or set(row) != {"id", "profile_id"}
                     or not isinstance(row["id"], str) or not _ID.fullmatch(row["id"])
                     or row["id"] in seen or not isinstance(row["profile_id"], str)
                     or row["profile_id"] not in profiles):
-                raise ValueError("Niepoprawna konfiguracja panelu klienta.")
+                raise ValueError("Invalid client pane configuration.")
             result.append(dict(row))
             seen.add(row["id"])
         return result
 
     def update(self, changes: dict) -> dict:
         if not isinstance(changes, dict) or set(changes) - {"profiles", "scan_roots", "default_slots", "project_slots", "project_stages", "project_mcp_servers", "project_mcp_server_edit", "last_project", "language", "view", "reduced_motion"}:
-            raise ValueError("Nieobsługiwane pole ustawień kokpitu.")
+            raise ValueError("Unsupported field of the cockpit settings.")
         if {"project_mcp_servers", "project_mcp_server_edit"} <= set(changes):
             raise ValueError("Invalid MCP server lists.")
         with _private_lock(self.root / "preferences.lock"):
@@ -154,19 +154,19 @@ class CockpitState:
             if "profiles" in changes:
                 rows = changes["profiles"]
                 if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
-                    raise ValueError("Podaj od 1 do 32 profili.")
+                    raise ValueError("Give 1 to 32 profiles.")
                 profiles = [normalize_profile(row) for row in rows]
                 if len({row["id"] for row in profiles}) != len(profiles):
-                    raise ValueError("Identyfikatory profili muszą być unikalne.")
+                    raise ValueError("Profile identifiers must be unique.")
                 value["profiles"] = profiles
             known = {p["id"] for p in value["profiles"]}
             if "scan_roots" in changes:
                 roots = changes["scan_roots"]
                 if not isinstance(roots, list) or len(roots) > 32:
-                    raise ValueError("Niepoprawna lista katalogów skanowania.")
+                    raise ValueError("Invalid list of folders to scan.")
                 selected = list(dict.fromkeys(str(normalize_path(p)) for p in roots if isinstance(p, str)))
                 if len(selected) != len(roots) or any(not Path(p).is_dir() for p in selected):
-                    raise ValueError("Katalogi skanowania muszą istnieć i być unikalne.")
+                    raise ValueError("Folders to scan must exist and be unique.")
                 value["scan_roots"] = selected
             if "default_slots" in changes:
                 value["default_slots"] = self._slots(changes["default_slots"], known)
@@ -175,7 +175,7 @@ class CockpitState:
             if "project_slots" in changes:
                 mapping = changes["project_slots"]
                 if not isinstance(mapping, dict) or len(mapping) > 1000:
-                    raise ValueError("Niepoprawne zestawy paneli projektów.")
+                    raise ValueError("Invalid sets of project panes.")
                 value["project_slots"] = {_project_id(k): self._slots(v, known) for k, v in mapping.items()}
             else:
                 for slots in value["project_slots"].values():
@@ -208,7 +208,7 @@ class CockpitState:
 
 def _project_id(value):
     if not isinstance(value, str) or not 1 <= len(value) <= 160 or "\0" in value:
-        raise ValueError("Niepoprawny identyfikator projektu.")
+        raise ValueError("Invalid project identifier.")
     return value
 
 
@@ -233,12 +233,12 @@ class ProjectDiscovery:
 
     def start(self, roots, *, max_directories=20000):
         if not isinstance(roots, list) or not 1 <= len(roots) <= 32:
-            raise ValueError("Wybierz katalogi skanowania.")
+            raise ValueError("Choose folders to scan.")
         paths = list(dict.fromkeys(normalize_path(p) for p in roots if isinstance(p, str)))
         if len(paths) != len(roots) or any(not p.is_dir() for p in paths):
-            raise ValueError("Wybrane katalogi muszą istnieć i być unikalne.")
+            raise ValueError("The chosen folders must exist and be unique.")
         if self._thread and self._thread.is_alive():
-            raise ValueError("Skanowanie już trwa; najpierw je anuluj.")
+            raise ValueError("A scan is already running; cancel it first.")
         self._cancel = threading.Event()
         with self._lock:
             self._state = {"id": str(uuid4()), "state": "running", "roots": list(map(str, paths)), "projects": [],

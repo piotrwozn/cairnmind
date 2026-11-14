@@ -21,9 +21,46 @@ def polish_literals(name):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and POLISH.search(node.value)]
 
 
-@pytest.mark.parametrize("name", ["agent.py", "service.py"])
+@pytest.mark.parametrize("name", [
+    "agent.py", "service.py", "cockpit.py", "terminal_client.py", "terminal_graph.py", "api_profiles.py",
+    "api_credentials.py", "api_runtime.py", "cockpit_state.py", "workspace_state.py", "workspace.py"])
 def test_backend_messages_are_written_in_english(name):
-    assert polish_literals(name) == []
+    # The one sentence kept as written: the catalog translates it to English, as a pinned test expects.
+    kept = {"stale_workspace_revision: odczytaj bieżący stan i ponów operację."}
+    assert [text for text in polish_literals(name) if text not in kept] == []
+    assert all(tr(text, "en") != text for text in kept)
+
+
+@pytest.mark.parametrize(("language", "line"), [
+    ("en", "Broker 503: The memory service is unavailable. Restart cairnmind."),
+    ("pl", "Broker 503: Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind.")])
+def test_a_broker_error_reads_in_the_panel_language(language, line):
+    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal_i18n_messages import broker_error_text
+    translate = lambda text: tr(text, language)  # noqa: E731
+    assert broker_error_text(BrokerError(503, "The memory service is unavailable. Restart cairnmind."),
+                             translate) == line
+    # A broker still running the earlier version answers in Polish: an English panel reads English.
+    assert broker_error_text(BrokerError(503, "Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind."),
+                             translate) == line
+    # Any other detail is shown as it came.
+    assert broker_error_text(BrokerError(409, "Open [bold]"), translate) == "Broker 409: Open [bold]"
+
+
+@pytest.mark.asyncio
+async def test_a_panel_notice_of_a_broker_error_is_translated(tmp_path, monkeypatch):
+    from textual.widgets import Static
+
+    from cairnmind.terminal_client import BrokerError
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: "en")
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.notice(BrokerError(503, "Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind."))
+        await pilot.pause()
+        assert str(app.query_one("#panel-notice", Static).render()) == (
+            "Broker 503: The memory service is unavailable. Restart cairnmind.")
 
 
 # What `cairnmind ask` returned on the trial installation for an English question, now in English.

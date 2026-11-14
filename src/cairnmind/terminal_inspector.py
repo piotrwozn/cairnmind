@@ -11,6 +11,7 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Select, St
 
 from . import terminal_theme
 from .terminal_detail import EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts  # noqa: F401
+from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
 from .terminal_safe import plain, safe_text
@@ -438,7 +439,8 @@ class InspectorApp(ImpactView, BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             if scope == self._scope_version:
                 await self.open_entity(record["id"], "records")
-                self.notice(self.t("Review was not retried. The current version was reloaded.") + " " + str(exc), "error")
+                self.notice(self.t("Review was not retried. The current version was reloaded.") + " "
+                            + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def resolve_conflict(self):
@@ -482,7 +484,8 @@ class InspectorApp(ImpactView, BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             if scope == self._scope_version:
                 await self.load_page()
-                self.notice(self.t("The decision was not saved. The current list was reloaded.") + " " + str(exc), "error")
+                self.notice(self.t("The decision was not saved. The current list was reloaded.") + " "
+                            + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
@@ -518,7 +521,7 @@ class InspectorApp(ImpactView, BasePanel):
                 return
             cursor = result.get("next_cursor")
             if not cursor:
-                self.notice("Nie znaleziono wskazanej wersji.")
+                self.notice("The chosen version was not found.")
                 return
 
     @work(group="inspector-source-choice", exclusive=True, exit_on_error=False)

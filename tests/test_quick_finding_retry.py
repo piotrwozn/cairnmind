@@ -129,7 +129,7 @@ async def test_after_an_unclear_answer_the_next_save_finds_a_restarted_broker(tm
 
 class UnreadableWorkspace:
     def read(self):
-        raise ValueError("Nieobsługiwany lub uszkodzony stan środowiska.")
+        raise ValueError("Unsupported or damaged workspace state.")
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ async def test_failures_before_any_request_never_say_the_finding_may_be_saved(tm
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         assert text_of(app, "#finding-error") == ("Could not read the workspace state. "
-                                                  "Nieobsługiwany lub uszkodzony stan środowiska.")
+                                                  "Unsupported or damaged workspace state.")
     down = FakeBroker()
     down.connect = lambda: (_ for _ in ()).throw(BrokerError(503, "Lokalny broker jest niedostępny lub "
                                                               "wymaga ponownego uruchomienia."))

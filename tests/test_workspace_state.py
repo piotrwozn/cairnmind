@@ -33,7 +33,7 @@ def test_work_is_explicit_and_entity_selection_belongs_to_selected_project(tmp_p
     selected = {"project_id": "project-a", "entity_type": "revision", "id": "revision-id",
                 "revision": 3, "owner_type": "record", "owner_id": "record-id"}
     state.update({"selected_entity": selected})
-    with pytest.raises(ValueError, match="innego projektu"):
+    with pytest.raises(ValueError, match="another project"):
         state.update({"selected_entity": {**selected, "project_id": "project-b"}})
     state.select_project(None)
     state.update({"selected_entity": {"project_id": None, "entity_type": "inbox", "id": "unassigned"}})
