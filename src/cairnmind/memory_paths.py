@@ -37,6 +37,34 @@ def is_reserved_memory(relative: str | Path) -> bool:
     return not path.is_absolute() and any(path.is_relative_to(directory) for directory in RESERVED_DIRECTORIES)
 
 
+def nested_reserved(store, base: str | Path) -> tuple[Path, ...]:
+    """The reserved directories of every registered project root strictly below ``base``, relative to it (#174).
+
+    One repository can hold several projects, each registered at its own subdirectory and publishing
+    its memory there. What one project's memory writes is then neither indexed, fingerprinted nor
+    scope-checked as code of a project registered above it. A directory of the same name that is no
+    registered project's is ordinary files.
+    """
+    base = Path(base).resolve()
+    roots = {Path(row["path"]).resolve() for row in store.query("SELECT path FROM project_roots")
+             if isinstance(row.get("path"), str) and row["path"]}
+    return tuple(sorted(root.relative_to(base) / directory for root in roots
+                        if root != base and root.is_relative_to(base) for directory in RESERVED_DIRECTORIES))
+
+
+def is_reserved_below(relative: str | Path, directories: tuple[Path, ...]) -> bool:
+    """Whether a path relative to a root lies in one of ``directories`` (from nested_reserved)."""
+    if not directories or ".memory" not in os.fspath(relative).lower():
+        return False
+    path = Path(os.path.normpath(relative))
+    return not path.is_absolute() and any(path.is_relative_to(directory) for directory in directories)
+
+
+def git_pathspec(directories: tuple[Path, ...] = ()) -> tuple[str, ...]:
+    """GIT_PATHSPEC, also leaving out ``directories``; taken literally, since they are names of real folders."""
+    return (*GIT_PATHSPEC, *(f":(exclude,literal){directory.as_posix()}" for directory in directories))
+
+
 def snapshot_directory(root: str | Path) -> Path | None:
     """The directory of a worktree that holds a snapshot to read: the current one, else the earlier one."""
     for directory in MEMORY_DIRECTORIES:

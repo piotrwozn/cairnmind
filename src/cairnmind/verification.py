@@ -22,7 +22,7 @@ import threading
 from uuid import UUID, uuid4
 
 from .sql import clean_row, insert_document, json_text, utc_now
-from .memory_paths import GIT_PATHSPEC, is_reserved_memory
+from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 # Check profiles are declared in the first file. The second is where versions up to 0.9.0 looked.
@@ -139,15 +139,19 @@ def _entry(root, relative, index_mode, unknowns, inside=None):
     return entry
 
 
-def _manifest(root, patterns):
-    unknowns, modes = [], {}
-    for item in _git(root, "ls-files", "--stage", "-z", *GIT_PATHSPEC).split(b"\0"):
+def _manifest(root, patterns, nested=()):
+    # ``nested``: the reserved directories of projects registered below this root (#174).
+    unknowns, modes, pathspec = [], {}, git_pathspec(nested)
+
+    def reserved(relative):
+        return is_reserved_memory(relative) or is_reserved_below(relative, nested)
+    for item in _git(root, "ls-files", "--stage", "-z", *pathspec).split(b"\0"):
         if not item:
             continue
         header, raw_path = item.split(b"\t", 1)
         mode, _, stage = header.decode("ascii").split()
         relative = os.fsdecode(raw_path)
-        if is_reserved_memory(relative):
+        if reserved(relative):
             continue
         modes[relative] = mode
         if mode == "160000":
@@ -156,8 +160,8 @@ def _manifest(root, patterns):
             unknowns.append(f"unmerged Git input: {relative}")
     paths = set(modes)
     paths.update(os.fsdecode(p) for p in _git(root, "ls-files", "--others", "--exclude-standard", "-z",
-                                              *GIT_PATHSPEC).split(b"\0")
-                 if p and not is_reserved_memory(os.fsdecode(p)))
+                                              *pathspec).split(b"\0")
+                 if p and not reserved(os.fsdecode(p)))
     for pattern in patterns:
         # Path's recursive glob does not descend symlink directories.  glob's
         # recursive=True does, including cycles and external trees.
@@ -165,7 +169,7 @@ def _manifest(root, patterns):
         if not matches:
             unknowns.append(f"extra input has no matches: {pattern}")
         for match in matches:
-            if ".git" in Path(match).parts or is_reserved_memory(match):
+            if ".git" in Path(match).parts or reserved(match):
                 continue
             path = root / match
             if not path.resolve().is_relative_to(root):
@@ -173,7 +177,7 @@ def _manifest(root, patterns):
             elif path.is_dir() and not path.is_symlink():
                 for child in path.rglob("*"):
                     if (".git" not in child.relative_to(root).parts
-                            and not is_reserved_memory(child.relative_to(root))
+                            and not reserved(child.relative_to(root))
                             and (child.is_file() or child.is_symlink())):
                         paths.add(child.relative_to(root).as_posix())
             else:
@@ -185,19 +189,30 @@ def _manifest(root, patterns):
     return entries, sorted(set(unknowns))
 
 
+def require_git_tree(root):
+    """A registered root is the root of a Git worktree or a directory inside one (#174).
+
+    A project registered at a subdirectory of a repository is that directory: Git lists its files
+    alone, relative to it. HEAD is the repository's, so any commit still moves it.
+    """
+    top = Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve()
+    if root != top and not root.is_relative_to(top):
+        raise ValueError("Registered root is not inside its Git worktree")
+
+
 def capture_code_state(store, project_id, worktree=None, extra_inputs=None) -> dict:
     root = _root(store, project_id, worktree)
     patterns = _input_patterns(extra_inputs)
     result = {"status": "unknown", "worktree": str(root), "head": None, "branch": None,
               "fingerprint": None, "manifest_hash": None, "unknowns": []}
     try:
-        if Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve() != root:
-            raise ValueError("Registered root is not the Git worktree root")
+        require_git_tree(root)
+        nested = nested_reserved(store, root)
         head = _git(root, "rev-parse", "--verify", "HEAD").decode("ascii").strip()
         branch = subprocess.run(["git", "-C", str(root), "symbolic-ref", "--quiet", "--short", "HEAD"],
                                 capture_output=True, timeout=20).stdout.decode(errors="replace").strip() or None
-        first, unknowns = _manifest(root, patterns)
-        second, later_unknowns = _manifest(root, patterns)
+        first, unknowns = _manifest(root, patterns, nested)
+        second, later_unknowns = _manifest(root, patterns, nested)
         later_head = _git(root, "rev-parse", "--verify", "HEAD").decode("ascii").strip()
         if first != second or head != later_head:
             unknowns.append("worktree changed during code-state capture")

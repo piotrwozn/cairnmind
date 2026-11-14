@@ -10,6 +10,10 @@ content. Nothing imported is verified, and no review is written as this machine'
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+from .memory_paths import PUBLISHED_RELATIVE
 from .memory_published import version_projection
 from .memory_published_check import check_directory, record_row, stub_row
 from .memory_published_format import J, canonical_uuid, projection, reviewed_by, same, sha256_text
@@ -20,6 +24,43 @@ class _DryRun(Exception):
     def __init__(self, result):
         super().__init__("dry run")
         self.result = result
+
+
+def _git_top(root):
+    from .verification import _git
+    try:
+        return Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def _own_directory(tx, directory, project_id):
+    """Refuse another project's published directory (#174).
+
+    One repository can hold several projects, each publishing at its own root. A directory named
+    `.memory/cairnmind-published` belongs to the directory that holds it. It is refused when that one
+    is a root of another local project, or lies in the Git worktree of this project's root without
+    being that root: then it is another project's in the same repository, registered here or not.
+    Anything else (a teammate's checkout, a copy, a directory of another name) is decided by its
+    FORMAT.json and the binding alone.
+    """
+    if not isinstance(directory, (str, os.PathLike)):
+        return
+    path = Path(os.path.abspath(directory))
+    if path.parts[-len(PUBLISHED_RELATIVE.parts):] != PUBLISHED_RELATIVE.parts:
+        return
+    holder = path.parents[len(PUBLISHED_RELATIVE.parts) - 1].resolve()
+    roots = {Path(row["path"]).resolve() for row in tx.query(
+        "SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})}
+    if holder in roots:
+        return
+    others = {Path(row["path"]).resolve() for row in tx.query(
+        "SELECT path FROM project_roots WHERE project_id<>:project", {"project": project_id})}
+    tops = {top for top in map(_git_top, sorted(roots)) if top is not None}
+    if holder in others or any(holder.is_relative_to(top) for top in tops):
+        from .memory import MemoryConflict
+        raise MemoryConflict(f"{path} is the published memory of {holder}, not of this project's root; "
+                             "each project imports only its own directory")
 
 
 def _core(definition):
@@ -72,14 +113,14 @@ class PublishedImporter:
             with self.store.transaction() as tx:
                 if authorize is not None:
                     authorize()
-                self._apply(tx, tree, project_id, bind, take, result)
+                self._apply(tx, tree, project_id, bind, take, result, directory)
                 if dry_run:
                     raise _DryRun(result)
         except _DryRun as done:
             return done.result
         return result
 
-    def _apply(self, tx, tree, project_id, bind, take, result):
+    def _apply(self, tx, tree, project_id, bind, take, result, directory=None):
         from .memory import MemoryConflict
         project = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id})
         identity = project.get("publication_id")
@@ -92,6 +133,7 @@ class PublishedImporter:
                 if any(row.get("project_id") != project_id for row in tx.query(
                         f"SELECT project_id FROM {table} WHERE id IN :ids", {"ids": identifiers[start:start + 500]})):
                     raise MemoryConflict("A memory entity ID belongs to another local project")
+        _own_directory(tx, directory, project_id)
         if identity != tree["project_id"]:
             update_document(tx, "projects", {"publication_id": tree["project_id"]}, "id=:id", {"id": project_id})
         self._stubs(tx, tree, project_id, result)
