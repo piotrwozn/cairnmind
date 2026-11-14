@@ -91,7 +91,8 @@ def _parts(value, *, allow_root=False):
     if not parts and not allow_root:
         raise ToolError("invalid_path", "A regular file path is required")
     if any(part == ".git" for part in parts) or any(
-        parts[index:index + 2] in ((".memory", "cairnmind"), (".memory", "devbrain")) for index in range(len(parts))
+        parts[index:index + 2] in ((".memory", "cairnmind"), (".memory", "devbrain"), (".memory", "cairnmind-published"))
+        for index in range(len(parts))
     ):
         raise ToolError("protected_path", "Git internals and managed memory must use their dedicated interfaces")
     return parts
