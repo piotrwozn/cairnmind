@@ -176,13 +176,22 @@ def refuse(message: str, code: int = 2):
     raise typer.Exit(code)
 
 
-def request(settings: Settings, method: str, path: str, *, start_service: bool = True, **kwargs):
+class ServiceRefusal(Exception):
+    """The service refused a request made with ``raise_refusal=True``; the message is its sanitized reason."""
+
+
+def request(settings: Settings, method: str, path: str, *, start_service: bool = True, session: bool = True,
+            raise_refusal: bool = False, **kwargs):
+    # session=False sends no session of the launched agent (a replay asks for the logged scope, #15);
+    # raise_refusal=True raises ServiceRefusal instead of ending the command.
     if start_service:
         ensure_service(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
         refuse("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
-    if (method.upper() == "POST" and (retry_job or path in {
+    if not session:
+        pass
+    elif (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
             "/memory/snapshot", "/memory/import"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
@@ -220,6 +229,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
                 detail = response.text
             # The service's answer, not a wrong argument; shown as it is, without control characters.
             from cairnmind.terminal_safe import safe_text
+            if raise_refusal:
+                raise ServiceRefusal(safe_text(str(detail)))
             refuse(safe_text(str(detail)))
         return response.json()
 
@@ -1088,7 +1099,9 @@ def eval_replay(ctx: typer.Context, project: str,
     from cairnmind.answer_log import replay
     pid = store_for_read(ctx.obj).resolve_project(project)["id"]
     try:
-        result = replay(ctx.obj, pid, lambda payload: request(ctx.obj, "POST", "/ask", json=payload),
+        # Asked for the logged scope, not the session's, and a refusal is kept as its reason in the report.
+        result = replay(ctx.obj, pid, lambda payload: request(ctx.obj, "POST", "/ask", json=payload, session=False,
+                                                              raise_refusal=True),
                         limit=limit, report_dir=report_dir)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from None
