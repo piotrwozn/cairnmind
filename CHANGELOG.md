@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- `cairnmind store size [PROJECT] [--json]` reports how large the store is: rows and approximate bytes per collection and vector type, sources and their chunks by kind (current against replaced), vector rows per namespace, jobs per state, and the disk use of the database, backups, agent journals and engine log. For the whole store, bytes above 1,000 rows are estimated from 256 rows spread over each collection; one project's rows are summed exactly. It is read-only, starts nothing and prints no record or source text (#184).
 - Indexing files that replace a current source, and files that were deleted, now counts first what the old source leaves behind and writes each file in one transaction, up to eight small files together. The journal events of a transaction are stored in one statement. After every file of a project changed, indexing again needs about half the database requests and time on real code (Cairnmind's own source: 47% of the requests, 50% of the time), and about a quarter to a third on trees of very small files (#102).
 - In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
 - More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
