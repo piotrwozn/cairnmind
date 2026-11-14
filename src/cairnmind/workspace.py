@@ -940,6 +940,12 @@ def detach_workspace(settings):
 _ENDED = {"exited", "failed", "interrupted"}
 
 
+def _unknown_run(error):
+    """The broker answered that it has no run with this id: 404, or the 400 of a broker before 0.11."""
+    status, detail = getattr(error, "status_code", None), getattr(error, "detail", None)
+    return status == 404 or (status == 400 and detail == "Unknown native run")
+
+
 def _forget_finished(manager, finished):
     """Save what the stop did: the supervisor that would have refreshed the slots is stopped with it (#154)."""
     manager.state.merge_ids("run_ids", remove=list(finished))
@@ -958,11 +964,18 @@ def _forget_finished(manager, finished):
 def stop_workspace(settings, stop_clients=False):
     manager = WorkspaceManager(settings)
     current = manager.state.read()
-    stopped, ended, errors, finished = [], [], [], {}
+    stopped, ended, errors, finished, unknown = [], [], [], {}, []
     if stop_clients:
         for run_id in current["run_ids"]:
             try:
-                run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+                try:
+                    run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+                except Exception as error:
+                    if _unknown_run(error):
+                        # The broker keeps no such run (its records were cleared): nothing runs to stop (#161).
+                        unknown.append(run_id)
+                        continue
+                    raise
                 if run.get("lifecycle") in _ENDED:
                     # Its process has already ended: there is nothing to stop, and that is not an error.
                     ended.append(run_id)
@@ -985,8 +998,11 @@ def stop_workspace(settings, stop_clients=False):
             pass
     if finished:
         _forget_finished(manager, finished)
+    if unknown:
+        manager.state.merge_ids("run_ids", remove=unknown)
     manager.close()
-    return {"stopped": running, "clients_stopped": stopped, "clients_already_ended": ended, "errors": errors}
+    return {"stopped": running, "clients_stopped": stopped, "clients_already_ended": ended,
+            "clients_unknown": unknown, "errors": errors}
 
 
 def show_auth(settings, client, workspace_id="default"):

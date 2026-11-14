@@ -276,3 +276,44 @@ def test_stop_with_clients_skips_ended_runs_and_saves_what_it_stopped(manager, m
     saved = workspace.state.read()
     assert [slot["lifecycle"] for slot in saved["slots"]] == ["exited", "exited"]
     assert saved["run_ids"] == []
+
+
+@pytest.mark.parametrize("answer", [(404, "Unknown native run"), (400, "Unknown native run")])
+def test_stop_with_clients_forgets_a_run_the_broker_no_longer_knows(manager, monkeypatch, answer):
+    # #161: an adopted run missing from the broker's records was reported as client_stop_unavailable.
+    # 400 is how a broker before this change answers; 404 is the answer now.
+    from cairnmind import workspace as module
+    from cairnmind.terminal_client import BrokerError
+    workspace, broker, project = manager
+    workspace.create(start_supervisor=False)
+    broker.value["runs"] = [{"id": "live", "generation": 1, "project_id": project["id"], "lifecycle": "running"}]
+    workspace._adopt(["gone", "live"])
+    known = broker.request
+
+    def request(method, path, **kwargs):
+        if "/gone" in path:
+            broker.calls.append((method, path, kwargs))
+            raise BrokerError(*answer)
+        return known(method, path, **kwargs)
+    monkeypatch.setattr(broker, "request", request)
+    monkeypatch.setattr(module, "WorkspaceManager", lambda *args, **kwargs: workspace)
+    result = module.stop_workspace(workspace.settings, stop_clients=True)
+    assert result["errors"] == [] and result["clients_unknown"] == ["gone"] and result["clients_stopped"] == ["live"]
+    assert ("POST", "/api/client-runs/gone/stop") not in [(method, path) for method, path, _ in broker.calls]
+    assert workspace.state.read()["run_ids"] == []
+
+
+def test_stop_with_clients_still_reports_a_broker_that_does_not_answer(manager, monkeypatch):
+    from cairnmind import workspace as module
+    from cairnmind.terminal_client import BrokerError
+    workspace, broker, project = manager
+    workspace.create(start_supervisor=False)
+    workspace._adopt(["kept"])
+
+    def request(method, path, **kwargs):
+        raise BrokerError(503, "The local broker does not answer.")
+    monkeypatch.setattr(broker, "request", request)
+    monkeypatch.setattr(module, "WorkspaceManager", lambda *args, **kwargs: workspace)
+    result = module.stop_workspace(workspace.settings, stop_clients=True)
+    assert result["errors"] == [{"run_id": "kept", "code": "client_stop_unavailable"}] and result["clients_unknown"] == []
+    assert workspace.state.read()["run_ids"] == ["kept"]  # still adopted: it may be running
