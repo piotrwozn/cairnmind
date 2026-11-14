@@ -168,11 +168,17 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
     raise typer.BadParameter(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
 
+def refuse(message: str, code: int = 2):
+    """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
+    typer.echo(f"Error: {message}", err=True)
+    raise typer.Exit(code)
+
+
 def request(settings: Settings, method: str, path: str, *, start_service: bool = True, **kwargs):
     if start_service:
         ensure_service(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
-        raise typer.BadParameter("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
+        refuse("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
@@ -202,16 +208,17 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             response = client.request(method, settings.url + path, **kwargs)
         except httpx.HTTPError:
             if not start_service:
-                raise typer.BadParameter(
-                    "The existing Cairnmind service is unavailable; diagnostics do not start it. "
-                    "Run `cairnmind serve` explicitly.") from None
+                refuse("The existing Cairnmind service is unavailable; diagnostics do not start it. "
+                       "Run `cairnmind serve` explicitly.")
             raise
         if not response.is_success:
             try:
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
-            raise typer.BadParameter(str(detail))
+            # The service's answer, not a wrong argument; shown as it is, without control characters.
+            from cairnmind.terminal_safe import safe_text
+            refuse(safe_text(str(detail)))
         return response.json()
 
 

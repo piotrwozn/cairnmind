@@ -82,6 +82,8 @@ def test_diagnostics_require_existing_config_without_creating_it(tmp_path, monke
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), *arguments])
     assert result.exit_code == 2
     assert "cairnmind init" in result.output
+    # A refusal, not a usage error: the person passed no wrong value (#154).
+    assert "Usage:" not in result.output and "Invalid value" not in result.output
     assert not data.parent.exists()
 
 
@@ -136,6 +138,7 @@ def test_unavailable_diagnostics_do_not_autostart_service(tmp_path, monkeypatch,
     result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), *arguments])
     assert result.exit_code == 2
     assert "cairnmind serve" in plain_words(result.output)
+    assert "Usage:" not in result.output and "Invalid value" not in result.output
     assert files(settings.data_dir) == before
 
 
@@ -191,6 +194,7 @@ def test_retry_surfaces_server_conflict_without_retrying_the_request(tmp_path, m
                                          "job-one", "--expected-attempts", "0"])
     assert result.exit_code == 2
     assert "stale expected_attempts" in result.output
+    assert "Usage:" not in result.output and "Invalid value" not in result.output
     assert len(requests) == 1
 
 
