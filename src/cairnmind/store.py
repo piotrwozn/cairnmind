@@ -598,7 +598,8 @@ class Store:
     @staticmethod
     def _validate_sources(tx, project_id, sources):
         if not isinstance(sources, list) or not sources or not all(isinstance(item, str) for item in sources):
-            raise ValueError("A memory record requires at least one source ID")
+            raise ValueError("A memory record requires at least one source ID: cite a source you read, "
+                             "or the source_ids a checkpoint returns")
         for source_id in sources:
             source = one_row(tx, "SELECT project_id FROM sources WHERE id=:id", {"id": source_id}, False)
             if not source or source.get("project_id") != project_id:

@@ -296,7 +296,11 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
 
     @server.tool()
     async def remember(project: str, record: dict[str, Any], sources: list[str]) -> dict[str, Any]:
-        """Save source-backed knowledge. Use id+expected_version for updates; preserve proposal status."""
+        """Save source-backed knowledge. Use id+expected_version for updates; preserve proposal status.
+
+        A record has kind, content, key, status and metadata; a task's state goes in metadata.state.
+        An external session may send sources: [] and its report becomes the record's own unverified source.
+        """
         return await bridge.post("/remember", {"project": project, "record": record, "sources": sources})
 
     @server.tool()
