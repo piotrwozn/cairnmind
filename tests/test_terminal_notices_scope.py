@@ -189,3 +189,31 @@ async def test_a_notice_of_the_project_still_shown_stays_on_the_line(tmp_path, m
         workspace.update({"focus": "inspector"})  # a change of the state that keeps the project
         await pilot.pause(.5)
         assert "Snapshot saved." in notice_of(app)
+
+
+@pytest.mark.asyncio
+async def test_the_inspector_import_notice_belongs_to_the_new_project_and_stays_on_the_line(tmp_path, monkeypatch):
+    # #161 review: the notice was stored under the old scope (no project), so the next poll took it off the line.
+    from textual.widgets import Input
+
+    from cairnmind.terminal_inspector import InspectorApp
+    from test_terminal_panels import setup
+    settings, broker, workspace = setup(tmp_path, monkeypatch, project=False)
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.action_snapshot()
+        await settle(app, pilot)
+        await pilot.click("#memory-import")
+        await pilot.pause()
+        app.screen.query_one("#field-path", Input).value = "/projects/a/.memory/cairnmind"
+        app.screen.query_one("#field-root", Input).value = "/projects/a"
+        await pilot.click("#form-submit")
+        await settle(app, pilot)
+        await pilot.click("#memory-apply")
+        await settle(app, pilot)
+        await app._poll_workspace()  # what the 0.3 s interval does next
+        await pilot.pause(.5)
+        assert notice_of(app) == app.t("Memory imported. No client was started automatically.")
+        entry = app.notice_history.on_line()
+        assert (entry.project_id, entry.worktree) == ("project-a", "/projects/a")

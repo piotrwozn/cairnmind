@@ -646,6 +646,8 @@ class InspectorApp(ImpactView, BasePanel):
                     from .workspace import refresh_workspace
                     await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
                     await asyncio.to_thread(refresh_workspace, self.settings, self.workspace_id)
+                    # Read the new scope before the notice, so the notice belongs to it and stays on the line (#161).
+                    await self._poll_workspace()
                 self.show_detail(result)
                 self.notice(self.t("Memory imported. No client was started automatically."))
             else:
