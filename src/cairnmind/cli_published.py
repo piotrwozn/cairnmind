@@ -12,14 +12,41 @@ def register(memory_app, initialized):
     @initialized
     def memory_publish(ctx: typer.Context, project: str, worktree: Path | None = None,
                        preview: Annotated[bool, typer.Option(
-                           "--preview", help="Show what would be written, and the size, without writing.")] = False):
-        """Write the project's confirmed knowledge as one file per record under .memory/cairnmind-published/.
+                           "--preview", help="Show what would be written, and the size, without writing.")] = False,
+                       new_package: Annotated[bool, typer.Option(
+                           "--new-package", help="In a checkout that holds other packages, start this project's own.")]
+                       = False):
+        """Write the project's confirmed knowledge as one file per record where its carrier says.
 
-        Never stages, commits or pushes. Held records are listed with the reason. Exit 1 when refused."""
+        By default under .memory/cairnmind-published/; see `memory carrier`. Never stages, commits or pushes.
+        Held records are listed with the reason. Exit 1 when refused."""
         from cairnmind.cli import output, request
         payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None,
                    "preview": preview}
+        if new_package:
+            payload["new_package"] = True
         output(request(ctx.obj, "POST", "/memory/publish", json=payload))
+
+    @memory_app.command("carrier")
+    @initialized
+    def memory_carrier(ctx: typer.Context, project: str,
+                       repository: Annotated[bool, typer.Option(
+                           "--repository", help="Publish into the project's repository (the default).")] = False,
+                       checkout: Annotated[Path | None, typer.Option(
+                           "--checkout", help="Publish into a checkout of a separate memory repository.")] = None,
+                       worktree: Path | None = None):
+        """Choose where the project's published memory goes. Nothing is moved: the command says where the
+        earlier package is and what to do with it. Committing and pushing stay with you."""
+        from cairnmind.cli import output, refuse, request
+        from cairnmind.config import session_value
+        if repository == (checkout is not None):
+            raise typer.BadParameter("Give exactly one of --repository or --checkout PATH")
+        if session_value("SESSION_ID"):
+            refuse("Where published memory goes is chosen only by a person, not inside a coding session.")
+        output(request(ctx.obj, "POST", "/memory/carrier", json={
+            "project": project, "kind": "repository" if repository else "checkout",
+            "path": str(checkout.expanduser().absolute()) if checkout is not None else None,
+            **({"worktree": str(worktree.expanduser().resolve())} if worktree else {})}))
 
     @memory_app.command("check-published")
     def memory_check_published(ctx: typer.Context, path: Path):

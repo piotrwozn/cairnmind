@@ -182,7 +182,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
-            "/memory/snapshot", "/memory/import", "/memory/publish", "/memory/import-published"})
+            "/memory/snapshot", "/memory/import", "/memory/publish", "/memory/import-published",
+            "/memory/carrier"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
         if session_id:
