@@ -150,6 +150,10 @@ class Settings:
     chat_model: str = "qwen3.5:9b"
     embedding_model: str = "qwen3-embedding:0.6b"
     num_ctx: int = 16384
+    # The knowledge agent's model server for each role; None is the local Ollama at ollama_url.
+    # Checked by memory_models.normalize_memory_model. The model names stay in the two fields above.
+    memory_chat: dict | None = None
+    memory_embedding: dict | None = None
     answer_tokens: int = 1200
     max_steps: int = 8
     ask_timeout: float = 60.0
