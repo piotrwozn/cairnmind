@@ -4,6 +4,10 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- Keys of TOML files (pyproject.toml and others, not lock files) are definitions, so a question about the required Python version or the project version is shown the line that states it. A TOML file nested too deeply to be read is reported as invalid and does not stop indexing (#104).
+- A setting whose name shares one word with the question is shown when its file or class shares another word with it, such as a timeout constant in journal.py for a question about the journal timeout (#104).
+- Parameter defaults of Python functions are definitions, shown when the question names the parameter or spells its name in the question's words. `cairnmind impact` compares a parameter by its own text, so a change to its neighbour or to the decorator does not mark it as changed (#104).
+- `cairnmind impact` compares a changed TOML file key by key instead of treating it as a file it cannot compare (#104).
 - Indexing files that replace a current source, and files that were deleted, now counts first what the old source leaves behind and writes each file in one transaction, up to eight small files together. The journal events of a transaction are stored in one statement. After every file of a project changed, indexing again needs about half the database requests and time on real code (Cairnmind's own source: 47% of the requests, 50% of the time), and about a quarter to a third on trees of very small files (#102).
 - In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
 - More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
