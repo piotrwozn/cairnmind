@@ -442,7 +442,7 @@ def _process_identity(pid):
     """Linux/WSL process birth token prevents treating a reused PID as the runner."""
     try:
         # comm may contain spaces and parentheses; the suffix starts at field 3.
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        fields = Path(f"/proc/{pid}/stat").read_text(errors="replace").rsplit(")", 1)[1].split()
         return fields[19] if fields[0] != "Z" else None
     except (OSError, IndexError):
         return None
