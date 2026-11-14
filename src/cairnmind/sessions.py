@@ -1144,7 +1144,9 @@ class SessionManager:
         except (OSError, ValueError) as exc:
             raise ValueError(f"resume_required: current project scope cannot be restored ({exc})") from None
         if current["state_hash"] != packet["state_hash"]:
-            raise ValueError("resume_required: plan, task, decision, scope or code changed")
+            raise ValueError("resume_required: plan, task, decision, scope or code changed since the acknowledged "
+                             "packet (a checkpoint or decision this session saved counts too); call resume_context "
+                             "and ack_resume its new packet")
 
     def note_event(self, payload: dict, client: str) -> None:
         """Called after spool import by the service; native hook performs no DB I/O."""

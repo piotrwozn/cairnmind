@@ -191,3 +191,25 @@ def test_the_fast_path_leaves_case_to_the_platform_s_path_comparison(path):
     normalised = Path(os.path.normpath(path))
     reference = not normalised.is_absolute() and normalised.is_relative_to(Path(".memory/devbrain"))
     assert is_reserved_memory(path) is reference
+
+
+def test_the_objects_of_a_snapshot_are_not_listed_at_every_capture(workspace, monkeypatch):
+    # #158: a snapshot of a large project leaves tens of thousands of objects in the worktree, and every
+    # session status and resume captured the code state twice, listing and filtering each of them.
+    store, project, root = workspace
+    before = capture_code_state(store, project["id"])
+    for directory in (".memory/cairnmind", ".memory/devbrain"):
+        objects = root / directory / "objects"
+        objects.mkdir(parents=True)
+        for number in range(1500):
+            (objects / f"{number:064x}.json").write_text("{}")
+    (root / ".memory" / "notes.md").write_text("A note beside the snapshots\n")
+    checked = []
+    original = verification.is_reserved_memory
+    monkeypatch.setattr(verification, "is_reserved_memory", lambda path: checked.append(path) or original(path))
+    after = capture_code_state(store, project["id"])
+    assert len(checked) < 50
+    # Only the file outside the reserved directories became a new input.
+    assert before["fingerprint"] != after["fingerprint"]
+    (root / ".memory" / "notes.md").unlink()
+    assert capture_code_state(store, project["id"])["fingerprint"] == before["fingerprint"]

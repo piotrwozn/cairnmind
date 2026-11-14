@@ -242,3 +242,52 @@ def test_a_full_native_packet_stays_ready_and_never_shows_an_external_record_unm
     states = {row["id"]: row.get("evidence_state") for row in trimmed["packet"]["records"]}
     assert states == {changed["id"]: None}
     assert trimmed["packet"]["omitted_records"] == full["omitted_records"] + 1
+
+
+def test_a_field_put_beside_the_record_is_refused_by_name_and_nothing_changes(fixture):
+    bound = fixture.session("codex")
+    task = remember(fixture, bound, "Write the release notes", [fixture.note["id"]], kind="task")
+    bound = fixture.refresh(bound)
+    response = fixture.client.post("/remember", json={
+        "project": fixture.project["id"], "sources": [fixture.note["id"]], **bound,
+        "record": {"id": task["id"], "expected_version": task["version"], "state": "needs_review"}})
+    assert response.status_code == 400, response.text
+    assert "'state' belongs in record.metadata.state" in response.json()["detail"]
+    stored = fixture.record(task["id"])
+    assert stored["version"] == task["version"] and stored["metadata"]["state"] == "todo"
+    # The same move with the state where it belongs is saved.
+    moved = post(fixture, "/remember", {"project": fixture.project["id"], "sources": [fixture.note["id"]], **bound,
+                                        "record": {"id": task["id"], "expected_version": task["version"],
+                                                   "metadata": {"state": "needs_review"}}})
+    assert fixture.record(moved["id"])["metadata"]["state"] == "needs_review"
+
+
+def test_an_external_session_remembers_a_fact_after_its_ack_without_a_source_and_never_verified(fixture):
+    from cairnmind.evidence import evidence_states
+
+    bound = fixture.session("external")
+    saved = post(fixture, "/remember", {"project": fixture.project["id"], "sources": [], **bound,
+                                        "record": {"kind": "fact", "content": "The editor formats on save"}})
+    record = fixture.record(saved["id"])
+    assert record["metadata"]["origin_evidence"] == "degraded"
+    source = fixture.store.get_source(record["source_ids"][0])
+    assert source["uri"].startswith("report://") and source["content"] == "The editor formats on save"
+    assert source["metadata"]["origin_evidence"] == "degraded" and source["metadata"]["origin"] == "client"
+    assert evidence_states(fixture.store, fixture.project["id"], [record])[saved["id"]]["evidence_state"] == "degraded"
+    # A fact is not part of the state the ACK was given for: the same ACK still lets the session write.
+    post(fixture, "/remember", {"project": fixture.project["id"], "sources": [], **bound,
+                                "record": {"kind": "fact", "content": "The editor uses tabs"}})
+    # Its own checkpoint does change that state; the refusal then says what to do.
+    post(fixture, "/checkpoint", {"project": fixture.project["id"], **bound, "state": {"summary": "Formatting"}})
+    stale = fixture.client.post("/remember", json={"project": fixture.project["id"], "sources": [], **bound,
+                                                   "record": {"kind": "fact", "content": "After the checkpoint"}})
+    assert stale.status_code == 409 and "call resume_context" in stale.json()["detail"]
+
+
+def test_only_an_external_session_may_leave_out_the_source(fixture):
+    for bound in (fixture.session("codex"), None):
+        response = fixture.client.post("/remember", json={
+            "project": fixture.project["id"], "sources": [], **(bound or {}),
+            "record": {"kind": "fact", "content": "No source given"}})
+        assert response.status_code == 400 and "at least one source" in response.text
+    assert not fixture.store.query("SELECT FROM sources WHERE uri LIKE 'report://%'")

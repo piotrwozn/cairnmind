@@ -252,6 +252,23 @@ def test_cli_memory_operations_forward_current_actor_without_stale_environment_p
     assert len(calls) == 1
 
 
+def test_a_snapshot_longer_than_the_wait_says_it_goes_on_and_how_to_check(tmp_path, monkeypatch):
+    # #158: a large project took longer than the ordinary 150 s wait; the CLI said only "timed out".
+    waited = []
+    monkeypatch.setattr(cli, "ensure_service", lambda settings: None)
+
+    def handler(request):
+        waited.append(request.extensions["timeout"]["read"])
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    _transport(monkeypatch, handler)
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "memory", "snapshot", "demo"])
+    assert result.exit_code == 2
+    assert waited[0] >= 1800
+    text = " ".join(result.output.replace("│", " ").split())  # the error box wraps the message
+    assert "still being written by the service" in text and "cairnmind memory status demo" in text
+
+
 @pytest.mark.parametrize("args", [[], ["--enable", "--disable"], ["--enable", "--interval-minutes", "0"]])
 def test_invalid_auto_options_do_not_initialize(tmp_path, monkeypatch, args):
     _no_diagnostic_mutations(monkeypatch)

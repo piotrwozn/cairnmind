@@ -17,6 +17,10 @@ from pathlib import Path
 MEMORY_RELATIVE = Path(".memory/cairnmind")
 EARLIER_MEMORY_RELATIVE = Path(".memory/devbrain")
 MEMORY_DIRECTORIES = (MEMORY_RELATIVE, EARLIER_MEMORY_RELATIVE)
+# Pathspecs that keep Git from listing the reserved directories at all: a snapshot of a large project
+# holds tens of thousands of objects, and the worktree is listed at every code-state capture (#158).
+# Case-sensitive like is_reserved_memory on Linux; that check still filters what Git lists.
+GIT_PATHSPEC = ("--", ".", *(f":(exclude){directory.as_posix()}" for directory in MEMORY_DIRECTORIES))
 
 
 def is_reserved_memory(relative: str | Path) -> bool:
