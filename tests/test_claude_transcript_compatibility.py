@@ -142,6 +142,49 @@ def test_missing_required_field_is_rejected_and_unknown_extensions_are_retained(
     assert ingest._event_text(event, "claude") == ("", "metadata", "claude", True)
 
 
+def test_last_prompt_without_its_optional_prompt_copy_is_metadata(tmp_path):
+    # Claude Code 2.1.325 writes a leafUuid-only last-prompt record, often at byte 0.
+    event = technical("last-prompt", tmp_path)
+    event.pop("lastPrompt")
+    assert ingest._event_text(event, "claude") == ("", "metadata", "claude", True)
+    for field, value in (("lastPrompt", 1), ("lastPrompt", None), ("lastPrompt", ["text"]), ("leafUuid", 7)):
+        malformed = {**event, field: value, "role": "user", "content": "Must not become an instruction"}
+        assert ingest._event_text(malformed, "claude")[3] is False
+    event.pop("leafUuid")
+    assert ingest._event_text(event, "claude")[3] is False
+
+
+def test_leaf_only_last_prompt_at_byte_zero_no_longer_poisons_resume(workspace, tmp_path, monkeypatch):
+    store, project, root, manager = workspace
+    path = tmp_path / "claude-rewritten.jsonl"
+    head = {"type": "last-prompt", "leafUuid": "fixture-leaf", "sessionId": SESSION_ID}
+    path.write_text("".join(json.dumps(row) + "\n" for row in
+                            [head, *(technical(kind, root) for kind in ("mode", "permission-mode", "last-prompt"))]))
+    actual = ingest._event_text
+
+    def previous_parser(event, client):
+        if event.get("type") == "last-prompt" and "lastPrompt" not in event:
+            return "", "unknown", "claude", False
+        return actual(event, client)
+
+    # Rows archived by the earlier parser stay as transcript_unknown until a repair pass.
+    with monkeypatch.context() as previous:
+        previous.setattr(ingest, "_event_text", previous_parser)
+        previous.setattr(ingest, "_reparse_history_sources_locked", lambda *a, **kw:
+                         {"repaired": 0, "unchanged": 0, "errors": []})
+        ingest.import_history(store, path, project["id"], "claude")
+        blocked = manager.prepare(project["id"], "claude", timeout=0)
+    assert blocked["status"] == "partial"
+    assert sources(store, path)[0]["kind"] == "transcript_unknown"
+    ready = manager.resume_context(blocked["session_id"])
+    assert ready["status"] == "ready", ready["unknowns"]
+    assert sources(store, path)[0]["kind"] == "transcript"
+    assert not store.query("SELECT id FROM resume_acks")
+    fresh = tmp_path / "claude-fresh.jsonl"
+    fresh.write_text(json.dumps({**head, "sessionId": "50000000-0000-4000-8000-000000000005"}) + "\n")
+    assert ingest.import_history(store, fresh, project["id"], "claude")["unknown"] == 0
+
+
 @pytest.mark.asyncio
 async def test_eof_repair_preserves_raw_identities_vectors_jobs_and_cursor(workspace, tmp_path, monkeypatch):
     store, project, _, _ = workspace
