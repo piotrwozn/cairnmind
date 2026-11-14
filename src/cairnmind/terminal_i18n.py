@@ -483,10 +483,10 @@ CATALOG.update({
         "Etap rozpoczęty. Asystent musi potwierdzić swój pakiet wznowienia.",
     "Running check": "Trwa test",
     "Map stages in More → Plan stages.": "Przypisz etapy w Więcej → Etapy planu.",
-    "Activate a plan for this folder with cairnmind plan activate, or save a new one with "
-    "cairnmind plan save --activate.":
-        "Aktywuj plan dla tego katalogu poleceniem cairnmind plan activate albo zapisz nowy poleceniem "
-        "cairnmind plan save --activate.",
+    "Activate a plan for this folder with cairnmind plan activate PROJECT PLAN_ID, or save a new one "
+    "with cairnmind plan save PROJECT PLAN.json --idempotency-key KEY --activate.":
+        "Aktywuj plan dla tego katalogu poleceniem cairnmind plan activate PROJECT PLAN_ID albo zapisz nowy "
+        "poleceniem cairnmind plan save PROJECT PLAN.json --idempotency-key KEY --activate.",
     "Check profile for the test stage (empty: not set)": "Profil testu dla etapu test (puste: nieustawione)",
     "The profile is read from this folder's checks.toml when it runs.":
         "Profil jest odczytywany z checks.toml tego katalogu podczas uruchomienia.",

@@ -69,8 +69,8 @@ CHECK_CONTINUES = "Its result will appear in Notices when it ends."
 AGENT_STARTED = ("Stage started. Nothing is sent to the model until you write to the assistant in its panel; "
                  "it must read and acknowledge its resume packet before it changes anything.")
 MAP_HINT = "Map stages in More → Plan stages."
-PLAN_HINT = ("Activate a plan for this folder with cairnmind plan activate, or save a new one with "
-             "cairnmind plan save --activate.")
+PLAN_HINT = ("Activate a plan for this folder with cairnmind plan activate PROJECT PLAN_ID, or save a new one "
+             "with cairnmind plan save PROJECT PLAN.json --idempotency-key KEY --activate.")
 MAP_PROBLEMS = ("not_mapped", "unknown_assistant", "unavailable_assistant")
 
 

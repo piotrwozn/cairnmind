@@ -156,6 +156,10 @@ async def test_the_dialog_hint_fits_why_nothing_runs(tmp_path, monkeypatch, prob
         text = str(app.screen.value)
     assert ("Map stages" in text) == (hint == "Map stages")
     assert ("cairnmind plan activate" in text) == (hint == "cairnmind plan activate")
+    if hint == "cairnmind plan activate":
+        # Each named command carries the arguments the CLI requires, so it can be typed as shown.
+        assert "cairnmind plan activate PROJECT PLAN_ID" in text
+        assert "cairnmind plan save PROJECT PLAN.json --idempotency-key KEY --activate" in text
 
 
 @pytest.mark.asyncio
