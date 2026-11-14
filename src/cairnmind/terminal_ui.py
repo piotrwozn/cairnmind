@@ -331,6 +331,7 @@ class BasePanel(App):
         self.notice_history = NoticeHistory()  # memory only, for the life of this panel (#130)
         self._feed_lock, self._feed_rows, self._feed_sent = threading.Lock(), None, None
         self._notice_about, self._mark_text = None, ""
+        self._line_scope = None  # (project id, worktree) the workspace state held when the line got its notice
         self._scope_version = 0
         self._workspace_revision = None
         self.language = language_for(settings)
@@ -371,6 +372,7 @@ class BasePanel(App):
             line.set_class(kind == "warn", "-warn")
             line.set_class(kind == "error", "-error")
         if shown is not None:
+            self._line_scope = self._workspace_scope() if shown.plain else None
             with suppress(Exception):
                 self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind)
                 self.show_notice_mark()
@@ -425,21 +427,36 @@ class BasePanel(App):
             self.show_notice_mark()
         self.publish_notices(later=True)
 
+    def _workspace_scope(self):
+        """(project id, worktree) the workspace state holds now, as workspace_stage reads it; None if unreadable."""
+        try:
+            value = self.workspace.read()
+        except Exception:
+            return None
+        return (value.get("project_id"), value.get("worktree")) if isinstance(value, dict) else None
+
     def clear_notice_of_other_project(self, shown: dict) -> None:
         """The shown project changed (here or elsewhere): a notice the line shows about another project
-        leaves the line. It stays in Notices under its project, and the mark counts it (#161)."""
+        leaves the line. It stays in Notices under its project, and the mark counts it (#161).
+
+        A notice put on the line after the workspace state had already moved to the project shown now
+        stays: it was written for this view (for example "Project changed…", about the earlier project)."""
+        def differs(project_id, worktree):
+            # The same rule as the Notices list uses to label an entry with its project.
+            folder = shown.get("worktree")
+            return project_id != shown.get("project_id") or bool(worktree and folder and worktree != folder)
         with suppress(Exception):
             entry = self.notice_history.on_line()
-            folder = shown.get("worktree")
-            # The same rule as the Notices list uses to label an entry with its project.
-            if entry is None or (entry.project_id == shown.get("project_id")
-                                 and not (entry.worktree and folder and entry.worktree != folder)):
+            if entry is None or not differs(entry.project_id, entry.worktree):
+                return
+            if self._line_scope is not None and not differs(*self._line_scope):
                 return
             line = self.query_one("#panel-notice", Static)
             line.update("")
             line.display = False
             line.remove_class("-warn", "-error")
             self.notice_history.add("", None)  # the line no longer shows it
+            self._line_scope = None
             self.show_notice_mark()
 
     def show_notice_mark(self) -> None:
