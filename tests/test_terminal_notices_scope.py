@@ -148,3 +148,105 @@ def test_a_stored_folder_or_name_cannot_start_a_line_that_looks_like_an_entry():
     assert "\x1b" not in text and " " not in text
     head = lines[0]
     assert head.count("] ") == 1 and head.endswith("] Check finished: unit · Check did not pass.")  # one label, one line
+
+
+@pytest.mark.asyncio
+async def test_a_notice_of_one_project_leaves_the_line_when_another_project_is_opened_elsewhere(tmp_path, monkeypatch):
+    # #161: the line kept a notice of the earlier project, without a project label, until the next notice.
+    from test_terminal_notices import mark_of
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    other = tmp_path / "other"
+    other.mkdir()
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.notice("Check finished: unit · Check did not pass.", "warn")
+        await pilot.pause()
+        assert "Check did not pass" in notice_of(app)
+        # Opened from outside this sidebar: the graph or another terminal writes the workspace state.
+        workspace.update({"project_id": "project-other", "project_name": "Other project", "worktree": str(other)})
+        await wait_for_state(pilot, lambda: app.workspace_data.get("project_id") == "project-other", "the other project")
+        await pilot.pause()
+        assert notice_of(app) == "" and not app.query_one("#panel-notice").display
+        assert mark_of(app) == "[Notices: 1]"
+        text = await open_history(app, pilot)
+    line = next(line for line in text.splitlines() if "Check did not pass" in line)
+    assert "[Keyboard project" in line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("posted", ["before the switch", "after the switch"])
+async def test_a_notice_about_the_earlier_project_leaves_the_line_only_if_posted_before_the_switch(
+        tmp_path, monkeypatch, posted):
+    # #161: "Project changed…" is about the earlier project but is written after the workspace moved;
+    # the poll that then sees the change must not take it off the line. One written before the move must go.
+    from cairnmind.terminal_notices import about
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    project = broker.projects[0]
+    subject = about(project["id"], project["name"], project["root"])
+    other = tmp_path / "other"
+    other.mkdir()
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        if posted == "before the switch":
+            app.notice_for(subject, "Check finished: unit · Check passed.")
+        # No await in between: the panel's poll cannot see the switch before the notice is on the line.
+        workspace.update({"project_id": "project-other", "project_name": "Other project", "worktree": str(other)})
+        if posted == "after the switch":
+            app.notice_for(subject, "Check finished: unit · Check passed.")
+        assert app.workspace_data.get("project_id") == project["id"]  # the panel has not seen the switch yet
+        await wait_for_state(pilot, lambda: app.workspace_data.get("project_id") == "project-other", "the other project")
+        await app._poll_workspace()
+        await pilot.pause(.5)
+        entry = app.notice_history.entries[-1]
+        assert (entry.project_id, entry.worktree) == (project["id"], project["root"])
+        if posted == "after the switch":
+            assert "Check passed." in notice_of(app) and app.notice_history.on_line() is entry
+        else:
+            assert notice_of(app) == "" and app.notice_history.on_line() is None
+
+
+@pytest.mark.asyncio
+async def test_a_notice_of_the_project_still_shown_stays_on_the_line(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    other = tmp_path / "other"
+    other.mkdir()
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        workspace.update({"project_id": "project-other", "project_name": "Other project", "worktree": str(other)})
+        await wait_for_state(pilot, lambda: app.workspace_data.get("project_id") == "project-other", "the other project")
+        app.notice("Snapshot saved.")
+        await pilot.pause()
+        workspace.update({"focus": "inspector"})  # a change of the state that keeps the project
+        await pilot.pause(.5)
+        assert "Snapshot saved." in notice_of(app)
+
+
+@pytest.mark.asyncio
+async def test_the_inspector_import_notice_belongs_to_the_new_project_and_stays_on_the_line(tmp_path, monkeypatch):
+    # #161 review: the notice was stored under the old scope (no project), so the next poll took it off the line.
+    from textual.widgets import Input
+
+    from cairnmind.terminal_inspector import InspectorApp
+    from test_terminal_panels import setup
+    settings, broker, workspace = setup(tmp_path, monkeypatch, project=False)
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.action_snapshot()
+        await settle(app, pilot)
+        await pilot.click("#memory-import")
+        await pilot.pause()
+        app.screen.query_one("#field-path", Input).value = "/projects/a/.memory/cairnmind"
+        app.screen.query_one("#field-root", Input).value = "/projects/a"
+        await pilot.click("#form-submit")
+        await settle(app, pilot)
+        await pilot.click("#memory-apply")
+        await settle(app, pilot)
+        await app._poll_workspace()  # what the 0.3 s interval does next
+        await pilot.pause(.5)
+        assert notice_of(app) == app.t("Memory imported. No client was started automatically.")
+        entry = app.notice_history.on_line()
+        assert (entry.project_id, entry.worktree) == ("project-a", "/projects/a")

@@ -37,6 +37,7 @@ jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's job
 memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
 cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
 workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
+answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -50,6 +51,7 @@ app.add_typer(jobs_app, name="jobs")
 app.add_typer(memory_app, name="memory")
 app.add_typer(cockpit_app, name="cockpit")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(answers_app, name="answers")
 
 
 def output(value) -> None:
@@ -174,13 +176,22 @@ def refuse(message: str, code: int = 2):
     raise typer.Exit(code)
 
 
-def request(settings: Settings, method: str, path: str, *, start_service: bool = True, **kwargs):
+class ServiceRefusal(Exception):
+    """The service refused a request made with ``raise_refusal=True``; the message is its sanitized reason."""
+
+
+def request(settings: Settings, method: str, path: str, *, start_service: bool = True, session: bool = True,
+            raise_refusal: bool = False, **kwargs):
+    # session=False sends no session of the launched agent (a replay asks for the logged scope, #15);
+    # raise_refusal=True raises ServiceRefusal instead of ending the command.
     if start_service:
         ensure_service(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
         refuse("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
-    if (method.upper() == "POST" and (retry_job or path in {
+    if not session:
+        pass
+    elif (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
             "/memory/snapshot", "/memory/import"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
@@ -218,6 +229,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
                 detail = response.text
             # The service's answer, not a wrong argument; shown as it is, without control characters.
             from cairnmind.terminal_safe import safe_text
+            if raise_refusal:
+                raise ServiceRefusal(safe_text(str(detail)))
             refuse(safe_text(str(detail)))
         return response.json()
 
@@ -465,9 +478,13 @@ def import_command(ctx: typer.Context, path: Path, project: str | None = None, c
 @app.command()
 @initialized
 def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None = None,
-        answer_schema: Path | None = None):
+        answer_schema: Path | None = None,
+        log: Annotated[bool, typer.Option("--log", help="Keep this answer and its citations in the project's "
+                                          "answer log, for `cairnmind eval replay`.")] = False):
     payload = {"project": project, "question": question,
                "worktree": str(worktree.resolve()) if worktree else None}
+    if log:
+        payload["log"] = True
     if answer_schema is not None:
         from cairnmind.answer_contract import prepare_answer_schema
         payload["answer_schema"] = prepare_answer_schema(json.loads(answer_schema.read_text(encoding="utf-8")))
@@ -1079,6 +1096,63 @@ def _record_evaluation(settings, kind: str, result: dict) -> None:
         result["models_evaluation_recorded"] = record_passed(settings, kind, result.get("model_identities"))
 
 
+@eval_app.command("replay")
+@initialized
+def eval_replay(ctx: typer.Context, project: str,
+                limit: Annotated[int, typer.Option("--limit", help="How many distinct logged questions, newest first.")] = 20,
+                report_dir: Path | None = None):
+    """Ask the logged questions of a project again and report answers that changed status or lost sources.
+
+    Compares the status and the set of cited source addresses, not the wording. Needs the service and its
+    model; exits 1 when an answer regressed or lost sources, 3 when nothing was logged.
+    """
+    from cairnmind.answer_log import replay
+    pid = store_for_read(ctx.obj).resolve_project(project)["id"]
+    try:
+        # Asked for the logged scope, not the session's, and a refusal is kept as its reason in the report.
+        result = replay(ctx.obj, pid, lambda payload: request(ctx.obj, "POST", "/ask", json=payload, session=False,
+                                                              raise_refusal=True),
+                        limit=limit, report_dir=report_dir)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    output(result)
+    if result["status"] != "passed":
+        raise typer.Exit(3 if result["status"] == "not_run" else 1)
+
+
+@answers_app.command("list")
+def answers_list(ctx: typer.Context, project: str,
+                 limit: Annotated[int, typer.Option("--limit", help="How many answers, newest first.")] = 20):
+    """List the logged answers of a project, newest first. Asks no model and writes nothing."""
+    from cairnmind.answer_log import listing
+    pid = store_for_read(ctx.obj).resolve_project(project)["id"]
+    try:
+        output(listing(ctx.obj, pid, limit))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+
+
+@answers_app.command("show")
+def answers_show(ctx: typer.Context, project: str, answer_id: str):
+    """Show one logged answer with its question, citations, code state, model and timings."""
+    from cairnmind.answer_log import find
+    pid = store_for_read(ctx.obj).resolve_project(project)["id"]
+    try:
+        output(find(ctx.obj, pid, answer_id))
+    except (ValueError, LookupError) as exc:
+        refuse(str(exc))
+
+
+@answers_app.command("prune")
+def answers_prune(ctx: typer.Context, project: str,
+                  keep: Annotated[int, typer.Option("--keep", min=0, help="How many of the newest answers to keep; "
+                                                    "0 deletes the log.")]):
+    """Keep only the newest logged answers of a project."""
+    from cairnmind.answer_log import prune
+    pid = store_for_read(ctx.obj).resolve_project(project)["id"]
+    output(prune(ctx.obj, pid, keep))
+
+
 SNAPSHOT_WAIT_SECONDS = 1800
 
 
@@ -1418,6 +1492,8 @@ def forget(ctx: typer.Context, project: str,
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     store.forget_project(pid)
+    from cairnmind.answer_log import forget as forget_answers
+    forget_answers(ctx.obj, pid)
     output({"deleted": pid, "backups_unchanged": True})
 
 

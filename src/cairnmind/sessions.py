@@ -40,6 +40,22 @@ def origin_mark(session: dict) -> dict | None:
             "origin_history": "unarchived", "origin_evidence": "degraded"}
 
 
+STALE_REASONS = ("state_changed", "packet_changed", "ack_mismatch", "scope_unavailable", "continuity")
+
+
+def stale_reason(message: str) -> str:
+    """Why a kept ACK no longer holds, as a fixed code from the sentence require_ack raised (#161)."""
+    if "changed since the acknowledged packet" in message:
+        return "state_changed"  # a record, plan, task or code changed, a tool result's record included
+    if "fetch and acknowledge the current ready resume packet" in message:
+        return "packet_changed"
+    if "no actual model ACK" in message:
+        return "ack_mismatch"
+    if "scope cannot be restored" in message:
+        return "scope_unavailable"
+    return "continuity"
+
+
 def _hash(value: Any) -> str:
     return hashlib.sha256(json_text(value).encode("utf-8")).hexdigest()
 
@@ -1240,4 +1256,6 @@ class SessionManager:
         except ValueError as exc:
             result["ack_reason"] = str(exc)
             result["stale"] = bool(session.get("ack_id"))
+            if result["stale"]:
+                result["stale_reason"] = stale_reason(str(exc))
         return result
