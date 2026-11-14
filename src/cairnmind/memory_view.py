@@ -98,6 +98,20 @@ def _origin_line(own, sources):
     return None
 
 
+def _step_mark(own, sources):
+    """The never-verified mark of a plan step's task, in the words of its origin line; "" otherwise.
+
+    A step line prints the task's state, and with --kind plan it is the only place the task appears (#158)."""
+    if _degraded(own):
+        client = str(own.get("origin_client", ""))
+        if client.startswith("mcp:"):
+            return f" (written after a result of the third-party tool server {_line(client[4:])}; never verified)"
+        return " (written by an external client's session; never verified)"
+    if sources and all(_source_mark(row) for row in sources):
+        return " (rests only on sources from an external client's session or a third-party tool result; never verified)"
+    return ""
+
+
 def _replaced(row):
     """Ids this record replaced: its `supersedes` link and the `superseded_ids` the conflict inbox adds."""
     later = _metadata(row).get("superseded_ids")
@@ -313,7 +327,8 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
         for number, step in enumerate(row["step_ids"], 1):
             task = records[step]
             out.append(f"  {number}. [{_line(task['metadata'].get('state', 'todo'))}] "
-                       f"{_first_line(task['content'])} ({_line(step)})")
+                       f"{_first_line(task['content'])} ({_line(step)})"
+                       + _step_mark(task["metadata"], [sources.get(i) for i in task["source_ids"]]))
     if not shown_records and not shown_plans:
         if filters:
             out += ["", "Nothing in this snapshot matches the filters."]
