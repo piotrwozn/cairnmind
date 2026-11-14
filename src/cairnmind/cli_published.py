@@ -117,10 +117,14 @@ def register(memory_app, initialized):
             head_commit, head_files, head_errors = published_files(root, head)
         except ValueError as exc:
             refuse(str(exc), 2)
-        report = (compare(base_files if not base_errors else {}, head_files) if not head_errors
+        # The base is only compared with: what of it can be read is used, and each entry left out is counted.
+        report = (compare(base_files, head_files) if not head_errors
                   else {"status": "refused", "errors": head_errors, "entries": [], "counts": [], "skipped": 0})
         if base_errors and not head_errors:
-            report["skipped"] += len(base_errors)
+            if base_files:
+                report["skipped"] += len(base_errors)
+            else:
+                report["base_unreadable"] = True
         if as_json:
             output({"base": base_commit, "head": head_commit, **report})
         elif markdown:

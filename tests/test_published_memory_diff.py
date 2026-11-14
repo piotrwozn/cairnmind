@@ -322,6 +322,68 @@ def test_a_project_in_a_subdirectory_reads_its_own_directory(tmp_path):
     assert result.exit_code == 0 and "1 decision added." in result.output and "Another team" not in result.output
 
 
+def test_a_revert_of_a_memory_merge_is_reported_and_passes(tmp_path):
+    root = tmp_path / "repository"
+    repository(root)
+    decision = record("decision", "Use cookies.", "auth")
+    task = record("task", "Write the format", "format")
+    publish(root, [decision, task], "Publish")
+    git(root, "checkout", "-qb", "a")
+    publish(root, [edited(decision, text="Use secure cookies."), progressed(task, "done")], "Change on a")
+    git(root, "checkout", "-q", "main")
+    git(root, "merge", "-q", "--no-ff", "-m", "Merge a", "a")
+    merged = git(root, "rev-parse", "HEAD")
+    git(root, "revert", "--no-edit", "-m", "1", merged)
+    result = diff(tmp_path, root, merged, "HEAD")
+    # The head keeps the first revisions and drops the rest: it imports, so the pull request is not failed.
+    assert result.exit_code == 0, result.output
+    assert "1 decision reverted, 1 task reverted." in result.output
+    assert "(revision 2 removed, confirmed)" in result.output
+    assert "  Text:\n    Use cookies.\n  Before:\n    Use secure cookies.\n" in result.output
+    assert "Confirmed by" not in result.output  # The removed revisions' reviewers are not shown as acting.
+    # A head whose kept revisions differ from the base's is still refused.
+    rewritten = deepcopy(decision)
+    rewritten["revisions"][0]["at"] = at()
+    refused = compare(files_of([edited(decision, text="Use secure cookies.")]), files_of([rewritten]))
+    assert refused["status"] == "refused" and "rewritten" in refused["errors"][0][1]
+
+
+def test_a_linked_published_directory_in_a_commit_is_refused_not_read_as_empty(tmp_path):
+    root = tmp_path / "repository"
+    start = repository(root)
+    elsewhere = root / "elsewhere"
+    for path, data in files_of([record("decision", "Use cookies.", "auth")]).items():
+        (elsewhere / path).parent.mkdir(parents=True, exist_ok=True)
+        (elsewhere / path).write_bytes(data)
+    (root / ".memory").mkdir()
+    os.symlink("../elsewhere", root / ".memory" / "cairnmind-published")
+    git(root, "add", "-A", ".")
+    git(root, "commit", "-qm", "A linked directory")
+    commit, files, errors = published_files(root, "HEAD")
+    assert files == {} and errors == [(".memory/cairnmind-published", "not a directory (or a symbolic link)")]
+    result = diff(tmp_path, root, start, "HEAD")
+    assert result.exit_code == 1 and ".memory/cairnmind-published: not a directory" in result.output
+
+
+def test_a_stray_file_in_the_base_leaves_out_only_that_file(tmp_path):
+    root = tmp_path / "repository"
+    repository(root)
+    kept = record("decision", "Use cookies.", "auth")
+    publish(root, [kept], "Publish")
+    (root / ".memory" / "cairnmind-published" / "notes.txt").write_text("hello\n")
+    git(root, "add", "-A", ".")
+    git(root, "commit", "-qm", "A stray file")
+    base = git(root, "rev-parse", "HEAD")
+    commit, files, errors = published_files(root, base)
+    assert errors == [("notes.txt", "unknown entry")] and path_of(kept) in files
+    added = record("fact", "The service listens on localhost only.", "listen")
+    head = publish(root, [kept, added], "A fact")
+    result = diff(tmp_path, root, base, head)
+    assert result.exit_code == 0, result.output
+    assert "1 fact added." in result.output and "Use cookies." not in result.output
+    assert "  1 file(s) of the base could not be read and were left out." in result.output
+
+
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 

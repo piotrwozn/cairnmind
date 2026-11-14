@@ -3,9 +3,10 @@
 Two published trees are compared by ID, with no store, service or model. A new file is added (a
 new task is opened, or closed when it arrives done); new revisions of a known file are changed,
 superseded or disputed records, or tasks closed or opened again; a new plan definition is a
-redefinition; a removed file is withdrawn. Published revisions are never rewritten, so a head whose
-file no longer starts with the base's revisions is an error, and so is a head tree that would not
-import. Every entry carries the text it now has and its quoted source.
+redefinition; a removed file is withdrawn. A file that keeps only the first of the base's revisions
+is reverted (a `git revert` of the change that appended the rest). Published revisions are never
+rewritten, so a head whose revisions differ from the base's is an error, and so is a head tree that
+would not import. Every entry carries the text it now has and its quoted source.
 
 Text from the files is untrusted. The text form passes it through safe_text. The Markdown form for a
 pull request comment puts it in four-space literal blocks (Markdown renders nothing there: no markup,
@@ -30,7 +31,10 @@ BLOCK_CHARS = 4000
 KIND_ORDER = ("decision", "constraint", "fact", "question", "preference", "task", "plan")
 ACTIONS = {"confirm": "Confirmed", "dispute": "Disputed", "resolve_conflict": "Chosen in a conflict decision",
            "confirm_plan": "Confirmed with its plan", "workspace_form": "Typed as confirmed in the workspace"}
-CATEGORY_ORDER = ("added", "opened", "closed", "changed", "disputed", "superseded", "redefined", "withdrawn")
+CATEGORY_ORDER = ("added", "opened", "closed", "changed", "disputed", "superseded", "redefined", "reverted",
+                  "withdrawn")
+BASE_UNREADABLE = ("The published memory of the base commit could not be read, so every record of the head is "
+                   "shown as added.")
 
 
 def _models(files, strict):
@@ -133,6 +137,14 @@ def compare(base_files, head_files) -> dict:
             entries.append(_entry(_category(new["kind"], None, _entries_of(new)[-1], True), new, path, 0))
             continue
         before, after = _entries_of(old), _entries_of(new)
+        if old["kind"] == new["kind"] and len(after) < len(before) and all(
+                J(a) == J(b) for a, b in zip(before, after)):
+            # The head keeps the base's first revisions and drops the rest: a revert of the change that appended
+            # them. The head tree imports (a store that has them stays ahead), so it is reported, not refused.
+            entry = _entry("reverted", new, path, len(after) - 1, before[-1])
+            entry.update(revisions=list(range(len(after) + 1, len(before) + 1)), reviewed_by=[])
+            entries.append(entry)
+            continue
         if old["kind"] != new["kind"] or len(after) < len(before) or any(
                 J(a) != J(b) for a, b in zip(before, after)):
             errors.append((path, "an earlier published revision was rewritten or removed; published revisions "
@@ -172,7 +184,7 @@ def _heading(entry):
     numbers = entry["revisions"]
     word = "definition" if entry["kind"] == "plan" else "revision"
     span = f"{word} {numbers[0]}" if len(numbers) == 1 else f"{word}s {numbers[0]}-{numbers[-1]}"
-    details = [span] if entry["category"] != "withdrawn" else [f"last {span}"]
+    details = [{"withdrawn": f"last {span}", "reverted": f"{span} removed"}.get(entry["category"], span)]
     if entry.get("status"):
         details.append(entry["status"] if entry.get("previous_status") in (None, entry["status"])
                        else f"{entry['previous_status']} -> {entry['status']}")
@@ -189,6 +201,8 @@ def render_text(report, base, head) -> str:
         lines.append(safe_text(f"  {path or '(tree)'}: {reason}"))
     if report.get("skipped"):
         lines.append(f"  {report['skipped']} file(s) of the base could not be read and were left out.")
+    if report.get("base_unreadable"):
+        lines.append(f"  {BASE_UNREADABLE}")
 
     def indented(label, text):
         lines.append(f"  {label}:")
@@ -285,6 +299,8 @@ def render_markdown(report, base, head, max_chars=MAX_COMMENT_CHARS) -> str:
         out += literal_block(listing)
     if report.get("skipped"):
         out += [f"{report['skipped']} file(s) of the base commit could not be read and were left out.", ""]
+    if report.get("base_unreadable"):
+        out += [BASE_UNREADABLE, ""]
     if state == "changed":
         out += ["Names, branches and texts below are what the files say. Nothing here is verified.", ""]
     text = "\n".join(out) + "\n"
