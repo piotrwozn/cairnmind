@@ -10,6 +10,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+from conftest import plain_words
 from cairnmind import cli
 from cairnmind.config import Settings
 from cairnmind.service import create_app
@@ -265,7 +266,7 @@ def test_a_snapshot_longer_than_the_wait_says_it_goes_on_and_how_to_check(tmp_pa
     result = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "memory", "snapshot", "demo"])
     assert result.exit_code == 2
     assert waited[0] >= 1800
-    text = " ".join(result.output.replace("│", " ").split())  # the error box wraps the message
+    text = plain_words(result.output)  # the error box wraps the message and may colour it
     assert "still being written by the service" in text and "cairnmind memory status demo" in text
 
 
