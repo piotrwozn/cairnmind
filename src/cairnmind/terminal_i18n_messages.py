@@ -171,6 +171,11 @@ AGENT_MESSAGES = {**PROVIDER_MESSAGES, **ENGINE_MESSAGES}
 # Answers of the local broker (cockpit.py) and of its client (terminal_client.py). A panel shows them as
 # "Broker <status>: <detail>"; the detail is translated when it is one of these exact sentences.
 BROKER_MESSAGES = {
+    # The synthetic preview (terminal_preview) answers like a broker (#161).
+    "Synthetic preview: the operation is blocked; models and the private database are off.":
+        "Podgląd syntetyczny: operacja zablokowana; modele i prywatna baza są wyłączone.",
+    "The synthetic preview server does not answer.": "Syntetyczny serwer podglądu nie odpowiada.",
+    "Synthetic connection failure.": "Syntetyczna awaria połączenia.",
     "The local broker is unavailable or needs a restart.":
         "Lokalny broker jest niedostępny lub wymaga ponownego uruchomienia.",
     "The local broker does not answer.": "Lokalny broker nie odpowiada.",
