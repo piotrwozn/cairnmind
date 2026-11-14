@@ -162,6 +162,8 @@ class Settings:
     arcade_version: str = "26.11.1"
     java_executable: str = ""
     tmux_executable: str = ""
+    # Keep every answer of `ask` in the project's answer log (answer_log.py); off unless set to true.
+    answer_log: bool = False
 
     @property
     def url(self) -> str:
