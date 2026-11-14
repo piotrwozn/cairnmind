@@ -919,7 +919,8 @@ class SidebarApp(BasePanel):
                 if not any(p["id"] == identifier for p in rows):
                     rows.append(updated)
                 await self.request("PUT", "/api/profiles", json={"profiles": rows})
-            value = await self.push_screen_wait(FormModal("Advanced limits and credentials" if advanced else "Edit connection",
+            title = "Advanced limits and credentials" if advanced else "Edit connection" if old else "Add connection"
+            value = await self.push_screen_wait(FormModal(title,
                 fields, note="Changes apply to the next launch. Saving does not start a model.", on_submit=save))
             if value:
                 await self.load_state()
@@ -1097,7 +1098,8 @@ class SidebarApp(BasePanel):
             return
         options = [("English", "en"), ("Polski", "pl")] if choice == "language" else (
             [("Focus", "focus"), ("Cockpit", "cockpit")] if choice == "view" else [("On", "on"), ("Off", "off")])
-        selected = await self.push_screen_wait(ChoiceModal("Settings", options))
+        titles = {"language": "Language", "view": "Layout", "reduced_motion": "Reduce motion"}
+        selected = await self.push_screen_wait(ChoiceModal(titles[choice], options))
         if selected is None:
             return
         values = {choice: selected == "on" if choice == "reduced_motion" else selected}
