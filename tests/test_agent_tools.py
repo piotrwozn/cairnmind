@@ -32,11 +32,19 @@ def live(pid):
         return False
 
 
+def written(path):
+    """The shell creates the file before it writes the pid into it: an empty file is not written yet."""
+    try:
+        return path.read_text().strip().isdigit()
+    except OSError:
+        return False
+
+
 async def wait_for(path):
     deadline = time.monotonic() + 3
-    while not path.exists() and time.monotonic() < deadline:
+    while not written(path) and time.monotonic() < deadline:
         await asyncio.sleep(.01)
-    assert path.exists()
+    assert written(path)
 
 
 async def test_create_read_patch_and_delete_record_effect_before_result(executor):
