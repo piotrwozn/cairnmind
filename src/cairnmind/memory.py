@@ -429,7 +429,25 @@ def inspect_snapshot(path):
     return _summary(path, manifest)
 
 
+def _sync_directory(directory):
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _atomic_write(path, data):
+    _write_whole(path, data)
+    _sync_directory(path.parent)
+
+
+def _write_whole(path, data):
+    """Write a file whole or not at all, its content on disk; the caller syncs its directory.
+
+    The objects of a snapshot are written with this and their directory is synced once, before the
+    manifest that names them is published: one directory sync per object made a large snapshot slow (#158).
+    """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if path.is_symlink() or path.parent.is_symlink():
         raise ValueError("Memory publication cannot replace symbolic links")
@@ -441,11 +459,6 @@ def _atomic_write(path, data):
             os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -606,6 +619,7 @@ class MemoryManager:
             if (len(raw) > MAX_MANIFEST_BYTES or sum(len(rows) for rows in objects.values()) > MAX_ROWS
                     or len(raw) + sum(d["bytes"] for rows in objects.values() for d in rows) > MAX_TOTAL_BYTES):
                 raise ValueError("Memory package exceeds its publication byte or row budget")
+            written = False
             for table, rows in payload.items():
                 for descriptor, row in zip(objects[table], rows, strict=True):
                     target = path.parent / descriptor["path"]
@@ -614,7 +628,10 @@ class MemoryManager:
                         if _read(target, MAX_OBJECT_BYTES) != data:
                             raise MemoryConflict("Existing memory object changed externally")
                     else:
-                        _atomic_write(target, data)
+                        _write_whole(target, data)
+                        written = True
+            if written:
+                _sync_directory(path.parent / "objects")
             _atomic_write(path.parent / "manifests" / f"{manifest['snapshot_id']}.json", raw)
             # Compare immediately before the only mutable pointer replacement.
             if ((previous_raw is None and path.exists()) or (previous_raw is not None and _read(path, MAX_MANIFEST_BYTES) != previous_raw)):

@@ -334,3 +334,23 @@ def test_auto_tick_of_unchanged_committed_memory_does_not_republish(origin):
     assert current["last_checked_at"] and current["last_success_at"] and current["error"] is None
     manager.configure_auto(project["id"], False)
     assert manager.status(project["id"])["auto"]["enabled"] is False
+
+
+def test_the_objects_of_a_snapshot_share_one_directory_sync_before_the_manifest(origin, monkeypatch):
+    # #158: a snapshot of a large project synced the objects directory once per object.
+    manager, project = origin["manager"], origin["project"]
+    synced, real = [], portable.os.fsync
+
+    def fsync(descriptor):
+        if portable.os.path.isdir(f"/proc/self/fd/{descriptor}"):
+            synced.append(portable.os.readlink(f"/proc/self/fd/{descriptor}"))
+        return real(descriptor)
+
+    monkeypatch.setattr(portable.os, "fsync", fsync)
+    published = manager.snapshot(project["id"])
+    objects = sum(len(rows) for rows in json.loads(Path(published["path"]).read_bytes())["objects"].values())
+    folder = Path(published["path"]).parent
+    assert objects > 5 and synced.count(str(folder / "objects")) == 1
+    # The objects are synced before the manifests that name them.
+    assert synced.index(str(folder / "objects")) < synced.index(str(folder / "manifests")) < synced.index(str(folder))
+    assert inspect_snapshot(published["path"])["snapshot_id"] == published["snapshot_id"]
