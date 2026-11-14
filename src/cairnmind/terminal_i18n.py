@@ -182,6 +182,12 @@ CATALOG = {
     "Cancel": "Anuluj", "Close": "Zamknij", "Save": "Zapisz", "Continue": "Dalej",
     "Confirm": "Potwierdź", "Refresh": "Odśwież", "Details": "Szczegóły",
     "Technical details": "Szczegóły techniczne", "Hide technical details": "Ukryj szczegóły techniczne",
+    # One key line at the bottom of each dialog, and the command menu's empty state.
+    "Enter: select · Esc: back": "Enter: wybierz · Esc: wstecz",
+    "Ctrl+S: save · Esc: cancel": "Ctrl+S: zapisz · Esc: anuluj",
+    "PgUp/PgDn: scroll · Esc: close": "PgUp/PgDn: przewiń · Esc: zamknij",
+    "PgUp/PgDn: scroll · Esc: cancel": "PgUp/PgDn: przewiń · Esc: anuluj",
+    "No matching commands.": "Brak pasujących poleceń.",
     "Check the highlighted field.": "Sprawdź zaznaczone pole.", "Required field": "Pole wymagane",
     "Saving…": "Zapisywanie…", "Could not save. Your entries were kept.": "Nie udało się zapisać. Wpisane wartości zachowano.",
     "Operation completed.": "Operacja zakończona.", "Operation needs attention.": "Operacja wymaga uwagi.",

@@ -23,6 +23,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 
+from . import terminal_theme
 from .config import Settings
 from .terminal_panels import ConfirmModal
 from .terminal_safe import plain, safe_text
@@ -102,25 +103,27 @@ def incomplete_streams(events):
 class AgentApp(App):
     TITLE = "Cairnmind · Agent"
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen { background: #101816; color: #d4dfd3; }
-    Header, Footer { background: #1c2a20; color: #c3df9b; }
+    # The shared rules come first, so the approval dialog has the same frame here as in the sidebar.
+    CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
     #agent-main { height: 1fr; }
     #agent-scope, #agent-status, #agent-usage { height: auto; max-height: 4; padding: 0 1; }
-    #agent-scope { color: #c3df9b; }
-    #agent-status { color: #dcb78c; }
-    #agent-history { height: 1fr; min-height: 3; background: #101816; }
+    #agent-scope { color: $cm-strong; }
+    #agent-status { color: $cm-text; }
+    #agent-usage { color: $cm-muted; }
+    #agent-history { height: 1fr; min-height: 3; background: $cm-bg; padding: 0 1; }
     #agent-stream { height: auto; max-height: 8; padding: 0 1; }
-    #agent-prompt { height: 5; min-height: 3; border: tall #344834; background: #101a15; }
-    #agent-actions { height: 3; }
-    #agent-actions Button { min-width: 10; width: 1fr; margin-right: 0; border: tall #344834; }
-    """
+    #agent-prompt { height: 5; min-height: 3; }
+    .-short #agent-prompt { height: 3; }
+    #agent-actions { height: 1; padding: 0 1; }
+    #agent-actions Button { min-width: 10; }
+    """)
     BINDINGS = [Binding("ctrl+c", "interrupt_turn", "Interrupt", priority=True),
                 Binding("ctrl+enter", "send", "Send", priority=True),
                 Binding("ctrl+r", "resolve", "Resolve", priority=True)]
 
     def __init__(self, settings, run, profile, *, key=None, engine_factory=None, mcp_servers=None, mcp_problems=None):
         super().__init__()
+        terminal_theme.install(self)
         self.settings, self.run_record, self.profile = settings, dict(run), dict(profile)
         # Third-party MCP servers fixed for this run by the launcher (#126); API runs only.
         self.mcp_servers = list(mcp_servers or []) if self.run_record.get("client") == "api" else []
@@ -157,7 +160,11 @@ class AgentApp(App):
                 yield Button(self.t("Resolve"), id="agent-resolve", disabled=True)
         yield Footer()
 
+    def on_resize(self):
+        terminal_theme.size_classes(self)
+
     async def on_mount(self):
+        terminal_theme.size_classes(self)
         self.refresh_language()
         self.set_interval(.5, self.check_language)
         try:

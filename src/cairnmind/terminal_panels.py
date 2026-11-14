@@ -14,6 +14,7 @@ from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static, Switch
 
+from . import terminal_theme
 from .config import Settings
 from .terminal_safe import plain
 from .terminal_i18n import native_failure_notice
@@ -28,16 +29,18 @@ class ConfirmModal(MessageModal):
         self.approve = approve
 
     def compose(self):
-        from textual.containers import VerticalScroll
-        with Vertical():
+        # Every ConfirmModal asks for consent, so every one has the consent frame. The request is one
+        # Static in one colour: nothing in it is dimmed, highlighted, cut or capped.
+        with Vertical(classes="cm-dialog -consent"):
             yield Static(plain(self.t(self.heading)), classes="heading")
-            with VerticalScroll():
+            with VerticalScroll(classes="cm-dialog-body"):
                 yield Static(plain(summary_text(self.value, getattr(self.app, "language", "en"))), id="message-body")
                 if not isinstance(self.value, str):
                     yield Button(self.t("Technical details"), id="message-details")
             with Horizontal(classes="actions"):
                 yield Button(self.t(self.approve), id="confirm-yes", variant="primary")
                 yield Button(self.t("Cancel"), id="confirm-no")
+            yield Static(self.t("PgUp/PgDn: scroll · Esc: cancel"), classes="cm-hint", markup=False)
 
     @on(Button.Pressed)
     def confirm_button(self, event):
@@ -51,13 +54,7 @@ class ConfirmModal(MessageModal):
 
 class CredentialModal(LocalizedModal, ModalScreen[dict | None]):
     """Write-only credential entry; a stored secret is never loaded into this form."""
-    CSS = """
-    CredentialModal { align: center middle; background: $background 70%; }
-    CredentialModal > VerticalScroll { width: 90%; max-width: 100; height: auto; max-height: 95%;
-        background: #111a18; border: round #52684b; padding: 1 2; }
-    CredentialModal .actions { height: auto; min-height: 3; }
-    CredentialModal #credential-error { color: #e7b594; height: auto; }
-    """
+    BODY_CHROME = 9  # frame, padding, title, error line, actions and blank rows; no hint row
     BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(self, label):
@@ -65,14 +62,16 @@ class CredentialModal(LocalizedModal, ModalScreen[dict | None]):
         self.profile_label = label
 
     def compose(self):
-        with VerticalScroll():
+        with Vertical(classes="cm-dialog"):
             yield Static(plain(self.t("API key") + " — " + self.profile_label), classes="heading")
-            yield Static(self.t("Klucz pozostaje poza pamięcią projektu. Domyślnie działa tylko podczas bieżącego działania silnika."), markup=False)
-            yield Label(self.t("Nowy klucz (zapisany klucz nie jest wyświetlany)"))
-            yield Input(password=True, id="credential-key")
-            yield Label(self.t("Zapamiętaj lokalnie"))
-            yield Switch(False, id="credential-persist")
-            yield Static(self.t("Opcja zapisu tworzy prywatny plik 0600 poza projektem. Plik nie jest szyfrowany i nie trafia do snapshotu."), markup=False)
+            with VerticalScroll(classes="cm-dialog-body"):
+                yield Static(self.t("Klucz pozostaje poza pamięcią projektu. Domyślnie działa tylko podczas bieżącego działania silnika."), markup=False)
+                yield Label(self.t("Nowy klucz (zapisany klucz nie jest wyświetlany)"), classes="form-label")
+                yield Input(password=True, id="credential-key")
+                with Horizontal(id="credential-remember"):
+                    yield Switch(False, id="credential-persist")
+                    yield Label(self.t("Zapamiętaj lokalnie"))
+                yield Static(self.t("Opcja zapisu tworzy prywatny plik 0600 poza projektem. Plik nie jest szyfrowany i nie trafia do snapshotu."), markup=False, classes="cm-note")
             yield Static("", id="credential-error", markup=False)
             with Horizontal(classes="actions"):
                 yield Button(self.t("Ustaw klucz"), id="credential-save", variant="primary")
@@ -154,13 +153,7 @@ def profile_from_form(value, *, identifier, client, provider=None):
 
 
 class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
-    CSS = """
-    DiscoveryModal { align: center middle; background: $background 70%; }
-    DiscoveryModal > Vertical { width: 95%; height: 95%; background: #101816; border: round #52684b; padding: 1; }
-    DiscoveryModal DataTable { height: 1fr; }
-    DiscoveryModal .actions { height: 3; }
-    #discovery-notice { height: auto; max-height: 4; }
-    """
+    BODY_CHROME = 12  # frame, padding, title, notice (up to 4 rows), actions and blank rows; no hint row
     BINDINGS = [("escape", "close", "Close")]
 
     def __init__(self, broker):
@@ -169,10 +162,10 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
         self.rows = []
 
     def compose(self):
-        with Vertical():
+        with Vertical(classes="cm-dialog -wide"):
             yield Static(self.t("Projekty z wybranych katalogów"), classes="heading")
             yield Static(self.t("Skanowanie…"), id="discovery-notice", markup=False)
-            yield DataTable(id="discovery-rows", cursor_type="row")
+            yield DataTable(id="discovery-rows", cursor_type="row", classes="cm-dialog-body")
             with Horizontal(classes="actions"):
                 yield Button(self.t("Wybierz"), id="discovery-select", variant="primary")
                 yield Button(self.t("Anuluj skan"), id="discovery-cancel")
@@ -235,20 +228,34 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
 class SidebarApp(BasePanel):
     panel_role = "sidebar"
     TITLE = "Cairnmind"
-    CSS = BasePanel.CSS + """
+    CSS = BasePanel.CSS + terminal_theme.css("""
     #sidebar-main { height: 1fr; padding: 0 1; overflow-y: auto; }
-    #sidebar-heading { height: auto; color: #a6d8ff; text-style: bold; }
-    #project-search { height: 3; }
+    #sidebar-heading { height: auto; color: $cm-accent; text-style: bold; }
+    #project-search { height: 1; }
     #project-rows { height: 1fr; min-height: 4; }
-    #sidebar-scope { height: auto; max-height: 5; color: #edf2f7; }
+    #project-state, #sidebar-help { height: auto; color: $cm-muted; }
+    #sidebar-empty { height: 0; color: $cm-muted; }
+    #sidebar-main.-empty #project-rows { height: 1; min-height: 1; }
+    #sidebar-main.-empty #sidebar-empty { height: 1fr; content-align: center middle; text-align: center; }
+    #sidebar-scope { height: auto; max-height: 5; margin-top: 1; }
+    #project-state { margin-bottom: 1; }
+    #project-state.-warn { color: $cm-warn; }
     #project-page { height: 1fr; }
-    #project-page Button { width: 100%; margin: 0; }
-    #sidebar-empty, #project-state, #sidebar-help { height: auto; color: #b8cbe0; }
-    .sidebar-actions { height: 3; }
-    .sidebar-actions Button { width: 1fr; min-width: 8; margin-right: 0; padding: 0; }
-    .narrow .sidebar-actions { layout: vertical; height: 6; }
-    .narrow .sidebar-actions Button { width: 100%; height: 3; }
-    """
+    #project-page Button { width: 100%; max-width: 44; margin: 0; padding: 0; content-align: left middle;
+        text-align: left; }
+    #project-back { background: transparent; color: $cm-muted; }
+    #project-back:hover { color: $cm-text; }
+    #project-back:focus { background: $cm-accent; color: $cm-bg; }
+    #assistant-select { border-left: thick $cm-border; }
+    #assistant-select:focus { border-left: thick $cm-accent; }
+    #project-page #memory-open { margin-top: 1; }
+    .sidebar-actions { height: 1; margin-top: 1; }
+    .narrow .sidebar-actions { margin-top: 0; }
+    .sidebar-actions Button { width: 1fr; min-width: 8; margin: 0 1 0 0; padding: 0; }
+    .narrow .sidebar-actions { layout: vertical; height: 2; }
+    .narrow .sidebar-actions Button { width: 100%; height: 1; margin: 0; }
+    .narrow Footer { display: none; }
+    """)
     BINDINGS = [("w", "work", "Start work"), ("p", "inspect", "Open"),
                 ("r", "refresh", "Refresh"), ("m", "memory", "Memory"),
                 ("escape", "projects", "Projects"), ("slash", "search", "Search")]
@@ -264,6 +271,7 @@ class SidebarApp(BasePanel):
         self._primary_run = None
         self._launch_feedback = None
         self._launch_feedback_state = None
+        self._longest_name = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -294,7 +302,9 @@ class SidebarApp(BasePanel):
         yield Footer()
 
     def on_mount(self):
-        self.query_one("#project-rows", DataTable).add_column(self.t("Projekt"))
+        self.query_one("#project-rows", DataTable).add_column(self.t("Projekt"), key="project")
+        for identifier in ("#project-back", "#assistant-select"):
+            self.query_one(identifier, Button).styles.line_pad = 0  # the label starts at the text column
         self.show_page("projects")
         self.set_interval(.3, self._poll_workspace)
         self.set_interval(3, self.refresh_sidebar)
@@ -302,6 +312,12 @@ class SidebarApp(BasePanel):
 
     def on_resize(self, event: Resize):
         self.screen.set_class(event.size.width < 40, "narrow")
+        self.call_after_refresh(self.fill_project_rows)
+
+    def fill_project_rows(self):
+        """The cursor row spans the list; names longer than the pane keep their full text."""
+        for table in self.query("#project-rows"):
+            terminal_theme.fill_column(table, "project", self._longest_name)
 
     async def ready_panel(self):
         await self.load_state()
@@ -313,12 +329,12 @@ class SidebarApp(BasePanel):
         else:
             self._update_launch_feedback(value)
 
-    def notice(self, value):
+    def notice(self, value, kind="info"):
         # A form result or another action owns its own message. Later lifecycle
         # polls must not overwrite it with feedback from an earlier Start.
         self._launch_feedback = None
         self._launch_feedback_state = None
-        super().notice(value)
+        super().notice(value, kind)
 
     def selected_native_status(self, value=None):
         """Read the exact selected slot from fresh workspace data, not cached GETs."""
@@ -407,7 +423,10 @@ class SidebarApp(BasePanel):
             self.selected_slot_id = live["id"] if live else (slots[0]["id"] if slots else None)
         selected = next((s for s in slots if s["id"] == self.selected_slot_id), None)
         profile = next((p for p in self.data.get("profiles", []) if selected and p["id"] == selected["profile_id"]), None)
-        self.query_one("#sidebar-scope", Static).update(plain((self.workspace_data.get("project_name") or self.t("Project")) + "\n" + (self.workspace_data.get("worktree") or "")))
+        # Two parts this panel knows apart: the name stands out, the path is quiet. The text is unchanged.
+        self.query_one("#sidebar-scope", Static).update(terminal_theme.assemble([
+            ("title", self.workspace_data.get("project_name") or self.t("Project")), ("value", "\n"),
+            ("muted", self.workspace_data.get("worktree") or "")]))
         self.query_one("#assistant-select", Button).label = plain(profile["label"] if profile else self.t("Choose assistant"))
         self.query_one("#project-work", Button).disabled = not (project_id and profile)
         live = self.reusable_run(selected, profile)
@@ -427,6 +446,7 @@ class SidebarApp(BasePanel):
             labels[key] = (label, original[1], original[2])
         self.refresh_bindings()
         failure = native_failure_notice(fresh or {}, self.language)
+        self.query_one("#project-state", Static).set_class(bool(failure) and not live, "-warn")
         self.query_one("#project-state", Static).update(self.t("Resume returns to the running process. Model changes apply to its next launch.") if live else
             failure or self.t("Browsing memory does not start an assistant."))
 
@@ -502,14 +522,18 @@ class SidebarApp(BasePanel):
             return
         self._last_render_signature = signature
         table.clear()
-        for project in rows:
-            table.add_row(plain(project["name"]), key=project["id"])
+        names = [plain(project["name"]) for project in rows]
+        self._longest_name = max([name.cell_len for name in names], default=0)
+        for project, name in zip(rows, names):
+            table.add_row(name, key=project["id"])
+        self.call_after_refresh(self.fill_project_rows)
         if selected:
             for index, project in enumerate(rows):
                 if project["id"] == selected:
                     table.move_cursor(row=index)
                     break
         self.query_one("#project-inspect", Button).disabled = not rows
+        self.query_one("#sidebar-main").set_class(not rows, "-empty")
         self.query_one("#sidebar-empty", Static).update("" if rows else self.t("No matching projects. Clear the search or add a folder." if query else "No projects yet. Add a folder to begin."))
 
     @on(Input.Changed, "#project-search")
