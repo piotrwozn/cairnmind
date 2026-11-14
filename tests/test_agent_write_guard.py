@@ -363,8 +363,11 @@ def _command_request(**extra):
 
 
 async def _shown(tmp_path, monkeypatch, language, *requests):
+    from cairnmind.cockpit_state import CockpitState
     from test_api_worker import make_app
     app = make_app(tmp_path)
+    # Saved, not only set: the app re-reads the saved language every half second and would switch back.
+    CockpitState(app.settings).update({"language": language})
     app.language = language
     shown, results = [], []
     async with app.run_test(size=(100, 40)) as pilot:
