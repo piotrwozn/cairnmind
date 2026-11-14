@@ -26,7 +26,7 @@ from .runtime_selection import resolve_tmux
 from . import workspace_activity as column
 from .terminal_theme import TMUX
 from .workspace_activity import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH  # noqa: F401 (re-exported)
-from .workspace_state import WorkspaceState
+from .workspace_state import UI_COMMANDS, WorkspaceState
 
 SESSION = "cairnmind-ui"
 MINIMUM = (140, 42)
@@ -970,7 +970,7 @@ def main():
     parser.add_argument("--finding-ui", action="store_true")
     parser.add_argument("--next-view", action="store_true")
     parser.add_argument("--activity", action="store_true")
-    parser.add_argument("--ui-command", choices=("search", "add_project", "start_work", "connections", "sessions", "memory", "more", "settings"))
+    parser.add_argument("--ui-command", choices=UI_COMMANDS)
     parser.add_argument("--client-pid", type=int)
     parser.add_argument("--client-tty")
     args = parser.parse_args()
