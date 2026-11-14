@@ -279,7 +279,7 @@ async def test_plan_stages_offer_only_launchable_assistants_and_save_in_preferen
     # Every assistant the workspace can start is offered, GitHub Copilot included (#125).
     assert offered == ["slot-native", "slot-github", ":unset"]
     # Named by what the person configured, never by an internal slot id (#154).
-    assert labels[:2] == ["Codex", "GitHub Copilot (GitHub Copilot · auto)"]
+    assert labels[:2] == ["Codex", "GitHub Copilot (auto)"]
     saves = [body for method, path, _, body in broker.calls if (method, path) == ("PUT", "/api/settings")]
     chosen = {"slot": "slot-native", "profile_id": "native-private-1", "client": "codex"}
     assert saves == [{"project_stages": {"project-keyboard": {"review": chosen}}},

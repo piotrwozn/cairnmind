@@ -181,7 +181,7 @@ def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monk
         "project_stages": {project["id"]: {"implement": CLOUD}}})
     before = plans.get(project["id"], saved["plan"]["id"])
     output = ask()
-    assert "Assistant: Cloud API (OpenAI · gpt-x)" in output and "Model: openai · gpt-x" in output
+    assert "Assistant: Cloud API\n" in output and "Model: openai · gpt-x" in output
     assert "The mapped assistant has no credential. Add its key in Connections" in output
     assert "Next:" not in output and "Start this stage from the workspace" not in output
     assert json.loads(ask("--json"))["problem"] == "credential_missing"

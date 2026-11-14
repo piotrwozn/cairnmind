@@ -85,8 +85,9 @@ def assistant_name(profile: dict, translate=lambda text: text) -> str:
     else:
         parts = [translate(CLIENT_WORDS[client]) if client in CLIENT_WORDS else str(client or ""),
                  str(model) if model else ""]
-    detail = " · ".join(part for part in parts if part)
-    if not detail or detail.casefold() == label.casefold():
+    # A word that only repeats the label ("GitHub Copilot (GitHub Copilot · auto)") is left out.
+    detail = " · ".join(part for part in parts if part and part.casefold() != label.casefold())
+    if not detail:
         return label or detail
     return label + " (" + detail + ")" if label else detail
 
@@ -301,8 +302,13 @@ def describe(decision: dict, translate=lambda text: text) -> str:
         lines.append(translate("Stage") + ": " + translate(decision["stage"]))
     if decision.get("slot_id"):
         # By the configured name; the slot id only names an assistant that is no longer configured.
-        named = (assistant_name(decision, translate) if decision.get("label")
-                 else translate("Unknown assistant") + " (" + str(decision["slot_id"]) + ")")
+        # An agent's provider and model follow on the Model line, so its label is not repeated with them.
+        if not decision.get("label"):
+            named = translate("Unknown assistant") + " (" + str(decision["slot_id"]) + ")"
+        elif decision.get("client") in AGENT_CLIENTS:
+            named = str(decision["label"])
+        else:
+            named = assistant_name(decision, translate)
         lines.append(translate("Assistant") + ": " + named)
     if decision.get("client") in AGENT_CLIENTS:
         named = " · ".join(str(value) for value in (decision.get("provider"), decision.get("model")) if value)

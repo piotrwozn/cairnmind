@@ -268,11 +268,16 @@ def test_assistants_are_named_by_what_was_configured_never_by_a_slot_id():
     from cairnmind.stages import assistant_name
     assert assistant_name({"label": "Codex", "client": "codex"}) == "Codex"
     assert assistant_name({"label": "Claude", "client": "claude"}) == "Claude (Claude Code)"
-    assert assistant_name({"label": "ollama", "client": "api", "provider": "ollama", "model": "qwen3.5:9b"}) == (
-        "ollama (Ollama · qwen3.5:9b)")
+    assert assistant_name({"label": "Local", "client": "api", "provider": "ollama", "model": "qwen3.5:9b"}) == (
+        "Local (Ollama · qwen3.5:9b)")
     assert assistant_name({"label": "cheap", "client": "api", "provider": "openai"}) == "cheap (OpenAI · default model)"
+    # A word that only repeats the label is not said twice.
+    assert assistant_name({"label": "ollama", "client": "api", "provider": "ollama", "model": "qwen3.5:9b"}) == (
+        "ollama (qwen3.5:9b)")
+    assert assistant_name({"label": "GitHub Copilot", "client": "copilot", "model": "auto"}) == "GitHub Copilot (auto)"
     shown = describe({"slot_id": "slot-cb68a6d447a4", "label": "ollama", "client": "api", "provider": "ollama",
                       "model": "qwen3.5:9b"})
-    assert "Assistant: ollama (Ollama · qwen3.5:9b)" in shown and "slot-" not in shown
+    # An agent's provider and model are on the Model line only.
+    assert "Assistant: ollama\n" in shown and "Model: ollama · qwen3.5:9b" in shown and "slot-" not in shown
     unknown = describe({"slot_id": "claude", "label": None, "problem": "unknown_assistant"})
     assert "Assistant: Unknown assistant (claude)" in unknown
