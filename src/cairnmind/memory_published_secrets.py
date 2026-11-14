@@ -22,6 +22,7 @@ import hashlib
 import math
 import re
 import tomllib
+import unicodedata
 
 REGISTERED = "registered_secret"
 PRIVATE_KEY = "private_key"
@@ -155,8 +156,19 @@ def _overlaps(span, taken):
     return any(span[0] < end and start < span[1] for start, end in taken)
 
 
+def _visible(text: str) -> str:
+    """The text without format characters (Unicode category Cf: zero-width spaces and joiners, soft hyphens,
+    word joiners), which pass the published format's character rule but cannot be seen in a diff."""
+    if text.isascii():
+        return text
+    return "".join(character for character in text if unicodedata.category(character) != "Cf")
+
+
 def scan_text(text: str, rules: Rules):
-    """[(kind, value)] found in one text. Each span is claimed by the first kind that finds it."""
+    """[(kind, value)] found in one text. Each span is claimed by the first kind that finds it.
+
+    The scan reads the text as a reader sees it: a secret split by an invisible character is still found."""
+    text = _visible(text)
     found, taken = [], []
 
     def claim(kind, start, end):

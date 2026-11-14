@@ -174,3 +174,35 @@ def test_check_published_reads_the_projects_patterns_and_exits_1_without_printin
     passed = runner.invoke(cli.app, ["--data-dir", unused, "memory", "check-published", str(folder),
                                      "--config", str(elsewhere)])
     assert passed.exit_code == 0 and f"of {PROJECT}" in passed.output
+
+
+def test_a_registered_secret_split_by_an_invisible_character_is_still_found():
+    key = secrets.token_urlsafe(32)
+    rules = Rules(registered=[key])
+    for invisible in ("​", "‍", "⁠", "­", "﻿"):
+        assert kinds(f"value {key[:20]}{invisible}{key[20:]} end", rules) == [REGISTERED]
+    assert kinds("café ​naïve", rules) == []
+
+
+def test_check_published_never_prints_a_secret_held_in_a_file_name_and_lists_every_release(tmp_path):
+    folder = tmp_path / "published"
+    model = with_text(f"The AWS documentation example key is {SHAPES['aws_access_key']}.")
+    hit = {"field": "text", "kind": "aws_access_key", "value_sha256": value_sha256(SHAPES["aws_access_key"])}
+    model["sources"][RELEASE] = release_source(RECORD, [hit])
+    for path, data in tree(model).items():
+        (folder / path).parent.mkdir(parents=True, exist_ok=True)
+        (folder / path).write_bytes(data)
+    runner, unused = CliRunner(), str(tmp_path / "unused")
+    passed = runner.invoke(cli.app, ["--data-dir", unused, "memory", "check-published", str(folder)])
+    assert passed.exit_code == 0
+    assert f"{path_of(model)}: release {RELEASE} by Ada Nowak lets through aws access key in text\n" in passed.output
+    assert SHAPES["aws_access_key"] not in passed.output
+    token = SHAPES["github_token"]
+    (folder / "decision" / f"{token}.md").write_text("x\n")
+    (folder / token).write_text("x\n")
+    (folder / "notes.txt").write_text("x\n")
+    refused = runner.invoke(cli.app, ["--data-dir", unused, "memory", "check-published", str(folder)])
+    assert refused.exit_code == 1 and token not in refused.output and token[4:16] not in refused.output
+    assert "(an entry in decision whose name holds a secret): unknown entry" in refused.output
+    assert "(an entry whose name holds a secret): unknown entry" in refused.output
+    assert "notes.txt: unknown entry" in refused.output
