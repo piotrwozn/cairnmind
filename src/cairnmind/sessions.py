@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .store import ORIGIN_METADATA, _clean, _insert, _json, _now, _one, _set
+from .store import ORIGIN_METADATA
+from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
 MAX_PACKET_BYTES = 24576
 MAX_RECORDS = 20
@@ -40,7 +41,7 @@ def origin_mark(session: dict) -> dict | None:
 
 
 def _hash(value: Any) -> str:
-    return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json_text(value).encode("utf-8")).hexdigest()
 
 
 def _scope_contains(root: str, cwd: Any) -> bool:
@@ -179,7 +180,7 @@ def format_packet(packet: dict) -> str:
         f"Project: {packet['project_id']}; worktree: {packet['worktree']}.",
         "Before normal shared-memory writes, call the Cairnmind MCP tool resume_context, read the complete "
         "packet, then call ack_resume with its exact id/hash and this readback shape:",
-        _json(_readback(packet)),
+        json_text(_readback(packet)),
         "Do not invent missing state or mark tasks done from a summary. "
         "Native CLI permissions still apply to all native actions.",
     ]
@@ -214,12 +215,12 @@ class SessionManager:
     def _session(self, session_id: str) -> dict:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("A logical session ID is required")
-        return _one(self.store, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+        return one_row(self.store, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
 
     def _packet(self, session: dict) -> dict | None:
         if not session.get("packet_id"):
             return None
-        row = _one(self.store, "SELECT FROM resume_packets WHERE id=:id",
+        row = one_row(self.store, "SELECT FROM resume_packets WHERE id=:id",
                    {"id": session["packet_id"]}, False)
         return row.get("payload") if row else None
 
@@ -264,7 +265,7 @@ class SessionManager:
         state_rows = self.store.query(
             "SELECT FROM worktree_states WHERE project_id=:project AND worktree=:root",
             {"project": project_id, "root": root})
-        worktree_state = _clean(state_rows[0]) if state_rows else None
+        worktree_state = clean_row(state_rows[0]) if state_rows else None
         records = self.store.list_records(project_id)
         bindings = memory_bindings(self.store, project_id)
         relevant = []
@@ -598,7 +599,7 @@ class SessionManager:
             if time.monotonic() >= deadline:
                 raise TimeoutError("Resume preparation deadline exceeded")
             native = event.get("native_session_id")
-            owner = _one(self.store, "SELECT FROM sessions WHERE id=:id",
+            owner = one_row(self.store, "SELECT FROM sessions WHERE id=:id",
                          {"id": event.get("session_id")}, False)
             if (not isinstance(native, str) or not native or not owner
                     or (owner.get("project_id"), owner.get("client"), owner.get("worktree"),
@@ -686,7 +687,7 @@ class SessionManager:
             if not target.get("proof"):
                 result["unknowns"].append(str(exc))
                 return result
-        cursor = _one(self.store, "SELECT FROM import_cursors WHERE path=:path AND project_id=:project",
+        cursor = one_row(self.store, "SELECT FROM import_cursors WHERE path=:path AND project_id=:project",
                       {"path": str(path), "project": session["project_id"]}, False)
         if not cursor or int(cursor.get("offset", 0)) < size:
             result["archived_offset"] = int(cursor.get("offset", 0)) if cursor else 0
@@ -802,7 +803,7 @@ class SessionManager:
                            if row.get("kind") == "agent_journal" else row for row in archives]
         packet = {"id": str(uuid4()), "schema_version": 1, "project_id": session["project_id"],
                   "session_id": session["id"], "epoch": session["epoch"], "client": session["client"],
-                  "worktree": session["worktree"], "created_at": _now(),
+                  "worktree": session["worktree"], "created_at": utc_now(),
                   "active_plan": plan_view, "active_task": task_view,
                   "next_action": state["reason"], "blockers": state["blocked"],
                   "records": [{"id": row["id"], "version": row["version"], "kind": row["kind"],
@@ -841,7 +842,7 @@ class SessionManager:
             packet.update(history="unarchived", evidence="degraded", no_history=False)
             packet["archive"]["scope"] = "captured EOFs only; this client's own conversation is not archived"
             packet["warnings"] = [EXTERNAL_WARNING, *packet.get("warnings", [])]
-        if evidence and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
+        if evidence and len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Advisory evidence data yields first: it must never be what makes a packet unready.
             # A record without a state reads as anchored, which an external session's record must never do:
             # one that needs "degraded" leaves the preview list and is counted as omitted instead.
@@ -850,14 +851,14 @@ class SessionManager:
             packet["records"] = shown
             for row in shown:
                 row.pop("evidence_state", None)
-            if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES and evidence_warning in packet.get("warnings", []):
+            if len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES and evidence_warning in packet.get("warnings", []):
                 packet["warnings"].remove(evidence_warning)
                 if not packet["warnings"]:
                     del packet["warnings"]
-        if task_view and "scope" in task_view and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
+        if task_view and "scope" in task_view and len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Advice, like the evidence data: it must never be what makes a packet unready.
             task_view["scope_omitted"] = len(task_view.pop("scope"))
-        if len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES:
+        if len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Essential goal/constraints are never silently truncated to a ready packet.
             packet["unknowns"].append("Essential resume packet exceeds the bounded context budget")
             packet["records"] = []
@@ -872,7 +873,7 @@ class SessionManager:
                                              for row in archives[:30]]
             packet["omitted_archive_watermarks"] = max(0, len(archives) - 30)
             while (packet["archive_watermarks"]
-                   and len(_json(packet).encode("utf-8")) > MAX_PACKET_BYTES - 512):
+                   and len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES - 512):
                 packet["archive_watermarks"].pop()
                 packet["omitted_archive_watermarks"] += 1
         packet["status"] = ("unavailable" if state["code"].get("status") != "fresh" and not baseline else
@@ -905,7 +906,7 @@ class SessionManager:
         project, root = self._root(project_id, worktree)
         with self.store.transaction() as tx:
             self._require_scope(tx, project["id"], root)
-            session = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id}, False) if session_id else None
+            session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id}, False) if session_id else None
             if session:
                 if (session["project_id"], session["client"], session["worktree"]) != (project["id"], client, root):
                     raise ValueError("A logical session cannot change project, client or worktree")
@@ -926,10 +927,10 @@ class SessionManager:
                            "worktree": root, "epoch": 1, "reason": reason, "status": "partial",
                            "native_session_id": None, "packet_id": None, "ack_id": None,
                            "pending_start": reason != "refresh", "resume_targets": None,
-                           "transcript_targets": [], "event_ids": [], "created_at": _now()}
-                _insert(tx, "sessions", session)
-            session["updated_at"] = _now()
-            _set(tx, "sessions", session, "id=:id", {"id": session["id"]})
+                           "transcript_targets": [], "event_ids": [], "created_at": utc_now()}
+                insert_document(tx, "sessions", session)
+            session["updated_at"] = utc_now()
+            update_document(tx, "sessions", session, "id=:id", {"id": session["id"]})
         archives, unknowns, targets = [], [], []
         capture_complete = session.get("resume_targets") is not None
         try:
@@ -940,13 +941,13 @@ class SessionManager:
                 # Persist before waiting: a retry must never chase a growing
                 # native transcript. Hooks retain later horizons separately.
                 with self.store.transaction() as tx:
-                    current = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": session["id"]})
+                    current = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session["id"]})
                     if current["epoch"] != session["epoch"]:
                         return {"session_id": current["id"], "epoch": current["epoch"], "status": "partial",
                                 "packet": None, "unknowns": ["Session resumed during horizon capture; retry"]}
                     if current.get("resume_targets") is None:
                         current["resume_targets"] = captured
-                        _set(tx, "sessions", current, "id=:id", {"id": current["id"]})
+                        update_document(tx, "sessions", current, "id=:id", {"id": current["id"]})
                     targets = current["resume_targets"]
                     capture_complete = True
             while True:
@@ -992,11 +993,11 @@ class SessionManager:
             proved.append(target)
         with self.store.transaction() as tx:
             self._require_scope(tx, project["id"], root)
-            current = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": session["id"]})
+            current = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session["id"]})
             if current["epoch"] != session["epoch"]:
                 return {"session_id": current["id"], "epoch": current["epoch"], "status": "partial", "packet": None,
                         "unknowns": ["Session resumed again during packet preparation; retry"]}
-            _insert(tx, "resume_packets", {"id": packet["id"], "project_id": project["id"],
+            insert_document(tx, "resume_packets", {"id": packet["id"], "project_id": project["id"],
                                            "session_id": session["id"], "epoch": session["epoch"],
                                            "hash": packet["hash"], "payload": packet, "created_at": packet["created_at"]})
             # A concurrent Stop may capture another horizon without changing epoch.
@@ -1004,8 +1005,8 @@ class SessionManager:
             extra_targets = [target for target in current.get("transcript_targets", []) if target not in targets]
             current.update(packet_id=packet["id"], ack_id=None, status=packet["status"],
                            resume_targets=proved if capture_complete else None,
-                           transcript_targets=self._merge_targets([*proved, *extra_targets]), updated_at=_now())
-            _set(tx, "sessions", current, "id=:id", {"id": current["id"]})
+                           transcript_targets=self._merge_targets([*proved, *extra_targets]), updated_at=utc_now())
+            update_document(tx, "sessions", current, "id=:id", {"id": current["id"]})
         return self._result(current, packet)
 
     def archive_agent_journal(self, session_id: str) -> dict:
@@ -1037,9 +1038,9 @@ class SessionManager:
                         "public_sources_hash", "sequence", "chain_hash")}}
             with self.store.transaction() as tx:
                 self._require_scope(tx, session["project_id"], session["worktree"])
-                current = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+                current = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
                 targets = self._merge_targets([*current.get("transcript_targets", []), proved])
-                _set(tx, "sessions", {"transcript_targets": targets, "updated_at": _now()},
+                update_document(tx, "sessions", {"transcript_targets": targets, "updated_at": utc_now()},
                      "id=:id", {"id": session_id})
         return {"session_id": session_id, **archive}
 
@@ -1073,19 +1074,19 @@ class SessionManager:
             except (OSError, ValueError):
                 pass
             with self.store.transaction() as tx:
-                current_session = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+                current_session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
                 if current_session["epoch"] == session["epoch"]:
                     if "resume_targets" not in current_session:
                         current_session["resume_targets"] = self._legacy_action_targets(current_session, packet)
                     current_session.update(epoch=session["epoch"] + 1, packet_id=None, ack_id=None,
-                                           status="partial", updated_at=_now())
-                    _set(tx, "sessions", current_session, "id=:id", {"id": session_id})
+                                           status="partial", updated_at=utc_now())
+                    update_document(tx, "sessions", current_session, "id=:id", {"id": session_id})
         return self.prepare(session["project_id"], session["client"], session["worktree"], session_id,
                             reason="refresh", timeout=0)
 
     def ack(self, session_id: str, packet_id: str, packet_hash: str, readback: dict) -> dict:
         with self.store.transaction() as tx:
-            session = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+            session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
             packet = self._packet(session)
             if (not packet or packet["status"] != "ready" or packet["id"] != packet_id
                     or packet["hash"] != packet_hash or packet["epoch"] != session["epoch"]):
@@ -1102,15 +1103,15 @@ class SessionManager:
                 raise ValueError("resume_required: " + continuity[0])
             if self._state(session)["state_hash"] != packet["state_hash"]:
                 raise ValueError("resume_required: relevant project state or code changed before ACK")
-            previous = _one(tx, "SELECT FROM resume_acks WHERE id=:id", {"id": session.get("ack_id")}, False)
+            previous = one_row(tx, "SELECT FROM resume_acks WHERE id=:id", {"id": session.get("ack_id")}, False)
             if previous and previous.get("packet_id") == packet_id:
                 return previous
             acknowledgment = {"id": str(uuid4()), "project_id": session["project_id"], "session_id": session_id,
                               "epoch": session["epoch"], "packet_id": packet_id, "packet_hash": packet_hash,
-                              "readback": readback, "status": "acknowledged", "created_at": _now(),
+                              "readback": readback, "status": "acknowledged", "created_at": utc_now(),
                               "meaning": "Exact packet receipt/readback; not proof of understanding"}
-            _insert(tx, "resume_acks", acknowledgment)
-            _set(tx, "sessions", {"ack_id": acknowledgment["id"], "updated_at": _now()},
+            insert_document(tx, "resume_acks", acknowledgment)
+            update_document(tx, "sessions", {"ack_id": acknowledgment["id"], "updated_at": utc_now()},
                  "id=:id", {"id": session_id})
             return acknowledgment
 
@@ -1121,7 +1122,7 @@ class SessionManager:
         if (not packet or packet.get("status") != "ready" or packet["epoch"] != session["epoch"]
                 or (packet_id is not None and packet_id != packet["id"]) or not session.get("ack_id")):
             raise ValueError("resume_required: fetch and acknowledge the current ready resume packet")
-        acknowledgment = _one(self.store, "SELECT FROM resume_acks WHERE id=:id", {"id": session["ack_id"]}, False)
+        acknowledgment = one_row(self.store, "SELECT FROM resume_acks WHERE id=:id", {"id": session["ack_id"]}, False)
         if (not acknowledgment or acknowledgment.get("packet_id") != packet["id"]
                 or acknowledgment.get("packet_hash") != packet["hash"]
                 or acknowledgment.get("epoch") != session["epoch"]):
@@ -1157,28 +1158,28 @@ class SessionManager:
         event_id = payload.get("event_id") or _hash(payload)
         with self.store.transaction() as tx:
             self._require_scope(tx, project["id"], root)
-            receipt = _one(tx, "SELECT FROM session_events WHERE id=:id", {"id": event_id}, False)
+            receipt = one_row(tx, "SELECT FROM session_events WHERE id=:id", {"id": event_id}, False)
             if receipt:
-                old_session = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": receipt["session_id"]})
+                old_session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": receipt["session_id"]})
                 if ((old_session["project_id"], old_session["client"], old_session["worktree"])
                         != (project["id"], client, root) or (logical_id and logical_id != old_session["id"])):
                     raise ValueError("Hook event ID is already bound to another logical session")
                 return
-            session = _one(tx, "SELECT FROM sessions WHERE id=:id", {"id": logical_id}, False) if logical_id else None
+            session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": logical_id}, False) if logical_id else None
             if logical_id and not session:
                 raise ValueError("Hook refers to an unknown logical session")
             if not session and native_id:
                 rows = tx.query("SELECT FROM sessions WHERE project_id=:project AND client=:client "
                                 "AND native_session_id=:native ORDER BY updated_at DESC LIMIT 1",
                                 {"project": project["id"], "client": client, "native": native_id})
-                session = _clean(rows[0]) if rows else None
+                session = clean_row(rows[0]) if rows else None
             if session and (session["project_id"], session["client"], session["worktree"]) != (project["id"], client, root):
                 raise ValueError("Hook session does not match client/project/worktree")
             if not session:
                 session = {"id": str(uuid4()), "project_id": project["id"], "client": client, "worktree": root,
                            "native_session_id": native_id, "epoch": 1, "status": "partial", "packet_id": None,
-                           "ack_id": None, "transcript_targets": [], "event_ids": [], "created_at": _now()}
-                _insert(tx, "sessions", session)
+                           "ack_id": None, "transcript_targets": [], "event_ids": [], "created_at": utc_now()}
+                insert_document(tx, "sessions", session)
             if native_id:
                 if session.get("native_session_id") and native_id != session["native_session_id"]:
                     raise ValueError("Logical session is already bound to a different native session")
@@ -1190,7 +1191,7 @@ class SessionManager:
             elif event == "SessionStart":
                 prepared_start = bool(session.get("pending_start", False)) and reason != "compact"
                 precompacted = reason == "compact" and bool(session.get("precompact_pending", False))
-                # _set updates supplied fields; popping would leave persisted
+                # update_document updates supplied fields; popping would leave persisted
                 # true flags behind and suppress every later native boundary.
                 session["pending_start"] = False
                 session["precompact_pending"] = False
@@ -1204,14 +1205,14 @@ class SessionManager:
                 if target not in targets:
                     targets.append(target)
                 session["transcript_targets"] = targets
-            _insert(tx, "session_events", {"id": event_id, "project_id": project["id"],
+            insert_document(tx, "session_events", {"id": event_id, "project_id": project["id"],
                                            "session_id": session["id"], "native_session_id": native_id,
                                            "client": client, "hook_event_name": event,
                                            "resume_reason": reason, "transcript_path": payload.get("transcript_path"),
                                            "transcript_watermark": payload.get("transcript_watermark"),
-                                           "applied_epoch": session["epoch"], "created_at": _now()})
-            session.update(updated_at=_now())
-            _set(tx, "sessions", session, "id=:id", {"id": session["id"]})
+                                           "applied_epoch": session["epoch"], "created_at": utc_now()})
+            session.update(updated_at=utc_now())
+            update_document(tx, "sessions", session, "id=:id", {"id": session["id"]})
 
     def status(self, session_id: str) -> dict:
         session = self._session(session_id)

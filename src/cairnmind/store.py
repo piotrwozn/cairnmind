@@ -17,6 +17,8 @@ import time
 from uuid import uuid4
 
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
+from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
+                  quote_name, update_document, utc_now)
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -46,7 +48,6 @@ MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
 })
 # Definition fields that say nothing about whether a task was proven: changing one keeps reported evidence.
 ADVISORY_DEFINITION_FIELDS = frozenset({"check_proposals", "scope"})
-_PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
 def validate_scope(scope) -> None:
@@ -76,7 +77,7 @@ def validate_criterion_links(metadata: dict, criteria: list) -> None:
     """The stored form of the links: every link belongs to a criterion, every proposal to a linked check."""
     links = metadata.get("criterion_checks", {})
     if (not isinstance(links, dict) or ("criterion_checks" in metadata and not links)
-            or not all(text in criteria and isinstance(check, str) and _PROFILE_NAME.fullmatch(check)
+            or not all(text in criteria and isinstance(check, str) and PROFILE_NAME.fullmatch(check)
                        for text, check in links.items())):
         raise ValueError("criterion_checks must link acceptance criteria to check profile names")
     proposals = metadata.get("check_proposals", {})
@@ -112,7 +113,7 @@ def normalise_criteria(metadata: dict) -> None:
                 if argv is not None:
                     raise ValueError("A criterion can propose a command only for a named check")
                 continue
-            if not isinstance(check, str) or not _PROFILE_NAME.fullmatch(check):
+            if not isinstance(check, str) or not PROFILE_NAME.fullmatch(check):
                 raise ValueError("criterion_checks must link acceptance criteria to check profile names")
             if links.get(text, check) != check:
                 raise ValueError("One criterion cannot be linked to two checks")
@@ -132,7 +133,6 @@ def normalise_criteria(metadata: dict) -> None:
             metadata.pop(key, None)
 
 
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DIAGNOSTIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _JOB_UNSET = object()
 JOB_STATES = {"pending", "running", "completed", "failed"}
@@ -188,10 +188,6 @@ def job_diagnostics(value):
     return result
 
 
-def _now():
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
-
-
 # Where a write came from, set by the service from the session row and never by a client: today only
 # for an external client's session, whose conversation is unarchived and whose evidence is degraded.
 ORIGIN_METADATA = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
@@ -235,75 +231,6 @@ CONFLICT_REVIEW_METADATA = ("conflicts_resolved", "conflict_decisions", "conflic
 # project row, whose graph fingerprint changes, and through the sources and records behind it.
 CACHE_STAMP_IGNORED = frozenset({"job", "session", "import", "inbox", "memory", "plan_request",
                                  "graph", "node", "edge"})
-
-
-def _utc(value):
-    """Timezone-aware ISO 8601 text as UTC; naive or invalid values are unusable."""
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
-
-
-def _evidence_time(tx, source_ids):
-    """When the record's evidence existed, from its immutable sources.
-
-    A transcript's own timestamp is when the statement was made (`stated`). Any other
-    source existed no later than the moment Cairnmind stored its snapshot (`observed`).
-    The audit note of a review or of a conflict decision records when someone judged the
-    record, not when its evidence existed, so it is left out.
-    """
-    times, bases = [], set()
-    for source_id in dict.fromkeys(source_ids):
-        row = _one(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
-                       "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
-        if row.get("origin") == "local_user_review":
-            continue
-        stated = _utc(row.get("stated"))
-        when, basis = (stated, "stated") if stated else (_utc(row.get("created_at")), "observed")
-        if when is not None:
-            times.append(when)
-            bases.add(basis)
-    if not times:
-        return {"earliest": None, "latest": None, "basis": "unknown"}
-    return {"earliest": min(times).isoformat(), "latest": max(times).isoformat(),
-            "basis": bases.pop() if len(bases) == 1 else "mixed"}
-
-
-def _json(value):
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False)
-
-
-def _clean(row):
-    return {key: value for key, value in row.items() if not key.startswith("@")}
-
-
-def _name(name):
-    if not isinstance(name, str) or not _IDENTIFIER.fullmatch(name):
-        raise ValueError("Invalid database type/property name")
-    return f"`{name}`"
-
-
-def _one(tx, sql, params=None, required=True):
-    rows = tx.query(sql, params)
-    if not rows:
-        if required:
-            raise ValueError("Record does not exist")
-        return None
-    return _clean(rows[0])
-
-
-def _insert(tx, collection, data):
-    tx.command(f"INSERT INTO {_name(collection)} CONTENT {_json(data)}")
-
-
-def _set(tx, collection, data, where, params):
-    assignments = ",".join(f"{_name(key)}=:value_{key}" for key in data)
-    return tx.command(f"UPDATE {_name(collection)} SET {assignments} WHERE {where}",
-                      {**params, **{f"value_{key}": value for key, value in data.items()}})
 
 
 class Store:
@@ -470,11 +397,11 @@ class Store:
             self.client.command("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
             with self.client.transaction() as tx:
                 if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
-                    _insert(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
+                    insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
                 if version is None:
-                    _insert(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
+                    insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
                 else:
-                    _set(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
+                    update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
             if indexed != LOOKUP_INDEX_SET:
                 self._lookup_indexes(indexed)
 
@@ -494,9 +421,9 @@ class Store:
             return
         with self.client.transaction() as tx:
             if recorded is None:
-                _insert(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})
+                insert_document(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})
             else:
-                _set(tx, "devbrain_meta", {"value": LOOKUP_INDEX_SET}, "name='lookup_indexes'", {})
+                update_document(tx, "devbrain_meta", {"value": LOOKUP_INDEX_SET}, "name='lookup_indexes'", {})
 
     @staticmethod
     def _require_project(tx, project_id):
@@ -568,32 +495,32 @@ class Store:
         if not name:
             raise ValueError("Project name must not be empty")
         with self.transaction() as tx:
-            existing = _one(tx, "SELECT FROM projects WHERE name=:name OR root=:root", {"name": name, "root": path}, False)
+            existing = one_row(tx, "SELECT FROM projects WHERE name=:name OR root=:root", {"name": name, "root": path}, False)
             if existing:
                 if existing["name"] != name or existing["root"] != path:
                     raise ValueError("Project name or root is already registered")
                 return existing
-            project = {"id": str(uuid4()), "name": name, "root": path, "created_at": _now()}
-            _insert(tx, "projects", project)
-            _insert(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path})
+            project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
+            insert_document(tx, "projects", project)
+            insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path})
             return project
 
     def add_project_root(self, project_id, path):
         root = self.require_safe_project_root(path)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            existing = _one(tx, "SELECT FROM project_roots WHERE path=:path", {"path": root}, False)
+            existing = one_row(tx, "SELECT FROM project_roots WHERE path=:path", {"path": root}, False)
             if existing and existing["project_id"] != project_id:
                 raise ValueError("Directory already belongs to another project")
             if not existing:
-                _insert(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root})
+                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root})
 
     def list_projects(self):
-        return [_clean(row) for row in self.query("SELECT FROM projects ORDER BY name")]
+        return [clean_row(row) for row in self.query("SELECT FROM projects ORDER BY name")]
 
     def resolve_project(self, identifier):
         value = str(identifier)
-        project = _one(self, "SELECT FROM projects WHERE id=:value OR name=:value", {"value": value}, False)
+        project = one_row(self, "SELECT FROM projects WHERE id=:value OR name=:value", {"value": value}, False)
         if project:
             return project
         path = Path(value).expanduser().resolve()
@@ -601,7 +528,7 @@ class Store:
                       if path == Path(r["path"]) or Path(r["path"]) in path.parents]
         if candidates:
             selected = max(candidates, key=lambda row: len(row["path"]))
-            return _one(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
+            return one_row(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
         raise ValueError(f"Unknown project: {value}")
 
     def _delete_old_vectors(self, tx, source_ids):
@@ -610,29 +537,29 @@ class Store:
         tx.command("DELETE FROM embeddings WHERE source_id IN :ids", {"ids": source_ids})
         for row in tx.query("SELECT FROM vector_indexes"):
             name = row.get("type_name")
-            if name and _IDENTIFIER.fullmatch(name) and name.startswith("vector_"):
-                tx.command(f"DELETE FROM {_name(name)} WHERE source_id IN :ids", {"ids": source_ids})
+            if name and IDENTIFIER.fullmatch(name) and name.startswith("vector_"):
+                tx.command(f"DELETE FROM {quote_name(name)} WHERE source_id IN :ids", {"ids": source_ids})
 
     def snapshot(self, project_id, uri, content, kind="document", metadata=None):
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
-        digest, key = hashlib.sha256(content.encode()).hexdigest(), _json([project_id, uri])
+        digest, key = hashlib.sha256(content.encode()).hexdigest(), json_text([project_id, uri])
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            existing = _one(tx, "SELECT FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False)
+            existing = one_row(tx, "SELECT FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False)
             if existing and existing["sha256"] == digest:
                 return existing
             if existing:
                 params = {"id": existing["id"]}
-                _set(tx, "sources", {"is_current": False, "current_key": None}, "id=:id", params)
-                _set(tx, "chunks", {"is_current": False}, "source_id=:id", params)
-                _set(tx, "nodes", {"is_current": False}, "source_id=:id AND kind NOT IN ['source','decision','task','fact','constraint','question','preference','checkpoint']", params)
-                _set(tx, "edges", {"is_current": False}, "source_id=:id AND kind NOT IN ['supported_by','depends_on','supersedes']", params)
+                update_document(tx, "sources", {"is_current": False, "current_key": None}, "id=:id", params)
+                update_document(tx, "chunks", {"is_current": False}, "source_id=:id", params)
+                update_document(tx, "nodes", {"is_current": False}, "source_id=:id AND kind NOT IN ['source','decision','task','fact','constraint','question','preference','checkpoint']", params)
+                update_document(tx, "edges", {"is_current": False}, "source_id=:id AND kind NOT IN ['supported_by','depends_on','supersedes']", params)
                 self._delete_old_vectors(tx, [existing["id"]])
             source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
                       "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
-                      "is_current": True, "current_key": key, "created_at": _now()}
-            _insert(tx, "sources", source)
+                      "is_current": True, "current_key": key, "created_at": utc_now()}
+            insert_document(tx, "sources", source)
             return source
 
     def snapshot_new(self, tx, project_id, uri, content, kind="document", metadata=None):
@@ -643,13 +570,13 @@ class Store:
         """
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
-        digest, key = hashlib.sha256(content.encode()).hexdigest(), _json([project_id, uri])
-        if _one(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False):
+        digest, key = hashlib.sha256(content.encode()).hexdigest(), json_text([project_id, uri])
+        if one_row(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False):
             return None
         source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
                   "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
-                  "is_current": True, "current_key": key, "created_at": _now()}
-        _insert(tx, "sources", source)
+                  "is_current": True, "current_key": key, "created_at": utc_now()}
+        insert_document(tx, "sources", source)
         return source
 
     def enqueue_new(self, tx, kind, project_id, payload, dedupe_key):
@@ -659,21 +586,21 @@ class Store:
         """
         if not kind or not isinstance(dedupe_key, str) or not dedupe_key:
             raise ValueError("A job requires a kind and deduplication key")
-        job_id, now = str(uuid4()), _now()
-        _insert(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
-                             "job_key": _json([kind, project_id, dedupe_key]), "state": "pending", "lease_until": None,
+        job_id, now = str(uuid4()), utc_now()
+        insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
+                             "job_key": json_text([kind, project_id, dedupe_key]), "state": "pending", "lease_until": None,
                              "worker": None, "error": None, "attempts": 0, "created_at": now, "updated_at": now})
         return job_id
 
     def get_source(self, source_id):
-        return _one(self, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+        return one_row(self, "SELECT FROM sources WHERE id=:id", {"id": source_id})
 
     @staticmethod
     def _validate_sources(tx, project_id, sources):
         if not isinstance(sources, list) or not sources or not all(isinstance(item, str) for item in sources):
             raise ValueError("A memory record requires at least one source ID")
         for source_id in sources:
-            source = _one(tx, "SELECT project_id FROM sources WHERE id=:id", {"id": source_id}, False)
+            source = one_row(tx, "SELECT project_id FROM sources WHERE id=:id", {"id": source_id}, False)
             if not source or source.get("project_id") != project_id:
                 raise ValueError("Sources must exist and belong to the same project")
 
@@ -692,7 +619,7 @@ class Store:
                 raise ValueError(f"{key} must be a list of nonempty strings")
         validate_criterion_links(metadata, criteria)
         for run_id in metadata.get("check_run_ids", []):
-            run = _one(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
+            run = one_row(tx, "SELECT task_id,project_id FROM check_runs WHERE id=:id", {"id": run_id}, False)
             if not run or run.get("project_id") != project_id or run.get("task_id") != record_id:
                 raise ValueError("check_run_ids must reference machine runs for this task and project")
         for flag in ("requires_test", "requires_review", "test_passed", "review_passed", "acceptance_passed"):
@@ -708,7 +635,7 @@ class Store:
             if task_id in seen:
                 return
             seen.add(task_id)
-            task = _one(tx, "SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task' AND status!='superseded'",
+            task = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task' AND status!='superseded'",
                         {"id": task_id, "project": project_id}, False)
             if not task:
                 raise ValueError("Task dependencies must be active tasks from the same project")
@@ -744,21 +671,21 @@ class Store:
         self._require_project(tx, node["project_id"])
         source = None
         if node.get("source_id"):
-            source = self._remembered(tx, "sources", node["source_id"], lambda: _one(
+            source = self._remembered(tx, "sources", node["source_id"], lambda: one_row(
                 tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": node["source_id"]}, False))
             if not source or source.get("project_id") != node["project_id"]:
                 raise ValueError("Graph vertex source must belong to the same project")
         # Evidence/decision vertices remain traversable as provenance even if a code file changed.
         node.setdefault("is_current", bool(source["is_current"]) if source and node["kind"] not in KINDS | {"source"} else True)
-        existing = self._remembered(tx, "nodes", node["id"], lambda: _one(
+        existing = self._remembered(tx, "nodes", node["id"], lambda: one_row(
             tx, "SELECT FROM nodes WHERE id=:id", {"id": node["id"]}, False))
         if existing and existing.get("project_id") != node["project_id"]:
             raise ValueError("Graph vertex belongs to another project")
         with self._keeping(tx) as known:
             if existing:
-                _set(tx, "nodes", node, "id=:id", {"id": node["id"]})
+                update_document(tx, "nodes", node, "id=:id", {"id": node["id"]})
             else:
-                tx.command(f"CREATE VERTEX nodes CONTENT {_json(node)}")
+                tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
             if known is not None:
                 known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
         return node
@@ -772,18 +699,18 @@ class Store:
             if not isinstance(edge.get(key), str):
                 raise ValueError(f"Graph edge requires {key}")
         for endpoint in (edge["from_id"], edge["to_id"]):
-            vertex = self._remembered(tx, "nodes", endpoint, lambda endpoint=endpoint: _one(
+            vertex = self._remembered(tx, "nodes", endpoint, lambda endpoint=endpoint: one_row(
                 tx, "SELECT project_id FROM nodes WHERE id=:id", {"id": endpoint}, False))
             if not vertex or vertex.get("project_id") != edge["project_id"]:
                 raise ValueError("Graph edge endpoints must exist in the same project")
         source = None
         if edge.get("source_id"):
-            source = self._remembered(tx, "sources", edge["source_id"], lambda: _one(
+            source = self._remembered(tx, "sources", edge["source_id"], lambda: one_row(
                 tx, "SELECT project_id,is_current FROM sources WHERE id=:id", {"id": edge["source_id"]}, False))
             if not source or source.get("project_id") != edge["project_id"]:
                 raise ValueError("Graph edge source must belong to the same project")
         edge.setdefault("is_current", bool(source["is_current"]) if source and edge["kind"] not in {"supported_by", "depends_on", "supersedes"} else True)
-        existing = self._remembered(tx, "edges", edge["id"], lambda: _one(
+        existing = self._remembered(tx, "edges", edge["id"], lambda: one_row(
             tx, "SELECT FROM edges WHERE id=:id", {"id": edge["id"]}, False))
         if existing and existing.get("project_id") != edge["project_id"]:
             raise ValueError("Graph edge belongs to another project")
@@ -794,10 +721,10 @@ class Store:
                 if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
                     tx.command("DELETE FROM edges WHERE id=:id", {"id": edge["id"]})
                 else:
-                    _set(tx, "edges", edge, "id=:id", {"id": edge["id"]})
+                    update_document(tx, "edges", edge, "id=:id", {"id": edge["id"]})
                     return edge
             tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
-                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {_json(edge)}",
+                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
                        {"from_id": edge["from_id"], "to_id": edge["to_id"]})
         return edge
 
@@ -815,7 +742,7 @@ class Store:
                               "kind": kind, "source_id": source_id, "is_current": record["status"] != "superseded"}, tx)
 
         for source_id in record["source_ids"]:
-            source = _one(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
+            source = one_row(tx, "SELECT FROM sources WHERE id=:id", {"id": source_id})
             target = f"source:{source_id}"
             self.upsert_node({"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
                               "source_id": source_id, "metadata": {"source_id": source_id, "source_kind": source["kind"]}}, tx)
@@ -828,8 +755,8 @@ class Store:
             edge(f"record:{record['supersedes']}", "supersedes", record["source_ids"][0])
 
     def _revision(self, tx, record):
-        _insert(tx, "record_revisions", {"id": f"{record['id']}:{record['version']}", "project_id": record["project_id"],
-                                        "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": _now()})
+        insert_document(tx, "record_revisions", {"id": f"{record['id']}:{record['version']}", "project_id": record["project_id"],
+                                        "record_id": record["id"], "version": record["version"], "snapshot": record, "recorded_at": utc_now()})
         self._record_graph(tx, record)
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
@@ -848,7 +775,7 @@ class Store:
             raise ValueError("record must be an object")
         old = None
         if record.get("id"):
-            old = _one(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record["id"], "project": project_id}, False)
+            old = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record["id"], "project": project_id}, False)
             if not old and not managed_batch:
                 raise ValueError("Cannot update an unknown record")
             if old and (type(record.get("expected_version")) is not int or record["expected_version"] != old["version"]):
@@ -891,7 +818,7 @@ class Store:
             # something else under this name stays writable, and is simply never compared.
             if "scope" in updates and updates["scope"] != (old or {}).get("metadata", {}).get("scope"):
                 validate_scope(updates["scope"])
-        evidence = _evidence_time(tx, sources)
+        evidence = evidence_time(tx, sources)
         metadata.update(evidence_earliest=evidence["earliest"], evidence_latest=evidence["latest"],
                         evidence_basis=evidence["basis"])
         # Set after the client's metadata, which can neither forge nor clear it; kept from the old version,
@@ -937,7 +864,7 @@ class Store:
         metadata.update(origin or {})
         supersedes = record.get("supersedes", old.get("supersedes") if old else None)
         if supersedes and (not old or supersedes != old.get("supersedes")):
-            previous = _one(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": supersedes, "project": project_id}, False)
+            previous = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": supersedes, "project": project_id}, False)
             if not previous or previous["id"] == record_id or previous["status"] == "superseded":
                 raise ValueError("supersedes must identify an active record in the same project")
             if previous["kind"] != kind:
@@ -946,32 +873,32 @@ class Store:
                 raise ValueError("Managed task membership must be changed through PlanManager")
             if not old and "expected_version" in record and record["expected_version"] != previous["version"]:
                 raise ValueError("Record version conflict; replaced record has changed")
-            previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=_now())
-            _set(tx, "records", previous, "id=:id", {"id": supersedes})
+            previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=utc_now())
+            update_document(tx, "records", previous, "id=:id", {"id": supersedes})
             self._revision(tx, previous)
         # Recomputed on every write of a replacement, so a later source change never
         # leaves a stale warning behind. Warn, never block.
         metadata.pop("supersede_warning", None)
         metadata.pop("supersede_replaced_evidence_latest", None)
         if supersedes:
-            replaced = _one(tx, "SELECT source_ids FROM records WHERE id=:id AND project_id=:project",
+            replaced = one_row(tx, "SELECT source_ids FROM records WHERE id=:id AND project_id=:project",
                             {"id": supersedes, "project": project_id}, False) or {}
             replaced_sources = replaced.get("source_ids") or []
             if isinstance(replaced_sources, str):
                 replaced_sources = json.loads(replaced_sources)
-            replaced_time = _evidence_time(tx, replaced_sources)
+            replaced_time = evidence_time(tx, replaced_sources)
             # Only a stated time is a real evidence time; an observed time is only an
             # upper bound, so comparing against it would flag snapshot order, not age.
-            replaced_latest = _utc(replaced_time["latest"]) if replaced_time["basis"] == "stated" else None
-            latest = _utc(metadata["evidence_latest"])
+            replaced_latest = parse_utc(replaced_time["latest"]) if replaced_time["basis"] == "stated" else None
+            latest = parse_utc(metadata["evidence_latest"])
             if replaced_latest and latest and latest < replaced_latest:
                 metadata["supersede_warning"] = "anachronistic_supersede"
                 metadata["supersede_replaced_evidence_latest"] = replaced_time["latest"]
-        active_key = _json([project_id, kind, key]) if status != "superseded" else None
-        collision = _one(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
+        active_key = json_text([project_id, kind, key]) if status != "superseded" else None
+        collision = one_row(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
         if collision and collision["id"] != record_id:
             raise ValueError("Active record key already exists; update using id and expected_version")
-        now = _now()
+        now = utc_now()
         result = {"id": record_id, "project_id": project_id, "kind": kind, "key": key, "content": content, "status": status,
                   "source_ids": list(dict.fromkeys(sources)), "version": old["version"] + 1 if old else 1, "supersedes": supersedes,
                   "metadata": metadata, "created_at": old["created_at"] if old else now, "updated_at": now, "active_key": active_key}
@@ -979,9 +906,9 @@ class Store:
             from .verification import validate_completion
             validate_completion(self, tx, project_id, {**result, "_completion_worktree": record.get("worktree")})
         if old:
-            _set(tx, "records", result, "id=:id AND version=:version", {"id": record_id, "version": old["version"]})
+            update_document(tx, "records", result, "id=:id AND version=:version", {"id": record_id, "version": old["version"]})
         else:
-            _insert(tx, "records", result)
+            insert_document(tx, "records", result)
         self._revision(tx, result)
         if managed and not managed_batch:
             from .plans import note_task_mutation
@@ -1014,10 +941,10 @@ class Store:
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):
             raise ValueError("Checkpoint state must be an object")
-        content = _json(state)
+        content = json_text(state)
         source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint", {"origin": "client"})
         with self.transaction() as tx:
-            old = _one(tx, "SELECT FROM records WHERE project_id=:project AND kind='checkpoint' AND `key`='latest' AND status!='superseded'", {"project": project_id}, False)
+            old = one_row(tx, "SELECT FROM records WHERE project_id=:project AND kind='checkpoint' AND `key`='latest' AND status!='superseded'", {"project": project_id}, False)
             record = {"kind": "checkpoint", "key": "latest", "content": content, "metadata": state}
             if old:
                 record.update(id=old["id"], expected_version=old["version"])
@@ -1029,7 +956,7 @@ class Store:
 
     def list_records(self, project_id, include_history=False):
         self._require_project(self, project_id)
-        return [_clean(row) for row in self.query("SELECT FROM records WHERE project_id=:project" +
+        return [clean_row(row) for row in self.query("SELECT FROM records WHERE project_id=:project" +
             ("" if include_history else " AND status!='superseded'") + " ORDER BY updated_at DESC,id", {"project": project_id})]
 
     def record_history(self, record_id):
@@ -1040,12 +967,12 @@ class Store:
             raise ValueError("A job requires a kind and deduplication key")
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            job_key = _json([kind, project_id, dedupe_key])
-            old = _one(tx, "SELECT id FROM jobs WHERE job_key=:key", {"key": job_key}, False)
+            job_key = json_text([kind, project_id, dedupe_key])
+            old = one_row(tx, "SELECT id FROM jobs WHERE job_key=:key", {"key": job_key}, False)
             if old:
                 return old["id"]
-            job_id, now = str(uuid4()), _now()
-            _insert(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
+            job_id, now = str(uuid4()), utc_now()
+            insert_document(tx, "jobs", {"id": job_id, "project_id": project_id, "kind": kind, "payload": payload, "dedupe_key": dedupe_key,
                                  "job_key": job_key, "state": "pending", "lease_until": None, "worker": None, "error": None,
                                  "attempts": 0, "created_at": now, "updated_at": now})
             return job_id
@@ -1062,7 +989,7 @@ class Store:
             if not project_ids:
                 return None  # An empty authorization set must never claim global work.
         with self.transaction() as tx:
-            job = _one(tx, "SELECT FROM jobs WHERE (state='pending' OR (state='running' AND lease_until<:now))" +
+            job = one_row(tx, "SELECT FROM jobs WHERE (state='pending' OR (state='running' AND lease_until<:now))" +
                        (" AND kind IN :kinds" if kinds is not None else "") +
                        (" AND project_id IN :projects" if project_ids is not None else "") +
                        " ORDER BY created_at,id LIMIT 1",
@@ -1071,16 +998,16 @@ class Store:
                 return None
             if job["state"] == "running":
                 job["attempt_history"] = self._job_event(job, "lease_expired")
-            job.update(state="running", worker=worker, lease_until=time.time() + lease_seconds, attempts=job.get("attempts", 0) + 1, updated_at=_now())
+            job.update(state="running", worker=worker, lease_until=time.time() + lease_seconds, attempts=job.get("attempts", 0) + 1, updated_at=utc_now())
             job["diagnostics"] = {}
-            _set(tx, "jobs", job, "id=:id", {"id": job["id"]})
+            update_document(tx, "jobs", job, "id=:id", {"id": job["id"]})
             return job
 
     @staticmethod
     def _job_event(job, event, *, state=None, error=_JOB_UNSET):
         history = list(job.get("attempt_history") or [])
         history.append({"event": event, "attempts": job.get("attempts", 0),
-                        "state": state or job["state"], "at": _now(),
+                        "state": state or job["state"], "at": utc_now(),
                         "worker": job.get("worker"), "error": job.get("error") if error is _JOB_UNSET else error,
                         "diagnostics": job_diagnostics(job.get("diagnostics"))})
         return history
@@ -1089,7 +1016,7 @@ class Store:
         """Publish sanitized attempt diagnostics without completing/reclaiming a job."""
         cleaned = job_diagnostics(diagnostics)
         with self.transaction() as tx:
-            job = _one(tx, "SELECT FROM jobs WHERE id=:id", {"id": job_id}, False)
+            job = one_row(tx, "SELECT FROM jobs WHERE id=:id", {"id": job_id}, False)
             if not job:
                 return False  # Project deletion never recreates operational rows.
             if (expected_attempts is not None and (job["state"] != "running"
@@ -1097,22 +1024,22 @@ class Store:
                 return False
             if worker is not None and (job["state"] != "running" or job.get("worker") != worker):
                 return False
-            _set(tx, "jobs", {"diagnostics": cleaned, "updated_at": _now()}, "id=:id", {"id": job_id})
+            update_document(tx, "jobs", {"diagnostics": cleaned, "updated_at": utc_now()}, "id=:id", {"id": job_id})
         return True
 
     def finish_job(self, job_id, error=None, *, worker=None, expected_attempts=None):
         with self.transaction() as tx:
-            job = _one(tx, "SELECT FROM jobs WHERE id=:id", {"id": job_id}, False)
+            job = one_row(tx, "SELECT FROM jobs WHERE id=:id", {"id": job_id}, False)
             if (not job or (worker is not None and (job.get("worker") != worker or job["state"] != "running"))
                     or (expected_attempts is not None and (job["state"] != "running"
                         or job.get("attempts", 0) != expected_attempts))):
                 raise ValueError("Unknown job or stale job lease")
             state = "failed" if error else "completed"
-            updates = {"state": state, "error": error, "lease_until": None, "updated_at": _now(),
+            updates = {"state": state, "error": error, "lease_until": None, "updated_at": utc_now(),
                        "attempt_history": self._job_event(job, "finished", state=state, error=error)}
             if error:
                 updates.update(last_error=error, last_error_at=updates["updated_at"])
-            _set(tx, "jobs", updates, "id=:id", {"id": job_id})
+            update_document(tx, "jobs", updates, "id=:id", {"id": job_id})
 
     def job_summary(self, project_id=None):
         self._require_project(self, project_id)
@@ -1139,11 +1066,11 @@ class Store:
                           + " ORDER BY updated_at DESC,id LIMIT :limit",
                           {"project": project_id, "state": state, "kind": kind, "limit": limit})
         packets = self._job_proofs(project_id) if any(row["kind"] == "import" for row in rows) else []
-        return [self._public_job(_clean(row), packets=packets) for row in rows]
+        return [self._public_job(clean_row(row), packets=packets) for row in rows]
 
     def job_status(self, project_id, job_id):
         self._require_project(self, project_id)
-        job = _one(self, "SELECT FROM jobs WHERE id=:id AND project_id=:project",
+        job = one_row(self, "SELECT FROM jobs WHERE id=:id AND project_id=:project",
                    {"id": job_id, "project": project_id}, False)
         if not job:
             raise JobNotFoundError("Unknown job in requested project")
@@ -1169,7 +1096,7 @@ class Store:
                 or any(type(capture.get(key)) is not int for key in ("device", "inode", "head_bytes"))
                 or not isinstance(capture.get("head_sha256"), str)):
             return {**unknown, "reason": "legacy_missing_capture"}
-        event = _one(self, "SELECT FROM session_events WHERE id=:id AND project_id=:project",
+        event = one_row(self, "SELECT FROM session_events WHERE id=:id AND project_id=:project",
                      {"id": event_id, "project": job["project_id"]}, False)
         if (not event or event.get("transcript_path") != path or event.get("client") != client
                 or event.get("transcript_watermark") != capture):
@@ -1192,7 +1119,7 @@ class Store:
                                          "AND metadata.import_path=:path AND metadata.byte_offset<:size",
                                          {"project": job["project_id"], "path": path, "size": row["size"]})
                     ids = sorted(source["id"] for source in sources)
-                    digest = hashlib.sha256(_json(ids).encode()).hexdigest()
+                    digest = hashlib.sha256(json_text(ids).encode()).hexdigest()
                     if len(ids) == row["source_count"] and digest == row["source_ids_hash"]:
                         return {"status": "captured_complete", "scope": "requested_capture", "proof_ref": proof}
                     return {**unknown, "reason": "published_source_set_unavailable"}
@@ -1260,7 +1187,7 @@ class Store:
             raise ValueError("Include omissions must be a boolean")
         with self.transaction() as tx:
             self._require_project(tx, project_id)
-            job = _one(tx, "SELECT FROM jobs WHERE id=:id AND project_id=:project",
+            job = one_row(tx, "SELECT FROM jobs WHERE id=:id AND project_id=:project",
                        {"id": job_id, "project": project_id}, False)
             if not job:
                 raise JobNotFoundError("Unknown job in requested project")
@@ -1286,19 +1213,19 @@ class Store:
                 and counts["written_records"] == 0 and counts["skipped_records"] == counts["candidate_records"])
 
     def _retry_job_locked(self, tx, job):
-        now = _now()
+        now = utc_now()
         updates = {"state": "pending", "error": None, "lease_until": None, "worker": None,
                    "updated_at": now, "last_retry_at": now, "retry_count": job.get("retry_count", 0) + 1,
                    "attempt_history": self._job_event(job, "retry_requested")}
         if job.get("error"):
             updates.update(last_error=job["error"], last_error_at=job.get("updated_at"))
-        _set(tx, "jobs", updates, "id=:id AND state=:state", {"id": job["id"], "state": job["state"]})
+        update_document(tx, "jobs", updates, "id=:id AND state=:state", {"id": job["id"], "state": job["state"]})
 
     def _count(self, collection, project_id=None, extra=""):
         condition = " WHERE project_id=:project" if project_id else ""
         if extra:
             condition += (" AND " if condition else " WHERE ") + extra
-        rows = self.query(f"SELECT count(*) AS total FROM {_name(collection)}{condition}", {"project": project_id})
+        rows = self.query(f"SELECT count(*) AS total FROM {quote_name(collection)}{condition}", {"project": project_id})
         return int(rows[0]["total"]) if rows else 0
 
     def status(self, project_id=None):
@@ -1363,7 +1290,7 @@ class Store:
                     self._stamp_base, self._stamp_global, self._stamp_seq = self._stamp_base + 1, 0, {}
                 self._stamp_cursor = head
             parts = [head["epoch"], self._stamp_base, self._stamp_global, self._stamp_seq.get(project_id, 0)]
-        return hashlib.sha256(_json(parts).encode()).hexdigest()
+        return hashlib.sha256(json_text(parts).encode()).hexdigest()
 
     def recent_job_errors(self, project_id=None, limit=10):
         rows = self.query("SELECT FROM jobs WHERE state='failed'" +
@@ -1373,14 +1300,14 @@ class Store:
         for row in rows:
             if row["kind"] == "import" and row["project_id"] not in proofs:
                 proofs[row["project_id"]] = self._job_proofs(row["project_id"])
-        return [self._public_job(_clean(row), packets=proofs.get(row["project_id"], ())) for row in rows]
+        return [self._public_job(clean_row(row), packets=proofs.get(row["project_id"], ())) for row in rows]
 
     def retry_jobs(self):
         """Explicit legacy global compatibility; every requeue retains its audit."""
         with self.transaction() as tx:
             rows = tx.query("SELECT FROM jobs WHERE state='failed'")
             for row in rows:
-                self._retry_job_locked(tx, _clean(row))
+                self._retry_job_locked(tx, clean_row(row))
         return {"retried": len(rows), "job_ids": [row["id"] for row in rows]}
 
     def missing_embeddings(self, namespace, project_id=None):
@@ -1391,7 +1318,7 @@ class Store:
     def reset_missing_embedding_job(self, job_id, chunk_id, namespace):
         with self.transaction() as tx:
             if not tx.query("SELECT id FROM embeddings WHERE chunk_id=:chunk AND namespace=:namespace", {"chunk": chunk_id, "namespace": namespace}):
-                _set(tx, "jobs", {"state": "pending", "error": None, "lease_until": None, "updated_at": _now()}, "id=:id AND state='completed'", {"id": job_id})
+                update_document(tx, "jobs", {"state": "pending", "error": None, "lease_until": None, "updated_at": utc_now()}, "id=:id AND state='completed'", {"id": job_id})
 
     def delete_embeddings(self, project_id):
         with self.transaction() as tx:
@@ -1403,17 +1330,17 @@ class Store:
             return self._export_snapshot(tx, project_id, EXPORT_TYPES, 5)
 
     def _export_snapshot(self, tx, project_id, collections, format_version):
-        result = {"format_version": format_version, "backend": "arcadedb", "exported_at": _now()}
+        result = {"format_version": format_version, "backend": "arcadedb", "exported_at": utc_now()}
         self._require_project(tx, project_id)
         for collection in collections:
             field = "id" if collection == "projects" else "project_id"
             result[collection] = [] if collection == "ingestion_inbox" and project_id else [
-                _clean(row) for row in tx.query(f"SELECT FROM {_name(collection)}" + (f" WHERE {field}=:project" if project_id else ""), {"project": project_id})]
+                clean_row(row) for row in tx.query(f"SELECT FROM {quote_name(collection)}" + (f" WHERE {field}=:project" if project_id else ""), {"project": project_id})]
         result["vector_data"] = {}
         for registry in result["vector_indexes"]:
             name = registry.get("type_name")
             if isinstance(name, str) and name.startswith("vector_"):
-                result["vector_data"][name] = [_clean(row) for row in tx.query(f"SELECT FROM {_name(name)}")]
+                result["vector_data"][name] = [clean_row(row) for row in tx.query(f"SELECT FROM {quote_name(name)}")]
         return result
 
     def backup(self, destination):
@@ -1426,13 +1353,13 @@ class Store:
     def _write_backup(destination, payload):
         destination = Path(destination).expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        envelope = {"format": BACKUP_FORMATS[0], "version": 1, "sha256": hashlib.sha256(_json(payload).encode()).hexdigest(), "payload": payload}
+        envelope = {"format": BACKUP_FORMATS[0], "version": 1, "sha256": hashlib.sha256(json_text(payload).encode()).hexdigest(), "payload": payload}
         fd, name = tempfile.mkstemp(prefix=".cairnmind-backup-", dir=destination.parent)
         temporary = Path(name)
         try:
             with os.fdopen(fd, "wb") as handle:
                 with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
-                    compressed.write(_json(envelope).encode())
+                    compressed.write(json_text(envelope).encode())
                 handle.flush()
                 os.fsync(handle.fileno())
             os.chmod(temporary, 0o600)
@@ -1454,7 +1381,7 @@ class Store:
             if not isinstance(envelope, dict) or envelope.get("format") not in BACKUP_FORMATS or envelope.get("version") != 1:
                 raise ValueError("This file is not a supported Cairnmind ArcadeDB backup")
             payload = envelope["payload"]
-            if hashlib.sha256(_json(payload).encode()).hexdigest() != envelope.get("sha256"):
+            if hashlib.sha256(json_text(payload).encode()).hexdigest() != envelope.get("sha256"):
                 raise ValueError("Backup checksum mismatch")
             if not isinstance(payload, dict):
                 raise ValueError("Backup payload must be an object")
@@ -1529,28 +1456,28 @@ class Store:
             name, dimension = registry.get("type_name"), registry.get("dimension")
             if not isinstance(name, str) or not name.startswith("vector_") or type(dimension) is not int or dimension <= 0:
                 raise ValueError("Invalid vector namespace in backup")
-            self.command(f"CREATE DOCUMENT TYPE {_name(name)} IF NOT EXISTS")
-            self.command(f"CREATE PROPERTY {_name(name)}.id IF NOT EXISTS STRING")
-            self.command(f"CREATE INDEX IF NOT EXISTS ON {_name(name)}(id) UNIQUE")
-            self.command(f"CREATE PROPERTY {_name(name)}.vector IF NOT EXISTS ARRAY_OF_FLOATS")
-            self.command(f"CREATE INDEX IF NOT EXISTS ON {_name(name)}(vector) LSM_VECTOR METADATA {{dimensions:{dimension},similarity:'COSINE',idPropertyName:'id'}}")
+            self.command(f"CREATE DOCUMENT TYPE {quote_name(name)} IF NOT EXISTS")
+            self.command(f"CREATE PROPERTY {quote_name(name)}.id IF NOT EXISTS STRING")
+            self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(id) UNIQUE")
+            self.command(f"CREATE PROPERTY {quote_name(name)}.vector IF NOT EXISTS ARRAY_OF_FLOATS")
+            self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(vector) LSM_VECTOR METADATA {{dimensions:{dimension},similarity:'COSINE',idPropertyName:'id'}}")
         with self.transaction() as tx:
             from .journal import Journal
             Journal.reset(tx, reason="restore")
             old_vectors = tx.query("SELECT FROM vector_indexes")
             for row in old_vectors:
                 if row.get("type_name", "").startswith("vector_"):
-                    tx.command(f"DELETE FROM {_name(row['type_name'])}")
+                    tx.command(f"DELETE FROM {quote_name(row['type_name'])}")
             tx.command("DELETE FROM edges")
             tx.command("DELETE FROM nodes")
             for collection in reversed(DOCUMENT_TYPES):
-                tx.command(f"DELETE FROM {_name(collection)}")
+                tx.command(f"DELETE FROM {quote_name(collection)}")
             for collection in DOCUMENT_TYPES:
                 for original in payload[collection]:
                     row = dict(original)
                     if collection == "jobs" and row.get("state") == "running":
                         row.update(state="pending", worker=None, lease_until=None)
-                    _insert(tx, collection, row)
+                    insert_document(tx, collection, row)
             for node in payload["nodes"]:
                 self.upsert_node(node, tx)
             for edge in payload["edges"]:
@@ -1559,7 +1486,7 @@ class Store:
                 if not isinstance(name, str) or not name.startswith("vector_"):
                     raise ValueError("Invalid vector type in backup")
                 for row in rows:
-                    _insert(tx, name, row)
+                    insert_document(tx, name, row)
 
     def forget_project(self, project_id):
         with self.transaction() as tx:
@@ -1571,5 +1498,5 @@ class Store:
             tx.command("DELETE FROM nodes WHERE project_id=:project", {"project": project_id})
             for collection in reversed(DOCUMENT_TYPES):
                 if collection != "projects":
-                    tx.command(f"DELETE FROM {_name(collection)} WHERE project_id=:project", {"project": project_id})
+                    tx.command(f"DELETE FROM {quote_name(collection)} WHERE project_id=:project", {"project": project_id})
             tx.command("DELETE FROM projects WHERE id=:project", {"project": project_id})

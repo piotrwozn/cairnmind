@@ -15,7 +15,7 @@ from uuid import uuid4
 from .agent import source_text
 from .memory_paths import bound_metadata, memory_bindings
 from .retrieval import Retriever, public_record, public_source_metadata
-from .store import _clean, _json, _now, _one
+from .sql import clean_row, json_text, one_row, utc_now
 
 
 TABLES = {"records", "sources", "plans", "check_runs", "jobs"}
@@ -40,7 +40,7 @@ def _limit(value, maximum=500):
 
 
 def _encode_cursor(value):
-    return base64.urlsafe_b64encode(_json(value).encode()).decode().rstrip("=")
+    return base64.urlsafe_b64encode(json_text(value).encode()).decode().rstrip("=")
 
 
 def _decode_cursor(value):
@@ -96,7 +96,7 @@ class Inspector:
         _limit(limit)
         scope = self._scope(project, worktree)
         pid = scope[0]["id"]
-        query_key = hashlib.sha256(_json([collection, pid, str(scope[1]), kind, status, state]).encode()).hexdigest()
+        query_key = hashlib.sha256(json_text([collection, pid, str(scope[1]), kind, status, state]).encode()).hexdigest()
         after = None
         if cursor:
             decoded = _decode_cursor(cursor)
@@ -134,7 +134,7 @@ class Inspector:
                                 {"project": pid, "ids": selected}) if selected else []
             items = []
             for row in rows:
-                row = _clean(row)
+                row = clean_row(row)
                 if collection == "records":
                     item = public_record(row, content_limit=1000, metadata_budget=2000)
                     item["project_id"] = pid
@@ -165,7 +165,7 @@ class Inspector:
             raise ValueError("Unknown inspector entity collection")
         scope = self._scope(project, worktree)
         with self.store.transaction() as reader:
-            row = _one(reader, f"SELECT FROM {collection} WHERE project_id=:project AND id=:id",
+            row = one_row(reader, f"SELECT FROM {collection} WHERE project_id=:project AND id=:id",
                        {"project": scope[0]["id"], "id": identifier}, False)
             metadata = row.get("metadata", {}) if row else {}
             if row and collection == "check_runs":
@@ -190,14 +190,14 @@ class Inspector:
             total = reader.query("SELECT count(*) AS n FROM plan_revisions WHERE project_id=:project AND plan_id=:id", params)[0]["n"]
             rows = reader.query("SELECT FROM plan_revisions WHERE project_id=:project AND plan_id=:id "
                                 "AND version>:offset_version ORDER BY version LIMIT :limit", params)
-            return {"items": [_clean(row) for row in rows[:limit]], "total": total,
+            return {"items": [clean_row(row) for row in rows[:limit]], "total": total,
                 "next_cursor": _encode_cursor({"plan": plan_id, "project": plan["project_id"], "after": str(rows[limit - 1]["version"])})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
 
     def record(self, project, record_id, worktree=None):
         scope = self._scope(project, worktree)
         with self.store.transaction() as reader:
-            row = _one(reader, "SELECT FROM records WHERE id=:id AND project_id=:project",
+            row = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project",
                        {"id": record_id, "project": scope[0]["id"]}, False)
             if not row or not self._matches(scope, row):
                 raise InspectorNotFound("Unknown record in requested scope")
@@ -211,7 +211,7 @@ class Inspector:
             from .verification import verification_status
 
             result["verification"] = verification_status(self.store, row, scope[1])
-            result["verification_observed_at"] = _now()
+            result["verification_observed_at"] = utc_now()
         return result
 
     def revisions(self, project, record_id, *, cursor=None, limit=100, worktree=None):
@@ -230,7 +230,7 @@ class Inspector:
             rows = reader.query("SELECT FROM record_revisions WHERE project_id=:project AND record_id=:id "
                 "AND version>:offset_version ORDER BY version LIMIT :limit",
                 {"project": pid, "id": record_id, "offset_version": after, "limit": limit + 1})
-            return {"items": [_clean(row) for row in rows[:limit]], "total": total,
+            return {"items": [clean_row(row) for row in rows[:limit]], "total": total,
                 "next_cursor": _encode_cursor({"record": record_id, "project": pid, "after": str(rows[limit - 1]["version"])})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
 
@@ -242,11 +242,11 @@ class Inspector:
             raise ValueError("Source offset must be nonnegative")
         scope = self._scope(project, worktree)
         with self.store.transaction() as reader:
-            row = _one(reader, "SELECT FROM sources WHERE id=:id AND project_id=:project",
+            row = one_row(reader, "SELECT FROM sources WHERE id=:id AND project_id=:project",
                        {"id": source_id, "project": scope[0]["id"]}, False)
             if not row or not self._matches(scope, row, source=True):
                 raise InspectorNotFound("Unknown source in requested scope")
-            text = row["content"] if view == "raw" else source_text(row) if view == "normalized" else _json(row["metadata"])
+            text = row["content"] if view == "raw" else source_text(row) if view == "normalized" else json_text(row["metadata"])
             end = min(len(text), offset + limit)
             return {"source": {**self._header(row), "metadata": public_source_metadata(row.get("metadata"))},
                 "view": view, "text": text[offset:end], "offset": offset, "next_offset": end if end < len(text) else None,
@@ -265,7 +265,7 @@ class Inspector:
             rows = reader.query("SELECT id,path,source_offset,sha256,client,cwd,reason,created_at "
                 "FROM ingestion_inbox WHERE id>:offset_id ORDER BY id LIMIT :limit",
                 {"offset_id": after, "limit": limit + 1})
-            return {"items": [{**_clean(row), "project_id": None, "entity_type": "inbox"} for row in rows[:limit]],
+            return {"items": [{**clean_row(row), "project_id": None, "entity_type": "inbox"} for row in rows[:limit]],
                 "total": total, "next_cursor": _encode_cursor({"query": "global-inbox", "after": rows[limit - 1]["id"]})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
 
@@ -276,11 +276,11 @@ class Inspector:
         if type(offset) is not int or offset < 0:
             raise ValueError("Source offset must be nonnegative")
         with self.store.transaction() as reader:
-            row = _one(reader, "SELECT FROM ingestion_inbox WHERE id=:id", {"id": identifier}, False)
+            row = one_row(reader, "SELECT FROM ingestion_inbox WHERE id=:id", {"id": identifier}, False)
             if not row:
                 raise InspectorNotFound("Unknown unassigned source")
             metadata = {key: value for key, value in row.items() if key not in {"raw", "id"}}
-            text = str(row.get("raw", "")) if view == "raw" else _json(metadata)
+            text = str(row.get("raw", "")) if view == "raw" else json_text(metadata)
             end = min(len(text), offset + limit)
             return {"source": {"id": identifier, "project_id": None, "kind": "unassigned",
                 "uri": row.get("path"), "sha256": row.get("sha256"), "created_at": row.get("created_at"),
@@ -316,20 +316,20 @@ class Inspector:
         pid = self._project(project)["id"]
         status = "confirmed" if action == "confirm" else "disputed"
         with self.store.transaction() as reader:
-            old = _one(reader, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record_id, "project": pid}, False)
+            old = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record_id, "project": pid}, False)
             if not old:
                 raise InspectorNotFound("Unknown record in requested project")
             if old["version"] != expected_version or old["status"] in {"superseded", status}:
                 raise ValueError("Review version conflict; read the current record")
             plan_id = old.get("metadata", {}).get("plan_ref") if old["kind"] == "task" else None
             if plan_id:
-                current = _one(reader, "SELECT version FROM plans WHERE id=:id AND project_id=:project", {"id": plan_id, "project": pid})
+                current = one_row(reader, "SELECT version FROM plans WHERE id=:id AND project_id=:project", {"id": plan_id, "project": pid})
                 if type(expected_plan_version) is not int or current["version"] != expected_plan_version:
                     raise ValueError("Review plan version conflict; read the current plan")
             audit = {"actor": "local_user", "action": action, "record_id": record_id, "previous_version": expected_version,
-                "previous_status": old["status"], "status": status, "reason": (reason or "").strip(), "at": _now(),
+                "previous_status": old["status"], "status": status, "reason": (reason or "").strip(), "at": utc_now(),
                 "content_sha256": hashlib.sha256(old["content"].encode()).hexdigest()}
-            source = self.store.snapshot(pid, "review://" + str(uuid4()), _json(audit), "manual",
+            source = self.store.snapshot(pid, "review://" + str(uuid4()), json_text(audit), "manual",
                                          {"origin": "local_user_review", "role": "user", "record_id": record_id})
             update = {"id": record_id, "expected_version": expected_version, "status": status}
             if plan_id:
@@ -439,7 +439,7 @@ class Inspector:
                 return {"nodes": [*groups, *nodes.values()], "edges": [*edges.values(), *structural],
                         "groups": groups, "counts": counts, "cursor": watermark}
             selected = sorted(identifier for identifier in nodes if group is None or buckets[identifier] == group.removeprefix("group:"))
-            query_key = hashlib.sha256(_json([pid, str(scope[1]), group]).encode()).hexdigest()
+            query_key = hashlib.sha256(json_text([pid, str(scope[1]), group]).encode()).hexdigest()
             if page_cursor:
                 decoded = _decode_cursor(page_cursor)
                 if decoded.get("query") != query_key:
@@ -466,7 +466,7 @@ class Inspector:
         _limit(limit)
         projection = self.graph(project, worktree=worktree, _full=True)
         rows = projection["groups"]
-        query_key = hashlib.sha256(_json([project, str(worktree), "groups"]).encode()).hexdigest()
+        query_key = hashlib.sha256(json_text([project, str(worktree), "groups"]).encode()).hexdigest()
         total = len(rows)
         if cursor:
             decoded = _decode_cursor(cursor)
@@ -482,7 +482,7 @@ class Inspector:
         nodes = {row["id"]: row for row in projection["nodes"]}
         if node_id not in nodes:
             raise InspectorNotFound("Unknown graph node in requested scope")
-        query_key = hashlib.sha256(_json([project, str(worktree), node_id]).encode()).hexdigest()
+        query_key = hashlib.sha256(json_text([project, str(worktree), node_id]).encode()).hexdigest()
         rows = sorted((row for row in projection["edges"] if node_id in (row["from_id"], row["to_id"])), key=lambda row: row["id"])
         total = len(rows)
         if cursor:

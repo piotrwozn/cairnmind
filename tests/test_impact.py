@@ -14,7 +14,8 @@ from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.impact import build_impact
 from cairnmind.ingest import index_project
-from cairnmind.store import Store, _clean
+from cairnmind.store import Store
+from cairnmind.sql import clean_row
 
 AUTH = '''SESSION_MINUTES = 30
 
@@ -159,7 +160,7 @@ def test_the_report_is_derived_and_writes_nothing(workspace):
     (root / "src" / "auth.py").write_text(AUTH.replace('":refreshed"', '":renewed"'))
 
     def everything():
-        return {name: sorted(json.dumps(_clean(row), sort_keys=True, default=str) for row in store.query(f"SELECT FROM {name}"))
+        return {name: sorted(json.dumps(clean_row(row), sort_keys=True, default=str) for row in store.query(f"SELECT FROM {name}"))
                 for name in ("records", "record_revisions", "sources", "nodes", "edges", "jobs", "projects")}
 
     before = everything()
@@ -656,7 +657,7 @@ def test_looking_for_mentions_writes_nothing(workspace):
     touch_auth(root)
 
     def everything():
-        rows = {name: sorted(json.dumps(_clean(row), sort_keys=True, default=str) for row in store.query(f"SELECT FROM {name}"))
+        rows = {name: sorted(json.dumps(clean_row(row), sort_keys=True, default=str) for row in store.query(f"SELECT FROM {name}"))
                 for name in ("records", "record_revisions", "sources", "nodes", "edges", "jobs", "projects")}
         files = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*")
                  if path.is_file() and ".git" not in path.relative_to(root).parts}

@@ -12,7 +12,8 @@ import pytest
 
 from cairnmind.ingest import import_history
 from cairnmind.sessions import SessionManager
-from cairnmind.store import Store, _json
+from cairnmind.store import Store
+from cairnmind.sql import json_text
 
 
 NATIVE_ID = "11111111-1111-4111-8111-111111111111"
@@ -310,7 +311,7 @@ def test_legacy_live_horizon_migration_requires_original_action_proof(lifecycle,
         # A truncated old proof is not evidence that an empty history scope
         # was intended, even if its legacy status says ready.
         packet = {**original["packet"], "omitted_archive_watermarks": 1}
-        packet["hash"] = hashlib.sha256(_json({key: value for key, value in packet.items() if key != "hash"}).encode()).hexdigest()
+        packet["hash"] = hashlib.sha256(json_text({key: value for key, value in packet.items() if key != "hash"}).encode()).hexdigest()
         store.command("UPDATE resume_packets SET payload=:payload,hash=:hash WHERE id=:id",
                       {"payload": packet, "hash": packet["hash"], "id": packet["id"]})
     store.command("UPDATE sessions REMOVE resume_targets WHERE id=:id", {"id": original["session_id"]})

@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 from uuid import uuid4
 
-from .store import _evidence_time, _json, _now, _one, _utc
+from .sql import evidence_time, json_text, one_row, parse_utc, utc_now
 
 KINDS = ("fact", "decision")
 ACTIONS = ("supersede", "different_scopes", "dismiss")
@@ -93,7 +93,7 @@ def _newer(first, second):
     evidence may be older. The order is therefore reliable exactly when the later of
     the two times was stated by its source.
     """
-    one, two = _utc(first.get("evidence_latest")), _utc(second.get("evidence_latest"))
+    one, two = parse_utc(first.get("evidence_latest")), parse_utc(second.get("evidence_latest"))
     if not one or not two or one == two:
         return None, "unknown"
     later = first if one > two else second
@@ -117,7 +117,7 @@ def list_conflicts(store, project_id, scoped_records, in_scope=None):
     with store.transaction() as tx:
         # Read from the sources now: a time stored on a record before audit notes were
         # left out of it may still be the time of a review.
-        times = {identifier: _evidence_time(tx, record.get("source_ids") or []) for identifier, record in involved.items()}
+        times = {identifier: evidence_time(tx, record.get("source_ids") or []) for identifier, record in involved.items()}
     items = []
     for candidate, existing in pairs:
         first, second = _view(candidate, uris, states, times), _view(existing, uris, states, times)
@@ -149,7 +149,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
     if action != "supersede" and keep is not None:
         raise ValueError("Only superseding takes a finding to keep")
     with store.transaction() as tx:
-        rows = {identifier: _one(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
+        rows = {identifier: one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
                                  {"id": identifier, "project": project_id}, False) for identifier in (record_id, other_id)}
         candidate, existing = rows[record_id], rows[other_id]
         if not candidate or not existing:
@@ -169,7 +169,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         if action == "different_scopes":
             notes["conflict_scope_note"] = reason[:500]
         audit = {"actor": "local_user", "action": "resolve_conflict", "decision": action, "record_id": record_id,
-                 "other_record_id": other_id, "marked_as": marked, "kept_record_id": keep, "reason": reason, "at": _now(),
+                 "other_record_id": other_id, "marked_as": marked, "kept_record_id": keep, "reason": reason, "at": utc_now(),
                  "versions": {record_id: expected_version, other_id: other_expected_version},
                  "previous_status": {record_id: candidate["status"], other_id: existing["status"]},
                  "status": "confirmed" if action == "supersede" else None,
@@ -177,7 +177,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
                                     for identifier, row in rows.items()}}
         # The same address and origin as a review note: it documents a decision and never
         # counts as evidence that a finding is true, nor as the time of its evidence.
-        source = store.snapshot(project_id, "review://" + str(uuid4()), _json(audit), "manual",
+        source = store.snapshot(project_id, "review://" + str(uuid4()), json_text(audit), "manual",
                                 {"origin": "local_user_review", "role": "user", "record_id": record_id,
                                  "conflict_with": other_id})
 
@@ -203,7 +203,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         else:
             update["supersedes"] = loser["id"]
         saved = write(update, winner)
-        replaced = _one(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
+        replaced = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
                         {"id": loser["id"], "project": project_id})
         return {"decision": action, "record": saved, "superseded": replaced, "audit_source_id": source["id"]}
 

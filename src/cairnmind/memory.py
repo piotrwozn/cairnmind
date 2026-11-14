@@ -20,8 +20,8 @@ import tempfile
 from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
-from .store import (KINDS, STATUSES, TASK_STATES, _clean, _insert, _json, _now, _one, _set,
-                    validate_criterion_links)
+from .store import KINDS, STATUSES, TASK_STATES, validate_criterion_links
+from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
 # earlier name are read as they are: rewriting one would change its identifier and its history.
@@ -45,7 +45,7 @@ class MemoryConflict(ValueError):
 
 
 def _bytes(value):
-    return _json(value).encode("utf-8")
+    return json_text(value).encode("utf-8")
 
 
 def _digest(value):
@@ -57,7 +57,7 @@ def _manifest_id(manifest):
 
 
 def _logical(table, original):
-    row = {k: deepcopy(v) for k, v in _clean(original).items() if k not in {"in", "out"}}
+    row = {k: deepcopy(v) for k, v in clean_row(original).items() if k not in {"in", "out"}}
     if table == "sources":
         row.pop("current_key", None)
     if table in {"nodes", "edges"}:
@@ -456,7 +456,7 @@ class MemoryManager:
 
     def _scope(self, project_id, worktree=None, reader=None):
         reader = reader or self.store
-        project = _one(reader, "SELECT FROM projects WHERE id=:id", {"id": project_id})
+        project = one_row(reader, "SELECT FROM projects WHERE id=:id", {"id": project_id})
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
         if not reader.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
                             {"project": project_id, "path": str(root)}):
@@ -506,7 +506,7 @@ class MemoryManager:
         payload = {table: sorted([_logical(table, r) for r in reader.query(
             f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})], key=lambda r: r["id"])
                    for table in TABLES}
-        focus = _one(reader, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
+        focus = one_row(reader, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
                      {"project": project_id, "root": str(root)}, False)
         active = focus.get("active_plan_id") if focus else None
         _validate(payload, project_id, active)
@@ -532,7 +532,7 @@ class MemoryManager:
                 "contains_raw_sources": bool(payload["sources"]), "model_calls": 0}
 
     def _known_manifest(self, project_id, path):
-        return _one(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project AND path=:path ORDER BY created_at DESC,id DESC LIMIT 1",
+        return one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project AND path=:path ORDER BY created_at DESC,id DESC LIMIT 1",
                     {"project": project_id, "path": str(path)}, False)
 
     def _receipt(self, tx, project_id, path, raw, manifest, origin, worktree=None):
@@ -543,9 +543,9 @@ class MemoryManager:
                "worktree": str(worktree if worktree is not None else manifest["origin_root"]),
                "active_plan_id": manifest.get("active_plan_id"),
                "path": str(path), "manifest_sha": hashlib.sha256(raw).hexdigest(),
-               "created_at": _now(), "origin": origin}
+               "created_at": utc_now(), "origin": origin}
         if not tx.query("SELECT id FROM memory_snapshots WHERE id=:id", {"id": row["id"]}):
-            _insert(tx, "memory_snapshots", row)
+            insert_document(tx, "memory_snapshots", row)
 
     def snapshot(self, project_id, worktree=None, *, authorize=None):
         with self._publisher_lock(project_id, worktree):
@@ -584,7 +584,7 @@ class MemoryManager:
                                            "path": f"objects/{digest}.json", "bytes": len(data)})
             content_hash = _digest({**{k: v for k, v in captured.items() if k not in {"processing", "completeness"}},
                                     "objects": objects})
-            tip = _one(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
+            tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
                        {"project": project_id}, False)
             if previous and tip and tip["snapshot_id"] != previous["snapshot_id"]:
                 if previous["snapshot_id"] not in tip.get("ancestors", []):
@@ -599,7 +599,7 @@ class MemoryManager:
             parent = tip["snapshot_id"] if tip else previous["snapshot_id"] if previous else None
             ancestors = ([parent] + (tip.get("ancestors", []) if tip else previous.get("ancestors", []) if previous else [])) if parent else []
             manifest = {"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,
-                        "created_at": _now(), "parent_id": parent, "ancestors": list(dict.fromkeys(ancestors))[:4096],
+                        "created_at": utc_now(), "parent_id": parent, "ancestors": list(dict.fromkeys(ancestors))[:4096],
                         "content_hash": content_hash}
             manifest["snapshot_id"] = _manifest_id(manifest)
             raw = _bytes(manifest)
@@ -661,13 +661,13 @@ class MemoryManager:
         with self.store.transaction() as tx:
             if authorize is not None:
                 authorize()
-            current = _one(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id}, False)
+            current = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id}, False)
             conflicts = tx.query("SELECT id FROM projects WHERE (name=:name OR root=:root) AND id!=:id",
                                  {"name": chosen_name, "root": str(root), "id": project_id})
             roots = tx.query("SELECT project_id FROM project_roots WHERE path=:path", {"path": str(root)})
             if conflicts or any(r["project_id"] != project_id for r in roots):
                 raise MemoryConflict("Memory target name or root belongs to another project identity")
-            prior = _one(tx, "SELECT FROM memory_imports WHERE project_id=:project ORDER BY imported_at DESC,id DESC LIMIT 1",
+            prior = one_row(tx, "SELECT FROM memory_imports WHERE project_id=:project ORDER BY imported_at DESC,id DESC LIMIT 1",
                          {"project": project_id}, False)
             if prior and prior["snapshot_id"] == snapshot_id:
                 if not roots:
@@ -675,7 +675,7 @@ class MemoryManager:
                 return {**result, "status": "unchanged", "project": current or result["project"]}
             if current:
                 captured, existing_payload = self._capture(project_id, current["root"], tx)
-                published = _one(tx, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
+                published = one_row(tx, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
                                  {"project": project_id}, False)
                 baseline = published or prior
                 exact_current = existing_payload == payload
@@ -683,10 +683,10 @@ class MemoryManager:
                                    or (captured["state_hash"] != baseline["state_hash"] and not exact_current)))
                         or (not baseline and not exact_current)):
                     raise MemoryConflict("Memory histories diverged or local knowledge changed")
-                focus = _one(tx, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
+                focus = one_row(tx, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
                              {"project": project_id, "root": str(root)}, False)
                 selected = focus.get("active_plan_id") if focus else None
-                focus_baseline = _one(tx, "SELECT active_plan_id FROM memory_snapshots WHERE project_id=:project "
+                focus_baseline = one_row(tx, "SELECT active_plan_id FROM memory_snapshots WHERE project_id=:project "
                                      "AND worktree=:root ORDER BY created_at DESC,id DESC LIMIT 1",
                                      {"project": project_id, "root": str(root)}, False)
                 previous_focus = focus_baseline.get("active_plan_id") if focus_baseline else None
@@ -731,23 +731,23 @@ class MemoryManager:
             from .journal import Journal
             Journal.reset(tx, reason="memory_import")
             if not current:
-                _insert(tx, "projects", {**result["project"], "created_at": _now()})
+                insert_document(tx, "projects", {**result["project"], "created_at": utc_now()})
             if not roots:
-                _insert(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": str(root)})
+                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": str(root)})
             for origin in origins:
                 binding = {"id": _digest([project_id, origin, str(root)]), "project_id": project_id,
                            "origin_root": origin, "local_root": str(root)}
                 if not tx.query("SELECT id FROM memory_bindings WHERE id=:id", {"id": binding["id"]}):
-                    _insert(tx, "memory_bindings", binding)
+                    insert_document(tx, "memory_bindings", binding)
             # Clear only affected derived unique keys before applying a complete
             # final record set; legitimate key swaps must not depend on row order.
             for row in payload["records"]:
                 if row["id"] in existing["records"]:
-                    _set(tx, "records", {"active_key": None}, "id=:id", {"id": row["id"]})
+                    update_document(tx, "records", {"active_key": None}, "id=:id", {"id": row["id"]})
             for row in payload["sources"]:
                 if (row["id"] in existing["sources"] and not (row["kind"] in {"code", "document", "file"}
                         and isinstance(row["metadata"].get("path"), str))):
-                    _set(tx, "sources", {"current_key": None}, "id=:id", {"id": row["id"]})
+                    update_document(tx, "sources", {"current_key": None}, "id=:id", {"id": row["id"]})
             for table in TABLES:
                 for original in payload[table]:
                     row, old = deepcopy(original), existing[table].get(original["id"])
@@ -755,17 +755,17 @@ class MemoryManager:
                         if old:
                             if not (row["kind"] in {"code", "document", "file"}
                                     and isinstance(row["metadata"].get("path"), str)):
-                                _set(tx, "sources", {"is_current": row["is_current"],
-                                    "current_key": _json([project_id, row["uri"]]) if row["is_current"] else None},
+                                update_document(tx, "sources", {"is_current": row["is_current"],
+                                    "current_key": json_text([project_id, row["uri"]]) if row["is_current"] else None},
                                      "id=:id", {"id": row["id"]})
-                                _set(tx, "chunks", {"is_current": row["is_current"]}, "source_id=:id", {"id": row["id"]})
+                                update_document(tx, "chunks", {"is_current": row["is_current"]}, "source_id=:id", {"id": row["id"]})
                             continue
                         foreign_file = row["kind"] in {"code", "document", "file"} and isinstance(row["metadata"].get("path"), str)
                         current_source = row["is_current"] and not foreign_file
                         row.update(is_current=current_source,
-                                   current_key=_json([project_id, row["uri"]]) if current_source else None)
+                                   current_key=json_text([project_id, row["uri"]]) if current_source else None)
                     elif table == "records":
-                        row["active_key"] = _json([project_id, row["kind"], row["key"]]) if row["status"] != "superseded" else None
+                        row["active_key"] = json_text([project_id, row["kind"], row["key"]]) if row["status"] != "superseded" else None
                     elif table == "check_runs":
                         if old:
                             continue  # A genuine local matching run retains its local authority.
@@ -787,9 +787,9 @@ class MemoryManager:
                     if old:
                         if table in {"record_revisions", "plan_revisions"}:
                             continue
-                        _set(tx, table, row, "id=:id", {"id": row["id"]})
+                        update_document(tx, table, row, "id=:id", {"id": row["id"]})
                     else:
-                        _insert(tx, table, row)
+                        insert_document(tx, table, row)
             # Canonical relationships describe the final heads, not a union of
             # old and new dependency/plan membership projections.
             from .plans import _plan_graph
@@ -808,9 +808,9 @@ class MemoryManager:
                     continue  # imported with the memory, never searchable text
                 if tx.query("SELECT id FROM chunks WHERE source_id=:source LIMIT 1", {"source": source["id"]}):
                     continue
-                saved = _one(tx, "SELECT is_current FROM sources WHERE id=:id", {"id": source["id"]})
+                saved = one_row(tx, "SELECT is_current FROM sources WHERE id=:id", {"id": source["id"]})
                 for number, (text, first, last) in enumerate(_chunks(source_text(source))):
-                    _insert(tx, "chunks", {"id": _identifier(project_id, source["id"], number, first, last, text),
+                    insert_document(tx, "chunks", {"id": _identifier(project_id, source["id"], number, first, last, text),
                         "project_id": project_id, "source_id": source["id"], "text": text,
                         "line_start": first, "line_end": last, "is_current": saved["is_current"],
                         "metadata": {"source_kind": source["kind"], "role": source["metadata"].get("role", "unknown")}})
@@ -819,17 +819,17 @@ class MemoryManager:
                 from .plans import PlanManager
                 PlanManager(self.store).activate(project_id, active, str(root))
             else:
-                focus = _one(tx, "SELECT FROM worktree_states WHERE project_id=:project AND worktree=:root",
+                focus = one_row(tx, "SELECT FROM worktree_states WHERE project_id=:project AND worktree=:root",
                              {"project": project_id, "root": str(root)}, False)
                 if focus and focus.get("active_plan_id") is not None:
-                    _set(tx, "worktree_states", {"active_plan_id": None, "version": focus["version"] + 1,
-                         "updated_at": _now()}, "id=:id", {"id": focus["id"]})
+                    update_document(tx, "worktree_states", {"active_plan_id": None, "version": focus["version"] + 1,
+                         "updated_at": utc_now()}, "id=:id", {"id": focus["id"]})
             receipt = {"id": _digest([project_id, snapshot_id]), "project_id": project_id, "snapshot_id": snapshot_id,
                        "state_hash": manifest["state_hash"], "ancestors": manifest.get("ancestors", []),
                        "origin_root": manifest["origin_root"], "local_root": str(root),
                        "source_ids": [s["id"] for s in payload["sources"] if s["id"] not in existing["sources"]],
-                       "imported_at": _now()}
-            _insert(tx, "memory_imports", receipt)
+                       "imported_at": utc_now()}
+            insert_document(tx, "memory_imports", receipt)
             self._receipt(tx, project_id, path, raw, manifest, "import", str(root))
         return result
 
@@ -839,11 +839,11 @@ class MemoryManager:
         _, root = self._scope(project_id, worktree)
         with self.store.transaction() as tx:
             row = {"id": project_id, "project_id": project_id, "enabled": enabled,
-                   "interval_minutes": interval_minutes, "worktree": str(root), "updated_at": _now()}
+                   "interval_minutes": interval_minutes, "worktree": str(root), "updated_at": utc_now()}
             if tx.query("SELECT id FROM memory_settings WHERE id=:id", {"id": project_id}):
-                _set(tx, "memory_settings", row, "id=:id", {"id": project_id})
+                update_document(tx, "memory_settings", row, "id=:id", {"id": project_id})
             else:
-                _insert(tx, "memory_settings", row)
+                insert_document(tx, "memory_settings", row)
         return {"status": "configured", **self.status(project_id, str(root))}
 
     def status(self, project_id, worktree=None):
@@ -851,7 +851,7 @@ class MemoryManager:
         # Shown: the package there is to read. Written next: always the current directory.
         found = snapshot_directory(root)
         path = found / "manifest.json" if found is not None else self._path(root)
-        schedule = _one(self.store, "SELECT FROM memory_settings WHERE id=:id", {"id": project_id}, False) or {}
+        schedule = one_row(self.store, "SELECT FROM memory_settings WHERE id=:id", {"id": project_id}, False) or {}
         result = {"project_id": project_id, "path": str(path), "write_path": str(self._path(root)),
                   "earlier_package": self._earlier_package(root), "latest": None,
                   "auto": {"enabled": False, "interval_minutes": 15, "worktree": str(root),
@@ -867,7 +867,7 @@ class MemoryManager:
         result["rebuilding"] = {"code_index_pending": not bool(project.get("graph_fingerprint")),
                                 "chunks": count("chunks"), "embedding_rows": count("embeddings"),
                                 "model_required_to_read_memory": False}
-        imported = _one(self.store, "SELECT snapshot_id,imported_at,origin_root,local_root FROM memory_imports "
+        imported = one_row(self.store, "SELECT snapshot_id,imported_at,origin_root,local_root FROM memory_imports "
                         "WHERE project_id=:project ORDER BY imported_at DESC,id DESC LIMIT 1", {"project": project_id}, False)
         result["last_import"] = imported
         result["verification"] = "Imported checks are historical; local execution and a new session ACK remain required."
@@ -897,5 +897,5 @@ class MemoryManager:
                 values = {"last_checked_at": timestamp, "error": code}
                 errors.append({"project_id": row["project_id"], "code": code})
             with self.store.transaction() as tx:
-                _set(tx, "memory_settings", values, "id=:id", {"id": row["id"]})
+                update_document(tx, "memory_settings", values, "id=:id", {"id": row["id"]})
         return {"status": "completed", "projects": results, "errors": errors}

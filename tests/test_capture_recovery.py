@@ -12,7 +12,8 @@ import pytest
 from cairnmind.ingest import import_history
 from cairnmind.integrations import _transcript_watermark
 from cairnmind.sessions import SessionManager
-from cairnmind.store import Store, _insert, _now, _set
+from cairnmind.store import Store
+from cairnmind.sql import insert_document, update_document, utc_now
 
 
 NATIVE_ID = "70000000-0000-4000-8000-000000000007"
@@ -104,7 +105,7 @@ def seed_legacy(workspace, tmp_path, *, damage=None, measured=None, unknown=Fals
         store.command("UPDATE session_events SET transcript_watermark=:value WHERE id=:id",
                       {"value": invalid, "id": later["event_id"]})
 
-    sid, now = str(uuid4()), _now()
+    sid, now = str(uuid4()), utc_now()
     session = {"id": sid, "project_id": project["id"], "client": "claude", "worktree": str(root),
                "native_session_id": None, "epoch": 1, "reason": "startup", "status": "partial",
                "packet_id": None, "ack_id": None, "pending_start": True,
@@ -125,11 +126,11 @@ def seed_legacy(workspace, tmp_path, *, damage=None, measured=None, unknown=Fals
     state = manager._state(session)
     packet = manager._build(session, state, [archive, fault], [f"{path}: {stub['error']}"])
     with store.transaction() as tx:
-        _insert(tx, "sessions", session)
-        _insert(tx, "resume_packets", {"id": packet["id"], "project_id": project["id"], "session_id": sid,
+        insert_document(tx, "sessions", session)
+        insert_document(tx, "resume_packets", {"id": packet["id"], "project_id": project["id"], "session_id": sid,
                                        "epoch": 1, "hash": packet["hash"], "payload": packet,
                                        "created_at": packet["created_at"]})
-        _set(tx, "sessions", {"packet_id": packet["id"]}, "id=:id", {"id": sid})
+        update_document(tx, "sessions", {"packet_id": packet["id"]}, "id=:id", {"id": sid})
     assert packet["status"] == "partial"
     return {"sid": sid, "origin_sid": origin["session_id"], "path": path, "project": project,
             "stub": stub, "bounded": bounded, "receipt": receipt, "packet": packet}

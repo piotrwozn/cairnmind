@@ -15,7 +15,8 @@ from cairnmind.memory import MemoryManager
 from cairnmind.plans import PlanManager
 from cairnmind.scope import drift_warning, record_baseline, scope_drift
 import cairnmind.scope as scope_module
-from cairnmind.store import Store, _clean
+from cairnmind.store import Store
+from cairnmind.sql import clean_row
 from cairnmind.verification import task_definition_hash, verification_status
 
 
@@ -146,7 +147,7 @@ def test_the_note_stays_on_this_machine(workspace):
     exported = "".join(path.read_text() for path in (root / ".memory").rglob("*.json"))
     assert digest not in exported and "scope-baselines" not in exported
     assert '"scope": ["src/auth/**"]' in exported or '"scope":["src/auth/**"]' in exported  # the declared scope travels
-    stored = json.dumps([_clean(row) for name in ("records", "record_revisions", "plan_revisions", "nodes", "worktree_states")
+    stored = json.dumps([clean_row(row) for name in ("records", "record_revisions", "plan_revisions", "nodes", "worktree_states")
                          for row in store.query(f"SELECT FROM {name}")], default=str)
     assert digest not in stored
 
@@ -158,7 +159,7 @@ def test_drift_is_a_warning_that_changes_no_record_and_blocks_nothing(workspace)
     (root / "src/billing/invoice.py").write_text("RATE = 2\n")
 
     def rows():
-        return sorted(json.dumps(_clean(row), sort_keys=True, default=str)
+        return sorted(json.dumps(clean_row(row), sort_keys=True, default=str)
                       for name in ("records", "record_revisions", "plans", "plan_revisions", "check_runs")
                       for row in store.query(f"SELECT FROM {name}"))
 

@@ -8,7 +8,8 @@ import pytest
 
 from cairnmind import ingest
 from cairnmind.arcade import ArcadeClient
-from cairnmind.store import Store, _clean
+from cairnmind.store import Store
+from cairnmind.sql import clean_row
 
 
 def tree(root, files=24):
@@ -25,8 +26,8 @@ def tree(root, files=24):
 
 def dump(store, pid):
     """Everything indexing stores, with the identifiers that differ between two databases replaced by what they name."""
-    sources = {row["id"]: row for row in map(_clean, store.query("SELECT FROM sources WHERE project_id=:p", {"p": pid}))}
-    chunks = {row["id"]: row for row in map(_clean, store.query("SELECT FROM chunks WHERE project_id=:p", {"p": pid}))}
+    sources = {row["id"]: row for row in map(clean_row, store.query("SELECT FROM sources WHERE project_id=:p", {"p": pid}))}
+    chunks = {row["id"]: row for row in map(clean_row, store.query("SELECT FROM chunks WHERE project_id=:p", {"p": pid}))}
     names = {pid: "PROJECT"}
     for row in sources.values():
         names[row["id"]] = f"source:{row['uri']}:{row['sha256'][:8]}"
@@ -42,7 +43,7 @@ def dump(store, pid):
     def without(row, *keys):
         return {key: value for key, value in row.items() if key not in keys and not key.startswith("@")}
 
-    nodes = {row["id"]: row for row in map(_clean, store.query("SELECT FROM nodes WHERE project_id=:p", {"p": pid}))}
+    nodes = {row["id"]: row for row in map(clean_row, store.query("SELECT FROM nodes WHERE project_id=:p", {"p": pid}))}
 
     def node(identifier):
         row = nodes[identifier]
@@ -52,11 +53,11 @@ def dump(store, pid):
         "sources": sorted(named(without(row, "id", "created_at")) for row in sources.values()),
         "chunks": sorted(named(without(row, "id")) for row in chunks.values()),
         "jobs": sorted(named(without(row, "id", "created_at", "updated_at"))
-                       for row in map(_clean, store.query("SELECT FROM jobs WHERE project_id=:p", {"p": pid}))),
+                       for row in map(clean_row, store.query("SELECT FROM jobs WHERE project_id=:p", {"p": pid}))),
         "nodes": sorted(node(identifier) for identifier in nodes),
         "edges": sorted(named([row["kind"], node(row["from_id"]), node(row["to_id"]), row.get("source_id"), row.get("is_current"),
                                row.get("status"), row.get("metadata")])
-                        for row in map(_clean, store.query("SELECT FROM edges WHERE project_id=:p", {"p": pid}))),
+                        for row in map(clean_row, store.query("SELECT FROM edges WHERE project_id=:p", {"p": pid}))),
         "events": sorted(collections.Counter(
             (row["entity_type"], row["op"]) for row in store.query("SELECT FROM journal_events WHERE project_id=:p", {"p": pid})
         ).items()),
@@ -157,7 +158,7 @@ def test_a_failure_stores_nothing_of_its_group_and_the_next_run_completes_it(tmp
     chunks = store.query("SELECT id,source_id FROM chunks WHERE project_id=:p", {"p": pid})
     assert {row["source_id"] for row in chunks} == {row["id"] for row in sources}  # no source without its chunks
     jobs = store.query("SELECT payload FROM jobs WHERE project_id=:p AND kind='embed'", {"p": pid})
-    assert sorted(_clean(row)["payload"]["chunk_id"] for row in jobs) == sorted(row["id"] for row in chunks)
+    assert sorted(clean_row(row)["payload"]["chunk_id"] for row in jobs) == sorted(row["id"] for row in chunks)
 
     ingest.index_project(store, pid)
     with monkeypatch.context() as patch:

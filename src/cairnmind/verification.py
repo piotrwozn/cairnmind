@@ -21,7 +21,7 @@ import tomllib
 import threading
 from uuid import UUID, uuid4
 
-from .store import _clean, _insert, _json, _now
+from .sql import clean_row, insert_document, json_text, utc_now
 from .memory_paths import is_reserved_memory
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
@@ -34,7 +34,7 @@ class _RunReferencesGone(ValueError):
 
 
 def _hash(value) -> str:
-    return hashlib.sha256(_json(value).encode()).hexdigest()
+    return hashlib.sha256(json_text(value).encode()).hexdigest()
 
 
 def _root(store, project_id, worktree=None) -> Path:
@@ -396,13 +396,13 @@ def _insert_run(store, run):
                 raise _RunReferencesGone("Source removed before check evidence could be recorded")
         existing = tx.query("SELECT FROM check_runs WHERE id=:id", {"id": run["id"]})
         if existing:
-            return _clean(existing[0])
-        _insert(tx, "check_runs", run)
+            return clean_row(existing[0])
+        insert_document(tx, "check_runs", run)
         return run
 
 
 def _cancelled_without_evidence(run, error):
-    now = _now()
+    now = utc_now()
     return {**run, "outcome": "cancelled", "passed": False, "recorded": False,
             "source_ids": {}, "profile_source_id": None, "ended_at": now, "error": error,
             "reasons": [error], "events": [*run.get("events", []), {"state": "cancelled", "at": now}]}
@@ -513,7 +513,7 @@ def recover_interrupted_runs(store, settings) -> list[dict]:
                 source_ids[name], rendered_size = _output_source(store, active["project_id"], active["id"],
                     name, data, MAX_OUTPUT_BYTES - rendered_total, interrupted=True)
                 rendered_total += rendered_size
-            ended_at = _now()
+            ended_at = utc_now()
             run = {key: active[key] for key in ("id", "project_id", "task_id", "worktree", "origin",
                    "profile_id", "profile_hash", "task_definition_hash", "profile_source_id", "started_at", "code_before")}
             run.update(ended_at=ended_at, outcome="interrupted", returncode=None, passed=False,
@@ -552,11 +552,11 @@ def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -
     output_root = (Path(settings.data_dir) / "checks").resolve()
     if output_root.is_relative_to(root):
         raise ValueError("Check output directory must be outside the working tree")
-    run_id, started_at = str(uuid4()), _now()
+    run_id, started_at = str(uuid4()), utc_now()
     output_dir = output_root / run_id
     output_dir.mkdir(parents=True, mode=0o700)
     before = capture_code_state(store, project_id, root, profile["extra_inputs"])
-    profile_source = store.snapshot(project_id, f"check://{run_id}/profile", _json(profile), "check_profile", {"run_id": run_id})
+    profile_source = store.snapshot(project_id, f"check://{run_id}/profile", json_text(profile), "check_profile", {"run_id": run_id})
     definition_hash = task_definition_hash(task)
     active = {"id": run_id, "project_id": project_id, "task_id": task_id, "worktree": str(root),
               "origin": "local_runner", "profile_id": profile_id, "profile_hash": profile["hash"],
@@ -567,7 +567,7 @@ def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -
     _write_active(active_path, active)
 
     def on_start(pid):
-        active.update(process_pid=pid, process_identity=_process_identity(pid), running_at=_now())
+        active.update(process_pid=pid, process_identity=_process_identity(pid), running_at=utc_now())
         _write_active(active_path, active)
 
     outcome, returncode, error, buffers = _execute(profile, root, output_dir, on_start)
@@ -611,7 +611,7 @@ def _finish_run(store, root, profile, active, outcome, returncode, error, buffer
         source_ids[name], rendered_size = _output_source(store, project_id, run_id, name, data,
             profile["output_limit_bytes"] - rendered_total, truncated=outcome == "output_limit")
         rendered_total += rendered_size
-    ended_at = _now()
+    ended_at = utc_now()
     run = {"id": run_id, "project_id": project_id, "task_id": task_id, "worktree": str(root),
            "origin": "local_runner", "profile_id": profile_id, "profile_hash": profile["hash"],
            "task_definition_hash": definition_hash, "profile_source_id": active["profile_source_id"],
@@ -632,7 +632,7 @@ def _verification_status(store, reader, task, worktree=None, capture=None):
     metadata = task.get("metadata", {})
     project_id = task["project_id"]
     root = _root(store, project_id, worktree)
-    runs = [_clean(r) for r in reader.query("SELECT FROM check_runs WHERE project_id=:project AND task_id=:task ORDER BY ended_at DESC,id",
+    runs = [clean_row(r) for r in reader.query("SELECT FROM check_runs WHERE project_id=:project AND task_id=:task ORDER BY ended_at DESC,id",
                                            {"project": project_id, "task": task["id"]})]
     scoped = [r for r in runs if r.get("worktree") == str(root)]
     try:
@@ -736,7 +736,7 @@ def criteria_status(store, task, worktree=None, *, capture=None, reader=None) ->
     except ValueError as exc:
         profiles, problem = {}, str(exc)
     definition = task_definition_hash(task)
-    runs = [_clean(r) for r in reader.query(
+    runs = [clean_row(r) for r in reader.query(
         "SELECT FROM check_runs WHERE project_id=:project AND task_id=:task ORDER BY ended_at DESC,id",
         {"project": task["project_id"], "task": task["id"]})]
     local = [r for r in runs if r.get("worktree") == str(root) and r.get("origin") == "local_runner"]

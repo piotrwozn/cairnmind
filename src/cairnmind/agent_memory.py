@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import httpx
 
-from .store import _clean, _json, _one
+from .sql import clean_row, json_text, one_row
 
 AGENT_CLIENTS = {"api", "copilot"}
 _SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
@@ -26,7 +26,7 @@ _PROVIDER_FIELDS = {"continuation", "reasoning", "thinking", "encrypted_content"
 
 
 def _hash(value: Any) -> str:
-    return hashlib.sha256(_json(value).encode()).hexdigest()
+    return hashlib.sha256(json_text(value).encode()).hexdigest()
 
 
 def _journal_path(settings, session_id: str) -> Path:
@@ -138,7 +138,7 @@ def capture_agent_target(settings, owner: dict) -> dict | None:
         events = _journal_events(settings, sid)
         if not events:
             return None
-        raw = b"".join((_json(event) + "\n").encode() for event in events)
+        raw = b"".join((json_text(event) + "\n").encode() for event in events)
         return {**target, "sequence": len(events), "size": len(raw),
                 "sha256": hashlib.sha256(raw).hexdigest(), "chain_hash": events[-1]["hash"]}
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -218,7 +218,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         expected_path = _journal_path(settings, sid)
         if target.get("path") != str(expected_path):
             raise ValueError("Own-agent archive path does not match its bound logical session")
-        owner = _one(store, "SELECT FROM sessions WHERE id=:id", {"id": sid})
+        owner = one_row(store, "SELECT FROM sessions WHERE id=:id", {"id": sid})
         if (owner.get("client") not in AGENT_CLIENTS or target.get("client") != owner["client"]
                 or (owner.get("project_id"), owner.get("worktree")) !=
                 (session["project_id"], session["worktree"])):
@@ -227,7 +227,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         if (type(sequence) is not int or not 1 <= sequence <= 1_000_000
                 or type(size) is not int or not 0 < size <= 64 * 1024 * 1024):
             raise ValueError("Invalid own-agent archive horizon")
-        rows = [_clean(row) for row in store.query(
+        rows = [clean_row(row) for row in store.query(
             "SELECT FROM sources WHERE project_id=:project AND metadata.agent_session_id=:session "
             "AND metadata.agent_sequence<=:sequence",
             {"project": session["project_id"], "session": sid, "sequence": sequence})]
@@ -250,7 +250,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         if len(events) < sequence:
             raise ValueError("Own-agent journal was truncated before the captured horizon")
         events = events[:sequence]
-        raw = b"".join((_json(event) + "\n").encode() for event in events)
+        raw = b"".join((json_text(event) + "\n").encode() for event in events)
         if (len(raw) != size or hashlib.sha256(raw).hexdigest() != target.get("sha256")
                 or events[-1].get("hash") != target.get("chain_hash")):
             raise ValueError("Own-agent journal captured prefix changed")
@@ -263,7 +263,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                 raise TimeoutError("Own-agent archive preparation exceeded its deadline")
             seq = event["seq"]
             visible = _public(event)
-            content = _json(visible) + "\n"
+            content = json_text(visible) + "\n"
             uri = f"agent-transcript://{owner['client']}/{sid}/{seq}/{event['hash']}"
             existing = by_sequence.get(seq)
             digest = hashlib.sha256(content.encode()).hexdigest()
@@ -274,11 +274,11 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
             role = data.get("role", "metadata") if isinstance(data, dict) else "metadata"
             normalized = data.get("content") if isinstance(data, dict) else None
             if not isinstance(normalized, str) or not normalized.strip():
-                normalized = _json(data)
+                normalized = json_text(data)
             metadata = {"client": owner["client"], "role": role, "session_id": sid,
                         "agent_session_id": sid, "agent_sequence": seq,
                         "agent_event_hash": event["hash"],
-                        "raw_sha256": hashlib.sha256((_json(event) + "\n").encode()).hexdigest(),
+                        "raw_sha256": hashlib.sha256((json_text(event) + "\n").encode()).hexdigest(),
                         "worktree": owner["worktree"], "cwd": owner["worktree"],
                         "origin": "agent_runtime", "archive_parser_revision": 1,
                         "archive_view": "public-agent-event-v1",

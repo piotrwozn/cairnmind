@@ -11,7 +11,8 @@ import pytest
 from cairnmind.ingest import import_history
 from cairnmind.plans import PlanManager
 from cairnmind.sessions import MAX_PACKET_BYTES, SessionManager, format_packet
-from cairnmind.store import Store, _json
+from cairnmind.store import Store
+from cairnmind.sql import json_text
 
 
 def git(root, *args):
@@ -92,7 +93,7 @@ def test_empty_ready_packet_is_immutable_and_delivery_never_acknowledges(session
     assert manager.status(result["session_id"])["acknowledged"]
     assert manager.resume_context(result["session_id"])["packet"] == packet
     body = {key: value for key, value in packet.items() if key != "hash"}
-    assert packet["hash"] == hashlib.sha256(_json(body).encode()).hexdigest()
+    assert packet["hash"] == hashlib.sha256(json_text(body).encode()).hexdigest()
     assert packet["id"] in format_packet(packet)
     assert len(format_packet(packet)) <= 6500
 
@@ -310,7 +311,7 @@ def test_oversized_essential_constraints_stay_bounded_and_unready(sessions):
         [{"key": "first", "content": "Do work"}], "large-plan", worktree=str(root), activate=True)
     result = manager.prepare(project["id"], "codex", timeout=0)
     assert result["status"] == "partial"
-    assert len(_json(result["packet"]).encode("utf-8")) <= MAX_PACKET_BYTES
+    assert len(json_text(result["packet"]).encode("utf-8")) <= MAX_PACKET_BYTES
     assert any("budget" in text for text in result["unknowns"])
 
 

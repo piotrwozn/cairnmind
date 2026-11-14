@@ -8,8 +8,8 @@ import json
 import pytest
 
 from cairnmind.arcade import ArcadeClient
-from cairnmind.store import (LEGACY_EXPORT_TYPES, SCHEMA_VERSION, V03_DOCUMENT_TYPES,
-                            Store, _json, _set)
+from cairnmind.store import LEGACY_EXPORT_TYPES, SCHEMA_VERSION, V03_DOCUMENT_TYPES, Store
+from cairnmind.sql import json_text, update_document
 from cairnmind.verification import verification_status
 
 
@@ -32,8 +32,8 @@ def schema_one_fixture(tmp_path):
     # historical state directly, without using a production completion bypass.
     task["metadata"]["requires_test"] = True
     with store.transaction() as tx:
-        _set(tx, "records", {"metadata": task["metadata"]}, "id=:id", {"id": task["id"]})
-        _set(tx, "record_revisions", {"snapshot": task}, "record_id=:id", {"id": task["id"]})
+        update_document(tx, "records", {"metadata": task["metadata"]}, "id=:id", {"id": task["id"]})
+        update_document(tx, "record_revisions", {"snapshot": task}, "record_id=:id", {"id": task["id"]})
         store._record_graph(tx, task)
     for collection in reversed(V03_DOCUMENT_TYPES):
         store.command(f"DROP TYPE {collection}")
@@ -69,7 +69,7 @@ def test_schema_one_backup_precedes_new_ddl_and_preserves_legacy(tmp_path, monke
             backups = list((original.data_dir / "backups").glob("before-schema-1-to-4-*.gz"))
             assert len(backups) == 1
             envelope = read_envelope(backups[0])
-            assert envelope["sha256"] == hashlib.sha256(_json(envelope["payload"]).encode()).hexdigest()
+            assert envelope["sha256"] == hashlib.sha256(json_text(envelope["payload"]).encode()).hexdigest()
             assert envelope["payload"]["format_version"] == 2
             assert not set(V03_DOCUMENT_TYPES).intersection(envelope["payload"])
             assert envelope["payload"]["records"] == [task]
