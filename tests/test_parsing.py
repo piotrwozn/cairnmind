@@ -123,3 +123,59 @@ def test_python_assignments_that_are_not_definitions_are_skipped():
 def test_javascript_top_level_values_stay_out_of_symbols():
     result = analyze_code(Path("limits.js"), "const LIMIT = 5;\nexport const NAME = 'x';\n")
     assert result["symbols"] == []
+
+
+PYPROJECT = '''# Project metadata.
+[project]
+name = "sample"
+version = "1.4.2"   # bumped by the release script
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",  # [not a table]
+    "rich",
+]
+description = """A
+multi-line # not a comment
+text"""
+
+[project.scripts]
+sample = "sample.cli:main"
+
+[tool.ruff]
+line-length = 110
+lint.select = ["E", "F"]
+"quoted.key" = 'x'
+inline = { a = 1, b = [2, 3] }
+
+[[tool.mypy.overrides]]
+module = "a"
+'''
+
+
+def test_toml_keys_are_symbols_named_by_their_table():
+    result = analyze_code(Path("pyproject.toml"), PYPROJECT)
+    assert result["language"] == "toml" and result["errors"] == []
+    found = {s["name"]: s for s in result["symbols"]}
+    assert set(found) == {
+        "project.name", "project.version", "project.requires-python", "project.dependencies",
+        "project.description", "project.scripts.sample", "tool.ruff.line-length", "tool.ruff.lint.select",
+        "tool.ruff.quoted.key", "tool.ruff.inline", "tool.mypy.overrides.module"}
+    python = found["project.requires-python"]
+    assert (python["kind"], python["owner"], python["member"]) == ("field", "project", "requires-python")
+    assert (python["line_start"], python["line_end"]) == (5, 5)
+    # A value over several lines keeps all of them: an array, a multi-line string.
+    assert (found["project.dependencies"]["line_start"], found["project.dependencies"]["line_end"]) == (6, 9)
+    assert (found["project.description"]["line_start"], found["project.description"]["line_end"]) == (10, 12)
+    assert found["tool.ruff.lint.select"]["owner"] == "tool.ruff.lint"
+    assert result["imports"] == [] and result["calls"] == []
+
+
+def test_toml_top_level_keys_and_invalid_files():
+    result = analyze_code(Path("settings.toml"), 'title = "x"\n[a]\nb = 1\n')
+    assert {s["name"]: s["kind"] for s in result["symbols"]} == {"title": "constant", "a.b": "field"}
+    broken = analyze_code(Path("broken.toml"), 'good = 1\nthis is not toml\n[t]\nlater = 2\n')
+    # The file is reported as invalid; the keys that can be read are still kept.
+    assert broken["errors"]
+    assert {s["name"] for s in broken["symbols"]} == {"good", "t.later"}
+    # A lock file in TOML syntax is not configuration: it stays text.
+    assert analyze_code(Path("uv.lock"), 'version = 1\n')["language"] == "text"

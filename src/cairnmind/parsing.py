@@ -9,12 +9,17 @@ from __future__ import annotations
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+import re
+import tomllib
 from typing import Any
 
 
 # Bump when syntax-to-fact semantics change, independently of grammar upgrades.
 # syntax-v2: Python module constants and class fields are symbols too.
-PARSER_VERSION = "syntax-v2"
+# syntax-v3: keys of TOML files are symbols too.
+PARSER_VERSION = "syntax-v3"
+MAX_CONFIG_KEYS = 1000  # symbols kept from one configuration file
+_TOML_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @lru_cache(maxsize=1)
@@ -128,24 +133,142 @@ def _python_assignments(root: Any) -> list[dict[str, Any]]:
     return found
 
 
+def _toml_key(line: str, pos: int) -> tuple[list[str], int] | None:
+    """(parts, position after the key and its spaces) of the dotted TOML key at ``pos``, or None."""
+    parts: list[str] = []
+    while True:
+        while pos < len(line) and line[pos] in " \t":
+            pos += 1
+        if pos < len(line) and line[pos] in "\"'":
+            quote, end = line[pos], pos + 1
+            while end < len(line) and line[end] != quote:
+                end += 2 if quote == '"' and line[end] == "\\" else 1
+            if end >= len(line):
+                return None
+            parts.append(line[pos + 1:end])  # escapes are kept as written
+            pos = end + 1
+        else:
+            match = _TOML_BARE_KEY.match(line, pos)
+            if match is None:
+                return None
+            parts.append(match.group())
+            pos = match.end()
+        while pos < len(line) and line[pos] in " \t":
+            pos += 1
+        if pos < len(line) and line[pos] == ".":
+            pos += 1
+            continue
+        return parts, pos
+
+
+def _toml_value_end(lines: list[str], row: int, pos: int) -> int:
+    """Index of the last line of the TOML value that starts at ``lines[row][pos]``.
+
+    A value goes on while an array or inline table is open or a multi-line string is; brackets
+    and "#" inside strings, and anything after a comment, do not count.
+    """
+    depth, multi = 0, None
+    while row < len(lines):
+        line = lines[row]
+        while pos < len(line):
+            if multi:
+                if multi == '"""' and line[pos] == "\\":
+                    pos += 2
+                elif line.startswith(multi, pos):
+                    pos, multi = pos + 3, None
+                else:
+                    pos += 1
+                continue
+            char = line[pos]
+            if line.startswith(('"""', "'''"), pos):
+                multi, pos = line[pos:pos + 3], pos + 3
+                continue
+            if char in "\"'":
+                end = pos + 1
+                while end < len(line) and line[end] != char:
+                    end += 2 if char == '"' and line[end] == "\\" else 1
+                pos = end + 1
+                continue
+            if char == "#":
+                break
+            depth += (char in "[{") - (char in "]}")
+            pos += 1
+        if not multi and depth <= 0:
+            return row
+        row, pos = row + 1, 0
+    return len(lines) - 1
+
+
+def _toml_keys(content: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Keys of a TOML file as symbols, and the file's syntax error if it has one.
+
+    Every ``key = value`` is a symbol with the lines of its whole value. A key in a table is a
+    field named ``table.key`` (``project.requires-python``) with ``owner`` (the table, dotted)
+    and ``member`` (the last part of the key) kept apart, as a class field is; a key above the
+    first table is a constant. Inline tables and arrays are one value. At most MAX_CONFIG_KEYS.
+    Validity is the standard library's verdict; keys on the lines that can be read are kept, and
+    a key under a table header that cannot be read is skipped.
+    """
+    errors: list[str] = []
+    try:
+        tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        errors.append(f"Syntax error: {exc}")
+    lines = content.split("\n")
+    symbols: list[dict[str, Any]] = []
+    table: list[str] | None = []
+    row = 0
+    while row < len(lines) and len(symbols) < MAX_CONFIG_KEYS:
+        line = lines[row]
+        stripped = line.strip()
+        start = len(line) - len(line.lstrip())
+        if not stripped or stripped.startswith("#"):
+            row += 1
+            continue
+        if stripped.startswith("["):
+            closing = "]]" if stripped.startswith("[[") else "]"
+            parsed = _toml_key(line, start + len(closing))
+            table = parsed[0] if parsed and line.startswith(closing, parsed[1]) else None
+            row += 1
+            continue
+        parsed = _toml_key(line, start)
+        if parsed is None or not line.startswith("=", parsed[1]):
+            row += 1
+            continue
+        last = _toml_value_end(lines, row, parsed[1] + 1)
+        if table is not None:
+            path = [*table, *parsed[0]]
+            item: dict[str, Any] = {"name": ".".join(path), "kind": "constant",
+                                    "line_start": row + 1, "line_end": last + 1}
+            if len(path) > 1:
+                item.update(kind="field", owner=".".join(path[:-1]), member=path[-1])
+            symbols.append(item)
+        row = last + 1
+    return symbols, errors
+
+
 def analyze_code(path: Path, content: str) -> dict[str, Any]:
     """Return declarations, imports and calls from Python/JS/TS syntax trees.
 
     Import ``names`` are exported/original names, with optional ``aliases``
     recording their local spelling. Source coordinates are one-based and refer
     to the exact supplied content, including when it is an uncommitted snapshot.
-    Syntax errors are reported; valid subtrees still yield useful evidence.
+    Syntax errors are reported; valid subtrees still yield useful evidence. A TOML file
+    (``*.toml``, not a lock file) yields its keys as symbols (see ``_toml_keys``).
     """
     suffix = Path(path).suffix.lower()
     name = {
         ".py": "python", ".pyi": "python",
         ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
         ".ts": "typescript", ".mts": "typescript", ".cts": "typescript", ".tsx": "tsx",
+        ".toml": "toml",
     }.get(suffix, "text")
     result: dict[str, Any] = {
         "language": name, "symbols": [], "imports": [], "calls": [], "errors": []
     }
-    if name == "text":
+    if name == "toml":
+        result["symbols"], result["errors"] = _toml_keys(content)
+    if name in {"text", "toml"}:
         return result
     try:
         from tree_sitter import Parser

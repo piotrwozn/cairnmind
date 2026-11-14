@@ -14,8 +14,9 @@ are resolved by exact name:
   definition, a word name constants and fields only, since a plain word such as "version" or
   "write" names many functions; code-name matches are read first, word-name matches fill up
   the rest of the bound;
-- a constant or field is also a candidate when its snake_case name is made only of question
-  words and FILLER_WORDS, with at least one question word and two words in all
+- a constant or field is also a candidate when its snake_case name (or hyphenated TOML key,
+  ``requires-python``) is made only of question words and FILLER_WORDS, with at least one
+  question word and two words in all
   (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
   drift report list at most?"). Words compare by a light stem (a trailing "ing", "ed" or "s" is
   dropped). The question words used are those that can be name words: NAME_STOPWORDS and words
@@ -158,14 +159,15 @@ def pattern_words(question: str) -> list[str]:
 
 
 def name_word_pattern(question: str) -> str | None:
-    """A regular expression for a lower-case snake_case name made of question words and filler
-    words, with at least one question word and two words in all; None without a usable word."""
+    """A regular expression for a lower-case name made of question words and filler words, with
+    at least one question word and two words in all, joined by "_" (snake_case) or "-" (a TOML
+    key such as ``requires-python``); None without a usable word."""
     words = pattern_words(question)
     if not words:
         return None
     real = "(?:" + "|".join(re.escape(word) for word in words) + ")(?:s|es|ed|ing)?"
     word = "(?:" + real + "|" + "|".join(FILLER_WORDS) + ")"
-    return f"^(?=(?:.*_)?{real}(?:_|$))(?:{word}_)+{word}$"
+    return f"^(?=(?:.*[_-])?{real}(?:[_-]|$))(?:{word}[_-])+{word}$"
 
 
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:

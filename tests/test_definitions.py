@@ -335,6 +335,39 @@ def test_a_test_constant_never_outranks_the_primary_definition_of_the_same_class
     assert [row["symbol"]["name"] for row in ranked] == ["Settings.timeout", "DEFAULT_TIMEOUT"]
 
 
+PYPROJECT = '''[project]
+name = "pkg"
+version = "7.7.7"
+requires-python = ">=9.9"
+
+[tool.pytest.ini_options]
+timeout = 41
+'''
+
+
+def test_a_hyphenated_key_made_of_question_words_matches_the_name_pattern():
+    import re
+
+    from cairnmind.definitions import name_word_pattern, relevance
+    pattern = name_word_pattern("Which Python version does this project require?")
+    assert re.match(pattern, "requires-python") and re.match(pattern, "requires_python")
+    assert not re.match(pattern, "requires-pythonic") and not re.match(pattern, "python")
+    key = {"name": "project.requires-python", "kind": "field", "owner": "project", "member": "requires-python"}
+    assert relevance("Which Python version does this project require?", key, "pyproject.toml") == (0, 1, 2, 1)
+
+
+def test_keys_of_a_toml_file_are_found_as_definitions(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pyproject.toml").write_text(PYPROJECT)
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "Which Python version does this project require?", [], {})
+    assert found and found[0]["definition"] == "project.requires-python" and found[0]["path"] == "pyproject.toml"
+    assert 'requires-python = ">=9.9"' in found[0]["text"]
+    found = agent._definitions(project["id"], "What is the version of the project?", [], {})
+    assert found and found[0]["definition"] == "project.version" and 'version = "7.7.7"' in found[0]["text"]
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
