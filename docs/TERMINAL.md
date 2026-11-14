@@ -156,7 +156,7 @@ cairnmind memory show ~/src/my-app/.memory/cairnmind --kind decision
 cairnmind memory import ~/src/my-app/.memory/cairnmind --root ~/src/my-app --dry-run
 ```
 
-Automatic snapshots remain opt-in per project. A snapshot contains the project's stored memory and history, excluding operational credentials and model weights. Raw conversations may contain private data. Import does not overwrite other projects, and transferred tests remain historical until they are checked locally. See the [memory contracts](MEMORY_CONTRACTS.md) for the full portable-memory format, limits and restore rules.
+`memory status` checks only the newest manifest (its format, identity and checksum), so it answers quickly for a large project; its `latest` says `manifest_valid` and `objects_checked: false`. `memory inspect` and every import check each object as well. Automatic snapshots remain opt-in per project. A snapshot contains the project's stored memory and history, excluding operational credentials and model weights. Raw conversations may contain private data. Import does not overwrite other projects, and transferred tests remain historical until they are checked locally. See the [memory contracts](MEMORY_CONTRACTS.md) for the full portable-memory format, limits and restore rules.
 
 ## 3D graph in the terminal
 
