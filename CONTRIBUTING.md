@@ -38,7 +38,7 @@ uv run pytest -n 4                           # the same full suite in 4 parallel
 
 ### Coverage
 
-Coverage is measured only when you ask for it. In CI the required `full-tests` job runs the suite without coverage; a separate `coverage` job, which is not required, runs the same suite with coverage beside it and shows the numbers in its job summary. A failure there blocks nothing. The same two numbers CI shows on a pull request, the coverage of all of `src/cairnmind` and of the lines your branch adds or changes since it left `origin/main`:
+Coverage is measured only when you ask for it. In CI the suite runs without coverage in four parts at the same time (`uv run pytest -n 4 --shard 2/4` runs one part locally), and the required `full-tests` check passes when every part passed; a separate `coverage` job, which is not required, runs the same suite with coverage beside it and shows the numbers in its job summary. A failure there blocks nothing. The same two numbers CI shows on a pull request, the coverage of all of `src/cairnmind` and of the lines your branch adds or changes since it left `origin/main`:
 
 ```bash
 uv run pytest -n 4 --cov --cov-report=xml && uv run python scripts/coverage_summary.py
