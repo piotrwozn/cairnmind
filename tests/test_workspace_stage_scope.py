@@ -113,11 +113,21 @@ async def test_a_check_result_is_not_shown_for_another_project(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_second_check(tmp_path, monkeypatch):
+@pytest.mark.parametrize("opened_late", [False, True])
+async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_second_check(tmp_path, monkeypatch,
+                                                                                          opened_late):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     project = broker.projects[0]
     answer_stage(broker, decision("run_check", project, stage="test", check_profile="unit"))
     started, release, calls = threading.Event(), threading.Event(), []
+    opening = threading.Event()  # the sidebar's reconcile; held, the open ends after the other project opens
+    if not opened_late:
+        opening.set()
+
+    def reconcile(*args, **kwargs):
+        opening.wait(10)
+        return workspace.read()
+    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", reconcile)
 
     def runner(argv, **kwargs):
         calls.append(argv)
@@ -141,11 +151,16 @@ async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_sec
         assert said == ["The check keeps running: unit · Its result will appear in Notices when it ends."]
         workspace.update({"project_id": "project-other", "worktree": "/elsewhere"})  # Then another project opens.
         app.workspace_data = workspace.read()
-        unseen = app.notice_history.replaced_unseen()
+        # The open's own "Project opened." replaces the line whenever that worker ends (on a slow run after
+        # the switch): let it end first, so the count below changes only by the check's outcome.
+        opening.set()
+        await wait_until(pilot, lambda: "Project opened" in notice_of(app))
+        shown, unseen = app.notice_history.on_line(), app.notice_history.replaced_unseen()
         release.set()
         await wait_until(pilot, lambda: any("Check finished" in entry.text for entry in app.notice_history.entries))
         assert not isinstance(app.screen, MessageModal)
         assert "Check finished" not in notice_of(app)  # never over the other project's notice line
+        assert app.notice_history.on_line() is shown
         assert app.notice_history.replaced_unseen() == unseen + 1  # the mark counts it
         listed = app.notice_history.lines(app.workspace_data, app.t)
     assert len(calls) == 1
