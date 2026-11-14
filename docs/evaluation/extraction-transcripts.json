@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "description": "Invented conversations for cairnmind eval extraction (#160). Each event is what the built-in agent journals (client api) or what Claude Code and Codex write to their transcripts. expect.keep lists the records a person would keep from that event; every other proposed record is one a person would reject. A record matches a kept item when each regular expression of match is found in its content, ignoring case. expect.label names why an event holds nothing to keep.",
+  "description": "Invented conversations for cairnmind eval extraction (#160). Each event is what the built-in agent journals (client api) or what Claude Code and Codex write to their transcripts. expect.keep lists the records a person would keep from that event; every other proposed record is one a person would reject. A record matches a kept item when each regular expression of match is found in its content and no regular expression of the optional reject list is (a request to the assistant or a guess naming the same thing), ignoring case. expect.label names why an event holds nothing to keep.",
   "transcripts": [
     {
       "id": "agent-trial",
@@ -44,9 +44,9 @@
                    "tool_calls": [{"id": "call_3", "name": "read_file", "arguments": {"path": "src/upload/handler.py"}}]},
          "expect": {"label": "narration", "keep": []}},
         {"event": {"role": "assistant", "content": "In src/upload/handler.py the thumbnail is generated inline inside handle_upload(), so the upload request currently violates the new constraint. Moving thumbnail generation to the job queue would fix it."},
-         "expect": {"label": "kept", "keep": [{"id": "thumbnail-inline-today", "kind": "fact", "match": ["thumbnail", "inline|handle_upload|queue"]}]}},
+         "expect": {"label": "kept", "keep": [{"id": "thumbnail-inline-today", "kind": "fact", "match": ["thumbnail", "inline|handle_upload"], "reject": ["^\\W*move\\b", "implied"]}]}},
         {"event": {"role": "user", "content": "Yes. Add a task: move thumbnail generation to the background worker, with a test that the upload request returns before the thumbnail exists."},
-         "expect": {"label": "kept", "keep": [{"id": "task-thumbnail-worker", "kind": "task", "match": ["thumbnail", "worker|queue|background"]}]}},
+         "expect": {"label": "kept", "keep": [{"id": "task-thumbnail-worker", "kind": "task", "match": ["thumbnail", "worker|queue|background"], "reject": ["implied", "currently"]}]}},
         {"event": {"role": "user", "content": "Can you show me the diff of the last commit?"},
          "expect": {"label": "one_off", "keep": []}},
         {"event": {"role": "assistant", "content": "Running git show --stat HEAD to display the last commit.",
@@ -101,7 +101,7 @@
                    "tool_calls": [{"id": "call_1", "name": "read_file", "arguments": {"path": "src/reports/scheduler.py"}}]},
          "expect": {"label": "kept", "keep": [{"id": "scheduler-local-time", "kind": "fact", "match": ["local time|utc"]}]}},
         {"event": {"role": "user", "content": "From now on every date in the reports module is computed in UTC; never use local time there."},
-         "expect": {"label": "kept", "keep": [{"id": "reports-utc", "kind": "constraint", "match": ["utc"]}]}}
+         "expect": {"label": "kept", "keep": [{"id": "reports-utc", "kind": "constraint", "match": ["utc|local time"]}]}}
       ]
     },
     {
@@ -128,7 +128,7 @@
         {"event": {"type": "user", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:01:00Z",
                    "message": {"role": "user", "content": "We're switching database migrations from hand-written SQL files to Alembic, that's decided. Keep the old SQL files under migrations/legacy/ for reference. Please run the linter afterwards."}},
          "expect": {"label": "kept", "keep": [
-           {"id": "migrations-alembic", "kind": "decision", "match": ["alembic"]},
+           {"id": "migrations-alembic", "kind": "decision", "match": ["alembic"], "reject": ["^\\W*run\\b", "linter"]},
            {"id": "legacy-sql-kept", "kind": "constraint", "match": ["legacy"]}]}},
         {"event": {"type": "assistant", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:04:00Z",
                    "message": {"role": "assistant", "content": [
@@ -163,7 +163,7 @@
          "expect": {"label": "protocol", "keep": []}},
         {"event": {"timestamp": "2026-11-11T14:02:00Z", "type": "response_item",
                    "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "From now on the project uses ruff instead of flake8; I already removed the flake8 config. Run ruff on the src directory and fix what it reports."}]}},
-         "expect": {"label": "kept", "keep": [{"id": "ruff-instead-of-flake8", "kind": "decision", "match": ["ruff"]}]}},
+         "expect": {"label": "kept", "keep": [{"id": "ruff-instead-of-flake8", "kind": "decision", "match": ["ruff", "instead of|flake8|replac|switch"], "reject": ["^\\W*run\\b"]}]}},
         {"event": {"timestamp": "2026-11-11T14:02:04Z", "type": "response_item",
                    "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Running ruff check src now."}]}},
          "expect": {"label": "narration", "keep": []}},

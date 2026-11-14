@@ -10,12 +10,13 @@ records a person would keep. Nothing is stored: no database, no engine, no user 
 The local model is not deterministic, so the set is run several times.
 
 Scoring is mechanical. A proposal *matches* a kept item when every regular expression of
-the item's ``match`` occurs in the proposal's content, ignoring case. A proposal matching a
+the item's ``match`` occurs in the proposal's content and none of its optional ``reject``
+(a request to the assistant or a guess that names the same thing), ignoring case. A proposal matching a
 kept item of its own event is *kept*; one matching a kept item of another event of the same
 transcript is a *duplicate*; any other is *rejected*. A person rejects duplicates too, so the
 rejected share is (rejected + duplicates) / proposals. A kept item is *found* in a run when
-at least one proposal of its event matches it. Pass: every kept item found in every run and
-no proposal from an event labelled ``protocol`` or ``host``.
+at least one proposal of its event matches it. Pass: every kept item found in every run, no
+proposal from an event labelled ``protocol`` or ``host``, and no message whose extraction failed.
 """
 from __future__ import annotations
 
@@ -80,7 +81,10 @@ def load_transcripts(path: Path) -> list[dict]:
                     raise _bad(where, "each kept item needs a unique id and a record kind")
                 if not isinstance(match, list) or not match or not all(isinstance(term, str) and term for term in match):
                     raise _bad(where, f"kept item {kid} needs a nonempty match list")
-                for term in match:
+                reject = kept.get("reject", [])
+                if not isinstance(reject, list) or not all(isinstance(term, str) and term for term in reject):
+                    raise _bad(where, f"kept item {kid}: reject must be a list of nonempty patterns")
+                for term in match + reject:
                     try:
                         re.compile(term)
                     except re.error as exc:
@@ -119,7 +123,8 @@ def transcript_sources(transcript: dict) -> list[dict]:
 
 
 def _matches(kept: dict, content: str) -> bool:
-    return all(re.search(term, content, re.IGNORECASE) for term in kept["match"])
+    return (all(re.search(term, content, re.IGNORECASE) for term in kept["match"])
+            and not any(re.search(term, content, re.IGNORECASE) for term in kept.get("reject", [])))
 
 
 def score_transcript(transcript: dict, proposals: dict[int, list[dict]]) -> dict:
@@ -208,7 +213,9 @@ def run_extraction_evaluation(settings: Settings, transcripts_path: Path, *, run
                                    "records": [row for result in results for row in result["records"]]})
         lost = any(run["summary"]["kept_lost"] for run in report["runs"])
         protocol = any(row["label"] in NEVER_PROPOSE for run in report["runs"] for row in run["records"])
-        report["status"] = "failed" if lost or protocol else "passed"
+        # A message whose extraction failed was not measured, so it cannot count as clean.
+        unmeasured = any(run["failures"] for run in report["runs"])
+        report["status"] = "failed" if lost or protocol or unmeasured else "passed"
     except OllamaUnavailable as exc:
         report.update(status="failed" if report["runs"] else "not_run", error=str(exc)[:500])
     report["elapsed_seconds"] = round(time.monotonic() - started, 4)

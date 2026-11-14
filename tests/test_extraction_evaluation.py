@@ -67,7 +67,18 @@ def test_scoring_counts_kept_duplicates_rejected_and_lost():
     assert summary["proposals_by_label"] == {"kept": 1, "protocol": 2}
 
 
+def test_a_request_naming_a_kept_record_does_not_count_as_keeping_it():
+    transcript = _transcript()
+    transcript["events"][0]["expect"]["keep"][0]["reject"] = [r"^\W*run\b"]
+    result = score_transcript(transcript, {0: [{"kind": "task", "content": "Run the ArcadeDB tests now."},
+                                               {"kind": "decision", "content": "The project uses ArcadeDB."}]})
+    assert [row["verdict"] for row in result["records"]] == ["rejected", "kept"]
+    assert result["kept_found"] == ["db"]
+
+
 @pytest.mark.parametrize("change, message", [
+    (lambda data: data["transcripts"][0]["events"][0]["expect"]["keep"][0].update(reject="run"), "reject"),
+    (lambda data: data["transcripts"][0]["events"][0]["expect"]["keep"][0].update(reject=["["]), "db"),
     (lambda data: data.update(format_version=2), "format_version"),
     (lambda data: data["transcripts"][0].update(client="other"), "client"),
     (lambda data: data["transcripts"][0]["events"][0]["expect"].update(keep=[]), "label kept"),
@@ -115,6 +126,29 @@ def test_the_run_scores_every_extracted_message_and_writes_a_private_report(tmp_
     written = Path(report["report_path"])
     assert json.loads(written.read_text(encoding="utf-8"))["status"] == "failed"
     assert (written.stat().st_mode & 0o777) == 0o600
+
+
+class FailingOnProtocolOllama(EchoOllama):
+    """Echoes every message, but gives output that stays invalid for the protocol message."""
+
+    async def chat(self, messages, **kwargs):
+        prompt = json.loads(messages[1]["content"])
+        if prompt["text"] != "Calling resume_context.":
+            return await super().chat(messages, **kwargs)
+        self.calls.append(copy.deepcopy(prompt))
+        return {"message": {"content": "not json"}, "done_reason": "stop"}
+
+
+def test_a_message_whose_extraction_failed_fails_the_run(tmp_path):
+    path = tmp_path / "set.json"
+    path.write_text(json.dumps({"format_version": 1, "transcripts": [_transcript()]}), encoding="utf-8")
+    report = run_extraction_evaluation(Settings(data_dir=tmp_path / "data"), path, runs=1,
+                                       report_dir=tmp_path / "reports", ollama=FailingOnProtocolOllama())
+    run = report["runs"][0]
+    # Nothing was lost and nothing came from the protocol message, but that message was never measured.
+    assert run["summary"]["kept_lost"] == [] and not any(row["label"] == "protocol" for row in run["records"])
+    assert [failure["event"] for failure in run["failures"]] == [1]
+    assert report["status"] == "failed"
 
 
 def test_a_missing_model_is_not_run_and_bad_run_counts_are_refused(tmp_path):
