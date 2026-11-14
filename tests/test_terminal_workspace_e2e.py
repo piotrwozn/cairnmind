@@ -363,7 +363,9 @@ def test_real_websocket_observer_takeover_never_sends_unauthorized_input(termina
         receive_control(first, False)
         first.send(json.dumps({"type": "input", "text": "FORBIDDEN_OLD_CONTROLLER\n"}))
         observer.send(json.dumps({"type": "input", "text": "AUTHORIZED_NEW_CONTROLLER\n"}))
-        receive_until(observer, "AUTHORIZED_NEW_CONTROLLER")
+        # The client's own ECHO line, printed after it traced the input: the terminal echoes the typed
+        # text earlier, before the client has read it.
+        receive_until(observer, 'ECHO "AUTHORIZED_NEW_CONTROLLER"')
         rows = stack.trace("input")
         assert any(row.get("text") == "AUTHORIZED_NEW_CONTROLLER" for row in rows)
         assert not any(row.get("text", "").startswith("FORBIDDEN_") for row in rows)
