@@ -830,8 +830,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 timeout=settings.ask_timeout + 5,
             )
         except TimeoutError:
-            return {"status": "partial", "answer": "Przekroczono czas oczekiwania na lokalnego agenta.",
-                    "sources": [], "unknowns": ["Kolejka lub analiza przekroczyła limit czasu."],
+            return {"status": "partial", "answer": "Waiting for the local agent timed out.",
+                    "sources": [], "unknowns": ["The queue or the analysis exceeded the time limit."],
                     "freshness": {}, "elapsed_seconds": settings.ask_timeout + 5, "cached": False,
                     "diagnostics": {"stage": "ask", "code": "queue_timeout",
                                     "budget": {"timeout_seconds": settings.ask_timeout + 5}}}

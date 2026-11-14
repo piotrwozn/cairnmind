@@ -20,8 +20,9 @@ from .config import Settings
 from .terminal_safe import plain
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
+from .terminal_i18n_messages import broker_error_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
-                          LocalizedModal, MessageModal, summary_text)
+                          LocalizedModal, MessageModal, remeasure_buttons, summary_text)
 
 
 class ConfirmModal(MessageModal):
@@ -181,10 +182,10 @@ def profile_from_form(value, *, identifier, client, provider=None):
             row.update(provider=provider, base_url=value["base_url"])
             if value.get("input_per_million") or value.get("output_per_million"):
                 if not value.get("input_per_million") or not value.get("output_per_million"):
-                    raise ValueError("Podaj obie stawki lub pozostaw obie puste.")
+                    raise ValueError("Give both rates or leave both empty.")
                 row["pricing"] = {key: float(value[key]) for key in ("input_per_million", "output_per_million")}
     except (ValueError, KeyError) as exc:
-        raise ValueError("Podaj poprawne limity całkowite i obie stawki liczbowe albo pozostaw ceny puste.") from exc
+        raise ValueError("Give whole-number limits and both rates as numbers, or leave the prices empty.") from exc
     return row
 
 
@@ -228,7 +229,7 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
             self.query_one("#discovery-notice", Static).update(plain(f"{value.get('state', 'unknown')} · {len(rows)} " + self.t("Projects") +
                 ("\n" + self.t("Operation needs attention.") if value.get("errors") else "")))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.query_one("#discovery-notice", Static).update(plain(exc))
+            self.query_one("#discovery-notice", Static).update(plain(broker_error_text(exc, self.t)))
 
     def choose(self):
         table = self.query_one("#discovery-rows", DataTable)
@@ -255,7 +256,7 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
             await asyncio.to_thread(self.broker.request, "DELETE", "/api/discovery")
             self.refresh_results()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.query_one("#discovery-notice", Static).update(plain(exc))
+            self.query_one("#discovery-notice", Static).update(plain(broker_error_text(exc, self.t)))
 
     def action_close(self):
         self.dismiss(None)
@@ -1133,6 +1134,7 @@ class SidebarApp(BasePanel):
         self.language = values.get("language", self.language)
         await self.reconcile()
         self.refresh_language()
+        remeasure_buttons(self)
         self.notice("Preferences saved.")
 
     def refresh_language(self):
@@ -1281,7 +1283,7 @@ class SidebarApp(BasePanel):
             await self.reconcile()
             await self.load_state()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(str(exc) + self.t(" · Nowa sesja jest osobną jawną operacją."))
+            self.notice(broker_error_text(exc, self.t) + self.t(" · Starting a new session is a separate action."))
 
     @on(Button.Pressed)
     def sidebar_action(self, event):
@@ -1299,7 +1301,7 @@ class SidebarApp(BasePanel):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prywatny panel terminalowego środowiska Cairnmind")
+    parser = argparse.ArgumentParser(description="Private panel of the Cairnmind terminal workspace")
     parser.add_argument("--kind", choices=["sidebar", "inspector", "graph", "activity"], required=True)
     parser.add_argument("--workspace-id", default="default")
     parser.add_argument("--data-dir", type=Path)

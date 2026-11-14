@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 
+from .terminal_i18n_messages import display_word
 from .terminal_notices import about
 from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
                      assistant_name, changed_since_confirmed, confirmed_choice, describe, stage_slot,
@@ -47,7 +48,7 @@ def run_stage_check(settings, decision: dict, runner=subprocess.run) -> dict:
 def check_summary(result: dict, translate) -> str:
     lines = [translate("Check passed." if result.get("passed") is True else "Check did not pass.")]
     if result.get("outcome"):
-        lines.append(translate("Outcome") + ": " + str(result["outcome"]))
+        lines.append(translate("Outcome") + ": " + display_word(result["outcome"], translate))
     for reason in (result.get("reasons") or [])[:10]:
         lines.append("- " + str(reason))
     if result.get("error"):
@@ -92,7 +93,7 @@ def _outcome(app, profile, result=None, error=None) -> str:
         return app.t("The check could not run") + ": " + profile + " · " + str(error)
     verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
     return (app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
-            + (" " + app.t("Outcome") + ": " + str(result["outcome"]) if result.get("outcome") else "")
+            + (" " + app.t("Outcome") + ": " + display_word(result["outcome"], app.t) if result.get("outcome") else "")
             + (" · " + str(result["error"]) if result.get("error") else ""))
 
 

@@ -1,5 +1,7 @@
 """English/Polish labels for the agent terminal, independent of provider data."""
 
+from .terminal_i18n_messages import AGENT_MESSAGES
+
 CATALOG = {
     "input": "wejście", "output": "wyjście", "unavailable": "brak danych",
     "token report incomplete": "raport tokenów niepełny", "cost: unavailable": "koszt: brak danych",
@@ -70,6 +72,7 @@ CATALOG = {
     "Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspace; it keeps running. Ctrl+C interrupts a turn.":
         "Ctrl+Q nie kończy agenta. Ctrl+B, potem d: wyjście ze środowiska; działa ono dalej. Ctrl+C przerywa turę.",
 }
+CATALOG.update(AGENT_MESSAGES)  # fixed provider and engine messages (#153)
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",
           "interrupted": "Interrupted", "failed": "Failed", "error": "Failed", "blocked": "Blocked",

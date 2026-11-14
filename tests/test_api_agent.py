@@ -381,7 +381,7 @@ async def test_ollama_trained_context_rejection_says_to_decrease_window_and_expo
     agent = engine(setup, provider)
     result = await agent.turn("Uruchom model")
     assert result["status"] == "context_limit" and result["error_code"] == "context_limit"
-    assert "Zmniejsz" in result["hint"] and "Zwiększ" not in result["hint"]
+    assert "Lower it" in result["hint"] and "Increase" not in result["hint"]
     assert result["unknowns"] == [result["hint"]]
     assert result["context_details"] == {"configured_context_window": 65536, "model_context_window": 32768}
     assert "sk-should-never-be-shown" not in json.dumps(result)
@@ -396,7 +396,7 @@ async def test_ollama_unknown_context_reports_metadata_problem_without_invented_
     agent = engine(setup, provider)
     result = await agent.turn("Uruchom model")
     assert result["status"] == "error" and result["error_code"] == "context_unknown"
-    assert "nie podała" in result["hint"] and "limit" in result["hint"]
+    assert "gave no reliable" in result["hint"] and "limit" in result["hint"]
     assert result["context_details"] == {}
     assert result["unknowns"] == [result["hint"]]
     assert len(provider.requests) == 1

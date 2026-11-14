@@ -282,6 +282,19 @@ def column_widths(table, widths) -> None:
         table.refresh(layout=True)
 
 
+def column_labels(table, labels) -> None:
+    """Rename the columns, in order, keeping their rows and widths (a language change).
+
+    Textual 8 keys its rendered lines by an update count that a new label does not change, so the
+    rendered lines are dropped here and the heading is drawn again with the new labels.
+    """
+    for column, label in zip(table.ordered_columns, labels):
+        column.label = Text(str(label))
+    table._clear_caches()
+    table._require_update_dimensions = True
+    table.refresh(layout=True)
+
+
 _ROLES = {
     "title": Style(color=TOKENS["strong"], bold=True),
     "label": Style(color=TOKENS["muted"]),

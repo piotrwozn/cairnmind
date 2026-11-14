@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from .terminal_i18n_messages import display_word
+
 STAGES = ("implement", "review", "test")
 # A task state names the work it waits for. Only the state decides the stage.
 STATE_STAGES = {"todo": "implement", "in_progress": "implement", "needs_review": "review", "needs_test": "test"}
@@ -296,7 +298,8 @@ def describe(decision: dict, translate=lambda text: text) -> str:
                      + " (v" + str(plan.get("version")) + ")")
     task = decision.get("task")
     if task:
-        lines.append(translate("Step") + ": " + task["content"] + " [" + str(task["state"]) + ", v"
+        lines.append(translate("Step") + ": " + task["content"] + " [" + display_word(task["state"], translate)
+                     + ", v"
                      + str(task.get("version")) + "]")
     if decision.get("stage"):
         lines.append(translate("Stage") + ": " + translate(decision["stage"]))

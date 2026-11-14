@@ -21,27 +21,28 @@ MAX_LINE_BYTES = 2 * 1024 * 1024
 MAX_TOOL_CALLS = 64
 _TOOL_NAME = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _MESSAGES = {
-    "credential_missing": "Brakuje poświadczeń API.",
-    "auth_rejected": "Dostawca odrzucił poświadczenia.",
-    "access_denied": "Konto nie ma dostępu do wybranego zasobu.",
-    "quota_exhausted": "Brak środków lub dostępnego limitu dostawcy.",
-    "rate_limited": "Dostawca ograniczył częstotliwość żądań.",
-    "network_unavailable": "Nie można połączyć się z dostawcą.",
-    "network_timeout": "Upłynął czas oczekiwania na dostawcę.",
-    "model_or_endpoint_missing": "Model lub adres API jest niedostępny.",
-    "context_limit": "Żądanie przekracza limit kontekstu. Zwiększ okno profilu Ollama lub skróć kontekst.",
-    "context_unknown": "Ollama nie podała wiarygodnego limitu kontekstu modelu; sprawdź model i wersję serwera.",
-    "output_limit": "Dostawca przerwał odpowiedź na limicie wyjścia.",
-    "unsupported_request": "Dostawca nie obsługuje żądanej konfiguracji.",
-    "unsupported_tools": "Model nie potwierdził poprawnej obsługi narzędzi.",
-    "provider_unavailable": "Usługa dostawcy jest chwilowo niedostępna.",
-    "provider_redirect_denied": "API zwróciło przekierowanie; sprawdź adres serwera.",
-    "invalid_response": "Dostawca zwrócił niepoprawną lub niekompletną odpowiedź.",
-    "response_too_large": "Odpowiedź dostawcy przekroczyła limit rozmiaru.",
-    "policy_refused": "Dostawca odmówił wykonania żądania.",
-    "request_conflict": "Dostawca odrzucił żądanie z powodu konfliktu.",
-    "provider_error": "Dostawca odrzucił żądanie.",
-    "tools_rejected": "Dostawca odrzucił definicje narzędzi.",
+    "credential_missing": "The API credential is missing.",
+    "auth_rejected": "The provider rejected the credential.",
+    "access_denied": "The account has no access to the chosen resource.",
+    "quota_exhausted": "No funds or provider quota are left.",
+    "rate_limited": "The provider limited the request rate.",
+    "network_unavailable": "Cannot connect to the provider.",
+    "network_timeout": "Waiting for the provider timed out.",
+    "model_or_endpoint_missing": "The model or the API address is unavailable.",
+    "context_limit": "The request exceeds the context limit. "
+                     "Increase the Ollama profile's window or shorten the context.",
+    "context_unknown": "Ollama gave no reliable context limit for the model; check the model and the server version.",
+    "output_limit": "The provider cut the answer off at the output limit.",
+    "unsupported_request": "The provider does not support the requested configuration.",
+    "unsupported_tools": "The model did not confirm working tool support.",
+    "provider_unavailable": "The provider's service is temporarily unavailable.",
+    "provider_redirect_denied": "The API answered with a redirect; check the server address.",
+    "invalid_response": "The provider returned an invalid or incomplete response.",
+    "response_too_large": "The provider's response exceeded the size limit.",
+    "policy_refused": "The provider refused to carry out the request.",
+    "request_conflict": "The provider rejected the request because of a conflict.",
+    "provider_error": "The provider rejected the request.",
+    "tools_rejected": "The provider rejected the tool definitions.",
 }
 
 
@@ -54,7 +55,8 @@ class ProviderError(ValueError):
                 and set(context_details) == {"configured_context_window", "model_context_window"}
                 and all(type(v) is int and 0 < v <= 2**31 - 1 for v in context_details.values())):
             self.context_details = dict(context_details)
-            self.message = "Wybrane okno przekracza limit modelu Ollama. Zmniejsz je lub wybierz model z większym kontekstem."
+            self.message = ("The chosen window exceeds the Ollama model's limit. "
+                            "Lower it or choose a model with a larger context.")
         self.hint = self.message
         super().__init__(self.message)
 
@@ -344,7 +346,7 @@ class Provider:
     def __init__(self, profile, key=None, *, client=None):
         self.profile = normalize_profile(profile)
         if self.profile["client"] != "api":
-            raise ValueError("Wybierz profil bezpośredniego API.")
+            raise ValueError("Choose a direct API profile.")
         if key is not None and (not isinstance(key, str) or not key or len(key) > 16384
                                 or any(ord(c) < 33 or ord(c) > 126 for c in key)):
             raise ProviderError("auth_rejected")

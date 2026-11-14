@@ -198,31 +198,31 @@ class WorkspaceManager:
 
     def _initialize(self):
         if not self.diagnostics()["available"]:
-            raise ValueError("Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co Cairnmind.")
+            raise ValueError("Install tmux >= 3.4 in the same WSL distribution as Cairnmind.")
         _private_directory(self.directory.parent)
         _private_directory(self.directory)
         _private_directory(self.socket_directory)
         if len(os.fsencode(self.socket)) > 100:
-            raise ValueError("Ścieżka gniazda środowiska jest zbyt długa.")
+            raise ValueError("The workspace socket path is too long.")
         if self.config.is_symlink():
-            raise ValueError("Konfiguracja środowiska nie może być dowiązaniem.")
+            raise ValueError("The workspace configuration must not be a link.")
         if not self.config.exists():
             fd = os.open(self.config, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as handle:
                 handle.write("set -g prefix C-b\nunbind-key -a\nset -g mouse off\n"
                              "set -g default-terminal tmux-256color\nset -g status on\n"
-                             "set -g status-left ' Cairnmind '\nset -g status-right ' C-b p/1/2/i/g · z powiększ · d odłącz '\n"
+                             "set -g status-left ' Cairnmind '\nset -g status-right ' C-b p/1/2/i/g · z zoom · d detach '\n"
                              "set -g pane-border-status top\n"
                              + "".join(f"set -gq {option} '{value}'\n" for option, value in tmux_chrome())
                              + "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
                              "set -g allow-passthrough off\nset -g history-limit 5000\n")
         info = self.config.stat()
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
-            raise ValueError("Konfiguracja środowiska musi być prywatnym plikiem użytkownika.")
+            raise ValueError("The workspace configuration must be a private file of the user.")
 
     def tmux(self, *args, check=True, timeout=8):
         if not self.binary:
-            raise ValueError("tmux jest niedostępny.")
+            raise ValueError("tmux is unavailable.")
         # Machine-readable formats require literal tabs and Unicode even when
         # the user's terminal locale is C or unset.
         return subprocess.run([self.binary, "-u", "-S", str(self.socket), "-f", str(self.config), *map(str, args)],
@@ -299,13 +299,13 @@ class WorkspaceManager:
         broker still independently enforces control between this UI and web.
         """
         if type(takeover) is not bool or not sys.stdin.isatty() or not sys.stdout.isatty():
-            raise ValueError("Dołączenie wymaga interaktywnego terminala.")
+            raise ValueError("Attaching needs an interactive terminal.")
         terminal = os.ttyname(sys.stdin.fileno())
         process = None
         try:
             with _private_lock(self.directory / "attach.lock"):
                 if not self.exists():
-                    raise ValueError("Środowisko terminalowe nie działa.")
+                    raise ValueError("The terminal workspace is not running.")
                 process = subprocess.Popen([self.binary, "-S", str(self.socket), "attach-session", "-r",
                                             "-f", "ignore-size", "-t", SESSION], env=_clean_env())
                 deadline = time.monotonic() + 8
@@ -316,7 +316,7 @@ class WorkspaceManager:
                     time.sleep(.025)
                 else:
                     if process.poll() is None:
-                        raise ValueError("Nie potwierdzono tożsamości dołączanego terminala.")
+                        raise ValueError("The identity of the attaching terminal was not confirmed.")
             # No lock is held while the interactive client is attached.
             return process.wait()
         finally:
@@ -439,7 +439,7 @@ class WorkspaceManager:
             # A durable UI selection is not durable authorization to start a
             # model after restarting the coordinator.
             self.state.update({"handled_work_request": current["work_request"], "intent": "inspect",
-                               "last_error": "Ponów jawne rozpoczęcie pracy po wznowieniu środowiska."})
+                               "last_error": "Start work again explicitly after the workspace resumes."})
         command = [sys.executable, "-I", "-m", "cairnmind.workspace", "--supervise", "--data-dir", str(self.settings.data_dir),
                    "--workspace-id", self.workspace_id, "--tmux-bin", self.binary]
         fd = os.open(self.directory / "supervisor.log", os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
@@ -537,7 +537,7 @@ class WorkspaceManager:
                 # Keep every existing bridge and native child alive when the
                 # memory service/broker is unavailable. Never dump credentials.
                 selected = self._save_if_current(selected, {"broker_available": False,
-                    "last_error": "Usługa klientów jest niedostępna; działające sesje pozostają zachowane."})
+                    "last_error": "The client service is unavailable; running sessions are kept."})
                 reconnect = getattr(self.broker, "reconnect", None)
                 if reconnect is not None:
                     try:
@@ -712,7 +712,7 @@ class WorkspaceManager:
 
     def focus(self, role):
         if role not in _ROLES:
-            raise ValueError("Niepoprawny panel środowiska.")
+            raise ValueError("Invalid workspace pane.")
         self._revive(role)
         panes = self.panes()
         target = panes.get(role, panes.get("client1"))
@@ -803,7 +803,7 @@ class WorkspaceManager:
 
     def open_auth(self, client):
         if client not in {"codex", "claude", "copilot"} or not self.exists():
-            raise ValueError("Wybierz obsługiwanego klienta w otwartym środowisku.")
+            raise ValueError("Choose a supported client in the open workspace.")
         run = (self.broker.request("POST", "/api/copilot/login", json={}) if client == "copilot"
                else self.broker.request("POST", "/api/auth/login", json={"client": client}))["run"]
         return self.show_auth_run(run)
@@ -811,7 +811,7 @@ class WorkspaceManager:
     def show_auth_run(self, run):
         client = run.get("client")
         if client not in {"codex", "claude", "copilot"} or run.get("purpose") != "auth" or not self.exists():
-            raise ValueError("Niepoprawny terminal logowania.")
+            raise ValueError("Invalid sign-in terminal.")
         pane = self.tmux("new-window", "-t", SESSION, "-n", "login-" + client, "-P", "-F", "#{pane_id}",
                          self._bridge_command(run["id"], run["generation"])).stdout.strip()
         self._tag(pane, "auth", run["id"])
@@ -865,16 +865,16 @@ def workspace_status(settings):
 
 def launch_workspace(settings, takeover=False):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise ValueError("Cairnmind wymaga interaktywnego terminala. Użyj `cairnmind workspace status` do diagnostyki.")
+        raise ValueError("Cairnmind needs an interactive terminal. Use `cairnmind workspace status` to diagnose.")
     manager = WorkspaceManager(settings)
     if not manager.diagnostics()["available"]:
-        raise ValueError("Zainstaluj tmux >= 3.4 w Ubuntu: sudo apt install tmux")
+        raise ValueError("Install tmux >= 3.4 in Ubuntu: sudo apt install tmux")
     manager.broker.ensure()
     manager.create()
     inherited = os.environ.get("TMUX", "").split(",", 1)[0]
     if inherited == str(manager.socket) and os.environ.get("TMUX_PANE") in manager.panes().values():
         if takeover:
-            raise ValueError("Odłącz widok C-b d i uruchom `cairnmind workspace takeover` w osobnym terminalu.")
+            raise ValueError("Detach this view with C-b d and run `cairnmind workspace takeover` in another terminal.")
         return 0
     # A different user's tmux server/config is neither modified nor adopted.
     if not takeover and any(not client["readonly"] for client in manager.clients()):

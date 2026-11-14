@@ -33,6 +33,7 @@ from . import terminal_theme
 from .terminal_safe import plain, safe_text
 from .config import Settings
 from .terminal_i18n import localize_bindings
+from .terminal_i18n_messages import display_word
 from .runtime_selection import resolve_tmux
 from .terminal_ui import BasePanel
 from .graph_raster import render_scene
@@ -214,7 +215,7 @@ class GraphModel:
             return False
         if (not isinstance(data, dict) or not isinstance(data.get("nodes", []), list)
                 or not isinstance(data.get("edges", []), list) or not isinstance(data.get("groups", []), list)):
-            raise ValueError("Niepoprawny format projekcji grafu.")
+            raise ValueError("Invalid graph projection format.")
         unique = {}
         for node in data.get("nodes", []):
             if isinstance(node, dict) and isinstance(node.get("id"), str) and node["id"] not in unique:
@@ -275,7 +276,7 @@ def selection_for(node):
         owner_id = node.get("owner_id")
         revision_id = node.get("revision_id")
         if owner_type not in {"record", "plan"} or not isinstance(owner_id, str) or not isinstance(revision_id, str):
-            raise ValueError("Niepełna tożsamość wersji historycznej.")
+            raise ValueError("Incomplete identity of a historical version.")
         return {"project_id": project, "entity_type": "revision", "id": revision_id,
                 "owner_type": owner_type, "owner_id": owner_id, "revision": node["version"]}
     for kind, field in (("record", "record_id"), ("plan", "plan_id"), ("source", "source_id"), ("inbox", "inbox_id")):
@@ -667,12 +668,12 @@ class GraphApp(BasePanel):
         async for event in self.broker.events(after=self.model.cursor):
             data = event.get("data") or {}
             if not isinstance(data, dict):
-                self.notice("Niejednoznaczne zdarzenie pamięci; odświeżono projekcję.")
+                self.notice("An ambiguous memory event; the view was read again.")
                 self._dirty = True
                 continue
             scope = self.model.scope
             if event.get("event") == "unavailable":
-                self.notice("Połączenie z pamięcią przerwane; zachowano widok i kamerę.")
+                self.notice("The connection to memory was interrupted; the view and camera were kept.")
             elif (event.get("event") == "reset" or scope.project is None
                   or data.get("project_id") in {None, scope.project}):
                 self._dirty = True
@@ -712,7 +713,8 @@ class GraphApp(BasePanel):
             # With no node the sentence is muted, so it does not read as a selected node.
             self.query_one("#graph-selection", Static).set_class(not selected, "-empty")
             self.query_one("#graph-selection", Static).update(plain(
-                "Enter: " + label(selected.get("label", selected["id"])) + " · " + label(selected.get("kind", ""))
+                "Enter: " + label(selected.get("label", selected["id"])) + " · "
+                + label(display_word(selected.get("kind", ""), self.t))
                 if selected else self.t("No nodes in this scope.")))
             self.query_one("#graph-status", Static).update(plain(
                 f"{len(self.model.nodes)}/{NODE_LIMIT} " + self.t("nodes") + f" · {len(self.model.edges)}/{EDGE_LIMIT} " + self.t("relationships") + " · "
@@ -767,7 +769,7 @@ class GraphApp(BasePanel):
                     return
                 project = next((p for p in data.get("projects", []) if p["id"] == node.get("project_id")), None)
                 if not project:
-                    raise ValueError("Projekt nie jest już zarejestrowany.")
+                    raise ValueError("The project is no longer registered.")
                 self._global = False
                 value = await asyncio.to_thread(self.workspace.select_project, project, project["root"], intent="inspect")
                 self.workspace_data = value
@@ -791,7 +793,7 @@ class GraphApp(BasePanel):
                         data = await self.request("GET", "/api/state")
                         project = next((p for p in data.get("projects", []) if p["id"] == selection["project_id"]), None)
                         if not project:
-                            raise ValueError("Nieznany projekt wskazanego wpisu.")
+                            raise ValueError("The project of the chosen entry is unknown.")
                         await asyncio.to_thread(self.workspace.select_project, project, intent="inspect")
                 await asyncio.to_thread(self.workspace.update, {"selected_entity": selection, "focus": "inspector"})
         except (OSError, ValueError, RuntimeError) as exc:

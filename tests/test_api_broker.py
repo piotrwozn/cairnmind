@@ -164,5 +164,5 @@ def test_provider_diagnostics_never_echo_mutated_upstream_hint(broker, monkeypat
     response = client.post('/api/profiles/api/probe', headers=headers, json={})
     assert response.json()['code'] == 'context_limit'
     assert response.json()['context_details']['model_context_window'] == 8192
-    assert 'Zmniejsz' in response.json()['hint']
+    assert 'Lower it' in response.json()['hint']
     assert 'RAW_PRIVATE_KEY_OR_PROVIDER_BODY' not in response.text
