@@ -165,6 +165,11 @@ class CredentialStore:
             return kind, name
         raise ValueError("Invalid credential reference.")
 
+    def registered_values(self):
+        """Every key this store holds, saved or for this session: the secrets gate (#171) refuses to publish them."""
+        with self._mutex:
+            return [*self._read().values(), *self._ephemeral.values()]
+
     def resolve(self, profile):
         kind, name = self._reference(profile)
         with self._mutex:

@@ -1,4 +1,4 @@
-"""The `memory` commands of published team memory (#170), registered on the CLI's memory group."""
+"""The `memory` commands of published team memory (#170, #171), registered on the CLI's memory group."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,11 +22,24 @@ def register(memory_app, initialized):
         output(request(ctx.obj, "POST", "/memory/publish", json=payload))
 
     @memory_app.command("check-published")
-    def memory_check_published(ctx: typer.Context, path: Path):
-        """Check a published memory directory without a store, service or model. Exit 0 valid, 1 refused."""
+    def memory_check_published(ctx: typer.Context, path: Path,
+                               config: Annotated[Path | None, typer.Option(
+                                   "--config", help="Personal-data patterns; default: .cairnmind/publication.toml "
+                                                    "of the checkout holding PATH.")] = None):
+        """Check a published memory directory without a store, service or model. Exit 0 valid, 1 refused.
+
+        Includes the secrets scan (private keys, key and token shapes, passwords in connection strings,
+        random strings, and personal data when the project turns it on); no secret is printed."""
         from cairnmind.memory_published_check import check_directory
+        from cairnmind.memory_published_release import checkout_rules
+        from cairnmind.memory_published_secrets import SecretRulesError
         from cairnmind.terminal_safe import safe_text
-        tree, errors = check_directory(path.expanduser().absolute())
+        selected = path.expanduser().absolute()
+        try:
+            rules = checkout_rules(selected, config.expanduser().absolute() if config else None)
+        except (SecretRulesError, OSError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="--config") from None
+        tree, errors = check_directory(selected, rules)
         for location, reason in errors:
             typer.echo(safe_text(f"{location or '(tree)'}: {reason}"))
         if errors:
@@ -77,6 +90,26 @@ def register(memory_app, initialized):
                     "origin_root": f"published directory {selected}"}
         typer.echo(render_snapshot(manifest, payload, kind=kind, status=status))
         typer.echo("Published elsewhere and not verified here: reviewed_by names are claims made by the files.")
+
+    @memory_app.command("release")
+    @initialized
+    def memory_release(ctx: typer.Context, project: str, record: str,
+                       reason: Annotated[str, typer.Option("--reason", help="Why the hits are not secrets; published.")],
+                       worktree: Path | None = None):
+        """Let a record's false alarms of the secrets scan be published, after reading the record.
+
+        The release names each field and kind of hit and is published in the record's file with the reason.
+        A registered secret is never released."""
+        from cairnmind.cli import output, refuse, request
+        from cairnmind.config import session_value
+        if session_value("SESSION_ID"):
+            refuse("A coding session cannot release a record; a person releases it outside the session.")
+        from cairnmind.memory_published_format import canonical_uuid
+        if not canonical_uuid(record):
+            raise typer.BadParameter("RECORD must be a record ID")
+        output(request(ctx.obj, "POST", f"/inspector/records/{record}/release",
+                       json={"project": project, "reason": reason,
+                             "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
 
     @memory_app.command("confirm-plan")
     @initialized

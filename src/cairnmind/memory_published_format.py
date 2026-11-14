@@ -242,8 +242,8 @@ def ref_class(ref):
         return "file"
     if keys == {"actor_name", "at", "branch", "commit", "kind", "origin"} and kind == "note":
         return "note" if ref["origin"] == "workspace_form" else None
-    if keys == {"at", "kind"} and kind in ("review", "plan"):
-        return kind
+    if keys == {"at", "kind"} and kind in ("review", "plan", "release"):
+        return kind  # A release (#171) lets a person's reviewed false alarms of the secrets gate through.
     if keys == {"at", "kind", "origin"} and kind.strip() and kind not in ("release", "published"):
         return "other"
     return None

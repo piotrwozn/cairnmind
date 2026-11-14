@@ -55,13 +55,15 @@ def read_tree(directory):
     return files, errors
 
 
-def scan(models):
-    """The secrets gate (#171) hooks in here: [{path, field, kind}] for every value that must not travel.
+def scan(models, rules=None):
+    """The secrets gate (#171): [{path, field, kind, value_sha256}] for every value that must not travel.
 
-    Called on what is about to be written and on what a check reads, before anything else is done with
-    it. Version 1 registers nothing yet, which is why publishing stays switched off outside tests.
+    Called on what is about to be written and on what a check reads. Without rules it looks for what
+    needs no machine: private keys, key and token shapes, passwords in connection strings and random
+    strings; the publisher adds this machine's registered secrets and the project's personal patterns.
     """
-    return []
+    from .memory_published_secrets import scan_models
+    return scan_models(models, rules)
 
 
 def record_row(project_id, model, revision, version):
@@ -172,8 +174,8 @@ def payload_of(project_id, records, plans, sources):
     return payload
 
 
-def check_files(files):
-    """Phase 1 of an import: (tree, errors). The tree is None whenever there is an error."""
+def check_files(files, rules=None):
+    """Phase 1 of an import: (tree, errors). The tree is None whenever there is an error, a secret included."""
     from .memory import _parse, _validate
     errors = []
     for path, raw in sorted(files.items()):
@@ -227,15 +229,16 @@ def check_files(files):
         _validate(payload, project_id, graph=False)
     except ValueError as exc:
         return None, [("", f"the tree as a whole is invalid: {exc}")]
-    hits = scan({"records": records, "plans": plans, "paths": paths})
+    hits = scan({"records": records, "plans": plans, "paths": paths}, rules)
     if hits:
-        return None, [(hit["path"], f"{hit['kind']} found in {hit['field']}; nothing was imported") for hit in hits]
+        # The file, the field and the kind of hit; never the value or its hash.
+        return None, [(hit["path"], f"{hit['kind'].replace('_', ' ')} found in {hit['field']}") for hit in hits]
     return {"project_id": project_id, "records": records, "plans": plans, "paths": paths, "sources": sources,
             "payload": payload}, []
 
 
-def check_directory(directory):
+def check_directory(directory, rules=None):
     files, errors = read_tree(directory)
     if errors:
         return None, errors
-    return check_files(files)
+    return check_files(files, rules)
