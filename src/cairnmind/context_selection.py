@@ -3,7 +3,9 @@
 Entries arrive in presentation order: checkpoints, open tasks, confirmed records, then the
 rest, each group most recently updated first. Before that order is applied, a stated share of
 the budget is reserved for the most recently updated proposed records, so new findings are
-seen even when many confirmed records or open tasks exist. The reserve is not lost when there
+seen even when many confirmed records or open tasks exist. The reserve always grows to hold the
+newest of those records when it fits the whole budget, so a long finding with metadata beside an
+active plan is not passed over for an older, shorter one. The reserve is not lost when there
 are few findings: the main pass fills the whole budget. An entry that does not fit is skipped
 and filling goes on, so one long entry does not hide every shorter one after it.
 
@@ -28,7 +30,8 @@ def select_entries(entries: list[dict], reserve: list[bool], budget: int,
     """Return the selected entries in presentation order and omitted counts per kind and status.
 
     ``reserve[i]`` marks an entry that may use the reserved share; such entries are tried for the
-    reserve in the order given, which is most recently updated first.
+    reserve in the order given, which is most recently updated first. The first of them is taken
+    whenever it fits the whole budget: the reserve grows to its size when the share is smaller.
     """
     if len(entries) != len(reserve):
         raise ValueError("Every entry needs a reserve flag")
@@ -36,6 +39,9 @@ def select_entries(entries: list[dict], reserve: list[bool], budget: int,
     chosen: set[int] = set()
     used = 0
     reserved = int(max(0, budget) * min(max(share, 0.0), 1.0))
+    newest = next((index for index, flag in enumerate(reserve) if flag), None)
+    if newest is not None and sizes[newest] <= budget:
+        reserved = max(reserved, sizes[newest])
     for index, size in enumerate(sizes):
         if reserve[index] and used + size <= reserved:
             chosen.add(index)

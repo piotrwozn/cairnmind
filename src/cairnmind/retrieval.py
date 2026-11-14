@@ -647,9 +647,9 @@ class Retriever:
             entry = public_record(record, content_limit=500, metadata_budget=800)
             entry["sources"] = entry.pop("source_ids")
             entries.append(entry)
-        # A share of the budget goes to the newest proposed records that are neither checkpoints
-        # nor open tasks, so new findings are seen beside many confirmed records (#188).
-        reserve = [record.get("status") == "proposed" and record["kind"] != "checkpoint" and not open_task(record)
+        # A share of the budget goes to the newest proposed findings, so they are seen beside many
+        # confirmed records (#188). Checkpoints and tasks, finished or not, keep their own places.
+        reserve = [record.get("status") == "proposed" and record["kind"] not in ("checkpoint", "task")
                    for record in records]
         budget = max(2500, 6500 - len(json.dumps(workflow, ensure_ascii=False)))
         selected, omitted = select_entries(entries, reserve, budget)

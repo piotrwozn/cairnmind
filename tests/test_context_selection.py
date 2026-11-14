@@ -150,3 +150,71 @@ def test_finding_text_cannot_claim_a_better_place(workspace):
     assert newest["id"] in by_id
     assert by_id.get(loud["id"], {"status": "proposed"})["status"] == "proposed"
     assert context["records"][0]["status"] == "confirmed"
+
+
+def test_newest_finding_of_real_size_is_seen_beside_an_active_plan(workspace):
+    from cairnmind.context_selection import PROPOSED_SHARE, entry_size
+    from cairnmind.plans import PlanManager
+
+    store, project, settings = workspace
+    PlanManager(store).save(project["id"], {"title": "Large plan", "goal": "Goal " * 2000,
+        "constraints": [f"Constraint {i}: " + "long " * 500 for i in range(20)]},
+        [{"key": f"step-{i}", "content": f"Task {i}: " + "detail " * 200,
+          "metadata": {"requires_test": True, "required_profiles": ["unit"]}} for i in range(10)],
+        "large", activate=True)
+    confirmed_decisions(store, project, 40)
+    for index in range(2):
+        store.remember(project["id"], {"kind": "fact", "key": f"short-{index}", "content": f"Short {index}."},
+                       [source(store, project)["id"]])
+    newest = store.remember(project["id"], {
+        "kind": "fact", "key": "extracted", "content": "Extracted finding: " + "the importer skips rows " * 25,
+        "metadata": {"extracted_by": "local-model", "origin": "document", "evidence": "quoted line " * 40,
+                     "scope": "src/importer"}}, [source(store, project)["id"]])
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    budget = max(2500, 6500 - len(json.dumps(context["workflow"], ensure_ascii=False)))
+    shown = {item["id"]: item for item in context["records"]}
+    assert context["workflow"]["plan"] and newest["id"] in shown
+    # The case the review measured: the finding is larger than the plain share of the budget.
+    assert entry_size(shown[newest["id"]]) > int(budget * PROPOSED_SHARE)
+    assert shown[newest["id"]]["status"] == "proposed"
+    assert sum(entry_size(item) for item in context["records"]) <= budget
+    assert context["records"][0]["kind"] == "task"
+
+
+def test_newest_reservable_entry_is_taken_before_shorter_older_ones():
+    from cairnmind.context_selection import select_entries
+
+    entries = [entry(f"c{index}") for index in range(30)] + \
+        [entry("newest", status="proposed", kind="fact", size=1200),
+         entry("older", status="proposed", kind="fact", size=10)]
+    selected, _ = select_entries(entries, [False] * 30 + [True, True], 3000)
+    assert "newest" in [item["id"] for item in selected]
+    # An entry larger than the whole budget is not forced in.
+    selected, _ = select_entries([entry("huge", status="proposed", kind="fact", size=5000), entry("c0")],
+                                 [True, False], 2500)
+    assert [item["id"] for item in selected] == ["c0"]
+
+
+def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
+    import cairnmind.retrieval as retrieval
+
+    store, project, settings = workspace
+    confirmed_decisions(store, project, 20)
+    finding = proposed_finding(store, project, 0)
+    evidence = source(store, project)
+    for step in range(4):
+        store.remember(project["id"], {"kind": "task", "key": f"done-{step}", "content": f"Step {step} finished.",
+                                       "metadata": {"state": "done"}}, [evidence["id"]])
+    seen = {}
+    real = retrieval.select_entries
+
+    def spy(entries, reserve, budget):
+        seen.update({item["id"]: (item["kind"], item["status"], flag) for item, flag in zip(entries, reserve)})
+        return real(entries, reserve, budget)
+
+    monkeypatch.setattr(retrieval, "select_entries", spy)
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    # Finishing a task does not confirm it, but the reserve is for findings, not finished steps.
+    assert {flag for kind, status, flag in seen.values() if kind == "task"} == {False}
+    assert {status for kind, status, flag in seen.values() if kind == "task"} == {"proposed"}
+    assert seen[finding["id"]][2] is True and finding["id"] in shown_ids(context)
