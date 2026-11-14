@@ -15,6 +15,7 @@ import inspect
 import json
 from uuid import uuid4
 
+from .agent_write_guard import ChangeLedger, without_changed_files
 from .mcp_host import MAX_ARGUMENT_BYTES, McpHost, _canonical
 from .mcp_schema import affordable, valid_arguments
 from .terminal_safe import safe_text
@@ -27,8 +28,8 @@ _HOST_KEYS = ("ok", "server_id", "tool", "third_party_untrusted", "is_error", "e
 
 
 def approval_text(request) -> str:
-    """The request exactly as the approval dialog prints it."""
-    return safe_text(json.dumps(request, ensure_ascii=False, indent=2))
+    """The request exactly as the approval dialog prints it; the list of changed files is shown apart (#176)."""
+    return safe_text(json.dumps(without_changed_files(request), ensure_ascii=False, indent=2))
 
 
 def projection(result: dict) -> dict:
@@ -53,8 +54,10 @@ def projection(result: dict) -> dict:
 
 
 class McpTools:
-    def __init__(self, servers, *, run, journal, worktree, reserved, approve=None):
+    def __init__(self, servers, *, run, journal, worktree, reserved, approve=None, changes=None):
         self.run, self.journal, self.approve = run, journal, approve
+        # The executor's list of files changed since the last approval, shared so either approval resets it.
+        self.changes = changes if changes is not None else ChangeLedger()
         self.results = 0  # third-party results journaled in this run
         self.withdrawn = set()  # tools whose argument check ran out of time
         redact = getattr(journal, "redact", None)
@@ -115,7 +118,7 @@ class McpTools:
         action_id = uuid4().hex
         request = {"kind": "mcp_tool", "action_id": action_id, "server_id": entry["server_id"],
                    "tool": entry["tool"], "name": name, "arguments": deepcopy(arguments),
-                   "timeout_seconds": timeout, **self._binding(call_id)}
+                   "timeout_seconds": timeout, **self._binding(call_id), **self.changes.fields()}
         shown = len(approval_text(request))
         if shown > MAX_SHOWN_CHARS:
             return {"ok": False, "error_code": "arguments_too_long_to_show", "shown_chars": shown, **base}
@@ -131,6 +134,7 @@ class McpTools:
         if not approved:
             return {"ok": False, "error_code": "approval_denied", **base,
                     "message": "The person did not approve this call"}
+        self.changes.approved()
         action = {"action_id": action_id, "kind": "mcp_tool", "name": name, "server_id": entry["server_id"],
                   "tool": entry["tool"], "arguments": deepcopy(arguments), **self._binding(call_id)}
         self.journal.append("action_started", action)

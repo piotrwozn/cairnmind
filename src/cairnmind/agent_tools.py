@@ -17,7 +17,8 @@ import signal
 import stat
 from uuid import uuid4
 
-from .agent_journal import AgentJournal
+from .agent_journal import AgentJournal, JournalError
+from .agent_write_guard import ChangeLedger, change_of, change_preview, configures_execution
 from .config import ENV_PREFIXES
 from .native_worker import process_start
 
@@ -117,6 +118,15 @@ class ToolExecutor:
         self._starting = {}
         self._interrupted = set()
         self._interrupt_epoch = 0
+        # Files changed since the person's last approval of a command or a third-party call (#176),
+        # read back from the journal so a restart does not forget an unapproved write.
+        self.changes = ChangeLedger()
+        events = getattr(self.journal, "events", None)
+        if callable(events):
+            try:
+                self.changes.replay(events(), lambda value: "/".join(_parts(value)))
+            except (JournalError, OSError, ValueError, TypeError):
+                self.changes.complete = False
 
     @contextmanager
     def _root(self):
@@ -469,7 +479,7 @@ class ToolExecutor:
             cwd = str(self.worktree.joinpath(*parts))
             request = {"action_id": action_id, "command": command, "cwd": cwd,
                        "session_id": self.session_id, "run_id": self.run_id, "generation": self.generation,
-                       "timeout_seconds": timeout, "tool_call_id": call_id}
+                       "timeout_seconds": timeout, "tool_call_id": call_id, **self.changes.fields()}
             self.journal.append("approval_requested", request)
             if self.approve is None:
                 return {"ok": False, "error_code": "approval_required", "message": "This command requires human approval"}
@@ -480,6 +490,7 @@ class ToolExecutor:
             self.journal.append("approval_decided", {**request, "approved": approved})
             if not approved:
                 return {"ok": False, "error_code": "approval_denied", "message": "Command was not approved"}
+            self.changes.approved()  # the person has now seen these files
             if epoch != self._interrupt_epoch:
                 return {"ok": False, "interrupted": True, "error_code": "command_interrupted",
                         "message": "Command was interrupted before execution"}
@@ -560,6 +571,51 @@ class ToolExecutor:
                     task.cancel()
             await asyncio.gather(wait, *tasks, return_exceptions=True)
 
+    async def _approve_write(self, name, args, parts, action_id, call_id):
+        """One-use approval of a change to a file that configures execution (#176); None when approved.
+
+        The preview is checked against the version the model read, as the effect is, so the change asked
+        about is the change made; a stale or impossible change is refused before anyone is asked."""
+        relative = "/".join(parts)
+        before = None
+        if name == "write_file" and args["expected_sha256"] is None:
+            try:
+                self._read(relative)
+            except FileNotFoundError:
+                pass
+            else:
+                raise FileExistsError(relative)
+        else:
+            _, raw, _ = self._read(relative)
+            self._check_hash(raw, args["expected_sha256"])
+            before = raw.decode("utf-8") if name == "apply_patch" else raw.decode("utf-8", errors="replace")
+        if name == "write_file":
+            after = args["content"]
+        elif name == "apply_patch":
+            if before.count(args["old_text"]) != 1:
+                raise ToolError("patch_ambiguous", "old_text must be nonempty and occur exactly once")
+            after = before.replace(args["old_text"], args["new_text"], 1)
+        else:
+            after = None
+        diff, more = change_preview(before, after)
+        request = {"kind": "file_write", "action_id": action_id, "tool": name, "path": relative,
+                   "change": change_of(name, args), "diff": diff, "diff_more_lines": more,
+                   "session_id": self.session_id, "run_id": self.run_id, "generation": self.generation,
+                   "tool_call_id": call_id}
+        self.journal.append("approval_requested", request)
+        if self.approve is None:
+            return {"ok": False, "error_code": "approval_required", "path": relative,
+                    "message": "A change to a file that configures execution requires human approval"}
+        decision = self.approve(deepcopy(request))
+        if inspect.isawaitable(decision):
+            decision = await decision
+        approved = decision is True
+        self.journal.append("approval_decided", {**request, "approved": approved})
+        if not approved:
+            return {"ok": False, "error_code": "approval_denied", "path": relative,
+                    "message": "The change to this file was not approved"}
+        return None
+
     def _action(self, action_id, name, args, call_id):
         return {"action_id": action_id, "name": name, "arguments": deepcopy(args),
                 "session_id": self.session_id, "run_id": self.run_id, "generation": self.generation,
@@ -580,16 +636,21 @@ class ToolExecutor:
         effect = name in _MUTATIONS
         started = False
         try:
-            if effect and name != "run_command":
-                _parts(args["path"])
-                self.journal.append("action_started", self._action(action_id, name, args, call_id))
-                started = True
             if name == "run_command":
                 result = await self._command(args, action_id, call_id)
                 # Approval refusals never count as started side effects.
                 started = result.get("error_code") not in {"approval_required", "approval_denied"}
-            elif name in _MUTATIONS:
-                result = self._file_effect(name, args)
+            elif effect:
+                parts = _parts(args["path"])
+                refused = (await self._approve_write(name, args, parts, action_id, call_id)
+                           if configures_execution(parts) else None)
+                if refused is not None:
+                    result = refused  # a refused change never counts as started
+                else:
+                    self.journal.append("action_started", self._action(action_id, name, args, call_id))
+                    started = True
+                    result = self._file_effect(name, args)
+                    self.changes.record(result["path"], change_of(name, args, result))
             elif name == "read_file":
                 result = self._read_file(args)
             elif name == "list_files":
@@ -600,6 +661,9 @@ class ToolExecutor:
             # There may have been an effect even if the return value was lost.
             if effect:
                 self.journal.append("action_interrupted", self._action(action_id, name, args, call_id))
+            if started and name != "run_command":
+                # The file may have changed: list it as if it did.
+                self.changes.record("/".join(_parts(args["path"])), change_of(name, args))
             raise
         except ToolError as exc:
             result = {"ok": False, "error_code": exc.code, "message": str(exc)}
