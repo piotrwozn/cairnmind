@@ -173,6 +173,9 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     @app.exception_handler(ValueError)
     async def bad_input(request, exc):
         message = str(exc)[:600]
+        from .client_runtime import UnknownRun
+        if isinstance(exc, UnknownRun):
+            return JSONResponse({"detail": message}, status_code=404)  # no such run here, not a refusal (#161)
         code = 409 if any(s in message.lower() for s in ("conflict", "generation", "stale", "already", "trwa")) else 400
         return JSONResponse({"detail": message}, status_code=code)
 
@@ -250,7 +253,8 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             response = None
         if response is not None and response.is_success:
             value = response.json()
-            details = {k: value.get(k) for k in ("status", "acknowledged", "stale", "unknowns", "native_session_id")}
+            details = {k: value.get(k) for k in ("status", "acknowledged", "stale", "stale_reason", "unknowns",
+                                                "native_session_id")}
             details["checked_at"] = time.time()
         else:
             details = {"status": "unavailable", "acknowledged": False, "stale": False}

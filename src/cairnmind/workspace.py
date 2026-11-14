@@ -56,16 +56,58 @@ def _status_text(value, columns):
     return result + "…"
 
 
-def tmux_chrome():
+# Why a kept ACK went stale (sessions.stale_reason), beside "stale" in the pane's border (#161).
+STALE_WORDS = {"state_changed": "memory changed after ACK", "packet_changed": "new packet without ACK",
+               "ack_mismatch": "ACK does not match packet", "scope_unavailable": "scope cannot be read",
+               "continuity": "session continuity broken"}
+
+
+def stale_badge(reason, language="en"):
+    """The raw word the badge colour reads, then the reason in the panels' language."""
+    from .terminal_i18n import tr
+    return "stale: " + tr(STALE_WORDS[reason], language) if reason in STALE_WORDS else "stale"
+
+
+# The keys, on the right of the active view's border (#161). The two status rows replace tmux's own row,
+# so status-right is never drawn; the rows are full at 80 columns, the border of the active view is not.
+HINT_KEYS = "C-b Space: menu · C-b ?: help · C-b d: detach"
+HINT_SHORT = "C-b ?: help"
+HINT_READ_ONLY = "Read only · C-b d: detach"
+HINT_READ_ONLY_SHORT = "C-b d: detach"
+LEFT_FIXED = 25  # the left part of a border without its badge, at its widest: " inspector controller " and gaps
+
+
+def _hint(text):
+    """Catalog text as a literal inside a tmux conditional: no format, no branch separator."""
+    return _status_text(text, 60).replace(",", " ").replace("}", ")")
+
+
+def border_hint(language="en"):
+    """The keys for the active pane, cut to what its width holds: all of them, one, or none."""
+    from .terminal_i18n import tr
+    full, short = (_hint(tr(text, language)) for text in (HINT_KEYS, HINT_SHORT))
+    read_only, read_only_short = (_hint(tr(text, language)) for text in (HINT_READ_ONLY, HINT_READ_ONLY_SHORT))
+    # The hint is drawn only where it fits beside the widest left part, so it never covers the badge.
+    reserve = LEFT_FIXED + max(cell_len("ACK required"), *(cell_len(stale_badge(r, language)) for r in STALE_WORDS))
+    wide = max(cell_len(full), cell_len(read_only)) + reserve
+    narrow = max(cell_len(short), cell_len(read_only_short)) + reserve
+    pick = lambda writer, reader: "#{?client_readonly," + reader + "," + writer + "}"  # noqa: E731
+    return ("#{?pane_active,#{?#{e|>=:#{pane_width}," + str(wide) + "}," + pick(full, read_only) + " ,"
+            "#{?#{e|>=:#{pane_width}," + str(narrow) + "}," + pick(short, read_only_short) + " ,}},}")
+
+
+def tmux_chrome(language="en"):
     """tmux options that only colour the chrome, from the palette the panels use (terminal_theme.TMUX).
 
     Every option is set quietly, so a tmux that does not know one (popup styles need 3.2 or 3.3)
     starts as before. The pane badge shows the raw memory word; only exactly `ack` is the good colour.
+    The active view's border also names the keys, on its right, in the panels' language.
     """
     c = {name: f"colour{cell}" for name, cell in TMUX.items()}
     badge = ("#{?#{==:#{@cairnmind_memory},ack},#[fg=" + c["ok"] + "],#{?#{==:#{@cairnmind_memory},unavailable},#[fg="
              + c["danger"] + "],#[fg=" + c["warn"] + "]}}#{@cairnmind_memory}#[default]")
-    border = (" #{?pane_active,#[fg=" + c["accent"] + "]#[bold],#[fg=" + c["label"] + "]}#{@cairnmind_role}#[default] "
+    border = ("#[align=right]#[fg=" + c["label"] + "]" + border_hint(language) + "#[default]#[align=left]"
+              " #{?pane_active,#[fg=" + c["accent"] + "]#[bold],#[fg=" + c["label"] + "]}#{@cairnmind_role}#[default] "
               "#[fg=" + c["label"] + "]#{@cairnmind_control}#[default] " + badge + " ")
     return [
         ("status-style", f"bg={c['bg']},fg={c['fg']}"),
@@ -176,6 +218,7 @@ class WorkspaceManager:
         self._last_focus = None
         self._activity_restarted = float("-inf")
         self._last_status = None
+        self._border_language = None
 
     @property
     def broker(self):
@@ -372,7 +415,8 @@ class WorkspaceManager:
             self._recover_ui_panels()
             self._bindings()
             # Live as well as in the config: the config file is written once and is not rewritten.
-            for option, value in tmux_chrome():
+            self._border_language = CockpitState(self.settings).load().get("language", "en")
+            for option, value in tmux_chrome(self._border_language):
                 self.tmux("set-option", "-gq", option, value)
             self.tmux("set-option", "-g", "status-right-length", "90")
             self.tmux("set-option", "-g", "status-right",
@@ -522,7 +566,9 @@ class WorkspaceManager:
                                     lifecycle=run.get("lifecycle"),
                                     exit_code=run["exit_code"] if type(run.get("exit_code")) is int
                                     and 0 <= run["exit_code"] <= 255 else None,
-                                    memory={key: memory.get(key) for key in ("status", "acknowledged", "stale")})
+                                    memory={**{key: memory.get(key) for key in ("status", "acknowledged", "stale")},
+                                            "stale_reason": memory.get("stale_reason")
+                                            if memory.get("stale_reason") in STALE_WORDS else None})
                         adopted.append(run["id"])
                     slots.append(item)
                 self._adopt(adopted)
@@ -568,6 +614,10 @@ class WorkspaceManager:
             if len(fields) == 2 and fields[0] == f"{slot['run_id']}:{slot.get('generation')}":
                 control = fields[1]
         language = CockpitState(self.settings).load().get("language", "en")
+        if language != self._border_language:
+            # The key hint in the border follows a language switch like the status rows do (#161).
+            self.tmux("set-option", "-gq", "pane-border-format", dict(tmux_chrome(language))["pane-border-format"])
+            self._border_language = language
         formats = workspace_status_lines(selected, self._broker_state or {}, slot, control, language)
         if formats != self._last_status:
             for index, value in enumerate(formats):
@@ -582,6 +632,7 @@ class WorkspaceManager:
         panes = self.panes()
         visible = [next(row for row in selected["slots"] if row["id"] == identifier) for identifier in selected["visible_slot_ids"]]
         wanted = max(1, len(visible))
+        language = CockpitState(self.settings).load().get("language", "en")
         if wanted == 1 and "client2" in panes:
             self.tmux("kill-pane", "-t", panes["client2"])
             panes.pop("client2")
@@ -596,7 +647,8 @@ class WorkspaceManager:
             run_id, generation = slot.get("run_id"), slot.get("generation")
             binding = (run_id or "") + ":" + str(generation or "")
             memory = slot.get("memory") or {}
-            badge = ("stale" if memory.get("stale") else memory["status"] if memory.get("status") in {"partial", "unavailable"}
+            badge = (stale_badge(memory.get("stale_reason"), language) if memory.get("stale")
+                     else memory["status"] if memory.get("status") in {"partial", "unavailable"}
                      else "ack" if memory.get("acknowledged") is True else "ACK required" if run_id else "")
             if run_id and selected["broker_available"] is False:
                 badge = "unavailable"
@@ -931,6 +983,16 @@ def detach_workspace(settings):
 _ENDED = {"exited", "failed", "interrupted"}
 
 
+def _unknown_run(error):
+    """The broker answered that it has no run with this id: 404 now, 400 from an earlier broker.
+
+    The detail must name the run as unknown: any other 404 (a route an older or other service
+    does not have) says nothing about the run, which may still be running.
+    """
+    status, detail = getattr(error, "status_code", None), getattr(error, "detail", None)
+    return status in {404, 400} and detail == "Unknown native run"
+
+
 def _forget_finished(manager, finished):
     """Save what the stop did: the supervisor that would have refreshed the slots is stopped with it (#154)."""
     manager.state.merge_ids("run_ids", remove=list(finished))
@@ -949,11 +1011,18 @@ def _forget_finished(manager, finished):
 def stop_workspace(settings, stop_clients=False):
     manager = WorkspaceManager(settings)
     current = manager.state.read()
-    stopped, ended, errors, finished = [], [], [], {}
+    stopped, ended, errors, finished, unknown = [], [], [], {}, []
     if stop_clients:
         for run_id in current["run_ids"]:
             try:
-                run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+                try:
+                    run = manager.broker.request("GET", "/api/client-runs/" + run_id)
+                except Exception as error:
+                    if _unknown_run(error):
+                        # The broker keeps no such run (its records were cleared): nothing runs to stop (#161).
+                        unknown.append(run_id)
+                        continue
+                    raise
                 if run.get("lifecycle") in _ENDED:
                     # Its process has already ended: there is nothing to stop, and that is not an error.
                     ended.append(run_id)
@@ -976,8 +1045,11 @@ def stop_workspace(settings, stop_clients=False):
             pass
     if finished:
         _forget_finished(manager, finished)
+    if unknown:
+        manager.state.merge_ids("run_ids", remove=unknown)
     manager.close()
-    return {"stopped": running, "clients_stopped": stopped, "clients_already_ended": ended, "errors": errors}
+    return {"stopped": running, "clients_stopped": stopped, "clients_already_ended": ended,
+            "clients_unknown": unknown, "errors": errors}
 
 
 def show_auth(settings, client, workspace_id="default"):

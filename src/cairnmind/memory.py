@@ -331,7 +331,8 @@ def _validate(payload, project_id, active_plan_id=None):
     return maps
 
 
-def _load_snapshot_impl(path):
+def _check_manifest(path):
+    """The manifest alone, checked for format, identity, ancestry and its own checksum; no object is read."""
     path = Path(path).expanduser().absolute()
     if path.is_dir():
         path /= "manifest.json"
@@ -373,6 +374,12 @@ def _load_snapshot_impl(path):
     objects = manifest.get("objects")
     if not isinstance(objects, dict) or set(objects) != set(TABLES):
         raise ValueError("Invalid memory object collections")
+    return path, raw, manifest
+
+
+def _load_snapshot_impl(path):
+    path, raw, manifest = _check_manifest(path)
+    project, objects = manifest["project"], manifest["objects"]
     base = path.parent if path.parent.name != "manifests" else path.parent.parent
     payload, total, count = {}, len(raw), 0
     for table in TABLES:
@@ -443,6 +450,19 @@ def inspect_snapshot(path):
     """Validate the complete package without constructing or mutating a Store."""
     path, _, manifest, _ = _load_snapshot(path)
     return _summary(path, manifest)
+
+
+def manifest_summary(path):
+    """What `memory status` shows of a package: its manifest, checked alone (#161).
+
+    Reading and hashing every object of a large project took longer than an ordinary request, as a
+    snapshot did (#158). The objects are checked by `memory inspect` and by every import.
+    """
+    try:
+        path, _, manifest = _check_manifest(path)
+    except (OSError, KeyError, TypeError, AttributeError, RecursionError, OverflowError) as exc:
+        raise ValueError("Invalid or unreadable portable memory package") from exc
+    return {**_summary(path, manifest, status="manifest_valid"), "objects_checked": False}
 
 
 def _sync_directory(directory):
@@ -905,7 +925,7 @@ class MemoryManager:
         result["verification"] = "Imported checks are historical; local execution and a new session ACK remain required."
         if path.exists() or path.is_symlink():
             try:
-                result["latest"] = inspect_snapshot(path)
+                result["latest"] = manifest_summary(path)
             except (OSError, ValueError):
                 result["error"] = "invalid_snapshot"
         return result

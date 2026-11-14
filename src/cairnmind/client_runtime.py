@@ -32,6 +32,12 @@ from .native_worker import process_start
 from .runtime_selection import resolve_tmux
 
 LIVE = {"starting", "running", "stopping"}
+
+
+class UnknownRun(ValueError):
+    """No run of this broker has this id; the broker answers 404 for it, not a refusal (#161)."""
+
+
 _ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$")
 _CONFIG = """set -g status off
 set -g prefix None
@@ -226,7 +232,7 @@ class NativeRuntime:
         for row in self.list_runs():
             if row["id"] == run_id:
                 return row
-        raise ValueError("Unknown native run")
+        raise UnknownRun("Unknown native run")
 
     history = list_runs
 
