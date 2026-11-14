@@ -12,7 +12,8 @@ from cairnmind.ingest import import_history
 from cairnmind.integrations import _transcript_watermark, drain_hook_spool
 from cairnmind.service import create_app, finish_job_if_present
 from cairnmind.sessions import SessionManager
-from cairnmind.store import JobNotFoundError, Store, _json, job_diagnostics
+from cairnmind.store import JobNotFoundError, Store, job_diagnostics
+from cairnmind.sql import json_text
 
 
 @pytest.fixture
@@ -162,7 +163,7 @@ def test_diagnostics_and_attempt_audit_round_trip_existing_schema(workspace, tmp
 def test_published_capture_proof_is_pure_and_does_not_rewrite_failed_history(workspace, tmp_path, monkeypatch):
     store, project, root = workspace
     history = tmp_path / "transcript.jsonl"
-    history.write_text(_json({"type": "user", "cwd": str(root), "sessionId": "native",
+    history.write_text(json_text({"type": "user", "cwd": str(root), "sessionId": "native",
                               "message": {"role": "user", "content": "Remember this instruction"}}) + "\n")
     manager = SessionManager(store, store.settings)
     initial = manager.prepare(project["id"], "claude", timeout=0)
@@ -206,7 +207,7 @@ def test_foreign_capture_receipt_and_invalid_published_source_set_never_complete
         "transcript_watermark": capture}})
     proof = {"id": "proof", "project_id": project["id"], "created_at": "now", "payload": {"archive_watermarks": [
         {**capture, "path": "/history", "client": "claude", "status": "complete", "archived_offset": 3,
-         "source_count": 1, "source_ids_hash": hashlib.sha256(_json(["missing-source"]).encode()).hexdigest()}]}}
+         "source_count": 1, "source_ids_hash": hashlib.sha256(json_text(["missing-source"]).encode()).hexdigest()}]}}
     store.command("INSERT INTO resume_packets CONTENT :proof", {"proof": proof})
     assert store.job_status(project["id"], jid)["coverage"]["reason"] == "published_source_set_unavailable"
     store.command("UPDATE resume_packets SET payload=:payload WHERE id='proof'", {"payload": {

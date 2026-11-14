@@ -191,7 +191,7 @@ def record_baseline(store, task: dict, worktree=None) -> bool:
     A task that goes back to work keeps the note of its first start: taking a new one would
     forget what had already changed. Only after the task was finished does a start begin anew.
     """
-    from cairnmind.store import _one
+    from cairnmind.sql import one_row
     from cairnmind.verification import _root
     if declared_scope(task) is None:
         return False
@@ -211,7 +211,7 @@ def record_baseline(store, task: dict, worktree=None) -> bool:
     _write(store, path, {"project_id": task["project_id"], "task_id": task["id"], "worktree": state["worktree"],
                          "head": state["head"], "captured_at": datetime.now(timezone.utc).isoformat(),
                          "captured_ns": started, "paths": paths})
-    current = _one(store, "SELECT FROM records WHERE id=:id", {"id": task["id"]}, False)
+    current = one_row(store, "SELECT FROM records WHERE id=:id", {"id": task["id"]}, False)
     if current and current.get("metadata", {}).get("state") == "done":
         close_note(store, current, root)  # it was finished while the tree was being read
     return True

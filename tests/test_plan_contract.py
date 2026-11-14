@@ -12,7 +12,8 @@ from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.contract import build_contract, write_contract
 from cairnmind.plans import PlanManager
-from cairnmind.store import Store, _clean
+from cairnmind.store import Store
+from cairnmind.sql import clean_row
 from cairnmind.verification import (criteria_status, load_profiles, run_check, task_definition_hash,
                                     verification_status)
 
@@ -206,7 +207,7 @@ def test_the_contract_runs_nothing_and_changes_no_record(workspace):
     plan(store, pid, root)
 
     def everything():
-        return {name: sorted(json.dumps(_clean(row), sort_keys=True, default=str) for row in store.query(f"SELECT FROM {name}"))
+        return {name: sorted(json.dumps(clean_row(row), sort_keys=True, default=str) for row in store.query(f"SELECT FROM {name}"))
                 for name in ("records", "record_revisions", "plans", "plan_revisions", "check_runs", "jobs")}
 
     before = everything()
