@@ -45,6 +45,33 @@ def _private_dir(path: Path):
         raise JournalError("Agent journal directories must be private and owned by this user")
 
 
+def redact_secrets(value, secrets):
+    """``value`` with every non-empty secret, a truncated one at the end of a string, and sensitive fields
+    replaced by [REDACTED]; also used by the answer log (#15). Raises JournalError for a non-JSON value."""
+    ordered = sorted({secret for secret in secrets if isinstance(secret, str) and secret}, key=len, reverse=True)
+
+    def walk(item):
+        if isinstance(item, str):
+            for secret in ordered:
+                item = item.replace(secret, "[REDACTED]")
+                # A bounded tool result may end in a truncated credential.
+                for length in range(min(len(secret) - 1, len(item)), 5, -1):
+                    if item.endswith(secret[:length]):
+                        item = item[:-length] + "[REDACTED]"
+                        break
+            return item
+        if isinstance(item, dict):
+            return {str(key): ("[REDACTED]" if str(key).casefold().replace("-", "_") in _SENSITIVE_FIELDS
+                               else walk(inner)) for key, inner in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [walk(inner) for inner in item]
+        if item is None or type(item) in (int, float, bool):
+            return item
+        raise JournalError("Agent journal accepts only JSON values")
+
+    return walk(value)
+
+
 class AgentJournal:
     def __init__(self, settings, session_id: str):
         if not isinstance(session_id, str) or not _ID.fullmatch(session_id):
@@ -61,23 +88,7 @@ class AgentJournal:
         self._secrets.update(value for value in values if isinstance(value, str) and value)
 
     def redact(self, value):
-        if isinstance(value, str):
-            for secret in sorted(self._secrets, key=len, reverse=True):
-                value = value.replace(secret, "[REDACTED]")
-                # A bounded tool result may end in a truncated credential.
-                for length in range(min(len(secret) - 1, len(value)), 5, -1):
-                    if value.endswith(secret[:length]):
-                        value = value[:-length] + "[REDACTED]"
-                        break
-            return value
-        if isinstance(value, dict):
-            return {str(key): ("[REDACTED]" if str(key).casefold().replace("-", "_") in _SENSITIVE_FIELDS
-                               else self.redact(item)) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [self.redact(item) for item in value]
-        if value is None or type(value) in (int, float, bool):
-            return value
-        raise JournalError("Agent journal accepts only JSON values")
+        return redact_secrets(value, self._secrets)
 
     def _initialize(self):
         root = Path(self.settings.data_dir)

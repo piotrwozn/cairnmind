@@ -169,6 +169,8 @@ class Settings:
     # Set by load and never saved: where the password came from ("password"), why it cannot be used
     # ("problem"), and the values load put in place of the stored ones ("kept": field -> (stored, loaded)).
     _origin: dict = field(default_factory=dict, repr=False, compare=False)
+    # Keep every answer of `ask` in the project's answer log (answer_log.py); off unless set to true.
+    answer_log: bool = False
 
     @property
     def url(self) -> str:
