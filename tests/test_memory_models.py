@@ -10,6 +10,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+from conftest import plain_words
 from cairnmind import memory_models
 from cairnmind.config import Settings
 from cairnmind.memory_openai import OpenAICompatible
@@ -396,7 +397,7 @@ def test_models_set_refuses_a_remote_server_without_consent(tmp_path):
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "set", "--role", "chat",
                                           "--provider", "openai_compatible",
                                           "--base-url", "https://models.example/v1", "--model", "m"])
-    assert result.exit_code != 0 and "--allow-remote" in result.output
+    assert result.exit_code != 0 and "--allow-remote" in plain_words(result.output)
     assert Settings.load(data).memory_chat is None
 
 

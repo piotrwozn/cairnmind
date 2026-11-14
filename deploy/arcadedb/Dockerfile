@@ -18,7 +18,8 @@ RUN set -eu; \
     base="https://github.com/ArcadeData/arcadedb/releases/download/${ARCADEDB_VERSION}"; \
     curl -fsSL --retry 3 -o "$name" "$base/$name"; \
     curl -fsSL --retry 3 -o "$name.sha256" "$base/$name.sha256"; \
-    read -r expected rest < "$name.sha256"; \
+    expected="$(awk '{print $1; exit}' "$name.sha256")"; \
+    test "${#expected}" -eq 64; \
     echo "$expected  $name" | sha256sum -c -; \
     tar -xzf "$name"; \
     test -d "arcadedb-${ARCADEDB_VERSION}/lib"; \
