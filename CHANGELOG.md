@@ -2,6 +2,12 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+- In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
+- More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
+- The key of the view in focus (for example Ctrl+B 1) now moves the keyboard back from the activity column, in Focus and in Cockpit (#149).
+
 ## 0.10.0
 
 - When the Copilot agent starts a new session, for example after its tool list changes, it must read and acknowledge memory again and read a file whole again before it can replace or delete that file. Before, the engine still counted what the earlier session had read (#157).
