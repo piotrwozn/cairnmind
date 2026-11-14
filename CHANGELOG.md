@@ -4,6 +4,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- `cairnmind ask --log`, or `"answer_log": true` in config.json, keeps each answer with its question, citations (source id, sha256, quote), commit, status, model digest and timings in a private per-project log outside the database, so a logged answer is never evidence (#15).
+- `cairnmind answers list`, `answers show` and `answers prune` read and trim the answer log; it is capped at 8 MiB per project and deleted by `forget --delete-project` (#15).
+- `cairnmind eval replay PROJECT` asks the logged questions again for the scope they were logged with and reports answers that are no longer complete or no longer cite a source they cited, comparing evidence, not wording (#15).
 - Indexing files that replace a current source, and files that were deleted, now counts first what the old source leaves behind and writes each file in one transaction, up to eight small files together. The journal events of a transaction are stored in one statement. After every file of a project changed, indexing again needs about half the database requests and time on real code (Cairnmind's own source: 47% of the requests, 50% of the time), and about a quarter to a third on trees of very small files (#102).
 - In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
 - More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
