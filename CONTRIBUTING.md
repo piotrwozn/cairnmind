@@ -89,7 +89,7 @@ cairnmind eval memory           # extraction, portable transfer and cited recall
 cairnmind eval run --clients    # adds the Codex → Claude Code → Codex hand-off; uses your client quotas
 ```
 
-If a change touches the knowledge agent, retrieval or extraction, include evaluation results in the pull request.
+If a change touches the knowledge agent, retrieval or extraction, include evaluation results in the pull request. The release gate and the release steps are in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Pull requests
 
