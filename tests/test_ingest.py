@@ -480,3 +480,24 @@ def test_project_deletion_during_import_cannot_recreate_orphan_cursor(workspace,
         import_history(store, path, project["id"])
     assert not rows(store, "SELECT FROM import_cursors")
     assert not rows(store, "SELECT FROM sources")
+
+
+def test_a_call_in_a_parameter_default_belongs_to_the_function(workspace):
+    store, project, root = workspace
+    (root / "cli.py").write_text("def option(value):\n    return value\n\n\n"
+                                 "def doctor(\n    as_json=option(False),\n):\n    return as_json\n")
+    index_project(store, project["id"])
+    labels = {row["id"]: row["label"] for row in rows(store, "SELECT id,label FROM nodes WHERE kind='symbol'")}
+    assert "doctor.as_json" in labels.values()
+    calls = [(labels.get(row["from_id"]), labels.get(row["to_id"]))
+             for row in rows(store, "SELECT from_id,to_id FROM edges WHERE kind='calls'")]
+    assert calls == [("doctor", "option")]
+
+
+def test_a_deeply_nested_toml_file_does_not_stop_indexing(workspace):
+    store, project, root = workspace
+    (root / "deep.toml").write_text("value = " + "[" * 600 + "]" * 600 + "\n")
+    (root / "app.py").write_text("def app():\n    return True\n")
+    assert index_project(store, project["id"])["changed"] == 2
+    labels = {row["label"] for row in rows(store, "SELECT label FROM nodes WHERE kind='symbol'")}
+    assert {"app", "value"} <= labels
