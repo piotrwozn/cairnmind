@@ -53,9 +53,11 @@ def answer_stage(broker, value, *, runs=(), during=None):
 
 
 async def wait_for(app, pilot, kind):
+    # A dialog becomes the current screen before its mount step fills it in (#145); reading or
+    # moving in it earlier sees an empty list. Keys wait in the screen's queue and need no wait.
     for _ in range(100):
         await pilot.pause(.02)
-        if isinstance(app.screen, kind):
+        if isinstance(app.screen, kind) and app.screen.is_mounted:
             return
     raise AssertionError(f"{kind.__name__} did not open")
 

@@ -49,6 +49,24 @@ async def close(app, pilot):
     await wait_until(pilot, lambda: not isinstance(app.screen, MessageModal))
 
 
+def menu_ready(app):
+    """The More menu is on screen with its rows filled in and the list focused.
+
+    The menu becomes the current screen before its mount step adds the rows, so moving the
+    cursor or reading a row earlier works on an empty list (#145). Keys a person presses wait
+    in the screen's queue behind that step and are not lost.
+    """
+    screen = app.screen
+    return (isinstance(screen, ChoiceModal) and screen.is_mounted
+            and screen.focused is screen.query_one("#choices"))
+
+
+async def open_more(app, pilot):
+    app.action_more()
+    await wait_until(pilot, lambda: menu_ready(app))
+    return app.screen.query_one("#choices")
+
+
 @pytest.mark.asyncio
 async def test_acceptance_two_notices_in_one_moment_both_stay_readable(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
@@ -166,11 +184,11 @@ async def test_opened_from_the_more_menu_as_its_last_entry(tmp_path, monkeypatch
         await settle(app, pilot)
         app.notice(CHECK)
         app.notice(STAGE)
-        app.action_more()
-        await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
+        table = await open_more(app, pilot)
         assert app.screen.choices[-1] == ("Notices", "notices")
-        table = app.screen.query_one("DataTable")
-        table.move_cursor(row=len(app.screen.choices) - 1)
+        last = len(app.screen.choices) - 1
+        table.move_cursor(row=last)
+        assert table.cursor_row == last
         await pilot.press("enter")
         await wait_until(pilot, lambda: isinstance(app.screen, MessageModal))
         assert CHECK in body_of(app)
@@ -247,9 +265,8 @@ async def test_the_history_is_polish_and_empty_history_says_so(tmp_path, monkeyp
         app.notice("Pierwszy")
         app.notice("Drugi")
         assert mark_of(app) == "[Komunikaty: 1]"
-        app.action_more()
-        await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
-        assert "Komunikaty" in str(app.screen.query_one("DataTable").get_row_at(len(app.screen.choices) - 1))
+        table = await open_more(app, pilot)
+        assert "Komunikaty" in str(table.get_row_at(len(app.screen.choices) - 1))
         await pilot.press("escape")
 
 
