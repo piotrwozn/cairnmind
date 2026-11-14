@@ -27,6 +27,11 @@ MAX_TEXT_CHARS = 128 * 1024
 MAX_COMMAND_OUTPUT_BYTES = 512 * 1024
 MAX_WALK_ENTRIES = 20000
 MAX_SEARCH_BYTES = 16 * 1024 * 1024
+# Stopping a command's process group: SIGTERM, up to TERM_GRACE_SECONDS for the
+# group to end, SIGKILL to what is left, then up to KILL_WAIT_SECONDS until no
+# process of the group runs. Past that the result says processes may remain.
+TERM_GRACE_SECONDS = 0.5
+KILL_WAIT_SECONDS = 1.0
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _SECRET_ENV = re.compile(r"(?:TOKEN|PASSWORD|SECRET|API_?KEY|AUTHORIZATION|CREDENTIAL)", re.I)
 _FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -97,6 +102,44 @@ def _parts(value, *, allow_root=False):
     return parts
 
 
+def _group_running(pgid):
+    """Whether a process of group pgid still runs. A zombie has ended and only
+    waits to be reaped; a signalled process counts until the kernel has ended it."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return True  # cannot tell, so never claim the group has ended
+    group = str(pgid)
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            # comm may contain spaces and closing parentheses; state, ppid, pgrp follow it.
+            fields = Path(f"/proc/{name}/stat").read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if len(fields) > 2 and fields[2] == group and fields[0] not in {"Z", "X"}:
+            return True
+    return False
+
+
+async def _group_ended(pgid, seconds):
+    deadline = asyncio.get_running_loop().time() + seconds
+    delay = .002
+    while _group_running(pgid):
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, .05)
+    return True
+
+
 class ToolExecutor:
     def __init__(self, settings, worktree, *, session_id, run_id, generation, journal=None,
                  approve=None, command_timeout_seconds=120):
@@ -115,6 +158,8 @@ class ToolExecutor:
         self.current_tool_call_id = None
         self._running = {}
         self._starting = {}
+        self._stopping = {}
+        self._left_running = set()  # cancelled actions whose processes were not confirmed gone
         self._interrupted = set()
         self._interrupt_epoch = 0
 
@@ -412,28 +457,45 @@ class ToolExecutor:
         return environment
 
     async def _terminate(self, process, birth):
-        current = process_start(process.pid)
+        """Stop the command's process group and wait, bounded, until none of it runs.
+
+        Returns True once no process of the group is left running and False when
+        that could not be confirmed within the bounds: the caller then reports
+        that processes may remain and never claims they are gone (#175).
+        """
+        pgid = process.pid
+        current = process_start(pgid)
         # A still-owned leader proves the group. After it has been reaped, an
-        # existing group remains reserved by its children until they exit.
+        # existing group remains reserved by its children until they exit, so
+        # a reused leader id means the group had already ended.
         if current is not None and current != birth:
-            return
+            return True
         if current is None and process.returncode is None:
-            return
+            return not _group_running(pgid)
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            os.killpg(pgid, signal.SIGTERM)
         except ProcessLookupError:
-            return
-        try:
-            await asyncio.wait_for(asyncio.shield(process.wait()), 0.5)
-        except asyncio.TimeoutError:
-            pass
-        current = process_start(process.pid)
+            return True
+        if await _group_ended(pgid, TERM_GRACE_SECONDS):
+            return True
+        current = process_start(pgid)
         if current is not None and current != birth:
-            return
+            return True
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(pgid, signal.SIGKILL)
         except ProcessLookupError:
-            pass
+            return True
+        # A signal is delivered asynchronously: the processes end when the
+        # kernel next runs them. Do not return before they have.
+        return await _group_ended(pgid, KILL_WAIT_SECONDS)
+
+    def _stop(self, process, birth):
+        """One shared stop per running command, so whoever asked for it can wait for its end."""
+        owner, task = self._stopping.get(process.pid, (None, None))
+        if owner is not process:
+            task = asyncio.ensure_future(self._terminate(process, birth))
+            self._stopping[process.pid] = (process, task)
+        return task
 
     async def interrupt(self):
         self._interrupt_epoch += 1
@@ -443,10 +505,12 @@ class ToolExecutor:
         if starting:
             await asyncio.gather(*(asyncio.shield(task) for task in starting), return_exceptions=True)
             await asyncio.sleep(0)
-        active = list(self._running.items())
-        for pid, (process, birth) in active:
+        stops = []
+        for pid, (process, birth) in list(self._running.items()):
             self._interrupted.add(pid)
-            await self._terminate(process, birth)
+            stops.append(self._stop(process, birth))
+        if stops:
+            await asyncio.shield(asyncio.gather(*stops, return_exceptions=True))
 
     async def close(self):
         await self.interrupt()
@@ -498,7 +562,8 @@ class ToolExecutor:
                 # Do not lose ownership of a process which exec'd before its
                 # coroutine returned. Finish setup, terminate, then propagate.
                 process = await asyncio.shield(spawn)
-                await asyncio.shield(self._terminate(process, process_start(process.pid)))
+                if not await asyncio.shield(self._terminate(process, process_start(process.pid))):
+                    self._left_running.add(action_id)
                 raise
             finally:
                 self._starting.pop(action_id, None)
@@ -523,29 +588,39 @@ class ToolExecutor:
         try:
             if epoch != self._interrupt_epoch:
                 self._interrupted.add(process.pid)
-                await self._terminate(process, birth)
+                await asyncio.shield(self._stop(process, birth))
             try:
                 await asyncio.wait_for(asyncio.shield(combined), timeout)
             except asyncio.TimeoutError:
                 timed_out = True
-                await self._terminate(process, birth)
+                await asyncio.shield(self._stop(process, birth))
                 try:
                     await asyncio.wait_for(asyncio.shield(combined), 1)
                 except asyncio.TimeoutError:
                     combined.cancel()
                     await asyncio.gather(combined, return_exceptions=True)
+            # The output can end before an interrupt has finished stopping the
+            # group (a process that closed its output, one that ignores SIGTERM):
+            # never return while that stop is still in progress.
+            owner, stop = self._stopping.get(process.pid, (None, None))
+            remaining = owner is process and not await asyncio.shield(stop)
             interrupted = process.pid in self._interrupted
             result = {"ok": process.returncode == 0 and not timed_out and not interrupted,
                       "exit_code": process.returncode, "stdout": buffers[0].decode("utf-8", errors="replace"),
                       "stderr": buffers[1].decode("utf-8", errors="replace"), "stdout_bytes": counts[0],
                       "stderr_bytes": counts[1], "timed_out": timed_out, "interrupted": interrupted,
                       "truncated": any(count > MAX_COMMAND_OUTPUT_BYTES for count in counts)}
+            if remaining:
+                # Signalled with SIGKILL but still running after the bound: the
+                # effect is not finished, so the action stays uncertain.
+                result["processes_remaining"] = True
             if not result["ok"]:
                 result["error_code"] = "command_interrupted" if interrupted else "command_timeout" if timed_out else "command_failed"
             return result
         except asyncio.CancelledError:
             self._interrupted.add(process.pid)
-            await asyncio.shield(self._terminate(process, birth))
+            if not await asyncio.shield(self._stop(process, birth)):
+                self._left_running.add(action_id)
             try:
                 await asyncio.wait_for(asyncio.shield(combined), 1)
             except (asyncio.TimeoutError, asyncio.CancelledError):
@@ -554,6 +629,8 @@ class ToolExecutor:
             raise
         finally:
             self._running.pop(process.pid, None)
+            if self._stopping.get(process.pid, (None,))[0] is process:
+                del self._stopping[process.pid]
             self._interrupted.discard(process.pid)
             for task in [wait, *tasks]:
                 if not task.done():
@@ -599,7 +676,11 @@ class ToolExecutor:
         except asyncio.CancelledError:
             # There may have been an effect even if the return value was lost.
             if effect:
-                self.journal.append("action_interrupted", self._action(action_id, name, args, call_id))
+                data = self._action(action_id, name, args, call_id)
+                if action_id in self._left_running:
+                    data["processes_remaining"] = True  # SIGKILLed, still running at the bound
+                self._left_running.discard(action_id)
+                self.journal.append("action_interrupted", data)
             raise
         except ToolError as exc:
             result = {"ok": False, "error_code": exc.code, "message": str(exc)}
@@ -616,6 +697,8 @@ class ToolExecutor:
             redacted["masked"] = True  # a registered secret was replaced: this is not the real text (#157)
         result = redacted
         if started:
-            event_type = "action_interrupted" if result.get("interrupted") else "action_completed"
+            # A command whose processes may still run has no settled outcome either.
+            event_type = ("action_interrupted" if result.get("interrupted") or result.get("processes_remaining")
+                          else "action_completed")
             self.journal.append(event_type, {**self._action(action_id, name, args, call_id), "result": result})
         return result

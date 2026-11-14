@@ -1,12 +1,17 @@
 """Real scoped filesystem, shell approval and cancellation regression tests."""
 import asyncio
 import hashlib
+import os
 from pathlib import Path
+import shlex
+import signal
 import stat
+import sys
 import time
 
 import pytest
 
+from cairnmind import agent_tools
 from cairnmind.agent_journal import AgentJournal, JournalError
 from cairnmind.agent_tools import MAX_COMMAND_OUTPUT_BYTES, ToolExecutor
 from cairnmind.config import Settings
@@ -318,6 +323,73 @@ async def test_explicit_interrupt_stops_owned_group_and_unrelated_process_surviv
         if unrelated.returncode is None:
             unrelated.terminate()
         await unrelated.wait()
+
+
+@pytest.mark.parametrize("operation", ["interrupt", "cancel"])
+async def test_stopped_command_does_not_return_while_a_child_ignoring_sigterm_runs(executor, operation):
+    # The child ignores SIGTERM and does not hold the command's output, so the
+    # output ends as soon as the shell dies: only SIGKILL and a wait for the
+    # whole group can end it before the tool returns. Its touched memory makes
+    # its exit after SIGKILL take tens of milliseconds, so a tool that returns
+    # right after sending the signal is caught every time (#175).
+    executor.approve = lambda request: True
+    child = ("import pathlib, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+             "memory = bytearray(256 << 20); pathlib.Path('ready').touch(); time.sleep(30)")
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(child)} >/dev/null 2>&1 & echo $! > child.pid; wait"
+    task = asyncio.create_task(executor.execute("run_command", {"command": command}))
+    await wait_for(executor.worktree / "child.pid")
+    pid = int((executor.worktree / "child.pid").read_text())
+    await wait_for(executor.worktree / "ready")
+    started = time.monotonic()
+    try:
+        if operation == "interrupt":
+            stopping = asyncio.create_task(executor.interrupt())
+            result = await asyncio.wait_for(task, 5)
+            assert not live(pid)  # checked before the interrupt call itself has returned
+            await asyncio.wait_for(stopping, 5)
+            assert result["interrupted"] and result["error_code"] == "command_interrupted"
+            assert "processes_remaining" not in result
+        else:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+            assert not live(pid)
+        assert time.monotonic() - started < 3 and not executor._running and not executor._stopping
+        pending = executor.journal.pending_actions()
+        assert len(pending) == 1 and pending[0]["last_state"] == "action_interrupted"
+        assert "processes_remaining" not in executor.journal.events()[-1]["data"]
+    finally:
+        if live(pid):
+            os.kill(pid, signal.SIGKILL)
+
+
+@pytest.mark.parametrize("operation", ["timeout", "cancel"])
+async def test_processes_still_running_after_the_kill_bound_are_reported(executor, monkeypatch, operation):
+    # When the group cannot be confirmed gone within the bound, the result and
+    # the journal say processes may remain, and the action stays uncertain. The
+    # child ignores SIGTERM, so the group still exists when SIGKILL is sent; the
+    # check that would see it end is made to fail.
+    monkeypatch.setattr(agent_tools, "_group_running", lambda pgid: True)
+    monkeypatch.setattr(agent_tools, "TERM_GRACE_SECONDS", .05)
+    monkeypatch.setattr(agent_tools, "KILL_WAIT_SECONDS", .1)
+    executor.approve = lambda request: True
+    executor.command_timeout_seconds = .2 if operation == "timeout" else 30
+    command = "(trap '' TERM; echo $BASHPID > child.pid; exec sleep 30) & wait"
+    task = asyncio.create_task(executor.execute("run_command", {"command": command}))
+    await wait_for(executor.worktree / "child.pid")
+    started = time.monotonic()
+    if operation == "timeout":
+        result = await asyncio.wait_for(task, 5)
+        assert result["timed_out"] and result["processes_remaining"] and not result["ok"]
+        assert executor.journal.events()[-1]["data"]["result"]["processes_remaining"]
+    else:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
+        assert executor.journal.events()[-1]["data"]["processes_remaining"]
+    assert time.monotonic() - started < 3 and not executor._left_running
+    pending = executor.journal.pending_actions()
+    assert len(pending) == 1 and pending[0]["last_state"] == "action_interrupted"
 
 
 async def test_journal_failure_prevents_file_effect(executor, monkeypatch):
