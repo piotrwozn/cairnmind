@@ -1,6 +1,6 @@
 # Results of `cairnmind eval repository` on Cairnmind
 
-**The acceptance figure of issue #104, sixteen of twenty questions complete and right in the worst of three runs, is not met: the worst run gave 13 of 20 on the 0.10.0 tree and 15 of 20 after the parsing and definition steps below.** The issue stays open.
+**The acceptance figure of issue #104, sixteen of twenty questions complete and right in the worst of three runs, is not met: measured the same way, the worst run gave 14 of 20 on the 0.10.0 tree and 15 of 20 after the parsing and definition steps below, a change within the spread of two to three questions between runs.** The issue stays open.
 
 This page is kept out of the copy that the evaluation indexes (see [../EVALUATION.md](../EVALUATION.md)), so that a run cannot read the results of earlier runs. It reports the questions that failed by topic, not by their answers.
 
@@ -8,7 +8,7 @@ This page is kept out of the copy that the evaluation indexes (see [../EVALUATIO
 
 **Still not met: the worst of three runs on the final tree of these steps gave 15 of 20 complete and right; the target is 16.**
 
-Measured on 14 November 2026 from release 0.10.0 (ae7ba4c), with the same models (`qwen3.5:9b` digest 56671c2a…, `qwen3-embedding:0.6b` digest ac6da0df…) and the same twenty questions, three runs per tree, each tree indexed from its own commit (280 files). Other work used the same graphics card during these runs; with the default question timeout of 60 seconds up to nine questions of a run ended in that timeout, which measured the shared card and not retrieval, so these runs set `ask_timeout` to 600 seconds. No question of the runs below reached it. The figures are therefore not directly comparable with the runs at 4326755 further down.
+Measured on 14 November 2026 from release 0.10.0 (ae7ba4c), with the same models (`qwen3.5:9b` digest 56671c2a…, `qwen3-embedding:0.6b` digest ac6da0df…) and the same twenty questions, three runs per tree, each tree indexed from its own commit (280 files). Other work used the same graphics card during these runs; with the default question timeout of 60 seconds up to nine questions of a run ended in that timeout, which measured the shared card and not retrieval, so these runs set `ask_timeout` to 600 seconds. No question of the runs below took longer than 46 seconds, so the longer timeout ended none of them and the default of 60 seconds would not have ended any either; the earlier series that hit the timeout ran while the card was more heavily shared. The runs at 4326755 further down were made on another tree and day; compare the trees within this table, not with those runs.
 
 | Tree | Run 1 | Run 2 | Run 3 | Worst | Complete and wrong |
 | --- | --- | --- | --- | --- | --- |
