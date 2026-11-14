@@ -29,6 +29,8 @@ READ_COMMANDS = [
     ["memory", "orphans", "demo"],
     ["impact", "demo", "--since", "HEAD"],
     ["usage", "demo"],
+    ["store", "size"],
+    ["store", "size", "demo", "--json"],
 ]
 
 # Commands that read but may write, or whose behaviour the owner kept: they prepare the store as before.
