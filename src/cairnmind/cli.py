@@ -37,6 +37,7 @@ jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's job
 memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
 cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
 workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
+db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -50,6 +51,7 @@ app.add_typer(jobs_app, name="jobs")
 app.add_typer(memory_app, name="memory")
 app.add_typer(cockpit_app, name="cockpit")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(db_app, name="db")
 
 
 def output(value) -> None:
@@ -347,6 +349,19 @@ def engine_stop(ctx: typer.Context):
     if service_alive(ctx.obj):
         raise typer.BadParameter("Run cairnmind stop first; the knowledge service is using ArcadeDB")
     output(stop_engine(ctx.obj))
+
+
+@db_app.command("create-user")
+@initialized
+def db_create_user(ctx: typer.Context, admin_password_file: Annotated[Path, typer.Option(
+        "--admin-password-file", help="A private file (mode 0600) with the root password of the server.")]):
+    """Create the database and the user arcade_user with rights on it only, signing in once as root.
+
+    The new user's password is the one configured for it: CAIRNMIND_ARCADE_PASSWORD or arcade_password_file.
+    """
+    from cairnmind.database_credentials import admin_password, create_user
+    admin = admin_password(str(admin_password_file.expanduser().absolute()))
+    output(create_user(ctx.obj, admin))
 
 
 @app.command()
