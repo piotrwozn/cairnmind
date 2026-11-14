@@ -5,7 +5,7 @@ import hashlib
 import json
 
 from cairnmind.agent_reads import ReadLedger
-from cairnmind.api_agent import TOOL_CONTEXT_CHARS
+from cairnmind.api_agent import TOOL_CONTEXT_CHARS, AgentEngine
 
 from test_api_agent import Memory, ScriptedProvider, call, engine, reply, tools_results
 from test_api_agent import setup as setup  # noqa: F401  (a fixture)
@@ -259,3 +259,67 @@ async def test_a_registered_secret_masked_in_a_read_still_blocks_a_whole_write(s
     assert (await agent.turn("Copy config.txt"))["status"] == "completed"
     assert config.read_text() == "token = sk-sensitive-file\n"
     assert tools_results(agent)[-1]["error_code"] == "full_read_required"
+
+
+GUIDE = "".join(f"Line {n:03d} of a short guide.\n" for n in range(1, 101))
+
+
+async def test_a_renewed_copilot_session_needs_a_new_ack_and_a_new_whole_read(setup):
+    # #157 review: Copilot renews its session when the tool catalog changes; the new session has seen nothing.
+    settings, run, profile, root = setup
+    run["client"] = profile["client"] = "copilot"
+    memory, seen = Memory(), {}
+    guide = root / "GUIDE.md"
+    guide.write_text(GUIDE)
+
+    class Copilot:
+        session_id = "copilot-session-1"
+        turns = 0
+
+        async def run_turn(self, prompt, tools, handler, *, system="", on_delta=None, on_event=None):
+            self.turns += 1
+            if self.turns == 1:
+                await handler("resume_context", {})
+                await handler("ack_resume", memory.ack_arguments())
+                assert (await handler("read_file", {"path": "GUIDE.md"}))["end_line"] == 100
+                return {"text": "Read.", "usage": {}, "copilot_session_id": self.session_id}
+            self.session_id = "copilot-session-2"  # renewed inside run_turn, before the model's first call
+            seen["unacknowledged"] = await handler("read_file", {"path": "GUIDE.md", "max_lines": 40})
+            await handler("resume_context", {})
+            await handler("ack_resume", memory.ack_arguments())
+            part = await handler("read_file", {"path": "GUIDE.md", "max_lines": 40})
+            seen["write"] = await handler("write_file", {"path": "GUIDE.md", "content": part["content"] + "Note.\n",
+                                                         "expected_sha256": part["sha256"]})
+            seen["delete"] = await handler("delete_file", {"path": "GUIDE.md", "expected_sha256": part["sha256"]})
+            return {"text": "Done.", "usage": {}, "copilot_session_id": self.session_id}
+
+    agent = AgentEngine(settings, run, profile, provider=Copilot(), memory=memory)
+    assert (await agent.turn("Read the guide"))["status"] == "completed"
+    assert (await agent.turn("Add a note"))["status"] == "completed"
+    assert seen["unacknowledged"]["error_code"] == "resume_required"
+    assert seen["write"]["error_code"] == seen["delete"]["error_code"] == "full_read_required"
+    assert guide.read_text() == GUIDE
+    assert sum(name == "ack_resume" for name, _ in memory.calls) == 2
+    assert [row["type"] for row in agent.journal.events()].count("provider_context_reset") == 1
+    await agent.close()
+
+
+async def test_a_copilot_session_renewed_without_a_tool_call_still_drops_the_ack(setup):
+    settings, run, profile, root = setup
+    run["client"] = profile["client"] = "copilot"
+    memory = Memory()
+
+    class Copilot:
+        turns = 0
+
+        async def run_turn(self, prompt, tools, handler, *, system="", on_delta=None, on_event=None):
+            self.turns += 1
+            if self.turns == 1:
+                await handler("resume_context", {})
+                await handler("ack_resume", memory.ack_arguments())
+            return {"text": "Hello.", "usage": {}, "copilot_session_id": f"copilot-session-{self.turns}"}
+
+    agent = AgentEngine(settings, run, profile, provider=Copilot(), memory=memory)
+    assert (await agent.turn("Start"))["status"] == "completed"
+    assert (await agent.turn("Continue"))["status"] == "resume_required"
+    await agent.close()

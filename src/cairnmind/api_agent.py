@@ -168,6 +168,8 @@ class AgentEngine:
         self._request_id = None
         self._execution_epoch = 0
         self._copilot_token = None
+        # The provider-side conversation this engine's ledger and ACK describe (#157).
+        self._provider_context = getattr(self.provider, "session_id", None)
         self._recover_incomplete_calls()
 
     @staticmethod
@@ -667,6 +669,23 @@ class AgentEngine:
         await self._notify("context_compacted", {"checkpoint": summary["checkpoint"]})
         return prepared
 
+    async def _provider_context_check(self, current=None):
+        """A provider that started a new conversation (Copilot's session renewed on a catalog change, on
+        compaction or by any other path) has lost what the model read and acknowledged. The ledger and the
+        ACK describe the old conversation, so both go: otherwise a model that saw only a slice in the new
+        conversation could replace or delete a whole file (#157)."""
+        if current is None:
+            current = getattr(self.provider, "session_id", None)
+        if not isinstance(current, str) or current == self._provider_context:
+            return
+        previous, self._provider_context = self._provider_context, current
+        if previous is None:
+            return  # the first identity this engine learns; the ledger is cleared when a run is prepared
+        self._reads.clear()
+        self._acknowledged, self._acked_packet, self._last_packet = False, None, None
+        self._record("provider_context_reset", {"run_id": self.run["id"], "generation": self.run["generation"]})
+        await self._notify("status", {"memory": "requires_model_ack"})
+
     async def _context_notice(self):
         if sum(len(_json(row)) for row in self._context) < CONTEXT_BUDGET_CHARS:
             return
@@ -731,6 +750,8 @@ class AgentEngine:
                     if call_id in self._seen_calls:
                         return self._error("repeated_tool_call")
                     self._seen_calls.add(call_id)
+                    # run_turn may have renewed the session before this call; check before any effect.
+                    await self._provider_context_check()
                     call = {"id": call_id, "name": name, "arguments": arguments}
                     return await self._execute_call(call, journal_assistant=True)
             return handler
@@ -758,6 +779,8 @@ class AgentEngine:
             await self._finish_stream()
             if not isinstance(reply, dict):
                 raise ValueError("Invalid Copilot result")
+            await self._provider_context_check(reply.get("copilot_session_id"))
+            await self._provider_context_check()
             self._usage(reply.get("usage"))
             response = reply.get("text", "")
             if not isinstance(response, str) or len(response) > MAX_REPLY_CHARS:
@@ -772,6 +795,7 @@ class AgentEngine:
                 if reset is None:
                     return self._result("context_limit", unknowns=["Copilot context reset unavailable."])
                 await _await(reset())
+                await self._provider_context_check()
                 prepared = await self._finish_compaction()
                 if prepared and not self._prepared:
                     return self._result("partial", unknowns=prepared.get("unknowns", []))
