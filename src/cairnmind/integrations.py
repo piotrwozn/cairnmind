@@ -727,6 +727,19 @@ def _packet_file(settings: Settings, prepared: dict[str, Any], project: dict[str
     return path
 
 
+def launch_prompt(session_id: str, context_path) -> str:
+    """The first message a launched native client receives. Cairnmind writes it, not the person, so
+    extraction leaves it out of memory (extraction_input.HOST_MESSAGE recognizes it)."""
+    return (
+        f"Cairnmind verified session {session_id}. First call the Cairnmind MCP tool resume_context and read "
+        "the complete packet it returns. The returned packet is authoritative: if ready, call "
+        "ack_resume with its exact ID/hash and active plan/task ID+version readback. "
+        f"The launcher prepared file is {context_path}; use it as a fallback only when its packet ID/hash "
+        "match the returned packet. If the returned packet has a different ID, use its current ID/hash "
+        "and readback. If partial or unavailable, report its unknowns and do not attempt ACK, checkpoint "
+        "or other shared-memory writes. Context delivery is not an ACK. Preserve native permissions.")
+
+
 def prepare_client_launch(settings: Settings, project: dict[str, Any], client: str,
                           args: list[str] | None = None, *, installation: dict | None = None,
                           bootstrap_when_args: bool = False) -> dict[str, Any]:
@@ -769,14 +782,7 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
         command.append("--no-daemon")
     command.extend(args or [])
     if not args or bootstrap_when_args:
-        command.append(
-            f"Cairnmind verified session {prepared['session_id']}. First call the Cairnmind MCP tool resume_context and read "
-            "the complete packet it returns. The returned packet is authoritative: if ready, call "
-            "ack_resume with its exact ID/hash and active plan/task ID+version readback. "
-            f"The launcher prepared file is {context_path}; use it as a fallback only when its packet ID/hash "
-            "match the returned packet. If the returned packet has a different ID, use its current ID/hash "
-            "and readback. If partial or unavailable, report its unknowns and do not attempt ACK, checkpoint "
-            "or other shared-memory writes. Context delivery is not an ACK. Preserve native permissions.")
+        command.append(launch_prompt(prepared["session_id"], context_path))
     env = native_environment()
     # Nothing of an outer session may survive, and readers of either version must see this one:
     # a project file written by an earlier version forwards only the earlier spelling.
