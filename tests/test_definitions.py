@@ -382,6 +382,33 @@ def test_a_name_with_one_question_word_is_found_through_its_file(workspace):  # 
     assert [item["definition"] for item in found] == ["JournalWriter.flush_delay"]  # through its class
 
 
+def test_a_value_written_only_as_a_parameter_default_is_found(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "worker.py").write_text(
+        "def poll(queue, interval_seconds: float = 13.5, label=None):\n    return queue\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "How many seconds is the poll interval by default?", [], {})
+    assert found and found[0]["definition"] == "poll.interval_seconds"
+    assert found[0]["definition_kind"] == "parameter" and "interval_seconds: float = 13.5" in found[0]["text"]
+
+
+def test_a_parameter_that_shares_one_word_with_the_question_is_not_shown():
+    # A parameter's name is local to its function: "size" or "timeout" alone says little about
+    # which value is asked. It counts when the question spells it or names it with its words only.
+    rows = [{"symbol": {"name": "read.timeout", "kind": "parameter", "owner": "read", "member": "timeout"},
+             "path": "pkg/net.py"},
+            {"symbol": {"name": "poll.interval_seconds", "kind": "parameter", "owner": "poll",
+                        "member": "interval_seconds"}, "path": "pkg/worker.py"},
+            {"symbol": {"name": "TIMEOUT", "kind": "constant"}, "path": "pkg/net.py"}]
+    ranked = rank_definitions("What is the read timeout of the poll, in seconds?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["TIMEOUT"]
+    ranked = rank_definitions("What is the poll interval in seconds?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["poll.interval_seconds"]
+    ranked = rank_definitions("What does read.timeout default to?", rows)
+    assert [row["symbol"]["name"] for row in ranked][0] == "read.timeout"
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())

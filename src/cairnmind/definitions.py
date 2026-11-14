@@ -10,14 +10,13 @@ are resolved by exact name:
   ``SCHEMA_VERSION``); word names are the question's other search terms, alone and adjacent
   pairs joined by "_" (``schema version`` -> ``schema_version``), each also upper-cased;
 - a candidate is a current symbol node of the project whose label equals a name, or, for a
-  field, whose member (the bare name after ``Owner.``) does; a code name finds any kind of
-  definition, a word name constants and fields only, since a plain word such as "version" or
-  "write" names many functions; code-name matches are read first, word-name matches fill up
-  the rest of the bound;
-- a constant or field is also a candidate when its snake_case name (or hyphenated TOML key,
-  ``requires-python``) is made only of question words and FILLER_WORDS, with at least one
-  question word and two words in all
-  (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
+  field or a parameter default (``connect.port`` for ``def connect(port=7311)``), whose member
+  (the bare name after ``Owner.``) does; a code name finds any kind of definition, a word name
+  constants and fields only, since a plain word such as "version" or "write" names many
+  functions; code-name matches are read first, word-name matches fill up the rest of the bound;
+- a constant, field or parameter default is also a candidate when its snake_case name (or
+  hyphenated TOML key, ``requires-python``) is made only of question words and FILLER_WORDS,
+  with at least one question word and two words in all (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
   drift report list at most?"). Words compare by a light stem (a trailing "ing", "ed" or "s" is
   dropped). The question words used are those that can be name words: NAME_STOPWORDS and words
   under three letters are left out, the longest MAX_PATTERN_WORDS are kept. The database applies
@@ -50,7 +49,7 @@ MAX_DEFINITION_ATTEMPTS = 8
 MAX_NAMES = 64
 MAX_ROWS = 200  # candidate definitions read per question, after the worktree filter
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
-_KIND_ORDER = {"constant": 0, "field": 0, "function": 1, "method": 1, "class": 2}
+_KIND_ORDER = {"constant": 0, "field": 0, "parameter": 1, "function": 2, "method": 2, "class": 3}
 # Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
 FILLER_WORDS = ("max", "min", "default", "num")
 MAX_PATTERN_WORDS = 8  # question words used to look up names by their words
@@ -130,10 +129,13 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     """Rows ``{"symbol": node metadata, "path": project-relative path, ...}`` in the order shown.
 
     Drops rows whose bare name shares no word with the question (unless the question writes the
-    name) and, per bare name (a field's member), secondary rows when a primary file defines that
-    name. Order: a name the question writes first, then a name made only of question words, then
-    question words in the name, then in its owner and file name, primary before secondary,
-    constants and fields before functions before classes, then path and line for a stable result.
+    name), parameter defaults that are neither named nor a full match (a parameter's name is
+    local to its function: ``size`` or ``timeout`` alone says little), and, per bare name (a
+    field's member), secondary rows when a primary file defines that name. Order: a name the
+    question writes first, then a name made only of question words, then question words in the
+    name, then in its owner and file name, primary before secondary,
+    values before functions before classes (a parameter default after a constant or field), then
+    path and line for a stable result.
     So a one-word overlap (SUPPORT_TOKENS for "tokens") never outranks a full match.
     """
     def bare(row: dict) -> str:
@@ -142,7 +144,7 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     scored = []
     for row in rows:
         named, full, words, context = relevance(question, row["symbol"], row["path"])
-        if named or words:
+        if named or (words and (full or row["symbol"].get("kind") != "parameter")):
             scored.append({**row, "named": named, "full": full, "relevance": words, "file_relevance": context,
                            "secondary": secondary_source(row["path"])})
     primary_names = {bare(row) for row in scored if not row["secondary"]}
@@ -231,7 +233,7 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
     pattern = name_word_pattern(question)
     if pattern:
         rows += [row for row in store.query(
-            select + "((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :pattern) "
+            select + "((metadata.kind IN ['field', 'parameter'] AND metadata.member.toLowerCase() MATCHES :pattern) "
             "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :pattern)) "
             f"{order} LIMIT {MAX_ROWS}",
             {"project": project_id, "eligible": eligible, "pattern": pattern}) if row["id"] not in known]

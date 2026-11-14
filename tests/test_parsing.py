@@ -125,6 +125,31 @@ def test_javascript_top_level_values_stay_out_of_symbols():
     assert result["symbols"] == []
 
 
+DEFAULTS = '''class Worker:
+    def poll(self, queue, interval: float = 2.5, *, limit=None, label="w"):
+        return queue
+
+
+def connect(host, port=7311,
+            retries: int = -3):
+    return host
+'''
+
+
+def test_python_parameter_defaults_are_symbols_named_by_their_function():
+    result = analyze_code(Path("worker.py"), DEFAULTS)
+    assert result["errors"] == []
+    found = {s["name"]: s for s in result["symbols"] if s["kind"] == "parameter"}
+    # A default of None says only that there is none: it is left out.
+    assert set(found) == {"poll.interval", "poll.label", "connect.port", "connect.retries"}
+    assert (found["poll.interval"]["owner"], found["poll.interval"]["member"]) == ("poll", "interval")
+    assert (found["connect.retries"]["line_start"], found["connect.retries"]["line_end"]) == (7, 7)
+    # The functions stay symbols; a lambda's default is not a parameter of a named function.
+    assert {"Worker", "poll", "connect"} <= {s["name"] for s in result["symbols"]}
+    assert analyze_code(Path("w.py"), "f = lambda x=1: x\n")["symbols"] == [
+        {"name": "f", "kind": "constant", "line_start": 1, "line_end": 1}]
+
+
 PYPROJECT = '''# Project metadata.
 [project]
 name = "sample"

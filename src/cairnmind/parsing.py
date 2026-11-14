@@ -16,7 +16,7 @@ from typing import Any
 
 # Bump when syntax-to-fact semantics change, independently of grammar upgrades.
 # syntax-v2: Python module constants and class fields are symbols too.
-# syntax-v3: keys of TOML files are symbols too.
+# syntax-v3: keys of TOML files and Python parameter defaults are symbols too.
 PARSER_VERSION = "syntax-v3"
 MAX_CONFIG_KEYS = 1000  # symbols kept from one configuration file
 _TOML_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
@@ -130,6 +130,33 @@ def _python_assignments(root: Any) -> list[dict[str, Any]]:
             owner, body = _text(node.child_by_field_name("name")), node.child_by_field_name("body")
             if owner and body is not None:
                 scan(body, owner)
+    return found
+
+
+def _python_parameter_defaults(root: Any) -> list[dict[str, Any]]:
+    """Parameters of named functions that have a default: ``function.parameter``, kind parameter.
+
+    A value written only as a default (``def connect(host, port=7311)``) has no other definition.
+    ``owner`` is the function's bare name and ``member`` the parameter's, as for a class field; the
+    lines are those of the parameter. A default of None, a lambda's parameter and an unpacked
+    parameter are left out.
+    """
+    found: list[dict[str, Any]] = []
+    for node in _walk(root):
+        if node.type != "function_definition":
+            continue
+        owner, parameters = _text(node.child_by_field_name("name")), node.child_by_field_name("parameters")
+        if not owner or parameters is None:
+            continue
+        for parameter in parameters.named_children:
+            if parameter.type not in {"default_parameter", "typed_default_parameter"}:
+                continue
+            name, value = parameter.child_by_field_name("name"), parameter.child_by_field_name("value")
+            if name is None or name.type != "identifier" or value is None or value.type == "none":
+                continue
+            member = _text(name)
+            found.append({"name": f"{owner}.{member}", "kind": "parameter", "owner": owner, "member": member,
+                          "line_start": parameter.start_point.row + 1, "line_end": parameter.end_point.row + 1})
     return found
 
 
@@ -368,6 +395,7 @@ def analyze_code(path: Path, content: str) -> dict[str, Any]:
                         })
     if name == "python":
         result["symbols"].extend(_python_assignments(tree.root_node))
+        result["symbols"].extend(_python_parameter_defaults(tree.root_node))
     if tree.root_node.has_error and not result["errors"]:
         # Missing punctuation can be an unnamed node, outside the fact walk.
         result["errors"].append("Syntax tree contains missing or invalid tokens")
