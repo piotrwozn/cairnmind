@@ -79,6 +79,19 @@ def _changes(root, commit):
     return changed
 
 
+def _span(lines, symbol):
+    """The text of ``symbol`` between its byte columns (the parser counts UTF-8 bytes) in its lines."""
+    first, last = symbol["line_start"] - 1, symbol["line_end"] - 1
+    chunk = [line.encode("utf-8") for line in lines[first:last + 1]]
+    if not chunk:
+        return ""
+    if len(chunk) == 1:
+        chunk[0] = chunk[0][symbol["column_start"]:symbol["column_end"]]
+    else:
+        chunk[0], chunk[-1] = chunk[0][symbol["column_start"]:], chunk[-1][:symbol["column_end"]]
+    return b"\n".join(chunk).decode("utf-8", "replace")
+
+
 def _definitions(name, text):
     """``{symbol name: sorted definition texts}``, or None when the file cannot be compared by symbol."""
     if text is None:
@@ -92,6 +105,10 @@ def _definitions(name, text):
     found = {}
     for symbol in analysis["symbols"]:
         start = symbol["line_start"] - 1
+        if symbol.get("kind") == "parameter" and "column_start" in symbol:
+            # A parameter shares its line with the function and the other parameters: compare only its own text.
+            found.setdefault(symbol["name"], []).append(_span(lines, symbol))
+            continue
         # A decorator is part of what a definition means, but the parser's definition starts below it.
         # Walk up over the decorator lines of this definition only: never past the end of the
         # definition above, nor past the header of the one that encloses this one.
