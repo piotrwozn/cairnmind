@@ -17,6 +17,8 @@ from uuid import uuid4
 
 from jsonschema import Draft202012Validator
 
+from .agent_reads import ReadLedger, projected_read
+
 
 SYSTEM = """You are Cairnmind's programming agent. Answer in the user's language.
 The user selected one registered project/worktree. Use only the supplied tools.
@@ -144,6 +146,7 @@ class AgentEngine:
         self._acknowledged = False
         self._last_packet = None
         self._context = []
+        self._reads = ReadLedger()  # what file content the current model context has seen (#157)
         self._closed = False
         self._turn_task = None
         self._lock = asyncio.Lock()
@@ -276,6 +279,8 @@ class AgentEngine:
             projection.update(host_context_truncated=True, full_result_archived=True,
                               full_result_journal_event=event["id"],
                               next_step="Read smaller tool slices or read_source for the complete archived result.")
+            if message.get("name") == "read_file":
+                projected_read(projection)
             sources = archive.get("source_ids") or []
             if len(sources) >= event["seq"] and isinstance(sources[event["seq"] - 1], str):
                 projection["full_result_source_id"] = sources[event["seq"] - 1]
@@ -527,6 +532,10 @@ class AgentEngine:
                     # Archived at once: the service then marks this session's later memory writes degraded.
                     await self._checked_archive()
                 return result
+            if name == "write_file":
+                refused = self._reads.refusal(arguments.get("path"), arguments.get("expected_sha256"))
+                if refused is not None:
+                    return refused
             self.tools.current_tool_call_id = call_id
             try:
                 return await self.tools.execute(name, arguments)
@@ -560,6 +569,8 @@ class AgentEngine:
         result = self._redact(await self._dispatch(call["name"], call["arguments"], call["id"]))
         delivered = await self._message({"role": "tool", "tool_call_id": call["id"],
                                          "name": call["name"], "content": _json(result)})
+        if call["name"] not in self.mcp.catalogue:
+            self._reads.observe(call["name"], json.loads(delivered["content"]))
         await self._notify("tool_result", {"tool_call_id": call["id"], "name": call["name"],
                                             "result": result})
         return json.loads(delivered["content"]) if self.run["client"] == "copilot" else result
@@ -635,6 +646,7 @@ class AgentEngine:
             return prepared
         # A checkpoint is inspected, explicitly labelled prior state; the
         # current packet still has to be read and acknowledged by the model.
+        self._reads.clear()
         self._context = [{"role": "user", "content": _json({
             "host": "Context renewed from durable evidence; read resume_context and ACK before continuing.",
             "checkpoint": summary["checkpoint"], "state": summary["state"],
@@ -793,6 +805,7 @@ class AgentEngine:
                     # restored through the archived memory packet, not a blind
                     # replay of all old messages and unbounded tool output.
                     self._context = []
+                    self._reads.clear()
                 elif self._acknowledged:
                     await self._fresh()
                     if self._memory_partial is not None:

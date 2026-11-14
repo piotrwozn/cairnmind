@@ -59,6 +59,20 @@ async def test_create_read_patch_and_delete_record_effect_before_result(executor
     assert deleted["ok"] and not file.exists() and not executor.journal.pending_actions()
 
 
+async def test_read_file_names_the_last_line_it_delivered_whole(executor):
+    # #157: a result cut by characters must not let a reader think it holds the line it ends in.
+    from cairnmind.agent_tools import MAX_TEXT_CHARS
+    line = "x" * 999 + "\n"
+    (executor.worktree / "big.txt").write_text(line * (MAX_TEXT_CHARS // 1000 + 5))
+    whole = MAX_TEXT_CHARS // 1000
+    read = await executor.execute("read_file", {"path": "big.txt"})
+    assert read["truncated"] and read["end_line"] == whole and len(read["content"]) == MAX_TEXT_CHARS
+    sliced = await executor.execute("read_file", {"path": "big.txt", "start_line": 3, "max_lines": 2})
+    assert sliced["start_line"] == 3 and sliced["end_line"] == 4
+    (executor.worktree / "empty.txt").write_text("")
+    assert (await executor.execute("read_file", {"path": "empty.txt"}))["end_line"] == 0
+
+
 async def test_existing_file_requires_exact_hash_and_preserves_mode(executor):
     file = executor.worktree / "run.sh"
     file.write_text("old")

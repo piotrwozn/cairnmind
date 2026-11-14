@@ -50,7 +50,8 @@ FILE_TOOLS = [
           {"query": {"type": "string", "minLength": 1, "maxLength": 2000}, "path": _PATH,
            "case_sensitive": {"type": "boolean"},
            "max_results": {"type": "integer", "minimum": 1, "maximum": 1000}}, ["query"]),
-    _tool("write_file", "Create a file exclusively with expected_sha256=null, or replace the exact version read.",
+    _tool("write_file", "Create a file exclusively with expected_sha256=null, or replace the exact version read. "
+          "Replacing needs every line of that version read whole in this conversation; use apply_patch to change a part.",
           {"path": _PATH, "content": {"type": "string", "maxLength": MAX_FILE_BYTES},
            "expected_sha256": {"anyOf": [_HASH, {"type": "null"}]}},
           ["path", "content", "expected_sha256"]),
@@ -305,10 +306,18 @@ class ToolExecutor:
         if "\0" in text:
             raise ToolError("binary_file", "Only UTF-8 text files are supported")
         lines = text.splitlines(keepends=True)
-        selected = "".join(lines[first - 1:first - 1 + limit])
+        rows = lines[first - 1:first - 1 + limit]
+        selected = "".join(rows)
         content = selected[:MAX_TEXT_CHARS]
+        # end_line: the last line delivered whole; a character cut can end inside a line.
+        whole, size = 0, 0
+        for row in rows:
+            size += len(row)
+            if size > MAX_TEXT_CHARS:
+                break
+            whole += 1
         return {"ok": True, "path": relative, "content": content, "sha256": hashlib.sha256(raw).hexdigest(),
-                "bytes": len(raw), "start_line": first, "total_lines": len(lines),
+                "bytes": len(raw), "start_line": first, "end_line": first - 1 + whole, "total_lines": len(lines),
                 "truncated": first != 1 or first - 1 + limit < len(lines) or len(selected) > MAX_TEXT_CHARS}
 
     def _search(self, args):
