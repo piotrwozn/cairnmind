@@ -75,7 +75,9 @@ def test_no_evidence_state_is_green_and_unknown_is_a_warning():
 
 
 def test_an_unknown_state_word_is_plain_never_green():
-    assert theme.state_style("confirmed") == theme.style("ok")
+    assert theme.state_style("confirmed") == theme.style("value")
+    assert theme.state_style("still valid") == theme.style("value")
+    assert theme.state_style("done") == theme.style("ok")
     assert theme.state_style("ACK required") == theme.style("warn")
     assert theme.state_style("failed") == theme.style("danger")
     for word in ("Confirmed", "confirmed!", "ack", "", "trusted"):

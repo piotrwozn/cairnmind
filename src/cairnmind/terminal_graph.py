@@ -316,7 +316,7 @@ class TerminalGraph(Widget, can_focus=True):
     DEFAULT_CSS = terminal_theme.css("TerminalGraph { height: 1fr; min-height: 3; background: $cm-bg; }")
     BINDINGS = [Binding("left", "left", show=False), Binding("right", "right", show=False),
                 Binding("up", "up", show=False), Binding("down", "down", show=False),
-                Binding("plus,equals_sign", "zoom_in", "+ zoom"), Binding("minus", "zoom_out", "− zoom"),
+                Binding("plus,equals_sign", "zoom_in", "Zoom in"), Binding("minus", "zoom_out", "Zoom out"),
                 Binding("space", "pause", "Pause"), Binding("r", "reset_camera", "Camera"),
                 Binding("right_square_bracket", "next_node", "Next node"), Binding("left_square_bracket", "previous_node", "Previous node"),
                 Binding("enter", "open", "Open"), Binding("g", "groups", "Groups"),
@@ -439,8 +439,10 @@ class GroupPicker(ModalScreen[dict | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="cm-dialog"):
-            yield Static(plain(self.graph_app.t("Memory groups · Enter: select · n/p: pages · Esc: back")),
-                         classes="heading")
+            # One Static with the exact text: the name is the heading, the key hints after it are muted.
+            name, separator, hints = self.graph_app.t("Memory groups · Enter: select · n/p: pages · Esc: back").partition(" · ")
+            yield Static(terminal_theme.assemble([("accent", name), ("muted", separator + hints)]),
+                         classes="heading", id="group-heading")
             yield OptionList(id="graph-groups", classes="cm-dialog-body")
             yield Static("", id="group-notice", markup=False)
 
@@ -509,15 +511,16 @@ class GraphApp(BasePanel):
     TITLE = "Cairnmind · Memory graph"
     panel_role = "graph"
     CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
-    #graph-heading { height: auto; max-height: 2; padding: 0 1 0 0; color: $cm-accent;
-        border-left: thick $cm-bg; }
-    #graph-heading.-focus { border-left: thick $cm-accent; }
+    #graph-heading { height: auto; max-height: 2; padding: 0 1; color: $cm-accent; }
+    #graph-heading.-focus { text-style: underline; }
     #graph-actions { height: 1; padding: 0 1; }
     #graph-actions Button { min-width: 8; }
     #graph-selection { height: auto; max-height: 3; padding: 0 1; color: $cm-text; text-style: bold; }
+    #graph-selection.-empty { color: $cm-muted; text-style: none; }
     #graph-status { height: auto; max-height: 2; padding: 0 1; color: $cm-muted; }
     #graph-groups, #graph-groups:focus { min-height: 1; padding: 0; background: $cm-panel;
         background-tint: transparent 0%; border: none; }
+    #group-heading { text-style: none; }
     #group-notice { margin-top: 1; }
     .-short #group-notice { margin-top: 0; }
     """)
@@ -704,6 +707,8 @@ class GraphApp(BasePanel):
                 ("accent", self.t("Memory graph")),
                 ("muted", " · " + title + (" · " + label(scope.group) if scope.group else ""))]))
             selected = self.model.selected
+            # With no node the sentence is muted, so it does not read as a selected node.
+            self.query_one("#graph-selection", Static).set_class(not selected, "-empty")
             self.query_one("#graph-selection", Static).update(plain(
                 "Enter: " + label(selected.get("label", selected["id"])) + " · " + label(selected.get("kind", ""))
                 if selected else self.t("No nodes in this scope.")))

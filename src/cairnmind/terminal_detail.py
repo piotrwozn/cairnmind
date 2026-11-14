@@ -80,9 +80,9 @@ def record_parts(value, translate):
         if isinstance(item.get(name), str):
             if lines:
                 lines.append([("stored", item[name])])
-            else:  # the first line names the entry; the rest of the stored text stays plain
+            else:  # the first line names the entry: bold, in the stored colour, never as a heading
                 first, newline, rest = item[name].partition("\n")
-                lines.append([("title", first), ("stored", newline + rest)])
+                lines.append([("stored-lead", first), ("stored", newline + rest)])
 
     metadata = item.get("metadata")
     if not isinstance(metadata, dict):

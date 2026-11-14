@@ -485,11 +485,11 @@ def test_an_evidence_sentence_takes_the_colour_of_its_state_and_none_is_green():
 
 def test_a_state_is_coloured_only_by_its_exact_word():
     _, parts = built("record/anchored/en")
-    assert styles(parts, "confirmed") == [theme.style("ok")]
+    assert styles(parts, "confirmed") == [theme.style("value")]  # neutral: the evidence may be weak
     _, parts = built("record/task/en")
     assert styles(parts, "needs_review") == [theme.style("warn")]
     assert [role for role, text in parts if text.startswith("Warning: ")] == ["warn-strong"]
     _, parts = built("impact/valid/en")
-    assert styles(parts, "checked: still valid (2026-11-13)") == [theme.style("ok")]
+    assert styles(parts, "checked: still valid (2026-11-13)") == [theme.style("value")]
     _, parts = built("impact/pending/en")
     assert [role for role, text in parts if text == "Not checked yet."] == ["warn"]

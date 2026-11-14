@@ -24,16 +24,21 @@ from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
 
 
 class ConfirmModal(MessageModal):
-    def __init__(self, title, value, *, approve="Confirm"):
+    SCROLL_HINT, CLOSE_HINT = "PgUp/PgDn: scroll · Esc: cancel", "Esc: cancel"
+
+    def __init__(self, title, value, *, approve="Confirm", consent=False):
         super().__init__(title, value)
         self.approve = approve
+        self.consent = consent
 
     def compose(self):
-        # Every ConfirmModal asks for consent, so every one has the consent frame. The request is one
-        # Static in one colour: nothing in it is dimmed, highlighted, cut or capped.
-        with Vertical(classes="cm-dialog -consent"):
+        # The heavy yellow frame is kept for consent (a command or third-party tool call, a paid
+        # request, a download, loading memory), so it still stands out; a routine confirmation has the
+        # ordinary frame. The request is one Static in one colour: nothing in it is dimmed,
+        # highlighted, cut or capped.
+        with Vertical(classes="cm-dialog -consent" if self.consent else "cm-dialog"):
             yield Static(plain(self.t(self.heading)), classes="heading")
-            with VerticalScroll(classes="cm-dialog-body"):
+            with VerticalScroll(classes="cm-dialog-body -message"):
                 yield Static(plain(summary_text(self.value, getattr(self.app, "language", "en"))), id="message-body")
                 if not isinstance(self.value, str):
                     yield Button(self.t("Technical details"), id="message-details")
@@ -259,19 +264,26 @@ class SidebarApp(BasePanel):
     #project-state { margin-bottom: 1; }
     #project-state.-warn { color: $cm-warn; }
     #project-page { height: 1fr; }
-    #project-page Button { width: 100%; max-width: 44; margin: 0; padding: 0; content-align: left middle;
-        text-align: left; }
-    #project-back { background: transparent; color: $cm-muted; }
-    #project-back:hover { color: $cm-text; }
-    #project-back:focus { background: $cm-accent; color: $cm-bg; }
-    #assistant-select { border-left: thick $cm-border; }
-    #assistant-select:focus { border-left: thick $cm-accent; }
+    #project-page Button { max-width: 44; }
+    #project-page #project-back { border-left: none; background: transparent; color: $cm-muted; }
+    #project-page #project-back:hover { color: $cm-text; }
+    #project-page #project-back:focus { background: $cm-raised; color: $cm-strong; text-style: bold; }
+    #assistant-row { height: 1; max-width: 44; }
+    #project-page #assistant-select { width: 1fr; background: $cm-raised; color: $cm-text;
+        border-left: thick $cm-border-hi; }
+    #project-page #assistant-select:focus { background: $cm-raised; color: $cm-strong; text-style: bold;
+        border-left: thick $cm-accent; }
+    #assistant-mark { width: 3; height: 1; background: $cm-raised; color: $cm-muted; content-align: center middle; }
+    #assistant-row:focus-within #assistant-mark { color: $cm-accent; }
     #project-page #memory-open { margin-top: 1; }
-    .sidebar-actions { height: 1; margin-top: 1; }
-    .narrow .sidebar-actions { margin-top: 0; }
-    .sidebar-actions Button { width: 1fr; min-width: 8; margin: 0 1 0 0; padding: 0; }
-    .narrow .sidebar-actions { layout: vertical; height: 2; }
+    .sidebar-actions { height: 1; margin-top: 0; max-width: 45; }
+    #project-list-actions { margin-top: 1; }
+    .sidebar-actions Button { width: 1fr; min-width: 8; margin: 0 1 0 0; padding: 0; content-align: left middle;
+        text-align: left; }
+    .narrow .sidebar-actions { layout: vertical; height: 2; max-width: 100%; }
     .narrow .sidebar-actions Button { width: 100%; height: 1; margin: 0; }
+    .narrow #project-list-actions { margin-top: 0; }
+    #panel-notice, #notice-mark { padding: 0; }
     .narrow Footer { display: none; }
     """)
     BINDINGS = [("w", "work", "Start work"), ("p", "inspect", "Open"),
@@ -298,20 +310,24 @@ class SidebarApp(BasePanel):
             yield Input(placeholder=self.t("Search projects…"), id="project-search")
             yield DataTable(id="project-rows", cursor_type="row", show_header=False)
             yield Static("", id="sidebar-empty", markup=False)
-            with VerticalScroll(id="project-page"):
+            # One button per row: no fill until focused (`cm-stack`), so the rows stay apart.
+            with VerticalScroll(id="project-page", classes="cm-stack"):
                 yield Button(self.t("Return to projects"), id="project-back")
                 yield Static("", id="sidebar-scope", markup=False)
                 yield Static(self.t("Browsing memory does not start an assistant."), id="project-state", markup=False)
-                yield Button(self.t("Choose assistant"), id="assistant-select")
+                with Horizontal(id="assistant-row"):  # a selector: its mark is a glyph, not part of the label
+                    yield Button(self.t("Choose assistant"), id="assistant-select")
+                    yield Static("▼", id="assistant-mark", markup=False)
                 yield Button(self.t("Start work"), id="project-work", variant="primary", disabled=True)
                 yield Button(self.t("Memory"), id="memory-open")
                 yield Button(self.t("Add assistant"), id="assistant-add")
                 # Last, so the Tab order of the existing buttons is unchanged.
                 yield Button(self.t("Run next stage"), id="stage-next")
-            with Horizontal(classes="sidebar-actions", id="project-list-actions"):
+            # Two rows of two: no fill until focused (`cm-stack`), so the rows do not merge into a slab.
+            with Horizontal(classes="sidebar-actions cm-stack", id="project-list-actions"):
                 yield Button(self.t("Add folder"), id="project-add", variant="primary")
                 yield Button(self.t("Open"), id="project-inspect", disabled=True)
-            with Horizontal(classes="sidebar-actions"):
+            with Horizontal(classes="sidebar-actions cm-stack"):
                 yield Button(self.t("Connections"), id="auth-open")
                 yield Button(self.t("More"), id="more-open")
             yield Static("", id="panel-notice", markup=False)
@@ -321,8 +337,7 @@ class SidebarApp(BasePanel):
 
     def on_mount(self):
         self.query_one("#project-rows", DataTable).add_column(self.t("Projekt"), key="project")
-        for identifier in ("#project-back", "#assistant-select"):
-            self.query_one(identifier, Button).styles.line_pad = 0  # the label starts at the text column
+        self.query_one("#project-back", Button).styles.line_pad = 0  # the label starts at the text column
         self.show_page("projects")
         self.set_interval(.3, self._poll_workspace)
         self.set_interval(3, self.refresh_sidebar)
@@ -734,7 +749,7 @@ class SidebarApp(BasePanel):
         if value is None:
             return
         payload, preview = checked["payload"], checked["preview"]
-        approve = await self.push_screen_wait(ConfirmModal(self.t("Wczytać tę pamięć projektu?"), preview, approve=self.t("Wczytaj pamięć")))
+        approve = await self.push_screen_wait(ConfirmModal(self.t("Wczytać tę pamięć projektu?"), preview, approve=self.t("Wczytaj pamięć"), consent=True))
         if not approve:
             return
         result = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": False})
@@ -1149,12 +1164,12 @@ class SidebarApp(BasePanel):
                 await self.request("DELETE", base + "/credential")
                 self.notice(self.t("Klucz usunięty."))
         elif action == "probe":
-            if await self.push_screen_wait(ConfirmModal(self.t("Wykonać test modelu?"), self.t("To rzeczywiste zapytanie do wybranego dostawcy. Może zużyć płatne tokeny lub limit Copilota. Test nie edytuje projektu."), approve=self.t("Uruchom test"))):
+            if await self.push_screen_wait(ConfirmModal(self.t("Wykonać test modelu?"), self.t("To rzeczywiste zapytanie do wybranego dostawcy. Może zużyć płatne tokeny lub limit Copilota. Test nie edytuje projektu."), approve=self.t("Uruchom test"), consent=True)):
                 self.notice(self.t("Trwa jawny test modelu i obsługi narzędzi…"))
                 result = await asyncio.to_thread(self.broker.request, "POST", base + "/probe", json={}, timeout=180)
                 await self.push_screen_wait(MessageModal(self.t("Wynik testu połączenia"), result))
         elif action == "prepare":
-            if await self.push_screen_wait(ConfirmModal(self.t("Przygotować Copilota?"), self.t("Pobierze przypięty oficjalny runtime i sprawdzi integralność. Nie uruchamia płatnej inferencji."), approve=self.t("Przygotuj"))):
+            if await self.push_screen_wait(ConfirmModal(self.t("Przygotować Copilota?"), self.t("Pobierze przypięty oficjalny runtime i sprawdzi integralność. Nie uruchamia płatnej inferencji."), approve=self.t("Przygotuj"), consent=True)):
                 self.notice(self.t("Trwa przygotowanie oficjalnego runtime Copilota…"))
                 result = await asyncio.to_thread(self.broker.request, "POST", "/api/copilot/prepare", json={}, timeout=300)
                 await self.push_screen_wait(MessageModal(self.t("Przygotowanie Copilota"), result))
@@ -1163,7 +1178,7 @@ class SidebarApp(BasePanel):
             runtime = local.get("runtime", {})
             if runtime.get("available") is False:
                 consent = await self.push_screen_wait(ConfirmModal("Prepare Copilot?",
-                    "Downloads and verifies the pinned official runtime. No model request is made.", approve="Prepare"))
+                    "Downloads and verifies the pinned official runtime. No model request is made.", approve="Prepare", consent=True))
                 if not consent:
                     return
                 prepared = await asyncio.to_thread(self.broker.request, "POST", "/api/copilot/prepare", json={}, timeout=300)
@@ -1203,8 +1218,10 @@ class SidebarApp(BasePanel):
         try:
             await self.load_state()
             runs = self.data.get("runs", [])
-            choices = [(f"{r.get('client')} · {r.get('lifecycle', r.get('state'))} · {r.get('worktree') or self.t('Account login')} · " +
-                        self.t("Memory acknowledged" if r.get("memory", {}).get("acknowledged") else "Memory acknowledgement required"), r["id"]) for r in runs]
+            # The memory state comes before the folder, so a narrow list cuts the path, never the state.
+            choices = [(f"{r.get('client')} · {r.get('lifecycle', r.get('state'))} · " +
+                        self.t("Memory acknowledged" if r.get("memory", {}).get("acknowledged") else "Memory acknowledgement required")
+                        + f" · {r.get('worktree') or self.t('Account login')}", r["id"]) for r in runs]
             if not choices:
                 self.notice(self.t("Brak uruchomionych sesji."))
                 return

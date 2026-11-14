@@ -73,15 +73,17 @@ def error_text(exc, translate, language="en", *, sent=False, lead=None) -> str:
 class FindingApp(App):
     ENABLE_COMMAND_PALETTE = False
     CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
-    Screen { padding: 0 1; }
-    #finding-scope { color: $cm-muted; height: auto; padding: 0 1; margin-bottom: 1; }
+    #finding-title, #finding-scope, #finding-label, #finding-content, #finding-choices, #finding-error {
+        margin-left: 1; margin-right: 1; }
+    #finding-scope { color: $cm-muted; height: auto; padding: 0 1; margin: 0 1 1 1; }
     #finding-title, #finding-label { padding: 0 1; }
     #finding-content { height: 1fr; min-height: 4; }
     #finding-choices { height: 1; }
-    #finding-choices Select { width: 1fr; margin-right: 1; }
+    #finding-choices Select { width: 1fr; }
+    #finding-kind { margin-right: 1; }
     #finding-error { color: $cm-muted; height: auto; padding: 0 1; }
     #finding-error.-error { color: $cm-danger; text-style: bold; }
-    .-short #finding-scope { margin-bottom: 0; }
+    .-short #finding-scope { margin: 0 1; }
     """)
     BINDINGS = [("ctrl+s", "save", "Save"), ("escape", "cancel", "Cancel")]
 
@@ -121,6 +123,8 @@ class FindingApp(App):
 
     def on_mount(self):
         terminal_theme.size_classes(self)
+        from .terminal_ui import localize_select_menus
+        localize_select_menus(self, self.language)
         # The finding goes to the project the person sees here, even if the workspace moves on meanwhile.
         try:
             selected = self.workspace.read()

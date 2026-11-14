@@ -32,6 +32,11 @@ What was checked on Textual 8.2.8 (so nobody repeats it):
   fit, its one row showed a scrollbar instead of the keys. The Footer rule switches it off again.
 - A DataTable column with a fixed width crops a longer cell without a mark and keeps the cell's
   text; `column_widths()` sets the widths, and a view recomputes them on every resize.
+- A `round` or `heavy` border paints its whole cell in the widget's background, so a dialog had a
+  half-cell band of panel colour outside its line. `tall` (thin) and `outer` (thick, for consent)
+  draw on the outer edge of the cell and leave nothing outside it.
+- Buttons stacked one per row (`.cm-stack`, or any action row of a narrow dialog) have no fill
+  until they are focused or primary: filled rows with no gap merged into one slab.
 """
 from __future__ import annotations
 
@@ -112,8 +117,8 @@ Switch:focus { border: none; border-left: thick $cm-accent; background-tint: tra
 Switch .switch--slider, Switch:hover > .switch--slider { color: $cm-border-hi; background: $cm-bg; }
 Switch.-on .switch--slider, Switch.-on:hover > .switch--slider { color: $cm-accent; }
 Checkbox:focus > .toggle--label { text-style: bold underline; }
-Checkbox > .toggle--button, Checkbox:hover > .toggle--button { color: $cm-raised; background: $cm-raised; }
-Checkbox.-on > .toggle--button, Checkbox.-on:hover > .toggle--button { color: $cm-accent; background: $cm-raised;
+Checkbox > .toggle--button, Checkbox:hover > .toggle--button { color: $cm-border; background: $cm-border; }
+Checkbox.-on > .toggle--button, Checkbox.-on:hover > .toggle--button { color: $cm-accent; background: $cm-border;
     text-style: bold; }
 DataTable { background: $cm-bg; color: $cm-text; border-left: vkey $cm-bg; }
 DataTable:focus { border-left: vkey $cm-accent; background-tint: transparent 0%; }
@@ -135,13 +140,29 @@ OptionList > .option-list--option-highlighted { background: $cm-select; color: $
 #notice-mark { height: auto; color: $cm-muted; padding: 0 1; display: none; }
 ModalScreen { align: center middle; background: $cm-bg 70%; }
 .cm-dialog { width: 94%; max-width: 100; height: auto; max-height: 92%; background: $cm-panel;
-    border: round $cm-border-hi; padding: 1 2; }
+    border: tall $cm-border-hi; padding: 1 2; }
 .cm-dialog.-wide { max-width: 120; }
 .cm-dialog.-menu { max-width: 72; }
 .cm-dialog > .heading, .cm-dialog > .form-title { margin-bottom: 1; }
-.cm-dialog.-consent { border: heavy $cm-warn; }
+.cm-dialog.-consent { border: outer $cm-warn; }
 .cm-dialog.-consent > .heading { color: $cm-warn; }
 .cm-dialog-body { height: auto; background: $cm-panel; }
+.cm-dialog-body.-message { border-left: vkey $cm-border; padding-left: 1; }
+.cm-dialog-body.-message:focus { border-left: vkey $cm-accent; background-tint: transparent 0%; }
+#choices, #project-rows { overflow-x: hidden; }
+.cm-stack Button, .-narrow .actions Button, .-narrow .form-actions Button { width: 100%; margin: 0; padding: 0;
+    content-align: left middle; text-align: left; background: transparent; color: $cm-text;
+    border-left: thick $cm-border; }
+.cm-stack Button:hover, .-narrow .actions Button:hover, .-narrow .form-actions Button:hover {
+    background: $cm-raised; border-left: thick $cm-border; }
+.cm-stack Button.-primary, .-narrow .actions Button.-primary, .-narrow .form-actions Button.-primary {
+    background: $cm-select; color: $cm-strong; text-style: bold; border-left: thick $cm-select; }
+.cm-stack Button:focus, .-narrow .actions Button:focus, .-narrow .form-actions Button:focus {
+    background: $cm-raised; color: $cm-strong; text-style: bold; border-left: thick $cm-accent; }
+.cm-stack Button.-primary:focus, .-narrow .actions Button.-primary:focus, .-narrow .form-actions Button.-primary:focus {
+    background: $cm-select; color: $cm-strong; text-style: bold; border-left: thick $cm-accent; }
+.cm-stack Button:disabled, .-narrow .actions Button:disabled, .-narrow .form-actions Button:disabled {
+    background: transparent; color: $cm-dim; text-style: none; border-left: thick $cm-raised; }
 .cm-dialog DataTable { background: $cm-panel; border-left: vkey $cm-panel; }
 .cm-dialog DataTable:focus { border-left: vkey $cm-accent; }
 .cm-dialog DataTable > .datatable--header, .cm-dialog DataTable > .datatable--odd-row,
@@ -162,7 +183,6 @@ ModalScreen { align: center middle; background: $cm-bg 70%; }
 .-short #credential-remember { margin: 0; }
 .-narrow .cm-dialog { width: 100%; padding-left: 1; padding-right: 1; }
 .-narrow .actions, .-narrow .form-actions { layout: vertical; height: auto; }
-.-narrow .actions Button, .-narrow .form-actions Button { width: 100%; margin: 0; }
 .-narrow .cm-hint { height: auto; }
 .-short #form-fields TextArea { height: 3; }
 """)
@@ -273,6 +293,8 @@ _ROLES = {
     "danger": Style(color=TOKENS["danger"], bold=True),
     "quote-bar": Style(color=TOKENS["border-hi"]),
     "stored": Style(color=TOKENS["text"]),
+    # The first line of stored text: the plain text colour, bold, never the heading colour.
+    "stored-lead": Style(color=TOKENS["text"], bold=True),
 }
 
 
@@ -306,8 +328,11 @@ def assemble(parts) -> Text:
     return text
 
 
+# Green only for a finished task: "confirmed" and "still valid" are shown where the evidence is not,
+# so they stay neutral and never look more trusted than the evidence behind them.
 _STATE = {
-    **dict.fromkeys(("confirmed", "done", "still valid"), "ok"),
+    "done": "ok",
+    **dict.fromkeys(("confirmed", "still valid"), "value"),
     **dict.fromkeys(("needs_review", "needs update", "not checked", "stale", "partial", "disputed",
                      "ACK required"), "warn"),
     **dict.fromkeys(("superseded", "not related"), "muted"),

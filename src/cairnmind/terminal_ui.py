@@ -9,6 +9,7 @@ from pathlib import Path
 from contextlib import suppress
 from dataclasses import dataclass
 
+from rich.cells import cell_len
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -19,6 +20,14 @@ from textual.worker import WorkerState
 from . import terminal_theme
 from .terminal_safe import plain, safe_text
 from .terminal_i18n import language_for, localize_bindings, tr
+
+
+def localize_select_menus(node, language):
+    """The open list of a Select has a Footer key of its own ("Dismiss menu"); translate it too."""
+    from textual.widgets._select import SelectOverlay
+    with suppress(Exception):
+        for overlay in node.query(SelectOverlay):
+            localize_bindings(overlay, language)
 
 
 class LocalizedModal:
@@ -143,7 +152,9 @@ class FormModal(LocalizedModal, ModalScreen[dict | None]):
             with Horizontal(classes="form-actions"):
                 yield Button(self.t(self.submit_label), id="form-submit", variant="primary")
                 yield Button(self.t("Cancel"), id="form-cancel")
-            yield Static(self.t("Ctrl+S: save · Esc: cancel"), classes="cm-hint", markup=False)
+            # Ctrl+S runs the form's own primary action, so the hint names that action.
+            yield Static(plain(self.t("Ctrl+S: {action} · Esc: cancel", action=self.t(self.submit_label))),
+                         classes="cm-hint")
 
     def on_mount(self):
         if self.fields:
@@ -223,16 +234,35 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
         self.value = value
         self.details = False
 
+    SCROLL_HINT, CLOSE_HINT = "PgUp/PgDn: scroll · Esc: close", "Esc: close"
+    SHORT_CELLS = 60  # a summary whose lines are all shorter gets the narrow menu frame
+
+    def short_summary(self):
+        text = summary_text(self.value, getattr(self.app, "language", "en"))
+        return max((cell_len(line) for line in text.split("\n")), default=0) < self.SHORT_CELLS
+
     def compose(self) -> ComposeResult:
-        with Vertical(classes="cm-dialog -wide"):
+        with Vertical(classes="cm-dialog " + ("-menu" if self.short_summary() else "-wide")):
             yield Static(plain(self.t(self.heading)), classes="heading")
-            with VerticalScroll(classes="cm-dialog-body"):
+            # The body takes focus first (PgUp/PgDn scroll it); its bar shows that it has the focus.
+            with VerticalScroll(classes="cm-dialog-body -message"):
                 yield Static(plain(summary_text(self.value, getattr(self.app, "language", "en"))), id="message-body")
             with Horizontal(classes="actions"):
                 if not isinstance(self.value, str):
                     yield Button(self.t("Technical details"), id="message-details")
                 yield Button(self.t("Close"), id="message-close")
-            yield Static(self.t("PgUp/PgDn: scroll · Esc: close"), classes="cm-hint", markup=False)
+            yield Static(self.t(self.SCROLL_HINT), classes="cm-hint", markup=False)
+
+    def fit_dialog(self):
+        super().fit_dialog()
+        self.call_after_refresh(self.fit_hint)
+
+    def fit_hint(self):
+        """PgUp/PgDn are named only while the body has more than it shows."""
+        with suppress(Exception):
+            body, hint = self.query_one(".cm-dialog-body"), self.query_one(".cm-hint", Static)
+            scrolls = body.virtual_size.height > body.scrollable_content_region.height
+            hint.update(self.t(self.SCROLL_HINT if scrolls else self.CLOSE_HINT))
 
     @on(Button.Pressed, "#message-details")
     def toggle_details(self, event):
@@ -241,6 +271,12 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
         self.query_one("#message-body", Static).update(plain(json.dumps(self.value, ensure_ascii=False, indent=2)
             if self.details else summary_text(self.value, getattr(self.app, "language", "en"))))
         event.button.label = self.t("Hide technical details" if self.details else "Technical details")
+        with suppress(Exception):  # the indented JSON gets the wide frame; the summary its own size
+            wide = self.details or not self.short_summary()
+            dialog = self.query_one(".cm-dialog")
+            dialog.set_class(wide, "-wide")
+            dialog.set_class(not wide, "-menu")
+        self.call_after_refresh(self.fit_hint)
 
     @on(Button.Pressed, "#message-close")
     def close_button(self) -> None:
@@ -302,6 +338,7 @@ class BasePanel(App):
             shown = plain(self.t(value))
             line = self.query_one("#panel-notice", Static)
             line.update(shown)
+            line.display = bool(shown.plain)  # an empty notice line takes no row from the list
             line.set_class(kind == "warn", "-warn")
             line.set_class(kind == "error", "-error")
         if shown is not None:
@@ -343,6 +380,7 @@ class BasePanel(App):
             if language != self.language:
                 self.language = language
                 localize_bindings(self, language)
+                localize_select_menus(self, language)
                 for screen in self.screen_stack:
                     if isinstance(screen, LocalizedModal):
                         localize_bindings(screen, language)
@@ -382,6 +420,11 @@ class BasePanel(App):
 
     def on_mount(self):
         terminal_theme.size_classes(self)
+        with suppress(Exception):
+            line = self.query_one("#panel-notice", Static)
+            if not str(line.render()):
+                line.display = False
+        localize_select_menus(self, self.language)
 
     def on_resize(self, event):
         terminal_theme.size_classes(self, event.size)

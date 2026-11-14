@@ -112,14 +112,14 @@ class AgentApp(App):
     #agent-main { height: 1fr; }
     #agent-scope, #agent-usage { height: auto; max-height: 4; padding: 0 1; }
     #agent-usage { color: $cm-muted; }
-    #agent-status { height: auto; max-height: 4; padding: 0 1 0 0; margin-bottom: 1; color: $cm-muted;
+    #agent-status { height: auto; max-height: 4; padding: 0 1; margin-bottom: 1; color: $cm-muted;
         border-left: thick $cm-border-hi; }
     .-short #agent-status { margin-bottom: 0; }
     #agent-status.-running { color: $cm-accent; border-left: thick $cm-accent; }
     #agent-status.-warn { color: $cm-warn; text-style: bold; border-left: thick $cm-warn; }
     #agent-status.-error { color: $cm-danger; text-style: bold; border-left: thick $cm-danger; }
     #agent-history { height: 1fr; min-height: 3; background: $cm-bg; padding: 0 1; }
-    #agent-stream { display: none; height: auto; max-height: 6; padding: 0 1 0 0; color: $cm-text;
+    #agent-stream { display: none; height: auto; max-height: 6; padding: 0 1; color: $cm-text;
         border-left: thick $cm-accent; }
     #agent-stream.-live { display: block; }
     #agent-prompt { height: 5; min-height: 3; }
@@ -362,7 +362,8 @@ class AgentApp(App):
         else:
             title, note, button = ("Approve one command", "This command runs with your user account permissions.",
                                    "Run once")
-        self._approval_screen = ConfirmModal(self.t(title), body + "\n\n" + self.t(note), approve=self.t(button))
+        self._approval_screen = ConfirmModal(self.t(title), body + "\n\n" + self.t(note), approve=self.t(button),
+                                            consent=True)
         try:
             return await self.push_screen_wait(self._approval_screen) is True
         finally:

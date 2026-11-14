@@ -168,10 +168,13 @@ class ImpactView:
             record = free - first - linked - checked
             if record < 20:  # a narrow pane: the paths give way first, down to their heading
                 linked = max(cell_len(self.t("Linked to")), linked - (20 - record))
-                record = max(20, free - first - linked - checked)
+                # then the record text, so the verdict column, the point of this view, stays on screen
+                record = max(6, free - first - linked - checked)
             widths = [first, record, linked, checked]
         else:
             first, last = max(24, longest), cell_len(self.t("Wersja / próba"))
+            if width < 100 and table.row_count:  # the numbers are short: the heading may crop
+                last = max(7, *(cell_len(str(cell)) for cell in table.get_column_at(2)))
             if free - first - last < 20:  # a narrow pane: the number column gives way, down to seven cells
                 last = max(7, last - (20 - (free - first - last)))
             widths = [first, max(20, free - first - last), last]

@@ -4,6 +4,7 @@ from __future__ import annotations
 from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
@@ -38,14 +39,15 @@ COMMANDS = (
 class CommandPaletteApp(App):
     ENABLE_COMMAND_PALETTE = False
     CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
-    Screen { padding: 0 1; }
-    Screen > .heading { padding: 0 2; }
-    #commands { height: 1fr; }
-    #command-search { margin: 0 0 1 0; }
-    #command-empty { height: 1fr; content-align: center middle; text-align: center; color: $cm-muted;
-        display: none; }
-    #command-help { height: 1fr; overflow-y: auto; margin-top: 1; padding: 0 2; }
-    .-short #command-search, .-short #command-help { margin: 0; }
+    Screen > .heading { padding: 0 3; }
+    #commands { height: 1fr; margin: 0 1; }
+    #command-search { margin: 0 1 1 1; }
+    #command-empty { height: 1fr; margin: 0 1; content-align: center middle; text-align: center;
+        color: $cm-muted; display: none; }
+    #command-help-scroll { height: 1fr; margin: 1 1 0 1; padding: 0 2 0 1; border-left: vkey $cm-bg; }
+    #command-help-scroll:focus { border-left: vkey $cm-accent; background-tint: transparent 0%; }
+    #command-help { height: auto; }
+    .-short #command-search, .-short #command-help-scroll { margin: 0 1; }
     """)
     TITLE_CELLS = 22  # the command column; a longer translated name widens it up to a third of the menu
     BINDINGS = [("escape", "cancel", "Back"), ("ctrl+n,down", "next", "Next"),
@@ -57,14 +59,25 @@ class CommandPaletteApp(App):
         self.manager = manager
         self.help_only = help_only
         self.rows = []
-        from .terminal_i18n import language_for, tr
+        from .terminal_i18n import language_for, localize_bindings, tr
         self.language = language_for(manager.settings)
         self.translate = lambda value: tr(value, self.language)
+        localize_bindings(self, self.language)  # the Footer's key labels in the menu's language
 
     def compose(self) -> ComposeResult:
         yield Static(plain(self.translate("Keyboard help" if self.help_only else "Commands")), classes="heading")
         if self.help_only:
-            yield Static(help_text(self.translate(
+            # A scrolling area with the focus, so text that does not fit shows a scrollbar and scrolls.
+            with VerticalScroll(id="command-help-scroll"):
+                yield from self.compose_help()
+        else:
+            yield Input(placeholder=self.translate("Type to find a command…"), id="command-search")
+            yield DataTable(id="commands", cursor_type="row", show_header=False)
+            yield Static(plain(self.translate("No matching commands.")), id="command-empty")
+        yield Footer()
+
+    def compose_help(self):
+        yield Static(help_text(self.translate(
                 "Ctrl+B, then Space: search all commands\n"
                 "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
                 "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
@@ -78,15 +91,12 @@ class CommandPaletteApp(App):
                 "Native assistants keep their own shortcuts, paste, Ctrl+C and approval dialogs.\n"
                 "Memory readiness, session activity and terminal control are separate states."
             )), id="command-help")
-        else:
-            yield Input(placeholder=self.translate("Type to find a command…"), id="command-search")
-            yield DataTable(id="commands", cursor_type="row", show_header=False)
-            yield Static(plain(self.translate("No matching commands.")), id="command-empty")
-        yield Footer()
 
     def on_mount(self):
         terminal_theme.size_classes(self)
-        if not self.help_only:
+        if self.help_only:
+            self.query_one("#command-help-scroll").focus()
+        else:
             self.query_one(DataTable).add_columns("Command", "Description")
             self.populate("")
             self.query_one(Input).focus()
@@ -206,9 +216,7 @@ class JoinWorkspaceApp(App):
     Screen { align: center middle; }
     #join { max-width: 78; }
     #join-explanation { color: $cm-muted; margin-bottom: 1; }
-    #join Button { width: 100%; margin: 0; content-align: left middle; text-align: left; }
-    #join-takeover { color: $cm-warn; }
-    #join-takeover:focus { color: $cm-bg; }
+    #join-takeover, #join-takeover:focus { color: $cm-warn; }
     """)
     BINDINGS = [("escape", "cancel", "Back")]
 
@@ -221,7 +229,7 @@ class JoinWorkspaceApp(App):
 
     def compose(self):
         from textual.containers import Vertical
-        with Vertical(id="join", classes="cm-dialog"):
+        with Vertical(id="join", classes="cm-dialog cm-stack"):
             yield Static(terminal_theme.styled(self.t("This workspace is open in another terminal."), "title"),
                          classes="heading")
             yield Static(plain(self.t("Choose read-only observation or explicitly take control. Existing assistants keep running.")),

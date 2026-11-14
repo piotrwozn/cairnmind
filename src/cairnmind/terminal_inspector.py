@@ -40,6 +40,8 @@ class InspectorApp(ImpactView, BasePanel):
     #entity-actions { margin-top: 1; }
     #entity-actions Button, #review-actions Button, #memory-actions Button, #memory-extra Button,
     #conflict-actions Button, #impact-actions Button { min-width: 8; }
+    #entity-actions Button, #review-actions Button { width: 1fr; max-width: 14; padding: 0; }
+    #review-actions { margin-top: 1; }  /* also when short: two filled rows with no gap read as one */
     #entity-open { background: $cm-select; color: $cm-strong; text-style: bold; }
     #entity-open:focus { background: $cm-accent; color: $cm-bg; }
     #entity-open:disabled { background: $cm-panel; color: $cm-dim; text-style: none; }
@@ -386,7 +388,7 @@ class InspectorApp(ImpactView, BasePanel):
             source = result.get("source", {})
             header = str(source.get("uri") or self.t("Sources"))
             self.show_detail(result, kind=collection,
-                             parts=[("title", header), ("stored", "\n\n" + self.source_content)])
+                             parts=[("stored-lead", header), ("stored", "\n\n" + self.source_content)])
             self.notice(self.t("Źródło literalne · v=tekst/surowy/metadane · Więcej pobiera kolejny fragment"))
         else:
             self.show_detail(result, kind=collection)
