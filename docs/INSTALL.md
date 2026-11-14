@@ -113,6 +113,10 @@ cairnmind engine status
 
 This simpler form lets `uv` resolve dependency versions itself; the installer additionally pins them to `uv.lock`.
 
+### Running the database in a container instead
+
+To run ArcadeDB yourself in a container, on a server or on a laptop for development, see [DEPLOYMENT.md](DEPLOYMENT.md). It also covers backups, restores and upgrading the database.
+
 ## 5. Download the models
 
 Ollama usually runs as a service after installation. If it does not, start it in a separate terminal with `ollama serve`. Then:
