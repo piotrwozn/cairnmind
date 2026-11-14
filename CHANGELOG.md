@@ -2,6 +2,10 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+- Indexing files that replace a current source, and files that were deleted, now counts first what the old source leaves behind and writes each file in one transaction, up to eight small files together. The journal events of a transaction are stored in one statement. After every file of a project changed, indexing again needs about half the database requests and time on real code (Cairnmind's own source: 47% of the requests, 50% of the time), and about a quarter to a third on trees of very small files (#102).
+
 ## 0.10.0
 
 - When the Copilot agent starts a new session, for example after its tool list changes, it must read and acknowledge memory again and read a file whole again before it can replace or delete that file. Before, the engine still counted what the earlier session had read (#157).
