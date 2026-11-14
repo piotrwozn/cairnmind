@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from cairnmind.agent_reads import ReadLedger
+from cairnmind.agent_reads import ReadLedger, projected_read
 from cairnmind.api_agent import TOOL_CONTEXT_CHARS, AgentEngine
 
 from test_api_agent import Memory, ScriptedProvider, call, engine, reply, tools_results
@@ -259,6 +259,81 @@ async def test_a_registered_secret_masked_in_a_read_still_blocks_a_whole_write(s
     assert (await agent.turn("Copy config.txt"))["status"] == "completed"
     assert config.read_text() == "token = sk-sensitive-file\n"
     assert tools_results(agent)[-1]["error_code"] == "full_read_required"
+
+
+def test_a_cut_read_reports_only_the_lines_it_holds_whole():
+    original = read_result("README.md", README)
+    projection = {**original, "content": original["content"][:4000]}
+    projected_read(projection, original)
+    whole = original["content"][:4000].count("\n")
+    assert projection["end_line"] == whole < 200 and projection["truncated"] is True
+    assert "line_too_long" not in projection and "smaller slices" in projection["next_step"]
+    nothing = {**original, "start_line": 5, "content": "x" * 4000}  # no line end within the cut
+    projected_read(nothing, {**original, "start_line": 5, "content": "x" * 9000 + "\nmore\n"})
+    assert "end_line" not in nothing and "line_too_long" not in nothing
+
+
+def test_one_line_that_does_not_fit_marks_the_file_as_unreadable_whole():
+    line = "var a=" + "1," * 10000 + "\n"
+    original = read_result("bundle.min.js", line)
+    projection = projected_read({**original, "content": line[:4000]}, original)
+    assert "end_line" not in projection and projection["line_too_long"] is True
+    assert "slices" not in projection["next_step"] and "apply_patch" in projection["next_step"]
+    ledger = ReadLedger()
+    ledger.observe("read_file", {**projection, "host_context_truncated": True})
+    for tool in ("write_file", "delete_file"):
+        refusal = ledger.refusal("bundle.min.js", digest(line), tool)
+        assert refusal["error_code"] == "full_read_required" and refusal["reason"] == "file_cannot_be_read_whole"
+        assert "apply_patch" in refusal["message"] and "slices" not in refusal["message"]
+        assert "unread_lines" not in refusal
+
+
+def test_a_file_larger_than_the_context_budget_is_refused_without_slice_advice():
+    ledger, small = ReadLedger(budget=200), ReadLedger()
+    for subject in (ledger, small):
+        subject.observe("read_file", read_result("big.md", README, 1, 5))
+    refusal = ledger.refusal("big.md", digest(README))
+    assert refusal["reason"] == "file_cannot_be_read_whole" and "slices" not in refusal["message"]
+    # Without a budget (a provider that keeps its own context) slices can still reach the whole file.
+    plain = small.refusal("big.md", digest(README))
+    assert "reason" not in plain and "slices" in plain["message"] and plain["unread_lines"] == [[6, 200]]
+    ledger.observe("write_file", {"ok": True, "path": "big.md", "sha256": digest("mine"), "previous_sha256": None})
+    ledger.observe("read_file", read_result("big.md", "mine"))
+    assert ledger.refusal("big.md", digest("mine")) is None  # its own whole write still counts
+
+
+async def test_a_minified_file_is_refused_plainly_after_a_one_line_read(setup):
+    memory = Memory()
+    bundle = setup[3] / "bundle.min.js"
+    bundle.write_text("var a=" + "1," * 10000 + "\n")
+    seen = {}
+
+    def delete(messages, tools):
+        seen.update(last_tool(messages))
+        return reply(call("delete_file", {"path": "bundle.min.js", "expected_sha256": seen["sha256"]}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("read_file", {"path": "bundle.min.js", "max_lines": 1})), delete, reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    assert (await agent.turn("Remove the bundle"))["status"] == "completed"
+    assert seen["line_too_long"] is True and "end_line" not in seen
+    refused = tools_results(agent)[-1]
+    assert refused["reason"] == "file_cannot_be_read_whole" and "slices" not in refused["message"]
+    assert bundle.exists()
+
+
+async def test_the_delivered_end_line_of_a_cut_read_is_the_last_whole_line(setup):
+    memory = Memory()
+    (setup[3] / "README.md").write_text(README)
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("read_file", {"path": "README.md"})), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    assert (await agent.turn("Read README.md"))["status"] == "completed"
+    seen = last_tool(provider.requests[-1]["messages"])
+    assert seen["host_context_truncated"] is True
+    assert seen["end_line"] == seen["content"].count("\n") < seen["total_lines"]
 
 
 GUIDE = "".join(f"Line {n:03d} of a short guide.\n" for n in range(1, 101))

@@ -147,7 +147,9 @@ class AgentEngine:
         self._last_packet = None
         self._acked_packet = None
         self._context = []
-        self._reads = ReadLedger()  # what file content the current model context has seen (#157)
+        # What file content the current model context has seen (#157). Only an API run renews its context
+        # at CONTEXT_BUDGET_CHARS; Copilot keeps its own.
+        self._reads = ReadLedger(CONTEXT_BUDGET_CHARS if run["client"] == "api" else None)
         self._closed = False
         self._turn_task = None
         self._lock = asyncio.Lock()
@@ -283,7 +285,7 @@ class AgentEngine:
                               full_result_journal_event=event["id"],
                               next_step="Read smaller tool slices or read_source for the complete archived result.")
             if message.get("name") == "read_file":
-                projected_read(projection)
+                projected_read(projection, value)
             sources = archive.get("source_ids") or []
             if len(sources) >= event["seq"] and isinstance(sources[event["seq"] - 1], str):
                 projection["full_result_source_id"] = sources[event["seq"] - 1]
