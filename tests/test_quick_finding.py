@@ -201,7 +201,15 @@ def stack(tmp_path, monkeypatch):
         with TestClient(app, base_url=ORIGIN) as browser:
             monkeypatch.setattr("cairnmind.cockpit.cockpit_status",
                                 lambda settings: {"available": True, "url": ORIGIN})
-            broker = BrokerClient(settings, transport=browser._transport)
+            def through_browser(request):
+                # The test client may be built on httpx2, whose transport httpx cannot use; bridge by request.
+                skip = {"host", "content-length", "transfer-encoding"}
+                reply = browser.request(request.method, request.url.raw_path.decode(), content=request.content,
+                                        headers={k: v for k, v in request.headers.items() if k.lower() not in skip})
+                return httpx.Response(reply.status_code, content=reply.content, headers={
+                    k: v for k, v in reply.headers.items()
+                    if k.lower() not in {"content-length", "content-encoding", "transfer-encoding"}})
+            broker = BrokerClient(settings, transport=httpx.MockTransport(through_browser))
             yield settings, store, project, root, broker, service
             broker.close()
 
