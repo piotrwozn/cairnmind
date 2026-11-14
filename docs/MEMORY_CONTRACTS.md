@@ -128,12 +128,15 @@ A record state travels only when a person's act covers it:
   conflict decision that chose which finding stands, or `confirm_plan`, whose `content_sha256`
   equals the SHA-256 of the text and, for a task, whose `definition_sha256` equals the hash of what
   the task asks for (its text, plan, step key, dependencies, test and review requirements, profiles,
-  acceptance criteria, their check links and its scope); the state's status must be what the act
-  decided;
+  acceptance criteria, their check links and its scope), and whose `identity_sha256` equals the hash
+  of the record's kind, key and `supersedes`; the state's status must be what the act decided. Audits
+  recorded before #170 carry no `identity_sha256`: for them only the text, the status and a task's
+  definition are covered, so the kind, key and `supersedes` of such a revision rest on the file alone;
 - a finding typed in the workspace form and saved as confirmed, at its first version only;
 - after one of these, a task's progress (a state that differs only in `state`), or a mechanical
-  supersession (status `superseded` with text, key and definition unchanged) when what replaced the
-  record is published too.
+  supersession (status `superseded` with text, key, `supersedes` and definition unchanged) when what
+  replaced the record is published too. A reader requires the replacement in the same tree: a record
+  that names it in `supersedes`, or the task's plan whose last definition no longer lists it.
 
 `remember --confirmed`, `tasks add`, session and MCP writes are not acts: agents can make all of
 them. Such records, and a confirmed record an agent edited after its review, stay local until a
@@ -236,9 +239,13 @@ whose every line ends in CRLF is read as LF), must be at its identity's path, mu
 revisions 1..m with no gap or repeat, must use only the fields above (`verified`, `test_passed` and
 the other verification fields are refused as "trust fields are never published"), must have every
 revision covered by an act whose passage is in the same file, and must render back to exactly its own
-bytes. Across files: one reference per source, one active record per kind and key, plan steps that
-agree with their task files, superseded records that are superseded, and the archive's structural
-checks (kinds, statuses, task contracts, closed references, dependency cycles).
+bytes. Every time (`created_at`, each `at`, each source's `at`) must be an ISO 8601 time with a time
+zone, and every value an audit passage holds, once its JSON escapes are read, must be free of control
+and bidi characters like the rest of the file. Across files: one file per ID (the same ID in two kind
+directories is refused), one reference per source, one active record per kind and key, plan steps
+that agree with their task files, superseded records that are superseded, a replacement in the tree
+for every mechanical supersession, and the archive's structural checks (kinds, statuses, task
+contracts, closed references, dependency cycles).
 
 ## Import
 
@@ -246,7 +253,10 @@ checks (kinds, statuses, task contracts, closed references, dependency cycles).
 tree as above, then applies it in one transaction, all or nothing:
 
 - sources arrive as stubs of kind `published` with their original IDs: the passage or nothing as
-  content, the reference in their metadata, never current; a local source with the same ID is kept;
+  content, the reference in their metadata, never current; a local source with the same ID is kept,
+  and a revision may cite such a local source only when a local version of the same record already
+  cited it (or it is a local review audit, or the source of the task's own plan): a file cannot
+  attach this machine's own evidence to a record, and the import is refused naming the path;
 - a record unknown here gets one local version per published revision; a record whose local head is
   an earlier published revision is fast-forwarded; a record whose local history already holds the
   published head is left alone (local work ahead is not touched);
@@ -256,7 +266,9 @@ tree as above, then applies it in one transaction, all or nothing:
   their change again as a new revision;
 - an imported version carries `publication` metadata (path, revision, reviewed_by), which only the
   importer sets and which later local edits keep;
-- plans are applied after their tasks; IDs that belong to another local project are refused, as for
+- plans are applied after their tasks. A diverged plan refuses the import; `--take-published` takes
+  records only, so the team resolves it in Git by keeping the definition the importing store holds;
+  IDs that belong to another local project are refused, as for
   the archive. A repeat import of the same tree writes nothing, and `--dry-run` writes nothing.
 
 Laptop import never deletes: a file that is absent says nothing. After a published import, a full

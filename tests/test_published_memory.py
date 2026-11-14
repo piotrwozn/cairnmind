@@ -14,6 +14,8 @@ from cairnmind.memory_acts import confirm_plan
 from cairnmind.memory import MemoryConflict, MemoryManager
 from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
 from cairnmind.memory_published_check import check_directory
+from cairnmind.memory_published_format import render
+from cairnmind.memory_published_parse import parse_file
 from cairnmind.memory_published_import import PublishedImporter
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
@@ -237,6 +239,35 @@ def test_two_branches_with_different_records_merge_cleanly_and_import_holds_both
     assert again["inserted"] == again["advanced"] == [] and again["unchanged"] == 3 and again["stubs"] == 0
     snapshot = MemoryManager(cy["store"]).snapshot(cy["project"])
     assert snapshot["status"] == "created" and snapshot["counts"]["records"] == 3
+
+
+def test_a_file_cannot_attach_the_importers_own_source_to_a_record(ada):
+    store, pid, root = ada["store"], ada["project"], ada["root"]
+    shared = reviewed(store, pid, "decision", "ArcadeDB is the only storage engine.", "storage",
+                      quote="The active backend is ArcadeDB.")
+    Publisher(store).publish(pid)
+    commit(root, "Publish team memory")
+    bo = teammate(ada, "bo", "Bo Lee")
+    PublishedImporter(bo["store"]).import_published(folder_of(bo["root"]), bo["project"])
+    theirs = reviewed(bo["store"], bo["project"], "fact", "The service listens on localhost only.", "listen")
+    Publisher(bo["store"]).publish(bo["project"])
+    folder = folder_of(bo["root"])
+    original = (folder / f"fact/{theirs['id']}.md").read_bytes()
+    # Ada's indexed guide, copied by hand from her file into Bo's fact: canonical, and still covered by Bo's review.
+    guide = next(s for s, source in parse_file((folder / f"decision/{shared['id']}.md").read_bytes())["sources"].items()
+                 if source["ref"]["kind"] == "document")
+    model = parse_file(original)
+    model["sources"][guide] = parse_file((folder / f"decision/{shared['id']}.md").read_bytes())["sources"][guide]
+    model["revisions"][0]["sources"] = sorted([*model["revisions"][0]["sources"], guide])
+    (folder / f"fact/{theirs['id']}.md").write_bytes(render(model))
+    assert check_directory(folder)[1] == []
+    with pytest.raises(MemoryConflict, match=f"cites source {guide}, which this record never cited here"):
+        PublishedImporter(store).import_published(folder, pid)
+    assert theirs["id"] not in {row["id"] for row in store.list_records(pid)}
+    (folder / f"fact/{theirs['id']}.md").write_bytes(original)
+    assert PublishedImporter(store).import_published(folder, pid)["inserted"] == [f"fact/{theirs['id']}.md"]
+    states = evidence_states(store, pid, [r for r in store.list_records(pid) if r["id"] == theirs["id"]])
+    assert states[theirs["id"]]["evidence_state"] == "unverified"
 
 
 def test_a_round_trip_keeps_identity_revisions_and_sources(ada):

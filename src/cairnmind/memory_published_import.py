@@ -26,6 +26,30 @@ def _core(definition):
     return {key: definition[key] for key in ("title", "goal", "constraints", "steps")}
 
 
+def _attached(model, path, numbers, versions, sources):
+    """Local sources a file would newly attach to a record: refused, since they would stand as evidence here.
+
+    A source this machine holds in full (not a published stub) may be cited by a written revision only when
+    a local version of the same record already cited it, or when it is a local review audit (never evidence)
+    or the source of the plan the task belongs to. Otherwise a hand-edited file could copy a source ID from
+    any file this machine published and make a record nobody here judged anchored.
+    """
+    before = {s for version in versions for s in version.get("source_ids") or []}
+    found = []
+    for index in numbers:
+        revision = model["revisions"][index]
+        for source_id in revision["sources"]:
+            row = sources.get(source_id)
+            if row is None or row["kind"] == "published" or source_id in before:
+                continue
+            metadata, uri = row.get("metadata") or {}, str(row.get("uri", ""))
+            if (uri.startswith("review://") and metadata.get("origin") == "local_user_review") or (
+                    row["kind"] == "plan" and revision.get("plan") and uri == f"plan://{revision['plan']}"):
+                continue
+            found.append(f"{path} cites source {source_id}, which this record never cited here")
+    return sorted(set(found))
+
+
 class PublishedImporter:
     def __init__(self, store):
         self.store = store
@@ -38,6 +62,7 @@ class PublishedImporter:
             raise MemoryConflict("The published memory was refused: " + _listing(errors))
         take = set(take_published or ())
         if any(not canonical_uuid(i) or i not in tree["records"] for i in take):
+            # Plans are not taken: a plan's local history has no mark to follow the published one (see _plans).
             raise ValueError("--take-published names a record that is not in the published memory")
         result = {"status": "dry_run" if dry_run else "imported", "project_id": project_id,
                   "publication_id": tree["project_id"], "inserted": [], "advanced": [], "unchanged": 0,
@@ -71,7 +96,7 @@ class PublishedImporter:
             update_document(tx, "projects", {"publication_id": tree["project_id"]}, "id=:id", {"id": project_id})
         self._stubs(tx, tree, project_id, result)
         plans = {i: m for i, m in tree["plans"].items()}
-        written, diverged = {}, []
+        written, diverged, foreign = {}, [], []
         heads = {}
         for record_id, model in sorted(tree["records"].items()):
             path = tree["paths"][record_id]
@@ -106,6 +131,9 @@ class PublishedImporter:
                     continue
             written[record_id] = (model, path, versions[-1] if versions else None, plan)
             result[start].append(path)
+            foreign += _attached(model, path, plan, versions, sources)
+        if foreign:
+            raise MemoryConflict("A file cannot attach this machine's own sources to a record: " + "; ".join(foreign))
         if diverged:
             raise MemoryConflict("These records diverged from the published memory; re-apply your change after "
                                  "--take-published, or resolve the conflict by taking one side: " + ", ".join(diverged))
@@ -118,7 +146,7 @@ class PublishedImporter:
             for index in numbers:
                 version += 1
                 heads[record_id] = self._write(tx, project_id, model, index, version, path, plans, now)
-        touched_plans = self._plans(tx, project_id, tree, written, heads, take, result, now)
+        touched_plans = self._plans(tx, project_id, tree, written, heads, result, now)
         for task_id, model in tree["records"].items():
             head = heads.get(task_id)
             if model["kind"] != "task" or head is None or head["metadata"].get("plan_ref") not in touched_plans:
@@ -237,7 +265,7 @@ class PublishedImporter:
                                                  "recorded_at": utc_now()})
         return row
 
-    def _plans(self, tx, project_id, tree, written, heads, take, result, now):
+    def _plans(self, tx, project_id, tree, written, heads, result, now):
         from .memory import MemoryConflict
         from .plans import _digest
         touched, diverged = [], []
@@ -262,9 +290,9 @@ class PublishedImporter:
                     matches = [k for k, core in enumerate(published) if cores and same(core, cores[-1])]
                     if matches:
                         numbers = list(range(matches[-1] + 1, len(published)))
-                    elif plan_id in take:
-                        numbers = [len(published) - 1]
                     else:
+                        # No --take-published for plans in version 1: appending the published definition would
+                        # not make this store publish the same definitions, since a plan revision carries no mark.
                         diverged.append(path)
                         continue
                 if not numbers and not steps_written:
@@ -300,5 +328,6 @@ class PublishedImporter:
             touched.append(plan_id)
             result["plans"].append(path)
         if diverged:
-            raise MemoryConflict("These plans diverged from the published memory: " + ", ".join(diverged))
+            raise MemoryConflict("These plans diverged from the published memory; a plan cannot be taken with "
+                                 "--take-published, so take the side your store holds in Git: " + ", ".join(diverged))
         return touched
