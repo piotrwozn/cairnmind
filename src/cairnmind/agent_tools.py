@@ -611,7 +611,10 @@ class ToolExecutor:
             result = {"ok": False, "error_code": "not_found", "message": "Project file or directory does not exist"}
         except OSError:
             result = {"ok": False, "error_code": "filesystem_error", "message": "Project operation was refused or failed"}
-        result = self.journal.redact(result)
+        redacted = self.journal.redact(result)
+        if redacted != result and isinstance(redacted, dict):
+            redacted["masked"] = True  # a registered secret was replaced: this is not the real text (#157)
+        result = redacted
         if started:
             event_type = "action_interrupted" if result.get("interrupted") else "action_completed"
             self.journal.append(event_type, {**self._action(action_id, name, args, call_id), "result": result})

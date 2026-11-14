@@ -74,10 +74,31 @@ def test_only_lines_delivered_whole_count():
 def test_cut_masked_or_failed_reads_never_count():
     ledger = ReadLedger()
     ledger.observe("read_file", read_result("a.md", TEXT, host_context_truncated=True))
-    ledger.observe("read_file", {**read_result("b.md", TEXT), "content": "[REDACTED]\n" * 10})
+    ledger.observe("read_file", {**read_result("b.md", TEXT), "content": "[REDACTED]\n" * 10}, masked=True)
     ledger.observe("read_file", {**read_result("c.md", TEXT), "ok": False})
-    for path in ("a.md", "b.md", "c.md"):
+    ledger.observe("read_file", read_result("d.md", TEXT, masked=True))  # the executor's own mark
+    for path in ("a.md", "b.md", "c.md", "d.md"):
         assert ledger.refusal(path, digest(TEXT))["error_code"] == "full_read_required"
+        assert ledger.refusal(path, digest(TEXT), "delete_file")["error_code"] == "full_read_required"
+
+
+def test_text_that_only_looks_like_the_mask_still_counts():
+    # #157 review: a file whose own text holds the mask's words could never be replaced whole.
+    ledger, notes = ReadLedger(), "Logs show [REDACTED] where a key was.\n"
+    ledger.observe("read_file", read_result("notes.md", notes))
+    assert ledger.refusal("notes.md", digest(notes)) is None
+
+
+def test_a_delete_needs_the_same_whole_read_as_a_replacement():
+    ledger = ReadLedger()
+    ledger.observe("read_file", read_result("a.md", TEXT, 1, 4))
+    refusal = ledger.refusal("a.md", digest(TEXT), "delete_file")
+    assert refusal["error_code"] == "full_read_required" and "delete_file" in refusal["message"]
+    assert refusal["unread_lines"] == [[5, 10]]
+    ledger.observe("read_file", read_result("a.md", TEXT, 5))
+    assert ledger.refusal("a.md", digest(TEXT), "delete_file") is None
+    ledger.observe("write_file", {"ok": True, "path": "b.md", "sha256": digest("mine"), "previous_sha256": None})
+    assert ledger.refusal("b.md", digest("mine"), "delete_file") is None
 
 
 def test_own_writes_count_and_a_patch_keeps_only_what_was_whole():
@@ -175,3 +196,66 @@ async def test_a_small_file_read_whole_is_replaced_as_before(setup):
     agent = engine(setup, provider, memory)
     assert (await agent.turn("Set VALUE"))["status"] == "completed"
     assert target.read_text() == "VALUE = 3\n"
+
+
+async def test_a_cut_read_cannot_delete_the_file_and_create_it_from_the_part_seen(setup):
+    # #157 review: delete_file then an exclusive create shrank a 27200-char README to 4011, with no approval.
+    memory = Memory()
+    readme = setup[3] / "README.md"
+    readme.write_text(README)
+    seen = {}
+
+    def delete(messages, tools):
+        seen.update(last_tool(messages))
+        return reply(call("delete_file", {"path": "README.md", "expected_sha256": seen["sha256"]}))
+
+    def create(messages, tools):
+        return reply(call("write_file", {"path": "README.md", "content": seen["content"], "expected_sha256": None}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("read_file", {"path": "README.md"})), delete, create, reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    assert (await agent.turn("Shorten README.md"))["status"] == "completed"
+    assert seen["host_context_truncated"] is True
+    assert readme.read_text() == README
+    refused, create_result = tools_results(agent)[-2:]
+    assert refused["error_code"] == "full_read_required" and "delete_file" in refused["message"]
+    assert create_result["ok"] is False  # the file is still there, so the exclusive create fails
+    assert not [row for row in agent.journal.events() if row["type"] == "approval_requested"]
+
+
+async def test_a_file_whose_text_holds_the_mask_words_is_replaced_after_a_whole_read(setup):
+    memory = Memory()
+    notes = setup[3] / "notes.md"
+    notes.write_text("Logs show [REDACTED] where a key was.\n")
+
+    def write(messages, tools):
+        return reply(call("write_file", {"path": "notes.md", "content": "Rewritten.\n",
+                                         "expected_sha256": last_tool(messages)["sha256"]}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("read_file", {"path": "notes.md"})), write, reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    assert (await agent.turn("Rewrite notes.md"))["status"] == "completed"
+    assert notes.read_text() == "Rewritten.\n"
+
+
+async def test_a_registered_secret_masked_in_a_read_still_blocks_a_whole_write(setup):
+    memory = Memory()
+    config = setup[3] / "config.txt"
+    config.write_text("token = sk-sensitive-file\n")
+
+    def write(messages, tools):
+        seen = last_tool(messages)
+        return reply(call("write_file", {"path": "config.txt", "content": seen["content"],
+                                         "expected_sha256": seen["sha256"]}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("read_file", {"path": "config.txt"})), write, reply(text="Done."))
+    agent = engine(setup, provider, memory, key="sk-sensitive-file")
+    assert (await agent.turn("Copy config.txt"))["status"] == "completed"
+    assert config.read_text() == "token = sk-sensitive-file\n"
+    assert tools_results(agent)[-1]["error_code"] == "full_read_required"

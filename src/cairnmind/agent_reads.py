@@ -60,8 +60,9 @@ class ReadLedger:
             return False
         return entry["total"] == 0 or _merge(entry["spans"]) == [[1, entry["total"]]]
 
-    def observe(self, name, delivered):
-        """Record a host file tool result exactly as it was delivered to the model."""
+    def observe(self, name, delivered, *, masked=False):
+        """Record a host file tool result exactly as it was delivered to the model. `masked` is True when
+        redaction changed the result, so the model did not see the real text."""
         if not isinstance(delivered, dict) or delivered.get("ok") is not True:
             return
         path, digest = delivered.get("path"), delivered.get("sha256")
@@ -80,7 +81,8 @@ class ReadLedger:
             self._files.pop(path, None)
             if known:
                 self._files[path] = {"sha256": digest, "total": 0, "spans": [], "authored": True}
-        elif name == "read_file" and not delivered.get("host_context_truncated"):
+        elif (name == "read_file" and not delivered.get("host_context_truncated")
+              and not masked and delivered.get("masked") is not True):
             self._read(path, digest, delivered)
 
     def _read(self, path, digest, delivered):
@@ -89,28 +91,34 @@ class ReadLedger:
         if (not isinstance(content, str) or any(type(value) is not int for value in (first, total, last))
                 or first < 1 or not 0 <= last <= total or len(content.splitlines()) < last - first + 1):
             return
-        if "[REDACTED]" in content:
-            return  # A registered secret was masked: the model did not see the real text.
         entry = self._entry(path, digest, total)
         if entry.get("authored"):
             return
         if last >= first:
             entry["spans"].append((first, last))
 
-    def refusal(self, path_argument, expected):
-        """None when a whole-file replacement is allowed, otherwise a tool error the model can act on."""
+    def refusal(self, path_argument, expected, tool="write_file"):
+        """None when replacing (write_file) or removing (delete_file) the whole file is allowed, otherwise a
+        tool error the model can act on. A delete is held to the same rule: otherwise delete_file and an
+        exclusive create would replace a file with the part that was seen, without any approval (#157)."""
         path = normalized_path(path_argument)
         if path is None or expected is None:
             return None  # An invalid path, or an exclusive create, is the executor's to decide.
         entry = self._files.get(path)
         if entry is not None and entry["sha256"] == expected and (entry.get("authored") or self._whole(path, expected)):
             return None
-        error = {"ok": False, "error_code": "full_read_required", "path": path, "message": (
-            "write_file replaces the whole file, but the complete current content of this file has not "
-            "reached you in this conversation (it was not read, read only in part, or cut to fit the "
-            "context). Writing it would drop what you have not seen. For a local change use apply_patch. "
-            "To rewrite the file, first read all of it with read_file, in slices with start_line and "
-            "max_lines if it is long, so that every result arrives whole.")}
+        if tool == "delete_file":
+            effect = ("delete_file removes the whole file, but the complete current content of this file has not "
+                      "reached you in this conversation (it was not read, read only in part, cut to fit the "
+                      "context, or masked). Deleting it would lose what you have not seen. For a local change use apply_patch. "
+                      "To delete the file, first read all of it with read_file")
+        else:
+            effect = ("write_file replaces the whole file, but the complete current content of this file has not "
+                      "reached you in this conversation (it was not read, read only in part, cut to fit the "
+                      "context, or masked). Writing it would drop what you have not seen. For a local change use "
+                      "apply_patch. To rewrite the file, first read all of it with read_file")
+        error = {"ok": False, "error_code": "full_read_required", "path": path, "message": effect + (
+            ", in slices with start_line and max_lines if it is long, so that every result arrives whole.")}
         if entry is not None and entry["sha256"] == expected and entry["total"]:
             gaps, line = [], 1
             for first, last in _merge(entry["spans"]):

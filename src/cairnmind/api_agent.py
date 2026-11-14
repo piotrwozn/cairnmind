@@ -537,8 +537,8 @@ class AgentEngine:
                     # Archived at once: the service then marks this session's later memory writes degraded.
                     await self._checked_archive()
                 return result
-            if name == "write_file":
-                refused = self._reads.refusal(arguments.get("path"), arguments.get("expected_sha256"))
+            if name in {"write_file", "delete_file"}:
+                refused = self._reads.refusal(arguments.get("path"), arguments.get("expected_sha256"), name)
                 if refused is not None:
                     return refused
             self.tools.current_tool_call_id = call_id
@@ -571,11 +571,14 @@ class AgentEngine:
                                          "arguments": call["arguments"]})
         await self._notify("tool_start", {"tool_call_id": call["id"], "name": call["name"],
                                            "arguments": call["arguments"]})
-        result = self._redact(await self._dispatch(call["name"], call["arguments"], call["id"]))
+        raw = await self._dispatch(call["name"], call["arguments"], call["id"])
+        result = self._redact(raw)
         delivered = await self._message({"role": "tool", "tool_call_id": call["id"],
                                          "name": call["name"], "content": _json(result)})
         if call["name"] not in self.mcp.catalogue:
-            self._reads.observe(call["name"], json.loads(delivered["content"]))
+            # Masking is told apart from file text that merely contains the mask's words (#157).
+            self._reads.observe(call["name"], json.loads(delivered["content"]),
+                                masked=result != raw or delivered["content"] != _json(result))
         await self._notify("tool_result", {"tool_call_id": call["id"], "name": call["name"],
                                             "result": result})
         return json.loads(delivered["content"]) if self.run["client"] == "copilot" else result
