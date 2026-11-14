@@ -29,7 +29,7 @@ payloads have explicit budgets, and unavailable or incomplete evidence is report
 
 ## Extension surfaces
 
-Cairnmind does not load third-party code into any of its own processes: no plugins, entry points or hooks that run someone else's Python, or a command, inside the service, the workspace broker, the workers or the MCP bridge. This holds for 1.0.0 as well. The service token and the database password are stored together in `config.json` in the data directory (`config.py`), so code running in a Cairnmind process could read both. Nothing could then enforce the resume acknowledgement, the rule that reviews, conflict decisions and impact verdicts are a person's, or the evidence rules against it.
+Cairnmind does not load third-party code into any of its own processes: no plugins, entry points or hooks that run someone else's Python, or a command, inside the service, the workspace broker, the workers or the MCP bridge. This holds for 1.0.0 as well. The service token is stored in `config.json` in the data directory (`config.py`), together with the database password of the managed local engine; a database on another host takes its password from the environment or a private file (`database_credentials.py`), which a Cairnmind process reads too. So code running in a Cairnmind process could read both. Nothing could then enforce the resume acknowledgement, the rule that reviews, conflict decisions and impact verdicts are a person's, or the evidence rules against it.
 
 What can be added is added outside those processes, through the surfaces below. Each one is described as it exists today.
 
