@@ -92,6 +92,15 @@ def stub_row(project_id, source_id, source):
             "is_current": False, "current_key": None, "created_at": source["ref"]["at"]}
 
 
+def replaced_in_tree(record_id, revision, records, plans) -> bool:
+    """A mechanical supersession stands only beside what replaced it: a record whose revisions name this one
+    as replaced, or the plan the task belonged to once its last definition no longer lists it."""
+    if any(r["supersedes"] == record_id for other in records.values() for r in other["revisions"]):
+        return True
+    plan = plans.get(revision.get("plan")) if revision.get("plan") else None
+    return plan is not None and record_id not in [step[0] for step in plan["definitions"][-1]["steps"]]
+
+
 def _cross_file(records, plans, paths):
     errors, sources, keys = [], {}, {}
     for model in [*records.values(), *plans.values()]:
@@ -111,6 +120,11 @@ def _cross_file(records, plans, paths):
             plan = plans.get(head["plan"])
             if plan is None or model["id"] not in [s[0] for s in plan["definitions"][-1]["steps"]]:
                 errors.append((paths[model["id"]], f"its plan {head['plan']} does not list it as a step"))
+    for model in records.values():
+        for number, revision in enumerate(model["revisions"], 1):
+            if revision["covered"].get("by") == "superseded" and not replaced_in_tree(model["id"], revision, records, plans):
+                errors.append((paths[model["id"]], f"revision {number} is superseded without a person's act, and "
+                                                   "nothing in the published memory replaces it"))
     for (kind, key), found in keys.items():
         if len(found) > 1:
             errors += [(path, f"two active {kind} records share the key {key!r}: {', '.join(found)}") for path in found]
@@ -196,6 +210,10 @@ def check_files(files):
             continue
         if path != path_of(model):
             errors.append((path, f"{path} holds {model['kind']} {model['id']}; expected {path_of(model)}"))
+            continue
+        if model["id"] in paths:
+            # One ID is one entity: two kind directories holding it would leave one of them unread.
+            errors.append((path, f"the ID {model['id']} is also in {paths[model['id']]}"))
             continue
         (plans if model["kind"] == "plan" else records)[model["id"]] = model
         paths[model["id"]] = path

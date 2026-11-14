@@ -328,14 +328,12 @@ class Publisher:
 
     @staticmethod
     def _replaced(record_id, history, histories, definitions, heads):
-        """A mechanical supersession travels only with what replaced it: a published record, or a published plan."""
+        """A mechanical supersession travels only with what replaced it, as a reader sees it in the tree
+        (memory_published_check.replaced_in_tree): a published record that names it, or a published plan.
+        A conflict decision recorded on both records instead is a review, which covers the loser itself."""
         metadata = heads[record_id].get("metadata") or {}
-        if metadata.get("superseded_by") in histories:
+        if any(r["supersedes"] == record_id for other in histories.values() for r in other):
             return True
-        for other_id, other in histories.items():
-            if any(r["supersedes"] == record_id for r in other) or record_id in (
-                    (heads[other_id].get("metadata") or {}).get("superseded_ids") or []):
-                return True
         plan = history[-1].get("plan")
         return bool(metadata.get("plan_archived") and plan in definitions
                     and record_id not in [s[0] for s in definitions[plan][-1]["steps"]])

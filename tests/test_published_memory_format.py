@@ -7,7 +7,7 @@ import os
 
 from cairnmind.memory_published_check import check_directory, check_files, format_bytes, read_tree
 from cairnmind.memory_published_format import (
-    GITATTRIBUTES, GITIGNORE, definition_hash, path_of, plan_hash, render,
+    GITATTRIBUTES, GITIGNORE, definition_hash, identity_hash, path_of, plan_hash, render,
 )
 from cairnmind.memory_published_parse import parse_file
 from cairnmind.sql import json_text
@@ -27,12 +27,14 @@ def sha(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def audit(record_id, text, *, at=AT, action="confirm", status="confirmed", definition=None):
+def audit(record_id, text, *, at=AT, action="confirm", status="confirmed", definition=None, identity=None):
     value = {"action": action, "actor": "local_user", "actor_name": "Ada Nowak", "at": at, "branch": "feat/storage",
              "commit": "3" * 40, "content_sha256": sha(text), "previous_status": "proposed", "previous_version": 1,
              "reason": "", "record_id": record_id, "status": status}
     if definition is not None:
         value["definition_sha256"] = definition
+    if identity is not None:
+        value["identity_sha256"] = identity
     return json_text(value)
 
 
@@ -231,3 +233,60 @@ def test_format_json_must_be_exact_and_unknown_entries_or_links_are_refused(tmp_
     os.symlink(folder / "notes.txt", folder / "fact" / f"{OTHER}.md")
     _, errors = read_tree(folder)
     assert {path for path, _ in errors} == {"notes.txt", f"fact/{OTHER}.md"}
+
+
+NEW = "6d7e8f90-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+LATER = "2026-11-14T11:20:40.500233+00:00"
+
+
+def single(record_id, key, text, review, *, supersedes=None, identity=True, kind="decision"):
+    passage = audit(record_id, text, identity=identity_hash(kind, key, supersedes) if identity else None)
+    revision = {"at": AT, "covered": {"by": "review", "source": review}, "status": "confirmed", "key": key,
+                "supersedes": supersedes, "sources": [review], "quote": None, "text": text}
+    return {"kind": kind, "id": record_id, "created_at": AT, "revisions": [revision],
+            "sources": {review: {"ref": {"at": AT, "kind": "review"}, "passage": passage}}}
+
+
+def test_one_id_in_two_kind_directories_is_refused_naming_both_files():
+    model = decision()
+    copy = {**decision(), "kind": "fact"}
+    files = {**tree(model), path_of(copy): render(copy)}
+    assert refused(files) == [(path_of(copy), f"the ID {RECORD} is also in {path_of(model)}")]
+
+
+def test_a_supersession_without_an_act_stands_only_beside_what_replaced_it():
+    old = single(RECORD, "storage-engine", "Use SQLite.", REVIEW)
+    old["revisions"].append({**old["revisions"][0], "at": LATER, "covered": {"by": "superseded"}, "status": "superseded"})
+    assert refused(tree(old)) == [(path_of(old), "revision 2 is superseded without a person's act, and nothing in "
+                                                 "the published memory replaces it")]
+    replacement = single(NEW, "storage-engine-2", "Use ArcadeDB.", REVIEW_TWO, supersedes=RECORD)
+    assert check_files(tree(old, replacement))[1] == []
+
+
+def test_the_kind_key_and_replaced_record_of_a_reviewed_revision_are_covered_by_its_audit():
+    text = "ArcadeDB is the only storage engine."
+    assert check_files(tree(single(RECORD, "storage-engine", text, REVIEW)))[1] == []
+    for change in ({"kind": "constraint"}, {"key": "forged-key"}, {"supersedes": OTHER}):
+        forged = single(RECORD, "storage-engine", text, REVIEW)
+        if "kind" in change:
+            forged["kind"] = change["kind"]
+        else:
+            forged["revisions"][0].update(change)
+        assert any("not covered" in reason for _, reason in refused(tree(forged))), change
+    # An audit recorded before #170 has no identity hash: only text, status and definition are covered.
+    older = single(RECORD, "storage-engine", text, REVIEW, identity=False)
+    older["revisions"][0]["key"] = "another-key"
+    assert check_files(tree(older))[1] == []
+
+
+def test_escaped_bidi_in_an_audit_and_times_that_are_not_iso_are_refused():
+    text = "ArcadeDB is the only storage engine."
+    model = single(RECORD, "storage-engine", text, REVIEW)
+    passage = model["sources"][REVIEW]["passage"].replace('"Ada Nowak"', '"Ada\\u202e Nowak"')
+    assert passage.isascii() and "\\u202e" in passage
+    model["sources"][REVIEW]["passage"] = passage
+    assert "audit holds characters" in refused(tree(model))[0][1]
+    for where, value in (("created_at", "2026‮-11-12"), ("at", "x‮y"), ("at", "2026-11-12T09:14:03")):
+        broken = single(RECORD, "storage-engine", text, REVIEW)
+        (broken if where == "created_at" else broken["revisions"][0])[where] = value
+        assert refused(tree(broken))[0][0] == path_of(broken), (where, value)

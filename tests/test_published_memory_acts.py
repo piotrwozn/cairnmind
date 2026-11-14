@@ -13,9 +13,9 @@ from typer.testing import CliRunner
 from cairnmind import cli, conflicts
 from cairnmind.findings import save_finding
 from cairnmind.inspector import Inspector, InspectorNotFound
-from cairnmind.memory_acts import confirm
+from cairnmind.memory_acts import confirm, covered_by_local_act
 from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.memory_published_format import definition_hash, plan_hash, task_fields
+from cairnmind.memory_published_format import definition_hash, identity_hash, plan_hash, task_fields
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
 
@@ -50,6 +50,7 @@ def test_a_review_audit_names_the_person_branch_and_commit_and_hashes_a_task_def
     assert (audit["actor_name"], audit["branch"], audit["commit"]) == ("Ada Nowak", "feature", commit)
     assert audit["content_sha256"] == hashlib.sha256(b"Use cookies.").hexdigest()
     assert "definition_sha256" not in audit
+    assert audit["identity_sha256"] == identity_hash("decision", record["key"], None)
     task = store.remember(pid, {"kind": "task", "content": "Ship it", "metadata": {"requires_test": True}}, [source["id"]])
     reviewed = Inspector(store).review(pid, task["id"], "confirm", task["version"])
     expected = definition_hash({"text": "Ship it", **task_fields(task["metadata"])})
@@ -124,6 +125,12 @@ def test_a_conflict_decision_and_a_typed_finding_name_the_person(workspace):
                                          keep=candidate["id"])
     audit = audit_of(store, decided["audit_source_id"])
     assert (audit["actor_name"], audit["branch"], audit["commit"]) == ("Ada Nowak", "feature", commit)
+    # The audit hashes kind, key and replaced record as the decision leaves them: renamed, and replacing the other.
+    kept = decided["record"]
+    assert (kept["key"], kept["supersedes"]) == ("ttl", existing["id"])
+    assert audit["identity_sha256"][candidate["id"]] == identity_hash("decision", "ttl", existing["id"])
+    with store.transaction() as tx:
+        assert covered_by_local_act(tx, kept)
     with store.transaction():
         saved = save_finding(store, pid, "8d2e4f60-1a3b-4c5d-9e7f-0a1b2c3d4e5f", "Never push for the user.",
                              "constraint", "confirmed")

@@ -148,7 +148,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         raise ValueError("Superseding requires the ID of the finding to keep")
     if action != "supersede" and keep is not None:
         raise ValueError("Only superseding takes a finding to keep")
-    from .memory_acts import act_context, row_definition_hash
+    from .memory_acts import act_context, identity_hash, row_definition_hash
     context = act_context(store, project_id)  # Who decided, on which branch and commit (#170).
     with store.transaction() as tx:
         rows = {identifier: one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
@@ -180,6 +180,15 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         if any(row["kind"] == "task" for row in rows.values()):
             audit["definition_sha256"] = {identifier: row_definition_hash(row["content"], row.get("metadata"))
                                           for identifier, row in rows.items() if row["kind"] == "task"}
+        if action == "supersede":
+            # Kind, key and replaced record of both findings as this decision leaves them (#170).
+            winner, loser = (candidate, existing) if keep == record_id else (existing, candidate)
+            renamed = winner is candidate and metadata.get("suggested_key") == existing["key"]
+            chained = bool(winner.get("supersedes")) and winner["supersedes"] != loser["id"]
+            audit["identity_sha256"] = {
+                winner["id"]: identity_hash(winner["kind"], existing["key"] if renamed else winner["key"],
+                                            winner["supersedes"] if chained else loser["id"]),
+                loser["id"]: identity_hash(loser["kind"], loser["key"], loser.get("supersedes"))}
         # The same address and origin as a review note: it documents a decision and never
         # counts as evidence that a finding is true, nor as the time of its evidence.
         source = store.snapshot(project_id, "review://" + str(uuid4()), json_text(audit), "manual",

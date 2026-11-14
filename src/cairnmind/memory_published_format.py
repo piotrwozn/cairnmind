@@ -113,6 +113,17 @@ def definition_hash(revision) -> str:
                           **{name: revision.get(name, TASK_DEFAULTS[name]) for name in DEFINITION_FIELDS}}))
 
 
+def identity_hash(kind, key, supersedes) -> str:
+    """What a record is, hashed: its kind, its key and the record it replaces. An act covers this too."""
+    return sha256_text(J({"key": key, "kind": kind, "supersedes": supersedes}))
+
+
+def timestamp(value) -> bool:
+    """A timezone-aware ISO 8601 time in plain characters, as the store writes them."""
+    from .sql import parse_utc
+    return clean_text(value) and parse_utc(value) is not None
+
+
 def task_fields(metadata) -> dict:
     """A stored task's metadata as the fields a published revision carries, with their defaults."""
     metadata = metadata if isinstance(metadata, dict) else {}
@@ -140,8 +151,12 @@ def _audit(source):
     return value if isinstance(value, dict) and value.get("action") in ACT_ACTIONS else None
 
 
-def audit_covers(audit, record_id, kind, status, text, definition) -> bool:
-    """Whether a person's recorded act covers this state of a record."""
+def audit_covers(audit, record_id, kind, status, text, definition, identity) -> bool:
+    """Whether a person's recorded act covers this state of a record.
+
+    `identity` is identity_hash(kind, key, supersedes). Audits recorded before #170 carry no identity hash;
+    for them only the text, the status and a task's definition are covered.
+    """
     if not isinstance(audit, dict) or audit.get("action") not in ACT_ACTIONS:
         return False
     action = audit["action"]
@@ -155,6 +170,8 @@ def audit_covers(audit, record_id, kind, status, text, definition) -> bool:
     if entry("content_sha256") != sha256_text(text):
         return False
     if kind == "task" and entry("definition_sha256") != definition:
+        return False
+    if "identity_sha256" in audit and entry("identity_sha256") != identity:
         return False
     if action == "resolve_conflict":
         # Only choosing which finding stands judges a finding; keeping both or dismissing the alarm does not.
@@ -178,19 +195,22 @@ def derive_covered(kind, record_id, previous, revision, sources, number):
         if task and not same(before["state"], after["state"]) and same(
                 {k: v for k, v in before.items() if k != "state"}, {k: v for k, v in after.items() if k != "state"}):
             return {"by": "progress"}
-        if (revision["status"] == "superseded" and previous["text"] == revision["text"]
-                and previous["key"] == revision["key"]
-                and (not task or definition_hash(previous) == definition_hash(revision))):
-            return {"by": "superseded"}
     if revision["status"] in ("confirmed", "disputed", "superseded"):
         definition = definition_hash(revision) if task else None
+        identity = identity_hash(kind, revision["key"], revision["supersedes"])
         found = []
         for source_id in revision["sources"]:
             audit = _audit(sources.get(source_id))
-            if audit and audit_covers(audit, record_id, kind, revision["status"], revision["text"], definition):
+            if audit and audit_covers(audit, record_id, kind, revision["status"], revision["text"], definition, identity):
                 found.append(_when(audit, source_id))
         if found:
             return {"by": "review", "source": max(found)[1]}
+    # A mechanical supersession changes nothing but the status. A reader also requires what replaced it to be
+    # in the same tree (memory_published_check), so three appended lines cannot withdraw a record.
+    if (previous is not None and revision["status"] == "superseded" and previous["text"] == revision["text"]
+            and previous["key"] == revision["key"] and previous["supersedes"] == revision["supersedes"]
+            and (not task or definition_hash(previous) == definition_hash(revision))):
+        return {"by": "superseded"}
     if number == 1 and revision["status"] == "confirmed" and len(revision["sources"]) == 1:
         source = sources.get(revision["sources"][0])
         if source and ref_class(source.get("ref")) == "note" and source.get("passage") == revision["text"]:

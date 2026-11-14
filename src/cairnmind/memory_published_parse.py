@@ -14,7 +14,7 @@ from .memory_published_format import (
     _BLOCK, _FIELD, _SOURCE, MAX_NOTE_CHARS, PLAN_FIELDS, PLAN_HEADER, RECORD_FIELDS, RECORD_HEADER,
     RECORD_KINDS, TASK_FIELDS, TRUST_FIELDS, PublishedFormatError, canonical_uuid,
     clean_text, clean_value, conflict_marker, decode, derive_covered, derive_plan_covered, parse_json,
-    ref_class, render, same,
+    ref_class, render, same, timestamp,
 )
 from .store import STATUSES, TASK_STATES
 
@@ -122,8 +122,17 @@ def _sources(lines):
 
 def _check_source(source_id, source):
     ref, passage, kind = source["ref"], source["passage"], ref_class(source["ref"])
-    if kind is None or not clean_value(ref):
+    if kind is None or not clean_value(ref) or not timestamp(ref["at"]):
         raise PublishedFormatError(f"source {source_id} has a reference the format does not allow")
+    if kind == "review":
+        # JSON escapes are plain text in the passage; what they stand for is checked once they are read.
+        try:
+            audit = parse_json(passage) if passage is not None else None
+        except PublishedFormatError:
+            audit = None
+        if not isinstance(audit, dict) or not clean_value(audit):
+            raise PublishedFormatError(f"source {source_id} is a review whose audit holds characters the format "
+                                       "does not allow, or is not an audit")
     if (passage is not None) != (kind in ("note", "review")):
         raise PublishedFormatError(f"source {source_id} has a passage where none belongs, or lacks one")
     if passage is not None and (not clean_text(passage) or not passage or len(passage) > MAX_NOTE_CHARS * 4):
@@ -144,8 +153,8 @@ def _uuid_list(value):
 def _check_revision(number, revision, sources, task):
     def bad(what):
         raise PublishedFormatError(f"revision {number}: {what}")
-    if not isinstance(revision["at"], str) or not isinstance(revision["covered"], dict):
-        bad("at and covered are required")
+    if not timestamp(revision["at"]) or not isinstance(revision["covered"], dict):
+        bad("at must be an ISO 8601 time, and covered is required")
     if revision["status"] not in STATUSES:
         bad("unknown status")
     if not clean_text(revision["key"]) or not revision["key"].strip():
@@ -240,7 +249,7 @@ def _plan_entry(model):
         definition.update(found)
         if "Goal" in blocks:
             definition["goal"] = blocks["Goal"]
-        if "at" not in found or "covered" not in found or not isinstance(definition["at"], str):
+        if "at" not in found or "covered" not in found or not timestamp(definition["at"]):
             raise PublishedFormatError(f"definition {number}: at and covered are required")
         steps, sources = definition["steps"], definition["sources"]
         if (not clean_text(definition["title"]) or not definition["title"].strip()
@@ -284,7 +293,7 @@ def parse_file(raw: bytes) -> dict:
     if header not in (RECORD_HEADER, PLAN_HEADER) or (header == PLAN_HEADER) != (kind == "plan"):
         raise PublishedFormatError("not a published memory file of version 1")
     if (kind != "plan" and kind not in RECORD_KINDS) or not canonical_uuid(front.get("id")) \
-            or not isinstance(front.get("created_at"), str):
+            or not timestamp(front.get("created_at")):
         raise PublishedFormatError("invalid kind, id or created_at")
     lines.expect("", "an empty line")
     lines.take()  # The title line; the rendering comparison checks it.
