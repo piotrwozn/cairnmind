@@ -1,5 +1,7 @@
 """English/Polish labels for the agent terminal, independent of provider data."""
 
+from .terminal_i18n_messages import AGENT_MESSAGES
+
 CATALOG = {
     "input": "wejście", "output": "wyjście", "unavailable": "brak danych",
     "token report incomplete": "raport tokenów niepełny", "cost: unavailable": "koszt: brak danych",
@@ -59,10 +61,13 @@ CATALOG = {
         "Sprawdzenie argumentów narzędzia zewnętrznego serwera MCP trwało za długo; narzędzie wycofano do końca "
         "tego uruchomienia.",
 }
+CATALOG.update(AGENT_MESSAGES)  # fixed provider and engine messages (#153)
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",
           "interrupted": "Interrupted", "failed": "Failed", "error": "Failed", "blocked": "Blocked",
-          "ready": "Ready", "approval_required": "Awaiting approval"}
+          "ready": "Ready", "approval_required": "Awaiting approval", "context_limit": "Context limit",
+          "limit_reached": "Limit reached", "resume_required": "Resume required", "uncertain": "Uncertain",
+          "partial": "Partial"}
 
 
 def tr(text, language="en", **values):

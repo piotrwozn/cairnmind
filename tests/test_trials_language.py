@@ -76,3 +76,46 @@ async def test_the_value_dialog_is_titled_after_the_setting_it_changes(tmp_path,
         app.action_settings()
         await settle(app, pilot)
     assert [screen.heading for screen in seen if isinstance(screen, ChoiceModal)] == ["Settings", title]
+
+
+@pytest.mark.parametrize("name", ["api_providers.py", "copilot_adapter.py"])
+def test_provider_errors_are_written_in_english(name):
+    assert polish_literals(name) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("language", "shown", "hidden"), [
+    ("en", "The request exceeds the context limit.", "Żądanie"),
+    ("pl", "Żądanie przekracza limit kontekstu.", "The request exceeds")])
+async def test_a_provider_error_reads_in_the_panel_language(tmp_path, language, shown, hidden):
+    from textual.widgets import RichLog, Static
+
+    from cairnmind.api_providers import ProviderError
+    from cairnmind.api_worker import AgentApp
+    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.config import Settings
+    from test_api_worker import Engine
+    from test_api_worker import settle as settle_agent
+
+    class Overflow(Engine):
+        async def turn(self, text):
+            self.turns.append(text)
+            # What AgentEngine.turn returns for a context_limit: the provider's own fixed hint.
+            hint = ProviderError("context_limit").hint
+            return {"status": "context_limit", "error_code": "context_limit", "hint": hint,
+                    "unknowns": [hint, "A note of the model [bold]"]}
+
+    run = {"id": "run-a", "run_id": "run-a", "generation": 2, "project_id": "project-a",
+           "worktree": str(tmp_path / "project"), "session_id": "session-a", "client": "api"}
+    profile = {"id": "profile-a", "label": "Test API", "client": "api", "model": "controlled"}
+    app = AgentApp(Settings(data_dir=tmp_path / "data"), run, profile, key="fixture-key", engine_factory=Overflow)
+    CockpitState(app.settings).update({"language": language})
+    app.language = language
+    async with app.run_test(size=(95, 42)) as pilot:
+        await pilot.pause()
+        app.execute_turn("Long request")
+        await settle_agent(app, pilot)
+        status = app.query_one("#agent-status", Static).render().plain
+        history = "\n".join(line.text for line in app.query_one("#agent-history", RichLog).lines)
+    for text in (status, history):
+        assert shown in text and hidden not in text and "A note of the model [bold]" in text

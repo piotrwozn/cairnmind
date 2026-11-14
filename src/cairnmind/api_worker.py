@@ -31,6 +31,7 @@ from .terminal_safe import plain, safe_text
 from .terminal_ui import ChoiceModal, Field, FormModal
 from .terminal_i18n import language_for
 from .terminal_agent_i18n import status_text, tr
+from .terminal_i18n_messages import AGENT_MESSAGES, fixed_message
 
 _SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 _CODE = re.compile(r"^[a-z][a-z_]{0,39}$")
@@ -392,13 +393,15 @@ class AgentApp(App):
                 for field in ("message", "error_code"):
                     if result.get(field):
                         details.append(str(result[field]))
-                if result.get("unknowns"):
-                    details.append("; ".join(str(v) for v in result["unknowns"]))
+                # The engine's and the providers' fixed sentences are translated; any other text is kept as is.
+                unknowns = [fixed_message(v, self.t, AGENT_MESSAGES) for v in result.get("unknowns") or []]
+                if unknowns:
+                    details.append("; ".join(unknowns))
                 self.set_status(self.t("Status: ") + " · ".join(details),
                                 kind=_RESULT_KINDS.get(str(result.get("status", "completed")), "warn"))
-                if result.get("unknowns"):
+                if unknowns:
                     self.write_history(self.t("Missing evidence / blockers:\n").removesuffix("\n"),
-                                       "\n".join(str(v) for v in result["unknowns"]), head_role="warn-strong")
+                                       "\n".join(unknowns), head_role="warn-strong")
                 if self._stream and result.get("status") not in {"completed", "complete"}:
                     self.show_stream(self.t("Incomplete response — unconfirmed output:\n") + self._stream)
                 if isinstance(result.get("usage"), dict):

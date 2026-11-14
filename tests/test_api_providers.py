@@ -357,7 +357,7 @@ async def test_ollama_server_training_cap_is_not_mistaken_for_requested_context(
             await make_provider(profile("ollama"), client=client).complete([{"role": "user", "content": "Small prompt"}], [])
         assert error.value.code == "context_limit"
         assert error.value.context_details == {"configured_context_window": 32768, "model_context_window": 8192}
-        assert "Zmniejsz" in error.value.hint
+        assert "Lower it" in error.value.hint
         assert [request.url.path for request in requests] == ["/api/show"]
         requests.clear()
         smaller = {**profile("ollama"), "limits": {"context_window_tokens": 8192}}

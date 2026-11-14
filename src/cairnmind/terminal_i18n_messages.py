@@ -70,10 +70,109 @@ ASK_MESSAGES = {
 ASK_UNSUPPORTED_PREFIX = "The quotes do not support the answer: "
 ASK_UNSUPPORTED_PREFIX_PL = "Cytaty nie potwierdzają odpowiedzi: "
 
+# Errors of the model providers (api_providers.py) and of Copilot (copilot_adapter.py).
+PROVIDER_MESSAGES = {
+    "The API credential is missing.": "Brakuje poświadczeń API.",
+    "The provider rejected the credential.": "Dostawca odrzucił poświadczenia.",
+    "The account has no access to the chosen resource.": "Konto nie ma dostępu do wybranego zasobu.",
+    "No funds or provider quota are left.": "Brak środków lub dostępnego limitu dostawcy.",
+    "The provider limited the request rate.": "Dostawca ograniczył częstotliwość żądań.",
+    "Cannot connect to the provider.": "Nie można połączyć się z dostawcą.",
+    "Waiting for the provider timed out.": "Upłynął czas oczekiwania na dostawcę.",
+    "The model or the API address is unavailable.": "Model lub adres API jest niedostępny.",
+    "The request exceeds the context limit. Increase the Ollama profile's window or shorten the context.":
+        "Żądanie przekracza limit kontekstu. Zwiększ okno profilu Ollama lub skróć kontekst.",
+    "Ollama gave no reliable context limit for the model; check the model and the server version.":
+        "Ollama nie podała wiarygodnego limitu kontekstu modelu; sprawdź model i wersję serwera.",
+    "The provider cut the answer off at the output limit.": "Dostawca przerwał odpowiedź na limicie wyjścia.",
+    "The provider does not support the requested configuration.": "Dostawca nie obsługuje żądanej konfiguracji.",
+    "The model did not confirm working tool support.": "Model nie potwierdził poprawnej obsługi narzędzi.",
+    "The provider's service is temporarily unavailable.": "Usługa dostawcy jest chwilowo niedostępna.",
+    "The API answered with a redirect; check the server address.":
+        "API zwróciło przekierowanie; sprawdź adres serwera.",
+    "The provider returned an invalid or incomplete response.":
+        "Dostawca zwrócił niepoprawną lub niekompletną odpowiedź.",
+    "The provider's response exceeded the size limit.": "Odpowiedź dostawcy przekroczyła limit rozmiaru.",
+    "The provider refused to carry out the request.": "Dostawca odmówił wykonania żądania.",
+    "The provider rejected the request because of a conflict.": "Dostawca odrzucił żądanie z powodu konfliktu.",
+    "The provider rejected the request.": "Dostawca odrzucił żądanie.",
+    "The provider rejected the tool definitions.": "Dostawca odrzucił definicje narzędzi.",
+    "The chosen window exceeds the Ollama model's limit. Lower it or choose a model with a larger context.":
+        "Wybrane okno przekracza limit modelu Ollama. Zmniejsz je lub wybierz model z większym kontekstem.",
+    "Install Cairnmind's dependencies with Copilot support.": "Zainstaluj zależności Cairnmind z obsługą Copilota.",
+    "The pinned Copilot SDK version is required.": "Wymagana jest przypięta wersja SDK Copilota.",
+    "Prepare the Copilot runtime in Cairnmind's settings.": "Przygotuj runtime Copilota w ustawieniach Cairnmind.",
+    "The Copilot runtime changed; prepare it again.": "Runtime Copilota zmienił się; przygotuj go ponownie.",
+    "Could not prepare a verified Copilot runtime.": "Nie udało się przygotować zweryfikowanego runtime Copilota.",
+    "Sign in to GitHub Copilot.": "Zaloguj się do GitHub Copilot.",
+    "GitHub rejected the Copilot credentials.": "GitHub odrzucił poświadczenia Copilota.",
+    "Account or organization policy restricts access to Copilot.":
+        "Zasady konta lub organizacji ograniczają dostęp do Copilota.",
+    "The available Copilot quota is used up.": "Wyczerpano dostępny limit Copilota.",
+    "Copilot limited the request rate.": "Copilot ograniczył częstotliwość żądań.",
+    "Cannot connect to the Copilot service.": "Nie można połączyć się z usługą Copilota.",
+    "The Copilot request failed; the result may be uncertain.":
+        "Żądanie Copilota zakończyło się błędem; wynik może być niepewny.",
+    "This turn's tool limit was reached. Continue explicitly.": "Osiągnięto limit narzędzi tej tury. Kontynuuj jawnie.",
+    "The Copilot turn time limit was reached.": "Osiągnięto limit czasu tury Copilota.",
+    "The Copilot response size limit was reached.": "Osiągnięto limit rozmiaru odpowiedzi Copilota.",
+    "The Copilot model did not confirm tool support.": "Model Copilota nie potwierdził obsługi narzędzi.",
+    "The previous Copilot turn is still running.": "Poprzednia tura Copilota nadal trwa.",
+    "Choose a direct API profile.": "Wybierz profil bezpośredniego API.",
+}
+# The Copilot sign-in terminal (copilot_adapter._login).
+LOGIN_MESSAGES = {
+    "Open:": "Otwórz:", "Code:": "Kod:", "Value:": "Wartość:",
+    "Copilot login completed.": "Logowanie Copilot zakończone.",
+    "Store the credentials locally without encryption? [y/N]:":
+        "Zapisać poświadczenia lokalnie bez szyfrowania? [tak/N]:",
+    "Login cancelled.": "Anulowano logowanie.",
+}
+# Gaps the built-in agent's engine (api_agent.py) reports at the end of a turn.
+ENGINE_MESSAGES = {
+    "A checkpoint is required before context can be shortened.":
+        "Przed skróceniem kontekstu wymagany jest punkt kontrolny.",
+    "An earlier action has no confirmed outcome. Resolve it explicitly before continuing.":
+        "Wcześniejsze działanie nie ma potwierdzonego wyniku. Rozstrzygnij je jawnie przed kontynuacją.",
+    "Context renewal limit reached.": "Osiągnięto limit odnowień kontekstu.",
+    "Copilot context reset unavailable.": "Reset kontekstu Copilota jest niedostępny.",
+    "Copilot did not complete the exact model read/ACK protocol.":
+        "Copilot nie ukończył dokładnego protokołu odczytu i ACK.",
+    "Host tool limit reached.": "Osiągnięto limit narzędzi hosta.",
+    "Model call limit reached; continue explicitly to renew the budget.":
+        "Osiągnięto limit wywołań modelu; kontynuuj jawnie, aby odnowić budżet.",
+    "No complete tool result was recorded; the tool was not replayed.":
+        "Nie zapisano pełnego wyniku narzędzia; narzędzia nie uruchomiono ponownie.",
+    "Read and ACK the current ready packet before effects.":
+        "Przed działaniami odczytaj i potwierdź (ACK) bieżący pakiet gotowości.",
+    "Read the complete ready packet using resume_context before its exact ACK.":
+        "Odczytaj cały pakiet gotowości przez resume_context przed jego dokładnym ACK.",
+    "Read the current state before another proposal.": "Odczytaj bieżący stan przed kolejną propozycją.",
+    "The authoritative packet contains credential material; it was not delivered or acknowledged.":
+        "Wiążący pakiet zawiera dane uwierzytelniające; nie został dostarczony ani potwierdzony.",
+    "The local memory service is unavailable; effects are paused.":
+        "Lokalna usługa pamięci jest niedostępna; działania są wstrzymane.",
+    "The model did not complete the current packet's read/ACK protocol.":
+        "Model nie ukończył protokołu odczytu i ACK bieżącego pakietu.",
+    "The service did not accept the exact ACK.": "Usługa nie przyjęła dokładnego ACK.",
+    "The turn stopped. No request or action was automatically repeated.":
+        "Tura została przerwana. Żadne żądanie ani działanie nie zostało automatycznie powtórzone.",
+    "Turn time limit reached.": "Osiągnięto limit czasu tury.",
+    "The request exceeds the configured model context. Increase the profile's explicit context window or "
+    "continue with a shorter request restored from archived memory. The request was not automatically retried.":
+        "Żądanie przekracza skonfigurowany kontekst modelu. Zwiększ jawne okno kontekstu profilu albo kontynuuj "
+        "krótszym żądaniem odtworzonym z zarchiwizowanej pamięci. Żądanie nie zostało automatycznie ponowione.",
+    # Turn results without a word of their own in the status line.
+    "Context limit": "Limit kontekstu", "Limit reached": "Osiągnięto limit", "Resume required": "Wymagane wznowienie",
+    "Uncertain": "Niepewne", "Partial": "Częściowo",
+}
+AGENT_MESSAGES = {**PROVIDER_MESSAGES, **ENGINE_MESSAGES}
+
 # The status word of an /ask result, as the panel shows it.
 ASK_STATUS = {"complete": "Complete", "partial": "Partial", "unavailable": "Unavailable"}
 
-MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL, "Complete": "Pełna"}
+MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL, "Complete": "Pełna",
+            **PROVIDER_MESSAGES, **LOGIN_MESSAGES}
 
 
 def fixed_message(text, translate, known=ASK_MESSAGES) -> str:
