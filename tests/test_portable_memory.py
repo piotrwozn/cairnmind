@@ -354,3 +354,18 @@ def test_the_objects_of_a_snapshot_share_one_directory_sync_before_the_manifest(
     # The objects are synced before the manifests that name them.
     assert synced.index(str(folder / "objects")) < synced.index(str(folder / "manifests")) < synced.index(str(folder))
     assert inspect_snapshot(published["path"])["snapshot_id"] == published["snapshot_id"]
+
+
+def test_a_repeated_snapshot_reads_the_objects_of_kept_history_only_by_name(origin, monkeypatch):
+    # #158: retention loaded, hashed and validated every object of each of the five kept manifests.
+    origin["manager"].snapshot(origin["project"]["id"])
+    for _ in range(6):
+        published = advance(origin)
+    loaded, real = [], portable._load_snapshot
+    monkeypatch.setattr(portable, "_load_snapshot", lambda path: loaded.append(path) or real(path))
+    published = advance(origin)
+    path = head_path(published)
+    assert loaded == [path]  # only the previous manifest, before it is replaced
+    kept = [json.loads(file.read_bytes()) for file in (path.parent / "manifests").glob("*.json")]
+    named = {d["sha256"] for manifest in kept for rows in manifest["objects"].values() for d in rows}
+    assert len(kept) == 5 and {file.stem for file in (path.parent / "objects").glob("*.json")} == named

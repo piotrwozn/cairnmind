@@ -416,6 +416,22 @@ def _load_snapshot(path):
         raise ValueError("Invalid or unreadable portable memory package") from exc
 
 
+def _named_objects(path):
+    """The object digests a kept manifest names, read without loading its objects (#158).
+
+    Retention needs only the names: loading every kept manifest read and hashed each object again,
+    several full passes over a large project at every snapshot. The manifest checksum is still checked,
+    and nothing is removed when a kept manifest is unreadable.
+    """
+    try:
+        manifest = _parse(_read(path, MAX_MANIFEST_BYTES))
+        if not isinstance(manifest, dict) or manifest.get("snapshot_id") != _manifest_id(manifest):
+            raise ValueError("Memory manifest checksum mismatch")
+        return {descriptor["sha256"] for rows in manifest["objects"].values() for descriptor in rows}
+    except (OSError, KeyError, TypeError, AttributeError, RecursionError, OverflowError) as exc:
+        raise ValueError("Invalid or unreadable portable memory package") from exc
+
+
 def _summary(path, manifest, status="valid"):
     return {"status": status, "path": str(path), "manifest_path": str(path), "format_version": VERSION,
             **{key: deepcopy(manifest.get(key)) for key in
@@ -651,9 +667,8 @@ class MemoryManager:
             manifest_path = path.parent / "manifests" / f"{identifier}.json"
             if not manifest_path.exists():
                 continue
-            _, _, manifest, _ = _load_snapshot(manifest_path)
+            referenced.update(_named_objects(manifest_path))
             kept.add(identifier)
-            referenced.update(d["sha256"] for rows in manifest["objects"].values() for d in rows)
         # Only owned, content-addressed files are collected after successful publication.
         for directory, allowed in (("manifests", kept), ("objects", referenced)):
             for entry in (path.parent / directory).glob("*.json"):
