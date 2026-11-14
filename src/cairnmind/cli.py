@@ -37,6 +37,7 @@ jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's job
 memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
 cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
 workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
+store_app = typer.Typer(help="How large the store is. Reads only; starts nothing.")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
 app.add_typer(models_app, name="models")
@@ -50,6 +51,7 @@ app.add_typer(jobs_app, name="jobs")
 app.add_typer(memory_app, name="memory")
 app.add_typer(cockpit_app, name="cockpit")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(store_app, name="store")
 
 
 def output(value) -> None:
@@ -599,6 +601,22 @@ def usage(ctx: typer.Context, project: str,
 def status(ctx: typer.Context, project: str | None = None):
     output(request(ctx.obj, "GET", "/status", start_service=False,
                    params={"project": project} if project else {}))
+
+
+@store_app.command("size")
+def store_size(ctx: typer.Context, project: Annotated[str | None, typer.Argument(
+                   help="Measure only this project's rows; the disk use is always the whole data directory.")] = None,
+               as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False):
+    """Rows and approximate bytes per collection, kind and namespace, and the disk use of the data directory.
+
+    Read-only: it never starts the engine or the service and changes nothing. Prints no record or source text."""
+    from cairnmind.store_size import measure
+    store = store_for_read(ctx.obj)
+    report = measure(store, store.resolve_project(project)["id"] if project is not None else None)
+    if as_json:
+        output(report)
+    else:
+        typer.echo(report["text"])
 
 
 @jobs_app.command("list")
