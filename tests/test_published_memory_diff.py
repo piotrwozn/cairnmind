@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 import itertools
+import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -284,3 +286,53 @@ def test_a_project_in_a_subdirectory_reads_its_own_directory(tmp_path):
     assert commit == head and errors == [] and path_of(ours) in files
     result = diff(tmp_path, root / "services" / "a", start, "HEAD")
     assert result.exit_code == 0 and "1 decision added." in result.output and "Another team" not in result.output
+
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+def test_the_workflow_needs_only_the_default_token_and_leaves_the_required_jobs_alone():
+    workflow = (REPOSITORY / ".github" / "workflows" / "memory.yml").read_text()
+    assert "\n  pull_request:\n" in workflow and "pull_request_target" not in workflow
+    assert "secrets." not in workflow and "GH_TOKEN: ${{ github.token }}" in workflow
+    assert "      pull-requests: write\n" in workflow and "\n  contents: read\n" in workflow
+    assert 'cairnmind memory diff "$BASE" HEAD --markdown' in workflow and "fetch-depth: 0" in workflow
+    assert "if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}" in workflow
+    assert "bash scripts/memory_pr_comment.sh" in workflow
+    script = (REPOSITORY / "scripts" / "memory_pr_comment.sh").read_text()
+    assert f"marker='{MARKER}'" in script
+    ci = (REPOSITORY / ".github" / "workflows" / "ci.yml").read_text()
+    assert all(f"\n  {job}:\n" in ci for job in ("lint", "fast-tests", "full-tests"))
+
+
+def run_comment_script(tmp_path, body, ids=""):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    fake = bin_dir / "gh"
+    fake.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$FAKE_LOG"\n'
+                    'case "$*" in *--paginate*) printf "%s" "$FAKE_IDS";; esac\n')
+    fake.chmod(0o755)
+    comment = tmp_path / "comment.md"
+    comment.write_text(body)
+    log = tmp_path / "gh.log"
+    log.write_text("")
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_LOG": str(log), "FAKE_IDS": ids,
+           "REPOSITORY": "team/repo", "NUMBER": "12", "GH_TOKEN": "unused"}
+    result = subprocess.run(["bash", str(REPOSITORY / "scripts" / "memory_pr_comment.sh"), str(comment)],
+                            capture_output=True, text=True, env=env)
+    return result, log.read_text().splitlines()
+
+
+def test_the_comment_is_posted_once_then_updated_and_never_posted_for_no_memory(tmp_path):
+    changed = render_markdown(compare({}, files_of([record("decision", "Use cookies.", "auth")])), "1" * 40, "2" * 40)
+    unchanged = render_markdown(compare({}, {}), "1" * 40, "2" * 40)
+    posted, calls = run_comment_script(tmp_path, changed)
+    assert posted.returncode == 0, posted.stderr
+    assert calls[-1] == f"api --method POST repos/team/repo/issues/12/comments -F body=@{tmp_path / 'comment.md'}"
+    updated, calls = run_comment_script(tmp_path, unchanged, ids="4711\n")
+    assert updated.returncode == 0
+    assert calls[-1] == f"api --method PATCH repos/team/repo/issues/comments/4711 -F body=@{tmp_path / 'comment.md'}"
+    quiet, calls = run_comment_script(tmp_path, unchanged)
+    assert quiet.returncode == 0 and len(calls) == 1 and "--paginate" in calls[0]
+    forged, calls = run_comment_script(tmp_path, "Approved\n" + changed)
+    assert forged.returncode == 2 and calls == []
