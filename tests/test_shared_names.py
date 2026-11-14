@@ -211,6 +211,36 @@ def test_a_broken_current_manifest_does_not_break_status(workspace):
     assert status["earlier_package"]["state"] == "unreadable" and status["error"] == "invalid_snapshot"
 
 
+def test_status_reads_the_manifest_and_not_every_object(workspace, monkeypatch):
+    # #161: status read and hashed every object of the package, which for a large project took longer
+    # than the ordinary command time-out, as `memory snapshot` did (#158).
+    store, pid, root, manager = workspace
+    published = manager.snapshot(pid)
+    read = []
+    original = portable._read
+
+    def counting(path, limit):
+        read.append(str(path))
+        return original(path, limit)
+    monkeypatch.setattr(portable, "_read", counting)
+    status = manager.status(pid)
+    assert [path for path in read if "/objects/" in path] == []
+    latest = status["latest"]
+    assert latest["snapshot_id"] == published["snapshot_id"] and latest["counts"] == published["counts"]
+    assert latest["status"] == "manifest_valid" and latest["objects_checked"] is False
+    # The objects are still checked where they are used: a damaged one is found by inspect, not hidden.
+    victim = next((root / ".memory/cairnmind/objects").iterdir())
+    victim.write_bytes(victim.read_bytes() + b" ")
+    assert manager.status(pid)["latest"]["snapshot_id"] == published["snapshot_id"]
+    with pytest.raises(ValueError):
+        inspect_snapshot(root / ".memory/cairnmind")
+    # A manifest that was changed after it was written is still refused by status.
+    manifest = json.loads((root / ".memory/cairnmind/manifest.json").read_text())
+    manifest["counts"] = {}
+    (root / ".memory/cairnmind/manifest.json").write_text(json.dumps(manifest))
+    assert manager.status(pid)["error"] == "invalid_snapshot"
+
+
 def test_two_profile_files_are_named_as_the_reason_a_task_cannot_be_verified(workspace):
     from cairnmind.verification import verification_status
 

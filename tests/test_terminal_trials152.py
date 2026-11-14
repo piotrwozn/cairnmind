@@ -230,7 +230,16 @@ async def test_graph_key_footer_fits_and_hidden_keys_still_work(panel, monkeypat
     monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
     app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
     async with app.run_test(size=(width, 35)) as pilot:
-        await pilot.pause(.3)
+        # Wait for the footer laid out in this language and the graph holding the focus, not for a fixed
+        # moment: on a slow machine the footer can still have no keys, or keys with no region, after .3 s.
+        def ready():
+            keys = list(app.query(FooterKey))
+            return bool(keys) and all(key.region.width for key in keys) and app.query_one(TerminalGraph).has_focus \
+                and {tr("Zoom in", language), tr("Next node", language)} <= {key.description for key in keys}
+        deadline = time.monotonic() + 30
+        while not ready() and time.monotonic() < deadline:
+            await pilot.pause(.05)
+        await pilot.pause()
         keys = list(app.query(FooterKey))
         assert keys and all(key.region.right <= width for key in keys), [(k.key, k.region) for k in keys]
         shown = {key.description for key in keys}

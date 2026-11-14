@@ -39,7 +39,7 @@ from .workspace import WorkspaceManager
 
 SCENARIOS = ("normal", "empty", "offline", "slow", "unicode-many")
 MARKER = "terminal-preview.json"
-NOTICE = "Podgląd syntetyczny: operacja zablokowana; modele i prywatna baza są wyłączone."
+NOTICE = "Synthetic preview: the operation is blocked; models and the private database are off."
 
 
 def source_hashes():
@@ -78,7 +78,7 @@ class PreviewBroker(BrokerClient):
         with self._lock:
             status = cockpit_status(self.settings)
             if not status.get("available"):
-                raise BrokerError(503, "Syntetyczny serwer podglądu nie odpowiada.")
+                raise BrokerError(503, "The synthetic preview server does not answer.")
             self._connect(status)
             return status
 
@@ -195,7 +195,7 @@ def create_preview_app(settings, scenario="normal", *, fixture=None):
         if request.method not in {"GET", "HEAD"} and path not in {"/_control/ticket", "/auth/exchange"}:
             response = JSONResponse({"detail": NOTICE}, status_code=403)
         elif path.startswith("/api/") and fixture.scenario == "offline":
-            response = JSONResponse({"detail": "Syntetyczna awaria połączenia."}, status_code=503)
+            response = JSONResponse({"detail": "Synthetic connection failure."}, status_code=503)
         else:
             if path.startswith("/api/") and fixture.scenario == "slow":
                 await asyncio.sleep(1.5)

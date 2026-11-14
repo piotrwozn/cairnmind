@@ -307,6 +307,10 @@ CATALOG = {
 # Existing memory workflows retain their labels as aliases while sharing the
 # same catalog. This only translates explicit UI text, never record content.
 LEGACY = {
+    # What workspace_state raises, its code first for the callers that check it (#161). The Polish sentence
+    # comes last: of two aliases of one English text the last is its Polish text (CATALOG below).
+    "stale_workspace_revision: read the current state and try again.":
+        "Workspace changed. Refresh its current state and try again.",
     "stale_workspace_revision: odczytaj bieżący stan i ponów operację.":
         "Workspace changed. Refresh its current state and try again.",
     "Pracuj": "Start work", "Podgląd": "Preview", "Dodaj": "Add folder", "Loguj": "Connections",
@@ -587,6 +591,16 @@ CATALOG.update({
         "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
         "XDG_DATA_HOME. Serwer, którego program, argument lub wartość wskazuje ścieżkę w katalogu tego "
         "projektu, nie zostanie uruchomiony.",
+    "A historical version cannot be reviewed.": "Wersja historyczna nie podlega ocenie.",
+    "Raw record": "Surowy zapis",
+    # The keys on the border of the active view (workspace.border_hint, #161).
+    "C-b Space: menu · C-b ?: help · C-b d: detach": "C-b Spacja: menu · C-b ?: pomoc · C-b d: odłącz",
+    "C-b ?: help": "C-b ?: pomoc", "Read only · C-b d: detach": "Tylko odczyt · C-b d: odłącz",
+    "C-b d: detach": "C-b d: odłącz",
+    # Why a kept ACK went stale, beside "stale" in the pane's border (workspace.STALE_WORDS, #161).
+    "memory changed after ACK": "pamięć zmieniona po ACK", "new packet without ACK": "nowy pakiet bez ACK",
+    "ACK does not match packet": "ACK nie pasuje do pakietu", "scope cannot be read": "nie można odczytać zakresu",
+    "session continuity broken": "przerwana ciągłość sesji",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 for _en, _pl in CATALOG.items():
