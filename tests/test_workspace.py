@@ -254,3 +254,25 @@ def test_detach_preserves_ui_and_stop_only_targets_explicitly_adopted_runs(manag
     assert result["clients_stopped"] == (["adopted"] if stop_clients else [])
     assert not any("unrelated" in path for _, path, _ in broker.calls)
     assert [path for method, path, _ in broker.calls if method == "POST"] == (["/api/client-runs/adopted/stop"] if stop_clients else [])
+
+
+def test_stop_with_clients_skips_ended_runs_and_saves_what_it_stopped(manager, monkeypatch):
+    # #154: every ended run was reported as client_stop_unavailable, and the saved slots still said running.
+    from cairnmind import workspace as module
+    workspace, broker, project = manager
+    workspace.create(start_supervisor=False)
+    base = {"generation": 1, "client": "codex", "profile_id": "codex", "project_id": project["id"],
+            "worktree": project["root"], "purpose": "coding"}
+    broker.value["runs"] = [{**base, "id": "live", "slot_id": "first", "lifecycle": "running"},
+                            {**base, "id": "ended", "slot_id": "second", "lifecycle": "exited"}]
+    workspace._adopt(["ended", "live"])
+    workspace.state.update({"slots": [{"id": "first", "profile_id": "codex", "run_id": "live", "lifecycle": "running"},
+                                      {"id": "second", "profile_id": "claude", "run_id": "ended", "lifecycle": "running"}]})
+    monkeypatch.setattr(module, "WorkspaceManager", lambda *args, **kwargs: workspace)
+    result = module.stop_workspace(workspace.settings, stop_clients=True)
+    assert result["errors"] == [] and result["clients_stopped"] == ["live"]
+    assert result["clients_already_ended"] == ["ended"]
+    assert [path for method, path, _ in broker.calls if method == "POST"] == ["/api/client-runs/live/stop"]
+    saved = workspace.state.read()
+    assert [slot["lifecycle"] for slot in saved["slots"]] == ["exited", "exited"]
+    assert saved["run_ids"] == []

@@ -886,16 +886,41 @@ def detach_workspace(settings):
     return {"detached": True, "available": True}
 
 
+_ENDED = {"exited", "failed", "interrupted"}
+
+
+def _forget_finished(manager, finished):
+    """Save what the stop did: the supervisor that would have refreshed the slots is stopped with it (#154)."""
+    manager.state.merge_ids("run_ids", remove=list(finished))
+    for _ in range(5):
+        current = manager.state.read()
+        slots = [{**slot, "lifecycle": finished[slot["run_id"]]} if slot.get("run_id") in finished else slot
+                 for slot in current["slots"]]
+        try:
+            manager.state.update({"slots": slots}, expected_revision=current["revision"])
+            return
+        except ValueError as error:
+            if "stale_workspace_revision" not in str(error):
+                raise
+
+
 def stop_workspace(settings, stop_clients=False):
     manager = WorkspaceManager(settings)
     current = manager.state.read()
-    stopped, errors = [], []
+    stopped, ended, errors, finished = [], [], [], {}
     if stop_clients:
         for run_id in current["run_ids"]:
             try:
                 run = manager.broker.request("GET", "/api/client-runs/" + run_id)
-                manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop", json={"generation": run["generation"]})
+                if run.get("lifecycle") in _ENDED:
+                    # Its process has already ended: there is nothing to stop, and that is not an error.
+                    ended.append(run_id)
+                    finished[run_id] = run["lifecycle"]
+                    continue
+                result = manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop", json={"generation": run["generation"]})
                 stopped.append(run_id)
+                lifecycle = result.get("lifecycle") if isinstance(result, dict) else None
+                finished[run_id] = lifecycle if lifecycle in _ENDED else "exited"
             except Exception:
                 errors.append({"run_id": run_id, "code": "client_stop_unavailable"})
     running = manager.exists()
@@ -907,8 +932,10 @@ def stop_workspace(settings, stop_clients=False):
             os.kill(info["pid"], signal.SIGTERM)
         except ProcessLookupError:
             pass
+    if finished:
+        _forget_finished(manager, finished)
     manager.close()
-    return {"stopped": running, "clients_stopped": stopped, "errors": errors}
+    return {"stopped": running, "clients_stopped": stopped, "clients_already_ended": ended, "errors": errors}
 
 
 def show_auth(settings, client, workspace_id="default"):
