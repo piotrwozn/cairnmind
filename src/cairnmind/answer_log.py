@@ -85,18 +85,6 @@ def _locked(settings, project_id: str, create: bool):
         os.close(fd)
 
 
-def _redact(value, secrets: list[str]):
-    if isinstance(value, str):
-        for secret in secrets:
-            value = value.replace(secret, "[REDACTED]")
-        return value
-    if isinstance(value, dict):
-        return {key: _redact(item, secrets) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact(item, secrets) for item in value]
-    return value
-
-
 def _counters(calls) -> list[dict]:
     keep = ("phase", "done_reason", "prompt_eval_count", "eval_count", "total_duration")
     return [{key: call[key] for key in keep if key in call} for call in (calls or [])[:8] if isinstance(call, dict)]
@@ -124,9 +112,10 @@ def make_entry(settings, project_id: str, question: str, result: dict, *, worktr
         "timings": {"elapsed_seconds": result.get("elapsed_seconds"),
                     "model_calls": _counters(diagnostics.get("model_calls"))},
     }
-    secrets = sorted({value for value in (getattr(settings, "token", ""), getattr(settings, "arcade_password", ""))
-                      if isinstance(value, str) and len(value) >= 8}, key=len, reverse=True)
-    return _redact(entry, secrets)
+    # The agent journal's rule: any non-empty credential, a truncated one at the end of a string, and
+    # sensitive field names. A value that is not JSON raises ValueError, and the answer is not logged.
+    from cairnmind.agent_journal import redact_secrets
+    return redact_secrets(entry, (getattr(settings, "token", None), getattr(settings, "arcade_password", None)))
 
 
 def _line(entry: dict) -> bytes:
@@ -178,10 +167,14 @@ def append(settings, entry: dict) -> bool:
         return False
     with _locked(settings, entry["project_id"], create=True) as folder:
         path = folder / "answers.jsonl"
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         with os.fdopen(fd, "ab") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):
                 raise ValueError(f"{path} is not a regular file")
+            if info.st_size and os.pread(handle.fileno(), 1, info.st_size - 1) != b"\n":
+                # An earlier write was cut short: end its fragment so it does not swallow this entry.
+                line = b"\n" + line
             handle.write(line)
             size = handle.tell()
         if size > MAX_LOG_BYTES:

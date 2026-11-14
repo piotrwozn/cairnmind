@@ -809,7 +809,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                                           answer_schema=answer_schema, code=code, model_digest=digest)
             if not await asyncio.to_thread(answer_log.append, settings, entry):
                 log.warning("An answer was too large for the answer log and was not kept")
-        except (OSError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - the answer was sent; a log failure is only a warning
             log.warning("The answer log could not be written: %s", exc)
 
     @app.post("/ask", dependencies=auth)

@@ -1,6 +1,7 @@
 """The opt-in answer log of `ask` and the replay that compares evidence, not wording (issue #15)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import stat
@@ -223,6 +224,83 @@ def test_cli_asks_with_log_lists_shows_prunes_and_replays(tmp_path, monkeypatch)
     pruned = runner.invoke(app, [*base, "answers", "prune", "demo", "--keep", "0"])
     assert pruned.exit_code == 0 and json.loads(pruned.output)["removed"] == 1
     assert runner.invoke(app, [*base, "eval", "replay", "demo", "--report-dir", str(tmp_path / "r")]).exit_code == 3
+
+
+def test_replay_asks_without_the_launched_session_and_keeps_a_refusal_as_its_reason(tmp_path, monkeypatch):
+    import httpx
+    from cairnmind import cli
+    settings = Settings.load(tmp_path / "memory", create=True)
+    answer_log.append(settings, {**_entry(settings, "Logged?"), "worktree": "/repo/wt"})
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(400, json={"detail": "Requested read worktree differs from session scope"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(cli, "ensure_service", lambda settings: None)
+    monkeypatch.setattr(cli, "session_value", lambda name: "agent-session-1")
+    monkeypatch.setattr(cli, "store_for_read", lambda settings: type(
+        "P", (), {"resolve_project": lambda self, value: {"id": "p1"}})())
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "eval", "replay", "demo",
+                                          "--report-dir", str(tmp_path / "r")])
+    assert result.exit_code == 1, result.output
+    # The logged scope is asked for, not the launched agent's session.
+    assert sent == [{"project": "p1", "question": "Logged?", "worktree": "/repo/wt", "log": False}]
+    [row] = json.loads(result.output)["answers"]
+    assert row["verdict"] == "not_asked" and row["reason"] == "Requested read worktree differs from session scope"
+    # Other commands still send the session.
+    with pytest.raises(cli.ServiceRefusal):
+        cli.request(settings, "POST", "/ask", json={"question": "Q?"}, raise_refusal=True)
+    assert sent[-1]["session_id"] == "agent-session-1"
+
+
+def test_a_cut_off_last_line_does_not_swallow_the_next_entry(tmp_path):
+    settings = Settings(data_dir=tmp_path)
+    answer_log.append(settings, _entry(settings, "First?"))
+    with answer_log.log_path(settings, "p1").open("ab") as handle:
+        handle.write(b'{"format_version":1,"id":"cut')
+    answer_log.append(settings, _entry(settings, "Second?"))
+    entries, unreadable = answer_log.read_entries(settings, "p1")
+    assert [entry["question"] for entry in entries] == ["First?", "Second?"] and unreadable == 1
+
+
+def test_redaction_follows_the_agent_journal_rule(tmp_path):
+    settings = Settings(data_dir=tmp_path, token="t" * 40, arcade_password="pw1")
+    result = {"status": "complete", "answer": "Ends with a cut token " + "t" * 20,
+              "sources": [{"id": "s", "uri": "a.py", "sha256": "1" * 64, "quote": "password pw1 here"}]}
+    entry = answer_log.make_entry(settings, "p1", "Q?", result)
+    assert entry["answer"] == "Ends with a cut token [REDACTED]"
+    assert entry["sources"][0]["quote"] == "password [REDACTED] here"
+
+
+def test_a_queue_timeout_is_logged(workspace, monkeypatch):
+    settings, _, project, _ = workspace
+    settings.ask_timeout = -4.9  # the service waits ask_timeout + 5 seconds for the inference queue
+
+    async def busy_queue(self, operation, priority=0):
+        await asyncio.sleep(30)  # other work holds the model: the answer never leaves the queue
+
+    monkeypatch.setattr("cairnmind.service.InferenceQueue.submit", busy_queue)
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    with TestClient(create_app(settings, start_worker=False, ollama=LocalModel())) as client:
+        response = client.post("/ask", json={"project": "demo", "question": "Where?", "log": True}, headers=headers)
+        assert response.status_code == 200 and response.json()["diagnostics"]["code"] == "queue_timeout"
+    [entry] = answer_log.read_entries(settings, project["id"])[0]
+    assert entry["diagnostic_code"] == "queue_timeout" and entry["status"] == "partial" and entry["code"]["head"]
+
+
+def test_an_unexpected_log_error_is_only_a_warning(workspace, monkeypatch, caplog):
+    settings = workspace[0]
+
+    def broken(*args, **kwargs):
+        raise TypeError("not JSON")
+
+    monkeypatch.setattr(answer_log, "make_entry", broken)
+    with caplog.at_level("WARNING"):
+        assert _ask(settings, {"project": "demo", "question": "Where is authenticate?", "log": True})["status"] == "complete"
+    assert "answer log could not be written" in caplog.text
 
 
 def test_forgetting_a_project_deletes_its_answer_log(workspace):
