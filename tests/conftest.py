@@ -32,6 +32,7 @@ import sys
 import threading
 from urllib.parse import quote
 import uuid
+import zlib
 
 import pytest
 
@@ -50,7 +51,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_runtime_pane", "test_runtime_selection", "test_sample_memory", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
     "test_terminal_ux080", "test_usage", "test_workspace","test_workspace_cli", "test_workspace_locale",
-    "test_workspace_state", "test_workspace_ux080", "test_workspace_focus_column",
+    "test_workspace_state", "test_workspace_ux080", "test_workspace_focus_column", "test_shards",
 })
 
 TMUX_MODULES = frozenset({
@@ -110,6 +111,27 @@ def pytest_configure(config):
     MCP_FIXTURE = str(copy)
 
 
+def pytest_addoption(parser):
+    parser.addoption("--shard", default="", metavar="I/N",
+                     help="Run only part I of N of the suite. The N parts are disjoint and together are the whole suite.")
+
+
+def shard_of(value: str) -> tuple[int, int]:
+    """`I/N` as (I, N); an empty value is the whole suite, (1, 1)."""
+    if not value:
+        return 1, 1
+    index, _, count = value.partition("/")
+    if not (index.isdecimal() and count.isdecimal() and 1 <= int(index) <= int(count) <= 64):
+        raise pytest.UsageError("--shard takes I/N with 1 <= I <= N <= 64, for example 2/4")
+    return int(index), int(count)
+
+
+def in_shard(nodeid: str, index: int, count: int) -> bool:
+    """Whether a test belongs to part `index` of `count`: decided by its id alone, so every process of a
+    run (the xdist controller and each worker) and every job of a CI run agree without talking."""
+    return zlib.crc32(nodeid.encode()) % count == index - 1
+
+
 def pytest_collection_modifyitems(config, items):
     for item in items:
         module = Path(str(item.fspath)).stem
@@ -119,6 +141,12 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.tmux)
         if module in EXCLUSIVE_MODULES:
             item.add_marker(pytest.mark.exclusive)
+    index, count = shard_of(config.getoption("--shard"))
+    if count > 1:
+        dropped = [item for item in items if not in_shard(item.nodeid, index, count)]
+        if dropped:
+            items[:] = [item for item in items if in_shard(item.nodeid, index, count)]
+            config.hook.pytest_deselected(items=dropped)
 
 
 def is_xdist_worker(config) -> bool:
