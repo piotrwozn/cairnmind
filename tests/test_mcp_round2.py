@@ -20,7 +20,7 @@ from cairnmind.mcp_schema import admit
 from cairnmind.mcp_servers import inside_worktree, server_directory
 from cairnmind.retrieval import Retriever
 from cairnmind.sessions import format_packet
-from conftest import MCP_FIXTURE, mcp_fixture_processes
+from conftest import MCP_FIXTURE, mcp_fixture_processes, time_budget
 from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup
 from test_impact_verdicts import changed as changed, entry, workspace as workspace
 from test_mcp_agent import acked, agent, events, names, results, server
@@ -247,7 +247,7 @@ def test_schemas_that_make_checking_expensive_are_refused():
     from jsonschema import Draft202012Validator
     started = time.perf_counter()
     assert Draft202012Validator(schema).is_valid(worst)
-    assert time.perf_counter() - started < 1
+    assert time.perf_counter() - started < time_budget(1)
 
 
 @pytest.mark.asyncio
