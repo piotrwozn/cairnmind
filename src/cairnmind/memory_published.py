@@ -16,6 +16,8 @@ from pathlib import Path
 
 from .memory_paths import PUBLISHED_RELATIVE
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
+from .memory_published_release import SecretsRefused, publication_rules, release_sources
+from .memory_published_secrets import described
 from .memory_published_format import (
     GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, canonical_uuid, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
     clean_value, derive_covered, derive_plan_covered, path_of, plan_hash, projection, ref_class, render, same,
@@ -24,8 +26,8 @@ from .memory_published_format import (
 from .sql import clean_row, one_row, update_document
 from .store import degraded_origin
 
-# Publishing writes files that a person commits. Until the secrets gate of #171 refuses registered
-# secrets and private keys, writing stays behind this switch; previews, checks and imports do not.
+# Writing stayed behind this switch until the secrets gate of #171 refused registered secrets and private
+# keys. It is no longer read; the name is kept for scripts and tests that still set it.
 PUBLICATION_SWITCH = "CAIRNMIND_ENABLE_PUBLICATION"
 _BATCH = 500
 
@@ -46,7 +48,7 @@ def source_ref(source, root):
     metadata = source.get("metadata") or {}
     if source["kind"] == "published":
         ref = metadata.get("published")
-        return ref, (source["content"] if ref_class(ref) in ("note", "review") else None)
+        return ref, (source["content"] if ref_class(ref) in ("note", "review", "release") else None)
     at, uri = source["created_at"], str(source.get("uri", ""))
     if source["kind"] in ("code", "document", "file"):
         path = metadata.get("relative_path")
@@ -64,6 +66,8 @@ def source_ref(source, root):
                         "commit": metadata.get("commit"), "kind": "note", "origin": "workspace_form"}, source["content"]
     elif uri.startswith("review://") and metadata.get("origin") == "local_user_review":
         ref, passage = {"at": at, "kind": "review"}, source["content"]
+    elif uri.startswith("release://") and metadata.get("origin") == "local_user_release":
+        ref, passage = {"at": at, "kind": "release"}, source["content"]  # A person's release (#171).
     elif source["kind"] == "plan":
         ref, passage = {"at": at, "kind": "plan"}, None
     else:
@@ -241,6 +245,8 @@ class Publisher:
             if authorize is not None:
                 authorize()
             records, versions, plans, plan_revisions, audits, sources = self._collect(tx, project_id)
+            releases = release_sources(tx, project_id)
+        sources.update({s: row for rows in releases.values() for s, row in rows.items()})
         cache = {}
 
         def refs(source_id):
@@ -255,9 +261,11 @@ class Publisher:
         histories, held, heads = {}, {}, {r["id"]: r for r in records}
 
         def model_of(kind, identifier, created_at, key, entries):
-            cited = sorted({s for entry in entries for s in entry["sources"]})
+            cited = {s for entry in entries for s in entry["sources"]}
+            if kind != "plan":
+                cited |= set(releases.get(identifier, ()))  # Releases travel beside the sources, cited by no revision.
             return {"kind": kind, "id": identifier, "created_at": created_at,
-                    "sources": {s: as_source(s) for s in cited}, key: entries}
+                    "sources": {s: as_source(s) for s in sorted(cited)}, key: entries}
 
         for record in records:
             try:
@@ -339,19 +347,19 @@ class Publisher:
                     and record_id not in [s[0] for s in definitions[plan][-1]["steps"]])
 
     def publish(self, project_id, worktree=None, *, preview=False, authorize=None):
-        if not preview and os.environ.get(PUBLICATION_SWITCH) != "1":
-            raise ValueError("Publishing team memory is switched off until the secrets gate (#171) exists; "
-                             "use --preview to see what would be written")
         from .memory import MemoryConflict, _sync_directory, _write_whole
         with self._lock(project_id):
             built = self.build(project_id, worktree, authorize)
             folder, files, project = built["folder"], built["files"], built["project"]
+            # The secrets gate (#171), before any file is written: refuse, never mask, and print no value.
+            rules = publication_rules(built["root"], self.store.settings)
             hits = scan({"records": {m["id"]: m for m in built["models"] if m["kind"] != "plan"},
                          "plans": {m["id"]: m for m in built["models"] if m["kind"] == "plan"},
-                         "paths": {m["id"]: path_of(m) for m in built["models"]}})
+                         "paths": {m["id"]: path_of(m) for m in built["models"]}}, rules)
             if hits:
-                raise MemoryConflict("Publishing refused: " + "; ".join(
-                    f"{hit['kind']} in {hit['field']} of {hit['path']}" for hit in hits))
+                raise SecretsRefused("Publishing refused, nothing was written: " + "; ".join(
+                    described(hit) for hit in hits[:50]) + (f"; and {len(hits) - 50} more" if len(hits) > 50 else "")
+                    + ". Remove the value, or read the record and release it with `cairnmind memory release`.")
             if any(p.is_symlink() for p in (built["root"] / ".memory", folder)):
                 raise ValueError("Memory publication needs a real project directory")
             existing, errors = read_tree(folder) if folder.exists() else ({}, [])
@@ -359,7 +367,7 @@ class Publisher:
                 raise MemoryConflict("The published memory cannot be read: " + _listing(errors))
             identity = project.get("publication_id")
             if "FORMAT.json" in existing:
-                tree, errors = check_files(existing)
+                tree, errors = check_files(existing, rules)
                 if errors:
                     raise MemoryConflict("The published memory is invalid; fix or import it first: " + _listing(errors))
                 if tree["project_id"] != identity:
@@ -371,7 +379,7 @@ class Publisher:
             merged = {**existing, **files, "FORMAT.json": existing.get("FORMAT.json", format_bytes(identity)),
                       ".gitattributes": existing.get(".gitattributes", GITATTRIBUTES),
                       ".gitignore": existing.get(".gitignore", GITIGNORE)}
-            _, errors = check_files(merged)
+            _, errors = check_files(merged, rules)
             if errors:
                 raise MemoryConflict("Publishing would leave an invalid tree: " + _listing(errors))
             changed = sorted(path for path, data in merged.items() if existing.get(path) != data)
