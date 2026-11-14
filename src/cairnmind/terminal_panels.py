@@ -42,6 +42,24 @@ class ConfirmModal(MessageModal):
                 yield Button(self.t("Cancel"), id="confirm-no")
             yield Static(self.t("PgUp/PgDn: scroll · Esc: cancel"), classes="cm-hint", markup=False)
 
+    def fit_dialog(self):
+        super().fit_dialog()
+        self.call_after_refresh(self.spare_hint_row)
+
+    def spare_hint_row(self):
+        """On a short terminal the key-hint row goes to the request when that one row is what keeps
+        the whole request and its note on screen at once. Nothing of the request is ever cut."""
+        try:
+            body, hint = self.query_one(".cm-dialog-body"), self.query_one(".cm-hint")
+        except Exception:
+            return
+        rows = self.app.size.height - (self.BODY_CHROME - 5)
+        spare = (terminal_theme.is_short(self.app) and self.app.size.width >= terminal_theme.NARROW_WIDTH
+                 and body.virtual_size.height == rows + 1)
+        hint.display = not spare
+        if spare:
+            body.styles.max_height = rows + 1
+
     @on(Button.Pressed)
     def confirm_button(self, event):
         if event.button.id in {"confirm-yes", "confirm-no"}:
