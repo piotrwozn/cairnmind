@@ -390,6 +390,14 @@ class BasePanel(App):
         finally:
             self._notice_about = None
 
+    def notice_elsewhere(self, about, value, kind="info") -> None:
+        """A notice about a project that is not shown now: kept in Notices under that project, with the
+        mark, and never put on the notice line over the shown project's own text."""
+        with suppress(Exception):
+            self.notice_history.add(plain(self.t(value)).plain, about, kind, on_line=False)
+            self.show_notice_mark()
+        self.publish_notices(later=True)
+
     def show_notice_mark(self) -> None:
         """A small mark in its own line, so the notice text itself is never changed."""
         with suppress(Exception):

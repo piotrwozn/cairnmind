@@ -102,6 +102,48 @@ async def test_new_ollama_profile_saved_without_model_request_or_client_start(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("identifier,advanced,title", [
+    ("+", False, "Add connection"), ("api-p", False, "Edit connection"),
+    ("api-p", True, "Advanced limits and credentials")])
+async def test_the_connection_form_title_says_what_it_does(tmp_path, monkeypatch, identifier, advanced, title):
+    settings, inner, workspace = setup(tmp_path, monkeypatch)
+    broker = ProfileBroker(inner, [{"id": "api-p", "label": "API", "client": "api", "provider": "openai"}])
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    titles = []
+
+    async def choose(screen):
+        if isinstance(screen, FormModal):
+            titles.append(screen.title_text)
+            return None
+        return "ollama"  # the connection type of a new one
+    monkeypatch.setattr(app, "push_screen_wait", choose)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.edit_profiles(identifier, advanced=advanced)
+        await settle(app, pilot)
+    assert titles == [title]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choice,title", [("language", "Language"), ("view", "Layout"),
+                                          ("reduced_motion", "Reduce motion")])
+async def test_a_setting_picker_is_titled_with_the_setting(tmp_path, monkeypatch, choice, title):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    headings = []
+
+    async def choose(screen):
+        headings.append(screen.heading)
+        return choice if len(headings) == 1 else None
+    monkeypatch.setattr(app, "push_screen_wait", choose)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.action_settings()
+        await settle(app, pilot)
+    assert headings == ["Settings", title]
+
+
+@pytest.mark.asyncio
 async def test_probe_cancel_never_calls_provider_and_confirm_calls_once(tmp_path, monkeypatch):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     profile = {"id": "api-p", "label": "API", "client": "api", "provider": "openai"}
