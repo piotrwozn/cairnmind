@@ -67,6 +67,7 @@ def manager(tmp_path, monkeypatch):
     idle = shlex.join([sys.executable, "-c", "import time; print('SAFE_UI_VIEW',flush=True); time.sleep(120)"])
     monkeypatch.setattr(manager, "_panel", lambda role: idle)
     monkeypatch.setattr(manager, "_bridge_command", lambda *args: idle)
+    monkeypatch.setattr(manager, "_activity_command", lambda *args: idle)  # the activity column (#144)
     try:
         yield manager, broker, project
     finally:

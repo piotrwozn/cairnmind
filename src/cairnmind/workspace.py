@@ -23,8 +23,10 @@ from .cockpit_state import CockpitState, _atomic, _private_directory, _private_l
 from .config import SESSION_NAMES, Settings, drop_env
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
+from . import workspace_activity as column
 from .terminal_theme import TMUX
-from .workspace_state import WorkspaceState
+from .workspace_activity import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH  # noqa: F401 (re-exported)
+from .workspace_state import UI_COMMANDS, WorkspaceState
 
 SESSION = "cairnmind-ui"
 MINIMUM = (140, 42)
@@ -172,6 +174,7 @@ class WorkspaceManager:
         self._broker_state = None
         self._last_layout = None
         self._last_focus = None
+        self._activity_restarted = float("-inf")
         self._last_status = None
 
     @property
@@ -234,16 +237,20 @@ class WorkspaceManager:
         except (OSError, subprocess.SubprocessError, ValueError):
             return False
 
-    def panes(self):
+    def panes(self, roles=_ROLES):
         if not self.exists():
             return {}
         result = self.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{window_name}")
         found = {}
         for line in result.stdout.splitlines():
             parts = line.split("\t")
-            if len(parts) == 4 and parts[1] == self.workspace_id and parts[2] in _ROLES:
+            if len(parts) == 4 and parts[1] == self.workspace_id and parts[2] in roles:
                 found[parts[2]] = parts[0]
         return found
+
+    def activity_pane(self):
+        """The activity column, which is not one of the five views (no focus stop, no key of its own)."""
+        return self.panes(("activity",)).get("activity")
 
     def clients(self):
         """Inspect only clients of this positively identified private session."""
@@ -331,6 +338,10 @@ class WorkspaceManager:
         return shlex.join([sys.executable, "-I", "-m", "cairnmind.terminal_panels", "--kind", role,
                            "--workspace-id", self.workspace_id, "--data-dir", str(self.settings.data_dir)])
 
+    def _activity_command(self, *popup):
+        return shlex.join([sys.executable, "-I", "-m", "cairnmind.terminal_panels", "--kind", "activity",
+                           "--workspace-id", self.workspace_id, "--data-dir", str(self.settings.data_dir), *popup])
+
     def _tag(self, pane, role, run_id=None):
         self.tmux("set-option", "-p", "-t", pane, "@cairnmind_workspace", self.workspace_id)
         self.tmux("set-option", "-p", "-t", pane, "@cairnmind_role", role)
@@ -376,13 +387,14 @@ class WorkspaceManager:
     def _recover_ui_panels(self):
         # Only an explicit launch/create retries crashed views. Reconciliation
         # never loops on a failing UI, and client/native panes are untouched.
-        for role, pane in self.panes().items():
-            if role not in {"sidebar", "inspector", "graph"}:
+        for role, pane in self.panes((*_ROLES, "activity")).items():
+            if role not in {"sidebar", "inspector", "graph", "activity"}:
                 continue
             identity = self.tmux("display-message", "-p", "-t", pane,
                                  "#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{pane_dead}").stdout.strip()
             if identity == f"{self.workspace_id}\t{role}\t1":
-                self.tmux("respawn-pane", "-k", "-t", pane, self._panel(role))
+                self.tmux("respawn-pane", "-k", "-t", pane,
+                          self._activity_command() if role == "activity" else self._panel(role))
                 self._tag(pane, role)
 
     def _bindings(self):
@@ -397,6 +409,7 @@ class WorkspaceManager:
         self.tmux("bind-key", "?", "run-shell", self._command("--help-popup", *client))
         # The form is a popup process of its own: typed text never enters this command line.
         self.tmux("bind-key", "n", "run-shell", self._command("--finding", *client))
+        self.tmux("bind-key", "a", "run-shell", self._command("--activity", *client))
         self.tmux("bind-key", "Tab", "run-shell", self._command("--next-view"))
         self.tmux("bind-key", "[", "copy-mode")
 
@@ -526,8 +539,9 @@ class WorkspaceManager:
                         reconnect()
                     except Exception:
                         pass
-            self._reconcile_views(selected)
-            self._layout()
+            with _private_lock(self.directory / "layout.lock"):
+                self._reconcile_views(selected)
+                self._arrange()
             self._update_status(self.state.read())
         return self.status()
 
@@ -593,8 +607,19 @@ class WorkspaceManager:
         self._save_if_current(selected, {"pane_ids": panes})
 
     def _layout(self):
-        panes = self.panes()
-        if not panes:
+        # Every process that arranges panes (the supervisor, each key) takes this lock: the
+        # activity column is created and killed here, and two processes must never both do it.
+        with _private_lock(self.directory / "layout.lock"):
+            self._arrange()
+
+    def _arrange(self):
+        found = column.rows(self)  # one query; the activity column is not a view
+        columns = [(pane, dead) for pane, role, dead in found if role == "activity"]
+        for extra, _ in columns[:-1]:  # one column only, whatever left a second one behind
+            self.tmux("kill-pane", "-t", extra, check=False)
+        current, dead = columns[-1] if columns else (None, False)
+        panes = {role: pane for pane, role, _ in found if role != "activity"}
+        if "sidebar" not in panes:
             return
         selected = self.state.read()
         dimensions = self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_width} #{window_height} #{window_zoomed_flag}").stdout.split()
@@ -603,8 +628,11 @@ class WorkspaceManager:
         # window_height excludes the two persistent status rows; MINIMUM is
         # the user's complete terminal geometry, not just the pane area.
         compact = preference == "focus" or width < MINIMUM[0] or height + 2 < MINIMUM[1]
-        layout = (width, height, len(panes), compact)
+        activity = self._reconcile_activity(panes["sidebar"], current, dead, column.wanted(compact, width))
+        if activity != current:  # adding or removing a pane unzooms the window
+            zoomed = int(self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_zoomed_flag}").stdout.strip() or 0)
         focus = panes.get(selected["focus"], panes.get("client1", panes["sidebar"]))
+        layout = (width, height, len(panes), compact, activity)
         changed_focus = selected["focus"] != self._last_focus
         if compact:
             if changed_focus and zoomed:
@@ -621,7 +649,10 @@ class WorkspaceManager:
             # views within their own window; native panes are on another socket.
             self.tmux("select-layout", "-t", panes["sidebar"], "main-vertical")
             self.tmux("set-option", "-w", "-t", panes["sidebar"], "main-pane-width", "24")
-            self._apply_layout(panes, width, height)
+            if column.order(self, panes["sidebar"], [panes[role] for role in column.ORDER if role in panes] + [activity] * bool(activity)):
+                self._apply_layout(panes, width, height, activity)
+            else:
+                layout = None  # a pane this code does not know is in the window: try again later
             self.tmux("select-pane", "-t", focus)
             if selected["zoom"]:
                 self.tmux("resize-pane", "-Z", "-t", focus)
@@ -634,12 +665,29 @@ class WorkspaceManager:
         if selected["layout"] != ("compact" if compact else "wide"):
             self._save_if_current(selected, {"layout": "compact" if compact else "wide"})
 
-    def _apply_layout(self, panes, width, height):
+    def _reconcile_activity(self, window, pane, dead, wanted):
+        """Create, restart or kill the activity column; a pane that is not wanted does not exist at all."""
+        if wanted and pane is not None and dead:
+            # Started again in place (never moved), and not in a tight loop if it ends at once.
+            if time.monotonic() - self._activity_restarted >= column.RESPAWN_PAUSE:
+                self._activity_restarted = time.monotonic()
+                self.tmux("respawn-pane", "-k", "-t", pane, self._activity_command(), check=False)
+                self._tag(pane, "activity")
+        elif wanted and pane is None:
+            pane = self.tmux("split-window", "-d", "-h", "-f", "-l", str(ACTIVITY_WIDTH), "-t", window,
+                             "-P", "-F", "#{pane_id}", self._activity_command()).stdout.strip()
+            self._tag(pane, "activity")
+        elif not wanted and pane is not None:
+            self.tmux("kill-pane", "-t", pane, check=False)  # already gone counts as removed
+            pane = None
+        return pane
+
+    def _apply_layout(self, panes, width, height, activity=None):
         # tmux custom layout grammar: checksum, WxH,X,Y{horizontal children} or
         # [vertical children]. Pane IDs are server-assigned and never shell text.
         available = height
         left = 24
-        right = width - left - 1
+        right = width - left - 1 - (ACTIVITY_WIDTH + 1 if activity else 0)
         top = max(5, round((available - 1) * .58))
         bottom = available - top - 1
         first_width = (right - 1) // 2 if "client2" in panes else right
@@ -652,13 +700,10 @@ class WorkspaceManager:
                      leaf("client2", right - first_width - 1, top, left + first_width + 2, 0) + "}")
         lower = (f"{right}x{bottom},{left + 1},{top + 1}{{" + leaf("inspector", inspector_width, bottom, left + 1, top + 1) + "," +
                  leaf("graph", right - inspector_width - 1, bottom, left + inspector_width + 2, top + 1) + "}")
+        edge = (f",{ACTIVITY_WIDTH}x{available},{left + right + 2},0,{activity[1:]}" if activity else "")
         description = (f"{width}x{available},0,0{{" + leaf("sidebar", left, available, 0, 0) + "," +
-                       f"{right}x{available},{left + 1},0[" + upper + "," + lower + "]}")
-        checksum = 0
-        for byte in description.encode():
-            checksum = (checksum >> 1) + ((checksum & 1) << 15)
-            checksum = (checksum + byte) & 0xffff
-        self.tmux("select-layout", "-t", panes["sidebar"], f"{checksum:04x}," + description)
+                       f"{right}x{available},{left + 1},0[" + upper + "," + lower + "]" + edge + "}")
+        self.tmux("select-layout", "-t", panes["sidebar"], column.with_checksum(description))
 
     def focus(self, role):
         if role not in _ROLES:
@@ -712,6 +757,18 @@ class WorkspaceManager:
         # bounded timeout used for ordinary tmux queries.
         self.tmux("display-popup", "-c", owner["tty"], "-E", "-w", "90%", "-h", "85%",
                   self._command(*arguments), timeout=None)
+
+    def open_activity(self, *, client_pid=None, client_tty=None):
+        """Ctrl+B a: focus the activity column when it is on screen, otherwise open it as a popup."""
+        owner = self._owner(client_pid, client_tty)
+        pane = self.activity_pane()
+        # A zoomed window hides the column, and a column whose process ended shows nothing: the popup then.
+        if pane is not None and self.tmux("display-message", "-p", "-t", pane,
+                                          "#{window_zoomed_flag} #{pane_dead}").stdout.strip() == "0 0":
+            self.tmux("select-pane", "-t", pane)
+            return
+        self.tmux("display-popup", "-c", owner["tty"], "-E", "-w", "90%", "-h", "85%",
+                  self._activity_command("--popup"), timeout=None)
 
     def open_finding(self, *, client_pid=None, client_tty=None):
         """The quick finding form, opened like the palette for the terminal that pressed the key."""
@@ -912,7 +969,8 @@ def main():
     parser.add_argument("--finding", action="store_true")
     parser.add_argument("--finding-ui", action="store_true")
     parser.add_argument("--next-view", action="store_true")
-    parser.add_argument("--ui-command", choices=("search", "add_project", "start_work", "connections", "sessions", "memory", "more", "settings"))
+    parser.add_argument("--activity", action="store_true")
+    parser.add_argument("--ui-command", choices=UI_COMMANDS)
     parser.add_argument("--client-pid", type=int)
     parser.add_argument("--client-tty")
     args = parser.parse_args()
@@ -928,6 +986,8 @@ def main():
         run_finding_form(manager, args.client_tty)
     elif args.finding:
         manager.open_finding(client_pid=args.client_pid, client_tty=args.client_tty)
+    elif args.activity:
+        manager.open_activity(client_pid=args.client_pid, client_tty=args.client_tty)
     elif args.next_view:
         manager.next_view()
     elif args.ui_command:

@@ -14,6 +14,10 @@ from .cockpit_state import _atomic, _private_directory, _private_lock, normalize
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _PANES = {"sidebar", "client1", "client2", "inspector", "graph"}
+# The commands a sidebar can be asked to run: what the state accepts, what the command menu sends and
+# what `--ui-command` takes. New ones go last.
+UI_COMMANDS = ("search", "add_project", "start_work", "connections", "sessions", "memory", "ask", "brief",
+               "more", "settings", "next_stage", "notices")
 _FIELDS = {"project_id", "project_name", "worktree", "intent", "work_request", "handled_work_request",
            "selected_entity", "slots", "visible_slot_ids", "run_ids", "focus", "layout", "zoom",
            "pane_ids", "cached_projects", "launch_errors", "last_error", "broker_available", "auth_runs",
@@ -139,8 +143,7 @@ class WorkspaceState:
         if command is not None:
             if (not isinstance(command, dict) or set(command) != {"id", "action", "target_role"}
                     or not isinstance(command["target_role"], str) or command["target_role"] not in {"sidebar", "inspector", "graph"}
-                    or not isinstance(command["action"], str) or command["action"] not in {"search", "add_project", "start_work", "connections", "sessions",
-                                                  "memory", "ask", "brief", "more", "settings", "next_stage", "notices"}):
+                    or not isinstance(command["action"], str) or command["action"] not in UI_COMMANDS):
                 raise ValueError("Invalid workspace command")
             _identifier(command["id"])
         if len(json.dumps(value, allow_nan=False).encode()) > 2 * 1024 * 1024:

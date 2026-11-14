@@ -275,6 +275,7 @@ CATALOG = {
     "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
     "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
     "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
+    "Ctrl+B, then a: activity panel (notices, plans, tasks)\n"
     "Ctrl+B, then [: scroll and copy terminal history (q to leave)\n"
     "Ctrl+B, then d: detach; run cairnmind to return\n"
     "Ctrl+B, then Ctrl+B: send Ctrl+B to the native assistant\n\n"
@@ -287,6 +288,7 @@ CATALOG = {
     "Ctrl+B, potem p / 1 / 2 / i / g: projekty / asystent / drugi asystent / pamięć / graf\n"
     "Ctrl+B, potem Tab: następny widok\nCtrl+B, potem z: powiększ lub przywróć panele\n"
     "Ctrl+B, potem n: zapisz ustalenie w pamięci (Ctrl+S zapisuje, Esc zamyka)\n"
+    "Ctrl+B, potem a: panel aktywności (komunikaty, plany, zadania)\n"
     "Ctrl+B, potem [: przewijaj i kopiuj historię terminala (q wraca)\n"
     "Ctrl+B, potem d: odłącz; uruchom cairnmind, aby wrócić\n"
     "Ctrl+B, potem Ctrl+B: przekaż Ctrl+B do natywnego asystenta\n\n"
@@ -486,6 +488,23 @@ CATALOG.update({
     # Notice history (#130)
     "Notices": "Komunikaty", "No notices yet.": "Brak komunikatów.", "No project": "Brak projektu",
     "Read the notices that were replaced on the notice line": "Przeczytaj komunikaty zastąpione w wierszu komunikatów",
+    # Activity panel (#144)
+    "Activity": "Aktywność", "Running now": "Teraz działa", "In progress": "W toku",
+    "Needs review": "Do przeglądu", "Needs test": "Do testu", "Blocked": "Zablokowane", "To do": "Do zrobienia",
+    "Done recently": "Ostatnio ukończone", "Plans finished recently": "Ostatnio zakończone plany",
+    "Showing {shown} of {total} tasks.": "Pokazano {shown} z {total} zadań.",
+    "Tab: next section · Enter: open · r: refresh": "Tab: następna sekcja · Enter: otwórz · r: odśwież",
+    "Enter: open · r: refresh": "Enter: otwórz · r: odśwież",
+    "{done} of {total} steps done": "{done} z {total} kroków ukończone", "Stage: {stage}": "Etap: {stage}",
+    "{client} running": "{client} działa", "info": "info", "warning": "uwaga", "error": "błąd",
+    "+ {count} more": "+ {count} więcej", "a / Esc: close": "a / Esc: zamknij", "Loading…": "Wczytywanie…",
+    "Choose a project in the sidebar to see its activity.":
+        "Wybierz projekt w panelu bocznym, aby zobaczyć jego aktywność.",
+    "No assistant is running.": "Żaden asystent nie działa.", "No active plan.": "Brak aktywnego planu.",
+    "This plan has no steps yet.": "Ten plan nie ma jeszcze kroków.",
+    "No tasks in this project yet.": "Ten projekt nie ma jeszcze zadań.",
+    "No notices since the workspace opened.": "Brak komunikatów od otwarcia środowiska.",
+    "Memory service unavailable; retrying.": "Usługa pamięci niedostępna; ponawiam.",
     # MCP servers of the built-in agent (#126)
     "MCP servers": "Serwery MCP", "Add server": "Dodaj serwer", "Add MCP server": "Dodaj serwer MCP",
     "Remove MCP server": "Usuń serwer MCP", "Server": "Serwer", "Program": "Program",

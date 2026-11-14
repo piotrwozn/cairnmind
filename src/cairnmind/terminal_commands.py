@@ -82,6 +82,7 @@ class CommandPaletteApp(App):
                 "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
                 "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
                 "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
+                "Ctrl+B, then a: activity panel (notices, plans, tasks)\n"
                 "Ctrl+B, then [: scroll and copy terminal history (q to leave)\n"
                 "Ctrl+B, then d: detach; run cairnmind to return\n"
                 "Ctrl+B, then Ctrl+B: send Ctrl+B to the native assistant\n\n"
