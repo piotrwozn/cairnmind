@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 import pytest
 from textual.widgets import DataTable
 
+from conftest import time_budget
+
 from cairnmind.terminal_preview import (FixtureData, PreviewBroker, PreviewServer, PreviewTerminal, PreviewWorkspace,
                                       capture_workspace, create_preview_app, preview_settings)
 
@@ -239,7 +241,7 @@ async def test_graph_keyboard_stays_live_during_slow_fetch_and_recovers_from_off
             started = time.monotonic()
             await pilot.press("left")
             assert app.model.camera.yaw != yaw
-            assert time.monotonic() - started < .5
+            assert time.monotonic() - started < time_budget(.5)
             for _ in range(100):
                 if app.model.nodes:
                     break

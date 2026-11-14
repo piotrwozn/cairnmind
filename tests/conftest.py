@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import sys
 import threading
 from urllib.parse import quote
 import uuid
@@ -62,6 +63,22 @@ EXCLUSIVE_MODULES = frozenset({"test_terminal_latency080"})
 
 # The directory, under the run's temporary root, of the engine that parallel workers share.
 SHARED_ENGINE = "arcade-engine-shared"
+
+
+def measuring_coverage() -> bool:
+    """Whether coverage is measuring this process (the non-required `coverage` CI job, or `--cov`)."""
+    coverage = sys.modules.get("coverage")
+    return bool(coverage and coverage.Coverage.current())
+
+
+def time_budget(seconds: float) -> float:
+    """A time limit for work that is bound by this process's own CPU.
+
+    Coverage's tracer slows pure-Python loops by about half, so under coverage the limit is
+    tripled; without coverage, as in the required CI job, it is exactly `seconds`. Do not use it
+    for a check that work did not wait for a timeout: a larger limit could hide the wait.
+    """
+    return seconds * 3 if measuring_coverage() else seconds
 
 
 @pytest.hookimpl(trylast=True)  # after the tmp_path plugin has set up the base directory
