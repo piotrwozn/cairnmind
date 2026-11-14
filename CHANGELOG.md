@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- Tooling: the fast test tier in CI runs with four processes, now that a stopped agent command waits for its process group (#175). The time-sensitive tests found by running the whole suite repeatedly on a loaded four-core machine wait for a state instead of a moment (#175).
 - The built-in agent no longer has to read and acknowledge its resume packet again when memory proposed from its own conversation is extracted while it works. A record that is confirmed, edited, written by anyone else or brought in by a memory package, and a code change, still make the acknowledgement stale (#168).
 - The built-in agent's approval dialog for a command or a third-party tool call now lists the files the agent created, changed or deleted since your last approval, at most 20 with a count of the rest, in English and Polish. Line breaks and control characters in a file name are shown as escapes, so a name cannot pass itself off as the app's own text (#176).
 - A change by the built-in agent to a file that configures execution now needs the same one-use approval as a command. This covers a coding client's settings or hooks, MCP files, repository instruction files such as AGENTS.md, AGENTS.override.md and CLAUDE.md, CI workflows, editor tasks, dev containers, .envrc and Git hook managers. The dialog shows the path and a bounded diff whose lines are shown whole or not at all, with a count of the lines not shown (#176).
