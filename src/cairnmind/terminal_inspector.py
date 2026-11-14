@@ -3,66 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date
 
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static
 
+from . import terminal_theme
+from .terminal_detail import EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts  # noqa: F401
 from .terminal_impact import ImpactView
 from .terminal_notices import about
 from .terminal_safe import plain, safe_text
 from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, summary_text
 
-# (evidence_state, quote_survives) as returned by the inspector for one record.
-EVIDENCE_LABELS = {
-    ("anchored", None): "at least one supporting source still stands",
-    ("evidence_replaced", True): "the source changed; the quoted passage is still there",
-    ("evidence_replaced", False): "the source changed; the quoted passage is gone",
-    ("evidence_replaced", None): "the source changed; there is no verified quoted passage to compare",
-    ("orphaned", None): "orphaned: no supporting source has a current version",
-    ("unverified", None): "imported file evidence has not been compared with local files yet",
-    ("degraded", None): "written by an external client's session, or resting only on one or on a third-party tool result; never verified",
-}
-
-def _finding_text(letter, role, item, translate):
-    # Stored text is indented behind a bar and loses its blank lines, so it can neither
-    # start a line that looks like one of this view's own labels nor fake a second finding.
-    content = ["  | " + line for line in str(item.get("content", "")).splitlines() if line.strip()]
-    if item.get("content_truncated"):
-        content.append("  | " + translate("(the text is longer; open the record to read all of it)"))
-    lines = [f"{letter} ({translate(role)})  [{item.get('kind')}] {item.get('status')}, "
-             f"{translate('Version').lower()} {item.get('version')}", *content]
-    latest, basis = str(item.get("evidence_latest") or "")[:10], item.get("evidence_basis")
-    if latest and basis in _EVIDENCE_TIME:
-        lines.append(translate(_EVIDENCE_TIME[basis]) + ": " + latest)
-    lines.append(translate("Scope") + ": " + str(item.get("scope") or translate("whole project")))
-    if item.get("sources"):
-        more = item.get("sources_total", 0) - len(item["sources"])
-        lines.append(translate("Sources") + ": " + ", ".join(map(str, item["sources"])) + (f" (+{more})" if more > 0 else ""))
-    label = EVIDENCE_LABELS.get((item.get("evidence_state"), item.get("quote_survives")))
-    if label:
-        lines.append(translate("Evidence") + ": " + translate(label))
-    return "\n".join(lines)
-
-
-def conflict_text(pair, translate):
-    """Both findings of a possible conflict, one after the other, with what is known about their order."""
-    first, second = pair.get("candidate") or {}, pair.get("existing") or {}
-    newer = pair.get("newer_evidence")
-    letter = "A" if newer == first.get("id") else "B" if newer == second.get("id") else None
-    if letter and pair.get("newer_evidence_basis") == "stated":
-        order = translate("{letter} has the newer evidence; both times were stated by their sources.", letter=letter)
-    elif letter:
-        order = translate("{letter} was recorded later, but its evidence time is only an upper bound.", letter=letter)
-    else:
-        order = translate("The order of the evidence cannot be compared.")
-    return "\n\n".join([translate("Possible conflict"), _finding_text("A", "new finding", first, translate),
-                         _finding_text("B", "existing finding", second, translate), order])
-
-
-_EVIDENCE_TIME = {"stated": "Stated", "observed": "Observed no later than", "mixed": "Mixed evidence"}
 _VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),
           ("Zadania", "tasks"), ("Testy", "checks"), ("Kolejka", "jobs"),
           ("Conflicts", "conflicts"), ("Impact", "impact"), ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
@@ -72,22 +25,33 @@ _TYPES = {"record": "records", "source": "sources", "plan": "plans", "check": "c
 class InspectorApp(ImpactView, BasePanel):
     panel_role = "inspector"
     TITLE = "Cairnmind · Memory"
-    CSS = BasePanel.CSS + """
+    CSS = BasePanel.CSS + terminal_theme.css("""
     #inspector-main { height: 1fr; }
     #inspector-heading { height: auto; max-height: 2; padding: 0 1; }
-    #inspector-view { height: 3; }
-    #inspector-filter { height: 3; }
+    #inspector-view, #inspector-filter { height: 1; }
+    #inspector-filter { background: $cm-bg; }
     #inspector-rows { height: 1fr; min-height: 3; }
-    #inspector-details { height: 1fr; min-height: 3; padding: 0 1; }
+    #inspector-details { height: 1fr; min-height: 3; padding: 1 1 0 1; }
+    #inspector-details.-empty { align: center middle; }
+    #inspector-details.-empty #entity-body { color: $cm-muted; text-align: center; }
     #entity-body { height: auto; }
-    #entity-actions, #review-actions, #memory-actions, #conflict-actions { height: 3; }
-    #memory-extra { height: 3; }
+    #entity-actions, #review-actions, #memory-actions, #conflict-actions, #impact-actions, #memory-extra {
+        height: 1; padding: 0 1; }
+    #entity-actions { margin-top: 1; }
     #entity-actions Button, #review-actions Button, #memory-actions Button, #memory-extra Button,
-    #conflict-actions Button { min-width: 8; }
-    #impact-bar, #impact-actions { height: 3; }
-    #impact-since-label { padding: 1 1 0 0; }
-    #impact-since { width: 30; }
-    """
+    #conflict-actions Button, #impact-actions Button { min-width: 8; }
+    #entity-actions Button, #review-actions Button { width: 1fr; max-width: 14; padding: 0; }
+    #review-actions { margin-top: 1; }  /* also when short: two filled rows with no gap read as one */
+    #entity-open { background: $cm-select; color: $cm-strong; text-style: bold; }
+    #entity-open:focus { background: $cm-accent; color: $cm-bg; }
+    #entity-open:disabled { background: $cm-panel; color: $cm-dim; text-style: none; }
+    #impact-bar { height: 1; padding: 0 1; }
+    #impact-since-label { color: $cm-muted; width: auto; padding: 0 1 0 0; }
+    #impact-since { width: 24; }
+    #impact-pending { width: auto; margin-left: 2; }
+    .-short #inspector-details { padding: 0 1; }
+    .-short #entity-actions { margin-top: 0; }
+    """)
     BINDINGS = [("r", "refresh", "Refresh"), ("escape", "back", "List"),
                 ("h", "history", "History"), ("m", "memory", "Memory")]
 
@@ -112,6 +76,7 @@ class InspectorApp(ImpactView, BasePanel):
         self.memory_status = {}
         self._memory_scope = None
         self._detail_text = ""
+        self._detail_parts = None
         self._technical_details = False
 
     def compose(self) -> ComposeResult:
@@ -152,6 +117,7 @@ class InspectorApp(ImpactView, BasePanel):
 
     def on_mount(self):
         self.query_one("#inspector-rows", DataTable).add_columns(self.t("Typ / stan"), self.t("Treść / źródło"), self.t("Wersja / próba"))
+        self.fit_columns()
         self.query_one("#inspector-details").display = False
         self.query_one("#review-actions").display = False
         self.query_one("#conflict-actions").display = False
@@ -191,8 +157,9 @@ class InspectorApp(ImpactView, BasePanel):
             self.query_one("#memory-save", Button).disabled = True
             self.query_one("#memory-apply", Button).disabled = True
         project = value.get("project_id")
-        self.query_one("#inspector-heading", Static).update(plain(
-            (value.get("project_name") or project or self.t("Pamięć globalna")) + " · " + (value.get("worktree") or self.t("Unassigned"))))
+        self.query_one("#inspector-heading", Static).update(terminal_theme.assemble([
+            ("title", value.get("project_name") or project or self.t("Pamięć globalna")),
+            ("muted", " · " + (value.get("worktree") or self.t("Unassigned")))]))
         selection = value.get("selected_entity")
         signature = json.dumps(selection, sort_keys=True, default=str)
         if selection and signature != self._selected_entity_signature:
@@ -247,7 +214,7 @@ class InspectorApp(ImpactView, BasePanel):
             else:
                 await self.load_page()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice(exc, "error")
 
     def params(self):
         return {"project": self.workspace_data.get("project_id"), "worktree": self.workspace_data.get("worktree")}
@@ -297,8 +264,9 @@ class InspectorApp(ImpactView, BasePanel):
                     continue
                 metadata = row.get("metadata") or {}
                 state = row.get("state", metadata.get("state", row.get("status", row.get("outcome", ""))))
-                table.add_row(plain(f"{row.get('kind', self.view)} / {state}"), plain(str(content).replace("\n", " "), limit=300),
+                table.add_row(self.state_cell(row.get("kind", self.view), state), plain(str(content).replace("\n", " "), limit=300),
                               plain(row.get("version", row.get("attempts", ""))), key=str(row["id"]))
+            self.fit_columns()
         table.display = True
         self.query_one("#inspector-details").display = False
         self.query_one("#review-actions").display = False
@@ -332,15 +300,22 @@ class InspectorApp(ImpactView, BasePanel):
                 else:
                     await self.open_entity(identifier, kind or self.view)
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice(exc, "error")
 
-    def show_detail(self, value, *, kind=None, text=None):
+    def show_detail(self, value, *, kind=None, text=None, parts=None, empty=False):
+        """Show one entry. `parts` (see terminal_detail) style the text they spell; `text` is shown as it is."""
         self.detail_data = value
         self.query_one("#inspector-rows").display = False
-        self.query_one("#inspector-details").display = True
+        details = self.query_one("#inspector-details")
+        details.display = True
+        details.set_class(empty, "-empty")
         self._technical_details = False
-        self._detail_text = text if text is not None else self.readable_detail(value, kind=kind)
-        self.query_one("#entity-body", Static).update(plain(self._detail_text))
+        if text is None and parts is None:
+            parts = record_parts(value, self.t)
+        self._detail_parts = parts if text is None else None
+        self._detail_text = (joined(parts) if self._detail_parts else text if text is not None
+                             else summary_text(value, self.language))
+        self.show_body()
         self.query_one("#review-actions").display = kind in {"records", "plans", "sources", "inbox"}
         self.query_one("#conflict-actions").display = kind == "conflicts"
         self.query_one("#impact-actions").display = kind == "impact"
@@ -351,76 +326,21 @@ class InspectorApp(ImpactView, BasePanel):
         self.query_one("#entity-more", Button).disabled = not bool(self.source_next)
 
     def readable_detail(self, value, *, kind=None):
-        if not isinstance(value, dict):
-            return summary_text(value, self.language)
+        parts = record_parts(value, self.t)
+        return joined(parts) if parts else summary_text(value, self.language)
 
-        item = value.get("record", value.get("item", value.get("source", value)))
-        if not isinstance(item, dict):
-            return summary_text(value, self.language)
-
-        lines = []
-        for name in ("title", "content", "uri", "message"):
-            if isinstance(item.get(name), str):
-                lines.append(item[name])
-
-        metadata = item.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-
-        state = item.get("state", metadata.get("state", item.get("status")))
-        if state:
-            lines.append(self.t("Status") + ": " + str(state))
-        if item.get("version"):
-            lines.append(self.t("Version") + ": " + str(item["version"]))
-        if item.get("source_ids"):
-            lines.append(self.t("Sources") + ": " + str(len(item["source_ids"])))
-
-        if isinstance(value.get("record"), dict):
-            # Any record detail, including a task opened from the task list.
-            def evidence_date(value):
-                if not isinstance(value, str):
-                    return None
-                try:
-                    return date.fromisoformat(value[:10]).isoformat() if len(value) >= 10 else None
-                except ValueError:
-                    return None
-
-            earliest = evidence_date(metadata.get("evidence_earliest"))
-            latest = evidence_date(metadata.get("evidence_latest"))
-            basis = metadata.get("evidence_basis")
-
-            if basis == "stated":
-                evidence_time = latest or earliest
-                if evidence_time:
-                    lines.append(self.t("Stated") + ": " + evidence_time)
-            elif basis == "observed":
-                evidence_time = latest or earliest
-                if evidence_time:
-                    lines.append(self.t("Observed no later than") + ": " + evidence_time)
-            elif basis == "mixed":
-                if earliest and latest:
-                    evidence_range = earliest if earliest == latest else f"{earliest} – {latest}"
-                    lines.append(self.t("Mixed evidence") + ": " + evidence_range)
-
-            if metadata.get("supersede_warning") == "anachronistic_supersede":
-                replaced_date = evidence_date(metadata.get("supersede_replaced_evidence_latest"))
-                warning = self.t("The superseded finding had newer evidence")
-                if replaced_date:
-                    warning += f" ({replaced_date})"
-                lines.append(self.t("Warning") + ": " + warning)
-
-        evidence = value.get("evidence") if isinstance(value.get("evidence"), dict) else {}
-        label = EVIDENCE_LABELS.get((evidence.get("evidence_state"), evidence.get("quote_survives")))
-        if label:
-            lines.append(self.t("Evidence") + ": " + self.t(label))
-        if not lines:
-            return summary_text(value, self.language)
-        return "\n\n".join(lines)
+    def show_body(self):
+        # The technical view is the stored structure as it is: never styled.
+        if self._technical_details:
+            body = plain(json.dumps(self.detail_data, ensure_ascii=False, indent=2))
+        else:
+            body = terminal_theme.assemble(self._detail_parts) if self._detail_parts else plain(self._detail_text)
+        self.query_one("#entity-body", Static).update(body)
 
     def toggle_technical(self):
         self._technical_details = not self._technical_details
-        self.query_one("#entity-body", Static).update(plain(json.dumps(self.detail_data, ensure_ascii=False, indent=2)
-            if self._technical_details else self._detail_text))
+        self.query_one("#inspector-details").remove_class("-empty")
+        self.show_body()
 
     async def open_entity(self, identifier, kind=None, *, source_view=None, offset=0):
         if not isinstance(identifier, str) or not identifier:
@@ -435,7 +355,7 @@ class InspectorApp(ImpactView, BasePanel):
             if pair:
                 self._entity_request += 1
                 self.entity_kind, self.entity, self.history_owner, self.source_next = "conflicts", pair, None, None
-                self.show_detail(pair, kind="conflicts", text=conflict_text(pair, self.t))
+                self.show_detail(pair, kind="conflicts", parts=conflict_parts(pair, self.t))
                 self.notice(self.t("Resolve records your decision with an audit note. No source is removed."))
             return
         collection = "records" if kind == "tasks" else kind
@@ -467,7 +387,8 @@ class InspectorApp(ImpactView, BasePanel):
             self.source_content = (self.source_content if offset else "") + result.get("text", "")
             source = result.get("source", {})
             header = str(source.get("uri") or self.t("Sources"))
-            self.show_detail(result, kind=collection, text=header + "\n\n" + self.source_content)
+            self.show_detail(result, kind=collection,
+                             parts=[("stored-lead", header), ("stored", "\n\n" + self.source_content)])
             self.notice(self.t("Źródło literalne · v=tekst/surowy/metadane · Więcej pobiera kolejny fragment"))
         else:
             self.show_detail(result, kind=collection)
@@ -491,7 +412,7 @@ class InspectorApp(ImpactView, BasePanel):
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."), "warn")
             return
         payload = {"project": project_id, "action": action,
                    "expected_version": record["version"], "reason": form["reason"]}
@@ -505,7 +426,7 @@ class InspectorApp(ImpactView, BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             if scope == self._scope_version:
                 await self.open_entity(record["id"], "records")
-                self.notice(self.t("Review was not retried. The current version was reloaded.") + " " + str(exc))
+                self.notice(self.t("Review was not retried. The current version was reloaded.") + " " + str(exc), "error")
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def resolve_conflict(self):
@@ -534,7 +455,7 @@ class InspectorApp(ImpactView, BasePanel):
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."))
+            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."), "warn")
             return
         payload = {"project": project_id, "record_id": first["id"], "other_id": second["id"], "action": action,
                    "expected_version": first["version"], "other_expected_version": second["version"],
@@ -549,7 +470,7 @@ class InspectorApp(ImpactView, BasePanel):
         except (OSError, ValueError, RuntimeError) as exc:
             if scope == self._scope_version:
                 await self.load_page()
-                self.notice(self.t("The decision was not saved. The current list was reloaded.") + " " + str(exc))
+                self.notice(self.t("The decision was not saved. The current list was reloaded.") + " " + str(exc), "error")
 
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
@@ -618,7 +539,7 @@ class InspectorApp(ImpactView, BasePanel):
         self.set_view("memory")
         if not self.workspace_data.get("project_id"):
             self.memory_status = {}
-            self.show_detail({}, text=self.t("Brak wybranego projektu. Import pozostaje dostępny z jawnym katalogiem docelowym."))
+            self.show_detail({}, text=self.t("Brak wybranego projektu. Import pozostaje dostępny z jawnym katalogiem docelowym."), empty=True)
             return
         scope = self._scope_version
         result = await self.request("GET", "/api/memory/status", params=self.params())
@@ -710,7 +631,7 @@ class InspectorApp(ImpactView, BasePanel):
             else:
                 await self.load_memory()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice(exc, "error")
 
     @work(group="inspector-journal", exclusive=True, exit_on_error=False)
     async def watch_journal(self):
@@ -727,7 +648,7 @@ class InspectorApp(ImpactView, BasePanel):
                         self._journal_timer.stop()
                     self._journal_timer = self.set_timer(.2, self.refresh_if_list)
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(self.t("Memory updates") + ": " + safe_text(exc))
+            self.notice(self.t("Memory updates") + ": " + safe_text(exc), "error")
 
     def refresh_if_list(self):
         # The impact list runs Git over the worktree and changes with files the journal does not report: r reads it.
@@ -772,7 +693,7 @@ class InspectorApp(ImpactView, BasePanel):
             elif self.next_cursor:
                 await self.load_page(self.next_cursor)
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice(exc, "error")
 
     @work(group="inspector-read", exclusive=True, exit_on_error=False)
     async def reload_conflict(self, identifier):
@@ -784,7 +705,7 @@ class InspectorApp(ImpactView, BasePanel):
             else:
                 self.notice(self.t("This conflict is no longer pending."))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc)
+            self.notice(exc, "error")
 
     def action_refresh(self):
         if self.entity and self.entity_kind == "conflicts":
