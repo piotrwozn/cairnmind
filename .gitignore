@@ -29,4 +29,8 @@ releases/
 dist/
 *.egg-info/
 .coverage
+.coverage.*
+coverage.xml
+coverage-badge.json
+htmlcov/
 .devbrain/

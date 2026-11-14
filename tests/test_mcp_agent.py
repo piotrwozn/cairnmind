@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+import conftest
+
 from cairnmind import agent_tools
 from cairnmind.agent_memory import MEMORY_TOOLS
 from cairnmind.api_agent import AgentEngine
@@ -19,7 +21,7 @@ from cairnmind.mcp_servers import frozen_servers
 from test_api_agent import Memory, ScriptedProvider, call, reply, setup as setup
 from test_api_worker import Engine as FakeEngine
 
-FIXTURE = str(Path(__file__).parent / "fixtures" / "mcp_fixture_server.py")
+FIXTURE = conftest.MCP_FIXTURE  # this pytest process's own copy (see conftest)
 
 
 def server(*modes, identifier="files"):

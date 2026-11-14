@@ -1,6 +1,8 @@
 """Indexes for lookups by a field other than id and project_id (issue #71)."""
 from __future__ import annotations
 
+import pytest
+
 from cairnmind.arcade import ArcadeClient
 from cairnmind.store import LOOKUP_INDEX_SET, LOOKUP_INDEXES, SCHEMA_VERSION, Store
 
@@ -18,6 +20,7 @@ def marker(store):
     return [row["value"] for row in rows]
 
 
+@pytest.mark.no_schema_template  # what Store.init builds in a database that has nothing yet
 def test_a_new_database_has_every_lookup_index(tmp_path):
     store = Store(tmp_path / "memory")
     found = indexed(store)
