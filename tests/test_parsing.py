@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from cairnmind.parsing import analyze_code
 
@@ -57,12 +58,12 @@ CONSTANTS_AND_FIELDS = '''"""Module."""
 from dataclasses import dataclass
 
 __all__ = ["Settings"]
-TIMEOUT = 60
+TIMEOUT = 47
 LIMITS: dict = {
     "a": 1,
     "b": 2,
 }
-TIMEOUT = 90
+TIMEOUT = 93
 count, total = 1, 2
 obj.attr = 3
 table["key"] = 4
@@ -78,8 +79,8 @@ except Exception:
 @dataclass
 class Settings:
     data_dir: str
-    port: int = 8765
-    cockpit_port: int = 8766
+    port: int = 6431
+    cockpit_port: int = 6432
     __slots__ = ()
 
     def url(self):
@@ -120,6 +121,20 @@ def test_python_assignments_that_are_not_definitions_are_skipped():
     assert {"Settings", "url", "helper"} <= names
 
 
+def test_fixtures_do_not_repeat_the_values_of_this_project():
+    # This file is indexed by `cairnmind eval repository`: a fixture with the real default of a
+    # setting gives the model a test to quote in place of the definition (issue #104).
+    from dataclasses import fields
+
+    from cairnmind.config import Settings
+    real = {str(field.default) for field in fields(Settings) if isinstance(field.default, (int, float))
+            and not isinstance(field.default, bool) and field.default >= 10}
+    real |= {value.removesuffix(".0") for value in real}
+    numbers = set(re.findall(r"(?<![\w.])\d+(?:\.\d+)?(?![\w.])", CONSTANTS_AND_FIELDS + DEFAULTS + PYPROJECT))
+    assert not numbers & real
+    assert '">=3.' not in PYPROJECT  # nor a Python version this project could require
+
+
 def test_javascript_top_level_values_stay_out_of_symbols():
     result = analyze_code(Path("limits.js"), "const LIMIT = 5;\nexport const NAME = 'x';\n")
     assert result["symbols"] == []
@@ -153,8 +168,8 @@ def test_python_parameter_defaults_are_symbols_named_by_their_function():
 PYPROJECT = '''# Project metadata.
 [project]
 name = "sample"
-version = "1.4.2"   # bumped by the release script
-requires-python = ">=3.11"
+version = "7.7.7"   # bumped by the release script
+requires-python = ">=4.2"
 dependencies = [
     "httpx>=0.27",  # [not a table]
     "rich",
