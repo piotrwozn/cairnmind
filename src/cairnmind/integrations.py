@@ -268,9 +268,9 @@ def doctor(settings: Settings) -> dict[str, Any]:
                 result["ollama"]["running"] = [
                     {k: model.get(k) for k in ("name", "size", "size_vram", "context_length")}
                     for model in running.json().get("models", [])]
-            except (httpx.HTTPError, ValueError):
+            except (httpx.HTTPError, ValueError, AttributeError, TypeError):
                 pass
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:  # a reply of another shape
             result["ollama"]["error"] = type(exc).__name__
         from .memory_models import doctor_models
         result["memory_models"] = doctor_models(settings, client)

@@ -20,7 +20,7 @@ from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
 from .evaluation import MeasuredOllama, _fixture_settings, _git
 from .ingest import index_pending_sources
-from .memory_models import from_settings
+from .memory_models import from_settings, inference_report
 from .ollama import OllamaUnavailable
 from .plans import PlanManager
 from .retrieval import Retriever
@@ -245,7 +245,8 @@ def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None,
     started = time.monotonic()
     measured = MeasuredOllama(ollama or from_settings(settings))
     report = {"format_version": 1, "cairnmind_version": __version__, "evaluation_mode": "portable_positive_extraction",
-        "inference": "injected_adapter" if ollama is not None else "local_ollama", "status": "not_run",
+        **({"inference": "injected_adapter"} if ollama is not None else inference_report(settings)),
+        "status": "not_run",
         "model": settings.chat_model, "embedding_model": settings.embedding_model,
         "model_identities": {}, "extraction": [], "recall": [], "deterministic_checks": {},
         "isolation": {"separate_databases": True, "different_roots": True, "user_projects_modified": False,

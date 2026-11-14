@@ -5,12 +5,17 @@ no secret: a key is named by a reference (env:NAME or profile:ID, as for coding 
 only when a request is made. A server that is not on this computer receives memory content, so it
 needs HTTPS and the person's explicit consent (allow_remote), given with `cairnmind models set`.
 
-Vectors never mix: their namespace is the embedding model's identity, and every vector index is keyed
-by namespace and dimension. Evaluations that pass are recorded per pair of model identities.
+Vectors of two models are kept apart: their namespace is the embedding model's identity, and every vector
+index is keyed by namespace and dimension. An OpenAI-compatible server reports no digest, so there the
+identity is the server and the model name: other weights served under the same name, with the same
+dimension, are not detected. Evaluations that pass are recorded per pair of model identities and setup.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
+import fcntl
+import hashlib
 import ipaddress
 import json
 import os
@@ -36,6 +41,7 @@ EVALUATIONS = ("recall", "memory", "repository")
 REQUIRED_EVALUATIONS = ("memory", "recall")
 EVALUATED_FILE = "models.evaluated.json"
 MAX_RECORDED_PAIRS = 50
+LABEL_SECONDS = 2.0  # naming the models for an answer's label never holds back a finished answer
 
 
 def is_loopback(url: str) -> bool:
@@ -127,6 +133,32 @@ def context_tokens(settings: Settings) -> int:
     return row["context_window"] if row and "context_window" in row else settings.num_ctx
 
 
+def setup_tag(settings: Settings) -> str:
+    """What a pair of model identities does not name: each role's server, the context window, the reasoning effort."""
+    rows = {}
+    for role in ROLES:
+        row = profile(settings, role) or {"provider": "ollama", "base_url": settings.ollama_url}
+        rows[role] = {key: value for key, value in row.items() if key != "credential_ref"}
+    rows["chat"]["context_window"] = context_tokens(settings)
+    return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def destinations(settings: Settings) -> dict:
+    """Per role: which kind of server runs it and whether content leaves this computer."""
+    result = {}
+    for role in ROLES:
+        row = profile(settings, role) or {"provider": "ollama", "base_url": settings.ollama_url}
+        result[role] = {"provider": row["provider"], "destination": _destination(row, role)["destination"]}
+    return result
+
+
+def inference_report(settings: Settings) -> dict:
+    """The inference fields of an evaluation report: unchanged for the local Ollama of the settings."""
+    if settings.memory_chat is None and settings.memory_embedding is None:
+        return {"inference": "local_ollama"}
+    return {"inference": "configured_model_servers", "model_servers": destinations(settings)}
+
+
 def _client(settings: Settings, role: str, credentials: Settings | None):
     row = profile(settings, role)
     if row is None:
@@ -194,6 +226,27 @@ async def identities(models, settings: Settings) -> dict:
             "embedding": await models.model_identity(settings.embedding_model)}
 
 
+async def ready_kinds(models) -> tuple[list[str], Exception | None]:
+    """Background job kinds whose server answers now (embed: the embedding role, extract: the chat role).
+
+    With split servers one role that is down does not stop the other; it is returned as the error.
+    Raises when no role answers, as the single Ollama client does.
+    """
+    if not isinstance(models, MemoryModels):
+        await models.models()
+        return ["embed", "extract"], None
+    kinds, error = [], None
+    for kind, client in (("embed", models.embedding_client), ("extract", models.chat_client)):
+        try:
+            await client.models()
+            kinds.append(kind)
+        except OllamaUnavailable as exc:
+            error = exc
+    if not kinds:
+        raise error
+    return kinds, error
+
+
 # Evaluations ------------------------------------------------------------------------------------------
 
 def _read_evaluations(settings: Settings) -> list[dict]:
@@ -207,38 +260,53 @@ def _read_evaluations(settings: Settings) -> list[dict]:
         pairs, list) else []
 
 
-def record_evaluation(settings: Settings, kind: str, pair: dict) -> None:
-    """Remember that an evaluation passed with exactly this pair of model identities."""
-    if kind not in EVALUATIONS:
-        raise ValueError("Unknown evaluation.")
-    pairs = _read_evaluations(settings)
-    entry = next((p for p in pairs if p["chat"] == pair["chat"] and p["embedding"] == pair["embedding"]), None)
-    if entry is None:
-        entry = {"chat": pair["chat"], "embedding": pair["embedding"], "passed": {}}
-        pairs.append(entry)
-    entry["passed"][kind] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    pairs = [p for p in pairs if p is not entry][-(MAX_RECORDED_PAIRS - 1):] + [entry]
-    settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, name = tempfile.mkstemp(prefix=".models-evaluated-", dir=settings.data_dir)
+def _write_json(path: Path, document: Any) -> None:
+    """Atomic and owner-readable."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, name = tempfile.mkstemp(prefix="." + path.stem + "-", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump({"version": 1, "pairs": pairs}, handle, indent=2)
+            json.dump(document, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.chmod(name, 0o600)
-        os.replace(name, settings.data_dir / EVALUATED_FILE)
+        os.replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
 
 
+def _matches(entry: dict, pair: dict, setup: str) -> bool:
+    return entry["chat"] == pair.get("chat") and entry["embedding"] == pair.get("embedding") and (
+        entry.get("setup") == setup)
+
+
+def record_evaluation(settings: Settings, kind: str, pair: dict) -> None:
+    """Remember that an evaluation passed with exactly this pair of model identities and this setup."""
+    if kind not in EVALUATIONS:
+        raise ValueError("Unknown evaluation.")
+    setup = setup_tag(settings)
+    pairs = _read_evaluations(settings)
+    entry = next((p for p in pairs if _matches(p, pair, setup)), None)
+    if entry is None:
+        entry = {"chat": pair["chat"], "embedding": pair["embedding"], "setup": setup, "passed": {}}
+        pairs.append(entry)
+    entry["passed"][kind] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    pairs = [p for p in pairs if p is not entry][-(MAX_RECORDED_PAIRS - 1):] + [entry]
+    _write_json(settings.data_dir / EVALUATED_FILE, {"version": 1, "pairs": pairs})
+
+
 def evaluation_status(settings: Settings, pair: dict) -> dict:
-    entry = next((p for p in _read_evaluations(settings)
-                  if p["chat"] == pair.get("chat") and p["embedding"] == pair.get("embedding")), None)
+    try:
+        setup = setup_tag(settings)
+    except ValueError:  # an invalid saved profile: nothing was evaluated with it
+        return {"evaluated": False, "passed": []}
+    entry = next((p for p in _read_evaluations(settings) if _matches(p, pair, setup)), None)
     passed = sorted(kind for kind in (entry or {}).get("passed", {}) if kind in EVALUATIONS)
     return {"evaluated": all(kind in passed for kind in REQUIRED_EVALUATIONS), "passed": passed}
 
 
 def record_passed(settings: Settings, kind: str, pair: dict | None = None) -> bool:
     """After a passing evaluation: record it for the models in use now. False when they cannot be named."""
-    import asyncio
     try:
         pair = pair if pair and all(isinstance(pair.get(r), str) for r in ROLES) else asyncio.run(
             identities(from_settings(settings), settings))
@@ -253,8 +321,8 @@ async def answer_label(settings: Settings, models) -> str | None:
     if is_default(settings):
         return None
     try:
-        pair = await identities(models, settings)
-    except Exception:  # an unnamed model is not an evaluated one; the answer itself is unaffected
+        pair = await asyncio.wait_for(identities(models, settings), LABEL_SECONDS)
+    except Exception:  # an unnamed or slow-to-name model is not an evaluated one; the answer is unaffected
         return "unevaluated"
     return "evaluated" if evaluation_status(settings, pair)["evaluated"] else "unevaluated"
 
@@ -297,13 +365,16 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
         entry["error"] = type(exc).__name__
         return entry
     entry["reachable"] = True
+    rows = document.get("models" if row["provider"] == "ollama" else "data") if isinstance(document, dict) else None
+    if not isinstance(rows, list):  # a server outside Cairnmind's control: reported, never trusted
+        entry.update(error="invalid_response", model_available=False)
+        return entry
     if row["provider"] == "ollama":
-        listed = [m for m in document.get("models", []) if isinstance(m, dict)
-                  and model in (m.get("name"), m.get("model"))]
-        if listed and listed[0].get("digest"):
+        listed = [m for m in rows if isinstance(m, dict) and model in (m.get("name"), m.get("model"))]
+        if listed and isinstance(listed[0].get("digest"), str) and listed[0]["digest"]:
             entry["identity"] = f"{model}@{listed[0]['digest']}"
     else:
-        listed = [m for m in document.get("data", []) if isinstance(m, dict) and m.get("id") == model]
+        listed = [m for m in rows if isinstance(m, dict) and m.get("id") == model]
         if listed:
             entry["identity"] = f"{model}@{server_tag(row['base_url'])}"
     entry["model_available"] = bool(listed)
@@ -348,6 +419,24 @@ async def _check(settings: Settings, role: str) -> tuple[dict, str]:
         await client.aclose()
 
 
+def save_role(data_dir: Path, role: str, row: dict | None, model: str) -> None:
+    """Change one role in config.json as stored, under the settings lock.
+
+    Settings in memory also hold environment overrides (engine address, password, executables);
+    saving them would make a shell's temporary values permanent, so only this role's two fields change.
+    """
+    path = data_dir / "config.json"
+    data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (data_dir / "config.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        values = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(values, dict):
+            raise ValueError("config.json is not a settings object; nothing was saved.")
+        values[FIELDS[role]] = row
+        values[MODEL_FIELDS[role]] = model
+        _write_json(path, values)
+
+
 async def configure_role(settings: Settings, role: str, *, provider: str, model: str, base_url: str | None = None,
                          credential_ref: str | None = None, context_window: int | None = None,
                          reasoning_effort: str | None = None, allow_remote: bool = False) -> dict:
@@ -356,6 +445,8 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
         raise ValueError("The role is chat or embedding.")
     if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
         raise ValueError("Invalid model identifier.")
+    if provider == "ollama" and base_url is None:
+        base_url = settings.ollama_url  # "back to the local Ollama" means the one the settings name
     row: dict[str, Any] = {"provider": provider}
     for key, value in (("base_url", base_url), ("credential_ref", credential_ref),
                        ("context_window", context_window), ("reasoning_effort", reasoning_effort)):
@@ -365,7 +456,8 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
         row["allow_remote"] = True
     row = normalize_memory_model(row, role)
     local_default = row == {"provider": "ollama", "base_url": normalize_base_url(settings.ollama_url)}
-    candidate = replace(settings, **{FIELDS[role]: None if local_default else row, MODEL_FIELDS[role]: model})
+    saved_row = None if local_default else row
+    candidate = replace(settings, **{FIELDS[role]: saved_row, MODEL_FIELDS[role]: model})
     checked, identity = await _check(candidate, role)
     previous = None
     if role == "embedding":
@@ -373,7 +465,7 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
             previous = await (_client(settings, role, None) or Ollama(settings)).model_identity(settings.embedding_model)
         except (OllamaUnavailable, ValueError):
             previous = None  # unknown: treated as changed
-    candidate.save()
+    save_role(settings.data_dir, role, saved_row, model)
     report = {"role": role, "provider": row["provider"], "base_url": row["base_url"], "model": model,
               **_destination(row, role), "checked": checked, "identity": identity, "saved": True}
     steps = ["Restart the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses this model."]

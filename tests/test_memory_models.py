@@ -398,3 +398,89 @@ def test_models_set_refuses_a_remote_server_without_consent(tmp_path):
                                           "--base-url", "https://models.example/v1", "--model", "m"])
     assert result.exit_code != 0 and "--allow-remote" in result.output
     assert Settings.load(data).memory_chat is None
+
+
+def test_models_set_changes_only_its_role_and_never_saves_environment_overrides(tmp_path, monkeypatch):
+    from cairnmind import cli
+    mock_async_client(monkeypatch, lmstudio_server)
+    data = tmp_path / "data"
+    stored = Settings.load(data, create=True)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_URL", "http://127.0.0.1:9999")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_PASSWORD", "from-the-shell")
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "set", "--role", "embedding",
+                                          "--provider", "openai_compatible", "--base-url", "http://127.0.0.1:1234/v1",
+                                          "--model", "text-embed"])
+    assert result.exit_code == 0, result.output
+    saved = json.loads((data / "config.json").read_text())
+    assert saved["arcade_url"] == stored.arcade_url and saved["arcade_password"] == stored.arcade_password
+    assert saved["embedding_model"] == "text-embed" and saved["memory_embedding"] == LMSTUDIO
+    assert saved["token"] == stored.token and saved.get("memory_chat") is None
+
+
+async def test_back_to_ollama_without_an_address_means_the_configured_ollama(tmp_path, monkeypatch):
+    async def check(settings, role):
+        return {"structured_output": True}, "c@1"
+    monkeypatch.setattr(memory_models, "_check", check)
+    settings = settings_with(tmp_path, ollama_url="http://localhost:11500", memory_chat=dict(LMSTUDIO))
+    settings.save()
+    await memory_models.configure_role(settings, "chat", provider="ollama", model="other:4b")
+    reloaded = Settings.load(tmp_path)
+    assert reloaded.memory_chat is None and reloaded.chat_model == "other:4b"
+
+
+@pytest.mark.parametrize("body", [[], {"data": None, "models": None}, {"data": "x", "models": {}}])
+def test_doctor_reports_a_malformed_model_list_instead_of_failing(tmp_path, body):
+    settings = settings_with(tmp_path, memory_chat=dict(LMSTUDIO))
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))) as http:
+        result = memory_models.doctor_models(settings, http)
+    for role in ("chat", "embedding"):
+        assert result[role]["error"] == "invalid_response" and result[role]["model_available"] is False
+    assert result["evaluated"] is False
+
+
+class Down(Fake):
+    async def models(self):
+        raise OllamaUnavailable("down")
+
+
+async def test_a_role_that_is_down_holds_back_only_its_own_jobs(tmp_path):
+    settings = settings_with(tmp_path)
+    assert await memory_models.ready_kinds(Fake("x")) == (["embed", "extract"], None)
+    kinds, error = await memory_models.ready_kinds(memory_models.MemoryModels(settings, Down("c"), Fake("e")))
+    assert kinds == ["embed"] and isinstance(error, OllamaUnavailable)
+    split = memory_models.MemoryModels(settings, Fake("c"), Down("e"))
+    assert (await memory_models.ready_kinds(split))[0] == ["extract"]
+    with pytest.raises(OllamaUnavailable):
+        await memory_models.ready_kinds(memory_models.MemoryModels(settings, Down("c"), Down("e")))
+
+
+def test_an_evaluation_counts_only_for_the_setup_it_ran_with(tmp_path):
+    pair = {"chat": "c@1", "embedding": "e@1"}
+    none = settings_with(tmp_path, memory_chat={**LMSTUDIO, "reasoning_effort": "none"})
+    for kind in ("recall", "memory"):
+        memory_models.record_evaluation(none, kind, pair)
+    assert memory_models.evaluation_status(none, pair)["evaluated"] is True
+    for changed in ({**LMSTUDIO, "reasoning_effort": "high"},
+                    {**LMSTUDIO, "reasoning_effort": "none", "context_window": 8192}):
+        assert memory_models.evaluation_status(settings_with(tmp_path, memory_chat=changed), pair)["evaluated"] is False
+    keyed = settings_with(tmp_path, memory_chat={**LMSTUDIO, "reasoning_effort": "none", "credential_ref": "env:K"})
+    assert memory_models.evaluation_status(keyed, pair)["evaluated"] is True  # a key is not part of the setup
+
+
+async def test_a_slow_model_list_labels_the_answer_unevaluated_instead_of_delaying_it(tmp_path, monkeypatch):
+    import asyncio
+
+    class Slow(Fake):
+        async def model_identity(self, name):
+            await asyncio.sleep(5)
+    monkeypatch.setattr(memory_models, "LABEL_SECONDS", 0.01)
+    assert await memory_models.answer_label(settings_with(tmp_path, chat_model="c"), Slow("s")) == "unevaluated"
+
+
+def test_evaluation_reports_name_the_kind_of_server_and_where_content_went(tmp_path):
+    assert memory_models.inference_report(settings_with(tmp_path)) == {"inference": "local_ollama"}
+    remote = settings_with(tmp_path, memory_chat={"provider": "openai_compatible", "allow_remote": True,
+                                                  "base_url": "https://models.example/v1"})
+    assert memory_models.inference_report(remote) == {"inference": "configured_model_servers", "model_servers": {
+        "chat": {"provider": "openai_compatible", "destination": "remote"},
+        "embedding": {"provider": "ollama", "destination": "this computer"}}}
