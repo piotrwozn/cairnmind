@@ -252,6 +252,37 @@ def test_below_the_width_focus_zooms_as_today(focus_workspace, size):
     assert workspace.tmux("show-options", "-wv", "-t", SESSION + ":workspace", "window-size", check=False).stdout.strip() == ""
 
 
+def test_the_key_of_the_view_in_focus_brings_the_keyboard_back_from_the_column(focus_workspace):
+    workspace = focus_workspace
+    with attached(workspace, 160, 45):
+        workspace._layout()
+        workspace.focus("client1")
+        workspace.tmux("select-pane", "-t", workspace.activity_pane())  # Ctrl+B a, as open_activity does
+        workspace.focus("client1")  # Ctrl+B 1 again, in the same process as the supervisor's refreshes
+        assert window(workspace, "#{pane_id}") == workspace.panes()["client1"]
+        assert_beside(workspace, "client1", 160)
+
+
+@pytest.mark.parametrize("off", [False, True], ids=["narrower", "switched-off"])
+def test_leaving_the_column_gives_the_views_their_cockpit_cells_not_narrow_strips(focus_workspace, off):
+    workspace = focus_workspace
+    terminal(workspace, 170, 45)
+    assert_beside(workspace, workspace.state.read()["focus"], 170)
+    if off:
+        CockpitState(workspace.settings).update({"activity_column": False})
+        workspace._layout()
+    else:
+        terminal(workspace, FOCUS_MIN_WIDTH - 1, 45)
+    columns = 170 if off else FOCUS_MIN_WIDTH - 1
+    workspace.focus("client1")
+    workspace.tmux("resize-pane", "-Z", "-t", workspace.panes()["client1"])  # unzoomed: the cells behind the zoom
+    found = geometry(workspace)
+    right = columns - 25
+    assert found["sidebar"][1] == 24 and found["client1"][1] == (right - 1) // 2
+    assert found["inspector"][1] == round((right - 1) * .6)
+    assert all(found[role][2] < 42 for role in VIEWS if role != "sidebar")  # rows, not full-height strips
+
+
 def test_the_switch_hides_and_shows_the_column_and_is_remembered(focus_workspace):
     workspace = focus_workspace
     preferences = CockpitState(workspace.settings)
