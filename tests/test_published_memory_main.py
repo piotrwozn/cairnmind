@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -173,6 +174,50 @@ def test_the_service_route_imports_a_commit_without_a_model(team):
         done = client.post("/memory/import-commit", headers=headers, json=body).json()
         assert len(done["inserted"]) == 4 and done["commit"] == git(team["server"], "rev-parse", "HEAD")
         assert client.post("/memory/import-commit", headers=headers, json=body).json()["inserted"] == []
+
+
+def drop_the_quoted_sentence(team, message):
+    (team["root"] / "docs" / "GUIDE.md").write_text(GUIDE.replace("Nothing else stores memory.\n", ""))
+    git(team["root"], "commit", "-qam", message)
+    git(team["server"], "pull", "-q", "--ff-only")
+
+
+def test_a_quote_edited_in_the_file_is_refused_and_an_unhashed_quote_never_anchors(team):
+    store, pid, records = team["store"], team["project"], team["records"]
+    folder = team["root"] / ".memory" / "cairnmind-published"
+    path = folder / f"constraint/{records['lost']['id']}.md"
+    original = path.read_text()
+    assert '"evidence_sha256":"' in original  # The review hashed the passage it saw.
+    # A short, common string put in place of the reviewed passage: the review no longer covers the revision.
+    path.write_text(original.replace("    Nothing else stores memory.", "    ArcadeDB.", 1))
+    drop_the_quoted_sentence(team, "Edit a quote by hand")
+    with pytest.raises(MemoryConflict, match="not covered by a person's act"):
+        import_commit(store, pid, "HEAD")
+    assert store.list_records(pid) == []
+    # An audit recorded before reviews hashed the passage covers the text only. Its quote can then be edited
+    # without a refusal, so it never decides anchoring: the record is judged by its file, which changed.
+    path.write_text(re.sub(r'"evidence_sha256":"[0-9a-f]{64}",', "", original)
+                    .replace("    Nothing else stores memory.", "    ArcadeDB.", 1))
+    git(team["root"], "commit", "-qam", "An old review, and an edited quote")
+    git(team["server"], "pull", "-q", "--ff-only")
+    result = import_commit(store, pid, "HEAD")
+    assert state_of(store, pid, records["lost"]["id"])["evidence_state"] == "evidence_replaced"
+    assert records["lost"]["id"] not in {item["id"] for item in result["evidence"].get("anchored", [])}
+    # The decision's quote is still hashed by its review and still in the guide: it anchors as before.
+    assert state_of(store, pid, records["kept"]["id"])["evidence_state"] == "anchored"
+
+
+def test_a_file_source_pointing_into_the_published_directory_never_anchors_itself(team):
+    store, pid, records = team["store"], team["project"], team["records"]
+    folder = team["root"] / ".memory" / "cairnmind-published"
+    own = f".memory/cairnmind-published/constraint/{records['lost']['id']}.md"
+    for path in folder.glob("*/*.md"):
+        path.write_text(path.read_text().replace('"path":"docs/GUIDE.md"', f'"path":"{own}"'))
+    drop_the_quoted_sentence(team, "Point the guide at a published file")
+    result = import_commit(store, pid, "HEAD")
+    # The published file holds its own quote, but a passage is compared with the project's code only.
+    assert state_of(store, pid, records["lost"]["id"])["evidence_state"] == "orphaned"
+    assert {item["id"] for item in result["evidence"]["orphaned"]} >= {records["lost"]["id"], records["kept"]["id"]}
 
 
 def test_a_broken_commit_is_refused_with_its_path_and_imports_nothing(team):

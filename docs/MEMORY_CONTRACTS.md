@@ -131,7 +131,11 @@ A record state travels only when a person's act covers it:
   acceptance criteria, their check links and its scope), and whose `identity_sha256` equals the hash
   of the record's kind, key and `supersedes`; the state's status must be what the act decided. Audits
   recorded before #170 carry no `identity_sha256`: for them only the text, the status and a task's
-  definition are covered, so the kind, key and `supersedes` of such a revision rest on the file alone;
+  definition are covered, so the kind, key and `supersedes` of such a revision rest on the file alone.
+  Audits recorded since #172 also carry `evidence_sha256`, the hash of the passage the record quoted
+  (CRLF normalised; null without one): a published quote must be that passage, while a withheld quote
+  (null) is always allowed. A quote no audit hashes can be edited in a file unnoticed, so it never
+  decides anchoring (see "Import on the main branch");
 - a finding typed in the workspace form and saved as confirmed, at its first version only;
 - after one of these, a task's progress (a state that differs only in `state`), or a mechanical
   supersession (status `superseded` with text, key, `supersedes` and definition unchanged) when what
@@ -320,8 +324,18 @@ check of `check-published`. Records are compared by ID:
   `done` is `closed`, one that leaves `done` is `opened` again; a plan with a new definition is
   `redefined`;
 - a removed file is `withdrawn`;
-- a head file that no longer starts with the base's revisions, byte for byte, is an error: published
-  revisions are only ever appended.
+- a head file that keeps only the first of the base's revisions, byte for byte, is `reverted` (a
+  `git revert` of the change that appended the rest; the head still imports, and a store that has the
+  dropped revisions stays ahead), shown with its text now and before, and without the dropped
+  revisions' reviewers;
+- a head file whose revisions differ from the base's is an error: published revisions are only ever
+  appended.
+
+The base is only compared with: a base entry that would not be accepted (a stray file, say) is left
+out and counted, and the rest of the base is still compared. When the base's directory cannot be read
+at all (a link in its place, or over the package budget), the output says so and every head record
+shows as added. A link, submodule or file in place of `.memory` or of the published directory is
+refused in a head, as it is on disk.
 
 Each entry carries the text it has now (and the text before, when it changed), the person and branch
 its file says acted on it (a claim, never verified), and its quoted passage with its path and lines,
@@ -370,6 +384,11 @@ same, `evidence_replaced` when it changed). Once a file source was compared, a c
 seen elsewhere, which can never be compared, no longer keeps the record `unverified`; a record
 resting only on such statements stays `unverified`. A full local source with the same ID (the
 author's own machine) is left to local indexing. Files over 32 MiB are left unchecked.
+
+Only a quote whose covering review hashed it (`evidence_sha256`) is compared; a record whose quote no
+audit hashes is judged by its file, as if it quoted nothing. A passage is compared with the project's
+own files only: paths inside a `.memory` directory (the published files, which always hold their own
+quotes, and the archive), at any depth, read as gone.
 
 The output adds `commit`, `rechecked` (the sources whose result changed), `unchecked`, `evidence`
 (the imported records by state, with path and first line) and `withdrawn`: records imported earlier

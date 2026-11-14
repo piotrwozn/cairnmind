@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from .memory_paths import PUBLISHED_RELATIVE
+from .memory_paths import PUBLISHED_RELATIVE, is_reserved_memory
 from .memory_published_check import DIRECTORIES, STATIC_FILES
 from .memory_published_format import MAX_FILE_BYTES, MAX_FILES, MAX_PACKAGE_BYTES, canonical_uuid
 from .terminal_safe import safe_text
@@ -108,10 +108,18 @@ def _entry_error(relative, mode, kind, size):
 def published_files(root, revision):
     """(commit ID, {relative path: bytes}, [(path, reason)]) of the published directory at a commit.
 
-    A commit without the directory gives no files and no errors: nothing was published there.
+    A commit without the directory gives no files and no errors: nothing was published there. With errors,
+    the files that could be read are still returned; a strict reader refuses them all, a lenient one (the
+    base of `memory diff`) compares what it can.
     """
     commit = resolve(root, revision)
-    base = prefix_of(root) + PUBLISHED_RELATIVE.as_posix()
+    prefix = prefix_of(root)
+    base = prefix + PUBLISHED_RELATIVE.as_posix()
+    for directory in (prefix + ".memory", base):
+        found = _entry_at(root, commit, directory)
+        if found is not None and found[1] != "tree":
+            # The directory itself, or .memory above it, is a link, a submodule or a file: refused as on disk.
+            return commit, {}, [(directory[len(prefix):], "not a directory (or a symbolic link)")]
     wanted, errors, total = {}, [], 0
     for mode, kind, oid, size, name in list_tree(root, commit, base):
         if not name.startswith(base + "/"):
@@ -131,17 +139,36 @@ def published_files(root, revision):
         total += size
         if len(wanted) > MAX_FILES or total > MAX_PACKAGE_BYTES:
             return commit, {}, [("", "the package exceeds 100,000 files or 256 MiB")]
-    if errors:
-        return commit, {}, errors
     blobs = read_blobs(root, wanted.values())
-    return commit, {relative: blobs[oid] for relative, oid in wanted.items()}, []
+    return commit, {relative: blobs[oid] for relative, oid in wanted.items()}, errors
+
+
+def _entry_at(root, commit, path):
+    """(mode, type) of the one entry at `path` in a commit, not recursing into it; None when absent."""
+    raw = _git(root, "ls-tree", "-z", "--full-tree", commit, "--", path)
+    for entry in raw.split(b"\0"):
+        meta, _, name = entry.partition(b"\t")
+        if entry and name.decode("utf-8", "surrogateescape") == path:
+            mode, kind, _ = meta.decode("ascii", "replace").split()
+            return mode, kind
+    return None
 
 
 def project_files(root, commit):
-    """{project-relative path: (object ID, size)} of the files of the project at a commit, links excluded."""
+    """{project-relative path: (object ID, size)} of the files of the project at a commit.
+
+    Links are excluded, and so are the reserved memory directories: a passage is only ever compared with
+    the project's own code, never with a published file (which always holds its own quote) or the archive.
+    """
     prefix = prefix_of(root)
     files = {}
     for mode, kind, oid, size, name in list_tree(root, commit, prefix.rstrip("/") or None):
-        if kind == "blob" and mode != "120000" and name.startswith(prefix):
-            files[name[len(prefix):]] = (oid, size)
+        relative = name[len(prefix):]
+        if kind == "blob" and mode != "120000" and name.startswith(prefix) and not _memory_path(relative):
+            files[relative] = (oid, size)
     return files
+
+
+def _memory_path(relative) -> bool:
+    """A path in a reserved memory directory, of this project or of a project nested in it (#174)."""
+    return is_reserved_memory(relative) or ".memory" in (part.lower() for part in relative.split("/")[:-1])

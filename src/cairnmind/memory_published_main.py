@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 
-from .memory_published_format import RECORD_KINDS, ref_class, sha256_text
+from .memory_published_format import RECORD_KINDS, covered_quotes, ref_class, sha256_text
 from .memory_published_git import MAX_CHECKED_BYTES, project_files, published_files, read_blobs
 from .sql import clean_row, update_document
 from .terminal_safe import safe_text
@@ -41,9 +41,11 @@ def recheck(tx, project_id, tree, root, commit):
         return {}, 0
     quotes = {}
     for model in tree["records"].values():
-        for revision in model["revisions"]:
-            if revision["quote"] is not None and revision["quote"]["source"] in targets:
-                quotes.setdefault(revision["quote"]["source"], set()).add(revision["quote"]["text"])
+        # Only a quote a person's act hashed is compared: any other quote can be edited in the file freely,
+        # so its record is judged by its file alone.
+        for source_id, text in covered_quotes(model):
+            if source_id in targets:
+                quotes.setdefault(source_id, set()).add(text)
     files = project_files(root, commit)
     found = {source_id: files.get(source["ref"]["path"]) for source_id, source in targets.items()}
     blobs = read_blobs(root, {entry[0] for entry in found.values() if entry and (entry[1] or 0) <= MAX_CHECKED_BYTES})

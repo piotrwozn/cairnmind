@@ -151,27 +151,43 @@ def _audit(source):
     return value if isinstance(value, dict) and value.get("action") in ACT_ACTIONS else None
 
 
-def audit_covers(audit, record_id, kind, status, text, definition, identity) -> bool:
+def evidence_hash(evidence):
+    """The hash of a record's quoted passage as an act records it (CRLF normalised), or None without one."""
+    if not isinstance(evidence, str) or not evidence.strip():
+        return None
+    return sha256_text(evidence.replace("\r\n", "\n"))
+
+
+def _audit_entry(audit, name, record_id):
+    """An audit's hash for one record: a plain string on a review of that record, else the record's entry."""
+    value = audit.get(name)
+    if isinstance(value, str):
+        return value if audit.get("action") in ("confirm", "dispute") and audit.get("record_id") == record_id else None
+    return value.get(record_id) if isinstance(value, dict) else None
+
+
+def audit_covers(audit, record_id, kind, status, text, definition, identity, quote=None) -> bool:
     """Whether a person's recorded act covers this state of a record.
 
     `identity` is identity_hash(kind, key, supersedes). Audits recorded before #170 carry no identity hash;
-    for them only the text, the status and a task's definition are covered.
+    for them only the text, the status and a task's definition are covered. An audit that hashes the quoted
+    passage (#172) covers a published quote only when it is that passage; withholding the quote (None) is
+    always allowed.
     """
     if not isinstance(audit, dict) or audit.get("action") not in ACT_ACTIONS:
         return False
     action = audit["action"]
 
     def entry(name):
-        value = audit.get(name)
-        if isinstance(value, str):
-            return value if action in ("confirm", "dispute") and audit.get("record_id") == record_id else None
-        return value.get(record_id) if isinstance(value, dict) else None
+        return _audit_entry(audit, name, record_id)
 
     if entry("content_sha256") != sha256_text(text):
         return False
     if kind == "task" and entry("definition_sha256") != definition:
         return False
     if "identity_sha256" in audit and entry("identity_sha256") != identity:
+        return False
+    if quote is not None and "evidence_sha256" in audit and entry("evidence_sha256") != evidence_hash(quote):
         return False
     if action == "resolve_conflict":
         # Only choosing which finding stands judges a finding; keeping both or dismissing the alarm does not.
@@ -199,9 +215,11 @@ def derive_covered(kind, record_id, previous, revision, sources, number):
         definition = definition_hash(revision) if task else None
         identity = identity_hash(kind, revision["key"], revision["supersedes"])
         found = []
+        quote = revision["quote"]["text"] if revision.get("quote") else None
         for source_id in revision["sources"]:
             audit = _audit(sources.get(source_id))
-            if audit and audit_covers(audit, record_id, kind, revision["status"], revision["text"], definition, identity):
+            if audit and audit_covers(audit, record_id, kind, revision["status"], revision["text"], definition, identity,
+                                      quote):
                 found.append(_when(audit, source_id))
         if found:
             return {"by": "review", "source": max(found)[1]}
@@ -216,6 +234,24 @@ def derive_covered(kind, record_id, previous, revision, sources, number):
         if source and ref_class(source.get("ref")) == "note" and source.get("passage") == revision["text"]:
             return {"by": "workspace_form", "source": revision["sources"][0]}
     return None
+
+
+def covered_quotes(model) -> set:
+    """{(source ID, quote text)} of a record's quotes that a person's act hashed (#172).
+
+    Only these may decide anchoring: a quote no act covers can be edited in the file without changing
+    anything else, so it says nothing about what the reviewer saw.
+    """
+    found = set()
+    for revision in model.get("revisions", []):
+        quote, covered = revision.get("quote"), revision.get("covered") or {}
+        if quote is None or covered.get("by") != "review":
+            continue
+        audit = _audit(model["sources"].get(covered.get("source")))
+        if audit and "evidence_sha256" in audit and \
+                _audit_entry(audit, "evidence_sha256", model["id"]) == evidence_hash(quote["text"]):
+            found.add((quote["source"], quote["text"]))
+    return found
 
 
 def derive_plan_covered(plan_id, previous, definition, sources):
