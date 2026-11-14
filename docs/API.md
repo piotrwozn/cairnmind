@@ -63,6 +63,35 @@ The adapter uses the official Python SDK `github-copilot-sdk`, pinned to a compa
 
 Signing in with an account does not require your own API key. The Cairnmind runtime has a separate credentials directory and may ask for consent to store them locally without encryption; the decision is yours. Version 0.7.2 fixed how this consent is passed to the runtime. Inherited `COPILOT_PROVIDER_*` and `COPILOT_OFFLINE` variables are removed so that they cannot switch this profile to a different API provider. File permissions and the runtime's SHA-256 checksums are checked again even after an earlier successful verification.
 
+## The knowledge agent's models
+
+The connections above are for coding assistants. Cairnmind's own knowledge agent (answers to `ask`, extraction of decisions and tasks, embeddings) has two roles, each with its own server: **chat** and **embedding**. By default both run on the local Ollama with `qwen3.5:9b` and `qwen3-embedding:0.6b`. Choose another model or server per role with `cairnmind models set`:
+
+```bash
+# LM Studio on this computer, both roles
+cairnmind models set --role chat --provider openai_compatible --base-url http://127.0.0.1:1234/v1 \
+  --model qwen/qwen3-8b --context-window 32768
+cairnmind models set --role embedding --provider openai_compatible --base-url http://127.0.0.1:1234/v1 \
+  --model text-embedding-qwen3-embedding-0.6b
+# a model server in the company network, chat only, key in an environment variable
+cairnmind models set --role chat --provider openai_compatible --base-url https://models.example.com/v1 \
+  --model qwen3-32b --credential-ref env:MODELS_API_KEY --allow-remote
+# back to the local Ollama
+cairnmind models set --role chat --provider ollama --model qwen3.5:9b
+```
+
+- `openai_compatible` speaks Chat Completions and `/embeddings` at the base URL. It covers LM Studio, vLLM, llama.cpp, an Ollama on another computer (its `/v1` address) and most model servers. A server that offers only one of the two can take that one role. The chat role needs structured JSON output for a JSON schema (`response_format` of type `json_schema`): extraction and answer repair depend on it.
+- `ollama` speaks Ollama's own API at the base URL.
+- Before saving, the command makes one test call: a short chat request with a JSON schema, or one embedding, whose dimension it reports. Nothing is saved when the test fails. The test sends only a fixed probe text.
+- The same transport rules as for coding connections apply: HTTPS unless the server is this computer, no key or password in the address. A key is named by `--credential-ref`, `env:NAME` or `profile:ID`, never typed into the command. The knowledge service is a separate process: an `env:` variable must be visible to it, and a `profile:` key must be saved on this computer (**Remember on this computer**); a key kept only for the workspace session cannot reach it.
+- **A server on another computer receives memory content**: source text, conversation transcripts, records and your questions. Cairnmind refuses such a server unless you pass `--allow-remote`. `cairnmind doctor` shows, under `memory_models`, the server, the model, whether it answers, and where each role's content is sent.
+- The service reads these settings when it starts: stop it and start Cairnmind again after a change.
+- **Changing the embedding model** changes the vectors. Vectors of different models are never mixed: each is stored under the model's identity and its dimension, and search uses only the current model's vectors. Run `cairnmind rebuild-vectors PROJECT` for each project after the change; until the new vectors exist, search falls back to full-text search. A running service also queues missing vectors for the current model on its own, as it does after `models pull`. A model on an OpenAI-compatible server reports no digest, so its identity is its name and server: weights replaced behind the same name are not detected.
+- **Changing only the chat model** needs no rebuild.
+- A pair of models is **evaluated** once `cairnmind eval run` and `cairnmind eval memory` have both passed with exactly those models (see [EVALUATION.md](EVALUATION.md)). Until then, with any models other than the release's, answers carry `"model_evaluation": "unevaluated"` in their diagnostics, and `doctor` shows `"evaluated": false`. The label informs; it does not block answers.
+
+`cairnmind models pull` downloads only the models that run on the local Ollama.
+
 ## Agent work and permissions
 
 The API/Copilot panel shows the history, the streamed response, tool calls and their results, and the memory state. **Send** or `Ctrl+Enter` starts a turn. `Ctrl+C` or **Interrupt** stops the current operation. The `Ctrl+B` workspace prefix and the panel shortcuts still work; press `Ctrl+B` twice to pass a native `Ctrl+B` through.

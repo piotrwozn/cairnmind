@@ -11,6 +11,8 @@ Cairnmind ships four explicit evaluations. They use real local models and, optio
 
 Exit codes are 0 for passed, 1 for failed and 3 when a required model or client is unavailable (`not_run`). A missing model never counts as a pass.
 
+The evaluations use the models the knowledge agent is configured with, on their servers (`cairnmind models set`, see [API.md](API.md#the-knowledge-agents-models)). A passing `eval run`, `eval memory` or `eval repository` is recorded in `models.evaluated.json` in the data directory, for exactly the pair of model identities it ran with (`"models_evaluation_recorded": true` in its output). A pair counts as evaluated once `eval run` and `eval memory` have both passed with it; `cairnmind doctor` shows the record, and answers given with other models than the release's are labelled `unevaluated` until then. After changing only the chat model, run both again; after changing the embedding model, run `rebuild-vectors` first.
+
 ## Results for 0.8.0
 
 Measured on 9 November 2026 with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an NVIDIA RTX 4080 Super under WSL2, Codex CLI 0.166.0 and Claude Code 2.1.319. Every run used its own data directory and engine, never a production installation.
