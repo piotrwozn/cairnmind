@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- The built-in agent no longer has to read and acknowledge its resume packet again when memory proposed from its own conversation is extracted while it works. A record that is confirmed, edited, written by anyone else or brought in by a memory package, and a code change, still make the acknowledgement stale (#168).
 - `cairnmind ask --log`, or `"answer_log": true` in config.json, keeps each answer with its question, citations (source id, sha256, quote), commit, status, model digest and timings in a private per-project log outside the database, so a logged answer is never evidence (#15).
 - `cairnmind answers list`, `answers show` and `answers prune` read and trim the answer log; it is capped at 8 MiB per project and deleted by `forget --delete-project` (#15).
 - `cairnmind eval replay PROJECT` asks the logged questions again for the scope they were logged with and reports answers that are no longer complete or no longer cite a source they cited, comparing evidence, not wording (#15).

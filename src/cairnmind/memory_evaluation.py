@@ -23,7 +23,7 @@ from .ingest import index_pending_sources
 from .ollama import Ollama, OllamaUnavailable
 from .plans import PlanManager
 from .retrieval import Retriever
-from .store import Store
+from .store import EXTRACTION_MARK, Store
 
 
 def _cases(marker: str) -> list[dict]:
@@ -82,6 +82,19 @@ def _revision_value(value):
     return value
 
 
+def _portable_revisions(rows: list[dict]) -> list[dict]:
+    # What a package carries of the source's revisions: the extraction mark is local to the machine
+    # that extracted the record and is never exported (#168). Only the expected side drops it, so a
+    # mark that reached the target would still fail the comparison.
+    expected = _revision_value(rows)
+    for row in expected:
+        snapshot = row.get("snapshot")
+        metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else None
+        if isinstance(metadata, dict):
+            metadata.pop(EXTRACTION_MARK, None)
+    return expected
+
+
 def _source_hashes(store: Store, project_id: str) -> dict:
     return {row["id"]: hashlib.sha256(row["content"].encode()).hexdigest()
             for row in _project_rows(store, project_id, "sources")}
@@ -138,7 +151,7 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
          {"key": "second", "content": "Review restored evidence", "depends_on": ["first"]}],
         idempotency_key="portable-evaluation-plan", worktree=source_root, activate=True)
     original_plan = managed["plan"]
-    original_revisions = _revision_value(_project_rows(source_store, project["id"], "record_revisions"))
+    original_revisions = _portable_revisions(_project_rows(source_store, project["id"], "record_revisions"))
     original_plan_revisions = _revision_value(_project_rows(source_store, project["id"], "plan_revisions"))
     original_records = {row["id"]: row for row in source_store.list_records(project["id"], include_history=True)}
     hashes = _source_hashes(source_store, project["id"])

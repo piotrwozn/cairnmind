@@ -110,8 +110,12 @@ Launcher blocks start on nonready; afterready startsnativeCLI bootstrap and real
 ack required for session writes. ACK validates packet ID/hash and readback active
 plan/task IDs+versions. Actual readback, not automatic ACK on HTTPcontext delivery.
 New epoch on resume/compact; relevant versions/scope/code change invalidates ACK,
-not each technical transcriptline. Raw nativeCLI operations retain nativecontrols;
-no complete hardtoolgate claimed.
+not each technical transcriptline. Nor does a proposal the extraction worker made
+from one archived message of the same api/copilot session, untouched since
+(store-set extraction_source_id, version 1, still proposed): other sessions still
+hash it, and a confirm or an edit counts. The mark is local: a memory package
+never exports or imports it, so an imported record always counts. Raw nativeCLI operations retain
+nativecontrols; no complete hardtoolgate claimed.
 
 Clients: codex, claude (launcher), api, copilot (own runtime) and external (any MCP
 client whose conversation cannot be read: Cursor, Cline, Zed). No product name is a
