@@ -78,6 +78,39 @@ def register(memory_app, initialized):
         typer.echo(render_snapshot(manifest, payload, kind=kind, status=status))
         typer.echo("Published elsewhere and not verified here: reviewed_by names are claims made by the files.")
 
+    @memory_app.command("diff")
+    def memory_diff(ctx: typer.Context, base: str, head: str,
+                    project_root: Annotated[Path, typer.Option(
+                        "--project-root", help="The project's directory in the Git repository (default: here).")] = Path("."),
+                    markdown: Annotated[bool, typer.Option(
+                        "--markdown", help="A bounded Markdown comment for a pull request.")] = False,
+                    max_chars: Annotated[int, typer.Option("--max-chars", min=2000, max=60000)] = 60000,
+                    as_json: Annotated[bool, typer.Option("--json", help="The comparison as JSON.")] = False):
+        """Compare the published memory of two commits, without a store, service or model.
+
+        Exit 0 when the head's published memory would import, 1 when it would not, 2 on a usage error."""
+        from cairnmind.cli import output, refuse
+        from cairnmind.memory_published_diff import compare, render_markdown, render_text
+        from cairnmind.memory_published_git import published_files
+        root = project_root.expanduser().absolute()
+        try:
+            base_commit, base_files, base_errors = published_files(root, base)
+            head_commit, head_files, head_errors = published_files(root, head)
+        except ValueError as exc:
+            refuse(str(exc), 2)
+        report = (compare(base_files if not base_errors else {}, head_files) if not head_errors
+                  else {"status": "refused", "errors": head_errors, "entries": [], "counts": [], "skipped": 0})
+        if base_errors and not head_errors:
+            report["skipped"] += len(base_errors)
+        if as_json:
+            output({"base": base_commit, "head": head_commit, **report})
+        elif markdown:
+            typer.echo(render_markdown(report, base_commit, head_commit, max_chars), nl=False)
+        else:
+            typer.echo(render_text(report, base_commit, head_commit), nl=False)
+        if report["status"] == "refused":
+            raise typer.Exit(1)
+
     @memory_app.command("confirm-plan")
     @initialized
     def memory_confirm_plan(ctx: typer.Context, project: str, plan: str,
