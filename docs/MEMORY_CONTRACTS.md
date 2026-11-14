@@ -93,7 +93,7 @@ validation are unchanged.
 ## Directory
 
 ```
-<registered project root>/.memory/cairnmind-published/
+<registered project root>/.memory/cairnmind-published/   (or PATH/<identity>/ in a separate repository; see Carriers)
   FORMAT.json            {"format":"cairnmind-published-memory","format_version":1,"project_id":"<team id>"} + "\n"
   .gitattributes         "* text eol=lf\n"
   .gitignore             ".cairnmind-memory-*\n"  (temporary files of an interrupted write)
@@ -317,3 +317,38 @@ switch `CAIRNMIND_ENABLE_PUBLICATION=1` until the secrets gate (#171) refuses re
 private keys; previews, checks and imports are not switched off.
 
 Budgets of version 1: 1 MiB per file, 100,000 files and 256 MiB per package.
+
+## Carriers: where published memory goes
+
+The package is the same whatever carries it: a carrier only chooses the directory it is written to,
+and `import-published DIR` reads any of them the same way, to the same records. Each project has one
+carrier, chosen by a person with `cairnmind memory carrier PROJECT --repository` or
+`cairnmind memory carrier PROJECT --checkout PATH` (never from inside a coding session). `memory status`
+shows it.
+
+- **The repository** (the default): `<project root>/.memory/cairnmind-published/`. Memory is committed
+  with the branch that changed it and reviewed beside the code in the same pull request, and merges
+  follow the code. Use it whenever the team can commit to the code repository.
+- **A separate repository**: `--checkout PATH`, a checkout of a memory repository. The package goes to
+  `PATH/<publication identity>/` with the same layout, so one memory repository can hold several
+  projects. Use it when the team does not want memory files beside its code, or cannot add generated
+  files to a repository it does not own. What it loses: memory is no longer reviewed beside the code
+  it describes, a code branch and its memory are committed, merged and reverted separately, and
+  `check-published` must run in the memory repository's own CI. Cairnmind writes the files; committing,
+  pushing and pulling the checkout stay with the person. A teammate imports with
+  `import-published PATH/<identity> --project P`.
+- **A server**: not available yet. It needs a receiving Cairnmind service with its own user and TLS
+  (#72).
+
+A checkout path is checked when it is chosen and again at every use: it must be an absolute path to
+an existing directory inside a Git checkout, with no symbolic link on the way (as everywhere in memory
+packages), and it may not be or lie inside Cairnmind's data directory, a registered project's files,
+or any project's memory directory. A project with no publication identity yet that publishes into a
+checkout already holding other packages is refused, as `FORMAT.json` refuses it in the repository:
+import this project's package first (which binds it), or start a new one with
+`memory publish PROJECT --new-package`.
+
+Changing the carrier moves nothing. The command says where the earlier package is and how many files
+it has, to import it first if teammates published there, then to publish to write the package at the
+new place, and to remove the earlier files in a commit of one's own once the team reads from the new
+place. The secrets gate (#171) runs on what is about to be written, before any carrier is written to.
