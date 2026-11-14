@@ -98,7 +98,7 @@ class CockpitState:
         defaults = {"version": 2, "profiles": deepcopy(DEFAULT_PROFILES), "scan_roots": [],
                     "default_slots": deepcopy(DEFAULT_SLOTS), "project_slots": {}, "last_project": None,
                     "project_stages": {}, "project_mcp_servers": {}, "language": "en", "view": "focus",
-                    "reduced_motion": False}
+                    "reduced_motion": False, "activity_column": True}
         if not self.path.exists():
             return defaults
         if self.path.is_symlink():
@@ -109,7 +109,7 @@ class CockpitState:
         defaults.update(value)
         if (not isinstance(defaults["language"], str) or defaults["language"] not in {"en", "pl"}
                 or not isinstance(defaults["view"], str) or defaults["view"] not in {"focus", "cockpit"}
-                or type(defaults["reduced_motion"]) is not bool):
+                or type(defaults["reduced_motion"]) is not bool or type(defaults["activity_column"]) is not bool):
             raise ValueError("Invalid display preferences")
         rows = defaults["profiles"]
         if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
@@ -135,7 +135,7 @@ class CockpitState:
         return result
 
     def update(self, changes: dict) -> dict:
-        if not isinstance(changes, dict) or set(changes) - {"profiles", "scan_roots", "default_slots", "project_slots", "project_stages", "project_mcp_servers", "project_mcp_server_edit", "last_project", "language", "view", "reduced_motion"}:
+        if not isinstance(changes, dict) or set(changes) - {"profiles", "scan_roots", "default_slots", "project_slots", "project_stages", "project_mcp_servers", "project_mcp_server_edit", "last_project", "language", "view", "reduced_motion", "activity_column"}:
             raise ValueError("Unsupported field of the cockpit settings.")
         if {"project_mcp_servers", "project_mcp_server_edit"} <= set(changes):
             raise ValueError("Invalid MCP server lists.")
@@ -151,6 +151,10 @@ class CockpitState:
                 if type(changes["reduced_motion"]) is not bool:
                     raise ValueError("Reduced motion must be a boolean")
                 value["reduced_motion"] = changes["reduced_motion"]
+            if "activity_column" in changes:  # the column beside the focused view (#149)
+                if type(changes["activity_column"]) is not bool:
+                    raise ValueError("The activity column setting must be a boolean")
+                value["activity_column"] = changes["activity_column"]
             if "profiles" in changes:
                 rows = changes["profiles"]
                 if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
