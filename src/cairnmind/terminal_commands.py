@@ -84,11 +84,12 @@ class CommandPaletteApp(App):
                 "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
                 "Ctrl+B, then a: activity panel (notices, plans, tasks)\n"
                 "Ctrl+B, then [: scroll and copy terminal history (q to leave)\n"
-                "Ctrl+B, then d: detach; run cairnmind to return\n"
+                "Ctrl+B, then d (or Ctrl+Q in a Cairnmind view): detach; run cairnmind to return\n"
                 "Ctrl+B, then Ctrl+B: send Ctrl+B to the native assistant\n\n"
                 "Cairnmind controls: Tab / Shift+Tab move focus; Enter chooses; Esc goes back.\n"
                 "Projects: Enter opens; Start work starts only the chosen assistant.\n"
                 "Graph: [ / ] select nodes; arrows rotate; Space pauses; Enter opens a node.\n"
+                "Graph: a switches between all memory and the project; r resets the camera; Backspace goes up.\n"
                 "Native assistants keep their own shortcuts, paste, Ctrl+C and approval dialogs.\n"
                 "Memory readiness, session activity and terminal control are separate states."
             )), id="command-help")
@@ -109,7 +110,7 @@ class CommandPaletteApp(App):
             self.call_after_refresh(self.fit_columns)
 
     def fit_columns(self):
-        """Two fixed columns that fill the menu, so no row scrolls sideways; a cell keeps its full text."""
+        """Two fixed columns that fill the menu, so no row scrolls sideways; a longer cell ends with "…"."""
         table = self.query_one(DataTable)
         room = table.scrollable_content_region.width - 4 * table.cell_padding
         if room < 20:
@@ -121,11 +122,16 @@ class CommandPaletteApp(App):
     def populate(self, query):
         table = self.query_one(DataTable)
         table.clear()
-        self.rows = [row for row in COMMANDS if query.casefold() in
-                     (self.translate(row[0]) + " " + self.translate(row[1])).casefold()]
+        query = query.casefold()
+        found = [row for row in COMMANDS if query in (self.translate(row[0]) + " " + self.translate(row[1])).casefold()]
+
+        def rank(row):  # names that start with the text, then names that hold it, then descriptions
+            name = self.translate(row[0]).casefold()
+            return (not name.startswith(query), query not in name)
+        self.rows = sorted(found, key=rank)  # stable: the menu's own order within each group
         for index, row in enumerate(self.rows):
-            table.add_row(terminal_theme.styled(self.translate(row[0]), "value"),
-                          terminal_theme.styled(self.translate(row[1]), "muted"), key=str(index))
+            table.add_row(terminal_theme.cropped(self.translate(row[0]), "value"),
+                          terminal_theme.cropped(self.translate(row[1]), "muted"), key=str(index))
         # The list stays in the screen; with nothing to list, the sentence takes its place.
         table.display = bool(self.rows)
         self.query_one("#command-empty").display = not self.rows

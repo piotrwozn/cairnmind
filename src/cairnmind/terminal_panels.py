@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
@@ -64,6 +65,18 @@ class ConfirmModal(MessageModal):
         hint.display = not spare
         if spare:
             body.styles.max_height = rows + 1
+
+    def on_mount(self):
+        if not self.consent:
+            self.call_after_refresh(self.start_on_cancel)
+
+    def start_on_cancel(self):
+        """A routine confirmation whose text fits starts on Cancel, so the focus shows and Enter cancels.
+        A consent request, or a text that scrolls, starts on the text, where no key decides anything."""
+        with suppress(Exception):
+            body = self.query_one(".cm-dialog-body")
+            if body.virtual_size.height <= body.scrollable_content_region.height and self.focused is body:
+                self.query_one("#confirm-no", Button).focus()
 
     @on(Button.Pressed)
     def confirm_button(self, event):
@@ -432,6 +445,14 @@ class SidebarApp(BasePanel):
     def action_search(self):
         self.show_page("projects")
         self.query_one("#project-search", Input).focus()
+
+    def on_key(self, event):
+        # Down in the search field goes into the list it filters.
+        if event.key == "down" and getattr(self.focused, "id", None) == "project-search":
+            rows = self.query_one("#project-rows", DataTable)
+            if rows.row_count:
+                event.stop()
+                rows.focus()
 
     def configured_slots(self, project_id=None):
         settings = self.data.get("settings", {})
@@ -1283,6 +1304,7 @@ def main():
     parser.add_argument("--workspace-id", default="default")
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--popup", action="store_true")
+    parser.add_argument("--run-request", action="store_true")  # a view started again by a menu request
     args = parser.parse_args()
     settings = Settings.load(args.data_dir, create=False)
     if args.kind == "activity":
@@ -1296,6 +1318,7 @@ def main():
     else:
         from .terminal_graph import GraphApp
         app = GraphApp(settings, args.workspace_id)
+    app.run_start_request = args.run_request
     app.run()
 
 

@@ -67,6 +67,8 @@ CATALOG = {
     "Limit reached": "Osiągnięto limit", "Outcome uncertain": "Wynik niepewny", "Busy": "Zajęty",
     "Closed": "Zamknięto", "Invalid input": "Nieprawidłowe dane wejściowe", "Status updated": "Zaktualizowano stan",
     "Context compacted": "Kontekst skrócony",
+    "Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspace; it keeps running. Ctrl+C interrupts a turn.":
+        "Ctrl+Q nie kończy agenta. Ctrl+B, potem d: wyjście ze środowiska; działa ono dalej. Ctrl+C przerywa turę.",
 }
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",

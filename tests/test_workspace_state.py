@@ -116,7 +116,7 @@ def menu_request(tmp_path, row):
     from cairnmind.workspace import WorkspaceManager
 
     state = WorkspaceState(Settings(data_dir=tmp_path / "data"))
-    stub = SimpleNamespace(state=state, _layout=lambda: None)
+    stub = SimpleNamespace(state=state, _layout=lambda: None, _revive=lambda role, **_: None)  # no tmux here
     stub.request_command = lambda action: WorkspaceManager.request_command(stub, action)
     dispatch_command(stub, row)
     return state.read()["command_request"]

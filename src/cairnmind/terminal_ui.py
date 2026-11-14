@@ -289,6 +289,7 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
 
 class BasePanel(App):
     ENABLE_COMMAND_PALETTE = False
+    run_start_request = False  # set by `--run-request`: the request found at start is for this start
     # Colours and the shape of every control and dialog live in terminal_theme; panels add sizes only.
     CSS = terminal_theme.BASE_CSS
 
@@ -442,7 +443,11 @@ class BasePanel(App):
             if isinstance(command, dict) and command.get("id") != self._last_command_id:
                 self._last_command_id = command.get("id")
                 if command.get("target_role") == getattr(self, "panel_role", None):
-                    self.open_command(command.get("action"))
+                    if isinstance(self.screen, ModalScreen):
+                        # Run behind an open dialog, a command would change the view that dialog belongs to.
+                        self.notify(self.t(self.DIALOG_OPEN), timeout=8, markup=False)
+                    else:
+                        self.open_command(command.get("action"))
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(safe_text(exc))
 
@@ -454,6 +459,10 @@ class BasePanel(App):
             await asyncio.to_thread(self.broker.ensure)
             await self._poll_workspace()
             await self.ready_panel()
+            if self.run_start_request:
+                # Started again by the menu request in the state (WorkspaceManager._revive): run it once.
+                self.run_start_request, self._last_command_id = False, None
+                await self._poll_workspace()
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(safe_text(exc))
 
@@ -482,6 +491,31 @@ class BasePanel(App):
     def header_footer(self):
         yield Header()
         yield Footer()
+
+    # Textual binds Ctrl+Q to quit and Ctrl+C to "press Ctrl+Q to quit". A workspace view must not end
+    # from a key: tmux keeps its pane (remain-on-exit) and shows it dead. In the workspace tmux takes
+    # Ctrl+Q first and detaches the terminal (WorkspaceManager._bindings); these run where it does not.
+    LEAVE_KEYS = "Ctrl+B, then d: leave the workspace. It keeps running; run cairnmind to return."
+    LEAVE_HINT = "To leave the workspace press Ctrl+Q, or Ctrl+B then d. It keeps running; run cairnmind to return."
+    DIALOG_OPEN = "A dialog is open in this view. Finish it or press Esc, then choose the command again."
+
+    async def action_quit(self) -> None:
+        self.leave_hint(self.LEAVE_KEYS)
+
+    def action_help_quit(self) -> None:
+        self.leave_hint(self.LEAVE_HINT)
+
+    def leave_hint(self, text) -> None:
+        """A key hint, not an event of the project: shown on the notice line, never kept in Notices."""
+        if lines := self.query("#panel-notice"):
+            line = lines.first(Static)
+            line.update(plain(self.t(text)))
+            line.display = True
+            line.remove_class("-warn", "-error")
+            self.notice_history.add("", None)  # the newest notice left the line: the mark counts it again
+            self.show_notice_mark()
+        else:  # a view without a notice line (the activity column)
+            self.notify(self.t(text), timeout=8, markup=False)
 
 
 class ChoiceModal(LocalizedModal, ModalScreen[str | None]):

@@ -393,6 +393,12 @@ class AgentApp(App):
         self.query_one("#agent-send", Button).disabled = busy or self.engine is None
         self.query_one("#agent-interrupt", Button).disabled = not busy
         self.query_one("#agent-resolve", Button).disabled = busy
+        self.call_after_refresh(self.keep_focus)
+
+    def keep_focus(self):
+        """A focused button that becomes disabled drops the focus, and typed text then went nowhere."""
+        if self.focused is None and self.screen is self.screen_stack[0]:
+            self.query_one("#agent-prompt", TextArea).focus()
 
     @work(group="agent-turn", exclusive=True, exit_on_error=False)
     async def execute_turn(self, text):
@@ -468,6 +474,11 @@ class AgentApp(App):
             if self._turn_task and not self._turn_task.done():
                 self._turn_task.cancel()
             self.set_status("Interrupting the current operation…", kind="running")
+
+    async def action_quit(self) -> None:
+        # Textual's Ctrl+Q would end the agent and tmux would keep its pane dead (#152); the status line is the run's.
+        self.notify(self.t("Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspace; it keeps running. "
+                           "Ctrl+C interrupts a turn."), timeout=8, markup=False)
 
     async def refresh_pending(self):
         pending = self.engine.pending_actions() if self.engine is not None else []
