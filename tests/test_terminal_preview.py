@@ -253,7 +253,8 @@ async def test_graph_keyboard_stays_live_during_slow_fetch_and_recovers_from_off
             await pilot.pause(.7)
             assert [row["id"] for row in app.model.nodes] == original
             text = "\n".join(strip.text for strip in app.screen._compositor.render_strips())
-            assert "503" in text or "przerwane" in text
+            # Either the answer of the offline server or the notice of a broken connection, in the UI language.
+            assert "503" in text or "was interrupted" in text or "przerwane" in text
             server.app.state.fixture.scenario = "normal"
             app._dirty = True
             await pilot.pause(.7)
