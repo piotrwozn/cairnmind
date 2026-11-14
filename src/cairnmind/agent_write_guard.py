@@ -14,11 +14,12 @@ Two protections, both on the host side of the tool executor:
 from __future__ import annotations
 
 import difflib
+import unicodedata
 
 MAX_LISTED = 20            # files named in one approval request; the rest are counted
 MAX_PATH_CHARS = 240       # a longer path is shown with its middle cut
 MAX_DIFF_LINES = 60        # lines of a gated change shown in its approval request
-MAX_DIFF_LINE_CHARS = 300  # a longer line is cut and marked
+MAX_DIFF_CHARS = 18_000    # characters of those lines; a line is shown whole or not at all, never cut
 CHANGES = ("created", "changed", "deleted")
 WRITE_TOOLS = ("write_file", "apply_patch", "delete_file")
 
@@ -30,7 +31,7 @@ EXECUTION_DIRECTORIES = frozenset({
 # A file name anywhere in the path: instruction files coding clients read in every directory, MCP and
 # environment files that tools load on their own.
 EXECUTION_FILES = frozenset({
-    "agents.md", "claude.md", "claude.local.md", "gemini.md", ".mcp.json", ".cursorrules", ".windsurfrules",
+    "agents.md", "agents.override.md", "claude.md", "claude.local.md", "gemini.md", ".mcp.json", ".cursorrules", ".windsurfrules",
     ".clinerules", ".devcontainer.json", ".envrc", ".pre-commit-config.yaml", "lefthook.yml", ".lefthook.yml",
     ".gitlab-ci.yml"})
 # A directory and what below it: only these parts of `.github` and `.vscode` run or steer anything.
@@ -54,7 +55,19 @@ def configures_execution(parts) -> bool:
     return False
 
 
+_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def inert_path(path: str) -> str:
+    """A file name on one line: line breaks, tabs, other control and format characters and line or paragraph
+    separators are written as escapes, so a name cannot start a line of its own in a dialog. Idempotent."""
+    return "".join(
+        _ESCAPES.get(char) or (f"\\u{ord(char):04x}" if ord(char) <= 0xFFFF else f"\\U{ord(char):08x}")
+        if unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"} else char for char in path)
+
+
 def shown_path(path: str) -> str:
+    path = inert_path(path)
     if len(path) <= MAX_PATH_CHARS:
         return path
     keep = (MAX_PATH_CHARS - 1) // 2
@@ -104,7 +117,11 @@ class ChangeLedger:
         return value
 
     def replay(self, events, normalise):
-        """Rebuild the list from journal events, so a restart does not forget an unapproved write."""
+        """Rebuild the list from journal events, so a restart does not forget an unapproved write.
+
+        An interrupted write counts only after its action_started: one cancelled while the person was
+        still being asked never started, as the live list knows."""
+        started = set()
         for event in events:
             data = event.get("data") if isinstance(event, dict) else None
             if not isinstance(data, dict):
@@ -115,7 +132,12 @@ class ChangeLedger:
                     self.approved()
                 continue
             name, arguments = data.get("name"), data.get("arguments")
+            if kind == "action_started":
+                started.add(data.get("action_id"))
+                continue
             if kind not in {"action_completed", "action_interrupted"} or name not in WRITE_TOOLS:
+                continue
+            if kind == "action_interrupted" and data.get("action_id") not in started:
                 continue
             if not isinstance(arguments, dict):
                 continue
@@ -129,17 +151,21 @@ class ChangeLedger:
             self.record(path, change_of(name, arguments, result if kind == "action_completed" else None))
 
 
-def _cut(line: str) -> str:
-    return line if len(line) <= MAX_DIFF_LINE_CHARS else line[:MAX_DIFF_LINE_CHARS - 1] + "…"
-
-
 def change_preview(before, after):
-    """A unified diff of a gated change, bounded; returns (text, count of lines not shown)."""
+    """A unified diff of a gated change, bounded; returns (text, count of lines not shown).
+
+    A line is shown whole or not at all: a cut line would hide its end behind a harmless start while the
+    count said nothing was left out. The first line that does not fit ends the preview."""
     old = [] if before is None else before.splitlines()
     new = [] if after is None else after.splitlines()
     lines = [line for line in difflib.unified_diff(old, new, lineterm="", n=2)][2:]  # without the ---/+++ header
-    shown = [_cut(line) for line in lines[:MAX_DIFF_LINES]]
-    return "\n".join(shown), max(0, len(lines) - MAX_DIFF_LINES)
+    shown, used = [], 0
+    for line in lines[:MAX_DIFF_LINES]:
+        if used + len(line) > MAX_DIFF_CHARS:
+            break
+        shown.append(line)
+        used += len(line)
+    return "\n".join(shown), len(lines) - len(shown)
 
 
 # The approval dialog ---------------------------------------------------------------------------------------
@@ -176,7 +202,7 @@ def changed_files_text(request, t) -> str:
     else:
         lines.append(t("Files the agent created, changed or deleted since your last approval ({count}):",
                        count=len(rows) + more))
-        lines.extend("  " + t(_LINE[row["change"]], path=row["path"]) for row in rows)
+        lines.extend("  " + t(_LINE[row["change"]], path=shown_path(row["path"])) for row in rows)
         if more:
             lines.append("  " + t("…and {count} more.", count=more))
         lines.append(t("What you approve here can run code from these files."))

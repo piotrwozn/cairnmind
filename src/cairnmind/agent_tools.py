@@ -659,7 +659,8 @@ class ToolExecutor:
                 result = self._search(args)
         except asyncio.CancelledError:
             # There may have been an effect even if the return value was lost.
-            if effect:
+            # A file change cancelled while the person was still being asked never started (#176).
+            if effect and (started or name == "run_command"):
                 self.journal.append("action_interrupted", self._action(action_id, name, args, call_id))
             if started and name != "run_command":
                 # The file may have changed: list it as if it did.
