@@ -1029,6 +1029,27 @@ def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
 
 
+@eval_app.command("extraction")
+@initialized
+def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: int = 3,
+                    report_dir: Path | None = None):
+    """Measure what extraction proposes from conversations against the records a person would keep.
+
+    TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory.
+    Needs Ollama with the configured chat model, no engine; nothing is stored. Exits 3 without the model.
+    """
+    from cairnmind.extraction_evaluation import run_extraction_evaluation
+    path = transcripts or Path("docs") / "evaluation" / "extraction-transcripts.json"
+    try:
+        result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    output({key: value for key, value in result.items() if key != "runs"}
+           | {"runs": [{"run": run["run"], **run["summary"], "failures": run["failures"]} for run in result["runs"]]})
+    if result.get("status") != "passed":
+        raise typer.Exit(3 if result.get("status") == "not_run" else 1)
+
+
 @eval_app.command("repository")
 @initialized
 def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = None, report_dir: Path | None = None):
