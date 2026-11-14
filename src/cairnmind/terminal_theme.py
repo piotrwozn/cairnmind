@@ -28,6 +28,8 @@ What was checked on Textual 8.2.8 (so nobody repeats it):
   `size_classes()` from `on_mount` and `on_resize`. Textual runs the `on_mount` / `on_resize`
   of every class in the MRO, so a subclass handler does not hide the one in `BasePanel`.
   An App's `on_resize` runs before the App takes the new size: use `event.size`, not `app.size`.
+- The `*` rule that makes every scrollbar one cell also gave the Footer one: with more keys than
+  fit, its one row showed a scrollbar instead of the keys. The Footer rule switches it off again.
 - A DataTable column with a fixed width crops a longer cell without a mark and keeps the cell's
   text; `column_widths()` sets the widths, and a view recomputes them on every resize.
 """
@@ -40,16 +42,20 @@ from rich.text import Text
 
 from .terminal_safe import plain
 
+# The surfaces are only slightly blue: a less grey value would turn into an ANSI blue or black
+# when Rich downgrades it for a 256-colour terminal (it matches colours with saturation of 15% or
+# more against the palette, and maps the rest onto the grey ramp).
 TOKENS = {
-    "bg": "#101418", "panel": "#1a2028", "raised": "#262d37", "border": "#3d4754",
-    "border-hi": "#5f6b7a", "text": "#d7dde4", "strong": "#f1f5f9", "muted": "#8b97a6",
-    "dim": "#5c6673", "accent": "#87afd7", "select": "#1f4468", "ok": "#8fd08a",
+    "bg": "#121418", "panel": "#1d2026", "raised": "#282e36", "border": "#3d4552",
+    "border-hi": "#5f6b7a", "text": "#dadee3", "strong": "#f1f5f9", "muted": "#8b97a6",
+    "dim": "#5c6673", "accent": "#87afd7", "select": "#1e4a78", "ok": "#8fd08a",
     "warn": "#f0cf87", "danger": "#f47067",
 }
-# Nearest xterm-256 cell of each token: what a 256-colour terminal and tmux show.
+# The xterm-256 cell Rich picks for each token: what a 256-colour terminal shows. tmux uses the
+# same numbers, so a state has one colour in a panel and in the status line.
 XTERM = {
     "bg": 233, "panel": 234, "raised": 236, "border": 238, "border-hi": 242, "text": 253,
-    "strong": 255, "muted": 246, "dim": 241, "accent": 110, "select": 24, "ok": 114,
+    "strong": 231, "muted": 246, "dim": 241, "accent": 110, "select": 24, "ok": 114,
     "warn": 222, "danger": 203,
 }
 TMUX = {"bg": 234, "fg": 250, "label": 246, "sep": 240, "accent": 110, "ok": 114, "warn": 222,
@@ -74,7 +80,7 @@ Screen { background: $cm-bg; color: $cm-text; }
 Header { height: 1; background: $cm-panel; color: $cm-strong; }
 HeaderIcon { display: none; }
 HeaderTitle { content-align: left middle; padding: 0 1; text-style: bold; }
-Footer { background: $cm-panel; }
+Footer { background: $cm-panel; scrollbar-size-horizontal: 0; scrollbar-size-vertical: 0; }
 FooterKey { background: $cm-panel; color: $cm-muted; }
 FooterKey .footer-key--key { color: $cm-accent; background: $cm-panel; text-style: bold; }
 FooterKey .footer-key--description { color: $cm-muted; background: $cm-panel; }
@@ -128,7 +134,7 @@ OptionList > .option-list--option-highlighted { background: $cm-select; color: $
 #panel-notice.-error { color: $cm-danger; text-style: bold; }
 #notice-mark { height: auto; color: $cm-muted; padding: 0 1; display: none; }
 ModalScreen { align: center middle; background: $cm-bg 70%; }
-.cm-dialog { width: 92%; max-width: 100; height: auto; max-height: 92%; background: $cm-panel;
+.cm-dialog { width: 94%; max-width: 100; height: auto; max-height: 92%; background: $cm-panel;
     border: round $cm-border-hi; padding: 1 2; }
 .cm-dialog.-wide { max-width: 120; }
 .cm-dialog.-menu { max-width: 72; }
@@ -148,7 +154,7 @@ ModalScreen { align: center middle; background: $cm-bg 70%; }
 #form-fields TextArea { height: 5; }
 #folder-notice, #discovery-notice, #group-notice { height: auto; max-height: 3; color: $cm-muted; }
 .cm-hint { color: $cm-muted; height: 1; margin-top: 1; }
-.cm-note { height: auto; color: $cm-text; border-left: thick $cm-warn; padding: 0 1; margin: 0 0 1 0; }
+.cm-note { height: auto; color: $cm-text; border-left: thick $cm-warn; padding: 0 0 0 1; margin: 0 0 1 0; }
 .cm-error, #form-error, #credential-error { height: auto; color: $cm-danger; text-style: bold; }
 .-short .cm-dialog { padding: 0 1; max-height: 100%; }
 .-short .cm-dialog > .heading, .-short .cm-dialog > .form-title, .-short .actions, .-short .form-actions,

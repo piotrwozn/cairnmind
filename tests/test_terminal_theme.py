@@ -12,7 +12,8 @@ from cairnmind.terminal_i18n import CATALOG, tr
 SOURCE = Path(theme.__file__).parent
 # Modules whose colours have moved to the theme. The list grows as panels are converted.
 THEMED = ["terminal_ui.py", "terminal_panels.py", "workspace.py", "api_worker.py", "terminal_inspector.py",
-          "terminal_impact.py", "terminal_detail.py"]
+          "terminal_impact.py", "terminal_detail.py", "terminal_commands.py", "workspace_finding.py"]
+# terminal_graph.py is not listed: its node colours are the graph's own data colours, not chrome.
 GREENS = {theme.TOKENS["ok"], f"colour{theme.XTERM['ok']}"}
 
 
@@ -28,10 +29,18 @@ def test_every_token_has_a_256_colour_cell_and_states_stay_apart_there():
     assert set(theme.TOKENS) == set(theme.XTERM)
     cells = theme.XTERM
     # Structure and state must survive a 256-colour terminal: these may never share a cell.
-    for group in (("bg", "raised", "select", "accent"), ("ok", "warn", "danger"), ("text", "muted", "dim")):
+    for group in (("bg", "panel", "raised", "select", "accent"), ("ok", "warn", "danger"), ("text", "muted", "dim")):
         assert len({cells[name] for name in group}) == len(group), group
     assert {theme.TMUX[name] for name in ("ok", "warn", "danger", "accent")} == {
         cells[name] for name in ("ok", "warn", "danger", "accent")}
+
+
+def test_a_256_colour_terminal_gets_the_cells_the_table_names():
+    from rich.color import Color, ColorSystem
+    # Rich picks the cell, so the table must be what it picks: a surface that came out as an ANSI
+    # blue or black would change the look on every 256-colour terminal.
+    for name, value in theme.TOKENS.items():
+        assert Color.parse(value).downgrade(ColorSystem.EIGHT_BIT).number == theme.XTERM[name], name
 
 
 def test_styled_text_keeps_the_whole_string_and_escapes_it():
@@ -114,3 +123,12 @@ def test_status_rows_read_the_same_without_styles():
     assert strip(second) == (" Memory:ACK ready | Connection:Ready(local) | "
                              "#{?client_readonly,Control:Read only,Control:You}")
     assert "," not in re.sub(r"#\{\?client_readonly,.*", "", second)
+
+
+def test_keyboard_help_keeps_its_text_when_the_keys_are_set_apart():
+    from cairnmind.terminal_commands import help_text
+    value = "Ctrl+B, then n: save a finding (Ctrl+S: saves)\n\nNo keys on this line.\nGraph: [ / ] select"
+    shown = help_text(value)
+    assert shown.plain == value
+    accents = [shown.plain[span.start:span.end] for span in shown.spans if span.style == theme.style("accent")]
+    assert accents == ["Ctrl+B, then n: ", "Graph: "]
