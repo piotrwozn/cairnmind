@@ -8,6 +8,7 @@ import pytest
 
 from cairnmind import ingest
 from cairnmind.arcade import ArcadeClient
+from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.store import Store
 from cairnmind.sql import clean_row
 
@@ -341,22 +342,27 @@ def test_a_group_of_replacements_is_checked_against_what_it_actually_wrote(tmp_p
         ingest.index_project(single, second)
     embed_everything(grouped, first)
     embed_everything(single, second)
-    for name in sizes:  # small now: what the new versions write is known, what the old ones leave behind is not
+    for name in sizes:  # small now: what the new versions write is little, what the old ones leave behind is not
         (root / name).write_text(f"NEW_{name[0]} = 1\n")
     ingest.forget_index_signature(grouped)
     committed, real = [], ingest._within_limit
 
-    def recorded(tx):
-        real(tx)
+    def recorded(tx, limit=ingest.EVENTS_PER_TRANSACTION):
+        real(tx, limit)
         committed.append(len(tx.pending()))
     with monkeypatch.context() as patch:
         patch.setattr(ingest, "_within_limit", recorded)
+        seen = counted(patch)
         ingest.index_project(grouped, first)
     with monkeypatch.context() as patch:
         row_by_row(patch)
         ingest.index_project(single, second)
-    # a, b and c each alone after the group of six was halved twice, then e and f together; d took the ordinary path.
-    assert len(committed) == 4 and max(committed) <= ingest.EVENTS_PER_TRANSACTION
+    # Counted before the write: a, b and c each alone, d alone above the shared limit but under the journal's,
+    # then e and f together. Nothing was written only to be rolled back.
+    assert len(committed) == 5 and max(committed) <= MAX_TRANSACTION_EVENTS
+    assert [size > ingest.EVENTS_PER_TRANSACTION for size in committed] == [False, False, False, True, False]
+    assert "rollback" not in seen
+    assert not [text for text in seen if text.startswith("SELECT FROM sources WHERE current_key=:key")]  # no snapshot
     one, other = dump(grouped, first), dump(single, second)
     for part in one:
         assert one[part] == other[part], part
@@ -376,11 +382,13 @@ def test_a_group_of_replacements_is_checked_against_what_it_actually_wrote(tmp_p
     del committed[:]
     with monkeypatch.context() as patch:
         patch.setattr(ingest, "_within_limit", recorded)
+        seen = counted(patch)
         assert ingest.index_project(grouped, first)["deleted"] == 4
     with monkeypatch.context() as patch:
         row_by_row(patch)
         assert ingest.index_project(single, second)["deleted"] == 4
-    assert committed == []  # the one group of four was too large and rolled back
+    # a and b each alone, as before; c and e together. Counted first, so nothing was rolled back.
+    assert len(committed) == 1 and committed[0] <= ingest.EVENTS_PER_TRANSACTION and "rollback" not in seen
     one, other = dump(grouped, first), dump(single, second)
     for part in one:
         assert one[part] == other[part], part
@@ -388,6 +396,98 @@ def test_a_group_of_replacements_is_checked_against_what_it_actually_wrote(tmp_p
                                  for row in grouped.query("SELECT FROM journal_events WHERE project_id=:p", {"p": first}))
     # No group was folded into "everything of this kind changed": every row is still named.
     assert not [key for key in events if key[1] == "reset" and key[0] in ("source", "chunk", "job", "embedding")]
+
+
+def test_a_count_out_of_date_by_the_write_is_still_caught_before_the_commit(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    sizes = {"a.py": 4100, "b.py": 4100, "c.py": 4100, "e.py": 10, "f.py": 10}
+    for name, lines in sizes.items():
+        (root / name).write_text("".join(f"# old line {n}\n" for n in range(lines)))
+    grouped, single = Store(tmp_path / "grouped"), Store(tmp_path / "single")
+    first, second = grouped.add_project("p", root)["id"], single.add_project("p", root)["id"]
+    ingest.index_project(grouped, first)
+    with monkeypatch.context() as patch:
+        row_by_row(patch)
+        ingest.index_project(single, second)
+    embed_everything(grouped, first)
+    embed_everything(single, second)
+    for name in sizes:
+        (root / name).write_text(f"NEW_{name[0]} = 1\n")
+    ingest.forget_index_signature(grouped)
+    committed, real = [], ingest._within_limit
+
+    def recorded(tx, limit=ingest.EVENTS_PER_TRANSACTION):
+        real(tx, limit)
+        committed.append(len(tx.pending()))
+    with monkeypatch.context() as patch:
+        patch.setattr(ingest, "_within_limit", recorded)
+        # As if the old sources had nothing hanging on them when they were counted, and gained it before the write.
+        patch.setattr(ingest, "_hanging_events", lambda store, source_ids, vectors: dict.fromkeys(source_ids, 1))
+        seen = counted(patch)
+        ingest.index_project(grouped, first)
+    with monkeypatch.context() as patch:
+        row_by_row(patch)
+        ingest.index_project(single, second)
+    assert "rollback" in seen and max(committed) <= ingest.EVENTS_PER_TRANSACTION
+    one, other = dump(grouped, first), dump(single, second)
+    for part in one:
+        assert one[part] == other[part], part
+    events = collections.Counter((row["entity_type"], row["op"]) for row in grouped.query(
+        "SELECT FROM journal_events WHERE project_id=:p", {"p": first}))
+    assert not [key for key in events if key[1] == "reset" and key[0] in ("source", "chunk", "job", "embedding")]
+
+
+def code_tree(root, files=10, functions=12):
+    """Files shaped like real code: many definitions and calls, so the graph rows of a source outweigh its chunks."""
+    for index in range(files):
+        lines = [f"from module_{(index + 1) % files:02d} import function_{(index + 1) % files}_0\n"]
+        for number in range(functions):
+            lines.append(f"\n\ndef function_{index}_{number}(value):\n"
+                         f"    return function_{index}_{max(number - 1, 0)}(value) + helper_{index}(value)\n")
+        lines.append(f"\n\nclass Thing{index}:\n" + "".join(
+            f"    def method_{number}(self):\n        return function_{index}_{number}(self)\n" for number in range(functions)))
+        lines.append(f"\n\ndef helper_{index}(value):\n    return value\n")
+        (root / f"module_{index:02d}.py").write_text("".join(lines))
+    big = "".join(f"\n\ndef big_{number}(value):\n    return big_{max(number - 1, 0)}(value)\n" for number in range(90))
+    (root / "module_big.py").write_text(big)
+
+
+def test_replaced_code_files_are_grouped_from_what_was_counted_and_never_rolled_back(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    code_tree(root)
+    grouped, single = Store(tmp_path / "grouped"), Store(tmp_path / "single")
+    first, second = grouped.add_project("p", root)["id"], single.add_project("p", root)["id"]
+    ingest.index_project(grouped, first)
+    with monkeypatch.context() as patch:
+        row_by_row(patch)
+        ingest.index_project(single, second)
+    rewrite(root)
+    ingest.forget_index_signature(grouped)
+    ingest.forget_index_signature(single)
+    weights, counter = [], ingest._hanging_events
+
+    def counting(store, source_ids, vectors):
+        found = counter(store, source_ids, vectors)
+        weights.extend(found.values())
+        return found
+    with monkeypatch.context() as patch:
+        patch.setattr(ingest, "_hanging_events", counting)
+        seen = counted(patch)
+        result = ingest.index_project(grouped, first)
+    with monkeypatch.context() as patch:
+        row_by_row(patch)
+        ingest.index_project(single, second)
+    assert result["changed"] == result["files"] == 11 and not result["errors"]
+    # Several files share a transaction, the big one is above the shared limit and is written alone in one.
+    assert len(weights) == 11 and max(weights) > ingest.EVENTS_PER_TRANSACTION
+    assert sum(text == "begin" for text in seen) < result["files"]
+    assert "rollback" not in seen
+    assert not [text for text in seen if text.startswith("SELECT FROM sources WHERE current_key=:key")]
+    one, other = dump(grouped, first), dump(single, second)
+    for part in one:
+        assert one[part] == other[part], part
 
 
 def test_a_failure_in_a_group_of_replacements_leaves_every_file_of_it_as_it_was(tmp_path, monkeypatch):

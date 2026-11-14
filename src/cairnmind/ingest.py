@@ -25,6 +25,7 @@ from cairnmind.parsing import analyze_code, parser_identity
 from cairnmind.arcade import ArcadeError
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
+from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import bound_metadata, imported_source_ids, is_memory_path, memory_bindings
 from cairnmind.sql import json_text as _json_text
 
@@ -264,27 +265,73 @@ def _deactivate_together(store, tx, source_ids: list[str]) -> None:
     store._delete_old_vectors(tx, source_ids)
 
 
-def _within_limit(tx) -> None:
-    """How much a replacement touches is known only once it is written: checked then, before the commit."""
-    if hasattr(tx, "pending") and len(tx.pending()) > EVENTS_PER_TRANSACTION:
+def _within_limit(tx, limit: int = EVENTS_PER_TRANSACTION) -> None:
+    """What was counted before the write can be out of date by then: checked again, before the commit."""
+    if hasattr(tx, "pending") and len(tx.pending()) > limit:
         raise _TooManyEvents
+
+
+def _vector_tables(store) -> int:
+    return sum(1 for row in store.query("SELECT type_name FROM vector_indexes")
+               if str(row.get("type_name") or "").startswith("vector_"))
+
+
+def _hanging_events(store, source_ids: list[str], vector_tables: int) -> dict[str, int]:
+    """The journal events that deactivating each of these sources writes, counted before anything is written.
+
+    One for the source, one per chunk, node and edge that ``_deactivate_together`` deactivates, one per
+    vector it deletes. On real code the graph rows of the old source outweigh what the new one writes.
+    """
+    weights = dict.fromkeys(source_ids, 1)
+    if not source_ids:
+        return weights
+    live = "(is_current=true OR is_current IS NULL)"
+    for table, condition, times in (
+            ("chunks", live, 1),
+            ("nodes", f"{live} AND kind NOT IN {_KEPT_NODE_KINDS}", 1),
+            ("edges", f"{live} AND kind NOT IN {_KEPT_EDGE_KINDS}", 1),
+            ("embeddings", "true", 1 + vector_tables)):
+        for row in store.query(f"SELECT source_id,count(*) AS n FROM {table} WHERE source_id IN :sources AND {condition} "
+                               "GROUP BY source_id", {"sources": source_ids}):
+            if row.get("source_id") in weights:
+                weights[row["source_id"]] += int(row.get("n") or 0) * times
+    return weights
+
+
+def _groups(items: list, cost) -> list[list]:
+    """Consecutive groups whose costs add up to at most EVENTS_PER_TRANSACTION; a costlier item stands alone."""
+    groups, total = [], 0
+    for item in items:
+        if not groups or total + cost(item) > EVENTS_PER_TRANSACTION:
+            groups.append([])
+            total = 0
+        groups[-1].append(item)
+        total += cost(item)
+    return groups
 
 
 def _deactivate_sources(store, source_ids: list[str]) -> None:
     """Deactivate the sources of deleted files, up to FILES_PER_TRANSACTION in one transaction.
 
-    The rows and the journal events are those of ``_deactivate_source`` for each. A group that would write
-    more events than EVENTS_PER_TRANSACTION is rolled back and written source by source instead.
+    The rows and the journal events are those of ``_deactivate_source`` for each. What hangs on each source is
+    counted first, so that no group holds more than EVENTS_PER_TRANSACTION events; a source over it alone is
+    deactivated as before. A group that wrote more all the same is rolled back and written source by source.
     """
+    vectors = _vector_tables(store) if source_ids else 0
     for offset in range(0, len(source_ids), FILES_PER_TRANSACTION):
         part = source_ids[offset:offset + FILES_PER_TRANSACTION]
-        try:
-            with store.transaction() as tx:
-                _deactivate_together(store, tx, part)
-                _within_limit(tx)
-        except _TooManyEvents:
-            for source_id in part:
-                _deactivate_source(store, source_id)
+        weights = _hanging_events(store, part, vectors)
+        for group in _groups(part, weights.__getitem__):
+            if len(group) == 1:
+                _deactivate_source(store, group[0])
+                continue
+            try:
+                with store.transaction() as tx:
+                    _deactivate_together(store, tx, group)
+                    _within_limit(tx)
+            except _TooManyEvents:
+                for source_id in group:
+                    _deactivate_source(store, source_id)
 
 
 def _write_files(store, project_id: str, batch: list[dict]) -> list:
@@ -295,21 +342,24 @@ def _write_files(store, project_id: str, batch: list[dict]) -> list:
     their vectors deleted. The rows and the journal events are those of ``snapshot``, ``_write_chunks``
     and ``enqueue``. A file is stored whole or not at all, so nothing is left for a later run to repair.
 
-    Returns one source per file for a leading part of the batch, possibly all of it: a group that wrote
-    more journal events than EVENTS_PER_TRANSACTION is rolled back and its first half tried alone, and
-    the caller sends the rest again. None for a file means nothing was written for it and the caller
-    takes the ordinary path: its URI had a current source other than the one it was to replace, or the
-    file alone writes more events than a shared transaction may hold.
+    Returns one source per file for a leading part of the batch, possibly all of it. The caller sizes groups
+    from what it counted before; a group that wrote more journal events than EVENTS_PER_TRANSACTION all
+    the same is rolled back and its first half tried alone, and the caller sends the rest again. A file
+    alone may hold up to the journal's own limit, under which every event is still named, as it was when
+    the file took ``snapshot``. None for a file means nothing was written for it and the caller takes the
+    ordinary path: its URI had a current source other than the one it was to replace, or the file alone
+    writes more events than that.
     """
     try:
-        return _write_files_once(store, project_id, batch)
+        return _write_files_once(store, project_id, batch,
+                                 EVENTS_PER_TRANSACTION if len(batch) > 1 else MAX_TRANSACTION_EVENTS)
     except _TooManyEvents:
         if len(batch) == 1:
             return [None]
         return _write_files(store, project_id, batch[:len(batch) // 2])
 
 
-def _write_files_once(store, project_id: str, batch: list[dict]) -> list:
+def _write_files_once(store, project_id: str, batch: list[dict], limit: int = EVENTS_PER_TRANSACTION) -> list:
     sources = []
     with store.transaction() as tx:
         store._require_project(tx, project_id)
@@ -342,7 +392,7 @@ def _write_files_once(store, project_id: str, batch: list[dict]) -> list:
                 store.enqueue_new(tx, "embed", project_id, {"chunk_id": chunk_id}, f"embed:{chunk_id}")
             if item["extract"]:
                 store.enqueue_new(tx, "extract", project_id, {"source_id": source["id"]}, f"extract:{source['id']}")
-        _within_limit(tx)
+        _within_limit(tx, limit)
     return sources
 
 
@@ -584,18 +634,32 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         written = _write_chunks(store, project_id, source["id"], item["content"], item["chunk_metadata"])
         finish(*item["place"], source, item["analysis"], written, item["extract"])
 
+    vectors: list[int] = []  # how many vector tables there are, read once, when a replacement first needs it
+
     def write_waiting():
         """Everything is written, and remembered, in the order in which the files were walked."""
         batch = waiting[:]
         del waiting[:]
-        while batch:
-            written = _write_files(store, project_id, batch)
-            for item, source in zip(batch, written):
-                if source is None:
-                    one_by_one(item)  # another writer was first, or the file is too large to share: as before
-                else:
-                    finish(*item["place"], source, item["analysis"], len(item["chunks"]), False)
-            batch = batch[len(written):]  # what a group too large to commit left over
+        replaced = [item["replaces"] for item in batch if item.get("replaces")]
+        if replaced and not vectors:
+            vectors.append(_vector_tables(store))
+        # What the old sources leave behind is counted before the write, so a group fits on its first attempt.
+        weights = _hanging_events(store, replaced, vectors[0]) if replaced else {}
+
+        def cost(item):
+            return item["cost"] + weights.get(item.get("replaces"), 1) - 1  # the old source is in both
+        for group in _groups(batch, cost):
+            if cost(group[0]) > MAX_TRANSACTION_EVENTS:
+                one_by_one(group[0])  # too large even alone: as before, so its events stay named where they were
+                continue
+            while group:
+                written = _write_files(store, project_id, group)
+                for item, source in zip(group, written):
+                    if source is None:
+                        one_by_one(item)  # another writer was first, or the file is too large to share: as before
+                    else:
+                        finish(*item["place"], source, item["analysis"], len(item["chunks"]), False)
+                group = group[len(written):]  # what a group too large to commit left over
     for root in registered_roots:
         if not root.is_dir():
             counts["errors"].append(f"Project root unavailable: {root}")
@@ -683,8 +747,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                     continue
                 item["replaces"] = replaces
                 item["chunks"] = list(_chunks(content))
-                # Journal events known in advance: source, chunks, their jobs, an extraction job and the old
-                # source. What hangs on the old source is counted once it is written (see _write_files).
+                # Journal events known from the file: source, chunks, their jobs, an extraction job and the old
+                # source. What hangs on the old source is counted before the group is written (write_waiting).
                 cost = 2 + 2 * len(item["chunks"]) + (1 if replaces else 0)
                 if cost > EVENTS_PER_TRANSACTION:
                     # Too large to share a transaction: written as before, each part in its own.
