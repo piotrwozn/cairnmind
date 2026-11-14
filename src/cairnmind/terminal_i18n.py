@@ -389,6 +389,8 @@ LEGACY = {
 }
 CATALOG.update({english: polish for polish, english in LEGACY.items() if english not in CATALOG})
 CATALOG.update({
+    "A dialog is open in this view. Finish it or press Esc, then choose the command again.":
+        "W tym widoku jest otwarte okno. Dokończ je lub naciśnij Esc, a potem wybierz polecenie ponownie.",
     "Ctrl+B, then d: leave the workspace. It keeps running; run cairnmind to return.":
         "Ctrl+B, potem d: wyjście ze środowiska. Działa ono dalej; uruchom cairnmind, aby wrócić.",
     "To leave the workspace press Ctrl+Q, or Ctrl+B then d. It keeps running; run cairnmind to return.":

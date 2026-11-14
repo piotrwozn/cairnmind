@@ -190,6 +190,55 @@ async def test_graph_key_footer_fits_and_hidden_keys_still_work(panel, monkeypat
             }[language] in text
 
 
+@pytest.mark.asyncio
+async def test_routine_confirmation_starts_on_cancel_and_consent_on_its_text(tmp_path, monkeypatch):
+    from textual.widgets import Button
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(ConfirmModal("Remove from layout?", "This hides the assignment. Existing processes are not stopped.",
+                                     approve="Remove"), results.append)
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.focused, Button) and app.focused.id == "confirm-no"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert results == [False]
+        app.push_screen(ConfirmModal("Run a paid model test?", "A real request.", approve="Run", consent=True),
+                        results.append)
+        await pilot.pause()
+        await pilot.pause()
+        assert "cm-dialog-body" in app.focused.classes  # a consent request: no key decides it
+        await pilot.press("enter")
+        await pilot.pause()
+        assert results == [False] and isinstance(app.screen, ConfirmModal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_menu_command_during_an_open_dialog_says_so_and_changes_nothing(tmp_path, monkeypatch, language):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        page, selections = app.page, list(workspace.selections)
+        modal = ConfirmModal("Remove from layout?", "Existing processes are not stopped.", approve="Remove")
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+        workspace.update({"command_request": {"id": "during-dialog", "action": "next_stage", "target_role": "sidebar"}})
+        await app._poll_workspace()
+        await settle(app, pilot)
+        assert app.screen is modal and not results and app.page == page
+        assert [n.message for n in app._notifications] == [tr(app.DIALOG_OPEN, language)]
+        assert workspace.selections == selections
+    assert tr(app.DIALOG_OPEN, "pl") != app.DIALOG_OPEN
+
+
 def wait_for(predicate, seconds=5):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:

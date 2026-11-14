@@ -434,7 +434,11 @@ class BasePanel(App):
             if isinstance(command, dict) and command.get("id") != self._last_command_id:
                 self._last_command_id = command.get("id")
                 if command.get("target_role") == getattr(self, "panel_role", None):
-                    self.open_command(command.get("action"))
+                    if isinstance(self.screen, ModalScreen):
+                        # Run behind an open dialog, a command would change the view that dialog belongs to.
+                        self.notify(self.t(self.DIALOG_OPEN), timeout=8, markup=False)
+                    else:
+                        self.open_command(command.get("action"))
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(safe_text(exc))
 
@@ -480,6 +484,7 @@ class BasePanel(App):
     # Ctrl+Q first and detaches the terminal (WorkspaceManager._bindings); these run where it does not.
     LEAVE_KEYS = "Ctrl+B, then d: leave the workspace. It keeps running; run cairnmind to return."
     LEAVE_HINT = "To leave the workspace press Ctrl+Q, or Ctrl+B then d. It keeps running; run cairnmind to return."
+    DIALOG_OPEN = "A dialog is open in this view. Finish it or press Esc, then choose the command again."
 
     async def action_quit(self) -> None:
         self.leave_hint(self.LEAVE_KEYS)
