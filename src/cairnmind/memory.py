@@ -635,7 +635,6 @@ class MemoryManager:
             if (len(raw) > MAX_MANIFEST_BYTES or sum(len(rows) for rows in objects.values()) > MAX_ROWS
                     or len(raw) + sum(d["bytes"] for rows in objects.values() for d in rows) > MAX_TOTAL_BYTES):
                 raise ValueError("Memory package exceeds its publication byte or row budget")
-            written = False
             for table, rows in payload.items():
                 for descriptor, row in zip(objects[table], rows, strict=True):
                     target = path.parent / descriptor["path"]
@@ -645,8 +644,9 @@ class MemoryManager:
                             raise MemoryConflict("Existing memory object changed externally")
                     else:
                         _write_whole(target, data)
-                        written = True
-            if written:
+            # Also when each object was already there: an attempt killed after renaming its objects into place
+            # but before this sync left entries that are not yet durable (#158). A snapshot with no objects has none.
+            if any(objects.values()):
                 _sync_directory(path.parent / "objects")
             _atomic_write(path.parent / "manifests" / f"{manifest['snapshot_id']}.json", raw)
             # Compare immediately before the only mutable pointer replacement.
