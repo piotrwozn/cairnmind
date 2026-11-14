@@ -328,7 +328,7 @@ This is an explicit test against a real Ollama: extraction of a fact, a decision
 
 The default data directory is `~/.local/share/cairnmind` for a new installation. An installation that already has data in `~/.local/share/devbrain` keeps using that directory where it is; nothing is moved or copied. Choose another one with `CAIRNMIND_HOME` or the global `--data-dir` option. Variables are spelled `CAIRNMIND_*`; the earlier `DEVBRAIN_*` spelling is still read. For a configuration variable the new spelling wins when both are set; `cairnmind doctor` reports a pair that disagrees. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `cairnmind stop` stops the knowledge service; once clients are closed, `cairnmind engine stop` stops the database without deleting data.
 
-Commands that only read the store never start the engine, create the data directory, configuration or database, or upgrade the schema: `project list`, `records`, `source`, `task list`, `plan list`, `plan show`, `plan next`, `plan contract` without `--write`, `check profiles`, `memory orphans`, `impact` and `usage`. When the engine is not running, the store was never created or its schema needs an upgrade, they stop at once with one line that says what to run, `cairnmind engine start` or `cairnmind init`. `brief` still starts a stopped engine, as do the commands that write and `check list`, `export` and `backup`.
+Commands that only read the store never start the engine, create the data directory, configuration or database, or upgrade the schema: `project list`, `records`, `source`, `task list`, `plan list`, `plan show`, `plan next`, `plan contract` without `--write`, `check profiles`, `memory orphans`, `impact`, `usage` and `store size`. When the engine is not running, the store was never created or its schema needs an upgrade, they stop at once with one line that says what to run, `cairnmind engine start` or `cairnmind init`. `brief` still starts a stopped engine, as do the commands that write and `check list`, `export` and `backup`.
 
 ```bash
 cairnmind export ~/memory.json --project my-app
@@ -339,6 +339,59 @@ cairnmind backup ~/cairnmind-backup.cairnmind.json.gz
 The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`. To move a single project, use `memory import`; `restore` replaces the entire store.
 
 Archiving does not wait for the GPU. Status shows archiving, indexing, model processing and the queue separately. The portable backup contains a consistent export of sources and database state; it does not contain credentials or model weights. Automatic backup runs while the service is running and keeps the seven most recent copies.
+
+`store size [PROJECT] [--json]` reports how large the store is. Like the other commands that only read, it never starts the engine or the service and changes nothing; it prints counts and sizes, never the text of a record or a source. It lists:
+
+- every collection (the tables of the schema, `nodes`, `edges` and each `vector_*` type) with its rows and approximate bytes;
+- sources by kind, current against replaced (an earlier version of the same address), and their chunks grouped by the kind of their source in the same way;
+- vector rows per embedding namespace, and jobs per state;
+- disk use: the whole data directory, `arcade/databases` and this store's database in it, `arcade/engine.log`, the engine's `arcade/log`, the backups in `backups/` (scheduled ones, `before-schema-*`, `before-restore-*` and others, each a count and a size) and the agent journals in `runtime/agents` (sessions and size).
+
+With `PROJECT` the rows are that project's only; the disk use is always the whole data directory. Bytes are the length of each row's JSON form, measured in the engine (equal to UTF-8 bytes for ASCII text), so they are close to what the row takes in a backup before compression, not what it takes on disk. A collection of at most 1,000 rows is summed exactly. Above that the bytes are estimated from up to 256 rows read at random points of its id index and marked `~` (JSON: `"sampled": true`); the row counts are always exact. To group chunks by the kind of their source the command reads one short row per source (id, kind and chunk count, no text), so its time grows with the number of sources: on a test store of 20,000 sources and 80,000 chunks it took about one second, and about three seconds for one project of that store. The text form looks like this (from a store filled by the test fixture in `tests/test_store_size.py`; collections with no rows are left out here):
+
+```text
+Store size (all projects)
+Bytes are approximate (length of each row's JSON form in the engine; equal to UTF-8 bytes for ASCII text); ~ marks a figure estimated from 256 sampled rows.
+
+Collections
+  projects                                  2         422 B
+  sources                                   4       3.9 KiB
+  chunks                                    7       4.5 KiB
+  records                                   1         692 B
+  jobs                                      7       4.4 KiB
+  embeddings                                3       1.2 KiB
+  journal_events                           34      11.5 KiB
+  vector_994f28d5f148c8082083cef6           3       1.3 KiB
+
+Sources by kind: current / replaced
+  document                     1     1.5 KiB  /         1     1.6 KiB
+  manual                       2       899 B  /         0         0 B
+
+Chunks by source kind: current / replaced
+  document                     2     1.7 KiB  /         3     2.2 KiB
+  manual                       2       617 B  /         0         0 B
+
+Vectors by namespace
+  embedder@digest: 1 type(s), 3 rows, 1.3 KiB
+
+Jobs by state
+  pending: 7
+
+Disk
+  data directory        6.9 KiB  /tmp/.../memory
+  databases               700 B
+  this database           700 B
+  engine.log              300 B
+  engine logs            absent
+  backups scheduled          1 file(s)      3.3 KiB
+  backups before-schema      1 file(s)        200 B
+  backups before-restore     1 file(s)        300 B
+  backups other              0 file(s)          0 B
+  agent journals      2 session(s)      1.5 KiB
+Measured in 0.197 s.
+```
+
+`--json` prints the same data with the keys `project` (null, or `id` and `name`), `method` (`exact_rows`, `sample_rows`, `bytes`), `collections` (each `name`, `rows`, `bytes`, `sampled`), `sources` and `chunks` (each `sampled` and `kinds`: `kind`, then `current` and `replaced`, each `rows` and `bytes`), `vectors` (`types`: `name`, `namespace`, `dimension`, `project_id`, `rows`, `bytes`, `sampled`; `namespaces`: `namespace`, `types`, `rows`, `bytes`, `sampled`), `jobs` (state to count), `disk` (`data_dir`, `databases`, `database`, `engine_log`, `engine_logs`, each `path`, `exists`, `files`, `bytes`; `backups` with `path` and `scheduled`, `before_schema`, `before_restore`, `other`, each `count` and `bytes`; `agent_journals` with `path`, `exists`, `sessions`, `files`, `bytes`), `elapsed_seconds` and `text`. A size is `null` (text: `unknown`) when it could not be estimated.
 
 ## Limits
 
