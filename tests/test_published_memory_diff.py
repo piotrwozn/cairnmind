@@ -17,7 +17,8 @@ from cairnmind import cli
 from cairnmind.memory_published_check import format_bytes
 from cairnmind.memory_published_diff import MARKER, compare, render_markdown, render_text
 from cairnmind.memory_published_format import (
-    GITATTRIBUTES, GITIGNORE, TASK_DEFAULTS, J, definition_hash, identity_hash, path_of, render, sha256_text,
+    GITATTRIBUTES, GITIGNORE, TASK_DEFAULTS, J, definition_hash, identity_hash, path_of, plan_hash, render,
+    sha256_text,
 )
 from cairnmind.memory_published_git import published_files, resolve
 
@@ -248,6 +249,39 @@ def test_changes_supersessions_disputes_withdrawals_and_rewritten_history():
     assert refused["status"] == "refused" and refused["errors"][0][0] == path_of(kept)
     assert "rewritten" in refused["errors"][0][1]
     assert compare(base, base)["status"] == "unchanged" and compare({}, {})["status"] == "unchanged"
+
+
+def plan_definition(model, goal, steps):
+    plan_source = next((s for s, v in model["sources"].items() if v["ref"]["kind"] == "plan"), None)
+    if plan_source is None:
+        plan_source = uid()
+        model["sources"][plan_source] = {"ref": {"at": at(), "kind": "plan"}, "passage": None}
+    definition = {"at": at(), "title": "Publication", "goal": goal, "constraints": ["No new dependency"],
+                  "steps": steps}
+    audit_source, when = uid(), at()
+    audit = {"action": "confirm_plan", "actor": "local_user", "actor_name": "Ada Nowak", "at": when, "branch": "main",
+             "commit": "c" * 40, "plan_id": model["id"], "plan_sha256": plan_hash(definition), "plan_version": 1,
+             "reason": ""}
+    model["sources"][audit_source] = {"ref": {"at": when, "kind": "review"}, "passage": J(audit)}
+    earlier = model["definitions"][-1]["sources"] if model["definitions"] else [plan_source]
+    definition.update(sources=sorted({*earlier, audit_source}), covered={"by": "review", "source": audit_source})
+    model["definitions"].append(definition)
+    return model
+
+
+def test_a_new_plan_is_added_and_a_new_definition_is_a_redefinition():
+    plan = {"kind": "plan", "id": uid(), "created_at": at(), "sources": {}, "definitions": []}
+    step = record("task", "Write the format", "plan-step", plan=plan["id"], step_key="format")
+    plan_definition(plan, "Publish confirmed knowledge.", [[step["id"], "format"]])
+    added = compare({}, files_of([step, plan]))
+    assert {(e["kind"], e["category"]) for e in added["entries"]} == {("task", "opened"), ("plan", "added")}
+    later = plan_definition(deepcopy(plan), "Publish confirmed knowledge with a branch.", [[step["id"], "format"]])
+    report = compare(files_of([step, plan]), files_of([step, later]))
+    assert [(e["kind"], e["category"], e["revisions"]) for e in report["entries"]] == [("plan", "redefined", [2])]
+    text = render_text(report, "1" * 40, "2" * 40)
+    assert "Plan " in text and "definition 2" in text and "  Title: Publication; 1 step(s)\n" in text
+    assert "  Goal:\n    Publish confirmed knowledge with a branch.\n  Before:\n    Publish confirmed knowledge.\n" in text
+    assert "Confirmed with its plan by `Ada Nowak` on `main`" in render_markdown(report, "1" * 40, "2" * 40)
 
 
 def test_a_head_that_would_not_import_fails_with_its_path_and_no_memory_is_no_change(tmp_path):

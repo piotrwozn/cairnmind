@@ -92,6 +92,8 @@ def test_a_passage_gone_from_the_main_branch_leaves_its_record_orphaned_and_one_
     paths = {name: f"{record['kind']}/{record['id']}.md" for name, record in records.items()}
     assert [item["path"] for item in result["evidence"]["orphaned"]] == [paths["lost"]]
     assert result["evidence"]["orphaned"][0]["title"] == "Nothing else may store memory."
+    assert result["evidence"]["orphaned"][0]["reviewed"] == \
+        "confirm by Ada Nowak on main (claimed by the file; not verified here)"
     assert sorted(item["path"] for item in result["evidence"]["anchored"]) == sorted([paths["kept"]])
     # The whole guide changed, so a record citing it without a quote cannot say more than that.
     assert [item["path"] for item in result["evidence"]["evidence_replaced"]] == [paths["plain"]]

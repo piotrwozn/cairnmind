@@ -76,6 +76,16 @@ def _title(record):
     return text if len(text) <= 100 else text[:99] + "…"
 
 
+def _claimed(record):
+    """Who the file says acted last, as the file says it: "confirm by Ada Nowak on main (claimed by the file)"."""
+    entries = ((record.get("metadata") or {}).get("publication") or {}).get("reviewed_by") or []
+    if not entries or not isinstance(entries[-1], dict):
+        return None
+    last = entries[-1]
+    where = f" on {last['branch']}" if last.get("branch") else ""
+    return safe_text(f"{last.get('action')} by {last.get('name')}{where} (claimed by the file; not verified here)")
+
+
 def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, bind=False, authorize=None):
     from .evidence import evidence_states
     from .memory import MemoryConflict
@@ -118,6 +128,7 @@ def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, 
     for row in rows:
         if row["id"] in states:
             evidence.setdefault(states[row["id"]]["evidence_state"], []).append(
-                {"id": row["id"], "kind": row["kind"], "path": tree["paths"][row["id"]], "title": _title(row)})
+                {"id": row["id"], "kind": row["kind"], "path": tree["paths"][row["id"]], "title": _title(row),
+                 "reviewed": _claimed(row)})
     result["evidence"] = {state: sorted(items, key=lambda item: item["path"]) for state, items in evidence.items()}
     return result
