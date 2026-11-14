@@ -152,8 +152,13 @@ class InspectorApp(ImpactView, BasePanel):
         self.refresh_impact_language()
         if self._count_notice is not None and str(self.query_one("#panel-notice", Static).render()) == self._count_notice[2]:
             self.count_notice(*self._count_notice[:2])  # the line shows the count: say it in the new language
-        if self.view != "impact" and self.entity is None and self.query_one("#inspector-rows").display:
-            self.render_rows(list(self.rows.values()))  # kinds and states in the new language
+        table = self.query_one("#inspector-rows", DataTable)
+        if self.entity is None and table.display:
+            # Kinds and states in the new language (the impact list too), on the row the person had chosen.
+            row = table.cursor_row
+            self.render_rows(list(self.rows.values()))
+            if table.row_count:
+                table.move_cursor(row=max(0, min(row, table.row_count - 1)))
 
     async def workspace_changed(self, value):
         scope = (value.get("project_id"), value.get("worktree"))

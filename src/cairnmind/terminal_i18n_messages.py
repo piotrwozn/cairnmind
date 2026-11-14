@@ -362,8 +362,11 @@ STATE_MESSAGES = {
     "Private panel of the Cairnmind terminal workspace": "Prywatny panel terminalowego środowiska Cairnmind",
     "The chosen version was not found.": "Nie znaleziono wskazanej wersji.",
 }
-# A broker started from an earlier version still answers in Polish; those sentences are known too.
-_BROKER_POLISH = frozenset(BROKER_MESSAGES.values())
+# The fixed sentences a broker may send as a detail: its own, and the checks of settings, profiles, keys,
+# workspace state and providers that it relays (a ValueError's text). A broker started from an earlier
+# version still answers in Polish; those sentences are known too. Only an exact sentence is translated.
+_BROKER_FIXED = frozenset(sentence for catalog in (BROKER_MESSAGES, STATE_MESSAGES, PROVIDER_MESSAGES)
+                          for pair in catalog.items() for sentence in pair)
 
 
 def broker_error_text(exc, translate) -> str:
@@ -371,8 +374,7 @@ def broker_error_text(exc, translate) -> str:
     detail, status = getattr(exc, "detail", None), getattr(exc, "status_code", None)
     if isinstance(detail, str) and type(status) is int:
         text = " ".join(detail.split())
-        return f"Broker {status}: " + (translate(text) if text in BROKER_MESSAGES or text in _BROKER_POLISH
-                                        else text)
+        return f"Broker {status}: " + (translate(text) if text in _BROKER_FIXED else text)
     return str(exc)
 
 

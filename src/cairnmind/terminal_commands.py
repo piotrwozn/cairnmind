@@ -63,6 +63,8 @@ class CommandPaletteApp(App):
         self.help_only = help_only
         self.rows = []
         self._description_cells = 0  # the width of the description column, once it is known
+        self._height = 0  # the lines the list has on screen, once known
+        self._expanded = None  # the one row shown in full when the wrapped list would not fit
         from .terminal_i18n import language_for, localize_bindings, tr
         self.language = language_for(manager.settings)
         self.translate = lambda value: tr(value, self.language)
@@ -113,35 +115,57 @@ class CommandPaletteApp(App):
             self.call_after_refresh(self.fit_columns)
 
     def fit_columns(self):
-        """Two fixed columns that fill the menu, so no row scrolls sideways; a cell keeps its full text."""
+        """Two fixed columns that fill the menu, so no row scrolls sideways; a cell keeps its full text.
+
+        The room is taken from the table's own size, not from the region its scrollbars leave, so a
+        scrollbar that comes or goes with taller rows cannot leave the columns one cell too wide."""
         table = self.query_one(DataTable)
-        room = table.scrollable_content_region.width - 4 * table.cell_padding
+        height = table.size.height
+        reserve = int(table.styles.scrollbar_size_vertical or 0) if len(COMMANDS) > height else 0
+        room = table.size.width - reserve - 4 * table.cell_padding
         if room < 20:
             return
         longest = max(cell_len(self.translate(row[0])) for row in COMMANDS)
         title = min(max(self.TITLE_CELLS, longest), max(self.TITLE_CELLS, room // 3))
         terminal_theme.column_widths(table, (title, room - title))
-        if room - title != self._description_cells:
-            # A description longer than its column wraps onto more lines of its row instead of being cut.
-            self._description_cells = room - title
+        if (room - title, height) != (self._description_cells, self._height):
+            self._description_cells, self._height = room - title, height
             row = table.cursor_row
-            self.populate(self.query_one(Input).value)
+            self.populate(self.query_one(Input).value, cursor=row)
             table.move_cursor(row=max(0, min(row, table.row_count - 1)))
 
-    def populate(self, query):
+    def populate(self, query, cursor=0):
+        """A description longer than its column wraps onto more lines of its row instead of being cut.
+        When the wrapped list would not fit the menu's height, only the chosen command shows its whole
+        description and the others end in "…", so every command stays on screen."""
         table = self.query_one(DataTable)
         table.clear()
         self.rows = [row for row in COMMANDS if query.casefold() in
                      (self.translate(row[0]) + " " + self.translate(row[1])).casefold()]
-        for index, row in enumerate(self.rows):
-            description = self.translate(row[1])
-            lines = textwrap.wrap(description, self._description_cells) if self._description_cells else []
+        cells = self._description_cells
+        descriptions = [self.translate(row[1]) for row in self.rows]
+        wrapped = [textwrap.wrap(text, cells) if cells else [] for text in descriptions]
+        self._expanded = None
+        if cells and sum(max(1, len(lines)) for lines in wrapped) > self._height:
+            self._expanded = max(0, min(cursor, len(self.rows) - 1))
+        for index, (row, description, lines) in enumerate(zip(self.rows, descriptions, wrapped)):
+            if self._expanded is not None and index != self._expanded:
+                lines = [textwrap.shorten(description, cells, placeholder="…")]
             table.add_row(terminal_theme.styled(self.translate(row[0]), "value"),
                           terminal_theme.styled("\n".join(lines) or description, "muted"), key=str(index),
                           height=max(1, len(lines)))
         # The list stays in the screen; with nothing to list, the sentence takes its place.
         table.display = bool(self.rows)
         self.query_one("#command-empty").display = not self.rows
+
+    @on(DataTable.RowHighlighted, "#commands")
+    def expand_chosen(self):
+        # The table's own cursor, not the event's row: a highlight left over from a redraw changes nothing.
+        table = self.query_one(DataTable)
+        if self._expanded is not None and table.row_count and table.cursor_row != self._expanded:
+            row = table.cursor_row
+            self.populate(self.query_one(Input).value, cursor=row)
+            table.move_cursor(row=row)
 
     @on(Input.Changed, "#command-search")
     def search(self, event):

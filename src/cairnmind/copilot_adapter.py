@@ -779,17 +779,19 @@ def main():
     from .config import Settings
     from .terminal_i18n import language_for, tr
     settings = Settings.load(args.data_dir)
+    language = language_for(settings)
     try:
         if args.prepare_worker:
             _prepare_worker(settings)
         else:
             asyncio.run(_login(settings))
     except (CopilotError, KeyboardInterrupt) as error:
-        print(str(error) if isinstance(error, CopilotError) else tr("Login cancelled.", language_for(settings)),
-              file=sys.stderr)
+        # The code stays as it is (for a report); the sentence is in the language of the prompts above it.
+        print(f"{error.code}: {tr(_MESSAGES[error.code], language)}" if isinstance(error, CopilotError)
+              else tr("Login cancelled.", language), file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:
-        print(_MESSAGES["copilot_failed"], file=sys.stderr)
+        print(tr(_MESSAGES["copilot_failed"], language), file=sys.stderr)
         raise SystemExit(1) from None
 
 

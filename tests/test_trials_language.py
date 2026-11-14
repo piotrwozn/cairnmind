@@ -47,6 +47,22 @@ def test_a_broker_error_reads_in_the_panel_language(language, line):
     assert broker_error_text(BrokerError(409, "Open [bold]"), translate) == "Broker 409: Open [bold]"
 
 
+@pytest.mark.parametrize(("language", "line"), [
+    ("en", "Broker 400: The chosen folders must exist and be unique."),
+    ("pl", "Broker 400: Wybrane katalogi muszą istnieć i być unikalne.")])
+def test_a_check_relayed_by_the_broker_reads_in_the_panel_language(tmp_path, language, line):
+    from cairnmind.cockpit_state import ProjectDiscovery
+    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal_i18n_messages import broker_error_text
+    translate = lambda text: tr(text, language)  # noqa: E731
+    # What the cockpit sends as the detail of a 400: the text of the check's ValueError.
+    with pytest.raises(ValueError) as raised:
+        ProjectDiscovery().start([str(tmp_path / "missing")])
+    assert broker_error_text(BrokerError(400, str(raised.value)), translate) == line
+    # The same holds for an older broker that still sends the Polish sentence.
+    assert broker_error_text(BrokerError(400, "Wybrane katalogi muszą istnieć i być unikalne."), translate) == line
+
+
 @pytest.mark.asyncio
 async def test_a_panel_notice_of_a_broker_error_is_translated(tmp_path, monkeypatch):
     from textual.widgets import Static
@@ -152,6 +168,34 @@ async def test_a_running_inspector_switches_every_label_to_the_new_language(tmp_
 
 
 @pytest.mark.asyncio
+async def test_a_language_switch_redraws_the_impact_list_and_keeps_the_chosen_row(tmp_path, monkeypatch):
+    from textual.widgets import DataTable
+
+    from cairnmind.terminal_inspector import InspectorApp
+    from test_terminal_impact import Impact
+    from test_terminal_ux080 import setup_ui
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    language = ["en"]
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language[0])
+    impact = Impact(broker, workspace)
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.query_one("#inspector-view").value = "impact"
+        await wait_until(pilot, lambda: impact.reads and app.query_one("#inspector-rows", DataTable).row_count == 2)
+        table = app.query_one("#inspector-rows", DataTable)
+        assert str(table.get_row("rec-task")[0]) == "task / proposed"
+        table.move_cursor(row=1)
+        language[0] = "pl"
+        await wait_until(pilot, lambda: app.language == "pl")
+        await settle(app, pilot)
+        assert str(table.get_row("rec-task")[0]) == "zadanie / proponowane"
+        assert str(table.get_row("rec-rule")[0]) == "decyzja / proponowane"
+        assert table.cursor_row == 1  # the row the person had chosen, not the first one
+        assert len(impact.reads) == 1  # relabelled from what was read, not read again
+
+
+@pytest.mark.asyncio
 async def test_a_running_graph_lays_out_its_buttons_again_for_longer_labels(tmp_path):
     from textual.widgets import Button
 
@@ -185,6 +229,28 @@ async def test_a_running_graph_lays_out_its_buttons_again_for_longer_labels(tmp_
 @pytest.mark.parametrize("name", ["api_providers.py", "copilot_adapter.py"])
 def test_provider_errors_are_written_in_english(name):
     assert polish_literals(name) == []
+
+
+@pytest.mark.parametrize(("language", "failure", "line"), [
+    ("pl", "auth", "copilot_auth_required: Zaloguj się do GitHub Copilot."),
+    ("en", "auth", "copilot_auth_required: Sign in to GitHub Copilot."),
+    ("pl", "other", "Żądanie Copilota zakończyło się błędem; wynik może być niepewny."),
+    ("en", "other", "The Copilot request failed; the result may be uncertain.")])
+def test_the_copilot_sign_in_terminal_prints_its_errors_in_the_ui_language(
+        tmp_path, monkeypatch, capsys, language, failure, line):
+    import sys
+
+    from cairnmind import copilot_adapter
+
+    async def fail(settings):
+        raise copilot_adapter.CopilotError("copilot_auth_required") if failure == "auth" else RuntimeError("SECRET")
+    monkeypatch.setattr(copilot_adapter, "_login", fail)
+    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: language)
+    monkeypatch.setattr(sys, "argv", ["copilot_adapter", "--data-dir", str(tmp_path / "data"), "--login"])
+    with pytest.raises(SystemExit):
+        copilot_adapter.main()
+    error = capsys.readouterr().err
+    assert line in error and "SECRET" not in error
 
 
 @pytest.mark.asyncio
@@ -262,7 +328,8 @@ def test_a_stage_and_its_check_result_name_states_and_outcomes_in_polish():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
-async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_path, monkeypatch, language):
+@pytest.mark.parametrize("size", [(80, 24), (72, 24), (90, 34)])
+async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_path, monkeypatch, language, size):
     from types import SimpleNamespace
 
     from textual.widgets import DataTable
@@ -271,15 +338,32 @@ async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_
     from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp
     monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: language)
     app = CommandPaletteApp(SimpleNamespace(settings=Settings(data_dir=tmp_path / "data")))
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        await pilot.pause()
+
+    def cells(table):
+        return [" ".join(str(table.get_row(str(index))[1]).split()) for index in range(len(COMMANDS))]
+
+    async with app.run_test(size=size) as pilot:
+        for _ in range(4):
+            await pilot.pause()
         table = app.query_one(DataTable)
         width = table.ordered_columns[1].width
-        for index, row in enumerate(COMMANDS):
-            cell = str(table.get_row(str(index))[1])
-            assert " ".join(cell.split()) == tr(row[1], language)  # every word of it, none cut off
-            assert all(len(line) <= width for line in cell.splitlines())
-        # The cursor still moves one command at a time.
-        await pilot.press("down")
-        assert table.cursor_row == 1
+        for _ in range(3):
+            assert table.max_scroll_x == 0  # no row scrolls sideways, whatever is wrapped
+            if size != (72, 24):
+                assert table.max_scroll_y == 0  # every command, the last ("Notices") included, is on screen
+            assert all(len(line) <= width for index in range(len(COMMANDS))
+                       for line in str(table.get_row(str(index))[1]).splitlines())
+            shown, chosen = cells(table), table.cursor_row
+            # The chosen command always shows every word of its description.
+            assert shown[chosen] == tr(COMMANDS[chosen][1], language)
+            for text, row in zip(shown, COMMANDS):
+                full = tr(row[1], language)
+                assert text == full or (text.endswith("…") and full.startswith(text[:-1].rstrip()))
+            if size == (90, 34):
+                assert shown == [tr(row[1], language) for row in COMMANDS]  # room for every line: none cut
+            # Down to "Brief", then to "Run next stage": one command at a time, each read in full.
+            target = 5 if chosen == 0 else 17
+            await pilot.press(*["down"] * (target - chosen))
+            for _ in range(3):
+                await pilot.pause()
+            assert table.cursor_row == target
