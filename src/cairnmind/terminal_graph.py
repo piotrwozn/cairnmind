@@ -29,6 +29,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
+from . import terminal_theme
 from .terminal_safe import plain, safe_text
 from .config import Settings
 from .terminal_i18n import localize_bindings
@@ -312,10 +313,10 @@ def tmux_visible(settings=None):
 
 
 class TerminalGraph(Widget, can_focus=True):
-    DEFAULT_CSS = "TerminalGraph { height: 1fr; min-height: 3; background: #0e1713; }"
+    DEFAULT_CSS = terminal_theme.css("TerminalGraph { height: 1fr; min-height: 3; background: $cm-bg; }")
     BINDINGS = [Binding("left", "left", show=False), Binding("right", "right", show=False),
                 Binding("up", "up", show=False), Binding("down", "down", show=False),
-                Binding("plus,equals_sign", "zoom_in", "+ zoom"), Binding("minus", "zoom_out", "− zoom"),
+                Binding("plus,equals_sign", "zoom_in", "Zoom in"), Binding("minus", "zoom_out", "Zoom out"),
                 Binding("space", "pause", "Pause"), Binding("r", "reset_camera", "Camera"),
                 Binding("right_square_bracket", "next_node", "Next node"), Binding("left_square_bracket", "previous_node", "Previous node"),
                 Binding("enter", "open", "Open"), Binding("g", "groups", "Groups"),
@@ -353,6 +354,17 @@ class TerminalGraph(Widget, can_focus=True):
     def on_resize(self):
         if self.is_mounted:
             self.app.invalidate_frame()
+
+    def on_focus(self):
+        self.mark_heading(True)
+
+    def on_blur(self):
+        self.mark_heading(False)
+
+    def mark_heading(self, focused):
+        """The canvas has no frame of its own: the heading above it shows that the keys go to it."""
+        with suppress(Exception):
+            self.app.query_one("#graph-heading").set_class(focused, "-focus")
 
     def action_left(self):
         self.model.camera.rotate(yaw=-.12)
@@ -415,12 +427,6 @@ class TerminalGraph(Widget, can_focus=True):
 
 
 class GroupPicker(ModalScreen[dict | None]):
-    CSS = """
-    GroupPicker { align: center middle; background: $background 80%; }
-    GroupPicker > Vertical { width: 85%; height: 85%; border: round #68835a; background: #111c16; }
-    GroupPicker Static { height: auto; padding: 0 1; }
-    GroupPicker OptionList { height: 1fr; }
-    """
     BINDINGS = [("escape", "cancel", "Close"), ("n", "next_page", "More groups"), ("p", "previous_page", "Previous")]
 
     def __init__(self, app):
@@ -432,15 +438,26 @@ class GroupPicker(ModalScreen[dict | None]):
         self.next_cursor = None
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static(plain(self.graph_app.t("Memory groups · Enter: select · n/p: pages · Esc: back")))
-            yield OptionList(id="graph-groups")
+        with Vertical(classes="cm-dialog"):
+            # One Static with the exact text: the name is the heading, the key hints after it are muted.
+            name, separator, hints = self.graph_app.t("Memory groups · Enter: select · n/p: pages · Esc: back").partition(" · ")
+            yield Static(terminal_theme.assemble([("accent", name), ("muted", separator + hints)]),
+                         classes="heading", id="group-heading")
+            yield OptionList(id="graph-groups", classes="cm-dialog-body")
             yield Static("", id="group-notice", markup=False)
 
     def on_mount(self):
         localize_bindings(self, self.graph_app.language)
+        self.fit_dialog()
         self.query_one(OptionList).focus()
         self.load_page()
+
+    def on_resize(self):
+        self.fit_dialog()
+
+    def fit_dialog(self):
+        with suppress(Exception):
+            terminal_theme.fit_body(self, self.query_one(OptionList))
 
     @work(group="graph-group-page", exclusive=True)
     async def load_page(self):
@@ -493,13 +510,20 @@ class GroupPicker(ModalScreen[dict | None]):
 class GraphApp(BasePanel):
     TITLE = "Cairnmind · Memory graph"
     panel_role = "graph"
-    CSS = """
-    #graph-heading { height: auto; max-height: 2; color: #bddb9e; }
-    #graph-selection { height: auto; max-height: 3; color: #d4dfd3; }
-    #graph-status { height: auto; max-height: 2; color: #8eaa99; }
-    #graph-actions { height: 3; }
-    #graph-actions Button { min-width: 8; width: 1fr; margin: 0; }
-    """
+    CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
+    #graph-heading { height: auto; max-height: 2; padding: 0 1; color: $cm-accent; }
+    #graph-heading.-focus { text-style: underline; }
+    #graph-actions { height: 1; padding: 0 1; }
+    #graph-actions Button { min-width: 8; }
+    #graph-selection { height: auto; max-height: 3; padding: 0 1; color: $cm-text; text-style: bold; }
+    #graph-selection.-empty { color: $cm-muted; text-style: none; }
+    #graph-status { height: auto; max-height: 2; padding: 0 1; color: $cm-muted; }
+    #graph-groups, #graph-groups:focus { min-height: 1; padding: 0; background: $cm-panel;
+        background-tint: transparent 0%; border: none; }
+    #group-heading { text-style: none; }
+    #group-notice { margin-top: 1; }
+    .-short #group-notice { margin-top: 0; }
+    """)
 
     def __init__(self, settings, workspace_id="default", *, broker=None, workspace=None, motion=True):
         super().__init__(settings, workspace_id, broker=broker, workspace=workspace)
@@ -679,8 +703,12 @@ class GraphApp(BasePanel):
             widget.set_frame(text)
             scope = self.model.scope
             title = self.t("Global memory") if scope.project is None else label(self.workspace_data.get("project_name") or scope.project)
-            self.query_one("#graph-heading", Static).update(plain(self.t("Memory graph") + " · " + title + (" · " + label(scope.group) if scope.group else "")))
+            self.query_one("#graph-heading", Static).update(terminal_theme.assemble([
+                ("accent", self.t("Memory graph")),
+                ("muted", " · " + title + (" · " + label(scope.group) if scope.group else ""))]))
             selected = self.model.selected
+            # With no node the sentence is muted, so it does not read as a selected node.
+            self.query_one("#graph-selection", Static).set_class(not selected, "-empty")
             self.query_one("#graph-selection", Static).update(plain(
                 "Enter: " + label(selected.get("label", selected["id"])) + " · " + label(selected.get("kind", ""))
                 if selected else self.t("No nodes in this scope.")))

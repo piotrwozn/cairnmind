@@ -31,7 +31,7 @@ NODE_COLORS = {
     "checkpoint": (129, 214, 195), "unassigned": (147, 187, 159),
 }
 SELECTED_COLOR = (255, 207, 127)
-EDGE_COLOR = (81, 131, 108)
+EDGE_COLOR = (75, 96, 120)
 
 
 class _Raster:

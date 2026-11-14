@@ -17,12 +17,14 @@ from pathlib import Path
 import re
 import sys
 
+from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 
+from . import terminal_theme
 from .config import Settings
 from .terminal_panels import ConfirmModal
 from .terminal_safe import plain, safe_text
@@ -32,6 +34,9 @@ from .terminal_agent_i18n import status_text, tr
 
 _SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 _CODE = re.compile(r"^[a-z][a-z_]{0,39}$")
+# Style of the status line after a turn, by the engine's status key. A key not listed is a warning.
+_RESULT_KINDS = {"completed": "idle", "complete": "idle", "ready": "idle", "running": "running",
+                 "working": "running", "failed": "error", "error": "error"}
 
 
 def usage_text(usage: dict, profile: dict, language="en") -> str:
@@ -102,31 +107,41 @@ def incomplete_streams(events):
 class AgentApp(App):
     TITLE = "Cairnmind · Agent"
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen { background: #101816; color: #d4dfd3; }
-    Header, Footer { background: #1c2a20; color: #c3df9b; }
+    # The shared rules come first, so the approval dialog has the same frame here as in the sidebar.
+    CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
     #agent-main { height: 1fr; }
-    #agent-scope, #agent-status, #agent-usage { height: auto; max-height: 4; padding: 0 1; }
-    #agent-scope { color: #c3df9b; }
-    #agent-status { color: #dcb78c; }
-    #agent-history { height: 1fr; min-height: 3; background: #101816; }
-    #agent-stream { height: auto; max-height: 8; padding: 0 1; }
-    #agent-prompt { height: 5; min-height: 3; border: tall #344834; background: #101a15; }
-    #agent-actions { height: 3; }
-    #agent-actions Button { min-width: 10; width: 1fr; margin-right: 0; border: tall #344834; }
-    """
+    #agent-scope, #agent-usage { height: auto; max-height: 4; padding: 0 1; }
+    #agent-usage { color: $cm-muted; }
+    #agent-status { height: auto; max-height: 4; padding: 0 1; margin-bottom: 1; color: $cm-muted;
+        border-left: thick $cm-border-hi; }
+    .-short #agent-status { margin-bottom: 0; }
+    #agent-status.-running { color: $cm-accent; border-left: thick $cm-accent; }
+    #agent-status.-warn { color: $cm-warn; text-style: bold; border-left: thick $cm-warn; }
+    #agent-status.-error { color: $cm-danger; text-style: bold; border-left: thick $cm-danger; }
+    #agent-history { height: 1fr; min-height: 3; background: $cm-bg; padding: 0 1; }
+    #agent-stream { display: none; height: auto; max-height: 6; padding: 0 1; color: $cm-text;
+        border-left: thick $cm-accent; }
+    #agent-stream.-live { display: block; }
+    #agent-prompt { height: 5; min-height: 3; }
+    .-short #agent-prompt { height: 3; }
+    #agent-actions { height: 1; padding: 0 1; }
+    #agent-actions Button { min-width: 10; }
+    """)
     BINDINGS = [Binding("ctrl+c", "interrupt_turn", "Interrupt", priority=True),
                 Binding("ctrl+enter", "send", "Send", priority=True),
                 Binding("ctrl+r", "resolve", "Resolve", priority=True)]
 
     def __init__(self, settings, run, profile, *, key=None, engine_factory=None, mcp_servers=None, mcp_problems=None):
         super().__init__()
+        terminal_theme.install(self)
         self.settings, self.run_record, self.profile = settings, dict(run), dict(profile)
         # Third-party MCP servers fixed for this run by the launcher (#126); API runs only.
         self.mcp_servers = list(mcp_servers or []) if self.run_record.get("client") == "api" else []
         self.mcp_problems = [row for row in (mcp_problems or []) if isinstance(row, dict)]
         self.language = language_for(settings)
         self._status_value = ("Restoring the local journal; no model is running…", {})
+        self._status_kind = "idle"
+        self._history_started = False
         self._last_usage = None
         self._key = key
         self._engine_factory = engine_factory
@@ -145,9 +160,12 @@ class AgentApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="agent-main"):
-            yield Static(plain(self.profile.get("label", "Agent") + " · " + (self.profile.get("model") or self.t("default model")) + "\n" + self.run_record["worktree"]), id="agent-scope")
+            yield Static(terminal_theme.assemble([
+                ("title", self.profile.get("label", "Agent") + " · " + (self.profile.get("model") or self.t("default model"))),
+                ("muted", "\n" + self.run_record["worktree"])]), id="agent-scope")
             yield Static(self.t("Restoring the local journal; no model is running…"), id="agent-status", markup=False)
-            yield RichLog(id="agent-history", wrap=True, markup=False, highlight=False, max_lines=5000)
+            # min_width: a line is wrapped to the pane, not to RichLog's default of 78 cells.
+            yield RichLog(id="agent-history", wrap=True, markup=False, highlight=False, max_lines=5000, min_width=20)
             yield Static("", id="agent-stream", markup=False)
             yield Static(self.t("usage: unavailable · cost: unavailable"), id="agent-usage", markup=False)
             yield TextArea(id="agent-prompt")
@@ -157,7 +175,11 @@ class AgentApp(App):
                 yield Button(self.t("Resolve"), id="agent-resolve", disabled=True)
         yield Footer()
 
+    def on_resize(self, event):
+        terminal_theme.size_classes(self, event.size)
+
     async def on_mount(self):
+        terminal_theme.size_classes(self)
         self.refresh_language()
         self.set_interval(.5, self.check_language)
         try:
@@ -181,7 +203,8 @@ class AgentApp(App):
                 for observed in incomplete_streams(events):
                     suffix = self.t(" (visible excerpt limited)") if observed["truncated"] else ""
                     self.write_message({"role": self.t("Incomplete response") + suffix,
-                        "content": self.t("Request {request_id} — this output is not a confirmed response.\n", request_id=observed["request_id"]) + observed["text"]})
+                        "content": self.t("Request {request_id} — this output is not a confirmed response.\n", request_id=observed["request_id"]) + observed["text"]},
+                        label_role="warn-strong")
             self.set_status("Ready. Send a message to start work and restore memory.")
             for problem in self.mcp_problems:
                 self.mcp_server_off(problem.get("server_id"), problem.get("code"))
@@ -190,7 +213,7 @@ class AgentApp(App):
             self.query_one("#agent-prompt", TextArea).focus()
         except Exception:
             self._key = None
-            self.set_status("Cannot prepare the agent. Check the profile and services in Connections.")
+            self.set_status("Cannot prepare the agent. Check the profile and services in Connections.", kind="error")
 
     async def check_language(self):
         language = await asyncio.to_thread(language_for, self.settings)
@@ -206,7 +229,7 @@ class AgentApp(App):
                 {"send": "Send", "interrupt_turn": "Interrupt", "resolve": "Resolve"}.get(binding.action, binding.description)))
                 for binding in bindings]
         self.refresh_bindings()
-        self.set_status(self._status_value[0], **self._status_value[1])
+        self.set_status(self._status_value[0], kind=self._status_kind, **self._status_value[1])
         self.update_usage(self._last_usage)
 
     def update_usage(self, value):
@@ -220,11 +243,29 @@ class AgentApp(App):
             value = value.replace(secret, "[REDACTED]")
         return plain(value, limit=limit)
 
-    def set_status(self, value, **values):
-        self._status_value = (value, values)
-        self.query_one("#agent-status", Static).update(self.display_text(self.t(value, **values), limit=3000))
+    def set_status(self, value, kind="idle", **values):
+        """`kind` (idle, running, warn, error) is given by the code that sets the status, never read
+        from its words; it only picks the style. The sentence is exactly the translated `value`."""
+        self._status_value, self._status_kind = (value, values), kind
+        status = self.query_one("#agent-status", Static)
+        for name in ("running", "warn", "error"):
+            status.set_class(kind == name, "-" + name)
+        status.update(self.display_text(self.t(value, **values), limit=3000))
 
-    def write_message(self, message):
+    def write_history(self, head, body=None, *, head_role="muted", body_role="stored"):
+        """One entry: a line this app wrote, then content as plain text. Both are escaped; only the
+        app's own line takes a label style, so stored or third-party text never looks like chrome."""
+        history = self.query_one("#agent-history", RichLog)
+        if self._history_started:
+            history.write(Text(""))
+        self._history_started = True
+        entry = Text()
+        entry.append(self.display_text(head).plain, style=terminal_theme.style(head_role))
+        if body is not None:
+            entry.append("\n" + self.display_text(body).plain, style=terminal_theme.style(body_role))
+        history.write(entry)
+
+    def write_message(self, message, *, label_role=None):
         if not isinstance(message, dict):
             return
         role = str(message.get("role", "event"))
@@ -234,13 +275,20 @@ class AgentApp(App):
         label = self.t({"user": "You", "assistant": "Agent", "tool": "Tool", "system": "System"}.get(role, role))
         if message.get("name"):
             label += " · " + str(message["name"])
-        self.query_one("#agent-history", RichLog).write(self.display_text(label + ":\n" + content))
+        self.write_history(label + ":", content,
+                           head_role=label_role or {"user": "accent", "assistant": "title"}.get(role, "muted"))
+
+    def show_stream(self, text, *, limit=131072):
+        """The live output has a row only while there is some."""
+        stream = self.query_one("#agent-stream", Static)
+        stream.update(self.display_text(text, limit=limit) if text else "")
+        stream.set_class(bool(text), "-live")
 
     async def on_delta(self, text):
         if self._closed:
             return
         self._stream = (self._stream + str(text))[-131072:]
-        self.query_one("#agent-stream", Static).update(self.display_text(self._stream, limit=131072))
+        self.show_stream(self._stream)
 
     async def agent_event(self, event):
         if self._closed or not isinstance(event, dict):
@@ -250,31 +298,32 @@ class AgentApp(App):
             self.write_message(data)
             if data.get("role") == "assistant":
                 self._stream = ""
-                self.query_one("#agent-stream", Static).update("")
+                self.show_stream("")
         elif kind == "provider_event" and data.get("type") == "usage" and isinstance(data.get("usage"), dict):
             self.update_usage(data["usage"])
         elif kind == "usage":
             self.update_usage(data)
         elif kind in {"status", "memory_required", "context_compacted", "error"}:
-            self.set_status(data.get("message", data.get("status", data.get("code", json.dumps(data, ensure_ascii=False)))))
+            self.set_status(data.get("message", data.get("status", data.get("code", json.dumps(data, ensure_ascii=False)))),
+                            kind={"error": "error", "memory_required": "warn"}.get(kind, "running" if self._busy else "idle"))
         elif kind == "mcp_server_failed":
             self.mcp_server_off(data.get("server_id"), data.get("code"))
         elif kind == "mcp_tool_withdrawn":
             text = self.t("A third-party MCP tool took too long to check its arguments and is withdrawn for this run.")
-            self.set_status(text)
-            self.query_one("#agent-history", RichLog).write(self.display_text(text))
+            self.set_status(text, kind="warn")
+            self.write_history(text, head_role="warn")
         elif kind in {"mcp_tools_withdrawn", "mcp_tools_kept"}:
             code = data.get("code") if isinstance(data.get("code"), str) and _CODE.fullmatch(data["code"]) else "unknown"
             text = self.t("The provider refused the request with third-party MCP tools ({code}); they are withdrawn "
                           "for this run and the agent works without them." if kind == "mcp_tools_withdrawn" else
                           "The provider refused the request ({code}) also without the third-party MCP tools; they "
                           "stay offered.", code=code)
-            self.set_status(text)
-            self.query_one("#agent-history", RichLog).write(self.display_text(text))
+            self.set_status(text, kind="warn")
+            self.write_history(text, head_role="warn")
         elif kind in {"tool_start", "tool_result"}:
             # Results are visible as literal data, never terminal control codes.
             label = self.t("Tool started" if kind == "tool_start" else "Tool result")
-            self.query_one("#agent-history", RichLog).write(self.display_text(label + "\n" + json.dumps(data, ensure_ascii=False, default=str)))
+            self.write_history(label, json.dumps(data, ensure_ascii=False, default=str), body_role="muted")
 
     def mcp_server_off(self, server_id, code):
         """A fixed code and a validated id only: never text from the server."""
@@ -282,8 +331,8 @@ class AgentApp(App):
         code = code if isinstance(code, str) and _CODE.fullmatch(code) else "unknown"
         text = self.t("Third-party MCP server {server} is off ({code}); the agent works without its tools.",
                       server=server, code=code)
-        self.set_status(text)
-        self.query_one("#agent-history", RichLog).write(self.display_text(text))
+        self.set_status(text, kind="warn")
+        self.write_history(text, head_role="warn")
 
     async def approve(self, request):
         # Every decision remains bound to the exact current run and generation.
@@ -313,7 +362,8 @@ class AgentApp(App):
         else:
             title, note, button = ("Approve one command", "This command runs with your user account permissions.",
                                    "Run once")
-        self._approval_screen = ConfirmModal(self.t(title), body + "\n\n" + self.t(note), approve=self.t(button))
+        self._approval_screen = ConfirmModal(self.t(title), body + "\n\n" + self.t(note), approve=self.t(button),
+                                            consent=True)
         try:
             return await self.push_screen_wait(self._approval_screen) is True
         finally:
@@ -333,8 +383,8 @@ class AgentApp(App):
         self._turn_task = asyncio.current_task()
         self.set_busy(True)
         self._stream = ""
-        self.query_one("#agent-stream", Static).update("")
-        self.set_status("Agent is working…")
+        self.show_stream("")
+        self.set_status("Agent is working…", kind="running")
         try:
             result = await self.engine.turn(text)
             if isinstance(result, dict):
@@ -344,17 +394,19 @@ class AgentApp(App):
                         details.append(str(result[field]))
                 if result.get("unknowns"):
                     details.append("; ".join(str(v) for v in result["unknowns"]))
-                self.set_status(self.t("Status: ") + " · ".join(details))
+                self.set_status(self.t("Status: ") + " · ".join(details),
+                                kind=_RESULT_KINDS.get(str(result.get("status", "completed")), "warn"))
                 if result.get("unknowns"):
-                    self.query_one("#agent-history", RichLog).write(self.display_text(self.t("Missing evidence / blockers:\n") + "\n".join(str(v) for v in result["unknowns"])))
+                    self.write_history(self.t("Missing evidence / blockers:\n").removesuffix("\n"),
+                                       "\n".join(str(v) for v in result["unknowns"]), head_role="warn-strong")
                 if self._stream and result.get("status") not in {"completed", "complete"}:
-                    self.query_one("#agent-stream", Static).update(self.display_text(self.t("Incomplete response — unconfirmed output:\n") + self._stream, limit=131072))
+                    self.show_stream(self.t("Incomplete response — unconfirmed output:\n") + self._stream)
                 if isinstance(result.get("usage"), dict):
                     self.update_usage(result["usage"])
         except asyncio.CancelledError:
-            self.set_status("Interrupted. Check uncertain actions; they will not be retried automatically.")
+            self.set_status("Interrupted. Check uncertain actions; they will not be retried automatically.", kind="warn")
         except Exception:
-            self.set_status("The operation did not finish. Check the journal and connection status.")
+            self.set_status("The operation did not finish. Check the journal and connection status.", kind="error")
         finally:
             self._turn_task = None
             self.set_busy(False)
@@ -396,7 +448,7 @@ class AgentApp(App):
                 await result
             if self._turn_task and not self._turn_task.done():
                 self._turn_task.cancel()
-            self.set_status("Interrupting the current operation…")
+            self.set_status("Interrupting the current operation…", kind="running")
 
     async def refresh_pending(self):
         pending = self.engine.pending_actions() if self.engine is not None else []
@@ -404,7 +456,8 @@ class AgentApp(App):
             pending = await pending
         self.query_one("#agent-resolve", Button).disabled = self._busy or not pending
         if pending:
-            self.set_status("Uncertain actions: {count}. Check their outcome and use Resolve before continuing.", count=len(pending))
+            self.set_status("Uncertain actions: {count}. Check their outcome and use Resolve before continuing.",
+                            kind="warn", count=len(pending))
         return pending
 
     @work(group="agent-resolve", exclusive=True, exit_on_error=False)
