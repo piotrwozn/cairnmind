@@ -11,7 +11,7 @@ from cairnmind.terminal_i18n import CATALOG, tr
 
 SOURCE = Path(theme.__file__).parent
 # Modules whose colours have moved to the theme. The list grows as panels are converted.
-THEMED = ["terminal_ui.py", "terminal_panels.py", "api_worker.py"]
+THEMED = ["terminal_ui.py", "terminal_panels.py", "workspace.py", "api_worker.py"]
 GREENS = {theme.TOKENS["ok"], f"colour{theme.XTERM['ok']}"}
 
 
@@ -83,3 +83,33 @@ def test_dialog_hints_exist_in_both_languages():
                  "PgUp/PgDn: scroll · Esc: cancel", "No matching commands."):
         assert text in CATALOG and tr(text, "pl") != text
 
+
+def test_tmux_pane_badge_is_green_only_for_ack():
+    from cairnmind.workspace import tmux_chrome
+    options = dict(tmux_chrome())
+    border = options["pane-border-format"]
+    ok, warn, danger = (f"colour{theme.TMUX[name]}" for name in ("ok", "warn", "danger"))
+    assert border.count(ok) == 1
+    assert "#{?#{==:#{@cairnmind_memory},ack},#[fg=" + ok + "]," in border
+    assert "#{==:#{@cairnmind_memory},unavailable},#[fg=" + danger + "],#[fg=" + warn + "]}" in border
+    # The words tmux shows are the raw option values, in the old order.
+    shown = re.sub(r"#\[[^]]*\]", "", border)
+    assert shown.index("#{@cairnmind_role} ") < shown.index("#{@cairnmind_control} ") < shown.rindex("#{@cairnmind_memory} ")
+    assert shown.endswith("#{@cairnmind_memory} ")
+    for option, value in options.items():
+        assert "'" not in value and "\n" not in value, option  # each is written into one quoted config line
+
+
+def test_status_rows_read_the_same_without_styles():
+    from cairnmind.workspace import workspace_status_lines
+    cached = {"profiles": [{"id": "codex", "client": "codex"}],
+              "auth": {"codex": {"auth": "reported_signed_in", "ready_to_launch": True}}}
+    slot = {"run_id": "run-7f3a91c2", "client": "codex", "profile_id": "codex", "lifecycle": "running",
+            "memory": {"status": "ready", "acknowledged": True}}
+    first, second = workspace_status_lines({"project_name": "payments-api", "broker_available": True},
+                                           cached, slot, "controller")
+    strip = lambda row: re.sub(r"#\[[^]]*\]", "", row)  # noqa: E731
+    assert strip(first) == " Project:payments-api | Session:codex run-7f3… Running"
+    assert strip(second) == (" Memory:ACK ready | Connection:Ready(local) | "
+                             "#{?client_readonly,Control:Read only,Control:You}")
+    assert "," not in re.sub(r"#\{\?client_readonly,.*", "", second)
