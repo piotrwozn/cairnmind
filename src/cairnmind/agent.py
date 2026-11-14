@@ -16,7 +16,8 @@ from jsonschema import Draft202012Validator
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
-from .ollama import Ollama, OllamaUnavailable
+from .memory_models import answer_label, context_tokens, from_settings
+from .ollama import OllamaUnavailable
 from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
                         with_source_origin)
 from .store import TASK_STATES, validate_task_state
@@ -360,7 +361,7 @@ class KnowledgeAgent:
     def __init__(self, store, settings: Settings, ollama=None, retriever=None):
         self.store = store
         self.settings = settings
-        self.ollama = ollama or Ollama(settings)
+        self.ollama = ollama or from_settings(settings)
         self.retriever = retriever or Retriever(store, settings, self.ollama)
 
     def _citation_catalog(self, project_id: str, evidence: dict, candidate: str = "", *,
@@ -932,10 +933,13 @@ class KnowledgeAgent:
         diagnostics = {"stage": "ask", "repair_attempted": False, "repair_outcome": "not_needed",
                        "validation_codes": [], "model_calls": [],
                        "budget": {"timeout_seconds": self.settings.ask_timeout, "max_steps": self.settings.max_steps,
-                                  "context_limit_chars": max(12000, self.settings.num_ctx * 2)}}
+                                  "context_limit_chars": max(12000, context_tokens(self.settings) * 2)}}
         started = time.monotonic()
         result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
         diagnostics["code"] = result.get("diagnostics", {}).get("code", "unavailable")
+        label = await answer_label(self.settings, self.ollama)  # None with the release's models
+        if label:
+            diagnostics["model_evaluation"] = label
         diagnostics["budget"]["elapsed_seconds"] = round(time.monotonic() - started, 3)
         return {**result, "diagnostics": diagnostics}
 
@@ -1047,7 +1051,7 @@ class KnowledgeAgent:
                     {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                 ]
                 # We retain complete tool exchanges, but stop before the local context is flooded.
-                context_chars = max(12000, self.settings.num_ctx * 2)
+                context_chars = max(12000, context_tokens(self.settings) * 2)
                 for _step in range(self.settings.max_steps):
                     if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > context_chars:
                         return self._result("partial", "The analysis reached the context budget; narrow the question.",

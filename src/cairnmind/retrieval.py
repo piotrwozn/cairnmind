@@ -13,7 +13,7 @@ from typing import Any
 from .arcade import ArcadeError
 from .config import Settings
 from .memory_paths import bound_metadata, memory_bindings
-from .ollama import Ollama
+from .memory_models import from_settings
 
 
 STOPWORDS = {
@@ -216,7 +216,7 @@ class Retriever:
     def __init__(self, store, settings: Settings, ollama=None):
         self.store = store
         self.settings = settings
-        self.ollama = ollama or Ollama(settings)
+        self.ollama = ollama or from_settings(settings)
         self.embedding_key = settings.embedding_model
         self.warnings: list[str] = []
         self._vector_indexes: dict[str, dict] = {}

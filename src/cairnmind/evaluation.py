@@ -24,7 +24,8 @@ from . import __version__
 from .agent import KnowledgeAgent, parse_object
 from .config import Settings, env_names, set_env
 from .ingest import index_pending_sources
-from .ollama import Ollama, OllamaUnavailable
+from .memory_models import from_settings
+from .ollama import OllamaUnavailable
 from .retrieval import Retriever
 from .store import Store
 
@@ -655,7 +656,8 @@ def run_evaluation(settings: Settings, *, clients: bool = False, skip_claude: bo
         store = Store(isolated.data_dir, settings=isolated)
         try:
             project, cases, canonical = _seed(store, worktree, other)
-            results = asyncio.run(_local_cases(store, isolated, project, cases, canonical, ollama or Ollama(isolated)))
+            results = asyncio.run(_local_cases(store, isolated, project, cases, canonical,
+                                                ollama or from_settings(isolated, credentials=settings)))
             # Deterministic checks are scored independently of model availability.
             stored = {r["id"]: r for r in store.list_records(project["id"])}
             deterministic = {

@@ -260,7 +260,7 @@ def finish_job_if_present(store, job_id: str, error: str | None = None, *, worke
 def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                background_inference: bool = True, ollama=None) -> FastAPI:
     from cairnmind.agent import KnowledgeAgent, extraction_outer_timeout, inference_lease_seconds
-    from cairnmind.ollama import Ollama
+    from cairnmind.memory_models import from_settings
     from cairnmind.retrieval import Retriever
     from cairnmind.store import Store
     from cairnmind.plans import PlanManager
@@ -273,7 +273,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     if not settings.token:
         raise ValueError("Run cairnmind init to create a local authentication token")
     store = Store(settings.data_dir)
-    model = ollama or Ollama(settings)
+    model = ollama or from_settings(settings)
     retriever = Retriever(store, settings, ollama=model)
     agent = KnowledgeAgent(store, settings, ollama=model, retriever=retriever)
     plans = PlanManager(store)

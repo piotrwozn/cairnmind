@@ -20,7 +20,8 @@ from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
 from .evaluation import MeasuredOllama, _fixture_settings, _git
 from .ingest import index_pending_sources
-from .ollama import Ollama, OllamaUnavailable
+from .memory_models import from_settings
+from .ollama import OllamaUnavailable
 from .plans import PlanManager
 from .retrieval import Retriever
 from .store import Store
@@ -242,7 +243,7 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
 def run_memory_evaluation(settings: Settings, *, report_dir: Path | None = None, ollama=None) -> dict:
     """Run explicitly requested local-model inference in two disposable databases."""
     started = time.monotonic()
-    measured = MeasuredOllama(ollama or Ollama(settings))
+    measured = MeasuredOllama(ollama or from_settings(settings))
     report = {"format_version": 1, "cairnmind_version": __version__, "evaluation_mode": "portable_positive_extraction",
         "inference": "injected_adapter" if ollama is not None else "local_ollama", "status": "not_run",
         "model": settings.chat_model, "embedding_model": settings.embedding_model,

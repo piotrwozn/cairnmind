@@ -272,6 +272,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
                 pass
         except (httpx.HTTPError, ValueError) as exc:
             result["ollama"]["error"] = type(exc).__name__
+        from .memory_models import doctor_models
+        result["memory_models"] = doctor_models(settings, client)
         try:
             response = client.get(f"{settings.url}/health")
             response.raise_for_status()
