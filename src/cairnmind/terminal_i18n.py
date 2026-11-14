@@ -593,6 +593,10 @@ CATALOG.update({
         "projektu, nie zostanie uruchomiony.",
     "A historical version cannot be reviewed.": "Wersja historyczna nie podlega ocenie.",
     "Raw record": "Surowy zapis",
+    # The keys on the border of the active view (workspace.border_hint, #161).
+    "C-b Space: menu · C-b ?: help · C-b d: detach": "C-b Spacja: menu · C-b ?: pomoc · C-b d: odłącz",
+    "C-b ?: help": "C-b ?: pomoc", "Read only · C-b d: detach": "Tylko odczyt · C-b d: odłącz",
+    "C-b d: detach": "C-b d: odłącz",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 for _en, _pl in CATALOG.items():

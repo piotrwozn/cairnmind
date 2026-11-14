@@ -56,16 +56,44 @@ def _status_text(value, columns):
     return result + "…"
 
 
-def tmux_chrome():
+# The keys, on the right of the active view's border (#161). The two status rows replace tmux's own row,
+# so status-right is never drawn; the rows are full at 80 columns, the border of the active view is not.
+HINT_KEYS = "C-b Space: menu · C-b ?: help · C-b d: detach"
+HINT_SHORT = "C-b ?: help"
+HINT_READ_ONLY = "Read only · C-b d: detach"
+HINT_READ_ONLY_SHORT = "C-b d: detach"
+BORDER_RESERVE = 40  # the left part at its widest: role, control word and memory badge, with their spaces
+
+
+def _hint(text):
+    """Catalog text as a literal inside a tmux conditional: no format, no branch separator."""
+    return _status_text(text, 60).replace(",", " ").replace("}", ")")
+
+
+def border_hint(language="en"):
+    """The keys for the active pane, cut to what its width holds: all of them, one, or none."""
+    from .terminal_i18n import tr
+    full, short = (_hint(tr(text, language)) for text in (HINT_KEYS, HINT_SHORT))
+    read_only, read_only_short = (_hint(tr(text, language)) for text in (HINT_READ_ONLY, HINT_READ_ONLY_SHORT))
+    wide = max(cell_len(full), cell_len(read_only)) + BORDER_RESERVE
+    narrow = max(cell_len(short), cell_len(read_only_short)) + BORDER_RESERVE
+    pick = lambda writer, reader: "#{?client_readonly," + reader + "," + writer + "}"  # noqa: E731
+    return ("#{?pane_active,#{?#{e|>=:#{pane_width}," + str(wide) + "}," + pick(full, read_only) + " ,"
+            "#{?#{e|>=:#{pane_width}," + str(narrow) + "}," + pick(short, read_only_short) + " ,}},}")
+
+
+def tmux_chrome(language="en"):
     """tmux options that only colour the chrome, from the palette the panels use (terminal_theme.TMUX).
 
     Every option is set quietly, so a tmux that does not know one (popup styles need 3.2 or 3.3)
     starts as before. The pane badge shows the raw memory word; only exactly `ack` is the good colour.
+    The active view's border also names the keys, on its right, in the panels' language.
     """
     c = {name: f"colour{cell}" for name, cell in TMUX.items()}
     badge = ("#{?#{==:#{@cairnmind_memory},ack},#[fg=" + c["ok"] + "],#{?#{==:#{@cairnmind_memory},unavailable},#[fg="
              + c["danger"] + "],#[fg=" + c["warn"] + "]}}#{@cairnmind_memory}#[default]")
-    border = (" #{?pane_active,#[fg=" + c["accent"] + "]#[bold],#[fg=" + c["label"] + "]}#{@cairnmind_role}#[default] "
+    border = ("#[align=right]#[fg=" + c["label"] + "]" + border_hint(language) + "#[default]#[align=left]"
+              " #{?pane_active,#[fg=" + c["accent"] + "]#[bold],#[fg=" + c["label"] + "]}#{@cairnmind_role}#[default] "
               "#[fg=" + c["label"] + "]#{@cairnmind_control}#[default] " + badge + " ")
     return [
         ("status-style", f"bg={c['bg']},fg={c['fg']}"),
@@ -176,6 +204,7 @@ class WorkspaceManager:
         self._last_focus = None
         self._activity_restarted = float("-inf")
         self._last_status = None
+        self._border_language = None
 
     @property
     def broker(self):
@@ -372,7 +401,8 @@ class WorkspaceManager:
             self._recover_ui_panels()
             self._bindings()
             # Live as well as in the config: the config file is written once and is not rewritten.
-            for option, value in tmux_chrome():
+            self._border_language = CockpitState(self.settings).load().get("language", "en")
+            for option, value in tmux_chrome(self._border_language):
                 self.tmux("set-option", "-gq", option, value)
             self.tmux("set-option", "-g", "status-right-length", "90")
             self.tmux("set-option", "-g", "status-right",
@@ -568,6 +598,10 @@ class WorkspaceManager:
             if len(fields) == 2 and fields[0] == f"{slot['run_id']}:{slot.get('generation')}":
                 control = fields[1]
         language = CockpitState(self.settings).load().get("language", "en")
+        if language != self._border_language:
+            # The key hint in the border follows a language switch like the status rows do (#161).
+            self.tmux("set-option", "-gq", "pane-border-format", dict(tmux_chrome(language))["pane-border-format"])
+            self._border_language = language
         formats = workspace_status_lines(selected, self._broker_state or {}, slot, control, language)
         if formats != self._last_status:
             for index, value in enumerate(formats):
