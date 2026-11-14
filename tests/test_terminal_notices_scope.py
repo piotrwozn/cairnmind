@@ -148,3 +148,44 @@ def test_a_stored_folder_or_name_cannot_start_a_line_that_looks_like_an_entry():
     assert "\x1b" not in text and " " not in text
     head = lines[0]
     assert head.count("] ") == 1 and head.endswith("] Check finished: unit · Check did not pass.")  # one label, one line
+
+
+@pytest.mark.asyncio
+async def test_a_notice_of_one_project_leaves_the_line_when_another_project_is_opened_elsewhere(tmp_path, monkeypatch):
+    # #161: the line kept a notice of the earlier project, without a project label, until the next notice.
+    from test_terminal_notices import mark_of
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    other = tmp_path / "other"
+    other.mkdir()
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.notice("Check finished: unit · Check did not pass.", "warn")
+        await pilot.pause()
+        assert "Check did not pass" in notice_of(app)
+        # Opened from outside this sidebar: the graph or another terminal writes the workspace state.
+        workspace.update({"project_id": "project-other", "project_name": "Other project", "worktree": str(other)})
+        await wait_for_state(pilot, lambda: app.workspace_data.get("project_id") == "project-other", "the other project")
+        await pilot.pause()
+        assert notice_of(app) == "" and not app.query_one("#panel-notice").display
+        assert mark_of(app) == "[Notices: 1]"
+        text = await open_history(app, pilot)
+    line = next(line for line in text.splitlines() if "Check did not pass" in line)
+    assert "[Keyboard project" in line
+
+
+@pytest.mark.asyncio
+async def test_a_notice_of_the_project_still_shown_stays_on_the_line(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    other = tmp_path / "other"
+    other.mkdir()
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        workspace.update({"project_id": "project-other", "project_name": "Other project", "worktree": str(other)})
+        await wait_for_state(pilot, lambda: app.workspace_data.get("project_id") == "project-other", "the other project")
+        app.notice("Snapshot saved.")
+        await pilot.pause()
+        workspace.update({"focus": "inspector"})  # a change of the state that keeps the project
+        await pilot.pause(.5)
+        assert "Snapshot saved." in notice_of(app)

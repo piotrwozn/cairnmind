@@ -425,6 +425,23 @@ class BasePanel(App):
             self.show_notice_mark()
         self.publish_notices(later=True)
 
+    def clear_notice_of_other_project(self, shown: dict) -> None:
+        """The shown project changed (here or elsewhere): a notice the line shows about another project
+        leaves the line. It stays in Notices under its project, and the mark counts it (#161)."""
+        with suppress(Exception):
+            entry = self.notice_history.on_line()
+            folder = shown.get("worktree")
+            # The same rule as the Notices list uses to label an entry with its project.
+            if entry is None or (entry.project_id == shown.get("project_id")
+                                 and not (entry.worktree and folder and entry.worktree != folder)):
+                return
+            line = self.query_one("#panel-notice", Static)
+            line.update("")
+            line.display = False
+            line.remove_class("-warn", "-error")
+            self.notice_history.add("", None)  # the line no longer shows it
+            self.show_notice_mark()
+
     def show_notice_mark(self) -> None:
         """A small mark in its own line, so the notice text itself is never changed."""
         with suppress(Exception):
@@ -465,6 +482,7 @@ class BasePanel(App):
                 self.workspace_data = value
                 if (old.get("project_id"), old.get("worktree")) != (value.get("project_id"), value.get("worktree")):
                     self._scope_version += 1
+                    self.clear_notice_of_other_project(value)
                 await self.workspace_changed(value)
             command = value.get("command_request")
             if isinstance(command, dict) and command.get("id") != self._last_command_id:

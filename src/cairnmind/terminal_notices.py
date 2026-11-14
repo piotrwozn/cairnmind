@@ -69,6 +69,10 @@ class NoticeHistory:
         while len(self.entries) > 1 and (len(self.entries) > self.max_entries or self._chars > self.max_chars):
             self._chars -= len(self.entries.popleft().text)
 
+    def on_line(self) -> Notice | None:
+        """The entry the notice line shows, if it shows one."""
+        return next((entry for entry in reversed(self.entries) if entry.seq == self._on_line), None)
+
     def replaced_unseen(self) -> int:
         """Notices added since the history was last opened that are not on the line now."""
         return sum(1 for entry in self.entries if entry.seq > self._seen and entry.seq != self._on_line)
