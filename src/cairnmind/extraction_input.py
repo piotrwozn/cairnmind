@@ -5,6 +5,9 @@ Pure functions without a model or a database, so that the extraction job and the
 """
 from __future__ import annotations
 
+import json
+import re
+
 from .retrieval import json_value, public_source_metadata
 from .store import TASK_STATES
 
@@ -33,6 +36,54 @@ SYSTEM = ("Extract durable project facts, explicit decisions, tasks, constraints
     "No records is a valid result. " + TASK_STATE_INSTRUCTION)
 
 
+# A source of these kinds is one message of a conversation (#160). Measured with
+# ``cairnmind eval extraction``: these two rules, with the protocol turns left out below, took the
+# share of proposals a person would reject from 62% to 14% and lost no kept record.
+CONVERSATION_KINDS = {"agent_transcript", "transcript"}
+CONVERSATION_RULE = (
+    " This source is one message of a conversation between a person and a coding assistant; "
+    "source_metadata.role says who wrote it. Durable project knowledge stays true beyond this conversation. "
+    "Do NOT extract: requests or instructions addressed to the assistant for this conversation (run, show, "
+    "check, open, call a tool, read a file); questions about the moment and their answers (the time, the "
+    "weather, whether something is installed); the assistant's narration of what it is doing, has just done "
+    "or will do next; tool calls and their arguments; session and memory protocol steps (reading, "
+    "acknowledging or resuming a context packet, session permissions, sandbox or environment settings). "
+    "DO extract a decision, constraint, task, fact or open question about the project itself, also when it "
+    "is stated next to such a request or names a tool. A problem, bug or missing piece the person reports "
+    "about the project is durable (a task or a fact) even when it comes with a request to investigate or fix it.")
+ASSISTANT_RULE = (
+    " This message was written by the assistant, not the person. From it extract only project "
+    "knowledge it reports as established: a finding about the code or the system, or a decision "
+    "or constraint it attributes to the person. Never its plans, intentions, next steps, actions "
+    "taken or about to be taken, or answers to one-off questions.")
+# Messages a program wrote in the person's place: the first message Cairnmind's launcher gives a
+# native client (integrations.launch_prompt) and the environment block Codex adds to a session.
+HOST_MESSAGE = re.compile(
+    r"\ACairnmind verified session \S+\. First call the Cairnmind MCP tool resume_context and read the "
+    r"complete packet it returns\.|\A\s*<environment_context>.*</environment_context>\s*\Z", re.DOTALL)
+
+
+def _raw_event(source: dict) -> dict | None:
+    try:
+        value = json.loads(source["content"])
+    except (ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _without_tool_calls(source: dict) -> str | None:
+    """A Claude assistant line's text blocks without its tool_use blocks (the parser writes those as
+    ``Tool: name`` and the arguments), or None when the line has no tool_use block."""
+    event = _raw_event(source)
+    message = event.get("message") if event else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list) or not any(
+            isinstance(block, dict) and block.get("type") == "tool_use" for block in content):
+        return None
+    return "\n".join(block["text"] for block in content
+                     if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str))
+
+
 def source_text(source: dict) -> str:
     """Keep raw bytes intact; cite the readable text view with normalized line endings."""
     metadata = json_value(source.get("metadata"), {})
@@ -46,14 +97,29 @@ def extraction_request(source: dict) -> dict | None:
     """The text, instruction and prompt extraction gives the model for ``source``.
 
     None when the source is never extracted: Cairnmind's own synthesis must not become
-    independent corroboration of itself.
+    independent corroboration of itself, and a message a program wrote in the person's place
+    (HOST_MESSAGE) or an assistant line holding only tool calls is protocol, not knowledge.
+    Every quote of the reduced text is still a literal passage of the archived source.
     """
     metadata = json_value(source.get("metadata"), {})
     if not isinstance(metadata, dict):
         metadata = {}
     if metadata.get("agent") in ("cairnmind", "devbrain") or source["kind"] == "agent_answer":
         return None
-    text = source_text(source)[:VISIBLE_CHARS]
+    text = source_text(source)
+    system = SYSTEM
+    if source["kind"] in CONVERSATION_KINDS:
+        role = metadata.get("role")
+        if role == "user" and HOST_MESSAGE.match(text):
+            return None
+        if role == "assistant" and source["kind"] == "transcript":
+            spoken = _without_tool_calls(source)
+            if spoken is not None:
+                if not spoken.strip():
+                    return None
+                text = spoken
+        system += CONVERSATION_RULE + (ASSISTANT_RULE if role == "assistant" else "")
+    text = text[:VISIBLE_CHARS]
     prompt = {"source_id": source["id"], "source_kind": source["kind"],
               "source_metadata": public_source_metadata(metadata), "text": text}
-    return {"text": text, "system": SYSTEM, "prompt": prompt}
+    return {"text": text, "system": system, "prompt": prompt}
