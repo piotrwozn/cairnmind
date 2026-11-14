@@ -309,9 +309,10 @@ class AgentApp(App):
         elif kind == "usage":
             self.update_usage(data)
         elif kind in {"status", "memory_required", "context_compacted", "error"}:
-            # A status event carries {"state": ...}: shown as its label, never as raw JSON (#157).
-            value = next((data[key] for key in ("message", "status", "state", "code") if data.get(key)), None)
-            value = STATUS.get(str(value), value) if value is not None else json.dumps(data, ensure_ascii=False)
+            # A status event carries {"state": ...} or {"memory": ...}: shown as its label, never as raw JSON (#157).
+            value = next((data[key] for key in ("message", "status", "state", "code", "memory") if data.get(key)), None)
+            fallback = "Context compacted" if kind == "context_compacted" else "Status updated"
+            value = STATUS.get(str(value), value) if value is not None else fallback
             self.set_status(value,
                             kind={"error": "error", "memory_required": "warn"}.get(kind, "running" if self._busy else "idle"))
         elif kind == "mcp_server_failed":

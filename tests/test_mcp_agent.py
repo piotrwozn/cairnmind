@@ -388,3 +388,27 @@ async def test_a_server_that_did_not_start_stays_named_after_later_statuses(tmp_
         row = app.query_one("#agent-mcp")
         assert row.has_class("-live") and "time (start_failed)" in str(row.render())
         assert "Completed" in str(app.query_one("#agent-status").render())
+
+
+@pytest.mark.asyncio
+async def test_every_status_event_shape_is_a_translated_label(tmp_path):
+    # #157 review: an ACK status {"memory": ...} and the turn states outside the first list were raw text.
+    app, _ = worker(tmp_path)
+    ack = ("status", {"memory": "acknowledged", "packet_id": "p-1"})
+    events = (ack, ("status", {"state": "resume_required"}), ("status", {"state": "context_limit"}),
+              ("status", {"state": "partial"}), ("status", {"state": "uncertain"}),
+              ("context_compacted", {"checkpoint": {"id": "c-1"}}), ("status", {}))
+    async with app.run_test(size=(95, 42)) as pilot:
+        await pilot.pause()
+        shown = {}
+        for language in ("en", "pl"):
+            app.language = language
+            for kind, data in events:
+                await app.agent_event({"type": kind, "data": data})
+                text = str(app.query_one("#agent-status").render())
+                assert "{" not in text and "_" not in text and "p-1" not in text
+                shown[language, kind, json.dumps(data)] = text
+        assert "Memory acknowledged" in shown["en", ack[0], json.dumps(ack[1])]
+        assert "Pamięć potwierdzona" in shown["pl", ack[0], json.dumps(ack[1])]
+        assert "Osiągnięto limit kontekstu" in shown["pl", "status", json.dumps({"state": "context_limit"})]
+        assert "Kontekst skrócony" in shown["pl", "context_compacted", json.dumps({"checkpoint": {"id": "c-1"}})]
