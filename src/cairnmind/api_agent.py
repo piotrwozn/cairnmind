@@ -145,6 +145,7 @@ class AgentEngine:
         self._prepared = False
         self._acknowledged = False
         self._last_packet = None
+        self._acked_packet = None
         self._context = []
         self._reads = ReadLedger()  # what file content the current model context has seen (#157)
         self._closed = False
@@ -469,8 +470,11 @@ class AgentEngine:
                     "Read the complete ready packet using resume_context before its exact ACK."])
         result = await self.memory.execute(name, arguments)
         if name == "resume_context":
-            self._acknowledged = False
             packet = result.get("packet") if isinstance(result, dict) else None
+            # The service hands back the same packet while nothing changed, and its ACK stays valid; reading
+            # it again must not leave the run asking for an ACK the workspace shows as given (#157).
+            self._acknowledged = (self._acknowledged and isinstance(packet, dict) and result.get("status") == "ready"
+                                  and self._acked_packet == (packet.get("id"), packet.get("hash")))
             if packet and self._redact(packet) != packet:
                 # Never let the model acknowledge a hash after silently
                 # changing the authoritative bytes it was supposed to read.
@@ -486,6 +490,7 @@ class AgentEngine:
                                   and result.get("packet_hash") == arguments.get("packet_hash"))
             if not self._acknowledged:
                 return self._error("resume_required", unknowns=["The service did not accept the exact ACK."])
+            self._acked_packet = (result["packet_id"], result["packet_hash"])
             await self._notify("status", {"memory": "acknowledged", "packet_id": result["packet_id"]})
         return result
 

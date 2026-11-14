@@ -739,3 +739,33 @@ async def test_production_memory_transport_and_model_orchestration_on_real_arcad
     assert any("VALUE = 2" in row["content"] for row in sources)
     assert not store.query("SELECT FROM check_runs")
     await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_reading_the_same_packet_again_keeps_its_ack(setup):
+    # #157: the pane said resume_required while the service, the header and Sessions still had the ACK.
+    memory = Memory()
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("resume_context")), reply(text="Nothing more to do."))
+    agent = engine(setup, provider, memory)
+    result = await agent.turn("Check the plan")
+    assert result["status"] == "completed" and memory.acked
+    assert "write_file" in {row["name"] for row in provider.requests[-1]["tools"]}
+
+
+@pytest.mark.asyncio
+async def test_a_changed_packet_still_needs_a_new_ack(setup):
+    memory = Memory()
+
+    def changed(messages, tools):
+        memory.packet = {**memory.packet, "id": "packet-2", "hash": "b" * 64}
+        return reply(call("resume_context"))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        changed, reply(text="Stopping here."))
+    agent = engine(setup, provider, memory)
+    result = await agent.turn("Check the plan")
+    assert result["status"] == "resume_required"
+    assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
