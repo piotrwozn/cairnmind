@@ -684,6 +684,50 @@ def test_primary_resume_requires_exact_native_live_identity(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("before,after,focus", [
+    (["slot-github", "slot-native"], ["slot-github", "slot-native"], "client2"),
+    (["slot-github"], ["slot-native", "slot-github"], "client1"),
+    ([], ["slot-native"], "client1"),
+])
+async def test_resume_keeps_the_other_running_session_on_screen(tmp_path, monkeypatch, before, after, focus):
+    # #155: resuming Codex dropped the running Copilot/Claude view, which then had no pane or status line.
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    project = broker.project
+    runs = [{"id": f"run-{slot}", "generation": 1, "purpose": "coding", "lifecycle": "running",
+             "project_id": project["id"], "worktree": project["root"], "slot_id": slot,
+             "profile_id": profile, "client": client}
+            for slot, profile, client in (("slot-native", "native-private-1", "codex"),
+                                          ("slot-github", "copilot-private-2", "copilot"))]
+
+    class LiveBroker(UIBroker):
+        def request(self, method, path, **kwargs):
+            value = super().request(method, path, **kwargs)
+            if path == "/api/state":
+                value["runs"] = deepcopy(runs)
+            return value
+
+    live = LiveBroker(project)
+    workspace.value["visible_slot_ids"] = list(before)
+    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", lambda *args, **kwargs: workspace.update({"slots": [
+        {"id": r["slot_id"], "run_id": r["id"], "generation": 1, "client": r["client"], "lifecycle": "running"}
+        for r in runs]}))
+    app = SidebarApp(settings, broker=live, workspace=workspace)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert app.selected_slot_id == "slot-native"
+        assert str(app.query_one("#project-work", Button).label) == "Resume session"
+        await focus_with_keyboard(app, pilot, "project-work")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert workspace.value["visible_slot_ids"] == after and workspace.value["focus"] == focus
+        assert all(intent == "inspect" for _, _, intent in workspace.selections)
+        assert all(method == "GET" for method, _, _, _ in live.calls)
+        assert "Returned to the running session. No process was restarted." in screen_text(app)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize("exit_stage", ["fresh_state", "reconcile", "final_state"])
 async def test_keyboard_resume_returns_to_actual_native_pid_and_never_launches_after_exit(native, monkeypatch, language, exit_stage, record_property):
