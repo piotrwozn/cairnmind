@@ -469,6 +469,25 @@ async def test_stale_broker_rejection_shows_fixed_feedback_without_reattach(pty_
     assert termios.tcgetattr(slave) == original
 
 
+@pytest.mark.asyncio
+async def test_a_run_the_broker_no_longer_knows_ends_as_stale_instead_of_offline(pty_pair):
+    # #161: the broker answers 404 for an unknown run (it was 400, which kept the pane offline and retrying).
+    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal_i18n import tr
+    master, slave = pty_pair
+    client = Client()
+
+    def forgotten(method, path, **kwargs):
+        client.requests.append((method, path))
+        raise BrokerError(404, "Unknown native run")
+    client.request = forgotten
+    bridge = RawTerminalBridge(client, "run-fixture", 7, input_fd=slave, output_fd=slave, language="en")
+    assert await asyncio.wait_for(bridge.run(), 2) == 1
+    rendered = (await read_terminal(master, tr("The session changed.", "en"))).decode("utf-8")
+    assert tr("The session changed.", "en") in rendered
+    assert client.requests == [("GET", "/api/client-runs/run-fixture")] and not client.connections
+
+
 def test_full_unread_terminal_cannot_block_final_feedback_or_terminal_restoration():
     # A separate controlled child gives this regression a real external deadline;
     # asyncio.wait_for alone cannot interrupt a blocking os.write regression.
