@@ -343,8 +343,30 @@ class BasePanel(App):
             line.set_class(kind == "error", "-error")
         if shown is not None:
             with suppress(Exception):
-                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data)
+                self.notice_history.add(shown.plain, self._notice_about or self.workspace_data, kind)
                 self.show_notice_mark()
+            self.publish_notices(later=True)
+
+    def publish_notices(self, *, later=False) -> None:
+        """Copy the history to this panel's private notice file for the activity panel (#144).
+
+        `later` writes once per burst of notices, half a second after the first. A failed copy is
+        ignored: a notice never fails because of it.
+        """
+        role = getattr(self, "panel_role", None)
+        with suppress(Exception):
+            from .terminal_notice_feed import ROLES, NoticeFeed
+            if role not in ROLES:
+                return
+            if later:
+                if getattr(self, "_feed_timer", None) is None:
+                    self._feed_timer = self.set_timer(.5, self._publish_now)
+                return
+            NoticeFeed(self.settings, self.workspace_id, role).publish(self.notice_history)
+
+    def _publish_now(self) -> None:
+        self._feed_timer = None
+        self.publish_notices()
 
     def notice_for(self, about, value, kind="info") -> None:
         """A notice about a project of its own (see terminal_notices.about), not the one shown now.
@@ -408,6 +430,8 @@ class BasePanel(App):
 
     @work(group="panel-startup", exclusive=True, exit_on_error=False)
     async def start_panel(self):
+        # A copy left by an earlier run of this panel is replaced: what is shown lives as long as the panel.
+        await asyncio.to_thread(self.publish_notices)
         try:
             await asyncio.to_thread(self.broker.ensure)
             await self._poll_workspace()
