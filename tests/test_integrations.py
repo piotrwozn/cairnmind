@@ -4,7 +4,6 @@ import json
 import copy
 import hashlib
 import os
-import re
 import stat
 import subprocess
 import sys
@@ -14,6 +13,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+
+from conftest import plain_words
 
 from cairnmind.config import Settings
 from cairnmind import integrations
@@ -1345,7 +1346,7 @@ def test_doctor_contract_prints_text_on_request_and_json_by_default(tmp_path, mo
     assert absent.exit_code == 0 and "failed" not in absent.output and absent.output.splitlines()[-1].split()[:3] == ["claude", "installed", "missing"]
     refused = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "doctor", "--format", "text"])
     # On CI the error box is coloured and wrapped, so compare the plain words.
-    plain = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", refused.output).split())
+    plain = plain_words(refused.output)
     assert refused.exit_code != 0 and "only with --contract" in plain
 
 
