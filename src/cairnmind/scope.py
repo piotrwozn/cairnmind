@@ -121,7 +121,7 @@ def path_states(store, project_id: str, worktree=None, *, known: dict | None = N
     ``known`` is the map of an earlier observation: a file whose size, times, mode and inode equal
     what it holds is not read again.
     """
-    from cairnmind.memory_paths import is_reserved_memory
+    from cairnmind.memory_paths import GIT_PATHSPEC, is_reserved_memory
     from cairnmind.verification import _git, _root
     root = _root(store, project_id, worktree)
     result = {"status": "unknown", "worktree": str(root), "head": None, "reasons": [], "paths": {}}
@@ -134,7 +134,7 @@ def path_states(store, project_id: str, worktree=None, *, known: dict | None = N
             head = None  # no first commit yet: the files can still be compared
         names = set()
         for arguments in (("ls-files", "-z"), ("ls-files", "--others", "--exclude-standard", "-z")):
-            names.update(os.fsdecode(item) for item in _git(root, *arguments).split(b"\0") if item)
+            names.update(os.fsdecode(item) for item in _git(root, *arguments, *GIT_PATHSPEC).split(b"\0") if item)
         paths = {}
         for name in sorted(names):
             if is_reserved_memory(name) or _MANAGED.match_file(name):

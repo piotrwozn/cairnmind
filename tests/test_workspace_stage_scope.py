@@ -99,11 +99,17 @@ async def test_a_check_result_is_not_shown_for_another_project(tmp_path, monkeyp
         app.action_next_stage()
         for _ in range(50):  # Polling, not settle: a wrongly shown result would hold the worker open.
             await pilot.pause(.02)
-            if isinstance(app.screen, MessageModal) or "not shown here" in notice_of(app):
+            if isinstance(app.screen, MessageModal) or workspace_stage.CHECK_MOVED in notice_of(app):
                 break
         assert not isinstance(app.screen, MessageModal)
         notice = notice_of(app)
-    assert "recorded for the earlier project and is not shown here" in notice
+        entries = list(app.notice_history.entries)
+    assert workspace_stage.CHECK_MOVED in notice
+    # The outcome is not lost: it is in Notices, under the project it ran for, and not on the line.
+    outcome = [entry for entry in entries if "Check finished: unit · Check passed." in entry.text]
+    assert len(outcome) == 1 and outcome[0].project_id == project["id"]
+    assert outcome[0].worktree == project["root"]
+    assert "Check finished" not in notice
 
 
 @pytest.mark.asyncio
@@ -126,15 +132,26 @@ async def test_choosing_a_project_cancels_a_running_check_stage_and_blocks_a_sec
         await settle(app, pilot)
         app.action_next_stage()
         await wait_until(pilot, started.is_set)
-        app.action_inspect()  # Start work's exclusive group: the stage worker is cancelled.
-        await pilot.pause(.3)
+        # Opening a project from the sidebar runs in Start work's exclusive group: the stage worker is
+        # cancelled while the workspace still shows the project the check runs for.
+        app.action_inspect()
+        await wait_until(pilot, lambda: any(workspace_stage.CHECK_CONTINUES in entry.text
+                                            for entry in app.notice_history.entries))
+        said = [entry.text for entry in app.notice_history.entries if workspace_stage.CHECK_CONTINUES in entry.text]
+        assert said == ["The check keeps running: unit · Its result will appear in Notices when it ends."]
         workspace.update({"project_id": "project-other", "worktree": "/elsewhere"})  # Then another project opens.
+        app.workspace_data = workspace.read()
+        unseen = app.notice_history.replaced_unseen()
         release.set()
-        for _ in range(25):
-            await pilot.pause(.02)
+        await wait_until(pilot, lambda: any("Check finished" in entry.text for entry in app.notice_history.entries))
         assert not isinstance(app.screen, MessageModal)
-        assert "Check finished" not in notice_of(app)
+        assert "Check finished" not in notice_of(app)  # never over the other project's notice line
+        assert app.notice_history.replaced_unseen() == unseen + 1  # the mark counts it
+        listed = app.notice_history.lines(app.workspace_data, app.t)
     assert len(calls) == 1
+    # The promise holds: the outcome is in Notices, labelled with the project and folder it ran for.
+    first = listed.splitlines()[0]
+    assert "[Keyboard project · " + project["root"] + "] Check finished: unit · Check passed." in first
 
 
 async def wait_until(pilot, condition):
@@ -227,6 +244,8 @@ def test_every_text_stages_can_show_has_a_polish_entry():
     assert raised
     shown = [*raised, *stages._PROBLEMS.values(), *stages._REASONS.values(), *stages.STAGES, stages.FROM_WORKSPACE,
              workspace_stage.PROJECT_CHANGED, workspace_stage.CHECK_MOVED, workspace_stage.ALREADY_RUNNING,
-             workspace_stage.CHECK_CONTINUES, workspace_stage.AGENT_STARTED, "Model", "default model", "not confirmed; save it to confirm", stages.NOT_CHECKED, "What changed", *stages.CHANGED_WORDS.values(),
-             "A check is still running", "The check could not run", "Check finished"]
+             workspace_stage.CHECK_CONTINUES, workspace_stage.CHECK_KEEPS_RUNNING, workspace_stage.MAP_HINT,
+             workspace_stage.PLAN_HINT, workspace_stage.AGENT_STARTED, "Model", "default model", "not confirmed; save it to confirm", stages.NOT_CHECKED, "What changed", *stages.CHANGED_WORDS.values(),
+             "A check is still running", "The check could not run", "Check finished", "Assistant",
+             "Unknown assistant", stages.CLIENT_WORDS["api"]]
     assert [text for text in shown if text not in CATALOG] == []

@@ -1,6 +1,8 @@
 """Small explicit terminal catalog. User content and API identifiers are never translated."""
 from __future__ import annotations
 
+from .terminal_i18n_messages import MESSAGES
+
 
 CATALOG = {
     "Invalid assistant selections": "Niepoprawna lista wyborów asystenta",
@@ -245,6 +247,7 @@ CATALOG = {
     "Review was not retried. The current version was reloaded.": "Ocena nie została ponowiona. Odczytano aktualną wersję.",
     "Memory updates": "Aktualizacje pamięci", "Account login": "Logowanie konta",
     "Memory acknowledged": "Pamięć potwierdzona", "Memory acknowledgement required": "Wymagane potwierdzenie pamięci",
+    "The session was stopped.": "Sesja została zatrzymana.",
     "Memory graph · Connecting…": "Graf pamięci · Łączenie…", "Memory graph": "Graf pamięci",
     "No nodes in this scope.": "Brak węzłów w tym zakresie.", "nodes": "węzłów", "relationships": "relacji",
     "paused": "pauza", "moving": "ruch", "n: next page": "n: następna strona", "limited view, g: groups": "ograniczony widok, g: grupy",
@@ -277,11 +280,12 @@ CATALOG = {
     "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
     "Ctrl+B, then a: activity panel (notices, plans, tasks)\n"
     "Ctrl+B, then [: scroll and copy terminal history (q to leave)\n"
-    "Ctrl+B, then d: detach; run cairnmind to return\n"
+    "Ctrl+B, then d (or Ctrl+Q in a Cairnmind view): detach; run cairnmind to return\n"
     "Ctrl+B, then Ctrl+B: send Ctrl+B to the native assistant\n\n"
     "Cairnmind controls: Tab / Shift+Tab move focus; Enter chooses; Esc goes back.\n"
     "Projects: Enter opens; Start work starts only the chosen assistant.\n"
     "Graph: [ / ] select nodes; arrows rotate; Space pauses; Enter opens a node.\n"
+    "Graph: a switches between all memory and the project; r resets the camera; Backspace goes up.\n"
     "Native assistants keep their own shortcuts, paste, Ctrl+C and approval dialogs.\n"
     "Memory readiness, session activity and terminal control are separate states.":
     "Ctrl+B, potem Spacja: wyszukaj polecenie\n"
@@ -290,11 +294,12 @@ CATALOG = {
     "Ctrl+B, potem n: zapisz ustalenie w pamięci (Ctrl+S zapisuje, Esc zamyka)\n"
     "Ctrl+B, potem a: panel aktywności (komunikaty, plany, zadania)\n"
     "Ctrl+B, potem [: przewijaj i kopiuj historię terminala (q wraca)\n"
-    "Ctrl+B, potem d: odłącz; uruchom cairnmind, aby wrócić\n"
+    "Ctrl+B, potem d (albo Ctrl+Q w widoku Cairnmind): odłącz; uruchom cairnmind, aby wrócić\n"
     "Ctrl+B, potem Ctrl+B: przekaż Ctrl+B do natywnego asystenta\n\n"
     "Cairnmind: Tab / Shift+Tab zmienia fokus; Enter wybiera; Esc wraca.\n"
     "Projekty: Enter otwiera; Rozpocznij pracę uruchamia tylko wybranego asystenta.\n"
     "Graf: [ / ] wybiera węzły; strzałki obracają; Spacja wstrzymuje; Enter otwiera węzeł.\n"
+    "Graf: a przełącza między całą pamięcią a projektem; r resetuje kamerę; Backspace przechodzi wyżej.\n"
     "Natywni asystenci zachowują własne skróty, wklejanie, Ctrl+C i zgody.\n"
     "Gotowość pamięci, aktywność sesji i sterowanie terminalem to oddzielne stany.",
 }
@@ -387,6 +392,12 @@ LEGACY = {
 }
 CATALOG.update({english: polish for polish, english in LEGACY.items() if english not in CATALOG})
 CATALOG.update({
+    "A dialog is open in this view. Finish it or press Esc, then choose the command again.":
+        "W tym widoku jest otwarte okno. Dokończ je lub naciśnij Esc, a potem wybierz polecenie ponownie.",
+    "Ctrl+B, then d: leave the workspace. It keeps running; run cairnmind to return.":
+        "Ctrl+B, potem d: wyjście ze środowiska. Działa ono dalej; uruchom cairnmind, aby wrócić.",
+    "To leave the workspace press Ctrl+Q, or Ctrl+B then d. It keeps running; run cairnmind to return.":
+        "Aby wyjść ze środowiska, naciśnij Ctrl+Q albo Ctrl+B, potem d. Działa ono dalej; uruchom cairnmind, aby wrócić.",
     "{client} failed.": "{client}: awaria.",
     "{client} was interrupted.": "{client}: przerwano pracę.",
     "Exit code: {code}.": "Kod zakończenia: {code}.",
@@ -415,7 +426,7 @@ CATALOG.update({
     "The mapped assistant cannot be launched for a plan step.":
         "Przypisanego asystenta nie można uruchomić dla kroku planu.",
     # Plan stages for the built-in API agent and Copilot (#125)
-    "default model": "model domyślny",
+    "default model": "model domyślny", "Built-in agent": "Wbudowany agent",
     "The assistant of this stage changed since it was mapped. Confirm it in More → Plan stages; nothing was started.":
         "Asystent tego etapu zmienił się od przypisania. Potwierdź go w Więcej → Etapy planu; "
         "nic nie zostało uruchomione.",
@@ -457,13 +468,15 @@ CATALOG.update({
     "The task state is unchanged. Update it after you review the result.":
         "Stan zadania się nie zmienił. Zaktualizuj go po sprawdzeniu wyniku.",
     "A check is still running": "Test nadal trwa",
-    "The check keeps running; its result will appear here when it ends.":
-        "Test nadal trwa; jego wynik pojawi się tutaj, gdy się zakończy.",
+    "The check keeps running": "Test nadal trwa",
+    "Its result will appear in Notices when it ends.": "Jego wynik pojawi się w Komunikatach, gdy się zakończy.",
     "The check could not run": "Nie udało się uruchomić testu", "Check finished": "Test zakończony",
     "Project changed. Run next stage was not carried out; press it again for this project.":
         "Projekt się zmienił. Następny etap nie został uruchomiony; naciśnij ponownie dla tego projektu.",
-    "Project changed while the check ran. Its result was recorded for the earlier project and is not shown here.":
-        "Projekt zmienił się w trakcie testu. Wynik zapisano dla poprzedniego projektu i nie jest tu pokazany.",
+    "Project changed while the check ran. Its result belongs to the earlier project and is listed under that "
+    "project in Notices.":
+        "Projekt zmienił się w trakcie testu. Wynik należy do poprzedniego projektu i jest w Komunikatach "
+        "pod tym projektem.",
     "This assistant is already running here. No process was restarted and it received no new resume packet. "
     "For the next stage, end that session or map another assistant to the stage.":
         "Ten asystent już tu działa. Proces nie został uruchomiony ponownie i nie dostał nowego pakietu "
@@ -481,6 +494,10 @@ CATALOG.update({
         "Etap rozpoczęty. Asystent musi potwierdzić swój pakiet wznowienia.",
     "Running check": "Trwa test",
     "Map stages in More → Plan stages.": "Przypisz etapy w Więcej → Etapy planu.",
+    "Activate a plan for this folder with cairnmind plan activate PROJECT PLAN_ID, or save a new one "
+    "with cairnmind plan save PROJECT PLAN.json --idempotency-key KEY --activate.":
+        "Aktywuj plan dla tego katalogu poleceniem cairnmind plan activate PROJECT PLAN_ID albo zapisz nowy "
+        "poleceniem cairnmind plan save PROJECT PLAN.json --idempotency-key KEY --activate.",
     "Check profile for the test stage (empty: not set)": "Profil testu dla etapu test (puste: nieustawione)",
     "The profile is read from this folder's checks.toml when it runs.":
         "Profil jest odczytywany z checks.toml tego katalogu podczas uruchomienia.",
@@ -528,6 +545,10 @@ CATALOG.update({
         "obowiązuje od następnego uruchomienia agenta.",
     "MCP server saved. The built-in agent of this project uses it from its next run.":
         "Zapisano serwer MCP. Wbudowany agent tego projektu użyje go od następnego uruchomienia.",
+    "MCP server saved, but its program does not exist or cannot be run on this computer. Until it can, the "
+    "built-in agent reports the server off and works without its tools.":
+        "Zapisano serwer MCP, ale jego program nie istnieje albo nie da się go uruchomić na tym komputerze. "
+        "Dopóki tak jest, wbudowany agent zgłasza serwer jako wyłączony i pracuje bez jego narzędzi.",
     "MCP server removed. The built-in agent of this project stops using it from its next run.":
         "Usunięto serwer MCP. Wbudowany agent tego projektu przestanie go używać od następnego uruchomienia.",
     "Write each environment value as NAME=value.": "Zapisz każdą zmienną środowiska jako NAZWA=wartość.",
@@ -567,6 +588,7 @@ CATALOG.update({
         "XDG_DATA_HOME. Serwer, którego program, argument lub wartość wskazuje ścieżkę w katalogu tego "
         "projektu, nie zostanie uruchomiony.",
 })
+CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

@@ -1,5 +1,7 @@
 """English/Polish labels for the agent terminal, independent of provider data."""
 
+from .terminal_i18n_messages import AGENT_MESSAGES
+
 CATALOG = {
     "input": "wejście", "output": "wyjście", "unavailable": "brak danych",
     "token report incomplete": "raport tokenów niepełny", "cost: unavailable": "koszt: brak danych",
@@ -55,14 +57,30 @@ CATALOG = {
         "tego uruchomienia, a agent pracuje bez nich.",
     "The provider refused the request ({code}) also without the third-party MCP tools; they stay offered.":
         "Dostawca odrzucił żądanie ({code}) także bez narzędzi zewnętrznych serwerów MCP; pozostają dostępne.",
+    "Third-party MCP servers off in this run: {servers}":
+        "Zewnętrzne serwery MCP wyłączone w tym uruchomieniu: {servers}",
     "A third-party MCP tool took too long to check its arguments and is withdrawn for this run.":
         "Sprawdzenie argumentów narzędzia zewnętrznego serwera MCP trwało za długo; narzędzie wycofano do końca "
         "tego uruchomienia.",
+    # Turn and memory states shown in the status line (#157)
+    "Memory acknowledged": "Pamięć potwierdzona", "Memory waits for the model's ACK": "Pamięć czeka na ACK modelu",
+    "Memory must be read and acknowledged again": "Pamięć trzeba ponownie odczytać i potwierdzić",
+    "Partial result": "Wynik niepełny", "Context limit reached": "Osiągnięto limit kontekstu",
+    "Limit reached": "Osiągnięto limit", "Outcome uncertain": "Wynik niepewny", "Busy": "Zajęty",
+    "Closed": "Zamknięto", "Invalid input": "Nieprawidłowe dane wejściowe", "Status updated": "Zaktualizowano stan",
+    "Context compacted": "Kontekst skrócony",
+    "Ctrl+Q does not end the agent. Ctrl+B, then d: leave the workspace; it keeps running. Ctrl+C interrupts a turn.":
+        "Ctrl+Q nie kończy agenta. Ctrl+B, potem d: wyjście ze środowiska; działa ono dalej. Ctrl+C przerywa turę.",
 }
+CATALOG.update(AGENT_MESSAGES)  # fixed provider and engine messages (#153)
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",
           "interrupted": "Interrupted", "failed": "Failed", "error": "Failed", "blocked": "Blocked",
-          "ready": "Ready", "approval_required": "Awaiting approval"}
+          "ready": "Ready", "approval_required": "Awaiting approval",
+          "acknowledged": "Memory acknowledged", "requires_model_ack": "Memory waits for the model's ACK",
+          "resume_required": "Memory must be read and acknowledged again", "partial": "Partial result",
+          "context_limit": "Context limit reached", "limit_reached": "Limit reached",
+          "uncertain": "Outcome uncertain", "busy": "Busy", "closed": "Closed", "invalid_input": "Invalid input"}
 
 
 def tr(text, language="en", **values):

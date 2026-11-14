@@ -328,7 +328,15 @@ def test_unknown_code_state_is_unavailable_and_readback_versions_are_typed(sessi
     plain.mkdir()
     (plain / "existing.py").write_text("Existing unversioned code\n")
     other = store.add_project("plain", plain)
-    assert manager.prepare(other["id"], "claude", timeout=0)["status"] == "unavailable"
+    unavailable = manager.prepare(other["id"], "claude", timeout=0)
+    assert unavailable["status"] == "unavailable"
+    exact = unavailable["packet"]
+    with pytest.raises(ValueError) as refused:
+        manager.ack(unavailable["session_id"], exact["id"], exact["hash"], {"plan": None, "task": None})
+    message = str(refused.value)
+    assert message.startswith("resume_required: the current packet is unavailable, not ready")
+    assert "partial" not in message and "does not match" not in message
+    assert (exact["unknowns"][0][:200] if exact["unknowns"] else "code state cannot be checked") in message
     for invalid in (-1, float("nan"), float("inf"), True):
         with pytest.raises(ValueError, match="timeout"):
             manager.prepare(project["id"], "codex", timeout=invalid)

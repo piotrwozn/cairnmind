@@ -313,7 +313,8 @@ async def test_ollama_large_context_is_rejected_before_request_until_window_expl
         requests.append(json.loads(request.content))
         return stream_response("ollama")
 
-    messages = [{"role": "user", "content": "ą" * 18000}]
+    # 40000 two-byte letters: at most 40000 tokens, over the default 32768 window, within 65536 (#157).
+    messages = [{"role": "user", "content": "ą" * 40000}]
     async with httpx.AsyncClient(transport=transport(handle)) as client:
         adapter = make_provider(profile("ollama"), client=client)
         with pytest.raises(ProviderError) as error:
@@ -325,6 +326,42 @@ async def test_ollama_large_context_is_rejected_before_request_until_window_expl
         assert reply["tool_calls"][0]["arguments"] == {"path": "note.txt"}
         assert requests[0]["options"]["num_ctx"] == 65536
         assert requests[0]["messages"][0]["content"] == messages[0]["content"]
+
+
+async def test_ollama_default_window_takes_a_real_post_ack_agent_step():
+    # #157: a one-line step after ACK (system prompt, 18 tools, a ~30 KB resume packet) measured about
+    # 11.5k real tokens, yet counting bytes as tokens refused it at the default 32768 window.
+    from cairnmind.agent_memory import MEMORY_TOOLS
+    from cairnmind.agent_tools import FILE_TOOLS
+    from cairnmind.api_agent import COMPACT_TOOL, SYSTEM
+
+    requests = []
+
+    async def handle(request):
+        requests.append(json.loads(request.content))
+        return stream_response("ollama")
+
+    tools = [*MEMORY_TOOLS, *FILE_TOOLS, COMPACT_TOOL]
+    packet = json.dumps({"status": "ready", "decisions": [
+        {"id": f"decision-{n}", "text": "The workspace keeps panels read-only and records every review. " * 4}
+        for n in range(100)]})
+    messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "Add one comment line to README.md"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "name": "resume_context", "arguments": {}}]},
+                {"role": "tool", "tool_call_id": "c1", "name": "resume_context", "content": packet},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "c2", "name": "ack_resume", "arguments": {}}]},
+                {"role": "tool", "tool_call_id": "c2", "name": "ack_resume", "content": '{"status": "acknowledged"}'}]
+    assert len(tools) >= 18 and 28_000 <= len(json.dumps(messages)) <= 34_000
+    async with httpx.AsyncClient(transport=transport(handle)) as client:
+        reply = await make_provider(profile("ollama"), client=client).complete(messages, tools)
+    assert reply["tool_calls"] and requests[0]["options"]["num_ctx"] == 32768
+
+
+async def test_ollama_refusal_to_truncate_is_a_context_limit():
+    async with httpx.AsyncClient(transport=transport(lambda request: httpx.Response(400,
+            json={"error": "the input length exceeds the context length"}))) as client:
+        with pytest.raises(ProviderError) as error:
+            await make_provider(profile("ollama"), client=client).complete([{"role": "user", "content": "Test"}], [])
+    assert error.value.code == "context_limit"
 
 
 @pytest.mark.parametrize("metadata", [{}, {"model_info": {}}, {"model_info": {"qwen3.context_length": 0}},
@@ -357,7 +394,7 @@ async def test_ollama_server_training_cap_is_not_mistaken_for_requested_context(
             await make_provider(profile("ollama"), client=client).complete([{"role": "user", "content": "Small prompt"}], [])
         assert error.value.code == "context_limit"
         assert error.value.context_details == {"configured_context_window": 32768, "model_context_window": 8192}
-        assert "Zmniejsz" in error.value.hint
+        assert "Lower it" in error.value.hint
         assert [request.url.path for request in requests] == ["/api/show"]
         requests.clear()
         smaller = {**profile("ollama"), "limits": {"context_window_tokens": 8192}}

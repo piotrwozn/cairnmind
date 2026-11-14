@@ -4,7 +4,8 @@
 stored links from the changed files and symbols to records:
 
 - ``relates_to``: extraction linked the record to a file or to a symbol because the quoted
-  evidence names it;
+  evidence names it; a symbol whose name is a plain word (``current``, ``status``) counts only
+  when the quote writes it as code, by the rule documentation mentions follow (``impact_docs``);
 - ``supported_by``: the record cites a snapshot of the file as its evidence.
 
 A link means "worth checking", not that the record is wrong. The report is derived each
@@ -30,7 +31,8 @@ from pathlib import Path, PurePosixPath
 
 from cairnmind.brief import _git_out, _line, _scoped_records, _title
 from cairnmind.evidence import THIRD_PARTY_WRITTEN, _FILE_KINDS, _QUOTE, _metadata, evidence_states
-from cairnmind.impact_docs import documentation_lines, documentation_mentions
+from cairnmind.impact_docs import documentation_lines, documentation_mentions, written_as_code
+from cairnmind.memory_paths import GIT_PATHSPEC
 from cairnmind.parsing import analyze_code
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -42,8 +44,9 @@ _SYMBOL = {"modified": "its definition changed", "removed": "it is no longer def
 
 def _changes(root, commit):
     """``{path relative to root: {"change", ...}}``: tracked differences with renames detected, and untracked files."""
-    raw = _git_out(root, "diff", "--name-status", "-M", "-z", "--relative", commit, "--")
-    untracked = _git_out(root, "ls-files", "--others", "--exclude-standard", "-z", "--")
+    # A published memory snapshot is Cairnmind's own state, not a change to the code (#158).
+    raw = _git_out(root, "diff", "--name-status", "-M", "-z", "--relative", commit, *GIT_PATHSPEC)
+    untracked = _git_out(root, "ls-files", "--others", "--exclude-standard", "-z", *GIT_PATHSPEC)
     if raw is None or untracked is None:
         raise ValueError("Cannot compare the worktree with that commit")
     parts = [part for part in raw.split("\0") if part]
@@ -261,6 +264,8 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
             known = symbols.get(name)
             if known is not None and node["label"] not in known:
                 continue  # the file changed, but the definition this record names did not
+            if not written_as_code(node["label"], _metadata(records[edge["from_id"][7:]]).get("evidence")):
+                continue  # a plain word of the quote ("current", "status"), not the definition of that name
             link.update(symbol=node["label"], symbol_change=None if known is None else known[node["label"]])
         add(edge["from_id"][7:], link)
 

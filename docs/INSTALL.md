@@ -69,9 +69,9 @@ Choose one option.
 
 ```bash
 mkdir -p ~/src && cd ~/src
-curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.9.0/cairnmind-0.9.0.tar.gz
-tar -xzf cairnmind-0.9.0.tar.gz
-cd cairnmind-0.9.0
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.10.0/cairnmind-0.10.0.tar.gz
+tar -xzf cairnmind-0.10.0.tar.gz
+cd cairnmind-0.10.0
 ```
 
 **From source.** Clone the repository to follow the latest `main`:

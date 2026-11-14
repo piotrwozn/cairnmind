@@ -21,6 +21,7 @@ from textual.worker import WorkerState
 from . import terminal_theme
 from .terminal_safe import plain, safe_text
 from .terminal_i18n import language_for, localize_bindings, tr
+from .terminal_i18n_messages import broker_error_text
 
 
 def localize_select_menus(node, language):
@@ -29,6 +30,29 @@ def localize_select_menus(node, language):
     with suppress(Exception):
         for overlay in node.query(SelectOverlay):
             localize_bindings(overlay, language)
+
+
+def remeasure_buttons(node) -> None:
+    """After a language change: a button as wide as its label is measured again. Textual 8 keeps the
+    width of the old label, so a longer new one is cut ("Otwó" for "Otwórz") until the next resize."""
+    for button in node.query(Button):
+        button.clear_cached_dimensions()
+        button.refresh(layout=True)
+
+
+def relabel_select(select, options, value) -> None:
+    """New option labels for a Select, keeping its value and announcing no change.
+
+    set_options alone picks the first option, and Textual 8 redraws the shown label only when the
+    value changes, so the old label would stay on screen.
+    """
+    from textual.widgets import Select
+    from textual.widgets._select import SelectCurrent
+    with select.prevent(Select.Changed):
+        select.set_options(options)
+        select.value = value
+    with suppress(Exception):
+        select.query_one(SelectCurrent).update(dict((v, label) for label, v in options)[value])
 
 
 class LocalizedModal:
@@ -210,7 +234,7 @@ class FormModal(LocalizedModal, ModalScreen[dict | None]):
                     await result
             self.dismiss(values)
         except (OSError, ValueError, RuntimeError) as exc:
-            self.query_one("#form-error", Static).update(plain(self.t(str(exc))))
+            self.query_one("#form-error", Static).update(plain(self.t(broker_error_text(exc, self.t))))
             if isinstance(exc, FieldError):
                 self.query_one("#field-" + exc.field).focus()
         finally:
@@ -289,6 +313,7 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
 
 class BasePanel(App):
     ENABLE_COMMAND_PALETTE = False
+    run_start_request = False  # set by `--run-request`: the request found at start is for this start
     # Colours and the shape of every control and dialog live in terminal_theme; panels add sizes only.
     CSS = terminal_theme.BASE_CSS
 
@@ -336,6 +361,8 @@ class BasePanel(App):
     def notice(self, value, kind="info") -> None:
         """Show one line. `kind` ("info", "warn", "error") only picks a style; the text is exactly `value`."""
         shown = None
+        if isinstance(value, BaseException):
+            value = broker_error_text(value, self.t)  # "Broker 503: …" with a fixed detail translated
         with suppress(Exception):
             shown = plain(self.t(value))
             line = self.query_one("#panel-notice", Static)
@@ -390,6 +417,14 @@ class BasePanel(App):
         finally:
             self._notice_about = None
 
+    def notice_elsewhere(self, about, value, kind="info") -> None:
+        """A notice about a project that is not shown now: kept in Notices under that project, with the
+        mark, and never put on the notice line over the shown project's own text."""
+        with suppress(Exception):
+            self.notice_history.add(plain(self.t(value)).plain, about, kind, on_line=False)
+            self.show_notice_mark()
+        self.publish_notices(later=True)
+
     def show_notice_mark(self) -> None:
         """A small mark in its own line, so the notice text itself is never changed."""
         with suppress(Exception):
@@ -419,6 +454,7 @@ class BasePanel(App):
                 refresh = getattr(self, "refresh_language", None)
                 if callable(refresh):
                     refresh()
+                remeasure_buttons(self)
             value = await asyncio.to_thread(self.workspace.read)
             if not self.is_running:
                 return
@@ -434,9 +470,13 @@ class BasePanel(App):
             if isinstance(command, dict) and command.get("id") != self._last_command_id:
                 self._last_command_id = command.get("id")
                 if command.get("target_role") == getattr(self, "panel_role", None):
-                    self.open_command(command.get("action"))
+                    if isinstance(self.screen, ModalScreen):
+                        # Run behind an open dialog, a command would change the view that dialog belongs to.
+                        self.notify(self.t(self.DIALOG_OPEN), timeout=8, markup=False)
+                    else:
+                        self.open_command(command.get("action"))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(safe_text(exc))
+            self.notice(exc)
 
     @work(group="panel-startup", exclusive=True, exit_on_error=False)
     async def start_panel(self):
@@ -446,8 +486,12 @@ class BasePanel(App):
             await asyncio.to_thread(self.broker.ensure)
             await self._poll_workspace()
             await self.ready_panel()
+            if self.run_start_request:
+                # Started again by the menu request in the state (WorkspaceManager._revive): run it once.
+                self.run_start_request, self._last_command_id = False, None
+                await self._poll_workspace()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(safe_text(exc))
+            self.notice(exc)
 
     async def ready_panel(self):
         pass
@@ -474,6 +518,31 @@ class BasePanel(App):
     def header_footer(self):
         yield Header()
         yield Footer()
+
+    # Textual binds Ctrl+Q to quit and Ctrl+C to "press Ctrl+Q to quit". A workspace view must not end
+    # from a key: tmux keeps its pane (remain-on-exit) and shows it dead. In the workspace tmux takes
+    # Ctrl+Q first and detaches the terminal (WorkspaceManager._bindings); these run where it does not.
+    LEAVE_KEYS = "Ctrl+B, then d: leave the workspace. It keeps running; run cairnmind to return."
+    LEAVE_HINT = "To leave the workspace press Ctrl+Q, or Ctrl+B then d. It keeps running; run cairnmind to return."
+    DIALOG_OPEN = "A dialog is open in this view. Finish it or press Esc, then choose the command again."
+
+    async def action_quit(self) -> None:
+        self.leave_hint(self.LEAVE_KEYS)
+
+    def action_help_quit(self) -> None:
+        self.leave_hint(self.LEAVE_HINT)
+
+    def leave_hint(self, text) -> None:
+        """A key hint, not an event of the project: shown on the notice line, never kept in Notices."""
+        if lines := self.query("#panel-notice"):
+            line = lines.first(Static)
+            line.update(plain(self.t(text)))
+            line.display = True
+            line.remove_class("-warn", "-error")
+            self.notice_history.add("", None)  # the newest notice left the line: the mark counts it again
+            self.show_notice_mark()
+        else:  # a view without a notice line (the activity column)
+            self.notify(self.t(text), timeout=8, markup=False)
 
 
 class ChoiceModal(LocalizedModal, ModalScreen[str | None]):
@@ -584,7 +653,7 @@ class FolderPicker(LocalizedModal, ModalScreen[str | None]):
             self.query_one("#folder-notice", Static).update(plain(str(target) if children else self.t("No subfolders. You can use this folder.")))
             table.focus()
         except (OSError, ValueError) as exc:
-            self.query_one("#folder-notice", Static).update(plain(self.t(str(exc))))
+            self.query_one("#folder-notice", Static).update(plain(self.t(broker_error_text(exc, self.t))))
             self.query_one("#folder-path", Input).focus()
 
     @on(Input.Submitted, "#folder-path")

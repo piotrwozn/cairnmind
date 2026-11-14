@@ -33,7 +33,7 @@ def test_work_is_explicit_and_entity_selection_belongs_to_selected_project(tmp_p
     selected = {"project_id": "project-a", "entity_type": "revision", "id": "revision-id",
                 "revision": 3, "owner_type": "record", "owner_id": "record-id"}
     state.update({"selected_entity": selected})
-    with pytest.raises(ValueError, match="innego projektu"):
+    with pytest.raises(ValueError, match="another project"):
         state.update({"selected_entity": {**selected, "project_id": "project-b"}})
     state.select_project(None)
     state.update({"selected_entity": {"project_id": None, "entity_type": "inbox", "id": "unassigned"}})
@@ -116,7 +116,7 @@ def menu_request(tmp_path, row):
     from cairnmind.workspace import WorkspaceManager
 
     state = WorkspaceState(Settings(data_dir=tmp_path / "data"))
-    stub = SimpleNamespace(state=state, _layout=lambda: None)
+    stub = SimpleNamespace(state=state, _layout=lambda: None, _revive=lambda role, **_: None)  # no tmux here
     stub.request_command = lambda action: WorkspaceManager.request_command(stub, action)
     dispatch_command(stub, row)
     return state.read()["command_request"]

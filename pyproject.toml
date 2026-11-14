@@ -1,7 +1,7 @@
 [project]
 name = "cairnmind"
-version = "0.9.0"
-description = "Evidence-grounded project memory for coding agents, in your terminal (formerly DevBrain)"
+version = "0.10.0"
+description = "Verified project memory for coding agents: every answer cites a checked source"
 readme = "README.md"
 license = "Apache-2.0"
 authors = [{ name = "Piotr Woźnicki" }]

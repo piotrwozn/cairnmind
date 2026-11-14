@@ -334,3 +334,68 @@ def test_auto_tick_of_unchanged_committed_memory_does_not_republish(origin):
     assert current["last_checked_at"] and current["last_success_at"] and current["error"] is None
     manager.configure_auto(project["id"], False)
     assert manager.status(project["id"])["auto"]["enabled"] is False
+
+
+def test_the_objects_of_a_snapshot_share_one_directory_sync_before_the_manifest(origin, monkeypatch):
+    # #158: a snapshot of a large project synced the objects directory once per object.
+    manager, project = origin["manager"], origin["project"]
+    synced, real = [], portable.os.fsync
+
+    def fsync(descriptor):
+        if portable.os.path.isdir(f"/proc/self/fd/{descriptor}"):
+            synced.append(portable.os.readlink(f"/proc/self/fd/{descriptor}"))
+        return real(descriptor)
+
+    monkeypatch.setattr(portable.os, "fsync", fsync)
+    published = manager.snapshot(project["id"])
+    objects = sum(len(rows) for rows in json.loads(Path(published["path"]).read_bytes())["objects"].values())
+    folder = Path(published["path"]).parent
+    assert objects > 5 and synced.count(str(folder / "objects")) == 1
+    # The objects are synced before the manifests that name them.
+    assert synced.index(str(folder / "objects")) < synced.index(str(folder / "manifests")) < synced.index(str(folder))
+    assert inspect_snapshot(published["path"])["snapshot_id"] == published["snapshot_id"]
+
+
+def test_objects_left_by_a_killed_attempt_are_synced_before_the_manifest_that_names_them(origin, monkeypatch):
+    # #158 review: an attempt killed after its objects were renamed into place, but before their directory was
+    # synced, left entries that the next attempt reused without a sync, then published a manifest naming them.
+    manager, project = origin["manager"], origin["project"]
+    real_write, real_fsync = portable._atomic_write, portable.os.fsync
+
+    def killed(destination, data):
+        if Path(destination).parent.name == "manifests":
+            raise OSError("Killed before the manifest")
+        return real_write(destination, data)
+
+    monkeypatch.setattr(portable, "_atomic_write", killed)
+    with pytest.raises(OSError):
+        manager.snapshot(project["id"])
+    monkeypatch.setattr(portable, "_atomic_write", real_write)
+    synced = []
+
+    def fsync(descriptor):
+        if portable.os.path.isdir(f"/proc/self/fd/{descriptor}"):
+            synced.append(portable.os.readlink(f"/proc/self/fd/{descriptor}"))
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(portable.os, "fsync", fsync)
+    published = manager.snapshot(project["id"])
+    folder = Path(published["path"]).parent
+    assert synced.count(str(folder / "objects")) == 1
+    assert synced.index(str(folder / "objects")) < synced.index(str(folder / "manifests"))
+    assert inspect_snapshot(published["path"])["snapshot_id"] == published["snapshot_id"]
+
+
+def test_a_repeated_snapshot_reads_the_objects_of_kept_history_only_by_name(origin, monkeypatch):
+    # #158: retention loaded, hashed and validated every object of each of the five kept manifests.
+    origin["manager"].snapshot(origin["project"]["id"])
+    for _ in range(6):
+        published = advance(origin)
+    loaded, real = [], portable._load_snapshot
+    monkeypatch.setattr(portable, "_load_snapshot", lambda path: loaded.append(path) or real(path))
+    published = advance(origin)
+    path = head_path(published)
+    assert loaded == [path]  # only the previous manifest, before it is replaced
+    kept = [json.loads(file.read_bytes()) for file in (path.parent / "manifests").glob("*.json")]
+    named = {d["sha256"] for manifest in kept for rows in manifest["objects"].values() for d in rows}
+    assert len(kept) == 5 and {file.stem for file in (path.parent / "objects").glob("*.json")} == named

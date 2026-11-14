@@ -51,17 +51,19 @@ def test_cli_stage_next_prints_the_existing_command_and_changes_nothing(planned)
     before = plans.get(project["id"], saved["plan"]["id"])
     shown = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo"])
     assert shown.exit_code == 0, shown.output or repr(shown.exception)
-    assert "Stage: implement" in shown.output and "Assistant: Codex (codex)" in shown.output
+    assert "Stage: implement" in shown.output and "Assistant: Codex\n" in shown.output
     assert "Two \\x1b[31msteps" in shown.output and "\x1b" not in shown.output
     root = str(store.resolve_project("demo")["root"])
-    assert f"Next: cairnmind run {project['id']} codex --worktree {root}" in shown.output
+    # The project by the name the person knows, not its id (#154).
+    assert f"Next: cairnmind run demo codex --worktree {root}" in shown.output
+    assert project["id"] not in shown.output
     assert plans.get(project["id"], saved["plan"]["id"]) == before
 
     moved = move(store, plans, project, saved, "needs_test")
     decision = json.loads(runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo",
                                                   "--json"]).output)
     assert (decision["stage"], decision["action"], decision["check_profile"]) == ("test", "run_check", "unit")
-    assert decision["command"] == ["cairnmind", "check", "run", project["id"], "unit", "--task", moved["id"],
+    assert decision["command"] == ["cairnmind", "check", "run", "demo", "unit", "--task", moved["id"],
                                    "--worktree", root]
     assert decision["task"]["version"] == moved["version"]
     assert store.query("SELECT FROM check_runs WHERE project_id=:p", {"p": project["id"]}) == []
@@ -85,7 +87,7 @@ def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says
     plain = [{"id": "codex", "client": "codex", "label": "Codex"}, {"id": "claude", "client": "claude", "label": "Claude"}]
     state.update({"profiles": [{**plain[0], "model": "gpt-6.1"}, plain[1]]})
     output = ask()
-    assert "Assistant: Codex (codex)" in output and "Next:" not in output
+    assert "Assistant: Codex\n" in output and "Next:" not in output
     assert "Start this stage from the workspace with Run next stage." in output
     value = json.loads(ask("--json"))
     assert (value["command"], value["command_reason"]) == (None, "profile_model")
@@ -179,7 +181,7 @@ def test_cli_describes_an_agent_stage_and_prints_no_command_for_it(planned, monk
         "project_stages": {project["id"]: {"implement": CLOUD}}})
     before = plans.get(project["id"], saved["plan"]["id"])
     output = ask()
-    assert "Assistant: Cloud API (cloud)" in output and "Model: openai · gpt-x" in output
+    assert "Assistant: Cloud API\n" in output and "Model: openai · gpt-x" in output
     assert "The mapped assistant has no credential. Add its key in Connections" in output
     assert "Next:" not in output and "Start this stage from the workspace" not in output
     assert json.loads(ask("--json"))["problem"] == "credential_missing"

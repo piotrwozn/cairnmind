@@ -42,13 +42,13 @@ class BrokerClient:
     @staticmethod
     def _validated(status):
         if not status.get("available") or not status.get("version_matches", True):
-            raise BrokerError(503, "Lokalny broker jest niedostępny lub wymaga ponownego uruchomienia.")
+            raise BrokerError(503, "The local broker is unavailable or needs a restart.")
         url = status.get("url", "")
         parsed = urlparse(url)
         if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port
                 or parsed.username or parsed.password or parsed.path not in {"", "/"}
                 or parsed.query or parsed.fragment):
-            raise BrokerError(503, "Niepoprawny adres lokalnego brokera.")
+            raise BrokerError(503, "The local broker address is invalid.")
         return url.rstrip("/")
 
     def _connect(self, status):
@@ -70,7 +70,7 @@ class BrokerClient:
                 self._connect(status)
                 return status
             except httpx.HTTPError:
-                raise BrokerError(503, "Lokalny broker nie odpowiada.") from None
+                raise BrokerError(503, "The local broker does not answer.") from None
 
     def _existing(self):
         from .cockpit import cockpit_status
@@ -81,9 +81,9 @@ class BrokerClient:
         try:
             value = response.json()
         except ValueError:
-            raise BrokerError(response.status_code, "Niepoprawna odpowiedź lokalnego brokera.") from None
+            raise BrokerError(response.status_code, "The local broker gave an invalid answer.") from None
         if response.is_error:
-            detail = value.get("detail", "Żądanie zostało odrzucone.") if isinstance(value, dict) else "Żądanie zostało odrzucone."
+            detail = value.get("detail", "The request was refused.") if isinstance(value, dict) else "The request was refused."
             raise BrokerError(response.status_code, str(detail)[:2000])
         return value
 
@@ -93,18 +93,18 @@ class BrokerClient:
             ticket_response = self._client.post("/_control/ticket", timeout=5,
                 headers={"Authorization": f"Bearer {self.settings.token}"})
         except httpx.HTTPError:
-            raise BrokerError(503, "Nie można uwierzytelnić lokalnej sesji.") from None
+            raise BrokerError(503, "The local session could not be authenticated.") from None
         ticket = self._decode(ticket_response)
         if not isinstance(ticket, dict) or not isinstance(ticket.get("ticket"), str):
-            raise BrokerError(503, "Niepoprawny bilet lokalnej sesji.")
+            raise BrokerError(503, "The local session ticket is invalid.")
         try:
             session_response = self._client.post("/auth/exchange", timeout=5,
                 json={"ticket": ticket["ticket"]}, headers={"Origin": self._url})
         except httpx.HTTPError:
-            raise BrokerError(503, "Nie można uwierzytelnić lokalnej sesji.") from None
+            raise BrokerError(503, "The local session could not be authenticated.") from None
         session = self._decode(session_response)
         if not isinstance(session, dict) or not isinstance(session.get("csrf"), str):
-            raise BrokerError(503, "Niepoprawna lokalna sesja.")
+            raise BrokerError(503, "The local session is invalid.")
         self._csrf = session["csrf"]
 
     def _ready(self):
@@ -135,7 +135,7 @@ class BrokerClient:
                 except httpx.HTTPError:
                     # Never retry a mutation after a transport error: its
                     # outcome may already have committed on the server.
-                    raise BrokerUnreachable(503, "Połączenie z lokalnym brokerem zostało przerwane.") from None
+                    raise BrokerUnreachable(503, "The connection to the local broker was interrupted.") from None
                 if response.status_code == 401 and attempt == 0:
                     self._authenticate()
                     continue
@@ -173,7 +173,7 @@ class BrokerClient:
                 break
             except InvalidStatus as exc:
                 if attempt or exc.response.status_code not in {401, 403}:
-                    raise BrokerError(exc.response.status_code, "Terminal odrzucił lokalną sesję lub generację.") from None
+                    raise BrokerError(exc.response.status_code, "The terminal refused the local session or generation.") from None
         try:
             yield websocket
         finally:
@@ -201,13 +201,13 @@ class BrokerClient:
                             await asyncio.to_thread(self._session, True)
                             continue
                         if response.is_error:
-                            raise BrokerError(response.status_code, "Strumień zdarzeń jest niedostępny.")
+                            raise BrokerError(response.status_code, "The event stream is unavailable.")
                         event, data, identifier = "message", [], None
                         size = 0
                         async for line in response.aiter_lines():
                             size += len(line)
                             if size > 256 * 1024:
-                                raise BrokerError(503, "Zdarzenie przekracza limit rozmiaru.")
+                                raise BrokerError(503, "The event exceeds the size limit.")
                             if not line:
                                 if data:
                                     raw = "\n".join(data)

@@ -493,6 +493,7 @@ class ActivityPopup(ActivityApp):
 
     def action_close(self):
         self.exit()
+    action_quit = action_help_quit = action_close  # a popup: Ctrl+Q and Ctrl+C close it like Esc
 
 
 def activity_app(settings, workspace_id="default", *, popup=False, **kwargs):

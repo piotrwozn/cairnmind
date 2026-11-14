@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,8 +20,9 @@ from .config import Settings
 from .terminal_safe import plain
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
+from .terminal_i18n_messages import broker_error_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
-                          LocalizedModal, MessageModal, summary_text)
+                          LocalizedModal, MessageModal, remeasure_buttons, summary_text)
 
 
 class ConfirmModal(MessageModal):
@@ -64,6 +66,18 @@ class ConfirmModal(MessageModal):
         hint.display = not spare
         if spare:
             body.styles.max_height = rows + 1
+
+    def on_mount(self):
+        if not self.consent:
+            self.call_after_refresh(self.start_on_cancel)
+
+    def start_on_cancel(self):
+        """A routine confirmation whose text fits starts on Cancel, so the focus shows and Enter cancels.
+        A consent request, or a text that scrolls, starts on the text, where no key decides anything."""
+        with suppress(Exception):
+            body = self.query_one(".cm-dialog-body")
+            if body.virtual_size.height <= body.scrollable_content_region.height and self.focused is body:
+                self.query_one("#confirm-no", Button).focus()
 
     @on(Button.Pressed)
     def confirm_button(self, event):
@@ -168,10 +182,10 @@ def profile_from_form(value, *, identifier, client, provider=None):
             row.update(provider=provider, base_url=value["base_url"])
             if value.get("input_per_million") or value.get("output_per_million"):
                 if not value.get("input_per_million") or not value.get("output_per_million"):
-                    raise ValueError("Podaj obie stawki lub pozostaw obie puste.")
+                    raise ValueError("Give both rates or leave both empty.")
                 row["pricing"] = {key: float(value[key]) for key in ("input_per_million", "output_per_million")}
     except (ValueError, KeyError) as exc:
-        raise ValueError("Podaj poprawne limity całkowite i obie stawki liczbowe albo pozostaw ceny puste.") from exc
+        raise ValueError("Give whole-number limits and both rates as numbers, or leave the prices empty.") from exc
     return row
 
 
@@ -215,7 +229,7 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
             self.query_one("#discovery-notice", Static).update(plain(f"{value.get('state', 'unknown')} · {len(rows)} " + self.t("Projects") +
                 ("\n" + self.t("Operation needs attention.") if value.get("errors") else "")))
         except (OSError, ValueError, RuntimeError) as exc:
-            self.query_one("#discovery-notice", Static).update(plain(exc))
+            self.query_one("#discovery-notice", Static).update(plain(broker_error_text(exc, self.t)))
 
     def choose(self):
         table = self.query_one("#discovery-rows", DataTable)
@@ -242,7 +256,7 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
             await asyncio.to_thread(self.broker.request, "DELETE", "/api/discovery")
             self.refresh_results()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.query_one("#discovery-notice", Static).update(plain(exc))
+            self.query_one("#discovery-notice", Static).update(plain(broker_error_text(exc, self.t)))
 
     def action_close(self):
         self.dismiss(None)
@@ -432,6 +446,14 @@ class SidebarApp(BasePanel):
     def action_search(self):
         self.show_page("projects")
         self.query_one("#project-search", Input).focus()
+
+    def on_key(self, event):
+        # Down in the search field goes into the list it filters.
+        if event.key == "down" and getattr(self.focused, "id", None) == "project-search":
+            rows = self.query_one("#project-rows", DataTable)
+            if rows.row_count:
+                event.stop()
+                rows.focus()
 
     def configured_slots(self, project_id=None):
         settings = self.data.get("settings", {})
@@ -628,7 +650,12 @@ class SidebarApp(BasePanel):
             if intent == "work":
                 changes = {"focus": "client1"}
                 if returning:
-                    changes["visible_slot_ids"] = [returning["slot_id"]]
+                    # Bring the resumed session into view without dropping another visible one (#155).
+                    shown = list((await asyncio.to_thread(self.workspace.read)).get("visible_slot_ids") or [])
+                    if returning["slot_id"] not in shown:
+                        shown = [returning["slot_id"], *shown][:2]
+                    changes.update(visible_slot_ids=shown,
+                                   focus="client2" if shown.index(returning["slot_id"]) else "client1")
                 await asyncio.to_thread(self.workspace.update, changes)
             await self.reconcile()
             if returning:
@@ -919,7 +946,8 @@ class SidebarApp(BasePanel):
                 if not any(p["id"] == identifier for p in rows):
                     rows.append(updated)
                 await self.request("PUT", "/api/profiles", json={"profiles": rows})
-            value = await self.push_screen_wait(FormModal("Advanced limits and credentials" if advanced else "Edit connection",
+            title = "Advanced limits and credentials" if advanced else "Edit connection" if old else "Add connection"
+            value = await self.push_screen_wait(FormModal(title,
                 fields, note="Changes apply to the next launch. Saving does not start a model.", on_submit=save))
             if value:
                 await self.load_state()
@@ -1097,7 +1125,8 @@ class SidebarApp(BasePanel):
             return
         options = [("English", "en"), ("Polski", "pl")] if choice == "language" else (
             [("Focus", "focus"), ("Cockpit", "cockpit")] if choice == "view" else [("On", "on"), ("Off", "off")])
-        selected = await self.push_screen_wait(ChoiceModal("Settings", options))
+        titles = {"language": "Language", "view": "Layout", "reduced_motion": "Reduce motion"}
+        selected = await self.push_screen_wait(ChoiceModal(titles[choice], options))
         if selected is None:
             return
         values = {choice: selected == "on" if choice == "reduced_motion" else selected}
@@ -1105,6 +1134,7 @@ class SidebarApp(BasePanel):
         self.language = values.get("language", self.language)
         await self.reconcile()
         self.refresh_language()
+        remeasure_buttons(self)
         self.notice("Preferences saved.")
 
     def refresh_language(self):
@@ -1218,10 +1248,9 @@ class SidebarApp(BasePanel):
         try:
             await self.load_state()
             runs = self.data.get("runs", [])
+            from .terminal_activity_data import run_is_live, session_label
             # The memory state comes before the folder, so a narrow list cuts the path, never the state.
-            choices = [(f"{r.get('client')} · {r.get('lifecycle', r.get('state'))} · " +
-                        self.t("Memory acknowledged" if r.get("memory", {}).get("acknowledged") else "Memory acknowledgement required")
-                        + f" · {r.get('worktree') or self.t('Account login')}", r["id"]) for r in runs]
+            choices = [(session_label(r, self.t), r["id"]) for r in runs]
             if not choices:
                 self.notice(self.t("Brak uruchomionych sesji."))
                 return
@@ -1229,7 +1258,9 @@ class SidebarApp(BasePanel):
             if not identifier:
                 return
             run = next(r for r in runs if r["id"] == identifier)
-            action = await self.push_screen_wait(ChoiceModal(self.t("Operacja na sesji"), [(self.t("Pokaż / dołącz bez nowego procesu"), "show"), (self.t("Przejmij sterowanie"), "takeover"), (self.t("Przerwij bieżącą operację"), "interrupt"), (self.t("Zatrzymaj proces"), "stop")] + ([(self.t("Wznów zapisaną sesję"), "resume"), (self.t("Nowa sesja z pamięcią projektu"), "new")] if run.get("project_id") else [])))
+            # An ended run has no process: stopping, interrupting or taking control of it is not offered.
+            live = [(self.t("Przejmij sterowanie"), "takeover"), (self.t("Przerwij bieżącą operację"), "interrupt"), (self.t("Zatrzymaj proces"), "stop")] if run_is_live(run) else []
+            action = await self.push_screen_wait(ChoiceModal(self.t("Operacja na sesji"), [(self.t("Pokaż / dołącz bez nowego procesu"), "show"), *live] + ([(self.t("Wznów zapisaną sesję"), "resume"), (self.t("Nowa sesja z pamięcią projektu"), "new")] if run.get("project_id") else [])))
             from . import workspace as manager
             if action == "show":
                 await asyncio.to_thread(manager.select_run, self.settings, identifier, self.workspace_id)
@@ -1237,6 +1268,7 @@ class SidebarApp(BasePanel):
                 await asyncio.to_thread(manager.take_control, self.settings, identifier, self.workspace_id)
             elif action == "stop":
                 await asyncio.to_thread(manager.stop_run, self.settings, identifier, run.get("generation"), self.workspace_id)
+                self.notice("The session was stopped.")
             elif action == "interrupt":
                 await self.request("POST", f"/api/client-runs/{identifier}/interrupt", json={"generation": run.get("generation")})
             elif action == "resume":
@@ -1251,7 +1283,7 @@ class SidebarApp(BasePanel):
             await self.reconcile()
             await self.load_state()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(str(exc) + self.t(" · Nowa sesja jest osobną jawną operacją."))
+            self.notice(broker_error_text(exc, self.t) + self.t(" · Starting a new session is a separate action."))
 
     @on(Button.Pressed)
     def sidebar_action(self, event):
@@ -1269,11 +1301,12 @@ class SidebarApp(BasePanel):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prywatny panel terminalowego środowiska Cairnmind")
+    parser = argparse.ArgumentParser(description="Private panel of the Cairnmind terminal workspace")
     parser.add_argument("--kind", choices=["sidebar", "inspector", "graph", "activity"], required=True)
     parser.add_argument("--workspace-id", default="default")
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--popup", action="store_true")
+    parser.add_argument("--run-request", action="store_true")  # a view started again by a menu request
     args = parser.parse_args()
     settings = Settings.load(args.data_dir, create=False)
     if args.kind == "activity":
@@ -1287,6 +1320,7 @@ def main():
     else:
         from .terminal_graph import GraphApp
         app = GraphApp(settings, args.workspace_id)
+    app.run_start_request = args.run_request
     app.run()
 
 

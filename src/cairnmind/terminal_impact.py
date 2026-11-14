@@ -16,6 +16,7 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, DataTable, Input, Label
 
 from . import terminal_theme
+from .terminal_i18n_messages import display_word
 from .terminal_detail import BAR, evidence_parts, join_lines, joined, labelled, state_role
 from .terminal_notices import about
 from .terminal_safe import plain
@@ -23,6 +24,9 @@ from .terminal_ui import ChoiceModal, Field, FormModal
 
 IMPACT_TIMEOUT = 120  # Git and the parser run for each list; a large worktree needs longer than a page read.
 DEFAULT_SINCE = "HEAD"
+# The headings of the inspector's table, before translation, for the list and for the impact view.
+COLUMNS = {"standard": ("Type / state", "Content / source", "Version / attempt"),
+           "impact": ("Kind / status", "Record", "Linked to", "Checked")}
 VERDICTS = {"still_valid": "still valid", "needs_update": "needs update", "not_related": "not related"}
 SYMBOL_CHANGES = {"modified": "its definition changed", "removed": "it is no longer defined there",
                   "added": "it is newly defined there", "moved": "it is now defined in the renamed file",
@@ -144,10 +148,14 @@ class ImpactView:
         self.query_one("#impact-since-label", Label).update(self.t("Compare with"))
         self.query_one("#impact-pending", Checkbox).label = self.t("Pending only")
         self.query_one("#impact-verdict", Button).label = self.t("Verdict")
+        table = self.query_one("#inspector-rows", DataTable)
+        terminal_theme.column_labels(table, [self.t(label) for label in COLUMNS[self._columns_kind]])
+        self.fit_columns()
 
     def state_cell(self, kind, state):
-        """`kind / state` as one cell: the same string as ever, the state in the colour of its exact word."""
-        return terminal_theme.assemble([("muted", f"{kind} / "), (state_role(state), f"{state}")])
+        """`kind / state` as one cell in the panel language; the state takes the colour of its stored word."""
+        return terminal_theme.assemble([("muted", display_word(kind, self.t) + " / "),
+                                        (state_role(state), display_word(state, self.t))])
 
     def fit_columns(self, width=None):
         """Give the text column the width the others leave, so every column is on screen without scrolling.
@@ -172,7 +180,7 @@ class ImpactView:
                 record = max(6, free - first - linked - checked)
             widths = [first, record, linked, checked]
         else:
-            first, last = max(24, longest), cell_len(self.t("Wersja / próba"))
+            first, last = max(24, longest), cell_len(self.t("Version / attempt"))
             if width < 100 and table.row_count:  # the numbers are short: the heading may crop
                 last = max(7, *(cell_len(str(cell)) for cell in table.get_column_at(2)))
             if free - first - last < 20:  # a narrow pane: the number column gives way, down to seven cells
@@ -190,10 +198,7 @@ class ImpactView:
             return
         table = self.query_one("#inspector-rows", DataTable)
         table.clear(columns=True)
-        if kind == "impact":
-            table.add_columns(self.t("Kind / status"), self.t("Record"), self.t("Linked to"), self.t("Checked"))
-        else:
-            table.add_columns(self.t("Typ / stan"), self.t("Treść / źródło"), self.t("Wersja / próba"))
+        table.add_columns(*(self.t(label) for label in COLUMNS[kind]))
         self._columns_kind = kind
 
     def impact_key(self):

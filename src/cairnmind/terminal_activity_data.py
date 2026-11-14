@@ -5,6 +5,8 @@ passes `terminal_safe` here; a state is a word from a fixed set, never a raw val
 """
 from __future__ import annotations
 
+import time
+
 from rich.cells import cell_len
 
 from .terminal_safe import safe_text
@@ -127,6 +129,29 @@ def running_rows(slots):
             rows.append((first_line(client) if isinstance(client, str) else "", word, slot.get("lifecycle") in _LIVE
                          and bool(slot.get("run_id"))))
     return rows
+
+
+def run_is_live(run) -> bool:
+    """Only a live run has a process to stop, interrupt or take control of."""
+    return isinstance(run, dict) and run.get("lifecycle", run.get("state")) in _LIVE
+
+
+def session_label(run, translate=lambda text: text) -> str:
+    """One row of Sessions: client, short id and start time tell runs of one folder apart (#154).
+
+    The lifecycle is a fixed word, never the raw value; the folder goes last so a narrow list cuts it.
+    """
+    client = first_line(run.get("client")) or "?"
+    short = first_line(run.get("id"))[:7]
+    word = translate(LIFECYCLE.get(run.get("lifecycle", run.get("state")), "Unknown"))
+    parts = [f"{client} {short}".strip(), word]
+    started = run.get("created_at")
+    if isinstance(started, (int, float)) and not isinstance(started, bool) and 0 < started < 2**33:
+        parts.append(time.strftime("%Y-%m-%d %H:%M", time.localtime(started)))
+    memory = run.get("memory") if isinstance(run.get("memory"), dict) else {}
+    parts.append(translate("Memory acknowledged" if memory.get("acknowledged") else "Memory acknowledgement required"))
+    parts.append(first_line(run.get("worktree")) or translate("Account login"))
+    return " · ".join(parts)
 
 
 KIND_WORDS = {"info": "info", "warn": "warning", "error": "error"}

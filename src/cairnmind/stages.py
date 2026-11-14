@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from .terminal_i18n_messages import display_word
+
 STAGES = ("implement", "review", "test")
 # A task state names the work it waits for. Only the state decides the stage.
 STATE_STAGES = {"todo": "implement", "in_progress": "implement", "needs_review": "review", "needs_test": "test"}
@@ -64,6 +66,32 @@ def changed_since_confirmed(target, slot: dict, profile: dict) -> list[str] | No
     if current["client"] in AGENT_CLIENTS and any(key not in target for key in AGENT_TARGET):
         return None
     return [key for key in AGENT_TARGET if key in current and target.get(key) != current[key]]
+
+
+# How an assistant is named to a person; a slot id is internal and never shown when a name exists (#154).
+CLIENT_WORDS = {"codex": "Codex", "claude": "Claude Code", "api": "Built-in agent", "copilot": "GitHub Copilot"}
+PROVIDER_WORDS = {"openai": "OpenAI", "anthropic": "Anthropic", "openai_compatible": "OpenAI-compatible",
+                  "ollama": "Ollama"}
+
+
+def assistant_name(profile: dict, translate=lambda text: text) -> str:
+    """The profile's label, then what it runs: the client, or for an agent the provider and model.
+
+    Fixed words are translated; the stored label, provider and model are appended, never formatted in.
+    """
+    label = str(profile.get("label") or profile.get("id") or "")
+    client, provider, model = profile.get("client"), profile.get("provider"), profile.get("model")
+    if client in AGENT_CLIENTS:
+        parts = [PROVIDER_WORDS.get(provider, str(provider)) if provider else translate(CLIENT_WORDS[client]),
+                 str(model) if model else translate("default model")]
+    else:
+        parts = [translate(CLIENT_WORDS[client]) if client in CLIENT_WORDS else str(client or ""),
+                 str(model) if model else ""]
+    # A word that only repeats the label ("GitHub Copilot (GitHub Copilot · auto)") is left out.
+    detail = " · ".join(part for part in parts if part and part.casefold() != label.casefold())
+    if not detail:
+        return label or detail
+    return label + " (" + detail + ")" if label else detail
 
 
 def stage_slot(target) -> str:
@@ -270,13 +298,21 @@ def describe(decision: dict, translate=lambda text: text) -> str:
                      + " (v" + str(plan.get("version")) + ")")
     task = decision.get("task")
     if task:
-        lines.append(translate("Step") + ": " + task["content"] + " [" + str(task["state"]) + ", v"
+        lines.append(translate("Step") + ": " + task["content"] + " [" + display_word(task["state"], translate)
+                     + ", v"
                      + str(task.get("version")) + "]")
     if decision.get("stage"):
         lines.append(translate("Stage") + ": " + translate(decision["stage"]))
     if decision.get("slot_id"):
-        lines.append(translate("Assistant") + ": " + str(decision.get("label") or decision["slot_id"])
-                     + " (" + str(decision["slot_id"]) + ")")
+        # By the configured name; the slot id only names an assistant that is no longer configured.
+        # An agent's provider and model follow on the Model line, so its label is not repeated with them.
+        if not decision.get("label"):
+            named = translate("Unknown assistant") + " (" + str(decision["slot_id"]) + ")"
+        elif decision.get("client") in AGENT_CLIENTS:
+            named = str(decision["label"])
+        else:
+            named = assistant_name(decision, translate)
+        lines.append(translate("Assistant") + ": " + named)
     if decision.get("client") in AGENT_CLIENTS:
         named = " · ".join(str(value) for value in (decision.get("provider"), decision.get("model")) if value)
         lines.append(translate("Model") + ": " + (named or translate("default model")))

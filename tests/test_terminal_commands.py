@@ -85,7 +85,7 @@ def test_ask_summary_shows_answer_quotes_missing_evidence_and_coverage():
         "unknowns": ["No decision explains the refresh window."],
         "coverage": {"answer_terms": 3, "terms_in_quotes": 1, "ratio": 0.333},
     }, lambda value: value)
-    assert "Status: partial" in text and "Sessions last one hour." in text
+    assert "Status: Partial" in text and "Sessions last one hour." in text
     assert '- file://src/auth.py (3-4): "SESSION_TTL = 3600"' in text
     assert "Missing evidence:\n- No decision explains the refresh window." in text
     assert "Answer words found in quotes: 1/3" in text

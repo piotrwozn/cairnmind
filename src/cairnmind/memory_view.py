@@ -67,6 +67,51 @@ def _metadata(row):
     return row["metadata"] if isinstance(row.get("metadata"), dict) else {}
 
 
+_EXTERNAL_SOURCE = " (external client's session, never verified)"
+_THIRD_PARTY_SOURCE = " (third-party tool result, never verified)"
+
+
+def _degraded(metadata):
+    # The marks the service sets (store.ORIGIN_METADATA); a package can only add them, which makes text less trusted.
+    return isinstance(metadata, dict) and metadata.get("origin_evidence") == "degraded"
+
+
+def _source_mark(row):
+    metadata = row.get("metadata") if row else None
+    if not _degraded(metadata):
+        return ""
+    return _THIRD_PARTY_SOURCE if str(metadata.get("origin_client", "")).startswith("mcp:") else _EXTERNAL_SOURCE
+
+
+def _origin_line(own, sources):
+    """The line saying a record or plan is never verified, as the inspector and `ask` say it; None otherwise."""
+    if _degraded(own):
+        client = str(own.get("origin_client", ""))
+        if client.startswith("mcp:"):
+            return f"  origin: written after a result of the third-party tool server {_line(client[4:])}; never verified"
+        return ("  origin: written by an external client's session (history unarchived, evidence degraded); "
+                "never verified")
+    if sources and all(_source_mark(row) for row in sources):
+        # As evidence.evidence_states: such a source never anchors a record, whoever wrote the record.
+        return ("  origin: rests only on sources from an external client's session or a third-party tool result; "
+                "never verified")
+    return None
+
+
+def _step_mark(own, sources):
+    """The never-verified mark of a plan step's task, in the words of its origin line; "" otherwise.
+
+    A step line prints the task's state, and with --kind plan it is the only place the task appears (#158)."""
+    if _degraded(own):
+        client = str(own.get("origin_client", ""))
+        if client.startswith("mcp:"):
+            return f" (written after a result of the third-party tool server {_line(client[4:])}; never verified)"
+        return " (written by an external client's session; never verified)"
+    if sources and all(_source_mark(row) for row in sources):
+        return " (rests only on sources from an external client's session or a third-party tool result; never verified)"
+    return ""
+
+
 def _replaced(row):
     """Ids this record replaced: its `supersedes` link and the `superseded_ids` the conflict inbox adds."""
     later = _metadata(row).get("superseded_ids")
@@ -128,7 +173,7 @@ def _source_lines(ids, sources, left, cache):
     lines, seen, used, limited = [], [], 0, False
     for identifier in dict.fromkeys(ids):
         row = sources.get(identifier)
-        name = _line(row["uri"]) if row else _line(identifier)
+        name = _line(row["uri"]) + _source_mark(row) if row else _line(identifier)
         why, whole = _prepared(identifier, sources, cache)
         if why:
             lines.append(f"  source {name}: {why}, not shown")
@@ -167,6 +212,12 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
 
     def uris(source_ids):
         return [sources[i]["uri"] for i in source_ids if i in sources]
+
+    def listed(source_ids):
+        return ", ".join(_line(sources[i]["uri"]) + _source_mark(sources[i]) for i in source_ids if i in sources)
+
+    def origin(own, source_ids):
+        return _origin_line(own, [sources.get(i) for i in source_ids])
 
     def found(*texts):
         return needle is None or any(needle in str(text).casefold() for text in texts)
@@ -233,12 +284,14 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
                     f"updated {_line(row.get('updated_at') or 'unknown')}",
                 f"  id: {_line(row['id'])}" + ("" if row["key"] == row["id"] else f"  key: {_line(row['key'])}"),
                 *_indented(row["content"], "  | ")]
+        if origin(metadata, row["source_ids"]):
+            out.append(origin(metadata, row["source_ids"]))
         if _replaced(row):
             out.append("  replaces: " + ", ".join(named(i) for i in _replaced(row)))
         later = replaced_by(row)
         if later:
             out.append(f"  replaced by: {named(later)}")
-        out += ["  sources: " + ", ".join(_line(uri) for uri in uris(row["source_ids"])), *texts[row["id"]]]
+        out += ["  sources: " + listed(row["source_ids"]), *texts[row["id"]]]
         if row["kind"] != "task":
             continue
         out.append(f"  state: {_line(metadata.get('state', 'todo'))}")
@@ -264,15 +317,18 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
     for row in shown_plans:
         active = ", active in the origin worktree" if row["id"] == manifest.get("active_plan_id") else ""
         out += ["", f"[plan] {_line(row['title'])}, version {row['version']}{active}", f"  id: {_line(row['id'])}"]
+        if origin(row, row["source_ids"]):
+            out.append(origin(row, row["source_ids"]))
         if row["goal"].strip():
             out += ["  goal:", *_indented(row["goal"], "  | ")]
         out += [f"  constraint: {_line(item)}" for item in row["constraints"]]
         if uris(row["source_ids"]):
-            out.append("  sources: " + ", ".join(_line(uri) for uri in uris(row["source_ids"])))
+            out.append("  sources: " + listed(row["source_ids"]))
         for number, step in enumerate(row["step_ids"], 1):
             task = records[step]
             out.append(f"  {number}. [{_line(task['metadata'].get('state', 'todo'))}] "
-                       f"{_first_line(task['content'])} ({_line(step)})")
+                       f"{_first_line(task['content'])} ({_line(step)})"
+                       + _step_mark(task["metadata"], [sources.get(i) for i in task["source_ids"]]))
     if not shown_records and not shown_plans:
         if filters:
             out += ["", "Nothing in this snapshot matches the filters."]

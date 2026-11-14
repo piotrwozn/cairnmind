@@ -255,7 +255,7 @@ def api_worker_config(settings: Settings, run_id: str, generation: int) -> dict:
                 raise ValueError("agent_credential_invalid")
             return {**value, "key": key}
     except (httpx.HTTPError, ValueError):
-        raise ValueError("Nie można odtworzyć prywatnej konfiguracji agenta. Uruchom go ponownie z Cairnmind.") from None
+        raise ValueError("The agent's private configuration cannot be restored. Start it again from Cairnmind.") from None
 
 
 def stage_readiness(settings: Settings, credentials):

@@ -717,7 +717,7 @@ async def test_device_code_login_uses_only_auth_rpc_and_cancels_unfinished_flow(
     assert login.cancelled == []
     text = capsys.readouterr().out
     assert "ABCD-EFGH" in text
-    assert "Logowanie Copilot zakończone" in text
+    assert "Copilot login completed" in text
 
     async def timeout(params, **kwargs):
         raise TimeoutError
@@ -775,7 +775,7 @@ async def test_login_plaintext_consent_uses_runtime_wire_decision(tmp_path, monk
     assert requests == [{"flowId": "consent-flow", "input": decision}]
     assert closed == [True]
     assert cancelled == ([] if completed else ["consent-flow"])
-    assert ("Logowanie Copilot zakończone" in capsys.readouterr().out) is completed
+    assert ("Copilot login completed" in capsys.readouterr().out) is completed
 
 
 @pytest.mark.parametrize("details,expected", [

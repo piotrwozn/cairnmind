@@ -28,14 +28,14 @@ def _identifier(value, *, nullable=False):
     if nullable and value is None:
         return None
     if not isinstance(value, str) or not value or len(value) > 200 or any(ord(c) < 32 for c in value):
-        raise ValueError("Niepoprawny identyfikator elementu środowiska.")
+        raise ValueError("Invalid workspace item identifier.")
     return value
 
 
 class WorkspaceState:
     def __init__(self, settings, workspace_id="default"):
         if not isinstance(workspace_id, str) or not _IDENTIFIER.fullmatch(workspace_id):
-            raise ValueError("Niepoprawny identyfikator środowiska.")
+            raise ValueError("Invalid workspace identifier.")
         self.settings, self.workspace_id = settings, workspace_id
         self.directory = settings.data_dir / "workspaces" / workspace_id
         self.path = self.directory / "state.json"
@@ -57,11 +57,11 @@ class WorkspaceState:
             info = os.fstat(handle.fileno())
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                     or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 2 * 1024 * 1024):
-                raise ValueError("Stan środowiska musi być prywatnym plikiem użytkownika.")
+                raise ValueError("The workspace state must be a private file of the user.")
             value = json.load(handle)
         if (not isinstance(value, dict) or value.get("version") != 1
                 or value.get("workspace_id") != self.workspace_id or type(value.get("revision")) is not int):
-            raise ValueError("Nieobsługiwany lub uszkodzony stan środowiska.")
+            raise ValueError("Unsupported or damaged workspace state.")
         result = self.defaults()
         result.update(value)
         self._validate(result)
@@ -72,11 +72,11 @@ class WorkspaceState:
             _identifier(value[key], nullable=True)
         if value["worktree"] is not None and (not isinstance(value["worktree"], str)
                                               or not Path(value["worktree"]).is_absolute() or "\0" in value["worktree"]):
-            raise ValueError("Katalog pracy musi być ścieżką bezwzględną.")
+            raise ValueError("The working folder must be an absolute path.")
         if value["intent"] not in {"inspect", "work"} or value["focus"] not in _PANES:
-            raise ValueError("Niepoprawny tryb lub wybrany panel środowiska.")
+            raise ValueError("Invalid mode or chosen pane of the workspace.")
         if value["layout"] not in {"wide", "compact"} or type(value["zoom"]) is not bool:
-            raise ValueError("Niepoprawny układ paneli.")
+            raise ValueError("Invalid pane layout.")
         selections = value["assistant_selections"]
         if not isinstance(selections, list) or len(selections) > 1000:
             raise ValueError("Invalid assistant selections")
@@ -98,47 +98,47 @@ class WorkspaceState:
         if selected is not None:
             allowed = {"project_id", "entity_type", "id", "revision", "owner_type", "owner_id"}
             if not isinstance(selected, dict) or set(selected) - allowed or not {"project_id", "entity_type", "id"} <= set(selected):
-                raise ValueError("Niepoprawny wybór wpisu pamięci.")
+                raise ValueError("Invalid choice of a memory entry.")
             if selected["project_id"] != value["project_id"]:
-                raise ValueError("Wpis należy do innego projektu niż wybrany panel.")
+                raise ValueError("The entry belongs to another project than the chosen pane.")
             for key in ("entity_type", "id"):
                 _identifier(selected[key])
             if "revision" in selected and (type(selected["revision"]) is not int or selected["revision"] < 1):
-                raise ValueError("Niepoprawna wersja historyczna.")
+                raise ValueError("Invalid historical version.")
             for key in ("owner_type", "owner_id"):
                 if key in selected:
                     _identifier(selected[key])
         if not isinstance(value["slots"], list) or len(value["slots"]) > 32:
-            raise ValueError("Niepoprawny zestaw paneli klientów.")
+            raise ValueError("Invalid set of client panes.")
         seen = set()
         for slot in value["slots"]:
             if not isinstance(slot, dict) or not {"id", "profile_id"} <= set(slot):
-                raise ValueError("Niepoprawny panel klienta.")
+                raise ValueError("Invalid client pane.")
             _identifier(slot["id"])
             _identifier(slot["profile_id"])
             if slot["id"] in seen:
-                raise ValueError("Panel klienta występuje więcej niż raz.")
+                raise ValueError("A client pane appears more than once.")
             seen.add(slot["id"])
         for key, maximum in (("run_ids", 1000), ("visible_slot_ids", 2), ("auth_runs", 20), ("requested_slot_ids", 32)):
             if not isinstance(value[key], list) or len(value[key]) > maximum:
-                raise ValueError("Niepoprawna lista paneli środowiska.")
+                raise ValueError("Invalid list of workspace panes.")
             for item in value[key]:
                 _identifier(item)
             if len(set(value[key])) != len(value[key]):
-                raise ValueError("Panel występuje więcej niż raz.")
+                raise ValueError("A pane appears more than once.")
         if any(item not in seen for item in value["visible_slot_ids"]):
-            raise ValueError("Wybrany panel nie należy do bieżącego zestawu klientów.")
+            raise ValueError("The chosen pane is not in the current set of clients.")
         if (not isinstance(value["pane_ids"], dict) or set(value["pane_ids"]) - _PANES
                 or any(not isinstance(p, str) or not re.fullmatch(r"%[0-9]+", p) for p in value["pane_ids"].values())):
-            raise ValueError("Niepoprawna tożsamość panelu terminala.")
+            raise ValueError("Invalid terminal pane identity.")
         if not isinstance(value["cached_projects"], list) or len(value["cached_projects"]) > 10000:
-            raise ValueError("Niepoprawna lista projektów.")
+            raise ValueError("Invalid list of projects.")
         if not isinstance(value["launch_errors"], list) or len(value["launch_errors"]) > 32:
-            raise ValueError("Niepoprawna lista błędów klientów.")
+            raise ValueError("Invalid list of client errors.")
         if value["last_error"] is not None and (not isinstance(value["last_error"], str) or len(value["last_error"]) > 1000):
-            raise ValueError("Niepoprawny komunikat środowiska.")
+            raise ValueError("Invalid workspace notice.")
         if value["broker_available"] is not None and type(value["broker_available"]) is not bool:
-            raise ValueError("Niepoprawny stan usługi klientów.")
+            raise ValueError("Invalid state of the client service.")
         command = value["command_request"]
         if command is not None:
             if (not isinstance(command, dict) or set(command) != {"id", "action", "target_role"}
@@ -147,11 +147,11 @@ class WorkspaceState:
                 raise ValueError("Invalid workspace command")
             _identifier(command["id"])
         if len(json.dumps(value, allow_nan=False).encode()) > 2 * 1024 * 1024:
-            raise ValueError("Stan środowiska przekracza limit.")
+            raise ValueError("The workspace state exceeds its limit.")
 
     def update(self, changes, expected_revision=None):
         if not isinstance(changes, dict) or set(changes) - _FIELDS:
-            raise ValueError("Nieobsługiwane pole stanu środowiska.")
+            raise ValueError("Unsupported field of the workspace state.")
         _private_directory(self.directory.parent)
         with _private_lock(self.directory / "state.lock"):
             return self._commit(self.read(), changes, expected_revision)
@@ -170,7 +170,7 @@ class WorkspaceState:
 
     def merge_ids(self, key, add=(), *, remove=()):
         if key not in {"run_ids", "auth_runs"}:
-            raise ValueError("Nieobsługiwana lista sesji środowiska.")
+            raise ValueError("Unsupported list of workspace sessions.")
         for identifier in (*add, *remove):
             _identifier(identifier)
         _private_directory(self.directory.parent)
@@ -200,9 +200,9 @@ class WorkspaceState:
 
     def select_project(self, project, worktree=None, *, intent="inspect", requested_slot_ids=None):
         if intent not in {"inspect", "work"} or (project is None and intent == "work"):
-            raise ValueError("Praca wymaga jawnie wybranego projektu.")
+            raise ValueError("Work needs an explicitly chosen project.")
         if project is not None and (not isinstance(project, dict) or not {"id", "root"} <= set(project)):
-            raise ValueError("Wybierz zarejestrowany projekt.")
+            raise ValueError("Choose a registered project.")
         requested = [] if requested_slot_ids is None else requested_slot_ids
         if (not isinstance(requested, list) or not all(isinstance(item, str) for item in requested)
                 or len(requested) > 32 or len(set(requested)) != len(requested)
@@ -225,4 +225,4 @@ class WorkspaceState:
             except ValueError as error:
                 if "stale_workspace_revision" not in str(error):
                     raise
-        raise ValueError("stale_workspace_revision: stan środowiska zmienia się, ponów wybór.")
+        raise ValueError("stale_workspace_revision: the workspace state is changing; choose again.")

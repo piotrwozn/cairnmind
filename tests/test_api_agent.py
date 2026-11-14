@@ -381,7 +381,7 @@ async def test_ollama_trained_context_rejection_says_to_decrease_window_and_expo
     agent = engine(setup, provider)
     result = await agent.turn("Uruchom model")
     assert result["status"] == "context_limit" and result["error_code"] == "context_limit"
-    assert "Zmniejsz" in result["hint"] and "Zwiększ" not in result["hint"]
+    assert "Lower it" in result["hint"] and "Increase" not in result["hint"]
     assert result["unknowns"] == [result["hint"]]
     assert result["context_details"] == {"configured_context_window": 65536, "model_context_window": 32768}
     assert "sk-should-never-be-shown" not in json.dumps(result)
@@ -396,7 +396,7 @@ async def test_ollama_unknown_context_reports_metadata_problem_without_invented_
     agent = engine(setup, provider)
     result = await agent.turn("Uruchom model")
     assert result["status"] == "error" and result["error_code"] == "context_unknown"
-    assert "nie podała" in result["hint"] and "limit" in result["hint"]
+    assert "gave no reliable" in result["hint"] and "limit" in result["hint"]
     assert result["context_details"] == {}
     assert result["unknowns"] == [result["hint"]]
     assert len(provider.requests) == 1
@@ -739,3 +739,56 @@ async def test_production_memory_transport_and_model_orchestration_on_real_arcad
     assert any("VALUE = 2" in row["content"] for row in sources)
     assert not store.query("SELECT FROM check_runs")
     await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_reading_the_same_packet_again_keeps_its_ack(setup):
+    # #157: the pane said resume_required while the service, the header and Sessions still had the ACK.
+    memory = Memory()
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("resume_context")), reply(text="Nothing more to do."))
+    agent = engine(setup, provider, memory)
+    result = await agent.turn("Check the plan")
+    assert result["status"] == "completed" and memory.acked
+    assert "write_file" in {row["name"] for row in provider.requests[-1]["tools"]}
+
+
+@pytest.mark.asyncio
+async def test_a_changed_packet_still_needs_a_new_ack(setup):
+    memory = Memory()
+
+    def changed(messages, tools):
+        memory.packet = {**memory.packet, "id": "packet-2", "hash": "b" * 64}
+        return reply(call("resume_context"))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        changed, reply(text="Stopping here."))
+    agent = engine(setup, provider, memory)
+    result = await agent.turn("Check the plan")
+    assert result["status"] == "resume_required"
+    assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
+
+
+@pytest.mark.asyncio
+async def test_a_kept_ack_ends_when_the_same_packet_is_refused_for_credential_material(setup):
+    # #157 review: the kept ACK outlived credential_in_packet, and the next turn stopped as partial at once.
+    memory = Memory()
+
+    def leaked(messages, tools):
+        memory.packet = {**memory.packet, "records": [{"content": "Leaked sk-sensitive-packet"}]}
+        return reply(call("resume_context"))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        leaked, reply(text="Read the packet again."))
+    agent = engine(setup, provider, memory, key="sk-sensitive-packet")
+    first = await agent.turn("Check the plan")
+    assert first["status"] == "partial" and tools_results(agent)[-1]["error_code"] == "credential_in_packet"
+    assert agent._acknowledged is False
+    asked = len(provider.requests)
+    second = await agent.turn("Continue")
+    assert len(provider.requests) == asked + 1  # the model is asked again instead of a stop before it
+    assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
+    assert second["status"] == "resume_required"

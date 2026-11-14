@@ -136,6 +136,33 @@ async def test_an_agent_that_cannot_start_is_shown_and_nothing_starts(tmp_path, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("problem,reason,hint", [
+    ("no_task", "no_active_plan", "cairnmind plan activate"), ("no_task", "completed", None),
+    ("no_task", "blocked", None), ("no_stage", "ready", None), ("not_mapped", "ready", "Map stages"),
+    ("unknown_assistant", "ready", "Map stages")])
+async def test_the_dialog_hint_fits_why_nothing_runs(tmp_path, monkeypatch, problem, reason, hint):
+    # Mapping a stage cannot help a folder without an active plan; that one is told how to get a plan.
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    project = broker.projects[0]
+    no_step = problem == "no_task"
+    answer_stage(broker, decision("none", project, problem=problem, reason=reason,
+                                  stage=None if no_step else "implement", task=None if no_step else
+                                  {"id": "task-1", "version": 5, "state": "todo", "content": "Build it"}))
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_next_stage()
+        await wait_for(app, pilot, MessageModal)
+        text = str(app.screen.value)
+    assert ("Map stages" in text) == (hint == "Map stages")
+    assert ("cairnmind plan activate" in text) == (hint == "cairnmind plan activate")
+    if hint == "cairnmind plan activate":
+        # Each named command carries the arguments the CLI requires, so it can be typed as shown.
+        assert "cairnmind plan activate PROJECT PLAN_ID" in text
+        assert "cairnmind plan save PROJECT PLAN.json --idempotency-key KEY --activate" in text
+
+
+@pytest.mark.asyncio
 async def test_a_failing_native_stage_never_falls_back_to_another_assistant(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     project = broker.projects[0]
@@ -267,6 +294,7 @@ async def test_plan_stages_offer_only_launchable_assistants_and_save_in_preferen
         await wait_for(app, pilot, ChoiceModal)
         await pilot.pause()
         offered = [value for _, value in app.screen.choices]
+        labels = [str(label) for label, _ in app.screen.choices]
         await pilot.press("enter")
         await settle(app, pilot)
         app.edit_stages()
@@ -277,6 +305,8 @@ async def test_plan_stages_offer_only_launchable_assistants_and_save_in_preferen
         await settle(app, pilot)
     # Every assistant the workspace can start is offered, GitHub Copilot included (#125).
     assert offered == ["slot-native", "slot-github", ":unset"]
+    # Named by what the person configured, never by an internal slot id (#154).
+    assert labels[:2] == ["Codex", "GitHub Copilot (auto)"]
     saves = [body for method, path, _, body in broker.calls if (method, path) == ("PUT", "/api/settings")]
     chosen = {"slot": "slot-native", "profile_id": "native-private-1", "client": "codex"}
     assert saves == [{"project_stages": {"project-keyboard": {"review": chosen}}},

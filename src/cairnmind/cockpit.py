@@ -66,7 +66,7 @@ class BrowserSessions:
     def ticket(self):
         self._prune()
         if len(self.tickets) >= 100:
-            raise ValueError("Zbyt wiele oczekujących otwarć kokpitu.")
+            raise ValueError("Too many pending cockpit openings.")
         value = secrets.token_urlsafe(32)
         self.tickets[hashlib.sha256(value.encode()).hexdigest()] = self.clock() + TICKET_SECONDS
         return value
@@ -74,10 +74,10 @@ class BrowserSessions:
     def exchange(self, ticket):
         self._prune()
         if not isinstance(ticket, str) or len(ticket) > 200:
-            raise HTTPException(401, "Niepoprawny bilet uruchomienia.")
+            raise HTTPException(401, "Invalid launch ticket.")
         expiry = self.tickets.pop(hashlib.sha256(ticket.encode()).hexdigest(), 0)
         if expiry <= self.clock():
-            raise HTTPException(401, "Bilet wygasł lub został już użyty. Uruchom ponownie cairnmind.")
+            raise HTTPException(401, "The ticket expired or was already used. Run cairnmind again.")
         token = secrets.token_urlsafe(32)
         session = {"csrf": secrets.token_urlsafe(32), "expires": self.clock() + SESSION_SECONDS}
         self.sessions[hashlib.sha256(token.encode()).hexdigest()] = session
@@ -95,9 +95,9 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     public_url = (public_url or f"http://127.0.0.1:{getattr(settings, 'cockpit_port', 8766)}").rstrip("/")
     parsed = urlparse(public_url)
     if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise ValueError("Kokpit musi używać lokalnego adresu HTTP.")
+        raise ValueError("The cockpit must use a local HTTP address.")
     if not settings.token:
-        raise ValueError("Najpierw zainicjalizuj Cairnmind.")
+        raise ValueError("Initialize Cairnmind first.")
     from .api_credentials import CredentialStore
     credentials = getattr(runtime, "credentials", None) or CredentialStore(settings)
     if runtime is None:
@@ -141,23 +141,23 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     def session_for(request):
         session = browser.get(request.cookies.get(cookie_name))
         if session is None:
-            raise HTTPException(401, "Sesja kokpitu wygasła. Uruchom cairnmind.")
+            raise HTTPException(401, "The broker session expired. Run cairnmind.")
         return session
 
     @app.middleware("http")
     async def browser_guard(request: Request, call_next):
         if request.headers.get("host", "").lower() != parsed.netloc.lower():
-            return JSONResponse({"detail": "Niepoprawny Host."}, status_code=403)
+            return JSONResponse({"detail": "Invalid Host."}, status_code=403)
         if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request.url.path.startswith("/_control/"):
             if not origin_allowed(request.headers):
-                return JSONResponse({"detail": "Niepoprawny Origin."}, status_code=403)
+                return JSONResponse({"detail": "Invalid Origin."}, status_code=403)
             if request.url.path != "/auth/exchange":
                 try:
                     session = session_for(request)
                 except HTTPException as exc:
                     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
                 if not _same(request.headers.get("x-csrf-token", ""), session["csrf"]):
-                    return JSONResponse({"detail": "Niepoprawny token CSRF."}, status_code=403)
+                    return JSONResponse({"detail": "Invalid CSRF token."}, status_code=403)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -178,29 +178,29 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
 
     def control(request):
         if request.headers.get("origin"):
-            raise HTTPException(403, "Sterowanie procesem wymaga lokalnego CLI.")
+            raise HTTPException(403, "Controlling a process needs the local CLI.")
         if not _same(request.headers.get("authorization", ""), f"Bearer {settings.token}"):
-            raise HTTPException(401, "Niepoprawny token lokalnej usługi.")
+            raise HTTPException(401, "Invalid local service token.")
 
     async def body(request):
         chunks, length = [], 0
         async for chunk in request.stream():
             length += len(chunk)
             if length > MAX_BODY:
-                raise HTTPException(413, "Żądanie przekracza limit.")
+                raise HTTPException(413, "The request is too large.")
             chunks.append(chunk)
         raw = b"".join(chunks)
         try:
             value = json.loads(raw)
         except (ValueError, UnicodeError):
-            raise HTTPException(400, "Niepoprawny JSON.") from None
+            raise HTTPException(400, "Invalid JSON.") from None
         if not isinstance(value, dict):
-            raise HTTPException(400, "Oczekiwano obiektu JSON.")
+            raise HTTPException(400, "A JSON object was expected.")
         return value
 
     def fields(value, allowed, required=()):
         if set(value) - set(allowed) or any(key not in value for key in required):
-            raise HTTPException(422, "Niepoprawne pola żądania.")
+            raise HTTPException(422, "Invalid request fields.")
 
     async def upstream(method, path, *, params=None, data=None):
         try:
@@ -209,22 +209,22 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                                        headers={"Authorization": f"Bearer {settings.token}"}) as client:
                 return await client.request(method, path, params=params, json=data)
         except httpx.HTTPError:
-            raise HTTPException(503, "Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind.") from None
+            raise HTTPException(503, "The memory service is unavailable. Restart cairnmind.") from None
 
     def forward(response):
         try:
             value = response.json()
         except ValueError:
-            raise HTTPException(502, "Usługa pamięci zwróciła niepoprawną odpowiedź.") from None
+            raise HTTPException(502, "The memory service gave an invalid answer.") from None
         return JSONResponse(value, status_code=response.status_code)
 
     async def projects():
         response = await upstream("GET", "/projects")
         if response.is_error:
-            raise HTTPException(response.status_code, "Nie można odczytać projektów.")
+            raise HTTPException(response.status_code, "The projects could not be read.")
         rows = response.json()
         if not isinstance(rows, list):
-            raise HTTPException(502, "Niepoprawna odpowiedź usługi pamięci.")
+            raise HTTPException(502, "The memory service gave an invalid response.")
         project_cache[:] = rows
         return rows
 
@@ -232,7 +232,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         rows = await projects()
         matches = [row for row in rows if identifier in (row.get("id"), row.get("name"), row.get("root"))]
         if len(matches) != 1:
-            raise HTTPException(404, "Nieznany projekt.")
+            raise HTTPException(404, "Unknown project.")
         return matches[0]
 
     async def enrich(run):
@@ -272,14 +272,14 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def worker_configuration(request: Request, action: str):
         control(request)
         if action not in {"config", "credential"}:
-            raise HTTPException(404, "Nieobsługiwana operacja agenta.")
+            raise HTTPException(404, "Unsupported agent operation.")
         value = await body(request)
         fields(value, {"run_id", "generation"}, {"run_id", "generation"})
         if not isinstance(value["run_id"], str) or type(value["generation"]) is not int:
-            raise HTTPException(422, "Niepoprawna tożsamość agenta.")
+            raise HTTPException(422, "Invalid agent identity.")
         method = getattr(runtime, "agent_configuration" if action == "config" else "agent_credential", None)
         if method is None:
-            raise HTTPException(409, "Silnik agenta jest niedostępny.")
+            raise HTTPException(409, "The agent engine is unavailable.")
         result = await asyncio.to_thread(method, value["run_id"], value["generation"])
         return JSONResponse(result if action == "config" else {"key": result},
                             headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
@@ -290,7 +290,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         value = await body(request)
         fields(value, {"stop_clients"})
         if type(value.get("stop_clients", False)) is not bool:
-            raise HTTPException(422, "stop_clients musi być wartością logiczną.")
+            raise HTTPException(422, "stop_clients must be a boolean.")
         if value.get("stop_clients"):
             for run in await asyncio.to_thread(runtime.list_runs):
                 if run.get("lifecycle", run.get("state")) in {"running", "starting", "preparing"}:
@@ -367,10 +367,10 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         value = await body(request)
         fields(value, {"root"}, {"root"})
         if not isinstance(value["root"], str):
-            raise HTTPException(422, "Podaj ścieżkę istniejącego katalogu projektu.")
+            raise HTTPException(422, "Give the path of an existing project folder.")
         root = await asyncio.to_thread(normalize_path, value["root"])
         if not await asyncio.to_thread(root.is_dir):
-            raise HTTPException(422, "Katalog projektu nie istnieje.")
+            raise HTTPException(422, "The project folder does not exist.")
         from .memory_paths import MEMORY_RELATIVE, snapshot_directory
         manifest = (snapshot_directory(root) or root / MEMORY_RELATIVE) / "manifest.json"
         # Presence is enough: parsing/validation belongs to memory inspect and
@@ -404,7 +404,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     def selected_profile(identifier):
         row = next((p for p in state.load()["profiles"] if p["id"] == identifier), None)
         if row is None:
-            raise HTTPException(404, "Nieznany profil.")
+            raise HTTPException(404, "Unknown profile.")
         return row
 
     def profile_signature(profile):
@@ -432,19 +432,19 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         session_for(request)
         profile = selected_profile(profile_id)
         if profile["client"] not in {"api", "copilot"}:
-            raise HTTPException(422, "Użyj natywnego logowania tego klienta.")
+            raise HTTPException(422, "Use this client's own sign-in.")
         value = await body(request)
         fields(value, {"key", "persist"}, {"key"})
         if not isinstance(value["key"], str) or type(value.get("persist", False)) is not bool:
-            raise HTTPException(422, "Niepoprawna konfiguracja poświadczeń.")
+            raise HTTPException(422, "Invalid credential configuration.")
         if value.get("persist"):
             for registered in await projects():
                 roots_response = await upstream("GET", "/project-roots", params={"project": registered["id"]})
                 if roots_response.is_error:
-                    raise HTTPException(503, "Nie można sprawdzić lokalizacji magazynu kluczy.")
+                    raise HTTPException(503, "The location of the key store could not be checked.")
                 roots = roots_response.json().get("roots", [registered["root"]])
                 if any(settings.data_dir.resolve().is_relative_to(Path(root).resolve()) for root in roots):
-                    raise HTTPException(409, "Magazyn kluczy musi znajdować się poza katalogami projektów.")
+                    raise HTTPException(409, "The key store must be outside project folders.")
         await asyncio.to_thread(credentials.set, profile_id, value["key"], persist=value.get("persist", False))
         config = state.load()
         rows = [{**p, "credential_ref": "profile:" + profile_id} if p["id"] == profile_id else p
@@ -459,7 +459,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         session_for(request)
         profile = selected_profile(profile_id)
         if profile["client"] not in {"api", "copilot"}:
-            raise HTTPException(422, "Użyj natywnego logowania tego klienta.")
+            raise HTTPException(422, "Use this client's own sign-in.")
         await asyncio.to_thread(credentials.delete, profile_id)
         profile_observations.pop(profile_id, None)
         return {"profile_id": profile_id, "status": await asyncio.to_thread(credentials.status, profile)}
@@ -473,7 +473,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         elif profile["client"] == "api":
             adapter = make_provider(profile, key)
         else:
-            raise HTTPException(422, "Modele natywnego klienta wybierasz w jego profilu lub terminalu.")
+            raise HTTPException(422, "A native client's models are chosen in its profile or terminal.")
         try:
             return await getattr(adapter, operation)()
         except (ProviderError, CopilotError) as exc:
@@ -560,7 +560,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         value = await body(request)
         fields(value, {"client"}, {"client"})
         if not isinstance(value["client"], str) or value["client"] not in {"codex", "claude"}:
-            raise HTTPException(422, "Nieobsługiwany klient logowania.")
+            raise HTTPException(422, "Unsupported sign-in client.")
         return {"run": await asyncio.to_thread(runtime.start_auth, value["client"])}
 
     @app.get("/api/client-runs")
@@ -582,13 +582,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                {"project", "idempotency_key"})
         key = value["idempotency_key"]
         if not isinstance(key, str) or not 1 <= len(key) <= 160 or type(value.get("resume", False)) is not bool:
-            raise HTTPException(422, "Niepoprawny identyfikator uruchomienia.")
+            raise HTTPException(422, "Invalid run identifier.")
         selected = await project(value["project"])
         worktree = str(normalize_path(value.get("worktree") or selected["root"]))
         response = await upstream("GET", "/project-roots", params={"project": selected["id"]})
         roots = response.json().get("roots", [selected["root"]]) if response.is_success else [selected["root"]]
         if worktree not in roots:
-            raise HTTPException(409, "Wybierz zarejestrowany katalog tego projektu.")
+            raise HTTPException(409, "Choose a registered folder of this project.")
         config = state.load()
         slots = value.get("slots")
         if slots is None and value.get("profile_id"):
@@ -604,7 +604,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             old = launches.get(key)
             if old:
                 if old[0] != signature:
-                    raise HTTPException(409, "Identyfikator uruchomienia został użyty dla innych parametrów.")
+                    raise HTTPException(409, "The run identifier was used with other parameters.")
                 return old[1]
             result = await asyncio.to_thread(runtime.start_project, selected, worktree=worktree,
                                             slots=mapped, resume=value.get("resume", False))
@@ -650,11 +650,11 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def control_run(request: Request, run_id: str, action: str):
         session_for(request)
         if action not in {"stop", "interrupt"}:
-            raise HTTPException(404, "Nieobsługiwana akcja terminala.")
+            raise HTTPException(404, "Unsupported terminal action.")
         value = await body(request)
         fields(value, {"generation"}, {"generation"})
         if not isinstance(value["generation"], (str, int)) or isinstance(value["generation"], bool):
-            raise HTTPException(422, "Niepoprawna generacja terminala.")
+            raise HTTPException(422, "Invalid terminal generation.")
         return await asyncio.to_thread(getattr(runtime, action), run_id, generation=value["generation"])
 
     @app.websocket("/api/client-runs/{run_id}/terminal")
@@ -716,10 +716,10 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                     await websocket.close(code=1008)
                     return
                 if len(text.encode()) > MAX_FRAME:
-                    raise ValueError("Zbyt duża ramka terminala.")
+                    raise ValueError("The terminal frame is too large.")
                 value = json.loads(text)
                 if not isinstance(value, dict):
-                    raise ValueError("Niepoprawna ramka terminala.")
+                    raise ValueError("Invalid terminal frame.")
                 kind = value.get("type")
                 if kind == "takeover":
                     attachment.take_control()
@@ -732,17 +732,17 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                     elif isinstance(value.get("data"), str):
                         data = base64.b64decode(value["data"], validate=True)
                     else:
-                        raise ValueError("Niepoprawne dane klawiatury.")
+                        raise ValueError("Invalid keyboard data.")
                     if len(data) > MAX_FRAME:
-                        raise ValueError("Zbyt dużo danych klawiatury.")
+                        raise ValueError("Too much keyboard data.")
                     await attachment.write(data)
                 elif kind == "resize":
                     cols, rows = value.get("cols"), value.get("rows")
                     if type(cols) is not int or type(rows) is not int or not 20 <= cols <= 500 or not 5 <= rows <= 200:
-                        raise ValueError("Niepoprawny rozmiar terminala.")
+                        raise ValueError("Invalid terminal size.")
                     attachment.resize(cols, rows)
                 else:
-                    raise ValueError("Nieobsługiwana ramka terminala.")
+                    raise ValueError("Unsupported terminal frame.")
         tasks = [asyncio.create_task(output()), asyncio.create_task(incoming())]
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -799,9 +799,9 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         fields(value, {"project", "question", "worktree"}, ("project", "question"))
         question = value["question"]
         if not isinstance(question, str) or not question.strip() or len(question) > 4000:
-            raise HTTPException(422, "Pytanie musi mieć od 1 do 4000 znaków.")
+            raise HTTPException(422, "A question has 1 to 4000 characters.")
         if not isinstance(value["project"], str) or not isinstance(value.get("worktree", ""), str):
-            raise HTTPException(422, "Niepoprawne pola żądania.")
+            raise HTTPException(422, "Invalid request fields.")
         return forward(await upstream("POST", "/ask", data=value))
 
     @app.post("/api/findings")
@@ -814,7 +814,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         required = ("project", "content", "kind", "status", "key")
         fields(value, {*required, "worktree"}, required)
         if not isinstance(value["project"], str) or not isinstance(value.get("worktree", ""), str):
-            raise HTTPException(422, "Niepoprawne pola żądania.")
+            raise HTTPException(422, "Invalid request fields.")
         error = finding_error(value["content"], value["kind"], value["status"]) or key_error(value["key"])
         if error:
             raise HTTPException(422, error)
@@ -825,7 +825,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         session_for(request)
         unknown = set(request.query_params) - {"project", "worktree"}
         if unknown or "project" not in request.query_params:
-            raise HTTPException(422, "Niepoprawne pola żądania.")
+            raise HTTPException(422, "Invalid request fields.")
         return forward(await upstream("GET", "/brief", params=request.query_params))
 
     @app.get("/api/stage")
@@ -835,13 +835,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         session_for(request)
         query = request.query_params
         if set(query) - {"project", "worktree"} or "project" not in query:
-            raise HTTPException(422, "Niepoprawne pola żądania.")
+            raise HTTPException(422, "Invalid request fields.")
         selected = await project(query["project"])
         worktree = str(normalize_path(query.get("worktree") or selected["root"]))
         response = await upstream("GET", "/project-roots", params={"project": selected["id"]})
         roots = response.json().get("roots", [selected["root"]]) if response.is_success else [selected["root"]]
         if worktree not in roots:
-            raise HTTPException(409, "Wybierz zarejestrowany katalog tego projektu.")
+            raise HTTPException(409, "Choose a registered folder of this project.")
         response = await upstream("POST", "/plans/next", data={"project": selected["id"], "worktree": worktree})
         if response.is_error:
             return forward(response)
@@ -870,7 +870,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         last_event = request.headers.get("last-event-id")
         if last_event:
             if len(last_event) > 200 or not re.fullmatch(r"[A-Za-z0-9:_-]+", last_event):
-                raise HTTPException(400, "Niepoprawny kursor zdarzeń.")
+                raise HTTPException(400, "Invalid event cursor.")
             stream_headers["Last-Event-ID"] = last_event
         async def stream():
             try:
@@ -946,9 +946,9 @@ def ensure_cockpit(settings):
                     break
                 time.sleep(.1)
             if not status["available"]:
-                raise ValueError("Kokpit nie uruchomił się; sprawdź lokalny plik cockpit/server.log.")
+                raise ValueError("The cockpit did not start; check the local file cockpit/server.log.")
         if not status.get("version_matches", True):
-            raise ValueError("Uruchomiony kokpit ma inną wersję. Zatrzymaj go i otwórz ponownie.")
+            raise ValueError("The running cockpit has another version. Stop it and open it again.")
         return status
 
 
@@ -969,7 +969,7 @@ def serve_cockpit(settings, port=None):
     try:
         return _serve_locked(settings, folder, port)
     except BlockingIOError:
-        raise ValueError("Kokpit już działa dla tego magazynu.") from None
+        raise ValueError("The cockpit is already running for this store.") from None
 
 
 def _serve_locked(settings, folder, port):

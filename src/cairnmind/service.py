@@ -830,8 +830,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 timeout=settings.ask_timeout + 5,
             )
         except TimeoutError:
-            return {"status": "partial", "answer": "Przekroczono czas oczekiwania na lokalnego agenta.",
-                    "sources": [], "unknowns": ["Kolejka lub analiza przekroczyła limit czasu."],
+            return {"status": "partial", "answer": "Waiting for the local agent timed out.",
+                    "sources": [], "unknowns": ["The queue or the analysis exceeded the time limit."],
                     "freshness": {}, "elapsed_seconds": settings.ask_timeout + 5, "cached": False,
                     "diagnostics": {"stage": "ask", "code": "queue_timeout",
                                     "budget": {"timeout_seconds": settings.ask_timeout + 5}}}
@@ -848,6 +848,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.post("/remember", dependencies=auth)
     async def remember(body: RememberBody):
+        from cairnmind.remember_input import external_report_source, record_error
+        error = record_error(body.record)
+        if error:
+            # A plain 400: the word-based mapping of ValueError would read a named field as a conflict.
+            raise HTTPException(status_code=400, detail=error)
         pid = project(body.project)["id"]
         def save(scope):
             record = dict(body.record)
@@ -856,7 +861,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 if requested and str(Path(requested).expanduser().resolve()) != scope:
                     raise ValueError("resume_required: completion scope differs from session")
                 record["worktree"] = scope
-            return store.remember(pid, record, body.sources)
+            sources = body.sources
+            if not sources and (store.current_origin() or {}).get("origin_client") == "external":
+                # An external session has no archived conversation to cite (README, external sessions).
+                sources = [external_report_source(store, pid, record)]
+            return store.remember(pid, record, sources)
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
         cache.clear()
         return result

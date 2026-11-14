@@ -38,7 +38,8 @@ def history_event(kind, root):
     return {"type": kind, "sessionId": NATIVE_ID, "cwd": str(root), **value}
 
 
-def seed_legacy(workspace, tmp_path, *, damage=None, measured=None, unknown=False, lag=False, legacy_marker=True):
+def seed_legacy(workspace, tmp_path, *, damage=None, measured=None, unknown=False, lag=False, legacy_marker=True,
+                head=None):
     """Persist the two-target partial state produced by releases before recovery.
 
     The valid horizon is checked against real archived bytes. Only the missing
@@ -64,7 +65,7 @@ def seed_legacy(workspace, tmp_path, *, damage=None, measured=None, unknown=Fals
     store.command("UPDATE sessions SET transcript_targets=:targets WHERE id=:id",
                   {"targets": [stub], "id": origin["session_id"]})
 
-    first = json.dumps(history_event("mode", root)) + "\n"
+    first = json.dumps(head or history_event("mode", root)) + "\n"
     remaining = "".join(json.dumps(history_event(kind, root)) + "\n"
                          for kind in ("permission-mode", "ai-title"))
     if unknown:
@@ -177,6 +178,17 @@ def test_receipt_bound_uncaptured_reservation_recovers_existing_and_future_sessi
     assert all(row["status"] == "complete" for row in future["packet"]["archive_watermarks"])
     assert_old_rows_unchanged(store, "resume_packets", packets)
     assert_old_rows_unchanged(store, "session_events", events)
+
+
+def test_rewritten_claude_head_with_leaf_only_last_prompt_still_recovers(workspace, tmp_path):
+    # Claude Code 2.1.325 can rewrite a transcript to start with a last-prompt record without lastPrompt.
+    store, project, _, manager = workspace
+    old = seed_legacy(workspace, tmp_path, head={"type": "last-prompt", "leafUuid": "leaf", "sessionId": NATIVE_ID})
+    recovered = manager.resume_context(old["sid"])
+    assert recovered["status"] == "ready", recovered["unknowns"]
+    future = manager.prepare(project["id"], "codex", timeout=0)
+    assert future["status"] == "ready", future["unknowns"]
+    assert not store.query("SELECT id FROM resume_acks")
 
 
 @pytest.mark.parametrize("damage", ["no_original_binding", "no_later_capture", "wrong_native", "wrong_project",

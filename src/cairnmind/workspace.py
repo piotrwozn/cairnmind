@@ -198,31 +198,31 @@ class WorkspaceManager:
 
     def _initialize(self):
         if not self.diagnostics()["available"]:
-            raise ValueError("Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co Cairnmind.")
+            raise ValueError("Install tmux >= 3.4 in the same WSL distribution as Cairnmind.")
         _private_directory(self.directory.parent)
         _private_directory(self.directory)
         _private_directory(self.socket_directory)
         if len(os.fsencode(self.socket)) > 100:
-            raise ValueError("Ścieżka gniazda środowiska jest zbyt długa.")
+            raise ValueError("The workspace socket path is too long.")
         if self.config.is_symlink():
-            raise ValueError("Konfiguracja środowiska nie może być dowiązaniem.")
+            raise ValueError("The workspace configuration must not be a link.")
         if not self.config.exists():
             fd = os.open(self.config, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as handle:
                 handle.write("set -g prefix C-b\nunbind-key -a\nset -g mouse off\n"
                              "set -g default-terminal tmux-256color\nset -g status on\n"
-                             "set -g status-left ' Cairnmind '\nset -g status-right ' C-b p/1/2/i/g · z powiększ · d odłącz '\n"
+                             "set -g status-left ' Cairnmind '\nset -g status-right ' C-b p/1/2/i/g · z zoom · d detach '\n"
                              "set -g pane-border-status top\n"
                              + "".join(f"set -gq {option} '{value}'\n" for option, value in tmux_chrome())
                              + "set -g remain-on-exit on\nset -g exit-empty off\nset -s set-clipboard off\n"
                              "set -g allow-passthrough off\nset -g history-limit 5000\n")
         info = self.config.stat()
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
-            raise ValueError("Konfiguracja środowiska musi być prywatnym plikiem użytkownika.")
+            raise ValueError("The workspace configuration must be a private file of the user.")
 
     def tmux(self, *args, check=True, timeout=8):
         if not self.binary:
-            raise ValueError("tmux jest niedostępny.")
+            raise ValueError("tmux is unavailable.")
         # Machine-readable formats require literal tabs and Unicode even when
         # the user's terminal locale is C or unset.
         return subprocess.run([self.binary, "-u", "-S", str(self.socket), "-f", str(self.config), *map(str, args)],
@@ -299,13 +299,13 @@ class WorkspaceManager:
         broker still independently enforces control between this UI and web.
         """
         if type(takeover) is not bool or not sys.stdin.isatty() or not sys.stdout.isatty():
-            raise ValueError("Dołączenie wymaga interaktywnego terminala.")
+            raise ValueError("Attaching needs an interactive terminal.")
         terminal = os.ttyname(sys.stdin.fileno())
         process = None
         try:
             with _private_lock(self.directory / "attach.lock"):
                 if not self.exists():
-                    raise ValueError("Środowisko terminalowe nie działa.")
+                    raise ValueError("The terminal workspace is not running.")
                 process = subprocess.Popen([self.binary, "-S", str(self.socket), "attach-session", "-r",
                                             "-f", "ignore-size", "-t", SESSION], env=_clean_env())
                 deadline = time.monotonic() + 8
@@ -316,7 +316,7 @@ class WorkspaceManager:
                     time.sleep(.025)
                 else:
                     if process.poll() is None:
-                        raise ValueError("Nie potwierdzono tożsamości dołączanego terminala.")
+                        raise ValueError("The identity of the attaching terminal was not confirmed.")
             # No lock is held while the interactive client is attached.
             return process.wait()
         finally:
@@ -384,17 +384,18 @@ class WorkspaceManager:
                 self._start_supervisor()
         return self.status()
 
-    def _recover_ui_panels(self):
-        # Only an explicit launch/create retries crashed views. Reconciliation
-        # never loops on a failing UI, and client/native panes are untouched.
+    def _recover_ui_panels(self, roles=("sidebar", "inspector", "graph", "activity"), *, run_request=False):
+        # Only an explicit launch/create, or a key that asks for that view, retries crashed views.
+        # Reconciliation never loops on a failing UI, and client/native panes are untouched.
         for role, pane in self.panes((*_ROLES, "activity")).items():
-            if role not in {"sidebar", "inspector", "graph", "activity"}:
+            if role not in roles:
                 continue
             identity = self.tmux("display-message", "-p", "-t", pane,
                                  "#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{pane_dead}").stdout.strip()
             if identity == f"{self.workspace_id}\t{role}\t1":
-                self.tmux("respawn-pane", "-k", "-t", pane,
-                          self._activity_command() if role == "activity" else self._panel(role))
+                command = self._activity_command() if role == "activity" else self._panel(role)
+                # The menu request that asked for this view is already in the state: the new process runs it.
+                self.tmux("respawn-pane", "-k", "-t", pane, command + (" --run-request" if run_request else ""))
                 self._tag(pane, role)
 
     def _bindings(self):
@@ -403,6 +404,10 @@ class WorkspaceManager:
             self.tmux("bind-key", key, "run-shell", self._command(*arguments))
         self.tmux("bind-key", "z", "run-shell", self._command("--toggle-zoom"))
         self.tmux("bind-key", "d", "detach-client")
+        # Ctrl+Q in a Cairnmind view leaves like C-b d: only this terminal detaches and everything keeps
+        # running. Native assistant panes get the key unchanged.
+        self.tmux("bind-key", "-n", "C-q", "if-shell", "-F", "#{m/r:^(sidebar|inspector|graph|activity)$,#{@cairnmind_role}}",
+                  "detach-client", "send-keys C-q")
         self.tmux("bind-key", "C-b", "send-prefix")
         client = ("--client-pid", "#{client_pid}", "--client-tty", "#{client_tty}")
         self.tmux("bind-key", "Space", "run-shell", self._command("--palette", *client))
@@ -434,7 +439,7 @@ class WorkspaceManager:
             # A durable UI selection is not durable authorization to start a
             # model after restarting the coordinator.
             self.state.update({"handled_work_request": current["work_request"], "intent": "inspect",
-                               "last_error": "Ponów jawne rozpoczęcie pracy po wznowieniu środowiska."})
+                               "last_error": "Start work again explicitly after the workspace resumes."})
         command = [sys.executable, "-I", "-m", "cairnmind.workspace", "--supervise", "--data-dir", str(self.settings.data_dir),
                    "--workspace-id", self.workspace_id, "--tmux-bin", self.binary]
         fd = os.open(self.directory / "supervisor.log", os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
@@ -532,7 +537,7 @@ class WorkspaceManager:
                 # Keep every existing bridge and native child alive when the
                 # memory service/broker is unavailable. Never dump credentials.
                 selected = self._save_if_current(selected, {"broker_available": False,
-                    "last_error": "Usługa klientów jest niedostępna; działające sesje pozostają zachowane."})
+                    "last_error": "The client service is unavailable; running sessions are kept."})
                 reconnect = getattr(self.broker, "reconnect", None)
                 if reconnect is not None:
                     try:
@@ -707,7 +712,8 @@ class WorkspaceManager:
 
     def focus(self, role):
         if role not in _ROLES:
-            raise ValueError("Niepoprawny panel środowiska.")
+            raise ValueError("Invalid workspace pane.")
+        self._revive(role)
         panes = self.panes()
         target = panes.get(role, panes.get("client1"))
         if target:
@@ -736,9 +742,20 @@ class WorkspaceManager:
             return self.focus(roles[(roles.index(current) + 1) % len(roles)] if current in roles else roles[0])
         return self.status()
 
+    def _revive(self, role, *, run_request=False):
+        """A view whose process ended starts again when a key or the menu asks for it (Ctrl+B p/i/g, Tab).
+
+        `run_request`: the command request for this view is written first, and the new process runs it;
+        a panel otherwise treats the request it finds at start as already seen.
+        """
+        if role in {"sidebar", "inspector", "graph"} and self.exists():
+            with _private_lock(self.directory / "ui.lock"):
+                self._recover_ui_panels((role,), run_request=run_request)
+
     def request_command(self, action, target_role="sidebar"):
         self.state.update({"command_request": {"id": str(uuid4()), "action": action, "target_role": target_role},
                            "focus": target_role})
+        self._revive(target_role, run_request=True)
         self._layout()
 
     def _owner(self, client_pid, client_tty):
@@ -786,7 +803,7 @@ class WorkspaceManager:
 
     def open_auth(self, client):
         if client not in {"codex", "claude", "copilot"} or not self.exists():
-            raise ValueError("Wybierz obsługiwanego klienta w otwartym środowisku.")
+            raise ValueError("Choose a supported client in the open workspace.")
         run = (self.broker.request("POST", "/api/copilot/login", json={}) if client == "copilot"
                else self.broker.request("POST", "/api/auth/login", json={"client": client}))["run"]
         return self.show_auth_run(run)
@@ -794,7 +811,7 @@ class WorkspaceManager:
     def show_auth_run(self, run):
         client = run.get("client")
         if client not in {"codex", "claude", "copilot"} or run.get("purpose") != "auth" or not self.exists():
-            raise ValueError("Niepoprawny terminal logowania.")
+            raise ValueError("Invalid sign-in terminal.")
         pane = self.tmux("new-window", "-t", SESSION, "-n", "login-" + client, "-P", "-F", "#{pane_id}",
                          self._bridge_command(run["id"], run["generation"])).stdout.strip()
         self._tag(pane, "auth", run["id"])
@@ -848,16 +865,16 @@ def workspace_status(settings):
 
 def launch_workspace(settings, takeover=False):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise ValueError("Cairnmind wymaga interaktywnego terminala. Użyj `cairnmind workspace status` do diagnostyki.")
+        raise ValueError("Cairnmind needs an interactive terminal. Use `cairnmind workspace status` to diagnose.")
     manager = WorkspaceManager(settings)
     if not manager.diagnostics()["available"]:
-        raise ValueError("Zainstaluj tmux >= 3.4 w Ubuntu: sudo apt install tmux")
+        raise ValueError("Install tmux >= 3.4 in Ubuntu: sudo apt install tmux")
     manager.broker.ensure()
     manager.create()
     inherited = os.environ.get("TMUX", "").split(",", 1)[0]
     if inherited == str(manager.socket) and os.environ.get("TMUX_PANE") in manager.panes().values():
         if takeover:
-            raise ValueError("Odłącz widok C-b d i uruchom `cairnmind workspace takeover` w osobnym terminalu.")
+            raise ValueError("Detach this view with C-b d and run `cairnmind workspace takeover` in another terminal.")
         return 0
     # A different user's tmux server/config is neither modified nor adopted.
     if not takeover and any(not client["readonly"] for client in manager.clients()):
@@ -886,16 +903,41 @@ def detach_workspace(settings):
     return {"detached": True, "available": True}
 
 
+_ENDED = {"exited", "failed", "interrupted"}
+
+
+def _forget_finished(manager, finished):
+    """Save what the stop did: the supervisor that would have refreshed the slots is stopped with it (#154)."""
+    manager.state.merge_ids("run_ids", remove=list(finished))
+    for _ in range(5):
+        current = manager.state.read()
+        slots = [{**slot, "lifecycle": finished[slot["run_id"]]} if slot.get("run_id") in finished else slot
+                 for slot in current["slots"]]
+        try:
+            manager.state.update({"slots": slots}, expected_revision=current["revision"])
+            return
+        except ValueError as error:
+            if "stale_workspace_revision" not in str(error):
+                raise
+
+
 def stop_workspace(settings, stop_clients=False):
     manager = WorkspaceManager(settings)
     current = manager.state.read()
-    stopped, errors = [], []
+    stopped, ended, errors, finished = [], [], [], {}
     if stop_clients:
         for run_id in current["run_ids"]:
             try:
                 run = manager.broker.request("GET", "/api/client-runs/" + run_id)
-                manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop", json={"generation": run["generation"]})
+                if run.get("lifecycle") in _ENDED:
+                    # Its process has already ended: there is nothing to stop, and that is not an error.
+                    ended.append(run_id)
+                    finished[run_id] = run["lifecycle"]
+                    continue
+                result = manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop", json={"generation": run["generation"]})
                 stopped.append(run_id)
+                lifecycle = result.get("lifecycle") if isinstance(result, dict) else None
+                finished[run_id] = lifecycle if lifecycle in _ENDED else "exited"
             except Exception:
                 errors.append({"run_id": run_id, "code": "client_stop_unavailable"})
     running = manager.exists()
@@ -907,8 +949,10 @@ def stop_workspace(settings, stop_clients=False):
             os.kill(info["pid"], signal.SIGTERM)
         except ProcessLookupError:
             pass
+    if finished:
+        _forget_finished(manager, finished)
     manager.close()
-    return {"stopped": running, "clients_stopped": stopped, "errors": errors}
+    return {"stopped": running, "clients_stopped": stopped, "clients_already_ended": ended, "errors": errors}
 
 
 def show_auth(settings, client, workspace_id="default"):

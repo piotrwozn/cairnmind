@@ -32,23 +32,23 @@ _NAME = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _SESSION = re.compile(r"^[A-Za-z0-9_-]{1,160}$")
 _MAX_TEXT = 2 * 1024 * 1024
 _MESSAGES = {
-    "copilot_sdk_missing": "Zainstaluj zależności Cairnmind z obsługą Copilota.",
-    "copilot_sdk_unsupported": "Wymagana jest przypięta wersja SDK Copilota.",
-    "copilot_runtime_missing": "Przygotuj runtime Copilota w ustawieniach Cairnmind.",
-    "copilot_runtime_invalid": "Runtime Copilota zmienił się; przygotuj go ponownie.",
-    "copilot_prepare_failed": "Nie udało się przygotować zweryfikowanego runtime Copilota.",
-    "copilot_auth_required": "Zaloguj się do GitHub Copilot.",
-    "copilot_auth_rejected": "GitHub odrzucił poświadczenia Copilota.",
-    "copilot_policy_restricted": "Zasady konta lub organizacji ograniczają dostęp do Copilota.",
-    "copilot_quota_exhausted": "Wyczerpano dostępny limit Copilota.",
-    "copilot_rate_limited": "Copilot ograniczył częstotliwość żądań.",
-    "copilot_network_unavailable": "Nie można połączyć się z usługą Copilota.",
-    "copilot_failed": "Żądanie Copilota zakończyło się błędem; wynik może być niepewny.",
-    "copilot_tool_limit": "Osiągnięto limit narzędzi tej tury. Kontynuuj jawnie.",
-    "copilot_turn_timeout": "Osiągnięto limit czasu tury Copilota.",
-    "copilot_output_limit": "Osiągnięto limit rozmiaru odpowiedzi Copilota.",
-    "copilot_tools_unsupported": "Model Copilota nie potwierdził obsługi narzędzi.",
-    "copilot_session_busy": "Poprzednia tura Copilota nadal trwa.",
+    "copilot_sdk_missing": "Install Cairnmind's dependencies with Copilot support.",
+    "copilot_sdk_unsupported": "The pinned Copilot SDK version is required.",
+    "copilot_runtime_missing": "Prepare the Copilot runtime in Cairnmind's settings.",
+    "copilot_runtime_invalid": "The Copilot runtime changed; prepare it again.",
+    "copilot_prepare_failed": "Could not prepare a verified Copilot runtime.",
+    "copilot_auth_required": "Sign in to GitHub Copilot.",
+    "copilot_auth_rejected": "GitHub rejected the Copilot credentials.",
+    "copilot_policy_restricted": "Account or organization policy restricts access to Copilot.",
+    "copilot_quota_exhausted": "The available Copilot quota is used up.",
+    "copilot_rate_limited": "Copilot limited the request rate.",
+    "copilot_network_unavailable": "Cannot connect to the Copilot service.",
+    "copilot_failed": "The Copilot request failed; the result may be uncertain.",
+    "copilot_tool_limit": "This turn's tool limit was reached. Continue explicitly.",
+    "copilot_turn_timeout": "The Copilot turn time limit was reached.",
+    "copilot_output_limit": "The Copilot response size limit was reached.",
+    "copilot_tools_unsupported": "The Copilot model did not confirm tool support.",
+    "copilot_session_busy": "The previous Copilot turn is still running.",
 }
 
 
@@ -713,10 +713,12 @@ class CopilotAdapter:
 
 async def _login(settings):
     """Device codes exist only in this operational terminal, never in memory."""
+    from .terminal_i18n import language_for, tr
     from .terminal_safe import plain
     from copilot.generated.rpc import (AuthLoginAdvanceRequest, AuthLoginBeginRequest, AuthLoginCancelRequest,
                                        AuthLoginMethod, LoginProviderKind)
     adapter = CopilotAdapter({"client": "copilot"}, settings=settings)
+    language = language_for(settings)
     flow_id = None
     try:
         await adapter._ensure_client()
@@ -730,25 +732,26 @@ async def _login(settings):
         for _ in range(20):
             kind = _kind(step.kind)
             if kind == "device-code":
-                print("Otwórz:", plain(step.verification_uri or "https://github.com/login/device"), flush=True)
-                print("Kod:", plain(step.user_code or ""), flush=True)
+                print(tr("Open:", language), plain(step.verification_uri or "https://github.com/login/device"), flush=True)
+                print(tr("Code:", language), plain(step.user_code or ""), flush=True)
             elif kind == "open-url":
-                print("Otwórz:", plain(step.url or ""), flush=True)
+                print(tr("Open:", language), plain(step.url or ""), flush=True)
             elif kind == "input-required":
                 # No arbitrary provider text or secret is persisted.
-                value = await asyncio.to_thread(input, plain(step.prompt or "Wartość: ") + " ")
+                value = await asyncio.to_thread(input, plain(step.prompt or tr("Value:", language)) + " ")
                 step = await api.advance(AuthLoginAdvanceRequest(flow_id=flow_id, input=value), timeout=300)
                 continue
             elif kind == "completed":
                 disposition = _kind(_get(step.result, "status", "completed"))
                 if disposition == "completed":
-                    print("Logowanie Copilot zakończone.", flush=True)
+                    print(tr("Copilot login completed.", language), flush=True)
                     flow_id = None
                     return
                 # The runtime may request plaintext storage/account selection.
                 # Keep that explicit rather than accepting any storage silently.
                 if disposition == "needs-plaintext-consent":
-                    value = await asyncio.to_thread(input, "Zapisać poświadczenia lokalnie bez szyfrowania? [tak/N]: ")
+                    question = tr("Store the credentials locally without encryption? [y/N]:", language)
+                    value = await asyncio.to_thread(input, question + " ")
                     # The pinned runtime's login protocol accepts "allow";
                     # a human-facing "yes" is interpreted as declined.
                     value = "allow" if value.strip().casefold() in {"tak", "yes", "y"} else "deny"
@@ -774,17 +777,21 @@ def main():
     operation.add_argument("--login", action="store_true")
     args = parser.parse_args()
     from .config import Settings
+    from .terminal_i18n import language_for, tr
     settings = Settings.load(args.data_dir)
+    language = language_for(settings)
     try:
         if args.prepare_worker:
             _prepare_worker(settings)
         else:
             asyncio.run(_login(settings))
     except (CopilotError, KeyboardInterrupt) as error:
-        print(str(error) if isinstance(error, CopilotError) else "Anulowano logowanie.", file=sys.stderr)
+        # The code stays as it is (for a report); the sentence is in the language of the prompts above it.
+        print(f"{error.code}: {tr(_MESSAGES[error.code], language)}" if isinstance(error, CopilotError)
+              else tr("Login cancelled.", language), file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:
-        print(_MESSAGES["copilot_failed"], file=sys.stderr)
+        print(tr(_MESSAGES["copilot_failed"], language), file=sys.stderr)
         raise SystemExit(1) from None
 
 

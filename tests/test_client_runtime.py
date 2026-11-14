@@ -269,6 +269,37 @@ def test_private_server_loss_marks_interrupted_and_requires_explicit_supported_r
     assert fresh['id'] != row['id'] and fresh['generation'] == row['generation']+1
 
 
+def test_session_gone_from_a_shared_server_is_ended_not_a_foreign_identity(native):
+    # tmux answers display-message for a missing target with exit 0 and empty fields (#154): while the
+    # server keeps other runs, a run whose session is gone is ended, and stopping it is not an error.
+    runtime, project, _ = native
+    first, second = runtime.start_project(project)['runs']
+    runtime._tmux('kill-session', '-t', first['tmux_session'])
+    assert runtime.get_run(first['id'])['lifecycle'] == 'interrupted'
+    # An ended run keeps its own end: stopping it never makes it read as stopped by a person.
+    stopped = runtime.stop(first['id'], first['generation'])
+    assert stopped['lifecycle'] == 'interrupted' and not stopped.get('stopped')
+    assert runtime.get_run(first['id'])['lifecycle'] == 'interrupted'
+    assert runtime.get_run(second['id'])['lifecycle'] == 'running'
+
+
+def test_session_answered_with_empty_fields_is_ended_too(native, monkeypatch):
+    # display-message answers for a missing session with exit 0 and empty fields while the server holds
+    # other runs: ended, not 'Native terminal identity does not match its registry'.
+    runtime, project, _ = native
+    first, second = runtime.start_project(project)['runs']
+    real = runtime._tmux
+
+    def racing(*args, check=True):
+        if args[:1] == ('display-message',) and first['tmux_session'] in args:
+            return subprocess.CompletedProcess(args, 0, '\t' * 6 + '\n', '')
+        return real(*args, check=check)
+
+    monkeypatch.setattr(runtime, '_tmux', racing)
+    assert runtime.get_run(first['id'])['lifecycle'] == 'interrupted'
+    assert runtime.get_run(second['id'])['lifecycle'] == 'running'
+
+
 def test_native_stop_refuses_changed_process_identity(native):
     runtime, project, _ = native
     row = runtime.start(project,'codex')

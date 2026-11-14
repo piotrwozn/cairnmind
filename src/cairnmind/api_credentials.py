@@ -35,14 +35,14 @@ class CredentialStore:
     @staticmethod
     def _id(value):
         if not isinstance(value, str) or not PROFILE_ID.fullmatch(value):
-            raise ValueError("Niepoprawny identyfikator poświadczeń.")
+            raise ValueError("Invalid credential identifier.")
         return value
 
     @staticmethod
     def _key(value):
         if (not isinstance(value, str) or not value or len(value) > 16384
                 or any(ord(c) < 33 or ord(c) > 126 for c in value)):
-            raise ValueError("Niepoprawny klucz API.")
+            raise ValueError("Invalid API key.")
         return value
 
     def _directory(self, create=False):
@@ -53,7 +53,7 @@ class CredentialStore:
         info = self.root.lstat()
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
                 or stat.S_IMODE(info.st_mode) != 0o700):
-            raise ValueError("Magazyn poświadczeń musi być prywatnym katalogiem użytkownika.")
+            raise ValueError("The credential store must be a private folder of the user.")
         return True
 
     @contextmanager
@@ -63,7 +63,7 @@ class CredentialStore:
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
-                raise ValueError("Blokada poświadczeń musi być prywatna.")
+                raise ValueError("The credential lock must be private.")
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
         finally:
@@ -77,18 +77,18 @@ class CredentialStore:
         except FileNotFoundError:
             return {}
         except OSError:
-            raise ValueError("Nie można bezpiecznie odczytać magazynu poświadczeń.") from None
+            raise ValueError("The credential store cannot be read safely.") from None
         with os.fdopen(fd) as handle:
             info = os.fstat(handle.fileno())
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                     or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 1024 * 1024):
-                raise ValueError("Plik poświadczeń musi być prywatnym plikiem użytkownika.")
+                raise ValueError("The credential file must be a private file of the user.")
             try:
                 value = json.load(handle)
             except (ValueError, UnicodeError):
-                raise ValueError("Niepoprawny magazyn poświadczeń.") from None
+                raise ValueError("Invalid credential store.") from None
         if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("keys"), dict):
-            raise ValueError("Nieobsługiwany magazyn poświadczeń.")
+            raise ValueError("Unsupported credential store.")
         for name, key in value["keys"].items():
             self._id(name)
             self._key(key)
@@ -97,7 +97,7 @@ class CredentialStore:
     def _write(self, keys):
         raw = json.dumps({"version": 1, "keys": keys}, sort_keys=True, separators=(",", ":"))
         if len(raw.encode("utf-8")) > 1024 * 1024:
-            raise ValueError("Magazyn poświadczeń przekroczył limit rozmiaru.")
+            raise ValueError("The credential store exceeds its size limit.")
         fd, temporary = tempfile.mkstemp(prefix=".api-keys-", dir=self.root)
         try:
             with os.fdopen(fd, "w") as handle:
@@ -117,7 +117,7 @@ class CredentialStore:
     def set(self, profile_id, key, persist=False):
         profile_id, key = self._id(profile_id), self._key(key)
         if type(persist) is not bool:
-            raise ValueError("Wybierz sposób przechowywania klucza.")
+            raise ValueError("Choose how the key is stored.")
         with self._mutex:
             if persist:
                 with self._lock():
@@ -152,18 +152,18 @@ class CredentialStore:
     @staticmethod
     def _reference(profile):
         if not isinstance(profile, dict):
-            raise ValueError("Niepoprawny profil poświadczeń.")
+            raise ValueError("Invalid credential profile.")
         reference = profile.get("credential_ref")
         if reference is None:
             return None, None
         if not isinstance(reference, str):
-            raise ValueError("Niepoprawne odwołanie do poświadczeń.")
+            raise ValueError("Invalid credential reference.")
         kind, _, name = reference.partition(":")
         if kind == "env" and ENV_NAME.fullmatch(name):
             return kind, name
         if kind == "profile" and PROFILE_ID.fullmatch(name):
             return kind, name
-        raise ValueError("Niepoprawne odwołanie do poświadczeń.")
+        raise ValueError("Invalid credential reference.")
 
     def resolve(self, profile):
         kind, name = self._reference(profile)

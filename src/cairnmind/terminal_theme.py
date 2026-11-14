@@ -31,7 +31,8 @@ What was checked on Textual 8.2.8 (so nobody repeats it):
 - The `*` rule that makes every scrollbar one cell also gave the Footer one: with more keys than
   fit, its one row showed a scrollbar instead of the keys. The Footer rule switches it off again.
 - A DataTable column with a fixed width crops a longer cell without a mark and keeps the cell's
-  text; `column_widths()` sets the widths, and a view recomputes them on every resize.
+  text; `column_widths()` sets the widths, and a view recomputes them on every resize. A cell made
+  with `cropped()` (no wrap, overflow "ellipsis") ends with "…" where it is cut.
 - A `round` or `heavy` border paints its whole cell in the widget's background, so a dialog had a
   half-cell band of panel colour outside its line. `tall` (thin) and `outer` (thick, for consent)
   draw on the outer edge of the cell and leave nothing outside it.
@@ -160,7 +161,7 @@ ModalScreen { align: center middle; background: $cm-bg 70%; }
 .cm-stack Button:focus, .-narrow .actions Button:focus, .-narrow .form-actions Button:focus {
     background: $cm-raised; color: $cm-strong; text-style: bold; border-left: thick $cm-accent; }
 .cm-stack Button.-primary:focus, .-narrow .actions Button.-primary:focus, .-narrow .form-actions Button.-primary:focus {
-    background: $cm-select; color: $cm-strong; text-style: bold; border-left: thick $cm-accent; }
+    background: $cm-accent; color: $cm-bg; text-style: bold; border-left: thick $cm-accent; }
 .cm-stack Button:disabled, .-narrow .actions Button:disabled, .-narrow .form-actions Button:disabled {
     background: transparent; color: $cm-dim; text-style: none; border-left: thick $cm-raised; }
 .cm-dialog DataTable { background: $cm-panel; border-left: vkey $cm-panel; }
@@ -269,7 +270,8 @@ def fill_column(table, key: str, longest: int) -> None:
 
 
 def column_widths(table, widths) -> None:
-    """Fix the width of each column, in order. The table crops a longer cell; the cell keeps its text."""
+    """Fix the width of each column, in order. The table crops a longer cell without a mark unless the
+    cell is a `cropped()` text, which ends with "…"; the cell keeps its text."""
     changed = False
     for column, width in zip(table.ordered_columns, widths):
         if (column.width, column.auto_width) != (width, False):
@@ -278,6 +280,19 @@ def column_widths(table, widths) -> None:
     if changed:
         table._require_update_dimensions = True
         table.refresh(layout=True)
+
+
+def column_labels(table, labels) -> None:
+    """Rename the columns, in order, keeping their rows and widths (a language change).
+
+    Textual 8 keys its rendered lines by an update count that a new label does not change, so the
+    rendered lines are dropped here and the heading is drawn again with the new labels.
+    """
+    for column, label in zip(table.ordered_columns, labels):
+        column.label = Text(str(label))
+    table._clear_caches()
+    table._require_update_dimensions = True
+    table.refresh(layout=True)
 
 
 _ROLES = {
@@ -306,6 +321,13 @@ def styled(value, role: str) -> Text:
     """One escaped string in one style: no spans, so `str()` and `.plain` are the full string."""
     text = plain(value)
     text.style = style(role)
+    return text
+
+
+def cropped(value, role: str) -> Text:
+    """As `styled`, for a cell of a fixed-width column: one row, and a cut shows as "…"."""
+    text = styled(value, role)
+    text.no_wrap, text.overflow = True, "ellipsis"
     return text
 
 

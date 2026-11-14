@@ -262,7 +262,7 @@ async def test_unreadable_or_failed_support_check_counts_as_no(workspace, suppor
     result, model = await _judged(workspace, support)
     assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
     assert "Five attempts." not in result["answer"]
-    assert any("Nie udało się sprawdzić" in gap for gap in result["unknowns"])
+    assert any("Could not check whether the quotes" in gap for gap in result["unknowns"])
     assert result["diagnostics"]["support_check"] == "failed" and len(model.support_calls) == 1
 
 
@@ -280,7 +280,7 @@ async def test_support_check_timeout_is_never_complete(workspace):
     model = SlowJudge([final(source["id"], SUPPORTED_QUOTE, "Five attempts.")])
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], "What is the retry budget?")
     assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
-    assert any("Kontrola poparcia" in gap for gap in result["unknowns"])
+    assert any("support check of the answer" in gap for gap in result["unknowns"])
     assert "Five attempts." not in result["answer"]
 
 
@@ -300,8 +300,8 @@ async def test_support_check_timeout_after_a_repair_keeps_the_repair_outcome(wor
     assert len(model.calls) == 2  # the answer and its repair; the support check never answered
     assert result["status"] == "partial" and result["diagnostics"]["code"] == "support_unverified"
     assert result["diagnostics"]["repair_outcome"] == "succeeded"
-    assert any("Kontrola poparcia" in gap for gap in result["unknowns"])
-    assert not any("poprawy" in gap for gap in result["unknowns"])  # not reported as a failed repair
+    assert any("support check of the answer" in gap for gap in result["unknowns"])
+    assert not any("orrect" in gap for gap in result["unknowns"])  # not reported as a failed repair
     assert "Five attempts." not in result["answer"]
 
 
@@ -575,7 +575,7 @@ async def test_final_repair_never_accepts_code_changed_during_generation(workspa
     assert result["status"] == "partial"
     assert "original policy is still current" not in result["answer"]
     assert len(model.calls) == (2 if during_repair else 1)
-    assert any("Cytowany fragment" in message for message in result["unknowns"])
+    assert any("quoted passage does not occur" in message for message in result["unknowns"])
 
 
 async def test_current_read_clears_earlier_historical_intent_before_final_freshness_check(workspace):
@@ -597,7 +597,7 @@ async def test_current_read_clears_earlier_historical_intent_before_final_freshn
     assert result["status"] == "partial"
     assert len(model.calls) == 3  # A freshness race is not a format-repair opportunity.
     assert "original policy is still current" not in result["answer"]
-    assert any("Cytowany fragment" in message for message in result["unknowns"])
+    assert any("quoted passage does not occur" in message for message in result["unknowns"])
 
 
 async def test_final_repair_obeys_total_step_budget(workspace):
@@ -608,7 +608,7 @@ async def test_final_repair_obeys_total_step_budget(workspace):
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], "Budgeted source evidence")
     assert result["status"] == "partial"
     assert len(model.calls) == 1
-    assert any("kroków" in gap for gap in result["unknowns"])
+    assert any("No steps were left" in gap for gap in result["unknowns"])
 
 
 async def test_final_repair_compacts_previous_state_within_total_context_budget(workspace, monkeypatch):
@@ -640,7 +640,7 @@ async def test_final_repair_refuses_contract_that_cannot_fit_total_context_budge
     assert result["status"] == "partial"
     assert len(model.calls) == 1
     assert result["diagnostics"]["repair_outcome"] == "budget_exhausted"
-    assert any("budżetu kontekstu" in gap for gap in result["unknowns"])
+    assert any("context budget" in gap for gap in result["unknowns"])
 
 
 async def test_final_repair_outage_preserves_original_partial_result(workspace):
@@ -650,8 +650,8 @@ async def test_final_repair_outage_preserves_original_partial_result(workspace):
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], "Available source evidence")
     assert result["status"] == "partial"
     assert len(model.calls) == 2
-    assert any("Niepoprawny format" in gap for gap in result["unknowns"])
-    assert any("podczas poprawy" in gap for gap in result["unknowns"])
+    assert any("invalid format" in gap for gap in result["unknowns"])
+    assert any("unavailable while correcting" in gap for gap in result["unknowns"])
 
 
 async def test_final_repair_timeout_preserves_original_partial_with_total_deadline(workspace):
@@ -671,8 +671,8 @@ async def test_final_repair_timeout_preserves_original_partial_with_total_deadli
     assert result["status"] == "partial"
     assert len(model.calls) == 2
     assert result["elapsed_seconds"] < 3
-    assert any("Niepoprawny format" in gap for gap in result["unknowns"])
-    assert any("limicie czasu" in gap for gap in result["unknowns"])
+    assert any("invalid format" in gap for gap in result["unknowns"])
+    assert any("time limit" in gap for gap in result["unknowns"])
 
 
 async def test_valid_final_still_uses_one_model_call(workspace):
@@ -730,7 +730,7 @@ async def test_typed_nested_unknown_repairs_contract_and_citations_together(work
     assert model.calls[1]["kwargs"]["format"]["properties"]["answer"] == prepare_answer_schema(contract)
     feedback = json.loads(model.calls[1]["messages"][-1]["content"])["validation_errors"]
     assert any("expected type string" in error for error in feedback)
-    assert any("Cytowany fragment" in error for error in feedback) == bad_quote
+    assert any("quoted passage does not occur" in error for error in feedback) == bad_quote
 
 
 async def test_typed_repeated_bad_shape_never_escapes_as_candidate_answer(workspace):
@@ -798,7 +798,7 @@ async def test_typed_contract_repair_keeps_current_source_freshness_guard(worksp
         project["id"], "Read current revision", answer_schema=answer_contract({"revision": {"type": "string"}}))
     assert result["status"] == "partial" and result["answer"] != '{"revision":"original"}'
     assert len(model.calls) == 2
-    assert any("Cytowany fragment" in error for error in result["unknowns"])
+    assert any("quoted passage does not occur" in error for error in result["unknowns"])
 
 
 async def test_typed_contract_error_keeps_total_step_budget(workspace):
@@ -826,7 +826,7 @@ async def test_typed_answer_json_is_never_silently_truncated(workspace, oversize
         project["id"], "Read bounded value", answer_schema=answer_contract({"value": {"type": "string"}}))
     if oversized:
         assert result["status"] == "partial" and result["answer"] != quote[:100]
-        assert any("budżet" in error for error in result["unknowns"])
+        assert any("budget" in error for error in result["unknowns"])
     else:
         assert result["status"] == "complete" and json.loads(result["answer"]) == value
         assert len(model.calls) == 1

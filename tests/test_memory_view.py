@@ -382,3 +382,55 @@ def test_grep_matches_a_criterion_as_it_is_printed(snapshot):
     payload["records"][2]["metadata"].update(acceptance_criteria=["Retries stop\nafter  five tries."])
     text = render_snapshot(manifest, payload, grep="stop after five")
     assert "    - Retries stop after five tries. (no check)" in text and "  id: t1" in text
+
+
+EXTERNAL = {"origin_client": "external", "origin_session_id": "x1", "origin_history": "unarchived",
+            "origin_evidence": "degraded"}
+EXTERNAL_LINE = "  origin: written by an external client's session (history unarchived, evidence degraded); never verified"
+
+
+def test_what_an_external_session_wrote_is_marked_never_verified(snapshot):
+    manifest, payload = snapshot
+    payload["sources"].append({"id": "s3", "uri": "checkpoint://c1", "kind": "checkpoint",
+                               "content": "Reported by an editor", "metadata": {"origin": "client", **EXTERNAL}})
+    payload["records"] += [_record("x1", "fact", "The external client formats on save.", sources=("s3",), **EXTERNAL),
+                           _record("p1", "fact", "A person's note on the editor's report.", sources=("s3",)),
+                           _record("m1", "fact", "Restates a tool result.", sources=("s1",),
+                                   **{**EXTERNAL, "origin_client": "mcp:weather"})]
+    payload["plans"][0].update(EXTERNAL)
+    manifest["counts"]["records"] = 7
+    text = render_snapshot(manifest, payload, grep="external client", sources_text=True)
+    block = text[text.index("  id: x1"):]
+    assert EXTERNAL_LINE in block
+    assert "  sources: checkpoint://c1 (external client's session, never verified)" in block
+    assert "  source checkpoint://c1 (external client's session, never verified):" in block
+    whole = render_snapshot(manifest, payload)
+    assert whole[whole.index("  id: p1"):].splitlines()[2] == (
+        "  origin: rests only on sources from an external client's session or a third-party tool result; "
+        "never verified")
+    assert ("  origin: written after a result of the third-party tool server weather; never verified"
+            in whole[whole.index("  id: m1"):])
+    assert whole[whole.index("[plan] Harden login"):].splitlines()[2] == EXTERNAL_LINE
+    # Records written natively carry no origin line.
+    assert whole.count("  origin: ") == 4
+
+
+def test_a_plan_step_marks_a_task_an_external_session_or_a_tool_result_moved(snapshot):
+    # #158 review: with --kind plan the step line is the only place the task's state appears.
+    manifest, payload = snapshot
+    # A step whose task was written natively has no mark.
+    native = render_snapshot(manifest, payload, kind="plan").splitlines()
+    assert "  1. [in_progress] Add the retry limit (t1)" in native and "  2. [todo] Document the retry limit. (t2)" in native
+    payload["sources"].append({"id": "s3", "uri": "checkpoint://c1", "kind": "checkpoint",
+                               "content": "Reported by an editor", "metadata": {"origin": "client", **EXTERNAL}})
+    payload["records"][2]["metadata"].update(EXTERNAL, state="done")
+    payload["records"][3].update(source_ids=["s3"])
+    payload["records"].append(_record("t3", "task", "Ship it.", state="done", **{**EXTERNAL, "origin_client": "mcp:ci"}))
+    payload["plans"][0]["step_ids"].append("t3")
+    text = render_snapshot(manifest, payload, kind="plan")
+    assert ("  1. [done] Add the retry limit (t1) (written by an external client's session; never verified)"
+            in text.splitlines())
+    assert ("  2. [todo] Document the retry limit. (t2) (rests only on sources from an external client's session "
+            "or a third-party tool result; never verified)") in text.splitlines()
+    assert ("  3. [done] Ship it. (t3) (written after a result of the third-party tool server ci; never verified)"
+            in text.splitlines())

@@ -168,11 +168,17 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
     raise typer.BadParameter(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
 
+def refuse(message: str, code: int = 2):
+    """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
+    typer.echo(f"Error: {message}", err=True)
+    raise typer.Exit(code)
+
+
 def request(settings: Settings, method: str, path: str, *, start_service: bool = True, **kwargs):
     if start_service:
         ensure_service(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
-        raise typer.BadParameter("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
+        refuse("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
@@ -202,16 +208,17 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             response = client.request(method, settings.url + path, **kwargs)
         except httpx.HTTPError:
             if not start_service:
-                raise typer.BadParameter(
-                    "The existing Cairnmind service is unavailable; diagnostics do not start it. "
-                    "Run `cairnmind serve` explicitly.") from None
+                refuse("The existing Cairnmind service is unavailable; diagnostics do not start it. "
+                       "Run `cairnmind serve` explicitly.")
             raise
         if not response.is_success:
             try:
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
-            raise typer.BadParameter(str(detail))
+            # The service's answer, not a wrong argument; shown as it is, without control characters.
+            from cairnmind.terminal_safe import safe_text
+            refuse(safe_text(str(detail)))
         return response.json()
 
 
@@ -547,7 +554,8 @@ def usage(ctx: typer.Context, project: str,
           by: Annotated[UsageBy, typer.Option("--by", help="Group by UTC day or by ISO week.")] = UsageBy.day,
           warn_over: Annotated[int | None, typer.Option(
               "--warn-over", min=1, help="Warn when input plus output tokens of the period exceed this; blocks "
-              "nothing. Default: warn_over_tokens under [usage] in .cairnmind/checks.toml.")] = None,
+              # Help is rendered through Rich: an unescaped [usage] would be read as a style tag and dropped.
+              "nothing. Default: warn_over_tokens under \\[usage] in .cairnmind/checks.toml.")] = None,
           as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
     """Sum the token usage of the built-in API agent per day or week, profile and model. Asks no model."""
     from cairnmind.codex_usage import stored_records, waiting_in_inbox
@@ -895,6 +903,17 @@ def check_run(ctx: typer.Context, project: str, profile: str,
         raise typer.Exit(1)
 
 
+def _project_handle(store, project: dict) -> str:
+    """How a printed command names the project: its name when that names exactly this project, else its id."""
+    name = project.get("name")
+    if not isinstance(name, str) or not name or name.startswith("-") or name != name.strip():
+        return project["id"]
+    try:
+        return name if store.resolve_project(name)["id"] == project["id"] else project["id"]
+    except ValueError:
+        return project["id"]
+
+
 @stage_app.command("next")
 @initialized
 def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None,
@@ -915,7 +934,7 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
                              readiness=cli_stage_readiness(ctx.obj))
     active = decision["plan"] if plan_id is None else plans.next_task(selected["id"], None, scope)["plan"]
     decision["command"], decision["command_reason"] = next_command(
-        decision, selected["id"], scope or str(Path(selected["root"]).resolve()),
+        decision, _project_handle(store, selected), scope or str(Path(selected["root"]).resolve()),
         slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
     if as_json:
         output(decision)
@@ -1029,12 +1048,27 @@ def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = Non
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
 
 
+SNAPSHOT_WAIT_SECONDS = 1800
+
+
 @memory_app.command("snapshot")
 @initialized
 def memory_snapshot(ctx: typer.Context, project: str, worktree: Path | None = None, preview: bool = False):
     """Save the project's full memory; --preview shows the scope without writing a snapshot."""
     payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
-    output(request(ctx.obj, "POST", "/memory/preview" if preview else "/memory/snapshot", json=payload))
+    if preview:
+        output(request(ctx.obj, "POST", "/memory/preview", json=payload))
+        return
+    try:
+        # A large project writes tens of thousands of objects: far longer than an ordinary request (#158).
+        result = request(ctx.obj, "POST", "/memory/snapshot", json=payload,
+                         timeout=httpx.Timeout(60, read=SNAPSHOT_WAIT_SECONDS))
+    except httpx.TimeoutException:
+        raise typer.BadParameter(
+            f"No answer within {SNAPSHOT_WAIT_SECONDS // 60} minutes. The snapshot is still being written by "
+            f"the service; leaving did not stop it. It is done when `cairnmind memory status {project}` shows "
+            "the new snapshot; until then another snapshot waits for this one.") from None
+    output(result)
 
 
 @memory_app.command("inspect")
