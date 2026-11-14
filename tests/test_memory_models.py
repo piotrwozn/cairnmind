@@ -405,6 +405,7 @@ def test_models_set_changes_only_its_role_and_never_saves_environment_overrides(
     mock_async_client(monkeypatch, lmstudio_server)
     data = tmp_path / "data"
     stored = Settings.load(data, create=True)
+    before = json.loads((data / "config.json").read_text())  # what is stored; values from the environment are not (#72)
     monkeypatch.setenv("CAIRNMIND_ARCADE_URL", "http://127.0.0.1:9999")
     monkeypatch.setenv("CAIRNMIND_ARCADE_PASSWORD", "from-the-shell")
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "set", "--role", "embedding",
@@ -412,7 +413,9 @@ def test_models_set_changes_only_its_role_and_never_saves_environment_overrides(
                                           "--model", "text-embed"])
     assert result.exit_code == 0, result.output
     saved = json.loads((data / "config.json").read_text())
-    assert saved["arcade_url"] == stored.arcade_url and saved["arcade_password"] == stored.arcade_password
+    assert saved.get("arcade_url") == before.get("arcade_url")
+    assert saved.get("arcade_password") == before.get("arcade_password")
+    assert "9999" not in json.dumps(saved) and "from-the-shell" not in json.dumps(saved)
     assert saved["embedding_model"] == "text-embed" and saved["memory_embedding"] == LMSTUDIO
     assert saved["token"] == stored.token and saved.get("memory_chat") is None
 
