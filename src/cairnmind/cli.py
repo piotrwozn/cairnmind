@@ -903,6 +903,17 @@ def check_run(ctx: typer.Context, project: str, profile: str,
         raise typer.Exit(1)
 
 
+def _project_handle(store, project: dict) -> str:
+    """How a printed command names the project: its name when that names exactly this project, else its id."""
+    name = project.get("name")
+    if not isinstance(name, str) or not name or name.startswith("-") or name != name.strip():
+        return project["id"]
+    try:
+        return name if store.resolve_project(name)["id"] == project["id"] else project["id"]
+    except ValueError:
+        return project["id"]
+
+
 @stage_app.command("next")
 @initialized
 def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None,
@@ -923,7 +934,7 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
                              readiness=cli_stage_readiness(ctx.obj))
     active = decision["plan"] if plan_id is None else plans.next_task(selected["id"], None, scope)["plan"]
     decision["command"], decision["command_reason"] = next_command(
-        decision, selected["id"], scope or str(Path(selected["root"]).resolve()),
+        decision, _project_handle(store, selected), scope or str(Path(selected["root"]).resolve()),
         slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
     if as_json:
         output(decision)

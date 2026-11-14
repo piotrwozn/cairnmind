@@ -54,14 +54,16 @@ def test_cli_stage_next_prints_the_existing_command_and_changes_nothing(planned)
     assert "Stage: implement" in shown.output and "Assistant: Codex (codex)" in shown.output
     assert "Two \\x1b[31msteps" in shown.output and "\x1b" not in shown.output
     root = str(store.resolve_project("demo")["root"])
-    assert f"Next: cairnmind run {project['id']} codex --worktree {root}" in shown.output
+    # The project by the name the person knows, not its id (#154).
+    assert f"Next: cairnmind run demo codex --worktree {root}" in shown.output
+    assert project["id"] not in shown.output
     assert plans.get(project["id"], saved["plan"]["id"]) == before
 
     moved = move(store, plans, project, saved, "needs_test")
     decision = json.loads(runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo",
                                                   "--json"]).output)
     assert (decision["stage"], decision["action"], decision["check_profile"]) == ("test", "run_check", "unit")
-    assert decision["command"] == ["cairnmind", "check", "run", project["id"], "unit", "--task", moved["id"],
+    assert decision["command"] == ["cairnmind", "check", "run", "demo", "unit", "--task", moved["id"],
                                    "--worktree", root]
     assert decision["task"]["version"] == moved["version"]
     assert store.query("SELECT FROM check_runs WHERE project_id=:p", {"p": project["id"]}) == []
