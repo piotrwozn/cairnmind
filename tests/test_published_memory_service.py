@@ -62,7 +62,8 @@ def test_publish_check_import_and_status_through_the_service_and_the_command_lin
     checked = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "unused"), "memory", "check-published", str(folder)])
     assert checked.exit_code == 0 and f"valid: 1 records and 0 plans of {project['id']}" in checked.output
     shown = runner.invoke(cli.app, ["--data-dir", str(tmp_path / "unused"), "memory", "show-published", str(folder)])
-    assert shown.exit_code == 0 and "Use cookies." in shown.output and "not verified here" in shown.output
+    assert shown.exit_code == 0 and "Use cookies." in shown.output
+    assert "  published: reviewed by Ada Nowak on main at " in shown.output and "not verified here" in shown.output
     assert not (tmp_path / "unused").exists()
     broken = folder / f"decision/{record['id']}.md"
     broken.write_text(broken.read_text().replace("    Use cookies.", "<<<<<<< ours\n    Use cookies.", 1))

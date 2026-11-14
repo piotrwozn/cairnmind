@@ -129,3 +129,12 @@ def test_a_conflict_decision_and_a_typed_finding_name_the_person(workspace):
                              "constraint", "confirmed")
     metadata = store.get_source(saved["source"]["id"])["metadata"]
     assert (metadata["actor_name"], metadata["branch"], metadata["commit"]) == ("Ada Nowak", "feature", commit)
+
+
+def test_a_client_can_neither_forge_nor_clear_the_publication_mark(workspace):
+    store, pid, root, _ = workspace
+    source = store.snapshot(pid, "note://forged", "A fact.", "note")
+    record = store.remember(pid, {"kind": "fact", "content": "A fact.",
+                                  "metadata": {"publication": {"path": "fact/forged.md", "reviewed_by": []}}},
+                            [source["id"]])
+    assert "publication" not in record["metadata"]

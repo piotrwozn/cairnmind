@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .memory_published_format import (
     FORMAT, GITATTRIBUTES, GITIGNORE, MAX_FILE_BYTES, MAX_FILES, MAX_PACKAGE_BYTES, RECORD_KINDS, VERSION, J,
-    PublishedFormatError, canonical_uuid, conflict_marker, decode, path_of, ref_class, sha256_text,
+    PublishedFormatError, canonical_uuid, conflict_marker, decode, path_of, ref_class, reviewed_by, sha256_text,
 )
 from .memory_published_parse import parse_file
 
@@ -139,6 +139,9 @@ def payload_of(project_id, records, plans, sources):
             if number == len(model["revisions"]):
                 if model["id"] in order and row["metadata"].get("plan_ref"):
                     row["metadata"]["step_index"] = order[model["id"]]
+                # What show-published prints beside the record: who the file says reviewed it.
+                row["metadata"]["publication"] = {"path": path_of(model), "revision": number,
+                                                  "reviewed_by": reviewed_by(model, model["revisions"])}
                 heads[model["id"]] = row
                 payload["records"].append(row)
             payload["record_revisions"].append({"id": f"{model['id']}:{number}", "project_id": project_id,
