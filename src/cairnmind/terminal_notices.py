@@ -40,35 +40,38 @@ class NoticeHistory:
         self._chars = 0
         self._seq = 0
         self._seen = 0        # highest seq the person has opened the history at
-        self._showing = False  # the line currently shows the newest entry
+        self._on_line = None   # seq of the entry the notice line shows, if any
 
-    def add(self, text: object, scope: dict | None, kind: str = "info") -> None:
+    def add(self, text: object, scope: dict | None, kind: str = "info", *, on_line: bool = True) -> None:
+        """Store one notice. `on_line` is False for a notice kept only here, never shown on the line
+        (the outcome of work for a project that is no longer shown); the line keeps what it shows."""
         kind = kind if kind in KINDS else "info"
         shown = safe_text(text, limit=MAX_ENTRY_CHARS)
         if not shown.strip():
-            self._showing = False  # the line was cleared: whatever it showed is now replaced
+            if on_line:
+                self._on_line = None  # the line was cleared: whatever it showed is now replaced
             return
         scope = scope if isinstance(scope, dict) else {}
         project = (scope.get("project_id"), scope.get("worktree"))
         last = self.entries[-1] if self.entries else None
-        if (last is not None and last.text == shown and (last.project_id, last.worktree) == project
+        if (on_line and last is not None and last.text == shown and (last.project_id, last.worktree) == project
                 and last.kind == kind):
             last.when, last.count = _now(), last.count + 1
-            self._showing = True
+            self._on_line = last.seq
             return
         self._seq += 1
         name = scope.get("project_name")
         self.entries.append(Notice(shown, _now(), project[0], safe_text(name, limit=200) if name else None,
                                    project[1], 1, self._seq, kind))
         self._chars += len(shown)
-        self._showing = True
+        if on_line:
+            self._on_line = self._seq
         while len(self.entries) > 1 and (len(self.entries) > self.max_entries or self._chars > self.max_chars):
             self._chars -= len(self.entries.popleft().text)
 
     def replaced_unseen(self) -> int:
-        """Notices added since the history was last opened that are no longer on the line."""
-        fresh = sum(1 for entry in self.entries if entry.seq > self._seen)
-        return max(0, fresh - 1) if self._showing else fresh
+        """Notices added since the history was last opened that are not on the line now."""
+        return sum(1 for entry in self.entries if entry.seq > self._seen and entry.seq != self._on_line)
 
     def mark_seen(self) -> None:
         self._seen = self._seq

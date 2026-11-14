@@ -457,13 +457,15 @@ CATALOG.update({
     "The task state is unchanged. Update it after you review the result.":
         "Stan zadania się nie zmienił. Zaktualizuj go po sprawdzeniu wyniku.",
     "A check is still running": "Test nadal trwa",
-    "The check keeps running; its result will appear here when it ends.":
-        "Test nadal trwa; jego wynik pojawi się tutaj, gdy się zakończy.",
+    "The check keeps running": "Test nadal trwa",
+    "Its result will appear in Notices when it ends.": "Jego wynik pojawi się w Komunikatach, gdy się zakończy.",
     "The check could not run": "Nie udało się uruchomić testu", "Check finished": "Test zakończony",
     "Project changed. Run next stage was not carried out; press it again for this project.":
         "Projekt się zmienił. Następny etap nie został uruchomiony; naciśnij ponownie dla tego projektu.",
-    "Project changed while the check ran. Its result was recorded for the earlier project and is not shown here.":
-        "Projekt zmienił się w trakcie testu. Wynik zapisano dla poprzedniego projektu i nie jest tu pokazany.",
+    "Project changed while the check ran. Its result belongs to the earlier project and is listed under that "
+    "project in Notices.":
+        "Projekt zmienił się w trakcie testu. Wynik należy do poprzedniego projektu i jest w Komunikatach "
+        "pod tym projektem.",
     "This assistant is already running here. No process was restarted and it received no new resume packet. "
     "For the next stage, end that session or map another assistant to the stage.":
         "Ten asystent już tu działa. Proces nie został uruchomiony ponownie i nie dostał nowego pakietu "
@@ -481,6 +483,10 @@ CATALOG.update({
         "Etap rozpoczęty. Asystent musi potwierdzić swój pakiet wznowienia.",
     "Running check": "Trwa test",
     "Map stages in More → Plan stages.": "Przypisz etapy w Więcej → Etapy planu.",
+    "Activate a plan for this folder with cairnmind plan activate, or save a new one with "
+    "cairnmind plan save --activate.":
+        "Aktywuj plan dla tego katalogu poleceniem cairnmind plan activate albo zapisz nowy poleceniem "
+        "cairnmind plan save --activate.",
     "Check profile for the test stage (empty: not set)": "Profil testu dla etapu test (puste: nieustawione)",
     "The profile is read from this folder's checks.toml when it runs.":
         "Profil jest odczytywany z checks.toml tego katalogu podczas uruchomienia.",

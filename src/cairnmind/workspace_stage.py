@@ -58,15 +58,27 @@ def check_summary(result: dict, translate) -> str:
 
 
 PROJECT_CHANGED = "Project changed. Run next stage was not carried out; press it again for this project."
-CHECK_MOVED = ("Project changed while the check ran. Its result was recorded for the earlier project "
-               "and is not shown here.")
+CHECK_MOVED = ("Project changed while the check ran. Its result belongs to the earlier project and is listed "
+               "under that project in Notices.")
 ALREADY_RUNNING = ("This assistant is already running here. No process was restarted and it received no new "
                    "resume packet. For the next stage, end that session or map another assistant to the stage.")
 
 
-CHECK_CONTINUES = "The check keeps running; its result will appear here when it ends."
+CHECK_KEEPS_RUNNING = "The check keeps running"
+CHECK_CONTINUES = "Its result will appear in Notices when it ends."
 AGENT_STARTED = ("Stage started. Nothing is sent to the model until you write to the assistant in its panel; "
                  "it must read and acknowledge its resume packet before it changes anything.")
+MAP_HINT = "Map stages in More → Plan stages."
+PLAN_HINT = ("Activate a plan for this folder with cairnmind plan activate, or save a new one with "
+             "cairnmind plan save --activate.")
+MAP_PROBLEMS = ("not_mapped", "unknown_assistant", "unavailable_assistant")
+
+
+def _hint(decision: dict) -> str | None:
+    """What the person can do next. Mapping helps only when a stage lacks a usable mapping."""
+    if decision.get("problem") == "no_task":
+        return PLAN_HINT if decision.get("reason") == "no_active_plan" else None
+    return MAP_HINT if decision.get("problem") in MAP_PROBLEMS else None
 
 
 async def _shown(app, scope) -> bool:
@@ -74,26 +86,39 @@ async def _shown(app, scope) -> bool:
     return (current.get("project_id"), current.get("worktree")) == scope
 
 
-def _late_result(app, scope, profile, subject=None):
-    """After the stage worker was cancelled: the outcome as a notice, never a dialog over other work."""
-    def done(future):
-        if future.cancelled():
-            return
+def _outcome(app, profile, result=None, error=None) -> str:
+    if error is not None:
+        return app.t("The check could not run") + ": " + profile + " · " + str(error)
+    verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
+    return (app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
+            + (" " + app.t("Outcome") + ": " + str(result["outcome"]) if result.get("outcome") else "")
+            + (" · " + str(result["error"]) if result.get("error") else ""))
+
+
+def _deliver(app, scope, subject, text, current=None) -> None:
+    """On the notice line when the project is still shown; otherwise only in Notices, under its project."""
+    if current is None:
         try:
             current = app.workspace.read()
         except (OSError, ValueError):
+            current = {}
+    if (current.get("project_id"), current.get("worktree")) == scope:
+        app.notice_for(subject, text)
+    else:
+        app.notice_elsewhere(subject, text)
+
+
+def _late_result(app, scope, profile, subject=None):
+    """After the stage worker was cancelled: the outcome as a notice, never a dialog over other work.
+
+    The check was recorded for the project it ran for. When another project is shown by then, the
+    outcome still reaches Notices, tagged with its own project, and leaves the notice line alone.
+    """
+    def done(future):
+        if future.cancelled():
             return
-        if (current.get("project_id"), current.get("worktree")) != scope:
-            return  # Recorded for that project; it is not this one's result.
         error = future.exception()
-        if error is not None:
-            app.notice_for(subject, app.t("The check could not run") + ": " + profile + " · " + str(error))
-            return
-        result = future.result()
-        verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
-        app.notice_for(subject, app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
-                   + (" " + app.t("Outcome") + ": " + str(result["outcome"]) if result.get("outcome") else "")
-                   + (" · " + str(result["error"]) if result.get("error") else ""))
+        _deliver(app, scope, subject, _outcome(app, profile, None if error else future.result(), error))
     return done
 
 
@@ -163,15 +188,19 @@ async def run_next_stage(app):
         try:
             result = await asyncio.shield(future)
         except asyncio.CancelledError:
-            # Another click in the same group cancelled the worker: say "project changed" only
-            # when it did, and let the outcome reach this project once the check ends.
+            # Another click in the same group cancelled the worker. Opening another project from the
+            # sidebar cancels it too, before the workspace switches, so the project may still look
+            # the same here: the outcome reaches Notices under this project either way.
             future.add_done_callback(_late_result(app, scope, profile, subject))
             current = app.workspace.read()
             same = (current.get("project_id"), current.get("worktree")) == scope
-            app.notice_for(subject, app.t(CHECK_CONTINUES) + " " + profile if same else CHECK_MOVED)
+            app.notice_for(subject, app.t(CHECK_KEEPS_RUNNING) + ": " + profile + " · " + app.t(CHECK_CONTINUES)
+                           if same else CHECK_MOVED)
             raise
-        if not await _shown(app, scope):
+        current = await asyncio.to_thread(app.workspace.read)
+        if (current.get("project_id"), current.get("worktree")) != scope:
             app.notice_for(subject, CHECK_MOVED)
+            _deliver(app, scope, subject, _outcome(app, profile, result), current)
             return
         app.notice_for(subject, "")
         await app.push_screen_wait(MessageModal("Check result", text + "\n\n" + check_summary(result, app.t)))
@@ -179,8 +208,8 @@ async def run_next_stage(app):
         # The text says what to do: fix the connection, or confirm the stage in Plan stages.
         await app.push_screen_wait(MessageModal("Run next stage", text))
     else:
-        await app.push_screen_wait(MessageModal("Run next stage", text + "\n\n"
-                                                + app.t("Map stages in More → Plan stages.")))
+        hint = _hint(decision)
+        await app.push_screen_wait(MessageModal("Run next stage", text + ("\n\n" + app.t(hint) if hint else "")))
 
 
 async def edit_stages(app):
