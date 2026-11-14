@@ -76,8 +76,9 @@ jobs:
 
   coverage:
     # The same suite with coverage, beside full-tests and not a required check: it may go red
-    # without blocking anything. Reported in the log and the job summary only; nothing is posted or
-    # sent anywhere, and no threshold fails the job.
+    # without blocking anything. Reported in the log and the job summary; on a push to main its
+    # `badge` output goes to coverage-badge, which publishes it to the public `badges` branch for the
+    # README badge. No threshold fails the job.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:

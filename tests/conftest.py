@@ -382,14 +382,19 @@ def arcade_test_engine(tmp_path_factory, request):
                "CAIRNMIND_ARCADE_PASSWORD": settings.arcade_password,
                "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
     os.environ.update(changes)
-    template = SchemaTemplate(settings, prefix, tmp_path_factory.mktemp("schema-template"))
     original_ensure = ArcadeClient.ensure_database
-    ArcadeClient.ensure_database = template.ensure_database(original_ensure)
+    template = None
     try:
+        # Built inside the try: a schema that fails to initialise must still stop the engine and restore the environment.
+        template = SchemaTemplate(settings, prefix, tmp_path_factory.mktemp("schema-template"))
+        ArcadeClient.ensure_database = template.ensure_database(original_ensure)
         yield settings, prefix, template
     finally:
         ArcadeClient.ensure_database = original_ensure
-        template.remove()
+        if template is not None:
+            template.remove()
+        for name in changes:
+            os.environ.pop(name, None)
         if owns:
             stop_engine(settings)
         for name, value in original.items():
