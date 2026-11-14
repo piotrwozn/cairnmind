@@ -62,6 +62,25 @@ CATALOG = {
     "A third-party MCP tool took too long to check its arguments and is withdrawn for this run.":
         "Sprawdzenie argumentów narzędzia zewnętrznego serwera MCP trwało za długo; narzędzie wycofano do końca "
         "tego uruchomienia.",
+    # The agent's own file changes in the approval dialog (#176)
+    "No files were created, changed or deleted since your last approval.":
+        "Od Twojej ostatniej zgody agent nie utworzył, nie zmienił ani nie usunął żadnego pliku.",
+    "Files the agent created, changed or deleted since your last approval ({count}):":
+        "Pliki, które agent utworzył, zmienił lub usunął od Twojej ostatniej zgody ({count}):",
+    "created: {path}": "utworzono: {path}", "changed: {path}": "zmieniono: {path}",
+    "deleted: {path}": "usunięto: {path}", "…and {count} more.": "…i {count} więcej.",
+    "What you approve here can run code from these files.":
+        "To, na co tu się zgadzasz, może uruchomić kod z tych plików.",
+    "Earlier changes could not be read from the journal; the list may be incomplete.":
+        "Wcześniejszych zmian nie udało się odczytać z dziennika; lista może być niepełna.",
+    "Approve one change to a file that configures execution":
+        "Zgoda na jedną zmianę pliku, który konfiguruje uruchamianie",
+    "Coding clients, CI, editors or shells can run what this file says. This is the change that will be made; "
+    "a refusal leaves the file as it is.":
+        "Klienci programistyczni, CI, edytory i powłoki mogą uruchomić to, co mówi ten plik. To jest zmiana, "
+        "która zostanie zapisana; odmowa zostawia plik bez zmian.",
+    "Write once": "Zapisz raz",
+    "{count} more lines of the change are not shown.": "Nie pokazano {count} dalszych wierszy zmiany.",
     # Turn and memory states shown in the status line (#157)
     "Memory acknowledged": "Pamięć potwierdzona", "Memory waits for the model's ACK": "Pamięć czeka na ACK modelu",
     "Memory must be read and acknowledged again": "Pamięć trzeba ponownie odczytać i potwierdzić",

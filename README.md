@@ -201,7 +201,7 @@ The built-in API agent (OpenAI, Anthropic, OpenAI-compatible endpoints, Ollama) 
 - A tool whose input schema is outside the subset every provider accepts is left out; if a provider still refuses the request with them and the same request succeeds without them, the third-party tools are withdrawn for the run and the agent works on without them.
 - Only tools are used (no resources, prompts, sampling, elicitation or roots), over the stdio transport only.
 
-Two things are accepted, not prevented. A stdio server is a program you chose to run under your own account: it can read and change what your account can, and Cairnmind is not a sandbox for it. And text from a server can steer the model into editing files in the worktree without an approval, exactly as text read from repository files can today. Details are in [docs/API.md](docs/API.md#third-party-mcp-tools).
+Two things are accepted, not prevented. A stdio server is a program you chose to run under your own account: it can read and change what your account can, and Cairnmind is not a sandbox for it. And text from a server can steer the model into editing files in the worktree without an approval, exactly as text read from repository files can. What limits this: the next command or tool-call dialog lists every file the agent created, changed or deleted since your last approval, and a change to a file that configures execution (a coding client's hooks or MCP file, `AGENTS.md`, `CLAUDE.md`, a CI workflow, editor tasks, a dev container, `.envrc`) needs its own one-use approval. Details are in [docs/API.md](docs/API.md#third-party-mcp-tools) and [the agent's own file changes](docs/API.md#the-agents-own-file-changes-and-approvals).
 
 ## Plans, tasks and evidence
 
