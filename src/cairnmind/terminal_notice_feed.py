@@ -4,9 +4,12 @@ The notice history stays in each panel's memory (terminal_notices, #130). Each U
 inspector, graph) also puts a bounded copy of its newest notices in an option of its own tmux pane
 (`@cairnmind_notices`) on the workspace's private tmux server. It lives in that server's memory and
 goes with the pane; a panel that starts again replaces it. The activity panel reads the options of
-the workspace's panes. Nothing else reads them: they never reach the store, a record, a review or a
-model. The reader trusts nothing in them: every field is checked, an entry dated in the future is
-dropped, and every string is made terminal-safe again.
+the workspace's panes. Nothing else reads them: they are shown to the person only and never reach
+the store, a record, a review or a model. Any process of the same user that can reach the workspace's
+tmux socket can write such an option, as it can already send keys to the panes, so a copy is no proof
+of where a notice came from. The reader trusts nothing in them: it reads a role's copy only from the
+pane the workspace state records for that role, every field is checked, an entry dated in the future
+is dropped, and every string is made terminal-safe again.
 """
 from __future__ import annotations
 
@@ -103,13 +106,20 @@ class TmuxChannel:
     def read(self) -> dict:
         if not self.manager.binary or not self.manager.socket.exists():
             return {}
-        result = self.manager.tmux("list-panes", "-a", "-F",
-                                   "#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{" + OPTION + "}", check=False)
+        # The pane the workspace recorded for a role is the only one read for it: another pane
+        # tagged with that role (anyone with the socket can tag one) cannot hide or replace its copy.
+        try:
+            recorded = self.manager.state.read().get("pane_ids") or {}
+        except Exception:
+            recorded = {}
+        result = self.manager.tmux("list-panes", "-a", "-F", "#{pane_id}\t#{@cairnmind_workspace}\t"
+                                   "#{@cairnmind_role}\t#{" + OPTION + "}", check=False)
         found = {}
         for line in result.stdout.splitlines():
             parts = line.split("\t")
-            if len(parts) == 3 and parts[0] == self.manager.workspace_id and parts[1] in ROLES and parts[2]:
-                found[parts[1]] = parts[2]
+            if (len(parts) == 4 and parts[1] == self.manager.workspace_id and parts[2] in ROLES and parts[3]
+                    and recorded.get(parts[2], parts[0]) == parts[0]):
+                found[parts[2]] = parts[3]
         return found
 
 

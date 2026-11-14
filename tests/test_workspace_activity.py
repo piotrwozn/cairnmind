@@ -1,14 +1,18 @@
 """The activity column of the workspace and its key (#144), on a real private tmux."""
 from __future__ import annotations
 
+import os
+import signal
 import threading
+import time
 
 import pytest
 
 from cairnmind import terminal_notice_feed as feed
 from cairnmind.cockpit_state import CockpitState
 from cairnmind.terminal_notices import NoticeHistory
-from cairnmind.workspace import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH, FOCUS_MIN_WIDTH, SESSION, WorkspaceManager
+from cairnmind.workspace import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH, SESSION, WorkspaceManager
+from cairnmind.workspace_activity import RESPAWN_PAUSE
 from test_workspace import manager as manager, rows
 
 ROLES = {"sidebar", "client1", "client2", "inspector", "graph"}
@@ -31,42 +35,65 @@ def view(workspace, name):
     CockpitState(workspace.settings).update({"view": name})
 
 
+def dead(workspace, pane):
+    return workspace.tmux("display-message", "-p", "-t", pane, "#{pane_dead}").stdout.strip()
+
+
 def zoomed(workspace):
     return workspace.tmux("display-message", "-p", "-t", SESSION + ":workspace", "#{window_zoomed_flag}").stdout.strip()
 
 
-def test_focus_at_160x45_shows_the_focused_view_beside_the_column(manager):
+@pytest.mark.parametrize("size", [(160, 45), (180, 55), (COCKPIT_MIN_WIDTH + 20, 60)])
+def test_focus_zooms_as_before_at_every_width_and_moves_no_pane(manager, size):
     workspace, broker, _ = manager
     view(workspace, "focus")  # the default layout
     workspace.create(start_supervisor=False)
-    workspace.focus("client1")
-    terminal(workspace, 160, 45)
-    window = shown(workspace)
-    assert set(window) == {"client1", "activity"}
-    assert window["client1"] == (0, 160 - ACTIVITY_WIDTH - 1) and window["activity"] == (160 - ACTIVITY_WIDTH, ACTIVITY_WIDTH)
-    assert zoomed(workspace) == "0"
-    assert set(workspace.panes()) == ROLES  # the other views wait, still running, where no terminal shows them
+    terminal(workspace, *size)
     before = {role: value[-1] for role, value in rows(workspace).items()}
-    workspace.focus("graph")
-    assert set(shown(workspace)) == {"graph", "activity"}
-    assert workspace.tmux("display-message", "-p", "-t", workspace.panes()["graph"], "#{pane_active}").stdout.strip() == "1"
+    for role in ("client1", "graph", "sidebar", "client2"):
+        workspace.focus(role)
+        assert workspace.activity_pane() is None and zoomed(workspace) == "1"
+        assert set(shown(workspace)) == ROLES  # every view stays in the one workspace window
+        assert len(workspace.tmux("list-windows", "-t", SESSION, "-F", "#{window_id}").stdout.split()) == 1
     assert {role: value[-1] for role, value in rows(workspace).items()} == before
     assert not broker.calls
 
 
-def test_focus_below_160_columns_zooms_as_before_and_brings_every_view_back(manager):
+def test_a_column_whose_process_ended_is_started_again_in_place(manager, monkeypatch):
     workspace, _, _ = manager
-    view(workspace, "focus")
     workspace.create(start_supervisor=False)
-    terminal(workspace, 160, 45)
-    assert workspace.activity_pane() is not None
-    terminal(workspace, FOCUS_MIN_WIDTH - 1, 45)
-    assert workspace.activity_pane() is None
-    assert set(shown(workspace)) == ROLES and zoomed(workspace) == "1"
-    view(workspace, "cockpit")
-    terminal(workspace, 180, 55)
-    window = shown(workspace)
-    assert set(window) == ROLES and window["client1"] == (25, 77) and window["client2"] == (103, 77)
+    terminal(workspace, COCKPIT_MIN_WIDTH, 55)
+    pane = workspace.activity_pane()
+
+    def end_it():
+        pid = int(workspace.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout)
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 10
+        while dead(workspace, pane) != "1" and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert dead(workspace, pane) == "1"
+    end_it()
+    sent, real = [], workspace.tmux
+
+    def tmux(*args, **kwargs):
+        sent.append(args)
+        return real(*args, **kwargs) if args[0] != "display-popup" else None
+    monkeypatch.setattr(workspace, "_owner", lambda pid, tty: {"tty": "/dev/pts/7"})
+    monkeypatch.setattr(workspace, "tmux", tmux)
+    workspace.open_activity(client_pid=1, client_tty="/dev/pts/7")  # a dead column is never selected
+    assert any(args[0] == "display-popup" for args in sent) and not any(args[0] == "select-pane" for args in sent)
+    workspace._layout()
+    assert workspace.activity_pane() == pane and dead(workspace, pane) == "0"
+    assert workspace.tmux("display-message", "-p", "-t", pane, "#{@cairnmind_role}").stdout.strip() == "activity"
+    assert shown(workspace)["activity"] == (COCKPIT_MIN_WIDTH - ACTIVITY_WIDTH, ACTIVITY_WIDTH)
+    assert not any(args[0] in {"join-pane", "break-pane"} for args in sent)  # restarted in place, never moved
+    end_it()
+    workspace._layout()  # ended again at once: no restart loop, it waits for the pause
+    assert dead(workspace, pane) == "1"
+    workspace._activity_restarted -= RESPAWN_PAUSE
+    workspace._layout()
+    assert workspace.activity_pane() == pane and dead(workspace, pane) == "0"
+    assert workspace.exists()
 
 
 @pytest.mark.parametrize("size", [(160, 45), (180, 55), (COCKPIT_MIN_WIDTH - 1, 55), (80, 24), (120, 40)])
@@ -92,10 +119,9 @@ def test_cockpit_column_from_its_width_keeps_the_coding_panes_as_wide_as_at_180(
 
 def test_two_processes_arranging_at_once_make_one_column(manager):
     workspace, _, _ = manager
-    view(workspace, "focus")
     workspace.create(start_supervisor=False)
-    terminal(workspace, 120, 40)
-    workspace.tmux("resize-window", "-t", "cairnmind-ui:workspace", "-x", "170", "-y", "43")
+    terminal(workspace, 180, 55)
+    workspace.tmux("resize-window", "-t", "cairnmind-ui:workspace", "-x", str(COCKPIT_MIN_WIDTH), "-y", "53")
     others = [WorkspaceManager(workspace.settings, tmux_binary=workspace.binary) for _ in range(3)]
     for other in others:
         other._activity_command = workspace._activity_command
@@ -113,7 +139,7 @@ def test_two_processes_arranging_at_once_make_one_column(manager):
         thread.join(20)
     assert not errors
     assert workspace.tmux("list-panes", "-a", "-F", "#{@cairnmind_role}").stdout.split().count("activity") == 1
-    assert set(shown(workspace)) == {"client1", "activity"} or set(shown(workspace)) == {"sidebar", "activity"}
+    assert set(shown(workspace)) == ROLES | {"activity"}
 
 
 def test_a_left_over_second_column_is_removed_and_the_layout_still_applies(manager):
@@ -131,7 +157,7 @@ def test_a_left_over_second_column_is_removed_and_the_layout_still_applies(manag
     # Killing a column another process already removed is not an error.
     gone = workspace.activity_pane()
     workspace.tmux("kill-pane", "-t", gone)
-    assert workspace._reconcile_activity(SESSION + ":workspace", gone, False) is None
+    assert workspace._reconcile_activity(SESSION + ":workspace", gone, False, False) is None
 
 
 def test_zoom_and_next_view_keep_their_five_stops(manager):
@@ -204,6 +230,13 @@ def test_notices_travel_on_the_panel_pane_and_never_touch_the_disk(manager, monk
     stored = workspace.tmux("show-options", "-pv", "-t", sidebar, feed.OPTION).stdout.strip()
     assert stored and "#" not in stored and ";" not in stored
     assert not (workspace.settings.data_dir / "workspaces" / "default" / "notices").exists()
+    # Another pane tagged with the role (anyone with the socket can tag one) can neither replace nor hide the copy.
+    graph = workspace.panes()["graph"]
+    forged = NoticeHistory()
+    forged.add("FORGED", {"project_id": "p"}, "error")
+    workspace.tmux("set-option", "-p", "-t", graph, "@cairnmind_role", "sidebar")
+    workspace.tmux("set-option", "-p", "-t", graph, feed.OPTION, feed.encode(feed.snapshot(forged)))
+    assert [entry["text"] for entry in feed.read_all(workspace.settings, "default")] == [entries[0]["text"]]
 
 
 def test_the_layout_without_the_column_is_unchanged_and_with_it_valid():

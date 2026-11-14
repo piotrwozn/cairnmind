@@ -144,7 +144,6 @@ class ActivityApp(BasePanel):
         self.render_all()
         self.watch_journal()
 
-    # ----- data --------------------------------------------------------------------------------
     async def workspace_changed(self, value):
         scope = (value.get("project_id"), value.get("worktree"))
         if scope != self._scope:
@@ -446,7 +445,6 @@ class ActivityApp(BasePanel):
         self._signatures.clear()
         self.render_all()
 
-    # ----- keys --------------------------------------------------------------------------------
     def action_section(self, step):
         """Move to the first task or plan of the next (or previous) section, or into the notices."""
         stops, here = [], (-1, -1)
