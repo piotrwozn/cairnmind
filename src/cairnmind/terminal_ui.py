@@ -147,7 +147,8 @@ class FormModal(LocalizedModal, ModalScreen[dict | None]):
 
     def on_mount(self):
         if self.fields:
-            self.query_one("#field-" + self.fields[0].name).focus()
+            # At once, not queued: a key typed as the form opens must reach the first field.
+            self.set_focus(self.query_one("#field-" + self.fields[0].name))
             # Focus scrolls the first field into view; a long note is still read from its first line.
             fields = self.query_one("#form-fields", VerticalScroll)
             self.call_after_refresh(lambda: fields.scroll_home(animate=False))
@@ -382,8 +383,8 @@ class BasePanel(App):
     def on_mount(self):
         terminal_theme.size_classes(self)
 
-    def on_resize(self):
-        terminal_theme.size_classes(self)
+    def on_resize(self, event):
+        terminal_theme.size_classes(self, event.size)
 
     def on_unmount(self):
         with suppress(Exception):

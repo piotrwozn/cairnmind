@@ -160,8 +160,8 @@ class AgentApp(App):
                 yield Button(self.t("Resolve"), id="agent-resolve", disabled=True)
         yield Footer()
 
-    def on_resize(self):
-        terminal_theme.size_classes(self)
+    def on_resize(self, event):
+        terminal_theme.size_classes(self, event.size)
 
     async def on_mount(self):
         terminal_theme.size_classes(self)
