@@ -14,7 +14,7 @@ import fcntl
 import os
 from pathlib import Path
 
-from .memory_paths import PUBLISHED_RELATIVE
+from .memory_published_carrier import carrier_of, destination as carrier_destination, unbound_in_checkout
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
 from .memory_published_format import (
     GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, canonical_uuid, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
@@ -189,9 +189,10 @@ class Publisher:
         self.store = store
 
     def destination(self, project_id, worktree=None):
+        """(project, root, directory): the directory is chosen by the project's carrier (#173)."""
         from .memory import MemoryManager
         project, root = MemoryManager(self.store)._scope(project_id, worktree)
-        return project, root, root / PUBLISHED_RELATIVE
+        return project, root, carrier_destination(self.store, project, root)[1]
 
     @contextmanager
     def _lock(self, project_id):
@@ -338,7 +339,7 @@ class Publisher:
         return bool(metadata.get("plan_archived") and plan in definitions
                     and record_id not in [s[0] for s in definitions[plan][-1]["steps"]])
 
-    def publish(self, project_id, worktree=None, *, preview=False, authorize=None):
+    def publish(self, project_id, worktree=None, *, preview=False, authorize=None, new_package=False):
         if not preview and os.environ.get(PUBLICATION_SWITCH) != "1":
             raise ValueError("Publishing team memory is switched off until the secrets gate (#171) exists; "
                              "use --preview to see what would be written")
@@ -352,9 +353,10 @@ class Publisher:
             if hits:
                 raise MemoryConflict("Publishing refused: " + "; ".join(
                     f"{hit['kind']} in {hit['field']} of {hit['path']}" for hit in hits))
-            if any(p.is_symlink() for p in (built["root"] / ".memory", folder)):
-                raise ValueError("Memory publication needs a real project directory")
+            if any(p.is_symlink() for p in (folder.parent, folder)):
+                raise ValueError("Memory publication needs a real directory, not a symbolic link")
             existing, errors = read_tree(folder) if folder.exists() else ({}, [])
+            unbound_in_checkout(self.store, project, folder, existing, new_package)
             if errors:
                 raise MemoryConflict("The published memory cannot be read: " + _listing(errors))
             identity = project.get("publication_id")
@@ -376,7 +378,7 @@ class Publisher:
                 raise MemoryConflict("Publishing would leave an invalid tree: " + _listing(errors))
             changed = sorted(path for path, data in merged.items() if existing.get(path) != data)
             result = {"status": "preview" if preview else "written" if changed else "unchanged",
-                      "destination": str(folder), "project_id": identity, "written": changed if not preview else [],
+                      "destination": str(folder), "carrier": carrier_of(self.store, project_id)["kind"], "project_id": identity, "written": changed if not preview else [],
                       "would_write": changed if preview else [], "unchanged": len(merged) - len(changed),
                       "files": len(merged), "bytes": sum(len(data) for data in merged.values()),
                       "records": sum(m["kind"] != "plan" for m in built["models"]),
@@ -444,7 +446,14 @@ def _held(held):
 
 def publication_status(store, project_id, worktree=None):
     """`memory status` → published: where the package is, whose it is and how many files it has. Computed live."""
-    project, _, folder = Publisher(store).destination(project_id, worktree)
+    from .memory import MemoryManager
+    from .memory_published_carrier import carrier_status
+    project, root = MemoryManager(store)._scope(project_id, worktree)
+    carried = carrier_status(store, project, root)
+    try:
+        folder = carrier_destination(store, project, root)[1]
+    except ValueError as exc:  # A checkout that moved or became a link: say so instead of failing the status.
+        return {**carried, "destination": None, "error": str(exc), "publication_id": project.get("publication_id")}
     files, errors = read_tree(folder) if folder.exists() else ({}, [])
     identity = None
     if "FORMAT.json" in files:
@@ -453,7 +462,7 @@ def publication_status(store, project_id, worktree=None):
             identity = _parse(files["FORMAT.json"]).get("project_id")
         except (ValueError, AttributeError):
             identity = None
-    return {"destination": str(folder), "format_exists": "FORMAT.json" in files, "format_project_id": identity,
+    return {**carried, "destination": str(folder), "format_exists": "FORMAT.json" in files, "format_project_id": identity,
             "publication_id": one_row(store, "SELECT publication_id FROM projects WHERE id=:id",
                                       {"id": project_id}).get("publication_id"),
             "files": len(files), "unreadable": [path for path, _ in errors]}
