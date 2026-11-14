@@ -528,6 +528,10 @@ CATALOG.update({
         "obowiązuje od następnego uruchomienia agenta.",
     "MCP server saved. The built-in agent of this project uses it from its next run.":
         "Zapisano serwer MCP. Wbudowany agent tego projektu użyje go od następnego uruchomienia.",
+    "MCP server saved, but its program does not exist or cannot be run on this computer. Until it can, the "
+    "built-in agent reports the server off and works without its tools.":
+        "Zapisano serwer MCP, ale jego program nie istnieje albo nie da się go uruchomić na tym komputerze. "
+        "Dopóki tak jest, wbudowany agent zgłasza serwer jako wyłączony i pracuje bez jego narzędzi.",
     "MCP server removed. The built-in agent of this project stops using it from its next run.":
         "Usunięto serwer MCP. Wbudowany agent tego projektu przestanie go używać od następnego uruchomienia.",
     "Write each environment value as NAME=value.": "Zapisz każdą zmienną środowiska jako NAZWA=wartość.",

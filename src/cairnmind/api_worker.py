@@ -30,7 +30,7 @@ from .terminal_panels import ConfirmModal
 from .terminal_safe import plain, safe_text
 from .terminal_ui import ChoiceModal, Field, FormModal
 from .terminal_i18n import language_for
-from .terminal_agent_i18n import status_text, tr
+from .terminal_agent_i18n import STATUS, status_text, tr
 
 _SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 _CODE = re.compile(r"^[a-z][a-z_]{0,39}$")
@@ -118,6 +118,8 @@ class AgentApp(App):
     #agent-status.-running { color: $cm-accent; border-left: thick $cm-accent; }
     #agent-status.-warn { color: $cm-warn; text-style: bold; border-left: thick $cm-warn; }
     #agent-status.-error { color: $cm-danger; text-style: bold; border-left: thick $cm-danger; }
+    #agent-mcp { display: none; height: auto; max-height: 3; padding: 0 1; color: $cm-warn; }
+    #agent-mcp.-live { display: block; }
     #agent-history { height: 1fr; min-height: 3; background: $cm-bg; padding: 0 1; }
     #agent-stream { display: none; height: auto; max-height: 6; padding: 0 1; color: $cm-text;
         border-left: thick $cm-accent; }
@@ -138,6 +140,7 @@ class AgentApp(App):
         # Third-party MCP servers fixed for this run by the launcher (#126); API runs only.
         self.mcp_servers = list(mcp_servers or []) if self.run_record.get("client") == "api" else []
         self.mcp_problems = [row for row in (mcp_problems or []) if isinstance(row, dict)]
+        self._mcp_off = {}  # server id -> code, kept on screen for the whole run (#157)
         self.language = language_for(settings)
         self._status_value = ("Restoring the local journal; no model is running…", {})
         self._status_kind = "idle"
@@ -164,6 +167,7 @@ class AgentApp(App):
                 ("title", self.profile.get("label", "Agent") + " · " + (self.profile.get("model") or self.t("default model"))),
                 ("muted", "\n" + self.run_record["worktree"])]), id="agent-scope")
             yield Static(self.t("Restoring the local journal; no model is running…"), id="agent-status", markup=False)
+            yield Static("", id="agent-mcp", markup=False)
             # min_width: a line is wrapped to the pane, not to RichLog's default of 78 cells.
             yield RichLog(id="agent-history", wrap=True, markup=False, highlight=False, max_lines=5000, min_width=20)
             yield Static("", id="agent-stream", markup=False)
@@ -231,6 +235,7 @@ class AgentApp(App):
         self.refresh_bindings()
         self.set_status(self._status_value[0], kind=self._status_kind, **self._status_value[1])
         self.update_usage(self._last_usage)
+        self.show_mcp_off()
 
     def update_usage(self, value):
         self._last_usage = value
@@ -304,7 +309,10 @@ class AgentApp(App):
         elif kind == "usage":
             self.update_usage(data)
         elif kind in {"status", "memory_required", "context_compacted", "error"}:
-            self.set_status(data.get("message", data.get("status", data.get("code", json.dumps(data, ensure_ascii=False)))),
+            # A status event carries {"state": ...}: shown as its label, never as raw JSON (#157).
+            value = next((data[key] for key in ("message", "status", "state", "code") if data.get(key)), None)
+            value = STATUS.get(str(value), value) if value is not None else json.dumps(data, ensure_ascii=False)
+            self.set_status(value,
                             kind={"error": "error", "memory_required": "warn"}.get(kind, "running" if self._busy else "idle"))
         elif kind == "mcp_server_failed":
             self.mcp_server_off(data.get("server_id"), data.get("code"))
@@ -333,6 +341,16 @@ class AgentApp(App):
                       server=server, code=code)
         self.set_status(text, kind="warn")
         self.write_history(text, head_role="warn")
+        self._mcp_off[server] = code
+        self.show_mcp_off()
+
+    def show_mcp_off(self):
+        """Later statuses replace the status line; the servers that are off stay named on their own row."""
+        servers = ", ".join(f"{server} ({code})" for server, code in self._mcp_off.items())
+        row = self.query_one("#agent-mcp", Static)
+        row.update(self.display_text(self.t("Third-party MCP servers off in this run: {servers}", servers=servers),
+                                     limit=1000) if servers else "")
+        row.set_class(bool(servers), "-live")
 
     async def approve(self, request):
         # Every decision remains bound to the exact current run and generation.

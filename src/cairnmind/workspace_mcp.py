@@ -23,6 +23,14 @@ LOADER_NOTE = ("Not allowed as environment names, since they change which code a
                "folder is not started.")
 SAVED = "MCP server saved. The built-in agent of this project uses it from its next run."
 REMOVED = "MCP server removed. The built-in agent of this project stops using it from its next run."
+SAVED_NOT_RUNNABLE = ("MCP server saved, but its program does not exist or cannot be run on this computer. Until it "
+                      "can, the built-in agent reports the server off and works without its tools.")
+
+
+def runnable(command: str) -> bool:
+    """Whether the program can be started here now; it may still be installed later, so this only warns."""
+    import os
+    return os.path.isfile(command) and os.access(command, os.X_OK)
 
 
 def parse_form(values: dict) -> dict:
@@ -88,7 +96,11 @@ async def edit_mcp_servers(app):
         ], note=app.t(NOTE) + "\n\n" + app.t(LOADER_NOTE), submit="Save", on_submit=submit))
         if saved:
             await app.load_state()
-            app.notice(SAVED)
+            command = saved.get("command", "") if isinstance(saved, dict) else ""
+            if command and not runnable(command):
+                app.notice(SAVED_NOT_RUNNABLE, "warn")
+            else:
+                app.notice(SAVED)
         return
     row = next((existing for existing in current if existing["id"] == choice), None)
     if row is None:

@@ -369,3 +369,22 @@ async def test_acceptance_a_person_added_server_in_one_project_only(tmp_path):
         assert not any(name.startswith("mcp_") for request in other.requests for name in names(request))
     finally:
         await engine_b.close()
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_did_not_start_stays_named_after_later_statuses(tmp_path):
+    # #157: the warning was replaced at once by a raw {"state": "running"} status and then by Completed.
+    app, _ = worker(tmp_path, servers=[server()])
+    async with app.run_test(size=(95, 42)) as pilot:
+        await pilot.pause()
+        assert not app.query_one("#agent-mcp").has_class("-live")
+        await app.agent_event({"type": "mcp_server_failed", "data": {"server_id": "time", "code": "start_failed"}})
+        await app.agent_event({"type": "status", "data": {"state": "running", "memory": "requires_model_ack"}})
+        status = str(app.query_one("#agent-status").render())
+        assert "{" not in status and "Working" in status
+        app.execute_turn("hello")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        row = app.query_one("#agent-mcp")
+        assert row.has_class("-live") and "time (start_failed)" in str(row.render())
+        assert "Completed" in str(app.query_one("#agent-status").render())

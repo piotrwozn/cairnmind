@@ -14,7 +14,7 @@ from cairnmind.terminal_i18n import CATALOG
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_ui import ChoiceModal, FormModal
 from cairnmind.mcp_servers import LOADER_ENV
-from cairnmind.workspace_mcp import LOADER_NOTE, NOTE, REMOVED, SAVED, parse_form
+from cairnmind.workspace_mcp import LOADER_NOTE, NOTE, REMOVED, SAVED, SAVED_NOT_RUNNABLE, parse_form
 from test_terminal_panels import settle
 from test_terminal_ux080 import screen_text, setup_ui
 from test_workspace_stage import wait_for
@@ -51,6 +51,28 @@ async def test_adding_a_server_saves_it_for_the_selected_project_only(tmp_path, 
     assert saves(broker) == [{"project_mcp_server_edit": {"project": "project-keyboard", "expected": [],
                                                           "servers": [SERVER]}}]
     assert SAVED.split(".")[0] in notice
+
+
+@pytest.mark.asyncio
+async def test_a_program_that_cannot_run_here_is_saved_with_a_warning(tmp_path, monkeypatch):
+    # #157: a missing program was accepted silently and failed only, briefly, in the next agent run.
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.edit_mcp_servers()
+        await wait_for(app, pilot, ChoiceModal)
+        await pilot.press("enter")
+        await wait_for(app, pilot, FormModal)
+        app.screen.query_one("#field-id", Input).value = "time"
+        app.screen.query_one("#field-command", Input).value = str(tmp_path / "no-such-mcp-server")
+        await pilot.press("ctrl+s")
+        await settle(app, pilot)
+        line = app.query_one("#panel-notice", Static)
+        shown, warned = str(line.render()), line.has_class("-warn")
+    assert saves(broker)[0]["project_mcp_server_edit"]["servers"][0]["id"] == "time"
+    assert "cannot be run on this computer" in shown and warned
+    assert SAVED_NOT_RUNNABLE in CATALOG
 
 
 @pytest.mark.asyncio
