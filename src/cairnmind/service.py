@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from cairnmind import __version__
@@ -72,6 +72,8 @@ class AskBody(BaseModel):
     worktree: str | None = None
     session_id: str | None = None
     answer_schema: dict | None = None
+    # Keep this answer in the project's answer log (#15); None follows the answer_log setting.
+    log: bool | None = None
 
 
 class RememberBody(BaseModel):
@@ -792,8 +794,26 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             result["verification"] = await asyncio.to_thread(verification_status, store, task[0], scope)
         return result
 
+    async def log_answer(pid, body, scope, answer_schema, code, result):
+        # Runs after the response is sent: a slow digest lookup or disk never delays an answer.
+        from cairnmind import answer_log
+        digest = None
+        identity = getattr(model, "model_identity", None)
+        if identity is not None:
+            try:
+                digest = await asyncio.wait_for(identity(settings.chat_model), 5)
+            except Exception:  # noqa: BLE001 - the digest is optional in a log entry
+                digest = None
+        try:
+            entry = answer_log.make_entry(settings, pid, body.question, result, worktree=scope,
+                                          answer_schema=answer_schema, code=code, model_digest=digest)
+            if not await asyncio.to_thread(answer_log.append, settings, entry):
+                log.warning("An answer was too large for the answer log and was not kept")
+        except Exception as exc:  # noqa: BLE001 - the answer was sent; a log failure is only a warning
+            log.warning("The answer log could not be written: %s", exc)
+
     @app.post("/ask", dependencies=auth)
-    async def ask(body: AskBody):
+    async def ask(body: AskBody, background: BackgroundTasks):
         from cairnmind.answer_contract import prepare_answer_schema
         from cairnmind.ingest import index_pending_sources, index_project_if_changed
         from cairnmind.verification import capture_code_state, load_profiles
@@ -801,11 +821,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         answer_schema = prepare_answer_schema(body.answer_schema)
         contract_key = json.dumps(answer_schema, sort_keys=True, separators=(",", ":"))
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+        keep = body.log if body.log is not None else getattr(settings, "answer_log", False) is True
+        code_state: dict = {}
         def code_identity():
             try:
                 profiles = load_profiles(store, pid, scope)
                 inputs = sorted({path for profile in profiles.values() for path in profile["extra_inputs"]})
                 code = capture_code_state(store, pid, scope, inputs)
+                code_state.update(code)
                 if code["status"] != "fresh":
                     return None
                 return code["fingerprint"], tuple(sorted((name, p["hash"]) for name, p in profiles.items()))
@@ -822,6 +845,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         key = (pid, body.question, scope, stamp, identity, contract_key)
         hit = cache.get(key)
         if hit and identity is not None and not index_errors and time.monotonic() - hit[0] < 60:
+            if keep:
+                background.add_task(log_answer, pid, body, scope, answer_schema, code_state, {**hit[1], "cached": True})
             return {**hit[1], "cached": True}
         try:
             result = await asyncio.wait_for(
@@ -830,11 +855,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 timeout=settings.ask_timeout + 5,
             )
         except TimeoutError:
-            return {"status": "partial", "answer": "Waiting for the local agent timed out.",
-                    "sources": [], "unknowns": ["The queue or the analysis exceeded the time limit."],
-                    "freshness": {}, "elapsed_seconds": settings.ask_timeout + 5, "cached": False,
-                    "diagnostics": {"stage": "ask", "code": "queue_timeout",
-                                    "budget": {"timeout_seconds": settings.ask_timeout + 5}}}
+            result = {"status": "partial", "answer": "Waiting for the local agent timed out.",
+                      "sources": [], "unknowns": ["The queue or the analysis exceeded the time limit."],
+                      "freshness": {}, "elapsed_seconds": settings.ask_timeout + 5, "cached": False,
+                      "diagnostics": {"stage": "ask", "code": "queue_timeout",
+                                      "budget": {"timeout_seconds": settings.ask_timeout + 5}}}
+            if keep:
+                background.add_task(log_answer, pid, body, scope, answer_schema, code_state, result)
+            return result
         if index_errors:
             result["unknowns"] = [*result.get("unknowns", []), *map(str, index_errors[:5])]
             result.setdefault("freshness", {}).setdefault("warnings", []).extend(map(str, index_errors[:5]))
@@ -844,6 +872,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             if len(cache) >= 128:
                 cache.pop(next(iter(cache)))
             cache[key] = (time.monotonic(), result)
+        if keep:
+            background.add_task(log_answer, pid, body, scope, answer_schema, code_state, {**result, "cached": False})
         return {**result, "cached": False}
 
     @app.post("/remember", dependencies=auth)
