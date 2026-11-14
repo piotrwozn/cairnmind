@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Footer, Label, Select, Static, TextArea
 
+from . import terminal_theme
 from .findings import FINDING_KINDS, FINDING_STATUSES, finding_error
 from .terminal_client import BrokerError
 from .terminal_safe import plain, safe_text
@@ -71,21 +72,22 @@ def error_text(exc, translate, language="en", *, sent=False, lead=None) -> str:
 
 class FindingApp(App):
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen { background: #101720; color: #edf2f7; padding: 1 2; }
-    #finding-title { color: #a6d8ff; text-style: bold; height: auto; }
-    #finding-scope { color: #b8cbe0; height: auto; }
-    #finding-content { height: 1fr; min-height: 4; border: tall #526579; background: #152131; }
-    #finding-content:focus { border: tall #a6d8ff; }
-    #finding-choices { height: auto; }
-    #finding-choices Select { width: 1fr; }
-    #finding-error { color: #e7b594; height: auto; }
-    Footer { background: #1b2938; }
-    """
+    CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
+    Screen { padding: 0 1; }
+    #finding-scope { color: $cm-muted; height: auto; padding: 0 1; margin-bottom: 1; }
+    #finding-title, #finding-label { padding: 0 1; }
+    #finding-content { height: 1fr; min-height: 4; }
+    #finding-choices { height: 1; }
+    #finding-choices Select { width: 1fr; margin-right: 1; }
+    #finding-error { color: $cm-muted; height: auto; padding: 0 1; }
+    #finding-error.-error { color: $cm-danger; text-style: bold; }
+    .-short #finding-scope { margin-bottom: 0; }
+    """)
     BINDINGS = [("ctrl+s", "save", "Save"), ("escape", "cancel", "Cancel")]
 
     def __init__(self, settings, workspace_id="default", *, broker=None, workspace=None):
         super().__init__()
+        terminal_theme.install(self)
         from .terminal_client import BrokerClient
         from .terminal_i18n import language_for, localize_bindings, tr
         from .workspace_state import WorkspaceState
@@ -102,9 +104,9 @@ class FindingApp(App):
 
     def compose(self) -> ComposeResult:
         t = self.translate
-        yield Static(plain(t("Save a finding")), id="finding-title")
+        yield Static(plain(t("Save a finding")), id="finding-title", classes="heading")
         yield Static("", id="finding-scope", markup=False)
-        yield Label(plain(t("Finding")))
+        yield Label(plain(t("Finding")), id="finding-label", classes="form-label")
         yield TextArea("", id="finding-content")
         with Horizontal(id="finding-choices"):
             yield Select([(kind, kind) for kind in FINDING_KINDS], value=FINDING_KINDS[0],
@@ -114,7 +116,11 @@ class FindingApp(App):
         yield Static("", id="finding-error", markup=False)
         yield Footer()
 
+    def on_resize(self, event):
+        terminal_theme.size_classes(self, event.size)
+
     def on_mount(self):
+        terminal_theme.size_classes(self)
         # The finding goes to the project the person sees here, even if the workspace moves on meanwhile.
         try:
             selected = self.workspace.read()
@@ -131,7 +137,13 @@ class FindingApp(App):
 
     def show_error(self, exc, *, sent=False, lead=None):
         text = error_text(exc, self.translate, self.language, sent=sent, lead=lead)
-        self.query_one("#finding-error", Static).update(plain(text))
+        self.show_line(text, error=True)
+
+    def show_line(self, text, *, error=False):
+        """The line under the form. Only a refusal or a failure is styled as one; "Saving…" is not."""
+        line = self.query_one("#finding-error", Static)
+        line.update(plain(text))
+        line.set_class(error, "-error")
 
     def values(self):
         return {"content": self.query_one("#finding-content", TextArea).text,
@@ -148,11 +160,11 @@ class FindingApp(App):
         if not self.scope.get("project"):
             problem = "Open a project first."
         if problem:
-            self.query_one("#finding-error", Static).update(plain(self.translate(problem)))
+            self.show_line(self.translate(problem), error=True)
             self.query_one("#finding-content", TextArea).focus()
             return
         self.saving = True
-        self.query_one("#finding-error", Static).update(plain(self.translate("Saving…")))
+        self.show_line(self.translate("Saving…"))
         self.send(values)
 
     @work(group="finding-save", exit_on_error=False)

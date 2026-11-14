@@ -1,10 +1,12 @@
 """A searchable, prefix-only command surface shared by every workspace pane."""
 from __future__ import annotations
 
+from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Footer, Input, Static
 
+from . import terminal_theme
 from .cockpit_state import CockpitState
 from .terminal_safe import plain
 
@@ -35,18 +37,23 @@ COMMANDS = (
 
 class CommandPaletteApp(App):
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen { background: #101720; color: #edf2f7; padding: 1 2; }
+    CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
+    Screen { padding: 0 1; }
+    Screen > .heading { padding: 0 2; }
     #commands { height: 1fr; }
-    #command-search { margin: 1 0; }
-    #command-help { height: 1fr; overflow-y: auto; }
-    Footer { background: #1b2938; }
-    """
+    #command-search { margin: 0 0 1 0; }
+    #command-empty { height: 1fr; content-align: center middle; text-align: center; color: $cm-muted;
+        display: none; }
+    #command-help { height: 1fr; overflow-y: auto; margin-top: 1; padding: 0 2; }
+    .-short #command-search, .-short #command-help { margin: 0; }
+    """)
+    TITLE_CELLS = 22  # the command column; a longer translated name widens it up to a third of the menu
     BINDINGS = [("escape", "cancel", "Back"), ("ctrl+n,down", "next", "Next"),
                 ("ctrl+p,up", "previous", "Previous")]
 
     def __init__(self, manager, *, help_only=False):
         super().__init__()
+        terminal_theme.install(self)
         self.manager = manager
         self.help_only = help_only
         self.rows = []
@@ -55,9 +62,9 @@ class CommandPaletteApp(App):
         self.translate = lambda value: tr(value, self.language)
 
     def compose(self) -> ComposeResult:
-        yield Static(plain(self.translate("Keyboard help" if self.help_only else "Commands")))
+        yield Static(plain(self.translate("Keyboard help" if self.help_only else "Commands")), classes="heading")
         if self.help_only:
-            yield Static(plain(self.translate(
+            yield Static(help_text(self.translate(
                 "Ctrl+B, then Space: search all commands\n"
                 "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
                 "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
@@ -74,13 +81,31 @@ class CommandPaletteApp(App):
         else:
             yield Input(placeholder=self.translate("Type to find a command…"), id="command-search")
             yield DataTable(id="commands", cursor_type="row", show_header=False)
+            yield Static(plain(self.translate("No matching commands.")), id="command-empty")
         yield Footer()
 
     def on_mount(self):
+        terminal_theme.size_classes(self)
         if not self.help_only:
             self.query_one(DataTable).add_columns("Command", "Description")
             self.populate("")
             self.query_one(Input).focus()
+            self.call_after_refresh(self.fit_columns)
+
+    def on_resize(self, event):
+        terminal_theme.size_classes(self, event.size)
+        if not self.help_only:
+            self.call_after_refresh(self.fit_columns)
+
+    def fit_columns(self):
+        """Two fixed columns that fill the menu, so no row scrolls sideways; a cell keeps its full text."""
+        table = self.query_one(DataTable)
+        room = table.scrollable_content_region.width - 4 * table.cell_padding
+        if room < 20:
+            return
+        longest = max(cell_len(self.translate(row[0])) for row in COMMANDS)
+        title = min(max(self.TITLE_CELLS, longest), max(self.TITLE_CELLS, room // 3))
+        terminal_theme.column_widths(table, (title, room - title))
 
     def populate(self, query):
         table = self.query_one(DataTable)
@@ -88,7 +113,11 @@ class CommandPaletteApp(App):
         self.rows = [row for row in COMMANDS if query.casefold() in
                      (self.translate(row[0]) + " " + self.translate(row[1])).casefold()]
         for index, row in enumerate(self.rows):
-            table.add_row(plain(self.translate(row[0])), plain(self.translate(row[1])), key=str(index))
+            table.add_row(terminal_theme.styled(self.translate(row[0]), "value"),
+                          terminal_theme.styled(self.translate(row[1]), "muted"), key=str(index))
+        # The list stays in the screen; with nothing to list, the sentence takes its place.
+        table.display = bool(self.rows)
+        self.query_one("#command-empty").display = not self.rows
 
     @on(Input.Changed, "#command-search")
     def search(self, event):
@@ -113,6 +142,18 @@ class CommandPaletteApp(App):
 
     def action_cancel(self):
         self.exit(None)
+
+
+def help_text(value):
+    """The help as it is written, with the keys of each line set apart: the part up to the first
+    `: ` of a line is the accent, the rest plain. The text itself is not changed."""
+    parts = []
+    for index, line in enumerate(str(value).split("\n")):
+        keys, colon, rest = line.partition(": ")
+        if index:
+            parts.append(("value", "\n"))
+        parts += [("accent", keys + colon), ("value", rest)] if colon else [("value", line)]
+    return terminal_theme.assemble(parts)
 
 
 def ask_summary(result, translate) -> str:
@@ -161,30 +202,40 @@ def dispatch_command(manager, row):
 class JoinWorkspaceApp(App):
     """Explicit keyboard choice when another terminal already has control."""
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen { align: center middle; background: #101720; color: #edf2f7; }
-    #join { width: 90%; max-width: 78; height: auto; padding: 1 2; border: round #a6d8ff; }
-    #join Button { width: 100%; margin-top: 1; }
-    """
+    CSS = terminal_theme.BASE_CSS + terminal_theme.css("""
+    Screen { align: center middle; }
+    #join { max-width: 78; }
+    #join-explanation { color: $cm-muted; margin-bottom: 1; }
+    #join Button { width: 100%; margin: 0; content-align: left middle; text-align: left; }
+    #join-takeover { color: $cm-warn; }
+    #join-takeover:focus { color: $cm-bg; }
+    """)
     BINDINGS = [("escape", "cancel", "Back")]
 
     def __init__(self, settings):
         super().__init__()
+        terminal_theme.install(self)
         from .terminal_i18n import language_for, tr
         self.language = language_for(settings)
         self.t = lambda value: tr(value, self.language)
 
     def compose(self):
         from textual.containers import Vertical
-        with Vertical(id="join"):
-            yield Static(plain(self.t("This workspace is open in another terminal.")))
-            yield Static(plain(self.t("Choose read-only observation or explicitly take control. Existing assistants keep running.")))
+        with Vertical(id="join", classes="cm-dialog"):
+            yield Static(terminal_theme.styled(self.t("This workspace is open in another terminal."), "title"),
+                         classes="heading")
+            yield Static(plain(self.t("Choose read-only observation or explicitly take control. Existing assistants keep running.")),
+                         id="join-explanation")
             yield Button(self.t("Observe (read only)"), id="join-observe", variant="primary")
             yield Button(self.t("Take control"), id="join-takeover")
             yield Button(self.t("Return to shell"), id="join-cancel")
 
     def on_mount(self):
+        terminal_theme.size_classes(self)
         self.query_one("#join-observe").focus()
+
+    def on_resize(self, event):
+        terminal_theme.size_classes(self, event.size)
 
     @on(Button.Pressed)
     def choose(self, event):
