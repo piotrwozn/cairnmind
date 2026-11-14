@@ -7,15 +7,20 @@ moves the acknowledged state still does.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
 
+from cairnmind import memory as portable
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.agent_journal import AgentJournal
+from cairnmind.memory import MemoryManager
 from cairnmind.sessions import SessionManager
-from cairnmind.store import Store
+from cairnmind.store import EXTRACTION_MARK, Store
 
 PROMPT = ("In inventory.txt change only line 250. We decided that inventory.txt stays sorted by item name, "
           "and the file must keep exactly 400 lines.")
@@ -187,3 +192,50 @@ def test_the_extraction_mark_is_only_for_a_new_record_from_its_one_source(worksp
     with pytest.raises(ValueError, match="extraction mark"):
         store.remember(project["id"], {"id": saved["id"], "expected_version": 1, "content": "B."}, [first["id"]],
                        extracted_from=first["id"])
+
+
+def marked_copy(package, target, mark):
+    """The package with the extraction mark written back into its record rows, checksums made consistent."""
+    shutil.copytree(package.parent, target)
+    data = json.loads((target / "manifest.json").read_text())
+    for table in ("records", "record_revisions"):
+        for descriptor in data["objects"][table]:
+            row = json.loads((target / descriptor["path"]).read_text())
+            head = row["snapshot"] if table == "record_revisions" else row
+            if head["key"] != "imported-order":
+                continue
+            head["metadata"][EXTRACTION_MARK] = mark
+            blob = portable._bytes(row)
+            digest = hashlib.sha256(blob).hexdigest()
+            (target / "objects" / f"{digest}.json").write_bytes(blob)
+            descriptor.update(sha256=digest, path=f"objects/{digest}.json", bytes=len(blob))
+    data["snapshot_id"] = portable._manifest_id(data)
+    (target / "manifest.json").write_bytes(portable._bytes(data))
+    return target / "manifest.json"
+
+
+@pytest.mark.parametrize("forged", [False, True])
+def test_a_record_from_an_imported_package_makes_the_ack_stale_even_with_the_mark(workspace, tmp_path, forged):
+    store, project, root, manager = workspace
+    sid = acknowledged(manager, project)
+    source = mid_turn_archive(store, manager, sid)["source_ids"][0]
+    manager.require_ack(sid)
+    baseline = MemoryManager(store).snapshot(project["id"])
+    # A collaborator imports the package, adds a record citing this session's transcript, and exports it.
+    elsewhere = tmp_path / "elsewhere"
+    subprocess.run(["git", "clone", "-q", str(root), str(elsewhere)], check=True, capture_output=True)
+    other = Store(tmp_path / "other-database")
+    MemoryManager(other).import_snapshot(Path(baseline["manifest_path"]), elsewhere)
+    other.remember(project["id"], {"kind": "decision", "key": "imported-order", "status": "proposed",
+                                   "content": DECISION + "."}, [source], extracted_from=source)
+    package = Path(MemoryManager(other).snapshot(project["id"])["manifest_path"])
+    rows = [json.loads((package.parent / item["path"]).read_text())
+            for item in json.loads(package.read_text())["objects"]["records"]]
+    assert rows and not any(EXTRACTION_MARK in row["metadata"] for row in rows)  # never exported
+    if forged:
+        package = marked_copy(package, tmp_path / "forged", source)
+    assert MemoryManager(store).import_snapshot(package, root)["status"] == "imported"
+    [saved] = [row for row in store.list_records(project["id"]) if row["key"] == "imported-order"]
+    assert EXTRACTION_MARK not in saved["metadata"]  # never imported
+    with pytest.raises(ValueError, match="resume_required"):
+        manager.require_ack(sid)
