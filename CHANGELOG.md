@@ -4,6 +4,12 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- A database on another host must be reached over https with the certificate verified, against a private authority named by arcade_ca_file or the system's authorities (which SSL_CERT_FILE and SSL_CERT_DIR replace when set); plain http is refused there, and verification cannot be turned off (#72).
+- The user root and a password stored in config.json are refused for a database on another host, and the message says which rule was broken (#72).
+- The database password can come from CAIRNMIND_ARCADE_PASSWORD or a private file (mode 0600) named by arcade_password_file, and a password, URL or user taken from the environment or a file is no longer written to config.json (#72).
+- Cairnmind never starts an engine for a database on another host and never writes that host's password into the data directory; when the server cannot be reached, it says so (#72).
+- New command `cairnmind db create-user --admin-password-file FILE` signs in as root once to create the database and a user with rights on that database only (#72).
+- `cairnmind doctor` reports the database user, whether the connection is encrypted and where the password comes from, and notes when it is stored in config.json; an existing local installation keeps working unchanged (#72).
 - Indexing files that replace a current source, and files that were deleted, now counts first what the old source leaves behind and writes each file in one transaction, up to eight small files together. The journal events of a transaction are stored in one statement. After every file of a project changed, indexing again needs about half the database requests and time on real code (Cairnmind's own source: 47% of the requests, 50% of the time), and about a quarter to a third on trees of very small files (#102).
 - In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
 - More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
