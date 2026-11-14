@@ -1097,7 +1097,8 @@ class SidebarApp(BasePanel):
             return
         options = [("English", "en"), ("Polski", "pl")] if choice == "language" else (
             [("Focus", "focus"), ("Cockpit", "cockpit")] if choice == "view" else [("On", "on"), ("Off", "off")])
-        selected = await self.push_screen_wait(ChoiceModal("Settings", options))
+        title = {"language": "Language", "view": "Layout", "reduced_motion": "Reduce motion"}[choice]
+        selected = await self.push_screen_wait(ChoiceModal(title, options))
         if selected is None:
             return
         values = {choice: selected == "on" if choice == "reduced_motion" else selected}
