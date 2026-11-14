@@ -9,6 +9,7 @@ from pathlib import Path
 from contextlib import suppress
 from dataclasses import dataclass
 
+from rich.cells import cell_len
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -16,16 +17,37 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static, TextArea
 from textual.worker import WorkerState
 
+from . import terminal_theme
 from .terminal_safe import plain, safe_text
 from .terminal_i18n import language_for, localize_bindings, tr
 
 
+def localize_select_menus(node, language):
+    """The open list of a Select has a Footer key of its own ("Dismiss menu"); translate it too."""
+    from textual.widgets._select import SelectOverlay
+    with suppress(Exception):
+        for overlay in node.query(SelectOverlay):
+            localize_bindings(overlay, language)
+
+
 class LocalizedModal:
+    BODY_CHROME = 10  # rows of a .cm-dialog that are not its scrolling body (see terminal_theme.fit_body)
+
     def t(self, text, **values):
         return tr(text, getattr(self.app, "language", "en"), **values)
 
     def on_mount(self):
         localize_bindings(self, getattr(self.app, "language", "en"))
+        self.fit_dialog()
+
+    def on_resize(self):
+        self.fit_dialog()
+
+    def fit_dialog(self):
+        """Size follows content: the body scrolls only when the terminal has no more rows to give."""
+        with suppress(Exception):
+            for body in self.query(".cm-dialog-body"):
+                terminal_theme.fit_body(self, body, self.BODY_CHROME)
 
 
 class FieldError(ValueError):
@@ -102,17 +124,7 @@ class Field:
 
 
 class FormModal(LocalizedModal, ModalScreen[dict | None]):
-    CSS = """
-    FormModal { align: center middle; background: $background 70%; }
-    FormModal > VerticalScroll { width: 88%; max-width: 100; height: auto; max-height: 95%;
-        border: round #52684b; background: #111a18; padding: 1 2; }
-    FormModal .form-title { text-style: bold; color: #c3df9b; height: auto; margin-bottom: 1; }
-    FormModal .form-label { height: auto; margin-top: 1; }
-    FormModal TextArea { height: 7; }
-    FormModal .form-actions { height: 3; margin-top: 1; }
-    FormModal .form-actions Button { margin-right: 1; }
-    FormModal #form-error { height: auto; color: #e7b594; }
-    """
+    BODY_CHROME = 11  # the error line may take a row of its own
     BINDINGS = [("escape", "cancel", "Cancel"), ("ctrl+s", "submit", "Save")]
 
     def __init__(self, title: str, fields: list[Field], *, note: str = "", submit="Save", on_submit=None):
@@ -122,26 +134,35 @@ class FormModal(LocalizedModal, ModalScreen[dict | None]):
         self.saving = False
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with Vertical(classes="cm-dialog"):
             yield Static(plain(self.t(self.title_text)), classes="form-title")
-            if self.note:
-                yield Static(plain(self.t(self.note)))
-            for field in self.fields:
-                yield Label(plain(self.t(field.label)), classes="form-label")
-                if field.multiline:
-                    yield TextArea(field.value, id="field-" + field.name)
-                else:
-                    yield Input(field.value, id="field-" + field.name)
-                if field.folder:
-                    yield Button(self.t("Browse folders"), id="browse-" + field.name)
+            with VerticalScroll(id="form-fields", classes="cm-dialog-body"):
+                if self.note:
+                    # Never cut or capped: a long note scrolls with the fields.
+                    yield Static(plain(self.t(self.note)), classes="cm-note")
+                for field in self.fields:
+                    yield Label(plain(self.t(field.label)), classes="form-label")
+                    if field.multiline:
+                        yield TextArea(field.value, id="field-" + field.name)
+                    else:
+                        yield Input(field.value, id="field-" + field.name)
+                    if field.folder:
+                        yield Button(self.t("Browse folders"), id="browse-" + field.name)
             yield Static("", id="form-error", markup=False)
             with Horizontal(classes="form-actions"):
                 yield Button(self.t(self.submit_label), id="form-submit", variant="primary")
                 yield Button(self.t("Cancel"), id="form-cancel")
+            # Ctrl+S runs the form's own primary action, so the hint names that action.
+            yield Static(plain(self.t("Ctrl+S: {action} · Esc: cancel", action=self.t(self.submit_label))),
+                         classes="cm-hint")
 
     def on_mount(self):
         if self.fields:
-            self.query_one("#field-" + self.fields[0].name).focus()
+            # At once, not queued: a key typed as the form opens must reach the first field.
+            self.set_focus(self.query_one("#field-" + self.fields[0].name))
+            # Focus scrolls the first field into view; a long note is still read from its first line.
+            fields = self.query_one("#form-fields", VerticalScroll)
+            self.call_after_refresh(lambda: fields.scroll_home(animate=False))
 
     @on(Button.Pressed)
     def form_button(self, event: Button.Pressed) -> None:
@@ -205,13 +226,6 @@ class FormModal(LocalizedModal, ModalScreen[dict | None]):
 
 
 class MessageModal(LocalizedModal, ModalScreen[None]):
-    CSS = """
-    MessageModal { align: center middle; background: $background 70%; }
-    MessageModal > Vertical { width: 90%; max-width: 120; height: 90%; border: round #52684b;
-      background: #111a18; padding: 1 2; }
-    MessageModal VerticalScroll { height: 1fr; }
-    MessageModal Button { margin-top: 1; }
-    """
     BINDINGS = [("escape", "close", "Close")]
 
     def __init__(self, title: str, value):
@@ -220,14 +234,35 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
         self.value = value
         self.details = False
 
+    SCROLL_HINT, CLOSE_HINT = "PgUp/PgDn: scroll · Esc: close", "Esc: close"
+    SHORT_CELLS = 60  # a summary whose lines are all shorter gets the narrow menu frame
+
+    def short_summary(self):
+        text = summary_text(self.value, getattr(self.app, "language", "en"))
+        return max((cell_len(line) for line in text.split("\n")), default=0) < self.SHORT_CELLS
+
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(classes="cm-dialog " + ("-menu" if self.short_summary() else "-wide")):
             yield Static(plain(self.t(self.heading)), classes="heading")
-            with VerticalScroll():
+            # The body takes focus first (PgUp/PgDn scroll it); its bar shows that it has the focus.
+            with VerticalScroll(classes="cm-dialog-body -message"):
                 yield Static(plain(summary_text(self.value, getattr(self.app, "language", "en"))), id="message-body")
-            if not isinstance(self.value, str):
-                yield Button(self.t("Technical details"), id="message-details")
-            yield Button(self.t("Close"), id="message-close")
+            with Horizontal(classes="actions"):
+                if not isinstance(self.value, str):
+                    yield Button(self.t("Technical details"), id="message-details")
+                yield Button(self.t("Close"), id="message-close")
+            yield Static(self.t(self.SCROLL_HINT), classes="cm-hint", markup=False)
+
+    def fit_dialog(self):
+        super().fit_dialog()
+        self.call_after_refresh(self.fit_hint)
+
+    def fit_hint(self):
+        """PgUp/PgDn are named only while the body has more than it shows."""
+        with suppress(Exception):
+            body, hint = self.query_one(".cm-dialog-body"), self.query_one(".cm-hint", Static)
+            scrolls = body.virtual_size.height > body.scrollable_content_region.height
+            hint.update(self.t(self.SCROLL_HINT if scrolls else self.CLOSE_HINT))
 
     @on(Button.Pressed, "#message-details")
     def toggle_details(self, event):
@@ -236,6 +271,12 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
         self.query_one("#message-body", Static).update(plain(json.dumps(self.value, ensure_ascii=False, indent=2)
             if self.details else summary_text(self.value, getattr(self.app, "language", "en"))))
         event.button.label = self.t("Hide technical details" if self.details else "Technical details")
+        with suppress(Exception):  # the indented JSON gets the wide frame; the summary its own size
+            wide = self.details or not self.short_summary()
+            dialog = self.query_one(".cm-dialog")
+            dialog.set_class(wide, "-wide")
+            dialog.set_class(not wide, "-menu")
+        self.call_after_refresh(self.fit_hint)
 
     @on(Button.Pressed, "#message-close")
     def close_button(self) -> None:
@@ -247,27 +288,12 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
 
 class BasePanel(App):
     ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen { background: #101720; color: #edf2f7; }
-    Header { height: 1; background: #1b2938; color: #e3edf7; }
-    Footer { background: #1b2938; }
-    Button { min-width: 10; border: tall #526579; margin-right: 1; }
-    Button.-primary { background: #2865a0; color: #ffffff; }
-    Button:focus { border: tall #a6d8ff; text-style: bold; }
-    Input, TextArea { border: tall #526579; background: #152131; }
-    Input:focus, TextArea:focus { border: tall #a6d8ff; }
-    Select { border: none; background: #152131; }
-    SelectCurrent { border: tall #526579; background: #152131; }
-    DataTable { background: #101720; }
-    DataTable:focus { border-left: solid #a6d8ff; }
-    .heading { color: #a6d8ff; text-style: bold; height: auto; }
-    .actions { height: auto; min-height: 3; }
-    #panel-notice { height: auto; max-height: 5; color: #dcb78c; padding: 0 1; }
-    #notice-mark { display: none; height: auto; color: #8fa3b8; padding: 0 1; }
-    """
+    # Colours and the shape of every control and dialog live in terminal_theme; panels add sizes only.
+    CSS = terminal_theme.BASE_CSS
 
     def __init__(self, settings, workspace_id="default", *, broker=None, workspace=None):
         super().__init__()
+        terminal_theme.install(self)
         from .terminal_client import BrokerClient
         from .workspace_state import WorkspaceState
         self.settings = settings
@@ -305,24 +331,30 @@ class BasePanel(App):
     async def request(self, method, path, *, params=None, json=None):
         return await asyncio.to_thread(self.broker.request, method, path, params=params, json=json)
 
-    def notice(self, value) -> None:
+    def notice(self, value, kind="info") -> None:
+        """Show one line. `kind` ("info", "warn", "error") only picks a style; the text is exactly `value`."""
         shown = None
         with suppress(Exception):
             shown = plain(self.t(value))
-            self.query_one("#panel-notice", Static).update(shown)
+            line = self.query_one("#panel-notice", Static)
+            line.update(shown)
+            line.display = bool(shown.plain)  # an empty notice line takes no row from the list
+            line.set_class(kind == "warn", "-warn")
+            line.set_class(kind == "error", "-error")
         if shown is not None:
             with suppress(Exception):
                 self.notice_history.add(shown.plain, self._notice_about or self.workspace_data)
                 self.show_notice_mark()
 
-    def notice_for(self, about, value) -> None:
+    def notice_for(self, about, value, kind="info") -> None:
         """A notice about a project of its own (see terminal_notices.about), not the one shown now.
 
         It goes through `notice`, so the line and its timing are those of every other notice.
         """
         self._notice_about = about
         try:
-            self.notice(value)
+            # One argument unless a kind is asked for: callers and tests may wrap `notice(value)`.
+            self.notice(value) if kind == "info" else self.notice(value, kind)
         finally:
             self._notice_about = None
 
@@ -348,6 +380,7 @@ class BasePanel(App):
             if language != self.language:
                 self.language = language
                 localize_bindings(self, language)
+                localize_select_menus(self, language)
                 for screen in self.screen_stack:
                     if isinstance(screen, LocalizedModal):
                         localize_bindings(screen, language)
@@ -385,6 +418,17 @@ class BasePanel(App):
     async def ready_panel(self):
         pass
 
+    def on_mount(self):
+        terminal_theme.size_classes(self)
+        with suppress(Exception):
+            line = self.query_one("#panel-notice", Static)
+            if not str(line.render()):
+                line.display = False
+        localize_select_menus(self, self.language)
+
+    def on_resize(self, event):
+        terminal_theme.size_classes(self, event.size)
+
     def on_unmount(self):
         with suppress(Exception):
             self.workers.cancel_all()
@@ -399,32 +443,41 @@ class BasePanel(App):
 
 
 class ChoiceModal(LocalizedModal, ModalScreen[str | None]):
-    CSS = """
-    ChoiceModal { align: center middle; background: $background 70%; }
-    ChoiceModal > Vertical { width: 90%; max-width: 110; height: 85%; padding: 1 2;
-      background: #111a18; border: round #52684b; }
-    ChoiceModal DataTable { height: 1fr; }
-    """
     BINDINGS = [("escape", "cancel", "Cancel")]
+    MENU_CELLS = 60  # a list whose longest row is shorter gets the narrow menu frame
 
     def __init__(self, title, choices):
         super().__init__()
         self.heading, self.choices = title, choices
+        self._longest = 0
 
     def compose(self):
-        from textual.widgets import DataTable
-        with Vertical():
+        with Vertical(classes="cm-dialog"):
             yield Static(plain(self.t(self.heading)), classes="heading")
-            yield DataTable(id="choices", cursor_type="row")
-            yield Button(self.t("Cancel"), id="choice-cancel")
+            # No header row: a row's index is the choice's index. Rows stay one line each, uncut.
+            yield DataTable(id="choices", cursor_type="row", show_header=False, classes="cm-dialog-body")
+            with Horizontal(classes="actions"):
+                yield Button(self.t("Cancel"), id="choice-cancel")
+            yield Static(self.t("Enter: select · Esc: back"), classes="cm-hint", markup=False)
 
     def on_mount(self):
-        from textual.widgets import DataTable
         table = self.query_one("#choices", DataTable)
-        table.add_column(self.t("Open"))
-        for index, (title, _) in enumerate(self.choices):
-            table.add_row(plain(self.t(title)), key=str(index))
+        rows = [plain(self.t(title)) for title, _ in self.choices]
+        self._longest = max([row.cell_len for row in rows], default=0)
+        self.query_one(".cm-dialog").set_class(self._longest < self.MENU_CELLS, "-menu")
+        table.add_column(self.t("Open"), key="choice")
+        for index, row in enumerate(rows):
+            table.add_row(row, key=str(index))
         table.focus()
+        self.call_after_refresh(self.fill_width)
+
+    def on_resize(self):
+        self.call_after_refresh(self.fill_width)
+
+    def fill_width(self):
+        """The cursor row spans the dialog; a row longer than the dialog keeps its full text and scrolls."""
+        with suppress(Exception):
+            terminal_theme.fill_column(self.query_one("#choices", DataTable), "choice", self._longest)
 
     @on(Button.Pressed, "#choice-cancel")
     def cancel_button(self):
@@ -440,13 +493,7 @@ class ChoiceModal(LocalizedModal, ModalScreen[str | None]):
 
 class FolderPicker(LocalizedModal, ModalScreen[str | None]):
     """Keyboard-first directory navigation. No shell, recursion, or writes."""
-    CSS = """
-    FolderPicker { align: center middle; background: $background 70%; }
-    FolderPicker > Vertical { width: 90%; height: 90%; border: round #a6d8ff; background: #101720; padding: 1; }
-    FolderPicker DataTable { height: 1fr; }
-    FolderPicker .actions { height: 3; }
-    #folder-notice { height: auto; max-height: 3; }
-    """
+    BODY_CHROME = 14  # frame, padding, title, label, path, notice (up to 3 rows), actions and blank rows
     BINDINGS = [("escape", "cancel", "Cancel"), ("alt+up", "parent", "Parent folder"), ("ctrl+s", "choose", "Use this folder")]
 
     def __init__(self, path=None):
@@ -456,12 +503,12 @@ class FolderPicker(LocalizedModal, ModalScreen[str | None]):
         self._generation = 0
 
     def compose(self):
-        with Vertical():
+        with Vertical(classes="cm-dialog -wide"):
             yield Static(self.t("Browse folders"), classes="heading")
-            yield Label(self.t("Folder path (Windows or WSL)"))
+            yield Label(self.t("Folder path (Windows or WSL)"), classes="form-label")
             yield Input(str(self.path), id="folder-path")
-            yield DataTable(id="folder-rows", cursor_type="row")
-            yield Static(self.t("Enter a folder path, then press Enter to browse."), id="folder-notice")
+            yield DataTable(id="folder-rows", cursor_type="row", classes="cm-dialog-body")
+            yield Static(self.t("Enter a folder path, then press Enter to browse."), id="folder-notice", classes="muted")
             with Horizontal(classes="actions"):
                 yield Button(self.t("Use this folder"), id="folder-choose", variant="primary")
                 yield Button(self.t("Parent folder"), id="folder-parent")
