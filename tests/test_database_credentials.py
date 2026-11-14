@@ -310,3 +310,47 @@ def test_a_private_certificate_authority_is_trusted_by_path(tmp_path, tls_endpoi
                                    arcade_database="tls_test", arcade_ca_file=str(authority)))
     assert client.server_info()["serverName"] == "tls-test"
     client.close()
+
+
+def test_the_authorities_named_by_ssl_cert_file_are_the_system_ones(tmp_path, tls_endpoint, monkeypatch):
+    # Documented in SECURITY.md: without arcade_ca_file, OpenSSL's defaults apply, and SSL_CERT_FILE
+    # replaces them. Verification stays on: the certificate is checked against that file.
+    url, authority = tls_endpoint
+    monkeypatch.setenv("SSL_CERT_FILE", str(authority))
+    client = ArcadeClient(Settings(data_dir=tmp_path, arcade_url=url, arcade_password=SECRET,
+                                   arcade_database="tls_test"))
+    assert client.server_info()["serverName"] == "tls-test"
+    client.close()
+
+
+def test_an_empty_current_spelling_does_not_hide_the_earlier_one(tmp_path, monkeypatch):
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_PASSWORD", "")
+    monkeypatch.setenv("DEVBRAIN_ARCADE_PASSWORD", SECRET)
+    settings = Settings.load(root)
+    assert settings.arcade_password == SECRET and settings._origin["password"] == "environment"
+    monkeypatch.setenv("CAIRNMIND_ARCADE_PASSWORD", STORED)
+    assert Settings.load(root).arcade_password == STORED  # the current spelling still comes first
+
+
+# --- A server on another host is never started here ---------------------------------------------------
+
+def test_an_unreachable_remote_server_is_reported_and_nothing_is_started_or_written(tmp_path, monkeypatch):
+    from cairnmind import engine
+
+    def unreachable(self, request):
+        raise httpx.ConnectError("no route", request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", unreachable)
+    (tmp_path / "runtime" / "lib").mkdir(parents=True)
+    monkeypatch.setattr(engine, "runtime_dir", lambda settings: tmp_path / "runtime")
+    monkeypatch.setattr(engine, "resolve_java", lambda settings: "/usr/bin/java")
+    monkeypatch.setattr(engine, "probe_java", lambda java: pytest.fail("Java was run for a remote server"))
+    settings = remote(tmp_path, arcade_url="https://192.0.2.1:2480")
+    with pytest.raises(ArcadeError, match=r"ArcadeDB at https://192\.0\.2\.1:2480 is unavailable") as refused:
+        engine.ensure_engine(settings)
+    with pytest.raises(ArcadeError, match="not on this machine"):
+        engine.start_engine(settings)
+    assert SECRET not in str(refused.value)
+    assert not (tmp_path / "arcade").exists()
+    assert not any(SECRET in path.read_text(errors="replace") for path in tmp_path.rglob("*") if path.is_file())

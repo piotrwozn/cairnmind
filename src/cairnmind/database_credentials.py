@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from .config import env_value
+from .config import env_names
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 # The longest password file read: a password is one line, and a larger file is not one.
@@ -78,9 +78,12 @@ def resolve_password(values: dict, environ=None) -> tuple[str, str, str | None]:
     source is environment, file, config, config_refused (a stored password that is not used because
     the host is not this machine) or none. problem is a message, without the password, or None.
     """
-    from_environment = env_value("ARCADE_PASSWORD", None, environ)
-    if from_environment:  # an empty variable names no password: the next source is used
-        return from_environment, "environment", None
+    environ = os.environ if environ is None else environ
+    # The first spelling that is not empty, the current one first: an empty variable names no password,
+    # so it does not hide the earlier spelling, and with neither the next source is used.
+    for name in env_names("ARCADE_PASSWORD"):
+        if environ.get(name):
+            return environ[name], "environment", None
     path = values.get("arcade_password_file") or ""
     if path:
         try:
@@ -127,7 +130,12 @@ def problem(settings) -> str | None:
 
 
 def tls_context(settings) -> ssl.SSLContext:
-    """Certificate and host name verification, always on: the system's authorities, or the file named."""
+    """Certificate and host name verification, always on: the system's authorities, or the file named.
+
+    Without ``arcade_ca_file`` the system's authorities are OpenSSL's default ones, and OpenSSL lets
+    the variables SSL_CERT_FILE and SSL_CERT_DIR replace those. That is an operator's setting like
+    CAIRNMIND_ARCADE_CA_FILE: verification stays on whichever authorities it names.
+    """
     authority = getattr(settings, "arcade_ca_file", "") or ""
     if authority and not os.path.isabs(authority):
         raise ValueError("arcade_ca_file must be an absolute path.")
