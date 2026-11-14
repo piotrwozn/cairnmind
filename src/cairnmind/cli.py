@@ -1029,12 +1029,27 @@ def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = Non
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
 
 
+SNAPSHOT_WAIT_SECONDS = 1800
+
+
 @memory_app.command("snapshot")
 @initialized
 def memory_snapshot(ctx: typer.Context, project: str, worktree: Path | None = None, preview: bool = False):
     """Save the project's full memory; --preview shows the scope without writing a snapshot."""
     payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
-    output(request(ctx.obj, "POST", "/memory/preview" if preview else "/memory/snapshot", json=payload))
+    if preview:
+        output(request(ctx.obj, "POST", "/memory/preview", json=payload))
+        return
+    try:
+        # A large project writes tens of thousands of objects: far longer than an ordinary request (#158).
+        result = request(ctx.obj, "POST", "/memory/snapshot", json=payload,
+                         timeout=httpx.Timeout(60, read=SNAPSHOT_WAIT_SECONDS))
+    except httpx.TimeoutException:
+        raise typer.BadParameter(
+            f"No answer within {SNAPSHOT_WAIT_SECONDS // 60} minutes. The snapshot is still being written by "
+            f"the service; leaving did not stop it. It is done when `cairnmind memory status {project}` shows "
+            "the new snapshot; until then another snapshot waits for this one.") from None
+    output(result)
 
 
 @memory_app.command("inspect")
