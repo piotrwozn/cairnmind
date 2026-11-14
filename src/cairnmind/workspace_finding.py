@@ -16,6 +16,7 @@ from textual.widgets import Footer, Label, Select, Static, TextArea
 from . import terminal_theme
 from .findings import FINDING_KINDS, FINDING_STATUSES, finding_error
 from .terminal_client import BrokerError
+from .terminal_i18n_messages import display_word
 from .terminal_safe import plain, safe_text
 
 ERROR_LIMIT = 300
@@ -111,9 +112,11 @@ class FindingApp(App):
         yield Label(plain(t("Finding")), id="finding-label", classes="form-label")
         yield TextArea("", id="finding-content")
         with Horizontal(id="finding-choices"):
-            yield Select([(kind, kind) for kind in FINDING_KINDS], value=FINDING_KINDS[0],
+            # The choices read in the form's language; the value saved is the stored word.
+            yield Select([(display_word(kind, t), kind) for kind in FINDING_KINDS], value=FINDING_KINDS[0],
                          allow_blank=False, id="finding-kind")
-            yield Select([(status, status) for status in FINDING_STATUSES], value=FINDING_STATUSES[0],
+            yield Select([(display_word(status, t), status) for status in FINDING_STATUSES],
+                         value=FINDING_STATUSES[0],
                          allow_blank=False, id="finding-status")
         yield Static("", id="finding-error", markup=False)
         yield Footer()

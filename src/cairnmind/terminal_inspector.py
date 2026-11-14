@@ -11,10 +11,10 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Select, St
 
 from . import terminal_theme
 from .terminal_detail import EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts  # noqa: F401
-from .terminal_impact import ImpactView
+from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
 from .terminal_safe import plain, safe_text
-from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, summary_text
+from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, summary_text
 
 _VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),
           ("Zadania", "tasks"), ("Testy", "checks"), ("Kolejka", "jobs"),
@@ -78,6 +78,7 @@ class InspectorApp(ImpactView, BasePanel):
         self._detail_text = ""
         self._detail_parts = None
         self._technical_details = False
+        self._count_notice = None  # (count, more pages, the text shown) of the last page read
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -116,7 +117,8 @@ class InspectorApp(ImpactView, BasePanel):
         yield Footer()
 
     def on_mount(self):
-        self.query_one("#inspector-rows", DataTable).add_columns(self.t("Typ / stan"), self.t("Treść / źródło"), self.t("Wersja / próba"))
+        self.title = self.t(self.TITLE)
+        self.query_one("#inspector-rows", DataTable).add_columns(*(self.t(label) for label in COLUMNS["standard"]))
         self.fit_columns()
         self.query_one("#inspector-details").display = False
         self.query_one("#review-actions").display = False
@@ -135,8 +137,9 @@ class InspectorApp(ImpactView, BasePanel):
     def refresh_language(self):
         from .terminal_i18n import localize_bindings
         localize_bindings(self, self.language)
-        self.query_one("#inspector-view", Select).set_options([(self.t(label), value) for label, value in _VIEWS])
-        self.query_one("#inspector-view", Select).value = self.view
+        self.title = self.t(self.TITLE)
+        relabel_select(self.query_one("#inspector-view", Select), [(self.t(label), value) for label, value in _VIEWS],
+                       self.view)
         self.query_one("#inspector-filter", Input).placeholder = self.t("Filter loaded page…")
         labels = {"entity-open": "Open", "entity-more": "More", "entity-back": "List", "entity-filters": "Filters",
                   "entity-technical": "Details", "entity-confirm": "Confirm", "entity-dispute": "Dispute",
@@ -146,6 +149,10 @@ class InspectorApp(ImpactView, BasePanel):
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.refresh_impact_language()
+        if self._count_notice is not None and str(self.query_one("#panel-notice", Static).render()) == self._count_notice[2]:
+            self.count_notice(*self._count_notice[:2])  # the line shows the count: say it in the new language
+        if self.view != "impact" and self.entity is None and self.query_one("#inspector-rows").display:
+            self.render_rows(list(self.rows.values()))  # kinds and states in the new language
 
     async def workspace_changed(self, value):
         scope = (value.get("project_id"), value.get("worktree"))
@@ -248,7 +255,12 @@ class InspectorApp(ImpactView, BasePanel):
         self.source_next = None
         self.rows = {**(self.rows if cursor else {}), **{r["id"]: r for r in result.get("items", [])}}
         self.render_rows(list(self.rows.values()))
-        self.notice(self.t("{count} items · read only", count=result.get("total", len(self.rows))) + (" · " + self.t("More pages available") if self.next_cursor else ""))
+        self.count_notice(result.get("total", len(self.rows)), bool(self.next_cursor))
+
+    def count_notice(self, count, more):
+        text = self.t("{count} items · read only", count=count) + (" · " + self.t("More pages available") if more else "")
+        self._count_notice = (count, more, text)
+        self.notice(text)
 
     def render_rows(self, rows):
         table = self.query_one("#inspector-rows", DataTable)

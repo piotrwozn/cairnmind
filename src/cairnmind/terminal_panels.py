@@ -20,7 +20,7 @@ from .terminal_safe import plain
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
-                          LocalizedModal, MessageModal, summary_text)
+                          LocalizedModal, MessageModal, remeasure_buttons, summary_text)
 
 
 class ConfirmModal(MessageModal):
@@ -1106,6 +1106,7 @@ class SidebarApp(BasePanel):
         self.language = values.get("language", self.language)
         await self.reconcile()
         self.refresh_language()
+        remeasure_buttons(self)
         self.notice("Preferences saved.")
 
     def refresh_language(self):

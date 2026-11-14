@@ -33,6 +33,7 @@ from . import terminal_theme
 from .terminal_safe import plain, safe_text
 from .config import Settings
 from .terminal_i18n import localize_bindings
+from .terminal_i18n_messages import display_word
 from .runtime_selection import resolve_tmux
 from .terminal_ui import BasePanel
 from .graph_raster import render_scene
@@ -710,7 +711,8 @@ class GraphApp(BasePanel):
             # With no node the sentence is muted, so it does not read as a selected node.
             self.query_one("#graph-selection", Static).set_class(not selected, "-empty")
             self.query_one("#graph-selection", Static).update(plain(
-                "Enter: " + label(selected.get("label", selected["id"])) + " · " + label(selected.get("kind", ""))
+                "Enter: " + label(selected.get("label", selected["id"])) + " · "
+                + label(display_word(selected.get("kind", ""), self.t))
                 if selected else self.t("No nodes in this scope.")))
             self.query_one("#graph-status", Static).update(plain(
                 f"{len(self.model.nodes)}/{NODE_LIMIT} " + self.t("nodes") + f" · {len(self.model.edges)}/{EDGE_LIMIT} " + self.t("relationships") + " · "

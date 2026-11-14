@@ -168,11 +168,34 @@ ENGINE_MESSAGES = {
 }
 AGENT_MESSAGES = {**PROVIDER_MESSAGES, **ENGINE_MESSAGES}
 
+# Stored kinds, states and outcomes, translated where a panel shows them. The stored value itself is
+# never changed: display_word is only for the text on screen (colours keep reading the raw word).
+WORDS = {
+    "decision": "decyzja", "fact": "fakt", "constraint": "ograniczenie", "question": "pytanie",
+    "preference": "preferencja", "task": "zadanie", "checkpoint": "punkt kontrolny", "plan": "plan",
+    "group": "grupa", "project": "projekt", "unassigned": "nieprzypisane", "source": "źródło",
+    "proposed": "proponowane", "confirmed": "potwierdzone", "disputed": "zakwestionowane",
+    "superseded": "zastąpione",
+    "todo": "do zrobienia", "in_progress": "w toku", "needs_test": "do testu", "needs_review": "do przeglądu",
+    "done": "zrobione", "blocked": "zablokowane",
+    "pending": "oczekuje", "running": "trwa", "completed": "zakończone", "failed": "nieudane",
+    "timeout": "przekroczony czas", "output_limit": "limit wyjścia", "cancelled": "anulowane",
+    "interrupted": "przerwane",
+}
+
+
+def display_word(word, translate) -> str:
+    """A stored kind, state or outcome in the panel's language; any other value as it is."""
+    word = str(word)
+    return translate(word) if word in WORDS else word
+
+
 # The status word of an /ask result, as the panel shows it.
 ASK_STATUS = {"complete": "Complete", "partial": "Partial", "unavailable": "Unavailable"}
 
 MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL, "Complete": "Pełna",
-            **PROVIDER_MESSAGES, **LOGIN_MESSAGES}
+            **PROVIDER_MESSAGES, **LOGIN_MESSAGES, **WORDS,
+            "Cairnmind · Memory": "Cairnmind · Pamięć"}
 
 
 def fixed_message(text, translate, known=ASK_MESSAGES) -> str:

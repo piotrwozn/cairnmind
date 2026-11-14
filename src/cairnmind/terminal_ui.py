@@ -31,6 +31,29 @@ def localize_select_menus(node, language):
             localize_bindings(overlay, language)
 
 
+def remeasure_buttons(node) -> None:
+    """After a language change: a button as wide as its label is measured again. Textual 8 keeps the
+    width of the old label, so a longer new one is cut ("Otwó" for "Otwórz") until the next resize."""
+    for button in node.query(Button):
+        button.clear_cached_dimensions()
+        button.refresh(layout=True)
+
+
+def relabel_select(select, options, value) -> None:
+    """New option labels for a Select, keeping its value and announcing no change.
+
+    set_options alone picks the first option, and Textual 8 redraws the shown label only when the
+    value changes, so the old label would stay on screen.
+    """
+    from textual.widgets import Select
+    from textual.widgets._select import SelectCurrent
+    with select.prevent(Select.Changed):
+        select.set_options(options)
+        select.value = value
+    with suppress(Exception):
+        select.query_one(SelectCurrent).update(dict((v, label) for label, v in options)[value])
+
+
 class LocalizedModal:
     BODY_CHROME = 10  # rows of a .cm-dialog that are not its scrolling body (see terminal_theme.fit_body)
 
@@ -419,6 +442,7 @@ class BasePanel(App):
                 refresh = getattr(self, "refresh_language", None)
                 if callable(refresh):
                     refresh()
+                remeasure_buttons(self)
             value = await asyncio.to_thread(self.workspace.read)
             if not self.is_running:
                 return

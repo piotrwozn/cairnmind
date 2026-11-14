@@ -1,6 +1,8 @@
 """A searchable, prefix-only command surface shared by every workspace pane."""
 from __future__ import annotations
 
+import textwrap
+
 from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
@@ -60,6 +62,7 @@ class CommandPaletteApp(App):
         self.manager = manager
         self.help_only = help_only
         self.rows = []
+        self._description_cells = 0  # the width of the description column, once it is known
         from .terminal_i18n import language_for, localize_bindings, tr
         self.language = language_for(manager.settings)
         self.translate = lambda value: tr(value, self.language)
@@ -118,6 +121,12 @@ class CommandPaletteApp(App):
         longest = max(cell_len(self.translate(row[0])) for row in COMMANDS)
         title = min(max(self.TITLE_CELLS, longest), max(self.TITLE_CELLS, room // 3))
         terminal_theme.column_widths(table, (title, room - title))
+        if room - title != self._description_cells:
+            # A description longer than its column wraps onto more lines of its row instead of being cut.
+            self._description_cells = room - title
+            row = table.cursor_row
+            self.populate(self.query_one(Input).value)
+            table.move_cursor(row=max(0, min(row, table.row_count - 1)))
 
     def populate(self, query):
         table = self.query_one(DataTable)
@@ -125,8 +134,11 @@ class CommandPaletteApp(App):
         self.rows = [row for row in COMMANDS if query.casefold() in
                      (self.translate(row[0]) + " " + self.translate(row[1])).casefold()]
         for index, row in enumerate(self.rows):
+            description = self.translate(row[1])
+            lines = textwrap.wrap(description, self._description_cells) if self._description_cells else []
             table.add_row(terminal_theme.styled(self.translate(row[0]), "value"),
-                          terminal_theme.styled(self.translate(row[1]), "muted"), key=str(index))
+                          terminal_theme.styled("\n".join(lines) or description, "muted"), key=str(index),
+                          height=max(1, len(lines)))
         # The list stays in the screen; with nothing to list, the sentence takes its place.
         table.display = bool(self.rows)
         self.query_one("#command-empty").display = not self.rows

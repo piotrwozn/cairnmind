@@ -78,6 +78,73 @@ async def test_the_value_dialog_is_titled_after_the_setting_it_changes(tmp_path,
     assert [screen.heading for screen in seen if isinstance(screen, ChoiceModal)] == ["Settings", title]
 
 
+async def wait_until(pilot, predicate, seconds=4):
+    for _ in range(int(seconds / .05)):
+        if predicate():
+            return
+        await pilot.pause(.05)
+    assert predicate()
+
+
+@pytest.mark.asyncio
+async def test_a_running_inspector_switches_every_label_to_the_new_language(tmp_path, monkeypatch):
+    from textual.widgets import DataTable, Select, Static
+    from textual.widgets._select import SelectCurrent
+
+    from cairnmind.terminal_inspector import InspectorApp
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    language = ["en"]
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language[0])
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        table = app.query_one("#inspector-rows", DataTable)
+        assert str(app.query_one("#panel-notice", Static).render()) == "1 items · read only"
+        assert app.title == "Cairnmind · Memory"
+        language[0] = "pl"  # Settings → Language → Polski, while the panel runs
+        await wait_until(pilot, lambda: app.language == "pl")
+        await settle(app, pilot)
+        shown = app.query_one("#inspector-view", Select).query_one(SelectCurrent).label
+        assert "Ustalenia" in str(shown) and app.query_one("#inspector-view", Select).value == "records"
+        assert app.view == "records"
+        assert [str(column.label) for column in table.ordered_columns] == [
+            "Typ / stan", "Treść / źródło", "Wersja / próba"]
+        assert str(app.query_one("#panel-notice", Static).render()) == "1 wpisów · tylko odczyt"
+        assert app.title == "Cairnmind · Pamięć"
+        assert str(table.get_row("record-a")[0]) == "zadanie / do przeglądu"
+
+
+@pytest.mark.asyncio
+async def test_a_running_graph_lays_out_its_buttons_again_for_longer_labels(tmp_path):
+    from textual.widgets import Button
+
+    from cairnmind.cockpit_state import CockpitState
+    from cairnmind.terminal_graph import GraphApp
+    from test_terminal_graph import ControlledBroker
+    from cairnmind.config import Settings
+    from cairnmind.workspace_state import WorkspaceState
+    settings = Settings(tmp_path / "data")
+    project = {"id": "alpha", "name": "Alpha", "root": str(tmp_path / "alpha")}
+    (tmp_path / "alpha").mkdir()
+    workspace = WorkspaceState(settings, "graph-tests")
+    workspace.select_project(project, intent="inspect")
+    workspace.update({"focus": "graph"})
+    app = GraphApp(settings, broker=ControlledBroker([project]), workspace=workspace, motion=False)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await wait_until(pilot, lambda: bool(app.model.nodes))
+        await pilot.press("]")
+        await wait_until(pilot, lambda: "Enter: " in str(app.query_one("#graph-selection").render()))
+        CockpitState(settings).update({"language": "pl"})
+        button = app.query_one("#graph-open", Button)
+        await wait_until(pilot, lambda: str(button.label) == "Otwórz")
+        await pilot.pause(.2)
+        # The whole label is on screen, not the part that fitted the width laid out for "Open".
+        row = app.screen._compositor.render_strips()[button.region.y].text
+        assert "Otwórz" in row and "Grupy" in row, row  # the trial showed "Otwó    Grupy" here
+        app.invalidate_frame()
+        await wait_until(pilot, lambda: str(app.query_one("#graph-selection").render()).endswith("· źródło"))
+
+
 @pytest.mark.parametrize("name", ["api_providers.py", "copilot_adapter.py"])
 def test_provider_errors_are_written_in_english(name):
     assert polish_literals(name) == []
@@ -119,3 +186,63 @@ async def test_a_provider_error_reads_in_the_panel_language(tmp_path, language, 
         history = "\n".join(line.text for line in app.query_one("#agent-history", RichLog).lines)
     for text in (status, history):
         assert shown in text and hidden not in text and "A note of the model [bold]" in text
+
+
+@pytest.mark.asyncio
+async def test_the_finding_form_offers_kinds_and_statuses_in_polish_and_saves_the_stored_word(
+        tmp_path, monkeypatch):
+    from textual.widgets import Select
+    from textual.widgets._select import SelectCurrent
+
+    from cairnmind.workspace_finding import FindingApp
+    from test_quick_finding import FakeBroker, selected_workspace
+    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: "pl")
+    settings, state = selected_workspace(tmp_path)
+    broker = FakeBroker()
+    app = FindingApp(settings, broker=broker, workspace=state)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        kind, status = app.query_one("#finding-kind", Select), app.query_one("#finding-status", Select)
+        assert str(kind.query_one(SelectCurrent).label) == "decyzja" and kind.value == "decision"
+        assert str(status.query_one(SelectCurrent).label) == "proponowane" and status.value == "proposed"
+        await pilot.press(*"Use", "space", *"WAL", "ctrl+s")
+        await app.workers.wait_for_complete()
+    sent = broker.calls[0][2]["json"]
+    assert (sent["kind"], sent["status"]) == ("decision", "proposed")
+
+
+def test_a_stage_and_its_check_result_name_states_and_outcomes_in_polish():
+    from cairnmind.stages import describe
+    from cairnmind.workspace_stage import check_summary
+    polish = lambda text: tr(text, "pl")  # noqa: E731
+    step = describe({"task": {"content": "Add a comment", "state": "needs_test", "version": 7}}, polish)
+    assert step == "Krok: Add a comment [do testu, v7]"
+    assert "Wynik: zakończone" in check_summary({"passed": True, "outcome": "completed"}, polish)
+    # Text that is not a stored word (a model's or a task's) is never translated.
+    assert describe({"task": {"content": "done", "state": "odd state", "version": 1}}, polish).endswith(
+        "done [odd state, v1]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_command_menu_descriptions_wrap_instead_of_being_cut_at_80x24(tmp_path, monkeypatch, language):
+    from types import SimpleNamespace
+
+    from textual.widgets import DataTable
+
+    from cairnmind.config import Settings
+    from cairnmind.terminal_commands import COMMANDS, CommandPaletteApp
+    monkeypatch.setattr("cairnmind.terminal_i18n.language_for", lambda settings: language)
+    app = CommandPaletteApp(SimpleNamespace(settings=Settings(data_dir=tmp_path / "data")))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        width = table.ordered_columns[1].width
+        for index, row in enumerate(COMMANDS):
+            cell = str(table.get_row(str(index))[1])
+            assert " ".join(cell.split()) == tr(row[1], language)  # every word of it, none cut off
+            assert all(len(line) <= width for line in cell.splitlines())
+        # The cursor still moves one command at a time.
+        await pilot.press("down")
+        assert table.cursor_row == 1
