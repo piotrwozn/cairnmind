@@ -1,6 +1,7 @@
 # Cairnmind
 
 [![CI](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml/badge.svg)](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpiotrwozn%2Fcairnmind%2Fbadges%2Fcoverage.json)](https://github.com/piotrwozn/cairnmind/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
 
 **Evidence-grounded project memory for coding agents, in your terminal.**
 
@@ -379,6 +380,7 @@ uv sync --locked --extra dev
 uv run ruff check src tests
 uv run pytest -m "not arcade and not tmux"   # fast tier, no database or tmux
 uv run pytest                                # full suite, needs Java 21 and tmux
+uv run pytest -n 4                           # the full suite in 4 parallel processes
 ```
 
 The automated tests need no Ollama, no models and no signed-in coding clients; those are used only by the explicit evaluations. Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier and the full suite on every pull request and on every push to `main`.

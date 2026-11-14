@@ -9,10 +9,12 @@ import sys
 
 import pytest
 
+import conftest
+
 from cairnmind import mcp_host
 from cairnmind.mcp_host import MAX_DESCRIPTION, McpHost
 
-FIXTURE = str(Path(__file__).parent / "fixtures" / "mcp_fixture_server.py")
+FIXTURE = conftest.MCP_FIXTURE  # this pytest process's own copy (see conftest)
 
 
 def server(*modes, identifier="files", **extra):

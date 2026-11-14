@@ -1162,9 +1162,11 @@ async def test_ask_memory_from_sidebar_shows_cited_answer(tmp_path, monkeypatch)
         # The ask worker stays busy while its form is open, so wait for the screen.
         for _ in range(100):
             await pilot.pause(.02)
-            if isinstance(app.screen, FormModal):
+            # The form focuses its first field when mounted, after it became the screen: a key
+            # pressed before that goes elsewhere.
+            if isinstance(app.screen, FormModal) and getattr(app.focused, "id", None) == "field-question":
                 break
-        assert isinstance(app.screen, FormModal)
+        assert isinstance(app.screen, FormModal) and getattr(app.focused, "id", None) == "field-question"
         await pilot.press(*"WhyArcadeDB", "ctrl+s")
         for _ in range(100):
             await pilot.pause(.02)
@@ -1256,9 +1258,11 @@ async def test_ask_memory_chosen_in_the_menu_reaches_what_the_project_page_reach
         await app._poll_workspace()
         for _ in range(100):
             await pilot.pause(.02)
-            if isinstance(app.screen, FormModal):
+            # The form focuses its first field when mounted, after it became the screen: a key
+            # pressed before that goes elsewhere.
+            if isinstance(app.screen, FormModal) and getattr(app.focused, "id", None) == "field-question":
                 break
-        assert isinstance(app.screen, FormModal)
+        assert isinstance(app.screen, FormModal) and getattr(app.focused, "id", None) == "field-question"
         await pilot.press(*"Why", "ctrl+s")
         for _ in range(100):
             await pilot.pause(.02)
