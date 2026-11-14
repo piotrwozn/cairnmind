@@ -47,6 +47,8 @@ def zoomed(workspace):
 def test_focus_zooms_as_before_at_every_width_and_moves_no_pane(manager, size):
     workspace, broker, _ = manager
     view(workspace, "focus")  # the default layout
+    # With the activity column switched off (#149); with it on, see test_workspace_focus_column.py.
+    CockpitState(workspace.settings).update({"activity_column": False})
     workspace.create(start_supervisor=False)
     terminal(workspace, *size)
     before = {role: value[-1] for role, value in rows(workspace).items()}
