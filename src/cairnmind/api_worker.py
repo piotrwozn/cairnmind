@@ -374,6 +374,12 @@ class AgentApp(App):
         self.query_one("#agent-send", Button).disabled = busy or self.engine is None
         self.query_one("#agent-interrupt", Button).disabled = not busy
         self.query_one("#agent-resolve", Button).disabled = busy
+        self.call_after_refresh(self.keep_focus)
+
+    def keep_focus(self):
+        """A focused button that becomes disabled drops the focus, and typed text then went nowhere."""
+        if self.focused is None and self.screen is self.screen_stack[0]:
+            self.query_one("#agent-prompt", TextArea).focus()
 
     @work(group="agent-turn", exclusive=True, exit_on_error=False)
     async def execute_turn(self, text):

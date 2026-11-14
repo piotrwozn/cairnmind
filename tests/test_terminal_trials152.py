@@ -239,6 +239,45 @@ async def test_a_menu_command_during_an_open_dialog_says_so_and_changes_nothing(
     assert tr(app.DIALOG_OPEN, "pl") != app.DIALOG_OPEN
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["button", "keys"])
+async def test_after_an_agent_reply_typing_goes_to_the_prompt(tmp_path, how):
+    from textual.widgets import TextArea
+    from test_api_worker import make_app, settle as settle_agent
+    app = make_app(tmp_path)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle_agent(app, pilot)
+        prompt = app.query_one("#agent-prompt", TextArea)
+        assert app.focused is prompt
+        await pilot.press(*"first")
+        if how == "button":
+            app.query_one("#agent-send").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+        else:
+            await pilot.press("ctrl+enter")
+        for _ in range(3):
+            await settle_agent(app, pilot)
+        assert app.engine.turns == ["first"]
+        assert app.focused is prompt, app.focused
+        await pilot.press(*"second")
+        assert prompt.text == "second"
+
+
+@pytest.mark.asyncio
+async def test_down_from_the_project_search_goes_into_the_list(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.open_command("search")  # Projects from the menu, and Ctrl+B p
+        await pilot.pause()
+        assert app.focused.id == "project-search"
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused.id == "project-rows"
+
+
 def wait_for(predicate, seconds=5):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:

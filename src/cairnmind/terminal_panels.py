@@ -446,6 +446,14 @@ class SidebarApp(BasePanel):
         self.show_page("projects")
         self.query_one("#project-search", Input).focus()
 
+    def on_key(self, event):
+        # Down in the search field goes into the list it filters.
+        if event.key == "down" and getattr(self.focused, "id", None) == "project-search":
+            rows = self.query_one("#project-rows", DataTable)
+            if rows.row_count:
+                event.stop()
+                rows.focus()
+
     def configured_slots(self, project_id=None):
         settings = self.data.get("settings", {})
         project_id = project_id or self.workspace_data.get("project_id")
