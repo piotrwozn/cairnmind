@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import math
 from statistics import median
-import sys
 from time import perf_counter
+
+from conftest import time_budget
 
 from cairnmind.graph_raster import LUMINANCE, SELECTED_COLOR, _Raster, render_scene
 from cairnmind.terminal_graph import Camera, seed_position
@@ -119,11 +120,6 @@ def test_empty_invalid_offscreen_and_near_plane_data_are_bounded():
     assert len(raster.render().plain.splitlines()) == 25
 
 
-def measuring_coverage() -> bool:
-    coverage = sys.modules.get("coverage")
-    return bool(coverage and coverage.Coverage.current())
-
-
 def test_full_graph_render_budget_and_bounded_output():
     nodes = [{"id": str(i), "kind": ("fact", "decision", "task", "source")[i % 4]} for i in range(300)]
     positions = {node["id"]: seed_position(node["id"]) for node in nodes}
@@ -137,10 +133,7 @@ def test_full_graph_render_budget_and_bounded_output():
             durations.append(perf_counter() - start)
         # The measured target is 100ms; leave CI headroom for the shared database
         # and browser processes.  A quadratic or unbounded raster regression fails.
-        # Coverage's tracer slows this pure-Python loop by about half, so the budget is only
-        # checked in runs that do not measure coverage (the required CI job is one of them).
-        if not measuring_coverage():
-            assert median(durations) < .18
+        assert median(durations) < time_budget(.18)
         assert len(result.plain.splitlines()) == rows
         assert all(len(line) == columns for line in result.plain.splitlines())
         assert len(_occupied(result)) > 100
