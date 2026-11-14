@@ -158,6 +158,38 @@ async def test_focus_on_a_stacked_primary_button_is_as_clear_as_on_the_others(co
     assert primary_focused[0] != Color.parse(terminal_theme.TOKENS["select"])  # not the selected-row fill
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+@pytest.mark.parametrize("width", [80, 120])
+async def test_graph_key_footer_fits_and_hidden_keys_still_work(panel, monkeypatch, language, width):  # noqa: F811
+    from textual.widgets._footer import FooterKey
+    from cairnmind.terminal_commands import CommandPaletteApp
+    from cairnmind.terminal_graph import TerminalGraph
+    settings, workspace, broker = panel
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=(width, 35)) as pilot:
+        await pilot.pause(.3)
+        keys = list(app.query(FooterKey))
+        assert keys and all(key.region.right <= width for key in keys), [(k.key, k.region) for k in keys]
+        shown = {key.description for key in keys}
+        assert tr("Zoom in", language) in shown and tr("Next node", language) in shown
+        bound = {binding.key for _, binding, *_ in app.active_bindings.values()}
+        assert {"a", "r", "backspace", "space", "enter", "g"} <= bound  # the keys still work
+        assert app.query_one(TerminalGraph).has_focus
+    # The keys no longer in the footer are named in the keyboard help.
+    from types import SimpleNamespace
+    from cairnmind.cockpit_state import CockpitState
+    CockpitState(settings).update({"language": language})
+    help_app = CommandPaletteApp(SimpleNamespace(settings=settings), help_only=True)
+    async with help_app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        text = " ".join(screen_text(help_app).split())
+    assert {"en": "Graph: a switches between all memory and the project; r resets the camera; Backspace goes up.",
+            "pl": "Graf: a przełącza między całą pamięcią a projektem; r resetuje kamerę; Backspace przechodzi wyżej.",
+            }[language] in text
+
+
 def wait_for(predicate, seconds=5):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:

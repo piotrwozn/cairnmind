@@ -282,6 +282,7 @@ CATALOG = {
     "Cairnmind controls: Tab / Shift+Tab move focus; Enter chooses; Esc goes back.\n"
     "Projects: Enter opens; Start work starts only the chosen assistant.\n"
     "Graph: [ / ] select nodes; arrows rotate; Space pauses; Enter opens a node.\n"
+    "Graph: a switches between all memory and the project; r resets the camera; Backspace goes up.\n"
     "Native assistants keep their own shortcuts, paste, Ctrl+C and approval dialogs.\n"
     "Memory readiness, session activity and terminal control are separate states.":
     "Ctrl+B, potem Spacja: wyszukaj polecenie\n"
@@ -295,6 +296,7 @@ CATALOG = {
     "Cairnmind: Tab / Shift+Tab zmienia fokus; Enter wybiera; Esc wraca.\n"
     "Projekty: Enter otwiera; Rozpocznij pracę uruchamia tylko wybranego asystenta.\n"
     "Graf: [ / ] wybiera węzły; strzałki obracają; Spacja wstrzymuje; Enter otwiera węzeł.\n"
+    "Graf: a przełącza między całą pamięcią a projektem; r resetuje kamerę; Backspace przechodzi wyżej.\n"
     "Natywni asystenci zachowują własne skróty, wklejanie, Ctrl+C i zgody.\n"
     "Gotowość pamięci, aktywność sesji i sterowanie terminalem to oddzielne stany.",
 }

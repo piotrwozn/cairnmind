@@ -316,12 +316,14 @@ class TerminalGraph(Widget, can_focus=True):
     DEFAULT_CSS = terminal_theme.css("TerminalGraph { height: 1fr; min-height: 3; background: $cm-bg; }")
     BINDINGS = [Binding("left", "left", show=False), Binding("right", "right", show=False),
                 Binding("up", "up", show=False), Binding("down", "down", show=False),
+                # The footer is one row that cannot wrap: keys with a button of their own (Open, Groups,
+                # Pause, Back) or named in the keyboard help (a, r) are not shown there, and still work.
                 Binding("plus,equals_sign", "zoom_in", "Zoom in"), Binding("minus", "zoom_out", "Zoom out"),
-                Binding("space", "pause", "Pause"), Binding("r", "reset_camera", "Camera"),
+                Binding("space", "pause", "Pause", show=False), Binding("r", "reset_camera", "Camera", show=False),
                 Binding("right_square_bracket", "next_node", "Next node"), Binding("left_square_bracket", "previous_node", "Previous node"),
-                Binding("enter", "open", "Open"), Binding("g", "groups", "Groups"),
+                Binding("enter", "open", "Open", show=False), Binding("g", "groups", "Groups", show=False),
                 Binding("n", "next_page", "Next"), Binding("p", "previous_page", "Previous"),
-                Binding("a", "global_view", "Global"), Binding("backspace", "parent", "Parent")]
+                Binding("a", "global_view", "Global", show=False), Binding("backspace", "parent", "Parent", show=False)]
 
     def __init__(self, model, **kwargs):
         super().__init__(**kwargs)

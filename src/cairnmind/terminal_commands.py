@@ -89,6 +89,7 @@ class CommandPaletteApp(App):
                 "Cairnmind controls: Tab / Shift+Tab move focus; Enter chooses; Esc goes back.\n"
                 "Projects: Enter opens; Start work starts only the chosen assistant.\n"
                 "Graph: [ / ] select nodes; arrows rotate; Space pauses; Enter opens a node.\n"
+                "Graph: a switches between all memory and the project; r resets the camera; Backspace goes up.\n"
                 "Native assistants keep their own shortcuts, paste, Ctrl+C and approval dialogs.\n"
                 "Memory readiness, session activity and terminal control are separate states."
             )), id="command-help")
