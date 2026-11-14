@@ -959,9 +959,13 @@ _ENDED = {"exited", "failed", "interrupted"}
 
 
 def _unknown_run(error):
-    """The broker answered that it has no run with this id: 404, or the 400 of a broker before 0.11."""
+    """The broker answered that it has no run with this id: 404 now, 400 from an earlier broker.
+
+    The detail must name the run as unknown: any other 404 (a route an older or other service
+    does not have) says nothing about the run, which may still be running.
+    """
     status, detail = getattr(error, "status_code", None), getattr(error, "detail", None)
-    return status == 404 or (status == 400 and detail == "Unknown native run")
+    return status in {404, 400} and detail == "Unknown native run"
 
 
 def _forget_finished(manager, finished):

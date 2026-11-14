@@ -303,7 +303,9 @@ def test_stop_with_clients_forgets_a_run_the_broker_no_longer_knows(manager, mon
     assert workspace.state.read()["run_ids"] == []
 
 
-def test_stop_with_clients_still_reports_a_broker_that_does_not_answer(manager, monkeypatch):
+@pytest.mark.parametrize("answer", [(503, "The local broker does not answer."), (404, "Not Found")])
+def test_stop_with_clients_still_reports_a_broker_that_does_not_answer(manager, monkeypatch, answer):
+    # A 404 that does not name the run (a route the service lacks) says nothing about the run (#161 review).
     from cairnmind import workspace as module
     from cairnmind.terminal_client import BrokerError
     workspace, broker, project = manager
@@ -311,7 +313,7 @@ def test_stop_with_clients_still_reports_a_broker_that_does_not_answer(manager, 
     workspace._adopt(["kept"])
 
     def request(method, path, **kwargs):
-        raise BrokerError(503, "The local broker does not answer.")
+        raise BrokerError(*answer)
     monkeypatch.setattr(broker, "request", request)
     monkeypatch.setattr(module, "WorkspaceManager", lambda *args, **kwargs: workspace)
     result = module.stop_workspace(workspace.settings, stop_clients=True)
