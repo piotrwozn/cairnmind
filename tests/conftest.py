@@ -267,7 +267,7 @@ def mcp_fixture_processes() -> list[int]:
             continue
         try:
             arguments = (entry / "cmdline").read_bytes().split(b"\0")
-            state = (entry / "stat").read_text().rsplit(")", 1)[1].split()[0]
+            state = (entry / "stat").read_text(errors="replace").rsplit(")", 1)[1].split()[0]
         except (OSError, IndexError):
             continue
         if state != "Z" and any(MCP_FIXTURE.encode() in argument for argument in arguments):
