@@ -24,6 +24,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -62,6 +63,20 @@ EXCLUSIVE_MODULES = frozenset({"test_terminal_latency080"})
 
 # The directory, under the run's temporary root, of the engine that parallel workers share.
 SHARED_ENGINE = "arcade-engine-shared"
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_BOX = re.compile("[\u2500-\u257f]")
+
+
+def plain_words(text: str) -> str:
+    """The words of CLI output, for comparing a message that Typer or Rich may have drawn in a box.
+
+    Colour codes, box-drawing characters and line breaks are dropped and runs of white space become
+    one space, so a message wrapped at 60 columns or split across a border still matches. Nothing
+    else is changed: the words, digits and punctuation of the message must still be there.
+    """
+    return " ".join(_BOX.sub(" ", _ANSI.sub("", text)).split())
 
 
 @pytest.hookimpl(trylast=True)  # after the tmp_path plugin has set up the base directory
