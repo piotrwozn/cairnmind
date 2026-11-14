@@ -11,6 +11,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `cairnmind workspace stop --clients` lists a run the client service no longer knows under `clients_unknown` and forgets it, instead of reporting `client_stop_unavailable`; the broker answers 404 for such a run, and an assistant pane whose run it no longer knows now ends with "The session changed." instead of showing offline and retrying (#161).
 - Two memory inspector texts that showed in Polish in an English panel, the source view's raw record choice and the refusal to review a historical version, are now translated (#161).
 - The panels' labels and messages, the stale workspace message and the synthetic preview's answers are written in English and translated to Polish; nothing displayed changed (#161).
+- Memory extraction no longer turns the protocol of a session into proposed records. The launcher's first message, Codex's environment block and a client's tool calls are left out, and conversation messages are told that requests to the assistant, one-off questions and the assistant's narration of its own actions are not project knowledge. On the new evaluation set the share of proposals a person would reject fell from 65% to 29%, with no kept record lost (#160).
+- New command `cairnmind eval extraction` measures, with the local model, what extraction proposes from built-in agent, Claude Code and Codex conversations against the records a person would keep (#160).
 
 ## 0.10.0
 
