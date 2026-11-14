@@ -126,7 +126,7 @@ def path_states(store, project_id: str, worktree=None, *, known: dict | None = N
     root = _root(store, project_id, worktree)
     result = {"status": "unknown", "worktree": str(root), "head": None, "reasons": [], "paths": {}}
     try:
-        require_git_tree(root)
+        below = require_git_tree(root)
         nested = nested_reserved(store, root)
         try:
             head = _git(root, "rev-parse", "--verify", "HEAD").decode("ascii").strip()
@@ -143,6 +143,8 @@ def path_states(store, project_id: str, worktree=None, *, known: dict | None = N
             entry = _entry(root, name, (known or {}).get(name))
             if entry is not None:
                 paths[name] = entry
+        if below and not paths:
+            raise ValueError("Git lists no file of the registered root")
         result.update(status="fresh", head=head, paths=paths)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result["reasons"] = [_shown(f"the worktree cannot be read: {type(exc).__name__}: {exc}", 300)]

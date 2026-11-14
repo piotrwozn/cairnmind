@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 
 from .memory_paths import PUBLISHED_RELATIVE
 from .memory_published import version_projection
@@ -27,11 +28,16 @@ class _DryRun(Exception):
 
 
 def _git_top(root):
+    """The top of a root's Git worktree; None outside Git. A Git that does not answer refuses the import."""
     from .verification import _git
     try:
         return Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve()
     except (OSError, ValueError):
         return None
+    except subprocess.SubprocessError as exc:
+        from .memory import MemoryConflict
+        raise MemoryConflict(f"Git did not answer for {root}, so it cannot be told whether the directory "
+                             "is another project's; nothing was imported") from exc
 
 
 def _own_directory(tx, directory, project_id):
@@ -42,14 +48,17 @@ def _own_directory(tx, directory, project_id):
     is a root of another local project, or lies in the Git worktree of this project's root without
     being that root: then it is another project's in the same repository, registered here or not.
     Anything else (a teammate's checkout, a copy, a directory of another name) is decided by its
-    FORMAT.json and the binding alone.
+    FORMAT.json and the binding alone: this is a guard against mistakes inside a repository, not a
+    proof of where a directory came from. The path is resolved first, parents included, and its name
+    compared without case, so a symbolic link or a differently cased name does not lead around it.
     """
     if not isinstance(directory, (str, os.PathLike)):
         return
-    path = Path(os.path.abspath(directory))
-    if path.parts[-len(PUBLISHED_RELATIVE.parts):] != PUBLISHED_RELATIVE.parts:
+    path = Path(directory).resolve()
+    tail = tuple(part.casefold() for part in path.parts[-len(PUBLISHED_RELATIVE.parts):])
+    if tail != tuple(part.casefold() for part in PUBLISHED_RELATIVE.parts):
         return
-    holder = path.parents[len(PUBLISHED_RELATIVE.parts) - 1].resolve()
+    holder = path.parents[len(PUBLISHED_RELATIVE.parts) - 1]
     roots = {Path(row["path"]).resolve() for row in tx.query(
         "SELECT path FROM project_roots WHERE project_id=:project", {"project": project_id})}
     if holder in roots:

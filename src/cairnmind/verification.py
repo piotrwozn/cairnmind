@@ -193,11 +193,22 @@ def require_git_tree(root):
     """A registered root is the root of a Git worktree or a directory inside one (#174).
 
     A project registered at a subdirectory of a repository is that directory: Git lists its files
-    alone, relative to it. HEAD is the repository's, so any commit still moves it.
+    alone, relative to it. HEAD is the repository's, so any commit still moves it. A root the
+    repository ignores is refused: Git would list none of its files, and an edit there would leave
+    the fingerprint unchanged. Returns whether the root is a subdirectory of its worktree.
     """
     top = Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve()
-    if root != top and not root.is_relative_to(top):
+    if root == top:
+        return False
+    if not root.is_relative_to(top):
         raise ValueError("Registered root is not inside its Git worktree")
+    ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "."], capture_output=True,
+                             timeout=20, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+    if ignored.returncode == 0:
+        raise ValueError("Registered root is ignored by Git, which lists none of its files")
+    if ignored.returncode != 1:
+        raise ValueError("Cannot inspect Git worktree")
+    return True
 
 
 def capture_code_state(store, project_id, worktree=None, extra_inputs=None) -> dict:
@@ -206,7 +217,7 @@ def capture_code_state(store, project_id, worktree=None, extra_inputs=None) -> d
     result = {"status": "unknown", "worktree": str(root), "head": None, "branch": None,
               "fingerprint": None, "manifest_hash": None, "unknowns": []}
     try:
-        require_git_tree(root)
+        below = require_git_tree(root)
         nested = nested_reserved(store, root)
         head = _git(root, "rev-parse", "--verify", "HEAD").decode("ascii").strip()
         branch = subprocess.run(["git", "-C", str(root), "symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -216,6 +227,8 @@ def capture_code_state(store, project_id, worktree=None, extra_inputs=None) -> d
         later_head = _git(root, "rev-parse", "--verify", "HEAD").decode("ascii").strip()
         if first != second or head != later_head:
             unknowns.append("worktree changed during code-state capture")
+        if below and not second:
+            unknowns.append("Git lists no file of the registered root")
         unknowns = sorted(set(unknowns + later_unknowns))
         manifest_hash = _hash(second)
         result.update(head=head, branch=branch, manifest_hash=manifest_hash, unknowns=unknowns,

@@ -224,6 +224,93 @@ def test_a_memory_directory_of_no_registered_project_is_ordinary_files(teams):
     assert "vendor/tool/.memory/cairnmind-published/notes.md" in path_states(store, whole["id"])["paths"]
 
 
+def test_a_project_git_cannot_see_has_no_fresh_code_state(teams):
+    store, root = teams["store"], teams["root"]
+    (root / ".gitignore").write_text("scratch/\n")
+    hidden = root / "scratch" / "p"
+    hidden.mkdir(parents=True)
+    (hidden / "app.py").write_text("print(1)\n")
+    empty = root / "services" / "c"
+    empty.mkdir()
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "ignore scratch")
+    projects = {}
+    for name, folder, reason in (("ignored", hidden, "ignored by Git"), ("empty", empty, "no file")):
+        projects[name] = project = store.add_project(name, folder)
+        state = capture_code_state(store, project["id"])
+        # Git lists nothing there, so an edit would leave the fingerprint unchanged: never fresh.
+        assert state["status"] == "unknown" and any(reason in u for u in state["unknowns"]), state
+        scope = path_states(store, project["id"])
+        assert scope["status"] == "unknown" and any(reason in r for r in scope["reasons"]), scope
+    (hidden / "new.py").write_text("print(2)\n")
+    assert capture_code_state(store, projects["ignored"]["id"])["status"] == "unknown"
+
+
+def test_another_worktree_of_the_root_project_reserves_the_memory_of_projects_below(teams):
+    store, root, a, tmp = teams["store"], teams["root"], teams["a"], teams["tmp"]
+    whole = store.add_project("monorepo", root)
+    worktree = tmp / "worktree"
+    git(root, "worktree", "add", "-q", str(worktree), "-b", "second")
+    store.add_project_root(whole["id"], worktree)
+    # Team A is registered at the main checkout only; its directory is reserved in every worktree.
+    assert Path("services/a/.memory/cairnmind-published") in nested_reserved(store, worktree)
+    before = capture_code_state(store, whole["id"], worktree=worktree)
+    assert before["status"] == "fresh", before["unknowns"]
+    published = worktree / "services" / "a" / PUBLISHED
+    published.mkdir(parents=True)
+    (published / "FORMAT.json").write_text(json.dumps({"project_id": a["id"]}) + "\n")
+    after = capture_code_state(store, whole["id"], worktree=worktree)
+    assert after["fingerprint"] == before["fingerprint"]
+    assert not any(".memory" in name for name in path_states(store, whole["id"], worktree)["paths"])
+    # Code is still code in that worktree.
+    (worktree / "services" / "a" / "app.py").write_text("TEAM = 'A'\n")
+    assert capture_code_state(store, whole["id"], worktree=worktree)["fingerprint"] != before["fingerprint"]
+
+
+def test_the_import_guard_resolves_links_and_ignores_case(teams):
+    store, root, a, b, tmp = teams["store"], teams["root"], teams["a"], teams["b"], teams["tmp"]
+    for project in (a, b):
+        index_project(store, project["id"])
+    reviewed(store, b["id"], "Team B stores memory in ArcadeDB too.", "storage")
+    Publisher(store).publish(b["id"])
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "memory of team B")
+    clone = tmp / "clone"
+    git(tmp, "clone", "-q", str(root), str(clone))
+    other = Store(tmp / "clone-database")
+    a2 = other.add_project("team-a", clone / "services" / "a")
+    # A parent linked from elsewhere still leads to team B's directory.
+    linked = tmp / "elsewhere" / ".memory"
+    linked.parent.mkdir()
+    linked.symlink_to(clone / "services" / "b" / ".memory", target_is_directory=True)
+    with pytest.raises(MemoryConflict, match="each project imports only its own"):
+        PublishedImporter(other).import_published(linked / "cairnmind-published", a2["id"], bind=True)
+    # A differently cased name, which a case-insensitive file system opens as the same directory.
+    renamed = clone / "services" / "b" / ".MEMORY"
+    (clone / "services" / "b" / ".memory").rename(renamed)
+    (renamed / "cairnmind-published").rename(renamed / "CAIRNMIND-PUBLISHED")
+    with pytest.raises(MemoryConflict, match="each project imports only its own"):
+        PublishedImporter(other).import_published(renamed / "CAIRNMIND-PUBLISHED", a2["id"], bind=True)
+    assert other.list_records(a2["id"]) == []
+
+
+def test_a_git_that_does_not_answer_refuses_the_import(teams, monkeypatch):
+    import cairnmind.verification as verification
+    store, root, b, tmp = teams["store"], teams["root"], teams["b"], teams["tmp"]
+    index_project(store, b["id"])
+    reviewed(store, b["id"], "Team B stores memory in ArcadeDB too.", "storage")
+    Publisher(store).publish(b["id"])
+    other = Store(tmp / "other-database")  # team A's machine, where team B is not registered
+    a2 = other.add_project("team-a", root / "services" / "a")
+
+    def hung(folder, *args):
+        raise subprocess.TimeoutExpired(["git", *args], 20)
+    monkeypatch.setattr(verification, "_git", hung)
+    with pytest.raises(MemoryConflict, match="Git did not answer"):
+        PublishedImporter(other).import_published(root / "services" / "b" / PUBLISHED, a2["id"])
+    assert other.list_records(a2["id"]) == []
+
+
 def test_an_existing_project_at_the_repository_root_keeps_its_directory(teams):
     store, root = teams["store"], teams["root"]
     whole = store.add_project("monorepo", root)
