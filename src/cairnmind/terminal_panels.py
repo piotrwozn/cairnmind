@@ -1270,12 +1270,16 @@ class SidebarApp(BasePanel):
 
 def main():
     parser = argparse.ArgumentParser(description="Prywatny panel terminalowego środowiska Cairnmind")
-    parser.add_argument("--kind", choices=["sidebar", "inspector", "graph"], required=True)
+    parser.add_argument("--kind", choices=["sidebar", "inspector", "graph", "activity"], required=True)
     parser.add_argument("--workspace-id", default="default")
     parser.add_argument("--data-dir", type=Path)
+    parser.add_argument("--popup", action="store_true")
     args = parser.parse_args()
     settings = Settings.load(args.data_dir, create=False)
-    if args.kind == "sidebar":
+    if args.kind == "activity":
+        from .terminal_activity import activity_app
+        app = activity_app(settings, args.workspace_id, popup=args.popup)
+    elif args.kind == "sidebar":
         app = SidebarApp(settings, args.workspace_id)
     elif args.kind == "inspector":
         from .terminal_inspector import InspectorApp
