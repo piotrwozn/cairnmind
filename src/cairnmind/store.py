@@ -570,8 +570,6 @@ class Store:
         """
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
-        if not isinstance(content, str) or not isinstance(uri, str) or not uri:
-            raise ValueError("Source requires a URI and text content")
         if one_row(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true",
                    {"key": json_text([project_id, uri])}, False):
             return None
