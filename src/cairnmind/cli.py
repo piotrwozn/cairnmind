@@ -547,7 +547,8 @@ def usage(ctx: typer.Context, project: str,
           by: Annotated[UsageBy, typer.Option("--by", help="Group by UTC day or by ISO week.")] = UsageBy.day,
           warn_over: Annotated[int | None, typer.Option(
               "--warn-over", min=1, help="Warn when input plus output tokens of the period exceed this; blocks "
-              "nothing. Default: warn_over_tokens under [usage] in .cairnmind/checks.toml.")] = None,
+              # Help is rendered through Rich: an unescaped [usage] would be read as a style tag and dropped.
+              "nothing. Default: warn_over_tokens under \\[usage] in .cairnmind/checks.toml.")] = None,
           as_json: Annotated[bool, typer.Option("--json", help="Print the usage as JSON.")] = False):
     """Sum the token usage of the built-in API agent per day or week, profile and model. Asks no model."""
     from cairnmind.codex_usage import stored_records, waiting_in_inbox
