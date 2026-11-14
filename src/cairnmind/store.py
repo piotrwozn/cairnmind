@@ -570,12 +570,22 @@ class Store:
         """
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
-        digest, key = hashlib.sha256(content.encode()).hexdigest(), json_text([project_id, uri])
-        if one_row(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true", {"key": key}, False):
+        if one_row(tx, "SELECT id FROM sources WHERE current_key=:key AND is_current=true",
+                   {"key": json_text([project_id, uri])}, False):
             return None
+        return self.new_source(tx, project_id, uri, content, kind, metadata)
+
+    def new_source(self, tx, project_id, uri, content, kind="document", metadata=None):
+        """Insert the current source of a URI whose earlier one, if any, this transaction already deactivated.
+
+        The row is the one ``snapshot`` writes; the unique index on the current key refuses a second current one.
+        """
+        if not isinstance(content, str) or not isinstance(uri, str) or not uri:
+            raise ValueError("Source requires a URI and text content")
         source = {"id": str(uuid4()), "project_id": project_id, "uri": uri, "kind": kind, "content": content,
-                  "sha256": digest, "metadata": {**(metadata or {}), **(self.current_origin() or {})},
-                  "is_current": True, "current_key": key, "created_at": utc_now()}
+                  "sha256": hashlib.sha256(content.encode()).hexdigest(),
+                  "metadata": {**(metadata or {}), **(self.current_origin() or {})},
+                  "is_current": True, "current_key": json_text([project_id, uri]), "created_at": utc_now()}
         insert_document(tx, "sources", source)
         return source
 
@@ -684,7 +694,9 @@ class Store:
             raise ValueError("Graph vertex belongs to another project")
         with self._keeping(tx) as known:
             if existing:
-                update_document(tx, "nodes", node, "id=:id", {"id": node["id"]})
+                # The project, checked above, lets a transaction that resets the project's graph skip reading
+                # the row before and after: the journal names no single node of a graph it reports as reset.
+                update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
             else:
                 tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
             if known is not None:
@@ -719,10 +731,12 @@ class Store:
             if known is not None:
                 known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
             if existing:
+                # The project is the checked one, as in upsert_node.
+                mine = {"id": edge["id"], "project_id": edge["project_id"]}
                 if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
-                    tx.command("DELETE FROM edges WHERE id=:id", {"id": edge["id"]})
+                    tx.command("DELETE FROM edges WHERE id=:id", mine)
                 else:
-                    update_document(tx, "edges", edge, "id=:id", {"id": edge["id"]})
+                    update_document(tx, "edges", edge, "id=:id", mine)
                     return edge
             tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
                        f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",

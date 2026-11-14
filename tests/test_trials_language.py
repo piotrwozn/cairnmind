@@ -114,7 +114,8 @@ def test_a_complete_answer_is_never_swapped_for_a_catalog_sentence():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("choice", "title"), [
-    ("language", "Language"), ("view", "Layout"), ("reduced_motion", "Reduce motion")])
+    ("language", "Language"), ("view", "Layout"), ("reduced_motion", "Reduce motion"),
+    ("activity_column", "Activity column")])
 async def test_the_value_dialog_is_titled_after_the_setting_it_changes(tmp_path, monkeypatch, choice, title):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)

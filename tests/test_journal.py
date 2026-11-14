@@ -78,6 +78,38 @@ def test_outbox_failure_rolls_back_the_domain_and_cursor(workspace, monkeypatch)
     assert not store.query("SELECT id FROM sources WHERE uri='manual://atomic'")
 
 
+def test_the_events_of_a_transaction_are_stored_by_a_few_statements_or_not_at_all(workspace, monkeypatch):
+    store, project, _, journal = workspace
+    before, command, statements = journal.cursor(), ArcadeClient.command, []
+
+    def counting(client, sql, params=None):
+        if sql.startswith("INSERT INTO journal_events "):
+            statements.append(len(params["rows"]))
+        return command(client, sql, params)
+    with monkeypatch.context() as patch:
+        patch.setattr(ArcadeClient, "command", counting)
+        with store.transaction() as tx:
+            for index in range(300):
+                Journal.touch(tx, project["id"], "record", f"r{index}")
+    assert statements == [module.EVENTS_PER_STATEMENT, 300 - module.EVENTS_PER_STATEMENT]
+    events = journal.read(before, limit=1000)["events"]
+    assert [event["seq"] for event in events] == list(range(before["seq"] + 1, before["seq"] + 301))
+    assert sorted(event["entity_id"] for event in events) == sorted(f"r{index}" for index in range(300))
+
+    # An engine that answered with fewer rows than it was sent would lose events without a word: refused.
+    after = journal.cursor()
+
+    def dropping(client, sql, params=None):
+        stored = command(client, sql, params)
+        return stored[:-1] if sql.startswith("INSERT INTO journal_events ") else stored
+    with monkeypatch.context() as patch:
+        patch.setattr(ArcadeClient, "command", dropping)
+        with pytest.raises(RuntimeError, match="did not store every event"):
+            store.snapshot(project["id"], "manual://lost", "must roll back")
+    assert journal.cursor() == after
+    assert not store.query("SELECT id FROM sources WHERE uri='manual://lost'")
+
+
 def test_concurrent_store_writers_keep_a_single_monotonic_sequence(workspace):
     store, project, _, journal = workspace
     before = journal.cursor()

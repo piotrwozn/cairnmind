@@ -1,6 +1,6 @@
 # Evaluation
 
-Cairnmind ships four explicit evaluations. They use real local models and, optionally, real coding clients, so they are not part of the automated test suite.
+Cairnmind ships five explicit evaluations. They use real local models and, optionally, real coding clients, so they are not part of the automated test suite.
 
 | Command | What it checks | Needs |
 | --- | --- | --- |
@@ -8,6 +8,7 @@ Cairnmind ships four explicit evaluations. They use real local models and, optio
 | `cairnmind eval run --clients` | Adds a hand-off through a fresh Codex, Claude Code and a fresh Codex again, each reading and acknowledging the same memory. | Codex CLI and Claude Code signed in; uses their quotas |
 | `cairnmind eval repository ROOT` | 20 questions with known answers about a real repository (for Cairnmind: `docs/evaluation/repository-questions.json`), asked in a copy indexed into a throwaway data directory and database. Counts complete, complete and right, complete and wrong. Pass: at least 80% complete and right. | Ollama with the configured models, a running engine |
 | `cairnmind eval memory` | Extraction of a fact, a decision and a task; portable snapshot transfer between two isolated databases; cited recall in the new database; refusal to answer about a neighbouring project. | Ollama |
+| `cairnmind eval extraction` | What extraction proposes from conversations: invented transcripts of the built-in agent, Claude Code and Codex (`docs/evaluation/extraction-transcripts.json`) with the records a person would keep marked, run three times by default. Counts kept, duplicate and rejected proposals. Pass: every kept record found in every run and no proposal from a protocol or launcher message. Nothing is stored. | Ollama with the configured chat model |
 
 Exit codes are 0 for passed, 1 for failed and 3 when a required model or client is unavailable (`not_run`). A missing model never counts as a pass.
 
@@ -26,6 +27,33 @@ The measurement found three problems, all fixed in 0.8.0:
 - **Abstention.** Asked about information the project does not contain, the knowledge agent wrote a confident answer instead of `unknown`. The instruction now states exactly how to abstain.
 - **Lost citation during repair.** The format-repair step could drop a verified citation, which cost one run a single recall case. Repair now carries over draft citations that already verify.
 - **Decision classified as fact.** Extraction once labelled an explicitly chosen decision as a fact. The extraction instruction now defines each record kind.
+
+## Extraction from conversations
+
+`cairnmind eval extraction [--transcripts FILE] [--runs N]` gives every message of the evaluation set that the product would extract to the production extraction (the same instruction, schema, repair and checks of quotes) and compares the proposals with the records a person would keep. A proposal that matches a kept record of its own message is kept, one that matches a kept record of another message of the same conversation is a duplicate, and any other one is rejected; a person rejects duplicates too. The figure is the share of proposals a person would reject. Matching uses regular expressions over the proposed text: a kept record's `match` must all occur and none of its `reject` (a request to the assistant or a guess that names the same thing), so read the records in the report as well. The run fails when a kept record is missed, when a protocol or launcher message gives a proposal, or when the extraction of any message failed, because that message was not measured.
+
+The set is invented and contains nothing private: the protocol a session goes through (reading and acknowledging the resume packet), questions of the moment answered with a tool, the assistant describing its own actions, the launcher's first message and Codex's environment block, mixed with decisions, constraints, tasks, a finding and an open question stated in conversation, one conversation in Polish, and one project about the resume protocol itself, where the names of the protocol tools are project knowledge.
+
+Measured on 14 November 2026 with `qwen3.5:9b` on an NVIDIA RTX 4080 Super under WSL2: 40 extracted messages, 15 kept records, three runs of each variant (#160). The product asks the model at temperature 0, and the three runs of each variant gave identical results.
+
+| Variant | Proposals | Rejected or duplicate | Share | Kept records found |
+| --- | --- | --- | --- | --- |
+| 0.10.0 extraction | 55 | 36 | 65% | 15 of 15 |
+| A rule for conversation messages | 32 | 14 | 44% | 14 of 15 |
+| The rule, keeping problems the person reports | 43 | 23 | 53% | 15 of 15 |
+| Protocol messages and tool calls left out | 36 | 17 | 47% | 15 of 15 |
+| Also every assistant message that calls a tool left out | 27 | 11 | 41% | 14 of 15 |
+| A higher bar for the assistant's messages | 51 | 32 | 63% | 15 of 15 |
+| The first rule and protocol left out | 29 | 11 | 38% | 14 of 15 |
+| The first rule, protocol left out and the higher bar | 26 | 8 | 31% | 14 of 15 |
+| The rule (keeping problems) and protocol left out | 31 | 11 | 35% | 15 of 15 |
+| **The rule, protocol left out and the higher bar (shipped)** | **28** | **8** | **29%** | **15 of 15** |
+
+The first rule, alone or combined, lost a problem the person reported together with a request to find its cause, and leaving out every assistant message that calls a tool lost a finding the assistant reported in the same message; neither was shipped. With the shipped change no proposal comes from a protocol message, the launcher's message, a one-off question or the assistant's narration of its actions. The eight left come from messages that also hold kept records: three guesses the text does not state (one inferred from "before the beta", two marked "implied"), two requests to the assistant for that conversation ("Run ruff on the src directory", "Run the linter after switching to Alembic"), the assistant's next step, and two restatements of the person's task. Read by eye, the 20 scored kept are records a person would keep, though two pairs say nearly the same thing (where originals are stored, and the reported report bug as a fact and as a task), so a person would reject about 8 to 10 of 28 (29% to 36%) against about 36 to 38 of 55 (65% to 69%) for 0.10.0.
+
+The scoring was made stricter after a review, with no new model run: requests and guesses that named a kept record had first counted as kept, which gave 62% for 0.10.0 and 14% for the shipped change. The shipped change was run again through the command after that (two runs, the same 28 proposals and 29%).
+
+As a stress test the 0.10.0 and the shipped extraction were also run three times at temperature 0.8, which the product does not use: the 0.10.0 extraction rejected 62%, 68% and 63% and missed the reported problem in two runs; the shipped one rejected 39%, 39% and 30% and missed it in one run.
 
 ## Questions about a real repository
 
