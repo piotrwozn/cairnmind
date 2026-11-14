@@ -1,16 +1,15 @@
-"""The private notice copy the activity panel reads (#144): bounded, private, never trusted."""
+"""The notice copies the activity panel reads (#144): bounded, never on disk, never trusted."""
 from __future__ import annotations
 
+import base64
 import json
-import os
-import stat
+import threading
+from datetime import datetime, timedelta
 
 import pytest
 
 from cairnmind import terminal_notice_feed as feed
-from cairnmind.cockpit_state import _private_directory
 from cairnmind.config import Settings
-from cairnmind.terminal_notice_feed import NoticeFeed, read_all
 from cairnmind.terminal_notices import NoticeHistory
 from cairnmind.terminal_panels import SidebarApp
 from test_terminal_panels import settle
@@ -19,120 +18,124 @@ from test_terminal_ux080 import setup_ui
 SCOPE = {"project_id": "p", "project_name": "P", "worktree": "/w"}
 
 
-def open_workspace(settings, workspace_id="default"):
-    """The folders the workspace state creates (0700) before any panel runs."""
-    _private_directory(settings.data_dir / "workspaces")
-    _private_directory(settings.data_dir / "workspaces" / workspace_id)
+class Memory:
+    """Stands in for the pane options of the workspace's tmux server."""
+
+    def __init__(self):
+        self.values, self.threads = {}, []
+
+    def publish(self, role, value):
+        self.threads.append(threading.current_thread())
+        self.values[role] = value
+
+    def read(self):
+        return dict(self.values)
 
 
-def settings_at(tmp_path):
+def install(monkeypatch):
+    memory = Memory()
+    monkeypatch.setattr(feed, "channel", lambda settings, workspace_id: memory)
+    return memory
+
+
+def publish(settings, role, history):
+    feed.publish(settings, "default", role, feed.snapshot(history))
+
+
+def raw(rows):
+    return base64.urlsafe_b64encode(json.dumps({"version": 1, "entries": rows}).encode()).decode()
+
+
+def test_round_trip_keeps_the_newest_thirty_cut_and_bounded(tmp_path, monkeypatch):
+    install(monkeypatch)
     settings = Settings(data_dir=tmp_path / "data")
-    open_workspace(settings)
-    return settings
-
-
-def test_without_a_workspace_folder_nothing_is_created(tmp_path):
-    settings = Settings(data_dir=tmp_path / "data")
-    history = NoticeHistory()
-    history.add("hello", SCOPE)
-    NoticeFeed(settings, "default", "sidebar").publish(history)
-    assert not (tmp_path / "data").exists() and read_all(settings, "default") == []
-
-
-def test_round_trip_keeps_the_newest_thirty_cut_and_private(tmp_path):
-    settings = settings_at(tmp_path)
     history = NoticeHistory()
     for index in range(40):
         history.add(f"notice {index}", SCOPE, "warn" if index % 2 else "info")
     history.add("x" * 2000, SCOPE, "error")
-    NoticeFeed(settings, "default", "sidebar").publish(history)
-    entries = read_all(settings, "default")
+    publish(settings, "sidebar", history)
+    entries = feed.read_all(settings, "default")
     assert len(entries) == 30
-    assert entries[0]["text"] == "x" * 500 + "…" and entries[0]["kind"] == "error"
+    assert entries[0]["text"] == "x" * feed.TEXT_CHARS + "…" and entries[0]["kind"] == "error"
     assert entries[1]["text"] == "notice 39" and entries[1]["kind"] == "warn"
-    path = feed.directory(settings, "default") / "sidebar.json"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert not (tmp_path / "data").exists()  # nothing on disk
 
 
-def test_entries_of_all_panels_merge_newest_first(tmp_path):
-    settings = settings_at(tmp_path)
-    for role in ("sidebar", "inspector", "graph"):
+def test_a_large_copy_drops_its_oldest_entries_to_fit_one_tmux_command():
+    rows = [{"seq": i, "when": "2026-11-14T10:00:00", "kind": "info", "text": "é" * 200, "project_id": "p",
+             "project_name": "P", "worktree": "/w" * 40, "count": 1} for i in range(30)]
+    value = feed.encode(rows)
+    assert len(value) <= feed.MAX_BYTES and set(value) <= set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_=")
+    kept = feed.decode("sidebar", value, now=datetime(2026, 11, 14, 12))
+    assert 0 < len(kept) < 30 and kept[-1]["seq"] == 29  # the newest stay
+
+
+def test_entries_of_all_panels_merge_newest_first(tmp_path, monkeypatch):
+    install(monkeypatch)
+    settings = Settings(data_dir=tmp_path / "data")
+    for role in feed.ROLES:
         history = NoticeHistory()
         history.add(role + " says hi", SCOPE)
-        NoticeFeed(settings, "default", role).publish(history)
-    assert sorted(entry["role"] for entry in read_all(settings, "default")) == ["graph", "inspector", "sidebar"]
-    times = [entry["when"] for entry in read_all(settings, "default")]
-    assert times == sorted(times, reverse=True)
+        publish(settings, role, history)
+    entries = feed.read_all(settings, "default")
+    assert sorted(entry["role"] for entry in entries) == ["graph", "inspector", "sidebar"]
+    assert [entry["when"] for entry in entries] == sorted((entry["when"] for entry in entries), reverse=True)
 
 
-def test_only_ui_panels_keep_a_copy_and_the_workspace_id_is_checked(tmp_path):
-    settings = settings_at(tmp_path)
+def test_only_ui_panels_keep_a_copy(tmp_path, monkeypatch):
+    install(monkeypatch)
     with pytest.raises(ValueError):
-        NoticeFeed(settings, "default", "activity")
-    with pytest.raises(ValueError):
-        NoticeFeed(settings, "../escape", "sidebar")
+        feed.publish(Settings(data_dir=tmp_path / "data"), "default", "activity", [])
 
 
-def test_a_linked_file_or_folder_is_refused(tmp_path):
-    settings = settings_at(tmp_path)
-    folder = feed.directory(settings, "default")
-    folder.mkdir(parents=True, mode=0o700)
-    target = tmp_path / "elsewhere.json"
-    target.write_text(json.dumps({"version": 1, "entries": [{"when": "2026-11-14T10:00:00", "text": "planted"}]}))
-    (folder / "sidebar.json").symlink_to(target)
-    assert read_all(settings, "default") == []
-    history = NoticeHistory()
-    history.add("mine", SCOPE)
-    NoticeFeed(settings, "default", "sidebar").publish(history)  # replaces the link, never writes through it
-    assert json.loads(target.read_text())["entries"][0]["text"] == "planted"
-    os.unlink(folder / "sidebar.json")
-    other = tmp_path / "other"
-    other.mkdir(mode=0o700)
-    os.rmdir(folder)
-    os.symlink(other, folder)
-    with pytest.raises(ValueError):
-        NoticeFeed(settings, "default", "sidebar").publish(history)
-    assert read_all(settings, "default") == []
-
-
-def test_a_hostile_file_is_read_safely(tmp_path):
-    settings = settings_at(tmp_path)
-    folder = feed.directory(settings, "default")
-    folder.mkdir(parents=True, mode=0o700)
+def test_a_hostile_copy_is_read_safely():
+    now = datetime(2026, 11, 14, 12)
     rows = [{"when": "2026-11-14T10:00:00", "text": "\x1b]52;c;x\x07[bold]hi‮", "kind": "evil",
              "project_id": 5, "count": "9", "seq": -1},
             {"when": "not a date", "text": "skipped"}, {"when": "2026-11-14T10:00:01", "text": 7},
-            "junk", {"when": "2026-11-14T10:00:02", "text": "   "}]
-    (folder / "sidebar.json").write_text(json.dumps({"version": 1, "entries": rows}))
-    (folder / "inspector.json").write_text("{" * 5000)
-    (folder / "graph.json").write_text(json.dumps({"version": 1, "entries": [
-        {"when": "2026-11-14T10:00:00", "text": "big " * 30000}]}))
-    entries = read_all(settings, "default")
+            "junk", {"when": "2026-11-14T10:00:02", "text": "   "},
+            {"when": (now + timedelta(days=1)).isoformat(), "text": "Review approved"}]  # dated in the future
+    entries = feed.decode("sidebar", raw(rows), now=now)
     assert len(entries) == 1
     entry = entries[0]
     assert "\x1b" not in entry["text"] and "‮" not in entry["text"] and "[bold]hi" in entry["text"]
     assert (entry["kind"], entry["project_id"], entry["count"], entry["seq"]) == ("info", None, 1, 0)
+    for value in ("{" * 5000, "not base64!", raw([]) * 400, base64.urlsafe_b64encode(b"[1,2]").decode(), None, 7):
+        assert feed.decode("sidebar", value, now=now) == []
 
 
-async def test_starting_a_panel_replaces_a_stale_copy_with_its_own_history(tmp_path, monkeypatch):
+def test_a_broken_channel_reads_as_no_notices(tmp_path, monkeypatch):
+    class Broken:
+        def read(self):
+            raise OSError("tmux is gone")
+    monkeypatch.setattr(feed, "channel", lambda settings, workspace_id: Broken())
+    assert feed.read_all(Settings(data_dir=tmp_path / "data"), "default") == []
+
+
+async def test_a_panel_replaces_its_copy_on_start_and_copies_off_the_event_loop(tmp_path, monkeypatch):
+    memory = install(monkeypatch)
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
-    open_workspace(settings)
     stale = NoticeHistory()
     stale.add("from an earlier run", SCOPE)
-    NoticeFeed(settings, "default", "sidebar").publish(stale)
+    publish(settings, "sidebar", stale)
+    memory.threads.clear()
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
-        assert all(entry["text"] != "from an earlier run" for entry in read_all(settings, "default"))
+        for _ in range(40):
+            await pilot.pause(.05)
+            if all(entry["text"] != "from an earlier run" for entry in feed.read_all(settings, "default")):
+                break
+        assert all(entry["text"] != "from an earlier run" for entry in feed.read_all(settings, "default"))
         app.notice("Check failed: unit", "error")
         app.notice("Check failed: unit", "error")
         for _ in range(40):
             await pilot.pause(.05)
-            if any(entry["text"] == "Check failed: unit" for entry in read_all(settings, "default")):
+            if any(entry["text"] == "Check failed: unit" for entry in feed.read_all(settings, "default")):
                 break
-        entries = read_all(settings, "default")
+        entries = feed.read_all(settings, "default")
         assert ("Check failed: unit", "error", 2) in [(entry["text"], entry["kind"], entry["count"]) for entry in entries]
+        assert memory.threads and threading.main_thread() not in memory.threads
 
 
 def test_a_notice_of_another_kind_is_not_merged_with_the_last_one():

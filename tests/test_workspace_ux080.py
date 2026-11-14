@@ -3,6 +3,7 @@ import pytest
 
 from cairnmind.cockpit_state import CockpitState
 from cairnmind.config import Settings
+from cairnmind.workspace import FOCUS_MIN_WIDTH
 from cairnmind.workspace_state import WorkspaceState
 from test_workspace import manager as manager
 
@@ -53,7 +54,9 @@ def test_focus_view_and_next_key_preserve_panes(manager):
     workspace.create(start_supervisor=False)
     before = workspace.panes()
     assert workspace.state.read()["layout"] == "compact"
-    assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == "1"
+    # At 180 columns Focus shows the focused view beside the activity column (#144) instead of a zoom.
+    assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == "0"
+    assert workspace.activity_pane() is not None
     workspace.next_view()
     assert workspace.state.read()["focus"] == "client1"
     assert workspace.panes() == before
@@ -202,12 +205,18 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
         while len(workspace.clients()) != 2 and time.monotonic() < deadline:
             time.sleep(.02)
         assert len(workspace.clients()) == 2
-        identities = workspace.tmux("list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}").stdout
+        # The views keep their processes; the activity column (#144) comes and goes with the width.
+        def views():
+            lines = workspace.tmux("list-panes", "-a", "-F", "#{@cairnmind_role}:#{pane_id}:#{pane_pid}").stdout.split()
+            return sorted(line for line in lines if not line.startswith("activity:"))
+        identities = views()
         for role in ("client1", "sidebar", "inspector", "graph"):
             workspace.focus(role)
             workspace._update_status(workspace.state.read())
             assert workspace.tmux("show-options", "-gv", "status").stdout.strip() == "2"
-            assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == "1"
+            # From 160 columns Focus puts the activity column beside the focused view instead of a zoom (#144).
+            assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == (
+                "0" if size[0] >= FOCUS_MIN_WIDTH else "1")
             for terminal, control in ((writer, "You"), (observer, "Read only")):
                 tty = os.ttyname(terminal.slave)
                 rows = [workspace.tmux("display-message", "-p", "-c", tty,
@@ -245,7 +254,7 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
         workspace.refresh()
         line = workspace.tmux("show-options", "-gv", "status-format[1]").stdout
         assert tr("Unavailable", language) in line and tr("Offline", language) in line
-        assert workspace.tmux("list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}").stdout == identities
+        assert views() == identities
         assert all(method == "GET" and path == "/api/state" for method, path, _ in broker.calls)
     finally:
         import sys

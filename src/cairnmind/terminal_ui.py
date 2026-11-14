@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import inspect
+import threading
 from pathlib import Path
 from contextlib import suppress
 from dataclasses import dataclass
@@ -303,6 +304,7 @@ class BasePanel(App):
         self.workspace_data = {}
         from .terminal_notices import NoticeHistory
         self.notice_history = NoticeHistory()  # memory only, for the life of this panel (#130)
+        self._feed_lock, self._feed_rows, self._feed_sent = threading.Lock(), None, None
         self._notice_about, self._mark_text = None, ""
         self._scope_version = 0
         self._workspace_revision = None
@@ -348,25 +350,33 @@ class BasePanel(App):
             self.publish_notices(later=True)
 
     def publish_notices(self, *, later=False) -> None:
-        """Copy the history to this panel's private notice file for the activity panel (#144).
+        """Copy the newest notices to this panel's tmux pane for the activity panel (#144).
 
-        `later` writes once per burst of notices, half a second after the first. A failed copy is
-        ignored: a notice never fails because of it.
+        `later` copies once per burst of notices, half a second after the first. The copy runs in a
+        thread, never on the event loop, and a failed copy is ignored: a notice never fails because of it.
         """
-        role = getattr(self, "panel_role", None)
-        with suppress(Exception):
-            from .terminal_notice_feed import ROLES, NoticeFeed
-            if role not in ROLES:
-                return
-            if later:
-                if getattr(self, "_feed_timer", None) is None:
-                    self._feed_timer = self.set_timer(.5, self._publish_now)
-                return
-            NoticeFeed(self.settings, self.workspace_id, role).publish(self.notice_history)
+        if getattr(self, "panel_role", None) not in {"sidebar", "inspector", "graph"}:
+            return
+        if not later:
+            self._publish_now()
+        elif getattr(self, "_feed_timer", None) is None:
+            self._feed_timer = self.set_timer(.5, self._publish_now)
 
     def _publish_now(self) -> None:
         self._feed_timer = None
-        self.publish_notices()
+        with suppress(Exception):
+            from .terminal_notice_feed import snapshot
+            self._feed_rows = snapshot(self.notice_history)  # read here: the history is not shared with a thread
+            self.run_worker(self._send_notices, thread=True, group="notice-feed", exit_on_error=False)
+
+    def _send_notices(self) -> None:
+        from .terminal_notice_feed import publish
+        with self._feed_lock:  # one copy at a time, and always the newest snapshot
+            rows = self._feed_rows
+            if rows is not self._feed_sent:
+                with suppress(Exception):
+                    publish(self.settings, self.workspace_id, self.panel_role, rows)
+                self._feed_sent = rows
 
     def notice_for(self, about, value, kind="info") -> None:
         """A notice about a project of its own (see terminal_notices.about), not the one shown now.
@@ -430,8 +440,8 @@ class BasePanel(App):
 
     @work(group="panel-startup", exclusive=True, exit_on_error=False)
     async def start_panel(self):
-        # A copy left by an earlier run of this panel is replaced: what is shown lives as long as the panel.
-        await asyncio.to_thread(self.publish_notices)
+        # A copy left on the pane by an earlier run of this panel is replaced: it lives as long as the panel.
+        self.publish_notices()
         try:
             await asyncio.to_thread(self.broker.ensure)
             await self._poll_workspace()

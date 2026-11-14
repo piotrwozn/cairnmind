@@ -491,7 +491,10 @@ CATALOG.update({
     # Activity panel (#144)
     "Activity": "Aktywność", "Running now": "Teraz działa", "In progress": "W toku",
     "Needs review": "Do przeglądu", "Needs test": "Do testu", "Blocked": "Zablokowane", "To do": "Do zrobienia",
-    "Done recently": "Ostatnio ukończone", "Finished recently": "Ostatnio zakończone",
+    "Done recently": "Ostatnio ukończone", "Plans finished recently": "Ostatnio zakończone plany",
+    "Showing {shown} of {total} tasks.": "Pokazano {shown} z {total} zadań.",
+    "Tab: next section · Enter: open · r: refresh": "Tab: następna sekcja · Enter: otwórz · r: odśwież",
+    "Enter: open · r: refresh": "Enter: otwórz · r: odśwież",
     "{done} of {total} steps done": "{done} z {total} kroków ukończone", "Stage: {stage}": "Etap: {stage}",
     "{client} running": "{client} działa", "info": "info", "warning": "uwaga", "error": "błąd",
     "+ {count} more": "+ {count} więcej", "a / Esc: close": "a / Esc: zamknij", "Loading…": "Wczytywanie…",

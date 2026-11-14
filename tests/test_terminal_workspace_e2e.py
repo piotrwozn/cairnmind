@@ -463,19 +463,11 @@ def outer_workspace(terminal_stack):
 
     manager = WorkspaceManager(terminal_stack.settings, tmux_binary=terminal_stack.tmux)
     manager.create(start_supervisor=False)
-    # From 160 columns the wide layout has the activity column (#144). WIDE keeps each of the two
-    # client panes as wide as before it, so the fake client's 62-character ready line does not wrap.
-    manager.tmux("resize-window", "-t", "cairnmind-ui:workspace", "-x", str(WIDE), "-y", "53")
-    manager.tmux("set-option", "-w", "-u", "-t", "cairnmind-ui:workspace", "window-size")  # clients size it again
-    manager._layout()
     try:
         yield manager
     finally:
         manager.tmux("kill-server", check=False)
         manager.broker.close()
-
-
-WIDE = 180 + 34  # the 180-column terminal of these scenarios plus the activity column and its border
 
 
 def pane_capture(manager, pane):
@@ -657,7 +649,7 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
     stack, manager = terminal_stack, outer_workspace
     master, slave = os.openpty()
     os.set_blocking(master, False)
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, WIDE, 0, 0))
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 180, 0, 0))
     attributes = termios.tcgetattr(slave)
     environment = {**os.environ, "TERM": "xterm-256color"}
     process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.native_worker", "--attach",

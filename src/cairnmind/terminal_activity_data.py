@@ -65,17 +65,30 @@ def live_tasks(tasks):
     return [task for task in tasks or [] if isinstance(task, dict) and task.get("status") != "superseded"]
 
 
-def group_tasks(tasks, *, small=False):
-    """Groups in a fixed order, newest change first; `hidden` counts the rows a cap leaves out."""
+def group_tasks(tasks, *, small=False, extra=0):
+    """Groups in a fixed order, newest change first; `hidden` counts the rows a cap leaves out.
+
+    `extra` rows of free height go to the capped groups in order; a group shown whole also gives
+    back the row its "+ N more" line took.
+    """
     rows, groups = live_tasks(tasks), []
     for state, label, cap in GROUPS:
         cap = min(cap, 2) if small else cap
         items = sorted((task for task in rows if task_state(task) == state), key=_updated, reverse=True)
         if state == "blocked" and not items:
             continue
-        groups.append({"state": state, "label": label, "total": len(items), "items": items[:cap],
-                       "hidden": max(0, len(items) - cap)})
+        hidden = max(0, len(items) - cap)
+        if hidden and extra > 0:
+            shown = hidden if hidden <= extra + 1 else extra
+            extra -= shown if shown < hidden else hidden - 1
+            cap, hidden = cap + shown, hidden - shown
+        groups.append({"state": state, "label": label, "total": len(items), "items": items[:cap], "hidden": hidden})
     return groups
+
+
+def task_summary(groups):
+    """(label, count) of each non-empty group, for the one-line summary of a short popup."""
+    return [(group["label"], group["total"]) for group in groups if group["total"]]
 
 
 def plan_progress(tasks, plan_id):
@@ -102,15 +115,42 @@ def finished_plans(tasks, plans, active_id, limit=3):
 
 
 def running_rows(slots):
-    """(client, lifecycle word) per slot; an unknown lifecycle is "None", never the raw value."""
+    """(client, lifecycle word, live) per started slot; an unknown lifecycle is "None", never the raw value.
+
+    A slot that was never started is left out: it has nothing to say under "Running now".
+    """
     rows = []
     for slot in slots if isinstance(slots, list) else []:
-        if isinstance(slot, dict):
+        if isinstance(slot, dict) and slot.get("run_id"):
             client = slot.get("client") or slot.get("profile_id") or slot.get("id") or ""
             word = LIFECYCLE.get(slot.get("lifecycle"), "None") if slot.get("run_id") else "None"
             rows.append((first_line(client) if isinstance(client, str) else "", word, slot.get("lifecycle") in _LIVE
                          and bool(slot.get("run_id"))))
     return rows
+
+
+KIND_WORDS = {"info": "info", "warn": "warning", "error": "error"}
+_KIND_ROLE = {"info": "label", "warn": "warn", "error": "danger"}
+
+
+def notice_parts(entry, width, words, project, folder, today, *, two_rows=False):
+    """(role, text) parts of one notice; `words` holds the translated kind words and, under None, "No project".
+
+    Another project is named before the text; with no project selected nothing is "another".
+    """
+    stamp = entry["when"].strftime("%H:%M" if entry["when"].date() == today else "%m-%d")
+    label = ""
+    if project and (entry["project_id"] != project or (entry["worktree"] and folder and entry["worktree"] != folder)):
+        label = "[" + first_line(entry["project_name"] or entry["project_id"] or words[None]) + "] "
+    text = label + first_line(entry["text"])
+    count = f" (×{entry['count']})" if entry["count"] > 1 else ""
+    word, role = words[entry["kind"]], _KIND_ROLE[entry["kind"]]
+    if two_rows:  # time and kind above the text, so the text keeps the whole width
+        return [("label", f"  {stamp} "), (role, word), ("label", count), ("value", "\n    "), ("stored", fit(text, width - 4))]
+    pad = max(cell_len(words[kind]) for kind in KIND_WORDS)
+    room = width - cell_len(f"  {stamp} ") - pad - 1 - cell_len(count)
+    return [("label", f"  {stamp} "), (role, word + " " * (pad - cell_len(word) + 1)), ("stored", fit(text, room)),
+            ("label", count)]
 
 
 def items_of(value):

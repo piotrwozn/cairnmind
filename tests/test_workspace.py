@@ -67,7 +67,7 @@ def manager(tmp_path, monkeypatch):
     idle = shlex.join([sys.executable, "-c", "import time; print('SAFE_UI_VIEW',flush=True); time.sleep(120)"])
     monkeypatch.setattr(manager, "_panel", lambda role: idle)
     monkeypatch.setattr(manager, "_bridge_command", lambda *args: idle)
-    monkeypatch.setattr(manager, "_activity_command", lambda *args: idle)
+    monkeypatch.setattr(manager, "_activity_command", lambda *args: idle)  # the activity column (#144)
     try:
         yield manager, broker, project
     finally:
@@ -84,9 +84,7 @@ def test_real_five_pane_geometry_private_socket_keys_and_reuse(manager):
     workspace, broker, project = manager
     assert workspace.create(start_supervisor=False)["available"] is True
     original = rows(workspace)
-    assert set(original) == {"sidebar", "client1", "client2", "inspector", "graph", "activity"}
-    assert set(workspace.panes()) == {"sidebar", "client1", "client2", "inspector", "graph"}
-    assert original["activity"][2] == 32 and original["activity"][0] == 180 - 32
+    assert set(original) == {"sidebar", "client1", "client2", "inspector", "graph"}
     assert original["sidebar"][2] == 24
     assert original["sidebar"][0] == 0 and original["client1"][0] == 25
     assert original["client1"][1] < original["inspector"][1]
@@ -96,7 +94,7 @@ def test_real_five_pane_geometry_private_socket_keys_and_reuse(manager):
     workspace.create(start_supervisor=False)
     assert rows(workspace) == original and not broker.calls
     bindings = workspace.tmux("list-keys", "-T", "prefix").stdout
-    for key in ("p", "1", "2", "i", "g", "z", "d", "C-b", "a"):
+    for key in ("p", "1", "2", "i", "g", "z", "d", "C-b"):
         assert key in bindings
     assert "send-prefix" in bindings
 
@@ -160,7 +158,7 @@ def test_profile_client_change_never_attaches_old_higher_generation(manager):
     workspace.refresh()
     assert workspace.state.read()["slots"][0]["run_id"] == "current-claude"
     assert len(workspace.panes()) == 4 and "client2" not in workspace.panes()
-    assert rows(workspace)["client1"][2] > 110  # 180 columns less the activity column (#144)
+    assert rows(workspace)["client1"][2] > 140
     assert not any(method == "POST" for method, _, _ in broker.calls)
 
 
@@ -190,14 +188,13 @@ def test_native_border_ack_is_only_validated_broker_state(manager):
 def test_compact_focus_and_zoom_preserve_all_view_processes(manager):
     workspace, broker, project = manager
     workspace.create(start_supervisor=False)
-    before = {key: value[-1] for key, value in rows(workspace).items() if key != "activity"}
+    before = {key: value[-1] for key, value in rows(workspace).items()}
     workspace.tmux("resize-window", "-t", "cairnmind-ui:workspace", "-x", "100", "-y", "30")
     workspace._layout()
     assert workspace.state.read()["layout"] == "compact"
     assert workspace.tmux("display-message", "-p", "-t", workspace.panes()["sidebar"], "#{window_zoomed_flag}").stdout.strip() == "1"
     workspace.focus("graph")
     assert workspace.tmux("display-message", "-p", "-t", workspace.panes()["graph"], "#{pane_active}").stdout.strip() == "1"
-    # The activity column (#144) is not a view: below its width it is closed, the five views stay.
     assert {key: value[-1] for key, value in rows(workspace).items()} == before
 
 

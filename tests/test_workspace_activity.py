@@ -1,10 +1,14 @@
-"""The activity column of the wide layout and its key (#144), on a real private tmux."""
+"""The activity column of the workspace and its key (#144), on a real private tmux."""
 from __future__ import annotations
+
+import threading
 
 import pytest
 
+from cairnmind import terminal_notice_feed as feed
 from cairnmind.cockpit_state import CockpitState
-from cairnmind.workspace import ACTIVITY_MIN_WIDTH, ACTIVITY_WIDTH, WorkspaceManager
+from cairnmind.terminal_notices import NoticeHistory
+from cairnmind.workspace import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH, FOCUS_MIN_WIDTH, SESSION, WorkspaceManager
 from test_workspace import manager as manager, rows
 
 ROLES = {"sidebar", "client1", "client2", "inspector", "graph"}
@@ -16,51 +20,124 @@ def terminal(workspace, columns, lines):
     workspace._layout()
 
 
-def test_at_160_columns_the_column_is_on_the_right_and_not_a_view(manager):
+def shown(workspace):
+    """Role -> (left, width) of the panes in the workspace window, the one a terminal shows."""
+    result = workspace.tmux("list-panes", "-t", SESSION + ":workspace", "-F",
+                            "#{@cairnmind_role}\t#{pane_left}\t#{pane_width}").stdout
+    return {parts[0]: (int(parts[1]), int(parts[2])) for line in result.splitlines() if (parts := line.split("\t"))}
+
+
+def view(workspace, name):
+    CockpitState(workspace.settings).update({"view": name})
+
+
+def zoomed(workspace):
+    return workspace.tmux("display-message", "-p", "-t", SESSION + ":workspace", "#{window_zoomed_flag}").stdout.strip()
+
+
+def test_focus_at_160x45_shows_the_focused_view_beside_the_column(manager):
     workspace, broker, _ = manager
+    view(workspace, "focus")  # the default layout
     workspace.create(start_supervisor=False)
+    workspace.focus("client1")
     terminal(workspace, 160, 45)
-    layout = rows(workspace)
-    assert workspace.activity_pane() is not None
-    assert layout["activity"][2] == ACTIVITY_WIDTH and layout["activity"][0] + ACTIVITY_WIDTH == 160
-    assert layout["activity"][0] == max(left + width for role, (left, _, width, *_) in layout.items() if role != "activity") + 1
-    assert layout["activity"][3] == 42 and layout["client1"][2] > 45  # 43 rows less its border row
-    assert set(workspace.panes()) == ROLES and len(workspace.panes()) == 5
-    assert workspace.state.read()["layout"] == "wide"
+    window = shown(workspace)
+    assert set(window) == {"client1", "activity"}
+    assert window["client1"] == (0, 160 - ACTIVITY_WIDTH - 1) and window["activity"] == (160 - ACTIVITY_WIDTH, ACTIVITY_WIDTH)
+    assert zoomed(workspace) == "0"
+    assert set(workspace.panes()) == ROLES  # the other views wait, still running, where no terminal shows them
+    before = {role: value[-1] for role, value in rows(workspace).items()}
+    workspace.focus("graph")
+    assert set(shown(workspace)) == {"graph", "activity"}
+    assert workspace.tmux("display-message", "-p", "-t", workspace.panes()["graph"], "#{pane_active}").stdout.strip() == "1"
+    assert {role: value[-1] for role, value in rows(workspace).items()} == before
     assert not broker.calls
 
 
-@pytest.mark.parametrize(("size", "view"), [((159, 45), "cockpit"), ((160, 45), "focus"), ((80, 24), "cockpit"),
-                                           ((150, 45), "cockpit")])
-def test_no_column_below_the_width_or_in_focus_view(manager, size, view):
+def test_focus_below_160_columns_zooms_as_before_and_brings_every_view_back(manager):
     workspace, _, _ = manager
-    CockpitState(workspace.settings).update({"view": view})
+    view(workspace, "focus")
+    workspace.create(start_supervisor=False)
+    terminal(workspace, 160, 45)
+    assert workspace.activity_pane() is not None
+    terminal(workspace, FOCUS_MIN_WIDTH - 1, 45)
+    assert workspace.activity_pane() is None
+    assert set(shown(workspace)) == ROLES and zoomed(workspace) == "1"
+    view(workspace, "cockpit")
+    terminal(workspace, 180, 55)
+    window = shown(workspace)
+    assert set(window) == ROLES and window["client1"] == (25, 77) and window["client2"] == (103, 77)
+
+
+@pytest.mark.parametrize("size", [(160, 45), (180, 55), (COCKPIT_MIN_WIDTH - 1, 55), (80, 24), (120, 40)])
+def test_cockpit_has_no_column_where_it_would_narrow_a_coding_pane(manager, size):
+    workspace, _, _ = manager
     workspace.create(start_supervisor=False)
     terminal(workspace, *size)
     assert workspace.activity_pane() is None
-    assert "activity" not in rows(workspace)
-    assert set(workspace.panes()) == ROLES
+    assert set(rows(workspace)) == ROLES
 
 
-def test_narrowing_closes_the_column_and_widening_opens_it_again(manager):
+def test_cockpit_column_from_its_width_keeps_the_coding_panes_as_wide_as_at_180(manager):
     workspace, _, _ = manager
     workspace.create(start_supervisor=False)
-    terminal(workspace, 160, 45)
+    terminal(workspace, COCKPIT_MIN_WIDTH, 55)
+    window = shown(workspace)
+    assert window["activity"] == (COCKPIT_MIN_WIDTH - ACTIVITY_WIDTH, ACTIVITY_WIDTH)
+    assert window["client1"][1] >= 77 and window["client2"][1] >= 77
+    assert set(workspace.panes()) == ROLES and workspace.state.read()["layout"] == "wide"
+    terminal(workspace, 180, 55)
+    assert workspace.activity_pane() is None and shown(workspace)["client1"] == (25, 77)
+
+
+def test_two_processes_arranging_at_once_make_one_column(manager):
+    workspace, _, _ = manager
+    view(workspace, "focus")
+    workspace.create(start_supervisor=False)
+    terminal(workspace, 120, 40)
+    workspace.tmux("resize-window", "-t", "cairnmind-ui:workspace", "-x", "170", "-y", "43")
+    others = [WorkspaceManager(workspace.settings, tmux_binary=workspace.binary) for _ in range(3)]
+    for other in others:
+        other._activity_command = workspace._activity_command
+    errors = []
+
+    def arrange(other):
+        try:
+            other._layout()
+        except Exception as error:  # reported below
+            errors.append(error)
+    threads = [threading.Thread(target=arrange, args=(other,)) for other in others]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(20)
+    assert not errors
+    assert workspace.tmux("list-panes", "-a", "-F", "#{@cairnmind_role}").stdout.split().count("activity") == 1
+    assert set(shown(workspace)) == {"client1", "activity"} or set(shown(workspace)) == {"sidebar", "activity"}
+
+
+def test_a_left_over_second_column_is_removed_and_the_layout_still_applies(manager):
+    workspace, _, _ = manager
+    workspace.create(start_supervisor=False)
+    terminal(workspace, COCKPIT_MIN_WIDTH, 55)
     first = workspace.activity_pane()
-    views = {role: value[-1] for role, value in rows(workspace).items() if role != "activity"}
-    terminal(workspace, 150, 45)
-    assert workspace.activity_pane() is None
-    assert rows(workspace)["client1"][0] == 25 and rows(workspace)["client2"][0] + rows(workspace)["client2"][2] == 150
-    terminal(workspace, 160, 45)
-    assert workspace.activity_pane() not in {None, first}
-    assert {role: value[-1] for role, value in rows(workspace).items() if role != "activity"} == views
-    assert rows(workspace)["activity"][2] == ACTIVITY_WIDTH
+    extra = workspace.tmux("split-window", "-d", "-h", "-f", "-l", "10", "-t", first, "-P", "-F", "#{pane_id}",
+                           workspace._activity_command()).stdout.strip()
+    workspace._tag(extra, "activity")
+    workspace._last_layout = None
+    workspace._layout()
+    assert workspace.tmux("list-panes", "-a", "-F", "#{@cairnmind_role}").stdout.split().count("activity") == 1
+    assert shown(workspace)["activity"][1] == ACTIVITY_WIDTH
+    # Killing a column another process already removed is not an error.
+    gone = workspace.activity_pane()
+    workspace.tmux("kill-pane", "-t", gone)
+    assert workspace._reconcile_activity(SESSION + ":workspace", gone, False) is None
 
 
 def test_zoom_and_next_view_keep_their_five_stops(manager):
     workspace, _, _ = manager
     workspace.create(start_supervisor=False)
-    terminal(workspace, 180, 55)
+    terminal(workspace, COCKPIT_MIN_WIDTH, 55)
     seen = []
     for _ in range(6):
         workspace.next_view()
@@ -68,7 +145,7 @@ def test_zoom_and_next_view_keep_their_five_stops(manager):
     assert set(seen) == ROLES and "activity" not in seen
     workspace.state.update({"zoom": True})
     workspace._layout()
-    assert workspace.tmux("display-message", "-p", "#{window_zoomed_flag}").stdout.strip() == "1"
+    assert zoomed(workspace) == "1"
     assert workspace.activity_pane() is not None
 
 
@@ -94,11 +171,11 @@ def test_the_key_focuses_the_column_or_opens_the_popup(manager, monkeypatch):
         return real(*args, **kwargs) if args[0] != "display-popup" else None
     monkeypatch.setattr(workspace, "_owner", lambda pid, tty: {"tty": "/dev/pts/7"})
     monkeypatch.setattr(workspace, "tmux", tmux)
-    terminal(workspace, 160, 45)
+    terminal(workspace, COCKPIT_MIN_WIDTH, 55)
     workspace.open_activity(client_pid=1, client_tty="/dev/pts/7")
     assert ("select-pane", "-t", workspace.activity_pane()) in sent
     assert not any(args[0] == "display-popup" for args in sent)
-    terminal(workspace, 120, 40)
+    terminal(workspace, 180, 55)
     sent.clear()
     workspace.open_activity(client_pid=1, client_tty="/dev/pts/7")
     popup = next(args for args in sent if args[0] == "display-popup")
@@ -106,7 +183,30 @@ def test_the_key_focuses_the_column_or_opens_the_popup(manager, monkeypatch):
     assert not any(args[0] == "select-pane" for args in sent)
 
 
-def test_the_layout_without_the_column_is_unchanged_and_with_it_valid(tmp_path):
+def test_notices_travel_on_the_panel_pane_and_never_touch_the_disk(manager, monkeypatch):
+    workspace, _, _ = manager
+    workspace.create(start_supervisor=False)
+    sidebar = workspace.panes()["sidebar"]
+    monkeypatch.setattr(feed, "_channels", {})
+    history = NoticeHistory()
+    history.add("Check failed: #{pid} ;\t[bold]x", {"project_id": "p"}, "error")
+    feed.publish(workspace.settings, "default", "sidebar", feed.snapshot(history))
+    assert feed.read_all(workspace.settings, "default") == []  # not from inside the workspace's tmux
+    monkeypatch.setenv("TMUX", f"{workspace.socket},1,0")
+    monkeypatch.setenv("TMUX_PANE", workspace.panes()["graph"])
+    feed.publish(workspace.settings, "default", "sidebar", feed.snapshot(history))
+    assert feed.read_all(workspace.settings, "default") == []  # a pane of another role is refused
+    monkeypatch.setenv("TMUX_PANE", sidebar)
+    feed.publish(workspace.settings, "default", "sidebar", feed.snapshot(history))
+    entries = feed.read_all(workspace.settings, "default")
+    assert [(entry["role"], entry["kind"]) for entry in entries] == [("sidebar", "error")]
+    assert "#{pid} ;" in entries[0]["text"] and "[bold]x" in entries[0]["text"]
+    stored = workspace.tmux("show-options", "-pv", "-t", sidebar, feed.OPTION).stdout.strip()
+    assert stored and "#" not in stored and ";" not in stored
+    assert not (workspace.settings.data_dir / "workspaces" / "default" / "notices").exists()
+
+
+def test_the_layout_without_the_column_is_unchanged_and_with_it_valid():
     workspace = WorkspaceManager.__new__(WorkspaceManager)
     sent = []
     workspace.tmux = lambda *args, **kwargs: sent.append(args)
@@ -117,10 +217,10 @@ def test_the_layout_without_the_column_is_unchanged_and_with_it_valid(tmp_path):
                             "155x22,25,31{92x22,25,31,3,62x22,118,31,4}]}")
     workspace._apply_layout({key: value for key, value in panes.items() if key != "client2"}, 180, 53)
     assert sent[-1][-1] == "c8f7,180x53,0,0{24x53,0,0,0,155x53,25,0[155x30,25,0,1,155x22,25,31{92x22,25,31,3,62x22,118,31,4}]}"
-    workspace._apply_layout(panes, ACTIVITY_MIN_WIDTH, 43, "%5")
+    workspace._apply_layout(panes, COCKPIT_MIN_WIDTH, 53, "%5")
     checksum, description = sent[-1][-1].split(",", 1)
     value = 0
     for byte in description.encode():
         value = ((value >> 1) + ((value & 1) << 15) + byte) & 0xffff
     assert checksum == f"{value:04x}"
-    assert description.endswith(",32x43,128,0,5}") and description.startswith("160x43,0,0{24x43,0,0,0,102x43,25,0[")
+    assert description.endswith(",32x53,181,0,5}") and "{77x30,25,0,1,77x30,103,0,2}" in description

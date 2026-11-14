@@ -16,7 +16,7 @@ from cairnmind.config import Settings
 from cairnmind.terminal_activity import (ActivityApp, ActivityList, ActivityPopup, activity_app, finished_plans,
                                          fit, group_tasks, plan_progress, running_rows)
 from cairnmind.terminal_i18n import CATALOG, tr
-from cairnmind.terminal_notice_feed import NoticeFeed
+from test_terminal_notice_feed import install, publish
 from cairnmind.terminal_notices import NoticeHistory
 from cairnmind.terminal_ui import BasePanel
 
@@ -121,6 +121,7 @@ def make(tmp_path, monkeypatch, *, language="en", project=PROJECT, slots=SLOTS, 
     _private_directory(settings.data_dir / "workspaces" / "default")
     workspace = Workspace(project, slots)
     broker = broker or Broker()
+    install(monkeypatch)
     return activity_app(settings, broker=broker, workspace=workspace, popup=popup), broker, workspace, settings
 
 
@@ -185,7 +186,7 @@ def test_session_words_come_from_a_fixed_set():
              "lifecycle": "[bold]hacked"}, {"client": "x", "lifecycle": "running"}, "junk",
              {"client": "\x1b[31mred", "run_id": "r", "lifecycle": "exited"}]
     assert [(word, live) for _, word, live in running_rows(slots)] == [
-        ("Running", True), ("None", False), ("None", False), ("Ended", False)]
+        ("Running", True), ("None", False), ("Ended", False)]  # a slot never started is left out
     assert "\x1b" not in running_rows(slots)[-1][0]
 
 
@@ -204,18 +205,18 @@ async def test_realistic_data_shows_the_four_sections(tmp_path, monkeypatch):
     history = NoticeHistory()
     history.add("Broker not responding; retrying", {"project_id": "project-a", "worktree": PROJECT["root"]}, "warn")
     history.add("Indexed 12 files", {"project_id": "project-b", "project_name": "other", "worktree": "/work/other"})
-    NoticeFeed(settings, "default", "sidebar").publish(history)
+    publish(settings, "sidebar", history)
     async with app.run_test(size=(32, 43)) as pilot:
         await until(pilot, loaded(app))
         await until(pilot, lambda: len(rows(app, "activity-notices")) == 3)
         main = rows(app)
-        for expected in ("Running now", "  claude    Running", "  Stage: review · claude run…", "Plan",
-                         "  Activity panel on the right", "  1 of 6 steps done", "  Finished recently", "Tasks",
+        for expected in ("Running now", "  claude    Running", "  Stage: review", "Plan",
+                         "  Activity panel on the right", "  1 of 6 steps done", "  Plans finished recently", "Tasks",
                          "  In progress 1", "  Needs review 2", "  Needs test 1", "  To do 5", "   + 2 more",
                          "  Done recently 4", "   + 1 more"):
             assert expected in main, expected
-        assert any(row.startswith("   Notice history") and row.endswith("11-12 2/2") for row in main)
-        assert all(cell_len(row) <= 29 for row in main)
+        assert "   · Notice history · 2/2" in main  # the date only where it does not cut the title
+        assert all(cell_len(row) <= 29 for row in main) and not any("codex" in row for row in main)
         notices = rows(app, "activity-notices")
         assert notices[0] == "Notices"
         # Newest first; in the narrow pane time and kind are above the text.
@@ -223,6 +224,7 @@ async def test_realistic_data_shows_the_four_sections(tmp_path, monkeypatch):
         assert " info\n    [other] Indexed 12 files" in notices[1]
         assert "Activity" in str(app.query_one("#activity-title").render())
         assert str(app.query_one("#activity-folder").render()) == "cairnmind-144"
+        assert str(app.query_one("#activity-keys").render()) == "Enter: open · r: refresh"
         assert not any(call[1] == "/api/inspector/records" for call in broker.calls)
 
 
@@ -284,9 +286,10 @@ async def test_broker_down_shows_unavailable_but_sessions_and_notices_render(tmp
     app, _, _, settings = make(tmp_path, monkeypatch, broker=broker)
     history = NoticeHistory()
     history.add("Local note", {"project_id": "project-a", "worktree": PROJECT["root"]})
-    NoticeFeed(settings, "default", "graph").publish(history)
+    publish(settings, "graph", history)
     async with app.run_test(size=(32, 43)) as pilot:
-        await until(pilot, lambda: flat(app).count("Memory service unavailable; retrying.") == 2)
+        await until(pilot, lambda: "Memory service unavailable; retrying." in flat(app))
+        assert flat(app).count("Memory service unavailable; retrying.") == 1  # once, not under every section
         assert "  claude    Running" in rows(app)
         await until(pilot, lambda: any("Local note" in row for row in rows(app, "activity-notices")))
 
@@ -325,10 +328,11 @@ async def test_journal_events_refresh_without_a_key_once_per_burst(tmp_path, mon
             broker.queue.put_nowait({"data": {"entity_type": "record", "project_id": "project-a"}})
         await until(pilot, lambda: any("Fresh" in row for row in rows(app)), timeout=1.5)
         await pilot.pause(.6)
-        assert len(broker.calls) == before + 3  # one request set: tasks, plans, stage
+        # One request set, and only what a record can change: tasks and the stage, not the plans.
+        assert [call[1] for call in broker.calls[before:]] == ["/api/inspector/tasks", "/api/stage"]
         history = NoticeHistory()
         history.add("A new notice", {"project_id": "project-a", "worktree": PROJECT["root"]}, "error")
-        NoticeFeed(settings, "default", "inspector").publish(history)
+        publish(settings, "inspector", history)
         await until(pilot, lambda: any(" error\n    A new notice" in row for row in rows(app, "activity-notices")),
                     timeout=1.6)
 
@@ -372,10 +376,7 @@ async def test_read_only_requests_and_enter_writes_only_the_ui_selection(tmp_pat
         await until(pilot, lambda: len(workspace.updates) == 2)
         assert workspace.updates[1]["selected_entity"]["entity_type"] == "plan"
         session = rows(app).index("  claude    Running")
-        widget.highlighted = session
-        await pilot.press("enter")
-        await pilot.pause(.2)
-        assert len(workspace.updates) == 2  # a session row opens nothing
+        assert widget.get_option_at_index(session).disabled  # a session row opens nothing, so it is no stop
 
 
 async def test_tab_moves_between_sections(tmp_path, monkeypatch):
@@ -387,11 +388,11 @@ async def test_tab_moves_between_sections(tmp_path, monkeypatch):
         seen = []
         for _ in range(4):
             await pilot.press("tab")
-            seen.append((app.focused.id, str(app.focused.get_option_at_index(app.focused.highlighted).prompt)))
-        assert [row for _, row in seen][:3] == ["  claude    Running", "  Activity panel on the right",
-                                                "   · Render the notices sect…"]
+            seen.append(app._payloads[app.focused.id].get(app.focused.highlighted))
+        # Only rows that open something: the stage task, the plan, the first task; then round again.
+        assert seen == [("record", "t2"), ("plan", "plan-a"), ("record", "t1"), ("record", "t2")]
         await pilot.press("shift+tab")
-        assert str(app.focused.get_option_at_index(app.focused.highlighted).prompt) == "   · Render the notices sect…"
+        assert app._payloads[app.focused.id].get(app.focused.highlighted) == ("record", "t1")
 
 
 async def test_polish_labels(tmp_path, monkeypatch):
@@ -399,7 +400,7 @@ async def test_polish_labels(tmp_path, monkeypatch):
     async with app.run_test(size=(32, 43)) as pilot:
         await until(pilot, loaded(app))
         text = text_of(app)
-        for word in ("Teraz działa", "W toku 1", "Do przeglądu 2", "Etap: przegląd · claude dz",
+        for word in ("Teraz działa", "W toku 1", "Do przeglądu 2", "Etap: przegląd", "Ostatnio zakończone plany",
                      "1 z 6 kroków ukończone", "Ostatnio zakończone", "Komunikaty", "Zadania"):
             assert word in text, word
         assert "Aktywność" in str(app.query_one("#activity-title").render())
@@ -407,7 +408,8 @@ async def test_polish_labels(tmp_path, monkeypatch):
 
 def test_every_new_string_has_a_polish_entry():
     for text in ("Activity", "Running now", "In progress", "Needs review", "Needs test", "Blocked", "To do",
-                 "Done recently", "Finished recently", "{done} of {total} steps done", "Stage: {stage}",
+                 "Done recently", "Plans finished recently", "{done} of {total} steps done", "Stage: {stage}",
+                 "Showing {shown} of {total} tasks.", terminal_activity.KEYS, terminal_activity.KEYS_SHORT,
                  "{client} running", "warning", "error", "+ {count} more", "a / Esc: close", "Loading…",
                  "Choose a project in the sidebar to see its activity.", "No assistant is running.",
                  "No active plan.", "This plan has no steps yet.", "No tasks in this project yet.",
@@ -428,7 +430,7 @@ def test_panel_keys_do_not_collide_with_the_base_panel():
 @pytest.mark.parametrize("key", ["escape", "q", "a"])
 async def test_the_popup_closes_with_one_key(tmp_path, monkeypatch, key):
     app, *_ = make(tmp_path, monkeypatch, popup=True)
-    async with app.run_test(size=(108, 34)) as pilot:
+    async with app.run_test(size=(120, 34)) as pilot:
         await until(pilot, loaded(app))
         assert app.has_class("-columns") and "a / Esc: close" in str(app.query_one("#activity-hint").render())
         await pilot.press(key)
@@ -456,3 +458,96 @@ def test_today_notice_shows_the_time(tmp_path, monkeypatch):
     app._scope = ("project-a", PROJECT["root"])
     assert [str(text) for text, _ in app.notice_rows(60)][1] == "  14:02 warning Hi (×2)"
     assert [str(text) for text, _ in app.notice_rows(30)][1] == "  14:02 warning (×2)\n    Hi"
+
+
+# ----- review fixes ---------------------------------------------------------------------------
+
+async def test_a_short_popup_shows_the_tasks_without_scrolling(tmp_path, monkeypatch):
+    app, _, _, settings = make(tmp_path, monkeypatch, popup=True)
+    history = NoticeHistory()
+    for index in range(6):
+        history.add(f"Notice {index}", {"project_id": "project-a", "worktree": PROJECT["root"]})
+    publish(settings, "sidebar", history)
+    async with app.run_test(size=(70, 18)) as pilot:  # the popup at 80x24
+        await until(pilot, loaded(app))
+        await until(pilot, lambda: len(rows(app, "activity-notices")) > 3)
+        await pilot.pause(.2)
+        main = app.query_one("#activity-main", ActivityList)
+        assert rows(app).index("Tasks") + 1 < main.size.height
+        summary = rows(app)[rows(app).index("Tasks") + 1]
+        assert summary.startswith("  In progress 1 · Needs review 2 · Needs test 1")
+
+
+async def test_notices_are_never_cut_between_their_two_rows(tmp_path, monkeypatch):
+    app, _, _, settings = make(tmp_path, monkeypatch)
+    history = NoticeHistory()
+    for index in range(20):
+        history.add(f"Notice {index}", {"project_id": "project-a", "worktree": PROJECT["root"]}, "error")
+    publish(settings, "sidebar", history)
+    async with app.run_test(size=(32, 43)) as pilot:
+        await until(pilot, loaded(app))
+        await until(pilot, lambda: len(rows(app, "activity-notices")) == 21)
+        await pilot.pause(.2)
+        notes = app.query_one("#activity-notices", ActivityList)
+        assert (notes.styles.max_height.value - 1) % 2 == 0  # the title, then whole two-row entries
+
+
+async def test_a_wide_popup_shows_more_of_each_group(tmp_path, monkeypatch):
+    app, *_ = make(tmp_path, monkeypatch, popup=True)
+    async with app.run_test(size=(141, 36)) as pilot:
+        await until(pilot, loaded(app))
+        await pilot.pause(.2)
+        assert app.has_class("-columns")
+        assert "   · Fourth to do" in rows(app) and "   + 2 more" not in rows(app)
+
+
+async def test_no_project_labels_no_notice_and_hides_the_folder_row(tmp_path, monkeypatch):
+    app, _, _, settings = make(tmp_path, monkeypatch, project=None)
+    history = NoticeHistory()
+    history.add("Broker not responding", {"project_id": "project-a", "project_name": "cairnmind"}, "warn")
+    publish(settings, "sidebar", history)
+    async with app.run_test(size=(32, 43)) as pilot:
+        await until(pilot, lambda: any("Broker not responding" in row for row in rows(app, "activity-notices")))
+        assert not any("[cairnmind]" in row for row in rows(app, "activity-notices"))
+        assert app.query_one("#activity-folder").has_class("-empty")
+
+
+async def test_the_stream_coming_back_or_a_reset_fetches_again(tmp_path, monkeypatch):
+    monkeypatch.setattr(terminal_activity, "THROTTLE", .1)
+    broker = Broker()
+    app, *_ = make(tmp_path, monkeypatch, broker=broker)
+    async with app.run_test(size=(32, 43)) as pilot:
+        await until(pilot, loaded(app))
+        await until(pilot, lambda: broker.queue is not None)
+        await pilot.pause(.3)
+        before = len(broker.calls)
+        broker.queue.put_nowait({"event": "unavailable", "data": {"reason": "broker"}})
+        broker.queue.put_nowait({"data": {"entity_type": "record", "project_id": "project-b"}})
+        await until(pilot, lambda: len(broker.calls) == before + 3, timeout=1.5)
+        before = len(broker.calls)
+        broker.queue.put_nowait({"event": "reset", "data": {"project_id": None, "entity_type": "reset"}})
+        await until(pilot, lambda: len(broker.calls) == before + 3, timeout=1.5)
+
+
+async def test_a_cut_task_list_says_how_many_are_shown(tmp_path, monkeypatch):
+    class Many(Broker):
+        def request(self, method, path, **kwargs):
+            value = super().request(method, path, **kwargs)
+            if path == "/api/inspector/tasks":
+                value.update(total=812, next_cursor="x")
+            return value
+    app, *_ = make(tmp_path, monkeypatch, broker=Many())
+    async with app.run_test(size=(60, 43)) as pilot:
+        await until(pilot, loaded(app))
+        assert f"Showing {len(TASKS)} of 812 tasks." in flat(app)
+
+
+def test_blocked_and_needs_test_are_told_apart_from_to_do(tmp_path, monkeypatch):
+    app, *_ = make(tmp_path, monkeypatch)
+    app.status, app.tasks = "ok", [task("b", "blocked"), task("n", "needs_test"), task("t", "todo")]
+    labels = {}
+    for text, _ in app._task_rows(60, False, 0):
+        for span in text.spans:
+            labels[text.plain[span.start:span.end]] = span.style
+    assert labels["Blocked"] == labels["Needs test"] == terminal_theme.style("warn")
+    assert labels["To do"] == terminal_theme.style("value") and labels["Blocked"] != terminal_theme.style("ok")

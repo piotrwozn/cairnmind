@@ -23,14 +23,13 @@ from .cockpit_state import CockpitState, _atomic, _private_directory, _private_l
 from .config import SESSION_NAMES, Settings, drop_env
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
+from . import workspace_activity as column
 from .terminal_theme import TMUX
+from .workspace_activity import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH, FOCUS_MIN_WIDTH  # noqa: F401 (re-exported)
 from .workspace_state import WorkspaceState
 
 SESSION = "cairnmind-ui"
 MINIMUM = (140, 42)
-# The activity panel (#144) is a column on the right of the wide layout from this width on; below
-# it the pane does not exist (no process polls) and Ctrl+B a opens it as a popup.
-ACTIVITY_WIDTH, ACTIVITY_MIN_WIDTH = 32, 160
 DEFAULT_SIZE = (180, 55)
 _ROLES = ("sidebar", "client1", "client2", "inspector", "graph")
 
@@ -539,8 +538,9 @@ class WorkspaceManager:
                         reconnect()
                     except Exception:
                         pass
-            self._reconcile_views(selected)
-            self._layout()
+            with _private_lock(self.directory / "layout.lock"):
+                self._reconcile_views(selected)
+                self._arrange()
             self._update_status(self.state.read())
         return self.status()
 
@@ -606,24 +606,52 @@ class WorkspaceManager:
         self._save_if_current(selected, {"pane_ids": panes})
 
     def _layout(self):
-        panes = self.panes((*_ROLES, "activity"))  # one query; the activity column is not a view
-        current = panes.pop("activity", None)
-        if not panes:
+        # Every process that arranges panes (the supervisor, each key) takes this lock: the
+        # activity column is created and killed here, and two processes must never both do it.
+        with _private_lock(self.directory / "layout.lock"):
+            self._arrange()
+
+    def _arrange(self):
+        found = column.rows(self)  # one query; the activity column is not a view
+        columns = [pane for pane, role, _ in found if role == "activity"]
+        for extra in columns[:-1]:  # one column only, whatever left a second one behind
+            self.tmux("kill-pane", "-t", extra, check=False)
+        current = columns[-1] if columns else None
+        found = [row for row in found if row[1] != "activity"]
+        panes = {role: pane for pane, role, _ in found}
+        if "sidebar" not in panes:
             return
         selected = self.state.read()
-        dimensions = self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_width} #{window_height} #{window_zoomed_flag}").stdout.split()
+        # The workspace window by name: in Focus with the column a view may wait in another window.
+        home, *dimensions = self.tmux("display-message", "-p", "-t", SESSION + ":workspace",
+                                      "#{window_id} #{window_width} #{window_height} #{window_zoomed_flag}").stdout.split()
         width, height, zoomed = map(int, dimensions)
         preference = CockpitState(self.settings).load().get("view", "focus")
         # window_height excludes the two persistent status rows; MINIMUM is
         # the user's complete terminal geometry, not just the pane area.
-        compact = preference == "focus" or width < MINIMUM[0] or height + 2 < MINIMUM[1]
-        activity = self._reconcile_activity(panes["sidebar"], current, not compact and width >= ACTIVITY_MIN_WIDTH)
-        if activity != current:  # adding or removing a pane can unzoom the window
-            zoomed = int(self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_zoomed_flag}").stdout.strip() or 0)
-        layout = (width, height, len(panes), compact, activity)
+        small = width < MINIMUM[0] or height + 2 < MINIMUM[1]
+        compact = preference == "focus" or small
+        activity = self._reconcile_activity(home, current, column.wanted(preference == "focus", small, width, height + 2))
         focus = panes.get(selected["focus"], panes.get("client1", panes["sidebar"]))
+        beside = preference == "focus" and activity is not None  # Focus: the focused view and the column
+        moved = column.place(self, SESSION, home, found, {focus, activity} if beside else None)
+        if activity != current or moved:  # adding, removing or moving a pane can unzoom the window
+            zoomed = int(self.tmux("display-message", "-p", "-t", home, "#{window_zoomed_flag}").stdout.strip() or 0)
+        layout = (width, height, len(panes), compact, activity, focus if beside else None)
         changed_focus = selected["focus"] != self._last_focus
-        if compact:
+        if beside:
+            if zoomed:
+                self.tmux("resize-pane", "-Z", "-t", focus)
+            if layout != self._last_layout or moved or zoomed:
+                if column.order(self, home, [focus, activity]):
+                    self.tmux("select-layout", "-t", home, column.beside(width, height, focus, activity))
+                else:
+                    layout = None  # a pane this code does not know is in the window: try again later
+            if changed_focus or moved:
+                self.tmux("select-pane", "-t", focus)
+        elif compact:
+            if moved:  # the views came back: their old order, so a later Cockpit layout fits them
+                column.order(self, home, [panes[role] for role in column.ORDER if role in panes])
             if changed_focus and zoomed:
                 self.tmux("resize-pane", "-Z", "-t", focus)
                 zoomed = False
@@ -631,14 +659,17 @@ class WorkspaceManager:
                 self.tmux("select-pane", "-t", focus)
             if not zoomed:
                 self.tmux("resize-pane", "-Z", "-t", focus)
-        elif layout != self._last_layout:
+        elif layout != self._last_layout or moved:
             if zoomed:
                 self.tmux("resize-pane", "-Z", "-t", focus)
             # Rebuild a deterministic layout in-place, moving only the UI
             # views within their own window; native panes are on another socket.
             self.tmux("select-layout", "-t", panes["sidebar"], "main-vertical")
             self.tmux("set-option", "-w", "-t", panes["sidebar"], "main-pane-width", "24")
-            self._apply_layout(panes, width, height, activity)
+            if column.order(self, home, [panes[role] for role in column.ORDER if role in panes] + [activity] * bool(activity)):
+                self._apply_layout(panes, width, height, activity)
+            else:
+                layout = None  # a pane this code does not know is in the window: try again later
             self.tmux("select-pane", "-t", focus)
             if selected["zoom"]:
                 self.tmux("resize-pane", "-Z", "-t", focus)
@@ -651,14 +682,14 @@ class WorkspaceManager:
         if selected["layout"] != ("compact" if compact else "wide"):
             self._save_if_current(selected, {"layout": "compact" if compact else "wide"})
 
-    def _reconcile_activity(self, sidebar, pane, wanted):
+    def _reconcile_activity(self, window, pane, wanted):
         """Create or kill the activity column; a pane that is not wanted does not exist at all."""
         if wanted and pane is None:
-            pane = self.tmux("split-window", "-d", "-h", "-f", "-l", str(ACTIVITY_WIDTH), "-t", sidebar,
+            pane = self.tmux("split-window", "-d", "-h", "-f", "-l", str(ACTIVITY_WIDTH), "-t", window,
                              "-P", "-F", "#{pane_id}", self._activity_command()).stdout.strip()
             self._tag(pane, "activity")
         elif not wanted and pane is not None:
-            self.tmux("kill-pane", "-t", pane)
+            self.tmux("kill-pane", "-t", pane, check=False)  # already gone counts as removed
             pane = None
         return pane
 
@@ -680,14 +711,10 @@ class WorkspaceManager:
                      leaf("client2", right - first_width - 1, top, left + first_width + 2, 0) + "}")
         lower = (f"{right}x{bottom},{left + 1},{top + 1}{{" + leaf("inspector", inspector_width, bottom, left + 1, top + 1) + "," +
                  leaf("graph", right - inspector_width - 1, bottom, left + inspector_width + 2, top + 1) + "}")
-        column = (f",{ACTIVITY_WIDTH}x{available},{left + right + 2},0,{activity[1:]}" if activity else "")
+        edge = (f",{ACTIVITY_WIDTH}x{available},{left + right + 2},0,{activity[1:]}" if activity else "")
         description = (f"{width}x{available},0,0{{" + leaf("sidebar", left, available, 0, 0) + "," +
-                       f"{right}x{available},{left + 1},0[" + upper + "," + lower + "]" + column + "}")
-        checksum = 0
-        for byte in description.encode():
-            checksum = (checksum >> 1) + ((checksum & 1) << 15)
-            checksum = (checksum + byte) & 0xffff
-        self.tmux("select-layout", "-t", panes["sidebar"], f"{checksum:04x}," + description)
+                       f"{right}x{available},{left + 1},0[" + upper + "," + lower + "]" + edge + "}")
+        self.tmux("select-layout", "-t", panes["sidebar"], column.with_checksum(description))
 
     def focus(self, role):
         if role not in _ROLES:
