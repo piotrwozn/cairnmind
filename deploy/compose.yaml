@@ -1,0 +1,41 @@
+# The ArcadeDB server of docs/DEPLOYMENT.md on one machine: a server, or a laptop for development.
+#
+#   umask 077; openssl rand -base64 32 > ~/.config/cairnmind-arcadedb-root-password
+#   ARCADEDB_ROOT_PASSWORD_FILE=~/.config/cairnmind-arcadedb-root-password \
+#       docker compose -f deploy/compose.yaml up -d --build --wait
+#
+# Environment:
+#   ARCADEDB_ROOT_PASSWORD_FILE  required: the file holding the root password (never committed)
+#   ARCADEDB_BIND                host address the HTTP port is published on (127.0.0.1)
+#   ARCADEDB_PORT                host port (2480)
+#   ARCADEDB_JAVA_OPTS           extra JVM options, e.g. -Xmx4g (the default heap is 1 GB)
+#
+# Cairnmind connects over plain HTTP to a loopback address only, so the port stays on 127.0.0.1;
+# reach it from another machine through an SSH tunnel until TLS support arrives (#72).
+
+# The project name, and so the volume name cairnmind-db_arcadedb-data, that docs/DEPLOYMENT.md uses.
+name: cairnmind-db
+
+services:
+  arcadedb:
+    build:
+      context: arcadedb
+    image: cairnmind-arcadedb:local
+    restart: unless-stopped
+    environment:
+      ARCADEDB_JAVA_OPTS: ${ARCADEDB_JAVA_OPTS:-}
+    ports:
+      - "${ARCADEDB_BIND:-127.0.0.1}:${ARCADEDB_PORT:-2480}:2480"
+    secrets:
+      - arcadedb_root_password
+    volumes:
+      - arcadedb-data:/var/lib/arcadedb
+    # The JVM gets SIGTERM and closes its databases; give it time before SIGKILL.
+    stop_grace_period: 60s
+
+volumes:
+  arcadedb-data:
+
+secrets:
+  arcadedb_root_password:
+    file: ${ARCADEDB_ROOT_PASSWORD_FILE:?set ARCADEDB_ROOT_PASSWORD_FILE to the file holding the ArcadeDB root password}
