@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 JOURNAL_TYPES = ("journal_state", "journal_events")
 MAX_EVENTS = 50_000
 MAX_TRANSACTION_EVENTS = 500
+EVENTS_PER_STATEMENT = 250
 TABLE_TYPES = {
     "nodes": "node", "edges": "edge",
     "projects": "project", "project_roots": "scope", "sources": "source", "chunks": "chunk",
@@ -203,7 +204,8 @@ class JournalTransaction:
         self.changes.clear()
         self.explicit.clear()
 
-    def flush(self):
+    def pending(self):
+        """The events this transaction would write now, before a fold into resets; empty after a reset."""
         events = {}
         if self.reset_reason is None:
             for (table, _), (before, after) in self.changes.items():
@@ -217,6 +219,10 @@ class JournalTransaction:
                 if after is not None:
                     events[_event_key(table, after)] = "upsert"
             events.update(self.explicit)
+        return events
+
+    def flush(self):
+        events = self.pending()
         if not events and self.reset_reason is None:
             return
         state = self.native.query("SELECT FROM journal_state WHERE id='current'")
@@ -233,11 +239,19 @@ class JournalTransaction:
         if len(events) > MAX_TRANSACTION_EVENTS:
             events = {(project, entity_type, None): "reset" for project, entity_type, _ in events}
         at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        rows = []
         for (project, entity_type, entity_id), operation in sorted(events.items(), key=lambda item: _json(item[0])):
             sequence += 1
-            event = {"id": f"{epoch}:{sequence}", "epoch": epoch, "seq": sequence, "project_id": project,
-                     "entity_type": entity_type, "entity_id": entity_id, "op": operation, "at": at}
-            self.native.command("INSERT INTO journal_events CONTENT :row", {"row": event})
+            rows.append({"id": f"{epoch}:{sequence}", "epoch": epoch, "seq": sequence, "project_id": project,
+                         "entity_type": entity_type, "entity_id": entity_id, "op": operation, "at": at})
+        # One statement stores a list of events. The engine returns each row it stored; fewer than were
+        # sent would be events lost without a word, so the transaction fails instead.
+        for offset in range(0, len(rows), EVENTS_PER_STATEMENT):
+            part = rows[offset:offset + EVENTS_PER_STATEMENT]
+            stored = self.native.command("INSERT INTO journal_events CONTENT :rows", {"rows": part})
+            if not isinstance(stored, list) or sorted(row.get("seq") for row in stored if isinstance(row, dict)) != \
+                    [row["seq"] for row in part]:
+                raise RuntimeError("The journal did not store every event of the transaction")
         first = max(1, sequence - MAX_EVENTS + 1)
         self.native.command("UPDATE journal_state SET seq=:seq,first_seq=:first WHERE id='current'",
                             {"seq": sequence, "first": first})
