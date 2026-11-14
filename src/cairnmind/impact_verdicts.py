@@ -76,7 +76,7 @@ def _on_disk(root, name):
 def fingerprints(root, changed, records, rows):
     """``{record id: fingerprint}`` from the worktree as it is now; reads files, writes nothing."""
     from cairnmind.impact import _definitions
-    from cairnmind.store import _json
+    from cairnmind.sql import json_text
     seen, definitions = {}, {}
 
     def current(link):
@@ -91,14 +91,14 @@ def fingerprints(root, changed, records, rows):
         found = definitions[name]
         if found is None:  # the file cannot be compared by symbol: any change of it counts
             return "file:" + marker
-        return _sha(_json(found[link["symbol"]])) if link["symbol"] in found else "removed"
+        return _sha(json_text(found[link["symbol"]])) if link["symbol"] in found else "removed"
 
     result = {}
     for row in rows:
         parts = [_sha(str(records[row["id"]].get("content", "")))]
         parts += sorted([link["via"], link["path"], link.get("symbol") or "", current(link)]
                         for link in row["links"])
-        result[row["id"]] = _sha(_json(parts))
+        result[row["id"]] = _sha(json_text(parts))
     return result
 
 
@@ -159,7 +159,7 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
     non-current source.
     """
     from cairnmind.impact import build_impact
-    from cairnmind.store import _json, _now
+    from cairnmind.sql import json_text, utc_now
     if verdict not in VERDICTS:
         raise ValueError("The verdict must be still_valid, needs_update or not_related")
     if note is not None and (not isinstance(note, str) or len(note) > MAX_NOTE_CHARS):
@@ -177,7 +177,7 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
         raise StaleVerdict(STALE)
     project_id, uri = report["project"]["id"], _uri(record_id, fingerprint)
     document = {"actor": "local_user", "action": "impact_verdict", "verdict": verdict, "record_id": record_id,
-                "fingerprint": fingerprint, "note": note, "at": _now(), "since": since,
+                "fingerprint": fingerprint, "note": note, "at": utc_now(), "since": since,
                 "commit": report["commit"]}
     metadata = {"origin": "local_user_review", "role": "user", "impact_verdict": True, "record_id": record_id,
                 "fingerprint": fingerprint}
@@ -188,7 +188,7 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
         if said == (verdict, note):
             return {"record_id": record_id, "fingerprint": fingerprint, "verdict": earlier[1],
                     "audit_source_id": earlier[0]["id"], "already_saved": True}
-        source = store.snapshot(project_id, uri, _json(document), "manual", metadata)
+        source = store.snapshot(project_id, uri, json_text(document), "manual", metadata)
     return {"record_id": record_id, "fingerprint": fingerprint, "verdict": document,
             "audit_source_id": source["id"], "already_saved": False}
 

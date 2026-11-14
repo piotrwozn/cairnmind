@@ -53,7 +53,7 @@ def _is_audit(source):
 
 def _file_verdicts(store, project_id, stale):
     """Classify non-current file sources with a fixed number of queries, whatever their count."""
-    from cairnmind.store import _json
+    from cairnmind.sql import json_text
     imported = imported_source_ids(store, project_id) & set(stale)
     bindings = memory_bindings(store, project_id) if imported else []
     addresses = {}
@@ -66,13 +66,13 @@ def _file_verdicts(store, project_id, stale):
             local = bound_metadata(store, project_id, {"path": path}, bindings=bindings).get("path")
             if isinstance(local, str) and local not in addresses[source_id]:
                 addresses[source_id].append(local)
-    keys = sorted({_json([project_id, uri]) for uris in addresses.values() for uri in uris})
+    keys = sorted({json_text([project_id, uri]) for uris in addresses.values() for uri in uris})
     # current_key is the unique index the store keeps for "the current version at this address".
     current = {row["current_key"]: row for row in store.query(
         "SELECT id,sha256,current_key FROM sources WHERE current_key IN :keys AND is_current=true", {"keys": keys})}
     verdicts, unmatched = {}, {}
     for source_id, source in stale.items():
-        found = next((current[key] for key in (_json([project_id, uri]) for uri in addresses[source_id])
+        found = next((current[key] for key in (json_text([project_id, uri]) for uri in addresses[source_id])
                       if key in current), None)
         if found is None:
             unmatched[source_id] = source

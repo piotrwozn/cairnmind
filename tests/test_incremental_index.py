@@ -13,7 +13,8 @@ import pytest
 from cairnmind import ingest
 from cairnmind.config import Settings
 from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed
-from cairnmind.store import Store, _clean
+from cairnmind.store import Store
+from cairnmind.sql import clean_row
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +51,7 @@ def workspace(tmp_path):
 def index_state(store, pid):
     """Everything indexing writes: current sources and chunks, and every node and edge of the project."""
     def rows(sql):
-        return sorted((_clean(row) for row in store.query(sql, {"project": pid})), key=lambda row: str(row.get("id")))
+        return sorted((clean_row(row) for row in store.query(sql, {"project": pid})), key=lambda row: str(row.get("id")))
 
     nodes = rows("SELECT id,kind,label,source_id,metadata,is_current FROM nodes WHERE project_id=:project")
     edges = rows("SELECT id,from_id,to_id,kind,source_id,status,is_current FROM edges WHERE project_id=:project")

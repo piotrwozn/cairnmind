@@ -236,7 +236,7 @@ def test_a_full_native_packet_stays_ready_and_never_shows_an_external_record_unm
     # Over the budget before its hash and status are added: the advisory data and warning yield, the external
     # record leaves the preview list (counted as omitted) rather than being shown unmarked, and the packet is
     # still ready, so a native launch is never blocked by it.
-    monkeypatch.setattr(sessions_module, "MAX_PACKET_BYTES", len(sessions_module._json(full).encode()) - 120)
+    monkeypatch.setattr(sessions_module, "MAX_PACKET_BYTES", len(sessions_module.json_text(full).encode()) - 120)
     trimmed = fixture.manager.prepare(fixture.project["id"], "claude", timeout=0)
     assert trimmed["status"] == "ready", trimmed["unknowns"]
     states = {row["id"]: row.get("evidence_state") for row in trimmed["packet"]["records"]}

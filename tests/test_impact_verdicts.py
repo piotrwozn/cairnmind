@@ -13,7 +13,7 @@ from cairnmind.evidence import _is_audit, evidence_states
 from cairnmind.impact import build_impact
 from cairnmind.impact_verdicts import record_verdict
 from cairnmind.inspector_api import attach_inspector_routes
-from cairnmind.store import _clean
+from cairnmind.sql import clean_row
 
 from test_cockpit_server import cockpit as cockpit, login
 from test_impact import AUTH, link, workspace as workspace
@@ -165,7 +165,7 @@ def test_records_their_revisions_and_a_task_state_are_identical_after_verdicts(c
     store, pid, root, records = changed
 
     def stored():
-        return {name: sorted(json.dumps(_clean(row), sort_keys=True, default=str) for row in store.query(
+        return {name: sorted(json.dumps(clean_row(row), sort_keys=True, default=str) for row in store.query(
             f"SELECT FROM {name} WHERE project_id=:project", {"project": pid}))
             for name in ("records", "record_revisions")}
 

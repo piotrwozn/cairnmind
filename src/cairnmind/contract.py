@@ -26,7 +26,8 @@ import tomllib
 from cairnmind.brief import _line, _title
 from cairnmind.plans import PlanManager, _digest
 from cairnmind.scope import drift_warning, scope_drift
-from cairnmind.store import _PROFILE_NAME, _one, valid_argv
+from cairnmind.store import valid_argv
+from cairnmind.sql import PROFILE_NAME, one_row
 from cairnmind.verification import _PROFILE_PATHS, _root, criteria_status, load_profiles
 
 _SUMMARY = {"machine_fresh": "proven by a machine run", "machine_stale": "its check must be run again",
@@ -37,7 +38,7 @@ _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 
 def _plan(store, project_id, plan_id, root):
     if plan_id is None:
-        state = _one(store, "SELECT active_plan_id FROM worktree_states WHERE id=:id",
+        state = one_row(store, "SELECT active_plan_id FROM worktree_states WHERE id=:id",
                      {"id": _digest([project_id, str(root)])}, False)
         plan_id = (state or {}).get("active_plan_id")
         if not plan_id:
@@ -140,7 +141,7 @@ def build_contract(store, project_id, plan_id=None, worktree=None, *, written=Fa
         commands = proposed.get(name, [])
         distinct = [argv for index, argv in enumerate(commands) if argv not in commands[:index]]
         # Whatever a record carries, only a name and a command the store itself would accept are offered.
-        if not isinstance(name, str) or not _PROFILE_NAME.fullmatch(name) or not all(valid_argv(argv) for argv in distinct):
+        if not isinstance(name, str) or not PROFILE_NAME.fullmatch(name) or not all(valid_argv(argv) for argv in distinct):
             undecided.append({"check": name, "reason": "the proposed name or command is not valid", "proposals": []})
         elif len(distinct) == 1:
             additions[name] = distinct[0]
