@@ -628,7 +628,12 @@ class SidebarApp(BasePanel):
             if intent == "work":
                 changes = {"focus": "client1"}
                 if returning:
-                    changes["visible_slot_ids"] = [returning["slot_id"]]
+                    # Bring the resumed session into view without dropping another visible one (#155).
+                    shown = list((await asyncio.to_thread(self.workspace.read)).get("visible_slot_ids") or [])
+                    if returning["slot_id"] not in shown:
+                        shown = [returning["slot_id"], *shown][:2]
+                    changes.update(visible_slot_ids=shown,
+                                   focus="client2" if shown.index(returning["slot_id"]) else "client1")
                 await asyncio.to_thread(self.workspace.update, changes)
             await self.reconcile()
             if returning:

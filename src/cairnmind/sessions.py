@@ -1088,6 +1088,15 @@ class SessionManager:
         with self.store.transaction() as tx:
             session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
             packet = self._packet(session)
+            if (packet and packet["status"] != "ready" and packet["id"] == packet_id
+                    and packet["hash"] == packet_hash and packet["epoch"] == session["epoch"]):
+                # The exact current packet: say why it cannot be acknowledged instead of "does not match".
+                status = "unavailable" if packet["status"] == "unavailable" else "partial"
+                unknowns = [str(value) for value in packet.get("unknowns") or []]
+                reason = (unknowns[0][:300] + (f" (and {len(unknowns) - 1} more)" if len(unknowns) > 1 else "")
+                          if unknowns else "its code state cannot be checked" if status == "unavailable"
+                          else "its archive is incomplete")
+                raise ValueError(f"resume_required: the current packet is {status}, not ready, and cannot be acknowledged: {reason}")
             if (not packet or packet["status"] != "ready" or packet["id"] != packet_id
                     or packet["hash"] != packet_hash or packet["epoch"] != session["epoch"]):
                 raise ValueError("resume_required: ACK does not match a ready current packet")

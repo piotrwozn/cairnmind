@@ -38,7 +38,7 @@ SECRET_NAMES = {".env", ".netrc", ".npmrc", ".pypirc", "credentials", "credentia
 SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".keystore", ".sqlite", ".sqlite3", ".db"}
 GRAPH_EDGE_KINDS = ("imports", "defines", "calls", "references", "test_imports", "snapshot_of")
 GRAPH_NODE_KINDS = ("file", "symbol", "external_module", "unresolved_reference")
-TRANSCRIPT_PARSER_REVISION = 2
+TRANSCRIPT_PARSER_REVISION = 3
 UNKNOWN_TRANSCRIPT_WARNING = "Unknown transcript schema; raw record retained"
 CODEX_TECHNICAL_RECORDS = {"world_state", "token_usage_record"}
 _CLAUDE_TECHNICAL_FIELDS = {
@@ -53,7 +53,7 @@ _CLAUDE_TECHNICAL_FIELDS = {
     "api-request": {"id": str, "timestamp": str, "version": str, "querySource": str,
                     "shapeHash": str, "params": dict, "keep": int, "tail": list,
                     "cacheControl": list, "requestDigest": str},
-    "last-prompt": {"lastPrompt": str, "leafUuid": str},
+    "last-prompt": {"leafUuid": str},
     "cost-state": {"totalCostUSD": (int, float), "totalAPIDuration": int,
                    "totalAPIDurationWithoutRetries": int, "totalToolDuration": int,
                    "totalLinesAdded": int, "totalLinesRemoved": int, "totalDuration": int,
@@ -61,6 +61,9 @@ _CLAUDE_TECHNICAL_FIELDS = {
     "ai-title": {"aiTitle": str},
     "tools-used": {"tools": list},
 }
+# Fields some client versions omit: absent is accepted, present must still have the type.
+# Claude Code 2.1.325 writes last-prompt records with only leafUuid (#155).
+_CLAUDE_OPTIONAL_FIELDS = {"last-prompt": {"lastPrompt": str}}
 CLAUDE_TECHNICAL_RECORDS = set(_CLAUDE_TECHNICAL_FIELDS)
 
 
@@ -948,7 +951,8 @@ def _claude_technical_metadata(event: dict) -> bool:
     fields = _CLAUDE_TECHNICAL_FIELDS.get(kind) if isinstance(kind, str) else None
     if fields is None or not isinstance(event.get("sessionId"), str):
         return False
-    for key, expected in fields.items():
+    optional = _CLAUDE_OPTIONAL_FIELDS.get(kind, {})
+    for key, expected in (*fields.items(), *((k, v) for k, v in optional.items() if k in event)):
         allowed = expected if isinstance(expected, tuple) else (expected,)
         if key not in event or type(event[key]) not in allowed:
             return False
