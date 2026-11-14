@@ -1295,6 +1295,7 @@ def main():
     parser.add_argument("--workspace-id", default="default")
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--popup", action="store_true")
+    parser.add_argument("--run-request", action="store_true")  # a view started again by a menu request
     args = parser.parse_args()
     settings = Settings.load(args.data_dir, create=False)
     if args.kind == "activity":
@@ -1308,6 +1309,7 @@ def main():
     else:
         from .terminal_graph import GraphApp
         app = GraphApp(settings, args.workspace_id)
+    app.run_start_request = args.run_request
     app.run()
 
 

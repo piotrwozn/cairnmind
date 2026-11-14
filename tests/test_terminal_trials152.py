@@ -39,6 +39,8 @@ async def test_ctrl_q_and_ctrl_c_never_end_a_sidebar_and_name_the_keys_that_leav
         shown = notice_text(app)
         assert shown == tr(app.LEAVE_HINT, language)
         assert "Ctrl+Q" in shown and "Ctrl+B" in shown and "ctrl+q to quit" not in screen_text(app)
+        # A key hint is not an event of the project: not in Notices, not copied to the activity column.
+        assert not app.notice_history.entries
     for text in (app.LEAVE_KEYS, app.LEAVE_HINT):
         assert tr(text, "pl") != text
 
@@ -53,6 +55,47 @@ async def test_ctrl_q_never_ends_the_graph(panel):  # noqa: F811
         await pilot.pause(.2)
         assert app.is_running
         assert notice_text(app) == app.LEAVE_KEYS
+
+
+@pytest.mark.asyncio
+async def test_a_leave_hint_does_not_hide_a_notice_from_the_mark(tmp_path, monkeypatch):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.notice("Assistant started.")
+        await pilot.press("ctrl+c")
+        await settle(app, pilot)
+        assert [entry.text for entry in app.notice_history.entries] == ["Assistant started."]
+        assert app.notice_history.replaced_unseen() == 1  # the hint took its place on the line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("started_for_it", [True, False])
+async def test_a_view_started_again_by_a_menu_request_runs_it(tmp_path, monkeypatch, started_for_it):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    # WorkspaceManager.request_command writes the request first, then starts the dead view with --run-request.
+    workspace.value["command_request"] = {"id": "before-start", "action": "search", "target_role": "sidebar"}
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    app.run_start_request = started_for_it
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await pilot.pause(.4)  # a few polls: the request runs once, or never for an ordinary start
+        assert (app.focused is not None and app.focused.id == "project-search") is started_for_it
+        assert app._last_command_id == "before-start" and not app.run_start_request
+
+
+def test_the_run_request_flag_reaches_the_view(tmp_path, monkeypatch):
+    import sys
+    from cairnmind import terminal_panels
+    from cairnmind.config import Settings
+    Settings.load(tmp_path / "data", create=True)
+    seen = []
+    monkeypatch.setattr(terminal_panels.SidebarApp, "run", lambda self: seen.append(self.run_start_request))
+    for extra in (["--run-request"], []):
+        monkeypatch.setattr(sys, "argv", ["panel", "--kind", "sidebar", "--data-dir", str(tmp_path / "data"), *extra])
+        terminal_panels.main()
+    assert seen == [True, False]
 
 
 @pytest.mark.asyncio
@@ -332,4 +375,9 @@ def test_real_tmux_a_dead_view_comes_back_when_its_key_asks_for_it(manager, ask)
     assert not dead(workspace, role)
     after = workspace.tmux("display-message", "-p", "-t", workspace.panes()[role], "#{pane_pid}").stdout.strip()
     assert after != before
+    # A menu request is written before the view starts again, and the new process is told to run it.
+    started = workspace.tmux("display-message", "-p", "-t", workspace.panes()[role], "#{pane_start_command}").stdout
+    assert ("--run-request" in started) is (ask == "projects")
+    if ask == "projects":
+        assert workspace.state.read()["command_request"]["action"] == "search"
     assert workspace.tmux("display-message", "-p", "-t", workspace.panes()["client1"], "#{pane_pid}").stdout.strip() == client

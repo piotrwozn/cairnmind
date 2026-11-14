@@ -384,7 +384,7 @@ class WorkspaceManager:
                 self._start_supervisor()
         return self.status()
 
-    def _recover_ui_panels(self, roles=("sidebar", "inspector", "graph", "activity")):
+    def _recover_ui_panels(self, roles=("sidebar", "inspector", "graph", "activity"), *, run_request=False):
         # Only an explicit launch/create, or a key that asks for that view, retries crashed views.
         # Reconciliation never loops on a failing UI, and client/native panes are untouched.
         for role, pane in self.panes((*_ROLES, "activity")).items():
@@ -393,8 +393,9 @@ class WorkspaceManager:
             identity = self.tmux("display-message", "-p", "-t", pane,
                                  "#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{pane_dead}").stdout.strip()
             if identity == f"{self.workspace_id}\t{role}\t1":
-                self.tmux("respawn-pane", "-k", "-t", pane,
-                          self._activity_command() if role == "activity" else self._panel(role))
+                command = self._activity_command() if role == "activity" else self._panel(role)
+                # The menu request that asked for this view is already in the state: the new process runs it.
+                self.tmux("respawn-pane", "-k", "-t", pane, command + (" --run-request" if run_request else ""))
                 self._tag(pane, role)
 
     def _bindings(self):
@@ -741,16 +742,20 @@ class WorkspaceManager:
             return self.focus(roles[(roles.index(current) + 1) % len(roles)] if current in roles else roles[0])
         return self.status()
 
-    def _revive(self, role):
-        """A view whose process ended starts again when a key or the menu asks for it (Ctrl+B p/i/g, Tab)."""
+    def _revive(self, role, *, run_request=False):
+        """A view whose process ended starts again when a key or the menu asks for it (Ctrl+B p/i/g, Tab).
+
+        `run_request`: the command request for this view is written first, and the new process runs it;
+        a panel otherwise treats the request it finds at start as already seen.
+        """
         if role in {"sidebar", "inspector", "graph"} and self.exists():
             with _private_lock(self.directory / "ui.lock"):
-                self._recover_ui_panels((role,))
+                self._recover_ui_panels((role,), run_request=run_request)
 
     def request_command(self, action, target_role="sidebar"):
-        self._revive(target_role)
         self.state.update({"command_request": {"id": str(uuid4()), "action": action, "target_role": target_role},
                            "focus": target_role})
+        self._revive(target_role, run_request=True)
         self._layout()
 
     def _owner(self, client_pid, client_tty):

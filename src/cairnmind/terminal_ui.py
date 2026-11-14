@@ -289,6 +289,7 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
 
 class BasePanel(App):
     ENABLE_COMMAND_PALETTE = False
+    run_start_request = False  # set by `--run-request`: the request found at start is for this start
     # Colours and the shape of every control and dialog live in terminal_theme; panels add sizes only.
     CSS = terminal_theme.BASE_CSS
 
@@ -450,6 +451,10 @@ class BasePanel(App):
             await asyncio.to_thread(self.broker.ensure)
             await self._poll_workspace()
             await self.ready_panel()
+            if self.run_start_request:
+                # Started again by the menu request in the state (WorkspaceManager._revive): run it once.
+                self.run_start_request, self._last_command_id = False, None
+                await self._poll_workspace()
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(safe_text(exc))
 
@@ -493,8 +498,14 @@ class BasePanel(App):
         self.leave_hint(self.LEAVE_HINT)
 
     def leave_hint(self, text) -> None:
-        if self.query("#panel-notice"):
-            self.notice(text)
+        """A key hint, not an event of the project: shown on the notice line, never kept in Notices."""
+        if lines := self.query("#panel-notice"):
+            line = lines.first(Static)
+            line.update(plain(self.t(text)))
+            line.display = True
+            line.remove_class("-warn", "-error")
+            self.notice_history.add("", None)  # the newest notice left the line: the mark counts it again
+            self.show_notice_mark()
         else:  # a view without a notice line (the activity column)
             self.notify(self.t(text), timeout=8, markup=False)
 
