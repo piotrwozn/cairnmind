@@ -14,6 +14,7 @@ from .terminal_safe import safe_text
 MAX_ENTRIES = 200
 MAX_CHARS = 60_000          # total size of the stored texts
 MAX_ENTRY_CHARS = 4_000     # one notice is cut here, so a single huge one cannot push out the rest
+KINDS = ("info", "warn", "error")
 
 
 def _now() -> datetime:
@@ -29,6 +30,7 @@ class Notice:
     worktree: str | None
     count: int = 1
     seq: int = 0
+    kind: str = "info"  # "info", "warn" or "error": the style the line had, shown as a word elsewhere
 
 
 class NoticeHistory:
@@ -40,7 +42,8 @@ class NoticeHistory:
         self._seen = 0        # highest seq the person has opened the history at
         self._showing = False  # the line currently shows the newest entry
 
-    def add(self, text: object, scope: dict | None) -> None:
+    def add(self, text: object, scope: dict | None, kind: str = "info") -> None:
+        kind = kind if kind in KINDS else "info"
         shown = safe_text(text, limit=MAX_ENTRY_CHARS)
         if not shown.strip():
             self._showing = False  # the line was cleared: whatever it showed is now replaced
@@ -48,14 +51,15 @@ class NoticeHistory:
         scope = scope if isinstance(scope, dict) else {}
         project = (scope.get("project_id"), scope.get("worktree"))
         last = self.entries[-1] if self.entries else None
-        if last is not None and last.text == shown and (last.project_id, last.worktree) == project:
+        if (last is not None and last.text == shown and (last.project_id, last.worktree) == project
+                and last.kind == kind):
             last.when, last.count = _now(), last.count + 1
             self._showing = True
             return
         self._seq += 1
         name = scope.get("project_name")
         self.entries.append(Notice(shown, _now(), project[0], safe_text(name, limit=200) if name else None,
-                                   project[1], 1, self._seq))
+                                   project[1], 1, self._seq, kind))
         self._chars += len(shown)
         self._showing = True
         while len(self.entries) > 1 and (len(self.entries) > self.max_entries or self._chars > self.max_chars):

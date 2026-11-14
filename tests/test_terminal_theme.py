@@ -12,7 +12,8 @@ from cairnmind.terminal_i18n import CATALOG, tr
 SOURCE = Path(theme.__file__).parent
 # Modules whose colours have moved to the theme. The list grows as panels are converted.
 THEMED = ["terminal_ui.py", "terminal_panels.py", "workspace.py", "api_worker.py", "terminal_inspector.py",
-          "terminal_impact.py", "terminal_detail.py", "terminal_commands.py", "workspace_finding.py"]
+          "terminal_impact.py", "terminal_detail.py", "terminal_commands.py", "workspace_finding.py",
+          "terminal_activity.py", "terminal_activity_data.py", "terminal_notice_feed.py", "workspace_activity.py"]
 # terminal_graph.py is not listed: its node colours are the graph's own data colours, not chrome.
 GREENS = {theme.TOKENS["ok"], f"colour{theme.XTERM['ok']}"}
 
