@@ -24,6 +24,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -79,6 +80,20 @@ def time_budget(seconds: float) -> float:
     for a check that work did not wait for a timeout: a larger limit could hide the wait.
     """
     return seconds * 3 if measuring_coverage() else seconds
+  
+  
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_BOX = re.compile("[\u2500-\u257f]")
+
+
+def plain_words(text: str) -> str:
+    """The words of CLI output, for comparing a message that Typer or Rich may have drawn in a box.
+
+    Colour codes, box-drawing characters and line breaks are dropped and runs of white space become
+    one space, so a message wrapped at 60 columns or split across a border still matches. Nothing
+    else is changed: the words, digits and punctuation of the message must still be there.
+    """
+    return " ".join(_BOX.sub(" ", _ANSI.sub("", text)).split())
 
 
 @pytest.hookimpl(trylast=True)  # after the tmp_path plugin has set up the base directory

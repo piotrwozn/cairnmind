@@ -8,6 +8,8 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+from conftest import plain_words
+
 from cairnmind import cli
 from cairnmind.config import Settings
 
@@ -133,7 +135,7 @@ def test_unavailable_diagnostics_do_not_autostart_service(tmp_path, monkeypatch,
     transport(monkeypatch, unavailable)
     result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), *arguments])
     assert result.exit_code == 2
-    assert "cairnmind serve" in result.output
+    assert "cairnmind serve" in plain_words(result.output)
     assert files(settings.data_dir) == before
 
 

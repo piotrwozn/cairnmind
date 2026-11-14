@@ -9,6 +9,8 @@ from types import ModuleType
 import pytest
 from typer.testing import CliRunner
 
+from conftest import plain_words
+
 from cairnmind import cli
 
 
@@ -67,7 +69,7 @@ def test_no_tty_is_actionable_and_does_not_initialize(tmp_path, monkeypatch, arg
     data = tmp_path / "absent"
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), *arguments])
     assert result.exit_code == 2
-    assert "interactive terminal" in " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.output).split())
+    assert "interactive terminal" in plain_words(result.output)
     assert not calls and not data.exists()
 
 
