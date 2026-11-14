@@ -56,13 +56,25 @@ def _status_text(value, columns):
     return result + "…"
 
 
+# Why a kept ACK went stale (sessions.stale_reason), beside "stale" in the pane's border (#161).
+STALE_WORDS = {"state_changed": "memory changed after ACK", "packet_changed": "new packet without ACK",
+               "ack_mismatch": "ACK does not match packet", "scope_unavailable": "scope cannot be read",
+               "continuity": "session continuity broken"}
+
+
+def stale_badge(reason, language="en"):
+    """The raw word the badge colour reads, then the reason in the panels' language."""
+    from .terminal_i18n import tr
+    return "stale: " + tr(STALE_WORDS[reason], language) if reason in STALE_WORDS else "stale"
+
+
 # The keys, on the right of the active view's border (#161). The two status rows replace tmux's own row,
 # so status-right is never drawn; the rows are full at 80 columns, the border of the active view is not.
 HINT_KEYS = "C-b Space: menu · C-b ?: help · C-b d: detach"
 HINT_SHORT = "C-b ?: help"
 HINT_READ_ONLY = "Read only · C-b d: detach"
 HINT_READ_ONLY_SHORT = "C-b d: detach"
-BORDER_RESERVE = 40  # the left part at its widest: role, control word and memory badge, with their spaces
+LEFT_FIXED = 25  # the left part of a border without its badge, at its widest: " inspector controller " and gaps
 
 
 def _hint(text):
@@ -75,8 +87,10 @@ def border_hint(language="en"):
     from .terminal_i18n import tr
     full, short = (_hint(tr(text, language)) for text in (HINT_KEYS, HINT_SHORT))
     read_only, read_only_short = (_hint(tr(text, language)) for text in (HINT_READ_ONLY, HINT_READ_ONLY_SHORT))
-    wide = max(cell_len(full), cell_len(read_only)) + BORDER_RESERVE
-    narrow = max(cell_len(short), cell_len(read_only_short)) + BORDER_RESERVE
+    # The hint is drawn only where it fits beside the widest left part, so it never covers the badge.
+    reserve = LEFT_FIXED + max(cell_len("ACK required"), *(cell_len(stale_badge(r, language)) for r in STALE_WORDS))
+    wide = max(cell_len(full), cell_len(read_only)) + reserve
+    narrow = max(cell_len(short), cell_len(read_only_short)) + reserve
     pick = lambda writer, reader: "#{?client_readonly," + reader + "," + writer + "}"  # noqa: E731
     return ("#{?pane_active,#{?#{e|>=:#{pane_width}," + str(wide) + "}," + pick(full, read_only) + " ,"
             "#{?#{e|>=:#{pane_width}," + str(narrow) + "}," + pick(short, read_only_short) + " ,}},}")
@@ -552,7 +566,9 @@ class WorkspaceManager:
                                     lifecycle=run.get("lifecycle"),
                                     exit_code=run["exit_code"] if type(run.get("exit_code")) is int
                                     and 0 <= run["exit_code"] <= 255 else None,
-                                    memory={key: memory.get(key) for key in ("status", "acknowledged", "stale")})
+                                    memory={**{key: memory.get(key) for key in ("status", "acknowledged", "stale")},
+                                            "stale_reason": memory.get("stale_reason")
+                                            if memory.get("stale_reason") in STALE_WORDS else None})
                         adopted.append(run["id"])
                     slots.append(item)
                 self._adopt(adopted)
@@ -616,6 +632,7 @@ class WorkspaceManager:
         panes = self.panes()
         visible = [next(row for row in selected["slots"] if row["id"] == identifier) for identifier in selected["visible_slot_ids"]]
         wanted = max(1, len(visible))
+        language = CockpitState(self.settings).load().get("language", "en")
         if wanted == 1 and "client2" in panes:
             self.tmux("kill-pane", "-t", panes["client2"])
             panes.pop("client2")
@@ -630,7 +647,8 @@ class WorkspaceManager:
             run_id, generation = slot.get("run_id"), slot.get("generation")
             binding = (run_id or "") + ":" + str(generation or "")
             memory = slot.get("memory") or {}
-            badge = ("stale" if memory.get("stale") else memory["status"] if memory.get("status") in {"partial", "unavailable"}
+            badge = (stale_badge(memory.get("stale_reason"), language) if memory.get("stale")
+                     else memory["status"] if memory.get("status") in {"partial", "unavailable"}
                      else "ack" if memory.get("acknowledged") is True else "ACK required" if run_id else "")
             if run_id and selected["broker_available"] is False:
                 badge = "unavailable"

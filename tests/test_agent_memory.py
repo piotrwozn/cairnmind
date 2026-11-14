@@ -100,6 +100,8 @@ async def test_actual_model_read_and_exact_ack_are_required_then_stale_on_state_
     assert manager._session(sid)["native_session_id"] is None
     await memory.execute("checkpoint", {"state": {"goal": "Implement API memory", "next_step": "Review"}})
     assert (await memory.execute("session_status", {}))["stale"] is True
+    # #161: the reason is named by a fixed code, so the workspace can show it beside "stale".
+    assert manager.status(sid)["stale_reason"] == "state_changed"
     with pytest.raises(RuntimeError, match="409"):
         await memory.execute("checkpoint", {"state": {"goal": "Old ACK cannot authorize this"}})
     native = manager.prepare(project["id"], "codex", timeout=0)

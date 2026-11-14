@@ -597,6 +597,10 @@ CATALOG.update({
     "C-b Space: menu · C-b ?: help · C-b d: detach": "C-b Spacja: menu · C-b ?: pomoc · C-b d: odłącz",
     "C-b ?: help": "C-b ?: pomoc", "Read only · C-b d: detach": "Tylko odczyt · C-b d: odłącz",
     "C-b d: detach": "C-b d: odłącz",
+    # Why a kept ACK went stale, beside "stale" in the pane's border (workspace.STALE_WORDS, #161).
+    "memory changed after ACK": "pamięć zmieniona po ACK", "new packet without ACK": "nowy pakiet bez ACK",
+    "ACK does not match packet": "ACK nie pasuje do pakietu", "scope cannot be read": "nie można odczytać zakresu",
+    "session continuity broken": "przerwana ciągłość sesji",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 for _en, _pl in CATALOG.items():

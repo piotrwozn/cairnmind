@@ -105,3 +105,47 @@ def test_the_border_follows_a_language_switch(manager):  # noqa: F811
     CockpitState(workspace.settings).update({"language": "pl"})
     workspace._update_status(workspace.state.read())
     assert tr(HINT_KEYS, "pl") in current() and tr(HINT_KEYS, "en") not in current()
+
+
+@pytest.mark.parametrize(("message", "code"), [
+    ("resume_required: plan, task, decision, scope or code changed since the acknowledged packet (a checkpoint "
+     "or decision this session saved counts too); call resume_context and ack_resume its new packet", "state_changed"),
+    ("resume_required: fetch and acknowledge the current ready resume packet", "packet_changed"),
+    ("resume_required: current packet has no actual model ACK", "ack_mismatch"),
+    ("resume_required: current project scope cannot be restored (gone)", "scope_unavailable"),
+    ("resume_required: another session continued this one", "continuity"),
+])
+def test_a_stale_ack_is_given_a_fixed_reason(message, code):
+    from cairnmind.sessions import STALE_REASONS, stale_reason
+    assert stale_reason(message) == code and code in STALE_REASONS
+
+
+def test_every_stale_reason_has_words_in_both_languages():
+    from cairnmind.sessions import STALE_REASONS
+    from cairnmind.workspace import STALE_WORDS, stale_badge
+    assert set(STALE_WORDS) == set(STALE_REASONS)
+    for reason in STALE_REASONS:
+        assert stale_badge(reason, "en").startswith("stale: ") and stale_badge(reason, "pl") != stale_badge(reason, "en")
+    assert stale_badge(None) == stale_badge("made up") == "stale"
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_the_pane_border_says_why_memory_is_stale(manager, language):  # noqa: F811
+    # #161: after a turn whose third-party tool result changed memory, the border said "stale" and no more.
+    workspace, broker, project = manager
+    CockpitState(workspace.settings).update({"language": language})
+    workspace.create(start_supervisor=False)
+    workspace.state.select_project(project)
+    broker.value["runs"] = [{"id": "native-fixture", "generation": 7, "client": "codex", "profile_id": "codex",
+        "project_id": project["id"], "worktree": project["root"], "slot_id": "first", "lifecycle": "running",
+        "purpose": "coding", "memory": {"status": "ready", "acknowledged": False, "stale": True,
+                                        "stale_reason": "state_changed"}}]
+    workspace.refresh()
+    pane = workspace.panes()["client1"]
+    badge = workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_memory").stdout.strip()
+    assert badge == "stale: " + tr("memory changed after ACK", language)
+    # A reason the workspace does not know is never shown: only the plain word.
+    broker.value["runs"][0]["memory"]["stale_reason"] = "<script>"
+    workspace._last_fetch = 0
+    workspace.refresh()
+    assert workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_memory").stdout.strip() == "stale"

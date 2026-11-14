@@ -253,7 +253,8 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             response = None
         if response is not None and response.is_success:
             value = response.json()
-            details = {k: value.get(k) for k in ("status", "acknowledged", "stale", "unknowns", "native_session_id")}
+            details = {k: value.get(k) for k in ("status", "acknowledged", "stale", "stale_reason", "unknowns",
+                                                "native_session_id")}
             details["checked_at"] = time.time()
         else:
             details = {"status": "unavailable", "acknowledged": False, "stale": False}
