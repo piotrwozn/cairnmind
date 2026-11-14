@@ -17,9 +17,9 @@ from .terminal_notices import about
 from .terminal_safe import plain, safe_text
 from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, summary_text
 
-_VIEWS = [("Ustalenia", "records"), ("Źródła", "sources"), ("Plany", "plans"),
-          ("Zadania", "tasks"), ("Testy", "checks"), ("Kolejka", "jobs"),
-          ("Conflicts", "conflicts"), ("Impact", "impact"), ("Nieprzypisane", "inbox"), ("Snapshot", "memory")]
+_VIEWS = [("Records", "records"), ("Sources", "sources"), ("Plans", "plans"),
+          ("Tasks", "tasks"), ("Checks", "checks"), ("Queue", "jobs"),
+          ("Conflicts", "conflicts"), ("Impact", "impact"), ("Unassigned", "inbox"), ("Snapshot", "memory")]
 _TYPES = {"record": "records", "source": "sources", "plan": "plans", "check": "checks", "job": "jobs"}
 
 
@@ -84,36 +84,36 @@ class InspectorApp(ImpactView, BasePanel):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="inspector-main"):
-            yield Static(self.t("Wybierz projekt w panelu projektów."), id="inspector-heading", markup=False)
+            yield Static(self.t("Select a project in Projects."), id="inspector-heading", markup=False)
             yield Select([(self.t(label), value) for label, value in _VIEWS], value="records", allow_blank=False, id="inspector-view")
-            yield Input(placeholder=self.t("Filtruj załadowaną stronę…"), id="inspector-filter")
+            yield Input(placeholder=self.t("Filter loaded page…"), id="inspector-filter")
             yield from self.compose_impact_bar()
             yield DataTable(id="inspector-rows", cursor_type="row", zebra_stripes=True)
             with VerticalScroll(id="inspector-details"):
                 yield Static("", id="entity-body", markup=False)
             with Horizontal(id="entity-actions"):
-                yield Button(self.t("Otwórz"), id="entity-open")
-                yield Button(self.t("Więcej"), id="entity-more")
-                yield Button(self.t("Lista"), id="entity-back")
-                yield Button(self.t("Filtry"), id="entity-filters")
+                yield Button(self.t("Open"), id="entity-open")
+                yield Button(self.t("More"), id="entity-more")
+                yield Button(self.t("List"), id="entity-back")
+                yield Button(self.t("Filters"), id="entity-filters")
                 yield Button(self.t("Details"), id="entity-technical")
             with Horizontal(id="review-actions"):
-                yield Button(self.t("Potwierdź"), id="entity-confirm")
-                yield Button(self.t("Zakwestionuj"), id="entity-dispute")
-                yield Button(self.t("Historia"), id="entity-history")
-                yield Button(self.t("Źródła"), id="entity-sources")
+                yield Button(self.t("Confirm"), id="entity-confirm")
+                yield Button(self.t("Dispute"), id="entity-dispute")
+                yield Button(self.t("History"), id="entity-history")
+                yield Button(self.t("Sources"), id="entity-sources")
             with Horizontal(id="conflict-actions"):
                 yield Button(self.t("Resolve"), id="conflict-resolve")
             with Horizontal(id="impact-actions"):
                 yield Button(self.t("Verdict"), id="impact-verdict")
             with Horizontal(id="memory-actions"):
-                yield Button(self.t("Podgląd"), id="memory-preview")
-                yield Button(self.t("Zapisz"), id="memory-save", disabled=True)
-                yield Button(self.t("Automat"), id="memory-auto")
+                yield Button(self.t("Preview"), id="memory-preview")
+                yield Button(self.t("Save"), id="memory-save", disabled=True)
+                yield Button(self.t("Automatic"), id="memory-auto")
                 yield Button(self.t("Import"), id="memory-import")
             with Horizontal(id="memory-extra"):
-                yield Button(self.t("Wczytaj"), id="memory-apply", disabled=True)
-                yield Button(self.t("Stan"), id="memory-refresh")
+                yield Button(self.t("Apply"), id="memory-apply", disabled=True)
+                yield Button(self.t("Status"), id="memory-refresh")
             yield Static("", id="panel-notice", markup=False)
         yield Footer()
 
@@ -171,7 +171,7 @@ class InspectorApp(ImpactView, BasePanel):
             self.query_one("#memory-apply", Button).disabled = True
         project = value.get("project_id")
         self.query_one("#inspector-heading", Static).update(terminal_theme.assemble([
-            ("title", value.get("project_name") or project or self.t("Pamięć globalna")),
+            ("title", value.get("project_name") or project or self.t("Global memory")),
             ("muted", " · " + (value.get("worktree") or self.t("Unassigned")))]))
         selection = value.get("selected_entity")
         signature = json.dumps(selection, sort_keys=True, default=str)
@@ -241,7 +241,7 @@ class InspectorApp(ImpactView, BasePanel):
             return
         project = self.workspace_data.get("project_id")
         if not project and self.view != "inbox":
-            self.notice(self.t("Wybierz projekt. Nieprzypisane wpisy i import są dostępne globalnie."))
+            self.notice(self.t("Choose a project. Unassigned items and import are available globally."))
             self.render_rows([])
             return
         scope, view = self._scope_version, self.view
@@ -340,7 +340,7 @@ class InspectorApp(ImpactView, BasePanel):
         for selector in ("#entity-confirm", "#entity-dispute"):
             self.query_one(selector, Button).disabled = kind != "records"
         self.query_one("#entity-history", Button).disabled = kind not in {"records", "plans"}
-        self.query_one("#entity-sources", Button).label = self.t("Widok") if kind in {"sources", "inbox"} else self.t("Źródła")
+        self.query_one("#entity-sources", Button).label = self.t("View") if kind in {"sources", "inbox"} else self.t("Sources")
         self.query_one("#entity-more", Button).disabled = not bool(self.source_next)
 
     def readable_detail(self, value, *, kind=None):
@@ -407,30 +407,30 @@ class InspectorApp(ImpactView, BasePanel):
             header = str(source.get("uri") or self.t("Sources"))
             self.show_detail(result, kind=collection,
                              parts=[("stored-lead", header), ("stored", "\n\n" + self.source_content)])
-            self.notice(self.t("Źródło literalne · v=tekst/surowy/metadane · Więcej pobiera kolejny fragment"))
+            self.notice(self.t("Literal source · choose Sources for text/raw/metadata · More loads the next part"))
         else:
             self.show_detail(result, kind=collection)
-            self.notice(self.t("Historia / Źródła otwierają zachowane dowody. Ocena zmienia tylko pewność ustalenia."))
+            self.notice(self.t("History and Sources show saved evidence. Review changes confidence only."))
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def review(self, action):
         if self.entity_kind != "records" or not self.entity:
-            self.notice(self.t("Najpierw otwórz ustalenie."))
+            self.notice(self.t("Open a record first."))
             return
         record = dict(self.entity)
         scope = self._scope_version
         project_id = self.workspace_data.get("project_id")
         plan_version = self.plan_version
         if record.get("status") == "superseded":
-            self.notice("Wersja historyczna nie podlega ocenie.")
+            self.notice("A historical version cannot be reviewed.")
             return
-        form = await self.push_screen_wait(FormModal(self.t("Potwierdź ustalenie") if action == "confirm" else self.t("Zakwestionuj ustalenie"),
-            [Field("reason", self.t("Uzasadnienie"), required=action == "dispute", multiline=True)],
-            note=f"v{record['version']}" + (f" · plan v{self.plan_version}" if self.plan_version else "") + " · " + self.t("Review changes confidence; it does not complete a task."), submit=self.t("Potwierdź ocenę")))
+        form = await self.push_screen_wait(FormModal(self.t("Confirm record") if action == "confirm" else self.t("Dispute record"),
+            [Field("reason", self.t("Reason"), required=action == "dispute", multiline=True)],
+            note=f"v{record['version']}" + (f" · plan v{self.plan_version}" if self.plan_version else "") + " · " + self.t("Review changes confidence; it does not complete a task."), submit=self.t("Confirm review")))
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."), "warn")
+            self.notice_for(about(project_id), self.t("The project changed during review. Nothing was saved."), "warn")
             return
         payload = {"project": project_id, "action": action,
                    "expected_version": record["version"], "reason": form["reason"]}
@@ -466,7 +466,7 @@ class InspectorApp(ImpactView, BasePanel):
             return
         action = "supersede" if choice.startswith("keep-") else choice
         form = await self.push_screen_wait(FormModal(self.t("Resolve conflict"),
-            [Field("reason", self.t("Describe the two scopes") if action == "different_scopes" else self.t("Uzasadnienie"),
+            [Field("reason", self.t("Describe the two scopes") if action == "different_scopes" else self.t("Reason"),
                    required=action == "different_scopes", multiline=True)],
             note=f"A v{first['version']} · B v{second['version']} · "
                  + self.t("The decision is saved with an audit note; every source is kept."),
@@ -474,7 +474,7 @@ class InspectorApp(ImpactView, BasePanel):
         if form is None:
             return
         if scope != self._scope_version:
-            self.notice_for(about(project_id), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."), "warn")
+            self.notice_for(about(project_id), self.t("The project changed during review. Nothing was saved."), "warn")
             return
         payload = {"project": project_id, "record_id": first["id"], "other_id": second["id"], "action": action,
                    "expected_version": first["version"], "other_expected_version": second["version"],
@@ -495,7 +495,7 @@ class InspectorApp(ImpactView, BasePanel):
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
         if not self.entity or self.entity_kind not in {"records", "plans"}:
-            self.notice(self.t("Otwórz rekord lub plan, aby odczytać historię."))
+            self.notice(self.t("Open a record or plan to see its history."))
             return
         owner = self.entity["id"]
         kind = self.entity_kind
@@ -504,13 +504,13 @@ class InspectorApp(ImpactView, BasePanel):
         self.next_cursor = result.get("next_cursor")
         self.render_rows(list(self.rows.values()))
         self.history_owner = (kind, owner)
-        self.notice(self.t("Historia jest tylko do odczytu. Enter otwiera dokładny snapshot wersji."))
+        self.notice(self.t("History is read-only. Enter opens the exact saved version."))
 
     async def open_revision(self, selection):
         owner_type = selection.get("owner_type", "record")
         owner = selection.get("owner_id")
         if not owner:
-            self.notice(self.t("Węzeł wersji nie zawiera identyfikatora właściciela."))
+            self.notice(self.t("This version has no owner identity."))
             return
         path = "records" if owner_type == "record" else "plans"
         cursor = None
@@ -532,25 +532,25 @@ class InspectorApp(ImpactView, BasePanel):
     @work(group="inspector-source-choice", exclusive=True, exit_on_error=False)
     async def choose_source(self):
         if self.entity and self.entity_kind in {"sources", "inbox"}:
-            choices = [(self.t("Tekst"), "normalized"), ("Surowy zapis", "raw"), (self.t("Metadane"), "metadata")]
+            choices = [(self.t("Text"), "normalized"), (self.t("Raw record"), "raw"), (self.t("Metadata"), "metadata")]
             if self.entity_kind == "inbox":
                 choices = choices[1:]
-            value = await self.push_screen_wait(ChoiceModal(self.t("Widok źródła"), choices))
+            value = await self.push_screen_wait(ChoiceModal(self.t("Source view"), choices))
             if value:
                 await self.open_entity(self.entity["id"], self.entity_kind, source_view=value)
         elif self.entity:
             sources = self.entity.get("source_ids", [])
             if not sources:
-                self.notice(self.t("Brak bezpośrednich źródeł w tym wpisie."))
+                self.notice(self.t("No direct sources for this item."))
                 return
-            value = await self.push_screen_wait(ChoiceModal(self.t("Źródła ustalenia"), [(s, s) for s in sources]))
+            value = await self.push_screen_wait(ChoiceModal(self.t("Record sources"), [(s, s) for s in sources]))
             if value:
                 await self.open_entity(value, "sources")
 
     @work(group="inspector-filters", exclusive=True, exit_on_error=False)
     async def edit_filters(self):
-        value = await self.push_screen_wait(FormModal(self.t("Filtry listy"), [Field("kind", self.t("Typ (np. fact, task, extract)")),
-            Field("status", self.t("Pewność (proposed / confirmed / disputed / superseded)")), Field("state", "Stan zadania lub kolejki")]))
+        value = await self.push_screen_wait(FormModal(self.t("List filters"), [Field("kind", self.t("Type (for example fact, task, extract)")),
+            Field("status", self.t("Confidence (proposed / confirmed / disputed / superseded)")), Field("state", "Task or queue state")]))
         if value is not None:
             self.filters = {k: v for k, v in value.items() if v}
             await self.load_page()
@@ -559,7 +559,7 @@ class InspectorApp(ImpactView, BasePanel):
         self.set_view("memory")
         if not self.workspace_data.get("project_id"):
             self.memory_status = {}
-            self.show_detail({}, text=self.t("Brak wybranego projektu. Import pozostaje dostępny z jawnym katalogiem docelowym."), empty=True)
+            self.show_detail({}, text=self.t("No project selected. Import is available with an explicit destination folder."), empty=True)
             return
         scope = self._scope_version
         result = await self.request("GET", "/api/memory/status", params=self.params())
@@ -577,26 +577,26 @@ class InspectorApp(ImpactView, BasePanel):
             scope = self._scope_version
             if action in {"preview", "save"}:
                 if not params["project"]:
-                    raise ValueError(self.t("Wybierz projekt do zapisania."))
+                    raise ValueError(self.t("Choose a project to save."))
                 if action == "save" and self.preview_scope != (params["project"], params["worktree"]):
-                    raise ValueError(self.t("Najpierw przeczytaj podgląd bieżącego projektu."))
+                    raise ValueError(self.t("Review the current project's preview first."))
                 result = await self.request("POST", "/api/memory/" + ("snapshot" if action == "save" else "preview"), json=params)
                 if scope != self._scope_version:
                     return
                 self.preview_scope = (params["project"], params["worktree"])
                 self.query_one("#memory-save", Button).disabled = False
                 self.show_detail(result)
-                self.notice(self.t("Podgląd gotowy. Zapis i publikacja w Git pozostają jawną operacją.") if action == "preview" else self.t("Snapshot zapisany."))
+                self.notice(self.t("Preview ready. Saving and publishing to Git remain explicit actions.") if action == "preview" else self.t("Snapshot saved."))
             elif action == "auto":
                 if not params["project"]:
-                    raise ValueError(self.t("Wybierz projekt do ustawienia automatu."))
+                    raise ValueError(self.t("Choose a project for automatic snapshots."))
                 auto = self.memory_status.get("auto") or {}
                 async def save_auto(values):
                     if scope != self._scope_version:
                         raise FieldError("enabled", self.t("The project changed. Close this form and open it again."))
                     enabled = values["enabled"].casefold()
                     if enabled not in {"tak", "nie", "yes", "no", "true", "false"}:
-                        raise FieldError("enabled", self.t("Wpisz tak albo nie."))
+                        raise FieldError("enabled", self.t("Enter yes or no."))
                     try:
                         interval = int(values["interval"])
                         if not 1 <= interval <= 10080:
@@ -606,10 +606,10 @@ class InspectorApp(ImpactView, BasePanel):
                     await self.request("PATCH", "/api/memory/settings", json={**params,
                         "enabled": enabled in {"tak", "yes", "true"}, "interval_minutes": interval})
                 enabled_value = ("tak" if auto.get("enabled") else "nie") if self.language == "pl" else ("yes" if auto.get("enabled") else "no")
-                value = await self.push_screen_wait(FormModal(self.t("Automatyczny snapshot"), [
-                    Field("enabled", self.t("Włączony: tak / nie"), enabled_value, True),
-                    Field("interval", self.t("Interwał w minutach"), str(auto.get("interval_minutes", 15)), True)],
-                    note=self.t("Pełny snapshot obejmuje rozmowy i źródła. Automat jest lokalny; nie wykonuje commitów ani wysyłania."),
+                value = await self.push_screen_wait(FormModal(self.t("Automatic snapshot"), [
+                    Field("enabled", self.t("Enabled: yes / no"), enabled_value, True),
+                    Field("interval", self.t("Interval in minutes"), str(auto.get("interval_minutes", 15)), True)],
+                    note=self.t("A snapshot includes conversations and sources. Automatic snapshots stay local; they do not commit or upload."),
                     on_submit=save_auto))
                 if value:
                     await self.load_memory()
@@ -623,12 +623,12 @@ class InspectorApp(ImpactView, BasePanel):
                         payload["name"] = values["name"]
                     checked["result"] = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": True})
                     checked["payload"] = payload
-                value = await self.push_screen_wait(FormModal(self.t("Sprawdź import pamięci"), [
-                    Field("path", self.t("Katalog snapshotu lub manifest.json"), required=True),
-                    Field("root", self.t("Jawny katalog docelowy"), self.workspace_data.get("worktree") or "", True, folder=True),
-                    Field("name", self.t("Lokalna nazwa (opcjonalnie)"))],
-                    note=self.t("Import nie uruchamia modeli ani klientów. Zachowuje historię; testy z innego komputera pozostają historyczne."),
-                    submit=self.t("Sprawdź import"), on_submit=check_import))
+                value = await self.push_screen_wait(FormModal(self.t("Check memory import"), [
+                    Field("path", self.t("Snapshot folder or manifest.json"), required=True),
+                    Field("root", self.t("Destination folder"), self.workspace_data.get("worktree") or "", True, folder=True),
+                    Field("name", self.t("Local name (optional)"))],
+                    note=self.t("Import does not start models or clients. It preserves history; checks from another computer remain historical."),
+                    submit=self.t("Check import"), on_submit=check_import))
                 if value and scope == self._scope_version:
                     payload, result = checked["payload"], checked["result"]
                     self.pending_import = payload
@@ -636,7 +636,7 @@ class InspectorApp(ImpactView, BasePanel):
                     self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + summary_text(result, self.language))
             elif action == "apply":
                 if not self.pending_import:
-                    raise ValueError(self.t("Najpierw sprawdź import z konkretną ścieżką i katalogiem."))
+                    raise ValueError(self.t("Check the import with its source and destination folders first."))
                 payload = dict(self.pending_import)
                 result = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": False})
                 self.pending_import = None
@@ -647,7 +647,7 @@ class InspectorApp(ImpactView, BasePanel):
                     await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
                     await asyncio.to_thread(refresh_workspace, self.settings, self.workspace_id)
                 self.show_detail(result)
-                self.notice(self.t("Pamięć wczytana; żaden klient nie został automatycznie uruchomiony."))
+                self.notice(self.t("Memory imported. No client was started automatically."))
             else:
                 await self.load_memory()
         except (OSError, ValueError, RuntimeError) as exc:

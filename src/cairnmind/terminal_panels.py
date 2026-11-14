@@ -102,17 +102,17 @@ class CredentialModal(LocalizedModal, ModalScreen[dict | None]):
         with Vertical(classes="cm-dialog"):
             yield Static(plain(self.t("API key") + " — " + self.profile_label), classes="heading")
             with VerticalScroll(classes="cm-dialog-body"):
-                yield Static(self.t("Klucz pozostaje poza pamięcią projektu. Domyślnie działa tylko podczas bieżącego działania silnika."), markup=False)
-                yield Label(self.t("Nowy klucz (zapisany klucz nie jest wyświetlany)"), classes="form-label")
+                yield Static(self.t("The key stays outside project memory. By default it lasts only for this engine session."), markup=False)
+                yield Label(self.t("New key (saved keys are never displayed)"), classes="form-label")
                 yield Input(password=True, id="credential-key")
                 with Horizontal(id="credential-remember"):
                     yield Switch(False, id="credential-persist")
-                    yield Label(self.t("Zapamiętaj lokalnie"))
-                yield Static(self.t("Opcja zapisu tworzy prywatny plik 0600 poza projektem. Plik nie jest szyfrowany i nie trafia do snapshotu."), markup=False, classes="cm-note")
+                    yield Label(self.t("Remember on this computer"))
+                yield Static(self.t("Remembering creates a private, unencrypted file outside the project. It is not included in snapshots."), markup=False, classes="cm-note")
             yield Static("", id="credential-error", markup=False)
             with Horizontal(classes="actions"):
-                yield Button(self.t("Ustaw klucz"), id="credential-save", variant="primary")
-                yield Button(self.t("Anuluj"), id="credential-cancel")
+                yield Button(self.t("Set API key"), id="credential-save", variant="primary")
+                yield Button(self.t("Cancel"), id="credential-cancel")
 
     @on(Button.Pressed)
     def credential_button(self, event):
@@ -123,7 +123,7 @@ class CredentialModal(LocalizedModal, ModalScreen[dict | None]):
             key_input = self.query_one("#credential-key", Input)
             value = key_input.value.strip()
             if not value:
-                self.query_one("#credential-error", Static).update(self.t("Wpisz nowy klucz."))
+                self.query_one("#credential-error", Static).update(self.t("Enter a new key."))
                 return
             persist = self.query_one("#credential-persist", Switch).value
             key_input.value = ""
@@ -137,30 +137,30 @@ class CredentialModal(LocalizedModal, ModalScreen[dict | None]):
 def profile_fields(old, *, client, provider=None):
     """Editable forms, with no credential values or opaque JSON blobs."""
     old = old or {}
-    fields = [Field("label", "Nazwa profilu", old.get("label", ""), True)]
+    fields = [Field("label", "Connection name", old.get("label", ""), True)]
     if client in {"codex", "claude"}:
-        return fields + [Field("client", "Klient: codex / claude", client, True),
-                         Field("model", "Model (puste = domyślny klienta)", old.get("model") or "")]
-    fields.append(Field("model", "Model" if client == "api" else "Model (puste = domyślny Copilota)", old.get("model") or "", client == "api"))
+        return fields + [Field("client", "Client: codex / claude", client, True),
+                         Field("model", "Model (blank = provider default)", old.get("model") or "")]
+    fields.append(Field("model", "Model" if client == "api" else "Model (blank = provider default)", old.get("model") or "", client == "api"))
     if client == "api":
         defaults = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1",
                     "openai_compatible": "http://127.0.0.1:8000/v1", "ollama": "http://127.0.0.1:11434"}
-        fields.append(Field("base_url", "Adres API", old.get("base_url") or defaults[provider], True))
-    fields.append(Field("credential_ref", "Odwołanie do klucza: env:NAZWA lub profile:ID (puste = bez klucza)", old.get("credential_ref") or ""))
+        fields.append(Field("base_url", "API address", old.get("base_url") or defaults[provider], True))
+    fields.append(Field("credential_ref", "Credential reference: env:NAME or profile:ID (blank = no key)", old.get("credential_ref") or ""))
     limits = old.get("limits") or {}
     if client == "api":
-        fields += [Field("max_model_calls", "Maksymalna liczba zapytań modelu w turze", str(limits.get("max_model_calls", 20)), True),
-                   Field("max_output_tokens", "Maksymalna liczba tokenów odpowiedzi", str(limits.get("max_output_tokens", 4096)), True)]
+        fields += [Field("max_model_calls", "Maximum model calls per turn", str(limits.get("max_model_calls", 20)), True),
+                   Field("max_output_tokens", "Maximum output tokens", str(limits.get("max_output_tokens", 4096)), True)]
         if provider == "ollama":
-            fields.append(Field("context_window_tokens", "Okno kontekstu Ollamy (tokeny; zużywa RAM/VRAM)", str(limits.get("context_window_tokens", 32768)), True))
+            fields.append(Field("context_window_tokens", "Ollama context tokens (uses RAM/VRAM)", str(limits.get("context_window_tokens", 32768)), True))
     else:
-        fields += [Field("max_tool_calls", "Maksymalna liczba narzędzi w turze", str(limits.get("max_tool_calls", 20)), True),
-                   Field("max_turn_seconds", "Maksymalny czas tury (sekundy)", str(limits.get("max_turn_seconds", 900)), True)]
-    fields.append(Field("command_timeout_seconds", "Limit czasu polecenia (sekundy)", str(limits.get("command_timeout_seconds", 120)), True))
+        fields += [Field("max_tool_calls", "Maximum tool calls per turn", str(limits.get("max_tool_calls", 20)), True),
+                   Field("max_turn_seconds", "Maximum turn duration (seconds)", str(limits.get("max_turn_seconds", 900)), True)]
+    fields.append(Field("command_timeout_seconds", "Command timeout (seconds)", str(limits.get("command_timeout_seconds", 120)), True))
     if client == "api" and provider != "ollama":
         pricing = old.get("pricing") or {}
-        fields += [Field("input_per_million", "Cena wejścia USD za milion tokenów (opcjonalnie)", str(pricing.get("input_per_million", ""))),
-                   Field("output_per_million", "Cena wyjścia USD za milion tokenów (opcjonalnie)", str(pricing.get("output_per_million", "")))]
+        fields += [Field("input_per_million", "Input USD per million tokens (optional)", str(pricing.get("input_per_million", ""))),
+                   Field("output_per_million", "Output USD per million tokens (optional)", str(pricing.get("output_per_million", "")))]
     return fields
 
 
@@ -200,16 +200,16 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
 
     def compose(self):
         with Vertical(classes="cm-dialog -wide"):
-            yield Static(self.t("Projekty z wybranych katalogów"), classes="heading")
-            yield Static(self.t("Skanowanie…"), id="discovery-notice", markup=False)
+            yield Static(self.t("Projects in selected folders"), classes="heading")
+            yield Static(self.t("Scanning…"), id="discovery-notice", markup=False)
             yield DataTable(id="discovery-rows", cursor_type="row", classes="cm-dialog-body")
             with Horizontal(classes="actions"):
-                yield Button(self.t("Wybierz"), id="discovery-select", variant="primary")
-                yield Button(self.t("Anuluj skan"), id="discovery-cancel")
-                yield Button(self.t("Zamknij"), id="discovery-close")
+                yield Button(self.t("Select"), id="discovery-select", variant="primary")
+                yield Button(self.t("Cancel scan"), id="discovery-cancel")
+                yield Button(self.t("Close"), id="discovery-close")
 
     def on_mount(self):
-        self.query_one("#discovery-rows", DataTable).add_columns(self.t("Projekt"), self.t("Katalog / pamięć"))
+        self.query_one("#discovery-rows", DataTable).add_columns(self.t("Project"), self.t("Folder / memory"))
         self.set_interval(.7, self.refresh_results)
         self.refresh_results()
 
@@ -223,7 +223,7 @@ class DiscoveryModal(LocalizedModal, ModalScreen[dict | None]):
             coordinate = table.cursor_coordinate
             table.clear()
             for index, row in enumerate(rows):
-                table.add_row(plain(row.get("name", self.t("Projekt"))), plain(str(row.get("root", row.get("path", ""))) + (" · snapshot" if row.get("memory_snapshot") else "")), key=str(index))
+                table.add_row(plain(row.get("name", self.t("Project"))), plain(str(row.get("root", row.get("path", ""))) + (" · snapshot" if row.get("memory_snapshot") else "")), key=str(index))
             if rows:
                 table.move_cursor(row=min(coordinate.row, len(rows)-1))
             self.query_one("#discovery-notice", Static).update(plain(f"{value.get('state', 'unknown')} · {len(rows)} " + self.t("Projects") +
@@ -350,7 +350,7 @@ class SidebarApp(BasePanel):
         yield Footer()
 
     def on_mount(self):
-        self.query_one("#project-rows", DataTable).add_column(self.t("Projekt"), key="project")
+        self.query_one("#project-rows", DataTable).add_column(self.t("Project"), key="project")
         self.query_one("#project-back", Button).styles.line_pad = 0  # the label starts at the text column
         self.show_page("projects")
         self.set_interval(.3, self._poll_workspace)
@@ -635,7 +635,7 @@ class SidebarApp(BasePanel):
             roots = project.get("roots") or [project["root"]]
             selected = self.workspace_data.get("worktree") if self.workspace_data.get("project_id") == project["id"] else project["root"]
             if len(roots) > 1 and (self.page != "project" or selected not in roots):
-                selected = await self.push_screen_wait(ChoiceModal(self.t("Katalog pracy"), [(r, r) for r in roots]))
+                selected = await self.push_screen_wait(ChoiceModal(self.t("Working folder"), [(r, r) for r in roots]))
                 if selected is None:
                     return
             requested = []
@@ -711,7 +711,7 @@ class SidebarApp(BasePanel):
     async def scan_projects(self):
         try:
             roots = self.data.get("settings", {}).get("scan_roots", [])
-            value = await self.push_screen_wait(FormModal(self.t("Szukaj projektów"), [Field("roots", self.t("Jawne katalogi, po jednym w wierszu"), "\n".join(roots), True, True)], note=self.t("Skanowane są tylko wybrane katalogi. Nie uruchamia to klientów."), submit=self.t("Szukaj")))
+            value = await self.push_screen_wait(FormModal(self.t("Find folders"), [Field("roots", self.t("Folders to scan, one per line"), "\n".join(roots), True, True)], note=self.t("Only selected folders are scanned. No client is started."), submit=self.t("Search")))
             if value is None:
                 return
             await self.request("POST", "/api/discovery", json={"roots": [r.strip() for r in value["roots"].splitlines() if r.strip()]})
@@ -743,9 +743,9 @@ class SidebarApp(BasePanel):
         root = inspected.get("root", root)
         snapshot = inspected.get("memory_snapshot")
         if snapshot:
-            choice = await self.push_screen_wait(ChoiceModal(self.t("Wykryto przenośną pamięć"), [
-                (self.t("Sprawdź i wczytaj — zachowaj tożsamość i historię"), "import"),
-                (self.t("Nowy projekt — osobna tożsamość, bez wczytywania historii"), "new")]))
+            choice = await self.push_screen_wait(ChoiceModal(self.t("Project memory found"), [
+                (self.t("Review and import — keep identity and history"), "import"),
+                (self.t("New project — separate identity, without existing history"), "new")]))
             if choice == "import":
                 await self.import_memory_form(snapshot, root, name)
                 return
@@ -767,16 +767,16 @@ class SidebarApp(BasePanel):
                 payload["name"] = values["name"]
             checked["preview"] = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": True})
             checked["payload"] = payload
-        value = await self.push_screen_wait(FormModal(self.t("Sprawdź import pamięci"), [
-            Field("path", self.t("Snapshot lub manifest.json"), path, True),
-            Field("root", self.t("Jawny katalog docelowy"), root, True, folder=True),
-            Field("name", self.t("Nazwa lokalna (opcjonalnie)"), name)],
-            note=self.t("Wczytanie zachowuje tożsamość projektu. Testy z drugiego komputera pozostają historyczne."),
-            submit=self.t("Sprawdź import"), on_submit=validate))
+        value = await self.push_screen_wait(FormModal(self.t("Check memory import"), [
+            Field("path", self.t("Snapshot or manifest.json"), path, True),
+            Field("root", self.t("Destination folder"), root, True, folder=True),
+            Field("name", self.t("Local name (optional)"), name)],
+            note=self.t("Import preserves project identity. Checks from another computer remain historical."),
+            submit=self.t("Check import"), on_submit=validate))
         if value is None:
             return
         payload, preview = checked["payload"], checked["preview"]
-        approve = await self.push_screen_wait(ConfirmModal(self.t("Wczytać tę pamięć projektu?"), preview, approve=self.t("Wczytaj pamięć"), consent=True))
+        approve = await self.push_screen_wait(ConfirmModal(self.t("Import this project memory?"), preview, approve=self.t("Import memory"), consent=True))
         if not approve:
             return
         result = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": False})
@@ -785,7 +785,7 @@ class SidebarApp(BasePanel):
             await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
         await self.load_state()
         await self.reconcile()
-        self.notice(self.t("Pamięć wczytana do podglądu; bez uruchamiania klientów."))
+        self.notice(self.t("Memory imported for viewing. No clients started."))
 
     @work(group="sidebar-import", exclusive=True, exit_on_error=False)
     async def import_memory(self):
@@ -1188,21 +1188,21 @@ class SidebarApp(BasePanel):
                 await self.request("POST", base + "/credential", json=value)
                 value.clear()
                 await self.load_state()
-                self.notice(self.t("Klucz ustawiony. Jego treść nie jest ponownie wyświetlana."))
+                self.notice(self.t("Key saved. Its value will not be displayed again."))
         elif action == "delete":
-            if await self.push_screen_wait(ConfirmModal(self.t("Usunąć klucz?"), self.t("Dotyczy tylko lokalnego klucza tego profilu."), approve=self.t("Usuń klucz"))):
+            if await self.push_screen_wait(ConfirmModal(self.t("Remove saved key?"), self.t("Only the local key for this connection will be removed."), approve=self.t("Remove saved key"))):
                 await self.request("DELETE", base + "/credential")
-                self.notice(self.t("Klucz usunięty."))
+                self.notice(self.t("Key removed."))
         elif action == "probe":
-            if await self.push_screen_wait(ConfirmModal(self.t("Wykonać test modelu?"), self.t("To rzeczywiste zapytanie do wybranego dostawcy. Może zużyć płatne tokeny lub limit Copilota. Test nie edytuje projektu."), approve=self.t("Uruchom test"), consent=True)):
-                self.notice(self.t("Trwa jawny test modelu i obsługi narzędzi…"))
+            if await self.push_screen_wait(ConfirmModal(self.t("Test this model?"), self.t("This sends a real request to the provider and can use paid tokens or Copilot quota. It does not edit your project."), approve=self.t("Run test"), consent=True)):
+                self.notice(self.t("Testing the model and tools…"))
                 result = await asyncio.to_thread(self.broker.request, "POST", base + "/probe", json={}, timeout=180)
-                await self.push_screen_wait(MessageModal(self.t("Wynik testu połączenia"), result))
+                await self.push_screen_wait(MessageModal(self.t("Connection test result"), result))
         elif action == "prepare":
-            if await self.push_screen_wait(ConfirmModal(self.t("Przygotować Copilota?"), self.t("Pobierze przypięty oficjalny runtime i sprawdzi integralność. Nie uruchamia płatnej inferencji."), approve=self.t("Przygotuj"), consent=True)):
-                self.notice(self.t("Trwa przygotowanie oficjalnego runtime Copilota…"))
+            if await self.push_screen_wait(ConfirmModal(self.t("Prepare Copilot?"), self.t("Downloads and verifies the pinned official runtime. No model request is made."), approve=self.t("Prepare"), consent=True)):
+                self.notice(self.t("Preparing the official Copilot runtime…"))
                 result = await asyncio.to_thread(self.broker.request, "POST", "/api/copilot/prepare", json={}, timeout=300)
-                await self.push_screen_wait(MessageModal(self.t("Przygotowanie Copilota"), result))
+                await self.push_screen_wait(MessageModal(self.t("Copilot setup"), result))
         elif action == "login":
             local = await self.request("GET", base + "/status")
             runtime = local.get("runtime", {})
@@ -1221,22 +1221,22 @@ class SidebarApp(BasePanel):
                 from .workspace import select_run
                 await asyncio.to_thread(select_run, self.settings, run["id"], self.workspace_id)
                 await self.reconcile()
-                self.notice(self.t("Otworzono operacyjny terminal logowania Copilota. Dane logowania nie trafiają do pamięci."))
+                self.notice(self.t("Copilot login opened. Credentials stay outside project memory."))
             else:
-                await self.push_screen_wait(MessageModal(self.t("Logowanie Copilota"), result))
+                await self.push_screen_wait(MessageModal(self.t("Copilot login"), result))
         elif action == "models":
             result = await self.request("GET", base + "/models")
             models = [model for model in result.get("models", []) if model.get("enabled", True)]
             if not models:
-                await self.push_screen_wait(MessageModal(self.t("Modele"), result))
+                await self.push_screen_wait(MessageModal(self.t("Models"), result))
                 return
-            choice = await self.push_screen_wait(ChoiceModal(self.t("Wybierz model — zapis dotyczy następnego uruchomienia"), [(m["id"], m["id"]) for m in models]))
+            choice = await self.push_screen_wait(ChoiceModal(self.t("Choose model — applies to the next launch"), [(m["id"], m["id"]) for m in models]))
             if choice:
                 updated = {**profile, "model": choice}
                 rows = [updated if p["id"] == identifier else p for p in self.data.get("profiles", [])]
                 await self.request("PUT", "/api/profiles", json={"profiles": rows})
                 await self.load_state()
-                self.notice(self.t("Model zapisany; nie uruchomiono generowania odpowiedzi."))
+                self.notice(self.t("Model saved. No generation started."))
         elif action == "status":
             result = await self.request("GET", "/api/auth", params={"client": profile["client"]}) if profile["client"] in {"codex", "claude"} else await self.request("GET", base + "/status")
             if profile["client"] == "copilot":
@@ -1252,15 +1252,15 @@ class SidebarApp(BasePanel):
             # The memory state comes before the folder, so a narrow list cuts the path, never the state.
             choices = [(session_label(r, self.t), r["id"]) for r in runs]
             if not choices:
-                self.notice(self.t("Brak uruchomionych sesji."))
+                self.notice(self.t("No sessions yet."))
                 return
-            identifier = await self.push_screen_wait(ChoiceModal(self.t("Sesje na tym komputerze"), choices))
+            identifier = await self.push_screen_wait(ChoiceModal(self.t("Sessions on this computer"), choices))
             if not identifier:
                 return
             run = next(r for r in runs if r["id"] == identifier)
             # An ended run has no process: stopping, interrupting or taking control of it is not offered.
-            live = [(self.t("Przejmij sterowanie"), "takeover"), (self.t("Przerwij bieżącą operację"), "interrupt"), (self.t("Zatrzymaj proces"), "stop")] if run_is_live(run) else []
-            action = await self.push_screen_wait(ChoiceModal(self.t("Operacja na sesji"), [(self.t("Pokaż / dołącz bez nowego procesu"), "show"), *live] + ([(self.t("Wznów zapisaną sesję"), "resume"), (self.t("Nowa sesja z pamięcią projektu"), "new")] if run.get("project_id") else [])))
+            live = [(self.t("Take control"), "takeover"), (self.t("Interrupt current operation"), "interrupt"), (self.t("Stop process"), "stop")] if run_is_live(run) else []
+            action = await self.push_screen_wait(ChoiceModal(self.t("Session actions"), [(self.t("Show / attach without a new process"), "show"), *live] + ([(self.t("Resume saved session"), "resume"), (self.t("New session with project memory"), "new")] if run.get("project_id") else [])))
             from . import workspace as manager
             if action == "show":
                 await asyncio.to_thread(manager.select_run, self.settings, identifier, self.workspace_id)

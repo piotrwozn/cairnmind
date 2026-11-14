@@ -158,7 +158,7 @@ class WorkspaceState:
 
     def _commit(self, value, changes, expected_revision=None):
         if expected_revision is not None and (type(expected_revision) is not int or expected_revision != value["revision"]):
-            raise ValueError("stale_workspace_revision: odczytaj bieżący stan i ponów operację.")
+            raise ValueError("stale_workspace_revision: read the current state and try again.")
         proposed = {**value, **deepcopy(changes)}
         self._validate(proposed)
         if all(proposed[key] == value[key] for key in changes):

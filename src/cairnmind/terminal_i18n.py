@@ -307,6 +307,10 @@ CATALOG = {
 # Existing memory workflows retain their labels as aliases while sharing the
 # same catalog. This only translates explicit UI text, never record content.
 LEGACY = {
+    # What workspace_state raises, its code first for the callers that check it (#161). The Polish sentence
+    # comes last: of two aliases of one English text the last is its Polish text (CATALOG below).
+    "stale_workspace_revision: read the current state and try again.":
+        "Workspace changed. Refresh its current state and try again.",
     "stale_workspace_revision: odczytaj bieżący stan i ponów operację.":
         "Workspace changed. Refresh its current state and try again.",
     "Pracuj": "Start work", "Podgląd": "Preview", "Dodaj": "Add folder", "Loguj": "Connections",
@@ -587,6 +591,8 @@ CATALOG.update({
         "BASH_ENV, ENV, CLASSPATH, JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, XDG_CONFIG_HOME, "
         "XDG_DATA_HOME. Serwer, którego program, argument lub wartość wskazuje ścieżkę w katalogu tego "
         "projektu, nie zostanie uruchomiony.",
+    "A historical version cannot be reviewed.": "Wersja historyczna nie podlega ocenie.",
+    "Raw record": "Surowy zapis",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 for _en, _pl in CATALOG.items():
