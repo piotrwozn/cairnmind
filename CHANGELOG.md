@@ -4,6 +4,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- A container image for the pinned ArcadeDB release and a Compose file to run the database on a server or a laptop, with the root password read from a file and the port kept on loopback (#73).
+- New guide docs/DEPLOYMENT.md: running the database in a container, connecting Cairnmind to it, logical backups and volume snapshots and what each leaves out, and what to do when the pinned ArcadeDB version changes (#73).
+- A new CI job, deployment-image, that is not a required check: it builds the database image, moves a backup between two copies of the Compose file and checks a volume snapshot (#73).
 - Indexing files that replace a current source, and files that were deleted, now counts first what the old source leaves behind and writes each file in one transaction, up to eight small files together. The journal events of a transaction are stored in one statement. After every file of a project changed, indexing again needs about half the database requests and time on real code (Cairnmind's own source: 47% of the requests, 50% of the time), and about a quarter to a third on trees of very small files (#102).
 - In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
 - More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
