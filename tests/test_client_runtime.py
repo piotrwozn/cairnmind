@@ -283,9 +283,9 @@ def test_session_gone_from_a_shared_server_is_ended_not_a_foreign_identity(nativ
     assert runtime.get_run(second['id'])['lifecycle'] == 'running'
 
 
-def test_session_ending_between_the_two_tmux_questions_is_ended_too(native, monkeypatch):
-    # has-session can still answer for a session that is gone before display-message runs, which then
-    # answers with empty fields: ended, not 'Native terminal identity does not match its registry'.
+def test_session_answered_with_empty_fields_is_ended_too(native, monkeypatch):
+    # display-message answers for a missing session with exit 0 and empty fields while the server holds
+    # other runs: ended, not 'Native terminal identity does not match its registry'.
     runtime, project, _ = native
     first, second = runtime.start_project(project)['runs']
     real = runtime._tmux

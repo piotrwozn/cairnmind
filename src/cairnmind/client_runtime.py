@@ -157,10 +157,6 @@ class NativeRuntime:
         info = self.socket.lstat()
         if info.st_uid != os.getuid() or not stat.S_ISSOCK(info.st_mode):
             raise ValueError("Native terminal socket is not owned by this user")
-        # tmux answers display-message for a missing target with exit 0 and empty fields, so a run whose
-        # session is gone from a server that still holds other runs is asked about by exact name first.
-        if self._tmux("has-session", "-t", "=" + row["tmux_session"], check=False).returncode:
-            return None
         result = self._tmux("display-message", "-p", "-t", row["tmux_session"],
             "#{session_name}\t#{@cairnmind_run_id}\t#{@cairnmind_generation}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_dead_status}", check=False)
         if result.returncode:
@@ -169,8 +165,9 @@ class NativeRuntime:
         # the trailing exit status, so absence cannot shift identity columns.
         fields = result.stdout.rstrip("\r\n").split("\t")
         if not fields[0]:
-            # No session answered: it ended after has-session. Gone, not another process
-            # (tmux never names a session "").
+            # tmux answers display-message for a missing target with exit 0 and empty fields when the
+            # server still holds other runs. No session answered: gone, not another process (tmux never
+            # names a session "").
             return None
         if len(fields) != 7 or fields[:3] != [row["tmux_session"], row["id"], str(row["generation"])]:
             raise ValueError("Native terminal identity does not match its registry")
@@ -413,11 +410,13 @@ class NativeRuntime:
         return self.get_run(run_id)
 
     def stop(self, run_id, generation=None):
+        with self._locked():
+            recorded = next((r for r in self._read() if r["id"] == run_id), None)
         row = self._guard(run_id, generation, live=False)
         pane = self._pane(row)
-        if row["lifecycle"] not in LIVE:
-            # Already ended: its own end (exited, failed, interrupted) stays, so it never reads as stopped by a
-            # person. A dead pane kept by tmux is still cleared.
+        if recorded is not None and recorded["lifecycle"] not in LIVE:
+            # Recorded as ended before this stop: its own end (exited, failed, interrupted) stays, so it never
+            # reads as stopped by a person. A dead pane kept by tmux is still cleared.
             if pane:
                 self._tmux("kill-session", "-t", row["tmux_session"], check=False)
             return dict(row)

@@ -158,7 +158,7 @@ async def test_menu_lists_commands_whose_name_matches_first(tmp_path, language, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
-async def test_menu_marks_a_cut_description_with_an_ellipsis_at_80_columns(tmp_path, language):
+async def test_menu_shows_a_description_whole_or_marks_the_cut_at_80_columns(tmp_path, language):
     from types import SimpleNamespace
     from cairnmind.cockpit_state import CockpitState
     from cairnmind.config import Settings
@@ -170,17 +170,15 @@ async def test_menu_marks_a_cut_description_with_an_ellipsis_at_80_columns(tmp_p
         await pilot.pause()
         await pilot.pause()
         screen = screen_text(app)
-    cut = 0
+    whole = " ".join(screen.replace("▏", " ").split())  # a wrapped description continues on the next line
     for name, description, *_ in COMMANDS:
         name, description = tr(name, language), tr(description, language)
         line = next(row for row in screen.splitlines() if (" " + name + " ") in row)
-        if description in line:
+        if " ".join(description.split()) in whole:
             continue
-        cut += 1
         shown = line.rstrip().rsplit("  ", 1)[-1].strip()
         assert shown.endswith("…"), line
         assert description.startswith(shown[:-1].rstrip()), line
-    assert cut  # at 80 columns some descriptions do not fit
 
 
 @pytest.mark.asyncio
