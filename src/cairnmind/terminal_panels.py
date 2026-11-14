@@ -1120,16 +1120,18 @@ class SidebarApp(BasePanel):
         store = CockpitState(self.settings)
         values = await asyncio.to_thread(store.load)
         choice = await self.push_screen_wait(ChoiceModal("Settings", [
-            ("Language", "language"), ("Layout", "view"), ("Reduce motion", "reduced_motion")]))
+            ("Language", "language"), ("Layout", "view"), ("Reduce motion", "reduced_motion"),
+            ("Activity column", "activity_column")]))
         if not choice:
             return
         options = [("English", "en"), ("Polski", "pl")] if choice == "language" else (
             [("Focus", "focus"), ("Cockpit", "cockpit")] if choice == "view" else [("On", "on"), ("Off", "off")])
-        titles = {"language": "Language", "view": "Layout", "reduced_motion": "Reduce motion"}
+        titles = {"language": "Language", "view": "Layout", "reduced_motion": "Reduce motion",
+                  "activity_column": "Activity column"}
         selected = await self.push_screen_wait(ChoiceModal(titles[choice], options))
         if selected is None:
             return
-        values = {choice: selected == "on" if choice == "reduced_motion" else selected}
+        values = {choice: selected == "on" if choice in {"reduced_motion", "activity_column"} else selected}
         await asyncio.to_thread(store.update, values)
         self.language = values.get("language", self.language)
         await self.reconcile()

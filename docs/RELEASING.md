@@ -12,6 +12,7 @@ A release needs all four, on the release commit.
    ```bash
    cairnmind eval run --report-dir DIR             # 20 recall cases
    cairnmind eval memory --report-dir DIR          # extraction, portable transfer, cited recall
+   cairnmind eval extraction --report-dir DIR      # what extraction proposes from conversations
    cairnmind eval repository . --report-dir DIR    # questions about this repository
    ```
 
