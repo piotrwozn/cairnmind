@@ -87,6 +87,14 @@ def _persons(event) -> bool:
             or event.get("type") == "action_resolved")
 
 
+def extracted_message(event) -> bool:
+    """Whether an archived event without third-party text goes to memory extraction: a message of the
+    person or the agent with nonblank text. Tool results and host events never do."""
+    data = event.get("data") if isinstance(event, dict) else None
+    return (event.get("type") == "message" and isinstance(data, dict) and data.get("role") in {"user", "assistant"}
+            and isinstance(data.get("content"), str) and bool(data["content"].strip()))
+
+
 def third_party_origin(store, project_id, session_id) -> dict | None:
     """The mark of a write made by an own-agent session after it received a third-party tool result.
 
@@ -310,9 +318,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
             # The exact source is already durable if interruption happens here.
             if server is None:
                 _write_chunks(store, session["project_id"], source["id"], normalized, {"role": role})
-            if (server is None and event.get("type") == "message" and role in {"user", "assistant"}
-                    and isinstance(data, dict) and isinstance(data.get("content"), str)
-                    and data["content"].strip()):
+            if server is None and extracted_message(visible):
                 store.enqueue("extract", session["project_id"], {"source_id": source["id"]},
                               f"extract:{source['id']}")
             source_rows.append(source)

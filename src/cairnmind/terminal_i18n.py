@@ -214,7 +214,7 @@ CATALOG = {
     "Find folders": "Szukaj folderów", "Import memory": "Importuj pamięć",
     "Snapshots and export": "Snapshoty i eksport", "Manage assistants": "Zarządzaj asystentami",
     "Language": "Język", "Layout": "Układ", "Focus": "Skupienie", "Cockpit": "Kokpit",
-    "Reduce motion": "Ogranicz ruch", "On": "Włączone", "Off": "Wyłączone",
+    "Reduce motion": "Ogranicz ruch", "Activity column": "Kolumna aktywności", "On": "Włączone", "Off": "Wyłączone",
     "Preferences saved.": "Preferencje zapisane.", "Return to projects": "Wróć do projektów",
     "This workspace is open in another terminal.": "To środowisko jest otwarte w innym terminalu.",
     "Choose read-only observation or explicitly take control. Existing assistants keep running.": "Wybierz podgląd albo jawnie przejmij sterowanie. Istniejący asystenci działają dalej.",

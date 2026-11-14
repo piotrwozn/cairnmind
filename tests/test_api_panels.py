@@ -126,7 +126,8 @@ async def test_the_connection_form_title_says_what_it_does(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("choice,title", [("language", "Language"), ("view", "Layout"),
-                                          ("reduced_motion", "Reduce motion")])
+                                          ("reduced_motion", "Reduce motion"),
+                                          ("activity_column", "Activity column")])
 async def test_a_setting_picker_is_titled_with_the_setting(tmp_path, monkeypatch, choice, title):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
@@ -141,6 +142,31 @@ async def test_a_setting_picker_is_titled_with_the_setting(tmp_path, monkeypatch
         app.action_settings()
         await settle(app, pilot)
     assert headings == ["Settings", title]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer,saved", [("off", False), ("on", True)])
+async def test_the_activity_column_switch_is_saved_as_a_preference(tmp_path, monkeypatch, answer, saved):
+    from cairnmind.cockpit_state import CockpitState
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    if saved:
+        CockpitState(settings).update({"activity_column": False})
+    else:
+        assert CockpitState(settings).load()["activity_column"] is True  # on by default (#149)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    answers = iter(["activity_column", answer])
+    seen = []
+
+    async def choose(screen):
+        seen.append([value for _, value in screen.choices])
+        return next(answers)
+    monkeypatch.setattr(app, "push_screen_wait", choose)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.action_settings()
+        await settle(app, pilot)
+    assert seen[0][-1] == "activity_column" and seen[1] == ["on", "off"]  # the new setting is the last one
+    assert CockpitState(settings).load()["activity_column"] is saved
 
 
 @pytest.mark.asyncio

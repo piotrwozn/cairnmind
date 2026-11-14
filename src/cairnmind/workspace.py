@@ -663,13 +663,14 @@ class WorkspaceManager:
             self.tmux("set-option", "-p", "-t", panes[role], "@cairnmind_binding", binding)
         self._save_if_current(selected, {"pane_ids": panes})
 
-    def _layout(self):
+    def _layout(self, *, reselect=False):
         # Every process that arranges panes (the supervisor, each key) takes this lock: the
         # activity column is created and killed here, and two processes must never both do it.
         with _private_lock(self.directory / "layout.lock"):
-            self._arrange()
+            self._arrange(reselect)
 
-    def _arrange(self):
+    def _arrange(self, reselect=False):
+        """`reselect`: a key asked for the focused view, so it gets the keyboard back even from the column."""
         found = column.rows(self)  # one query; the activity column is not a view
         columns = [(pane, dead) for pane, role, dead in found if role == "activity"]
         for extra, _ in columns[:-1]:  # one column only, whatever left a second one behind
@@ -680,18 +681,41 @@ class WorkspaceManager:
             return
         selected = self.state.read()
         dimensions = self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_width} #{window_height} #{window_zoomed_flag}").stdout.split()
-        width, height, zoomed = map(int, dimensions)
-        preference = CockpitState(self.settings).load().get("view", "focus")
+        window_size = tuple(map(int, dimensions[:2]))
+        zoomed = int(dimensions[2])
+        width, height = column.terminal_size(self, SESSION, panes["sidebar"], *window_size)
+        preferences = CockpitState(self.settings).load()
+        preference = preferences.get("view", "focus")
+        beside = column.beside(preferences, width)  # Focus with the activity column (#149)
+        narrowed = not beside and column.narrow(self, panes["sidebar"], width, height)
+        if narrowed:
+            self._last_layout = None
         # window_height excludes the two persistent status rows; MINIMUM is
         # the user's complete terminal geometry, not just the pane area.
         compact = preference == "focus" or width < MINIMUM[0] or height + 2 < MINIMUM[1]
-        activity = self._reconcile_activity(panes["sidebar"], current, dead, column.wanted(compact, width))
+        activity = self._reconcile_activity(panes["sidebar"], current, dead, column.wanted(compact, width, beside))
         if activity != current:  # adding or removing a pane unzooms the window
             zoomed = int(self.tmux("display-message", "-p", "-t", panes["sidebar"], "#{window_zoomed_flag}").stdout.strip() or 0)
         focus = panes.get(selected["focus"], panes.get("client1", panes["sidebar"]))
-        layout = (width, height, len(panes), compact, activity)
+        layout = (width, height, len(panes), compact, activity, beside)
         changed_focus = selected["focus"] != self._last_focus
-        if compact:
+        if beside and activity:
+            if zoomed:
+                self.tmux("resize-pane", "-Z", "-t", panes["sidebar"])
+            spread = window_size != (column.spread_width(width, len(panes)), height)
+            if changed_focus or zoomed or spread or layout != self._last_layout:
+                # Only then: between two switches the person may have moved to the column (Ctrl+B a).
+                if column.spread(self, panes["sidebar"], focus, activity, list(panes.values()), width, height):
+                    self.tmux("select-pane", "-t", focus)
+                else:
+                    layout = None  # a pane this code does not know is in the window: try again later
+            elif reselect:
+                self.tmux("select-pane", "-t", focus)
+        elif compact:
+            if narrowed and column.order(self, panes["sidebar"], [panes[role] for role in column.ORDER if role in panes]):
+                # Out of the widened window: the views' cells as the Cockpit has them, not narrow strips (#149).
+                self._apply_layout(panes, width, height, check=False)
+                zoomed = False
             if changed_focus and zoomed:
                 self.tmux("resize-pane", "-Z", "-t", focus)
                 zoomed = False
@@ -715,7 +739,7 @@ class WorkspaceManager:
                 self.tmux("resize-pane", "-Z", "-t", focus)
         elif bool(zoomed) != selected["zoom"]:
             self.tmux("resize-pane", "-Z", "-t", focus)
-        elif changed_focus:
+        elif changed_focus or reselect:
             self.tmux("select-pane", "-t", focus)
         self._last_layout = layout
         self._last_focus = selected["focus"]
@@ -739,7 +763,7 @@ class WorkspaceManager:
             pane = None
         return pane
 
-    def _apply_layout(self, panes, width, height, activity=None):
+    def _apply_layout(self, panes, width, height, activity=None, *, check=True):
         # tmux custom layout grammar: checksum, WxH,X,Y{horizontal children} or
         # [vertical children]. Pane IDs are server-assigned and never shell text.
         available = height
@@ -760,7 +784,8 @@ class WorkspaceManager:
         edge = (f",{ACTIVITY_WIDTH}x{available},{left + right + 2},0,{activity[1:]}" if activity else "")
         description = (f"{width}x{available},0,0{{" + leaf("sidebar", left, available, 0, 0) + "," +
                        f"{right}x{available},{left + 1},0[" + upper + "," + lower + "]" + edge + "}")
-        self.tmux("select-layout", "-t", panes["sidebar"], column.with_checksum(description))
+        # check=False: a terminal too small for these cells keeps tmux's own (only on leaving the column).
+        self.tmux("select-layout", "-t", panes["sidebar"], column.with_checksum(description), check=check)
 
     def focus(self, role):
         if role not in _ROLES:
@@ -770,7 +795,7 @@ class WorkspaceManager:
         target = panes.get(role, panes.get("client1"))
         if target:
             self.state.update({"focus": role})
-            self._layout()
+            self._layout(reselect=True)  # the same view's key brings the keyboard back from the column
         return self.status()
 
     def toggle_zoom(self):
