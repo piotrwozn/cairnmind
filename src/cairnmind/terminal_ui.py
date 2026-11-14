@@ -475,6 +475,24 @@ class BasePanel(App):
         yield Header()
         yield Footer()
 
+    # Textual binds Ctrl+Q to quit and Ctrl+C to "press Ctrl+Q to quit". A workspace view must not end
+    # from a key: tmux keeps its pane (remain-on-exit) and shows it dead. In the workspace tmux takes
+    # Ctrl+Q first and detaches the terminal (WorkspaceManager._bindings); these run where it does not.
+    LEAVE_KEYS = "Ctrl+B, then d: leave the workspace. It keeps running; run cairnmind to return."
+    LEAVE_HINT = "To leave the workspace press Ctrl+Q, or Ctrl+B then d. It keeps running; run cairnmind to return."
+
+    async def action_quit(self) -> None:
+        self.leave_hint(self.LEAVE_KEYS)
+
+    def action_help_quit(self) -> None:
+        self.leave_hint(self.LEAVE_HINT)
+
+    def leave_hint(self, text) -> None:
+        if self.query("#panel-notice"):
+            self.notice(text)
+        else:  # a view without a notice line (the activity column)
+            self.notify(self.t(text), timeout=8, markup=False)
+
 
 class ChoiceModal(LocalizedModal, ModalScreen[str | None]):
     BINDINGS = [("escape", "cancel", "Cancel")]

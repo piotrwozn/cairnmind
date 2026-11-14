@@ -84,7 +84,7 @@ class CommandPaletteApp(App):
                 "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
                 "Ctrl+B, then a: activity panel (notices, plans, tasks)\n"
                 "Ctrl+B, then [: scroll and copy terminal history (q to leave)\n"
-                "Ctrl+B, then d: detach; run cairnmind to return\n"
+                "Ctrl+B, then d (or Ctrl+Q in a Cairnmind view): detach; run cairnmind to return\n"
                 "Ctrl+B, then Ctrl+B: send Ctrl+B to the native assistant\n\n"
                 "Cairnmind controls: Tab / Shift+Tab move focus; Enter chooses; Esc goes back.\n"
                 "Projects: Enter opens; Start work starts only the chosen assistant.\n"

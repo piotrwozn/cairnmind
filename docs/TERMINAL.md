@@ -194,7 +194,7 @@ cairnmind workspace stop
 cairnmind workspace stop --clients
 ```
 
-`detach` or `Ctrl+B d` detaches the terminal while keeping the workspace and running processes. The next `cairnmind` attaches to the existing workspace. `workspace stop` ends the outer terminal layout; `--clients` additionally stops only the client identifiers adopted by this workspace. It does not stop every client on the machine or arbitrary sessions outside its registry.
+`detach` or `Ctrl+B d` detaches the terminal while keeping the workspace and running processes. `Ctrl+Q` in a Cairnmind view (projects, memory, graph or activity) does the same for the terminal that pressed it; in an assistant pane the key goes to the assistant. No key ends a Cairnmind view, and a view whose process ended anyway starts again when you ask for it with `Ctrl+B p`, `i`, `g`, `Tab` or the menu. The next `cairnmind` attaches to the existing workspace. `workspace stop` ends the outer terminal layout; `--clients` additionally stops only the client identifiers adopted by this workspace. It does not stop every client on the machine or arbitrary sessions outside its registry.
 
 Only one terminal can type at a time. When the workspace is already open in another terminal, `cairnmind` offers a choice: **Observe (read only)**, **Take control** or **Return to shell**. The default `Enter` chooses observing. Taking control explicitly hands the keyboard to the new terminal and switches the previous one to view-only mode. It does not start a second copy of the clients or a new coding session. From view-only mode you can also detach with `Ctrl+B d` and run `cairnmind workspace takeover`.
 

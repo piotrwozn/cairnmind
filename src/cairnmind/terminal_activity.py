@@ -494,6 +494,13 @@ class ActivityPopup(ActivityApp):
     def action_close(self):
         self.exit()
 
+    async def action_quit(self) -> None:
+        # A popup is not a pane that tmux keeps: Ctrl+Q and Ctrl+C close it like Esc.
+        self.exit()
+
+    def action_help_quit(self) -> None:
+        self.exit()
+
 
 def activity_app(settings, workspace_id="default", *, popup=False, **kwargs):
     return (ActivityPopup if popup else ActivityApp)(settings, workspace_id, popup=popup, **kwargs)

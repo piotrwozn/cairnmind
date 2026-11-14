@@ -384,11 +384,11 @@ class WorkspaceManager:
                 self._start_supervisor()
         return self.status()
 
-    def _recover_ui_panels(self):
-        # Only an explicit launch/create retries crashed views. Reconciliation
-        # never loops on a failing UI, and client/native panes are untouched.
+    def _recover_ui_panels(self, roles=("sidebar", "inspector", "graph", "activity")):
+        # Only an explicit launch/create, or a key that asks for that view, retries crashed views.
+        # Reconciliation never loops on a failing UI, and client/native panes are untouched.
         for role, pane in self.panes((*_ROLES, "activity")).items():
-            if role not in {"sidebar", "inspector", "graph", "activity"}:
+            if role not in roles:
                 continue
             identity = self.tmux("display-message", "-p", "-t", pane,
                                  "#{@cairnmind_workspace}\t#{@cairnmind_role}\t#{pane_dead}").stdout.strip()
@@ -403,6 +403,10 @@ class WorkspaceManager:
             self.tmux("bind-key", key, "run-shell", self._command(*arguments))
         self.tmux("bind-key", "z", "run-shell", self._command("--toggle-zoom"))
         self.tmux("bind-key", "d", "detach-client")
+        # Ctrl+Q in a Cairnmind view leaves like C-b d: only this terminal detaches and everything keeps
+        # running. Native assistant panes get the key unchanged.
+        self.tmux("bind-key", "-n", "C-q", "if-shell", "-F", "#{m/r:^(sidebar|inspector|graph|activity)$,#{@cairnmind_role}}",
+                  "detach-client", "send-keys C-q")
         self.tmux("bind-key", "C-b", "send-prefix")
         client = ("--client-pid", "#{client_pid}", "--client-tty", "#{client_tty}")
         self.tmux("bind-key", "Space", "run-shell", self._command("--palette", *client))
@@ -708,6 +712,7 @@ class WorkspaceManager:
     def focus(self, role):
         if role not in _ROLES:
             raise ValueError("Niepoprawny panel środowiska.")
+        self._revive(role)
         panes = self.panes()
         target = panes.get(role, panes.get("client1"))
         if target:
@@ -736,7 +741,14 @@ class WorkspaceManager:
             return self.focus(roles[(roles.index(current) + 1) % len(roles)] if current in roles else roles[0])
         return self.status()
 
+    def _revive(self, role):
+        """A view whose process ended starts again when a key or the menu asks for it (Ctrl+B p/i/g, Tab)."""
+        if role in {"sidebar", "inspector", "graph"} and self.exists():
+            with _private_lock(self.directory / "ui.lock"):
+                self._recover_ui_panels((role,))
+
     def request_command(self, action, target_role="sidebar"):
+        self._revive(target_role)
         self.state.update({"command_request": {"id": str(uuid4()), "action": action, "target_role": target_role},
                            "focus": target_role})
         self._layout()

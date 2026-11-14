@@ -277,7 +277,7 @@ CATALOG = {
     "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
     "Ctrl+B, then a: activity panel (notices, plans, tasks)\n"
     "Ctrl+B, then [: scroll and copy terminal history (q to leave)\n"
-    "Ctrl+B, then d: detach; run cairnmind to return\n"
+    "Ctrl+B, then d (or Ctrl+Q in a Cairnmind view): detach; run cairnmind to return\n"
     "Ctrl+B, then Ctrl+B: send Ctrl+B to the native assistant\n\n"
     "Cairnmind controls: Tab / Shift+Tab move focus; Enter chooses; Esc goes back.\n"
     "Projects: Enter opens; Start work starts only the chosen assistant.\n"
@@ -290,7 +290,7 @@ CATALOG = {
     "Ctrl+B, potem n: zapisz ustalenie w pamięci (Ctrl+S zapisuje, Esc zamyka)\n"
     "Ctrl+B, potem a: panel aktywności (komunikaty, plany, zadania)\n"
     "Ctrl+B, potem [: przewijaj i kopiuj historię terminala (q wraca)\n"
-    "Ctrl+B, potem d: odłącz; uruchom cairnmind, aby wrócić\n"
+    "Ctrl+B, potem d (albo Ctrl+Q w widoku Cairnmind): odłącz; uruchom cairnmind, aby wrócić\n"
     "Ctrl+B, potem Ctrl+B: przekaż Ctrl+B do natywnego asystenta\n\n"
     "Cairnmind: Tab / Shift+Tab zmienia fokus; Enter wybiera; Esc wraca.\n"
     "Projekty: Enter otwiera; Rozpocznij pracę uruchamia tylko wybranego asystenta.\n"
@@ -387,6 +387,10 @@ LEGACY = {
 }
 CATALOG.update({english: polish for polish, english in LEGACY.items() if english not in CATALOG})
 CATALOG.update({
+    "Ctrl+B, then d: leave the workspace. It keeps running; run cairnmind to return.":
+        "Ctrl+B, potem d: wyjście ze środowiska. Działa ono dalej; uruchom cairnmind, aby wrócić.",
+    "To leave the workspace press Ctrl+Q, or Ctrl+B then d. It keeps running; run cairnmind to return.":
+        "Aby wyjść ze środowiska, naciśnij Ctrl+Q albo Ctrl+B, potem d. Działa ono dalej; uruchom cairnmind, aby wrócić.",
     "{client} failed.": "{client}: awaria.",
     "{client} was interrupted.": "{client}: przerwano pracę.",
     "Exit code: {code}.": "Kod zakończenia: {code}.",
