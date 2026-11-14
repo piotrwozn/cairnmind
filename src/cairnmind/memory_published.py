@@ -17,7 +17,7 @@ from pathlib import Path
 from .memory_paths import PUBLISHED_RELATIVE
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
 from .memory_published_format import (
-    GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
+    GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, canonical_uuid, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
     clean_value, derive_covered, derive_plan_covered, path_of, plan_hash, projection, ref_class, render, same,
     sha256_text, task_fields, MAX_FILE_BYTES,
 )
@@ -253,8 +253,16 @@ class Publisher:
             return {"ref": ref, "passage": passage}
 
         histories, held, heads = {}, {}, {r["id"]: r for r in records}
+
+        def model_of(kind, identifier, created_at, key, entries):
+            cited = sorted({s for entry in entries for s in entry["sources"]})
+            return {"kind": kind, "id": identifier, "created_at": created_at,
+                    "sources": {s: as_source(s) for s in cited}, key: entries}
+
         for record in records:
             try:
+                if not canonical_uuid(record["id"]):
+                    raise Held("its ID is not a canonical UUID")
                 if degraded_origin(record.get("metadata")):
                     raise Held("an external or third-party session wrote it (degraded origin)")
                 history = select_history(record["kind"], record["id"], versions.get(record["id"], []), sources,
@@ -263,6 +271,7 @@ class Publisher:
                     raise Held("no person's act covers it; review it in the inspector")
                 if any(degraded_origin(sources[s].get("metadata")) for r in history for s in r["sources"]):
                     raise Held("it cites a source of degraded origin")
+                _writable(model_of(record["kind"], record["id"], record["created_at"], "revisions", history))
                 histories[record["id"]] = history
             except Held as exc:
                 held[record["id"]] = (record["kind"], str(exc))
@@ -272,27 +281,17 @@ class Publisher:
                 found = plan_definitions(plan, plan_revisions.get(plan["id"], []), sources, refs, audits.get(plan["id"], []))
                 if not found:
                     raise Held("no confirm_plan act covers it")
+                if not canonical_uuid(plan["id"]):
+                    raise Held("its ID is not a canonical UUID")
+                _writable(model_of("plan", plan["id"], plan["created_at"], "definitions", found))
                 definitions[plan["id"]] = found
             except Held as exc:
                 held_plans[plan["id"]] = str(exc)
         self._close(histories, held, definitions, held_plans, heads)
-        models = []
-        for record_id, history in sorted(histories.items()):
-            cited = sorted({s for revision in history for s in revision["sources"]})
-            models.append({"kind": heads[record_id]["kind"], "id": record_id, "created_at": heads[record_id]["created_at"],
-                           "sources": {s: as_source(s) for s in cited}, "revisions": history})
-        for plan in plans:
-            if plan["id"] in definitions:
-                cited = sorted({s for d in definitions[plan["id"]] for s in d["sources"]})
-                models.append({"kind": "plan", "id": plan["id"], "created_at": plan["created_at"],
-                               "sources": {s: as_source(s) for s in cited}, "definitions": definitions[plan["id"]]})
-        files = {}
-        for model in models:
-            data = render(model)
-            if len(data) > MAX_FILE_BYTES:
-                held[model["id"]] = (model["kind"], "its file would be larger than 1 MiB")
-                continue
-            files[path_of(model)] = data
+        models = [model_of(heads[i]["kind"], i, heads[i]["created_at"], "revisions", h) for i, h in sorted(histories.items())]
+        models += [model_of("plan", plan["id"], plan["created_at"], "definitions", definitions[plan["id"]])
+                   for plan in plans if plan["id"] in definitions]
+        files = {path_of(model): render(model) for model in models}
         held.update({plan_id: ("plan", reason) for plan_id, reason in held_plans.items()})
         return {"project": project, "root": root, "folder": folder, "files": files, "models": models, "held": held}
 
@@ -417,6 +416,19 @@ class Publisher:
         if behind:
             raise MemoryConflict("The published memory has revisions this store does not have; import it first: "
                                  + ", ".join(behind))
+
+
+def _writable(model):
+    """Hold, before anything refers to it, what the format cannot hold: a file over 1 MiB, or one that does not
+    read back as written (a scope, link or name the reader refuses). A held record never blocks the others."""
+    from .memory_published_parse import parse_file
+    data = render(model)
+    if len(data) > MAX_FILE_BYTES:
+        raise Held("its file would be larger than 1 MiB")
+    try:
+        parse_file(data)
+    except ValueError as exc:
+        raise Held(f"it cannot be written in the published format: {exc}") from None
 
 
 def _listing(errors):

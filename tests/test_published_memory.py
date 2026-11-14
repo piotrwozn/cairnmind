@@ -180,6 +180,24 @@ def test_a_record_an_external_session_wrote_is_never_published(ada):
     assert result["held"]["items"][0]["reason"].endswith("(degraded origin)") and result["records"] == 0
 
 
+def test_hidden_characters_and_dangling_references_hold_only_the_records_concerned(ada):
+    store, pid, root = ada["store"], ada["project"], ada["root"]
+    hidden = reviewed(store, pid, "decision", "Use cookies‮, then tokens.", "hidden")
+    plain = reviewed(store, pid, "fact", "The service listens on localhost only.", "listen")
+    # A replacement a person confirmed, of a record nobody did: it names something that is not published.
+    old_source = store.snapshot(pid, "note://old", "Use sessions.", "note")
+    old = store.remember(pid, {"kind": "decision", "key": "sessions", "content": "Use sessions."}, [old_source["id"]])
+    new_source = store.snapshot(pid, "note://new", "Use short sessions.", "note")
+    replacement = store.remember(pid, {"kind": "decision", "key": "sessions-2", "content": "Use short sessions.",
+                                       "supersedes": old["id"]}, [new_source["id"]])
+    Inspector(store).review(pid, replacement["id"], "confirm", replacement["version"])
+    result = Publisher(store).publish(pid)
+    reasons = {item["id"]: item["reason"] for item in result["held"]["items"]}
+    assert reasons[hidden["id"]].startswith("its text holds control or bidi characters")
+    assert reasons[replacement["id"]] == f"it names record {old['id']}, which is not published"
+    assert result["records"] == 1 and (folder_of(root) / f"fact/{plain['id']}.md").is_file()
+
+
 def test_two_branches_with_different_records_merge_cleanly_and_import_holds_both(ada):
     store, pid, root = ada["store"], ada["project"], ada["root"]
     shared = reviewed(store, pid, "decision", "ArcadeDB is the only storage engine.", "storage",
