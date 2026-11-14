@@ -11,7 +11,8 @@ from cairnmind.terminal_i18n import CATALOG, tr
 
 SOURCE = Path(theme.__file__).parent
 # Modules whose colours have moved to the theme. The list grows as panels are converted.
-THEMED = ["terminal_ui.py", "terminal_panels.py", "workspace.py", "api_worker.py"]
+THEMED = ["terminal_ui.py", "terminal_panels.py", "workspace.py", "api_worker.py", "terminal_inspector.py",
+          "terminal_impact.py", "terminal_detail.py"]
 GREENS = {theme.TOKENS["ok"], f"colour{theme.XTERM['ok']}"}
 
 

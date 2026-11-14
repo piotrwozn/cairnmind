@@ -27,6 +27,9 @@ What was checked on Textual 8.2.8 (so nobody repeats it):
 - An App calls `install()` in `__init__` (the theme is applied when the app starts) and
   `size_classes()` from `on_mount` and `on_resize`. Textual runs the `on_mount` / `on_resize`
   of every class in the MRO, so a subclass handler does not hide the one in `BasePanel`.
+  An App's `on_resize` runs before the App takes the new size: use `event.size`, not `app.size`.
+- A DataTable column with a fixed width crops a longer cell without a mark and keeps the cell's
+  text; `column_widths()` sets the widths, and a view recomputes them on every resize.
 """
 from __future__ import annotations
 
@@ -103,6 +106,9 @@ Switch:focus { border: none; border-left: thick $cm-accent; background-tint: tra
 Switch .switch--slider, Switch:hover > .switch--slider { color: $cm-border-hi; background: $cm-bg; }
 Switch.-on .switch--slider, Switch.-on:hover > .switch--slider { color: $cm-accent; }
 Checkbox:focus > .toggle--label { text-style: bold underline; }
+Checkbox > .toggle--button, Checkbox:hover > .toggle--button { color: $cm-raised; background: $cm-raised; }
+Checkbox.-on > .toggle--button, Checkbox.-on:hover > .toggle--button { color: $cm-accent; background: $cm-raised;
+    text-style: bold; }
 DataTable { background: $cm-bg; color: $cm-text; border-left: vkey $cm-bg; }
 DataTable:focus { border-left: vkey $cm-accent; background-tint: transparent 0%; }
 DataTable > .datatable--header, DataTable:focus > .datatable--header { background: $cm-bg; color: $cm-muted;
@@ -188,13 +194,15 @@ def is_short(app) -> bool:
     return app.size.height < SHORT_HEIGHT
 
 
-def size_classes(app) -> None:
+def size_classes(app, size=None) -> None:
     """`-short` on the App while the terminal has few rows, `-narrow` while it has few columns.
 
-    A short dialog gives up padding and blank rows; a narrow one stacks its buttons.
+    A short dialog gives up padding and blank rows; a narrow one stacks its buttons. A resize
+    handler passes `event.size`: Textual runs it before the App takes the new size.
     """
-    app.set_class(is_short(app), "-short")
-    app.set_class(app.size.width < NARROW_WIDTH, "-narrow")
+    size = size or app.size
+    app.set_class(size.height < SHORT_HEIGHT, "-short")
+    app.set_class(size.width < NARROW_WIDTH, "-narrow")
 
 
 def fit_body(screen, body, chrome_rows: int = 10) -> None:
@@ -230,6 +238,18 @@ def fill_column(table, key: str, longest: int) -> None:
     width = room if fill else longest
     if (column.width, column.auto_width) != (width, not fill):
         column.width, column.auto_width = width, not fill
+        table._require_update_dimensions = True
+        table.refresh(layout=True)
+
+
+def column_widths(table, widths) -> None:
+    """Fix the width of each column, in order. The table crops a longer cell; the cell keeps its text."""
+    changed = False
+    for column, width in zip(table.ordered_columns, widths):
+        if (column.width, column.auto_width) != (width, False):
+            column.width, column.auto_width = width, False
+            changed = True
+    if changed:
         table._require_update_dimensions = True
         table.refresh(layout=True)
 
