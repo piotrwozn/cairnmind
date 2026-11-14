@@ -117,17 +117,21 @@ def inference_lease_seconds() -> float:
     return max(120.0, extraction_work_budget() + 90.0)
 
 
-def _extraction_schema(visible_text: str) -> dict:
-    """Constrain generated quotes to bounded literal passages of this source."""
+def _extraction_schema(visible_text: str, segments: list[str] | None = None) -> dict:
+    """Constrain generated quotes to bounded literal passages of this source.
+
+    ``segments`` are the separately quotable parts of the visible text (extraction_input): no
+    passage spans two of them, because their join need not occur in the archived source.
+    """
     schema = deepcopy(EXTRACTION_SCHEMA)
-    text = visible_text[:12000]
     passages = []
-    for start in range(0, len(text), 320):
-        passage = text[start:start + 400]
-        if passage.strip() and passage not in passages:
-            passages.append(passage)
-        if start + 400 >= len(text):
-            break
+    for text in segments if segments is not None else [visible_text[:12000]]:
+        for start in range(0, len(text), 320):
+            passage = text[start:start + 400]
+            if passage.strip() and passage not in passages:
+                passages.append(passage)
+            if start + 400 >= len(text):
+                break
     records = schema["properties"]["records"]
     if passages:
         records["items"]["properties"]["evidence"].update(enum=passages, maxLength=400)
@@ -1234,7 +1238,7 @@ class KnowledgeAgent:
             diagnostics["code"] = "source_skipped"
             return None
         visible_text, system, prompt = request["text"], request["system"], request["prompt"]
-        extraction_schema = _extraction_schema(visible_text)
+        extraction_schema = _extraction_schema(visible_text, request["segments"])
         diagnostics["code"] = "generation_budget_invalid"
         if type(self.settings.answer_tokens) is not int or self.settings.answer_tokens <= 0:
             raise ValueError("Extraction requires a finite positive integer token budget")

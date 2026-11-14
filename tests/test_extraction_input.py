@@ -56,6 +56,12 @@ def test_the_launchers_first_message_is_left_out_but_a_person_naming_the_protoco
     assert extraction_request(agent_message("user", decision))["text"] == decision
     quoted = "The launcher says: " + launched
     assert extraction_request(agent_message("user", quoted))["text"] == quoted
+    # The person's own words after the launcher's text keep the message, the launcher's text alone does not.
+    assert extraction_request(agent_message("user", launched + "\n")) is None
+    pasted = launched + "\nAlso: we decided to drop Python 3.11 support."
+    assert extraction_request(agent_message("user", pasted))["text"] == pasted
+    report = launched.split(". The returned packet")[0] + ". This sentence is cut off in the Codex launch."
+    assert extraction_request(claude_line("user", report))["text"] == report
 
 
 def test_codex_environment_block_is_left_out_only_when_it_is_the_whole_message():
@@ -78,6 +84,26 @@ def test_a_claude_tool_call_is_left_out_of_what_extraction_reads():
     assert request["text"] in spoken["metadata"]["normalized_text"]
     plain = claude_line("assistant", [{"type": "text", "text": "Done."}])
     assert extraction_request(plain)["text"] == "Done."
+
+
+def test_every_quote_allowed_around_a_claude_tool_call_is_kept_at_commit():
+    """The commit check (agent._commit_extraction) keeps a quote only when it is in ``source_text``."""
+    from cairnmind import agent as agent_module
+    from cairnmind.extraction_input import source_text
+
+    long_text = "The scheduler computes the report date in local time. " * 12
+    line = claude_line("assistant", [
+        {"type": "text", "text": "Found it:\r\nthe job reads the wrong day."},
+        {"type": "tool_use", "id": "t", "name": "Read", "input": {"path": "src/reports/scheduler.py"}},
+        {"type": "text", "text": long_text},
+        {"type": "tool_use", "id": "u", "name": "Bash", "input": {"command": "pytest"}},
+        {"type": "text", "text": "   "}])
+    request = extraction_request(line)
+    assert "Tool: " not in request["text"] and request["segments"][0] == "Found it:\nthe job reads the wrong day."
+    passages = agent_module._extraction_schema(request["text"], request["segments"])[
+        "properties"]["records"]["items"]["properties"]["evidence"]["enum"]
+    assert len(passages) > 2 and all(passage in source_text(line) for passage in passages)
+    assert all(passage in request["text"] for passage in passages)
 
 
 class CountingOllama:

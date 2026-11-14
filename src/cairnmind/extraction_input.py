@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 
+from .integrations import launch_prompt
 from .retrieval import json_value, public_source_metadata
 from .store import TASK_STATES
 
@@ -38,7 +39,7 @@ SYSTEM = ("Extract durable project facts, explicit decisions, tasks, constraints
 
 # A source of these kinds is one message of a conversation (#160). Measured with
 # ``cairnmind eval extraction``: these two rules, with the protocol turns left out below, took the
-# share of proposals a person would reject from 62% to 14% and lost no kept record.
+# share of proposals a person would reject from 65% to 29% and lost no kept record.
 CONVERSATION_KINDS = {"agent_transcript", "transcript"}
 CONVERSATION_RULE = (
     " This source is one message of a conversation between a person and a coding assistant; "
@@ -58,9 +59,11 @@ ASSISTANT_RULE = (
     "taken or about to be taken, or answers to one-off questions.")
 # Messages a program wrote in the person's place: the first message Cairnmind's launcher gives a
 # native client (integrations.launch_prompt) and the environment block Codex adds to a session.
+# Each is matched as the whole message, so a person's own words after it keep the message.
+_LAUNCHER = re.escape(launch_prompt("\0session\0", "\0path\0")).replace(
+    re.escape("\0session\0"), r"\S+").replace(re.escape("\0path\0"), r"[^\n]+")
 HOST_MESSAGE = re.compile(
-    r"\ACairnmind verified session \S+\. First call the Cairnmind MCP tool resume_context and read the "
-    r"complete packet it returns\.|\A\s*<environment_context>.*</environment_context>\s*\Z", re.DOTALL)
+    r"\A\s*(?:" + _LAUNCHER + r"|<environment_context>.*</environment_context>)\s*\Z", re.DOTALL)
 
 
 def _raw_event(source: dict) -> dict | None:
@@ -71,17 +74,37 @@ def _raw_event(source: dict) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def _without_tool_calls(source: dict) -> str | None:
+def _lines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _without_tool_calls(source: dict) -> list[str] | None:
     """A Claude assistant line's text blocks without its tool_use blocks (the parser writes those as
-    ``Tool: name`` and the arguments), or None when the line has no tool_use block."""
+    ``Tool: name`` and the arguments), or None when the line has no tool_use block.
+
+    The blocks keep the archived view's line endings and stay separate: joined, they are no
+    longer one passage of the archived source, which has the tool calls between them."""
     event = _raw_event(source)
     message = event.get("message") if event else None
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, list) or not any(
             isinstance(block, dict) and block.get("type") == "tool_use" for block in content):
         return None
-    return "\n".join(block["text"] for block in content
-                     if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str))
+    archived = source_text(source)
+    blocks = (_lines(block["text"]) for block in content
+              if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str))
+    return [block for block in blocks if block.strip() and block in archived]
+
+
+def _visible(segments: list[str]) -> list[str]:
+    """``segments`` cut to VISIBLE_CHARS of their text joined by newlines."""
+    visible, room = [], VISIBLE_CHARS
+    for segment in segments:
+        if room <= 0:
+            break
+        visible.append(segment[:room])
+        room -= len(segment) + 1
+    return visible
 
 
 def source_text(source: dict) -> str:
@@ -89,8 +112,7 @@ def source_text(source: dict) -> str:
     metadata = json_value(source.get("metadata"), {})
     normalized = (metadata.get("normalized_text") if isinstance(metadata, dict)
                   and not metadata.get("path") and source["kind"] not in {"code", "file"} else None)
-    text = normalized if isinstance(normalized, str) and normalized else source["content"]
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+    return _lines(normalized if isinstance(normalized, str) and normalized else source["content"])
 
 
 def extraction_request(source: dict) -> dict | None:
@@ -99,27 +121,29 @@ def extraction_request(source: dict) -> dict | None:
     None when the source is never extracted: Cairnmind's own synthesis must not become
     independent corroboration of itself, and a message a program wrote in the person's place
     (HOST_MESSAGE) or an assistant line holding only tool calls is protocol, not knowledge.
-    Every quote of the reduced text is still a literal passage of the archived source.
+    ``segments`` are the parts of ``text`` a quote may come from, each a literal passage of the
+    archived source (``source_text``), so that the check at commit keeps every allowed quote.
     """
     metadata = json_value(source.get("metadata"), {})
     if not isinstance(metadata, dict):
         metadata = {}
     if metadata.get("agent") in ("cairnmind", "devbrain") or source["kind"] == "agent_answer":
         return None
-    text = source_text(source)
+    segments = [source_text(source)]
     system = SYSTEM
     if source["kind"] in CONVERSATION_KINDS:
         role = metadata.get("role")
-        if role == "user" and HOST_MESSAGE.match(text):
+        if role == "user" and HOST_MESSAGE.match(segments[0]):
             return None
         if role == "assistant" and source["kind"] == "transcript":
             spoken = _without_tool_calls(source)
             if spoken is not None:
-                if not spoken.strip():
+                if not spoken:
                     return None
-                text = spoken
+                segments = spoken
         system += CONVERSATION_RULE + (ASSISTANT_RULE if role == "assistant" else "")
-    text = text[:VISIBLE_CHARS]
+    segments = _visible(segments)
+    text = "\n".join(segments)
     prompt = {"source_id": source["id"], "source_kind": source["kind"],
               "source_metadata": public_source_metadata(metadata), "text": text}
-    return {"text": text, "system": system, "prompt": prompt}
+    return {"text": text, "segments": segments, "system": system, "prompt": prompt}
