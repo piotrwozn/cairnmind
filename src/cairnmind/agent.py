@@ -1395,7 +1395,7 @@ class KnowledgeAgent:
             }
             diagnostics["persistence_stage"] = "write_record"
             try:
-                record = self.store.remember(project_id, candidate, [source["id"]])
+                record = self.store.remember(project_id, candidate, [source["id"]], extracted_from=source["id"])
             except ValueError as exc:
                 if "Active record key already exists" not in str(exc):
                     raise
@@ -1407,7 +1407,7 @@ class KnowledgeAgent:
                 conflicts = [r["id"] for r in latest if r["key"] == key]
                 candidate["metadata"]["possible_conflicts"] = conflicts
                 candidate["key"] = f"{key[:150]}~{suffix}"
-                record = self.store.remember(project_id, candidate, [source["id"]])
+                record = self.store.remember(project_id, candidate, [source["id"]], extracted_from=source["id"])
             existing_keys[record["key"]] = record
             seen.add(content.strip().casefold())
             diagnostics["counts"]["written_records"] += 1
