@@ -98,7 +98,8 @@ def test_after_one_edit_only_the_edited_file_is_read(workspace, monkeypatch):
     edited = index_project_if_changed(store, pid)
     monkeypatch.undo()
     assert read == ["pkg/limits.py"]
-    assert lookups == [str(root / "pkg" / "limits.py")]
+    # Not even the edited file is looked up: the read before the walk already says its content changed (#102).
+    assert lookups == []
     assert (edited["files"], edited["changed"], edited["unchanged"], edited["read"]) == (19, 1, 18, 1)
     assert_same_as_a_full_run(store, pid)
 

@@ -2,6 +2,22 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+- The knowledge agent can use another model or model server: `cairnmind models set` chooses the chat model (answers, extraction) and the embedding model separately, each on the local Ollama, another Ollama, or any server with the OpenAI-compatible API such as LM Studio, vLLM or llama.cpp, after one test call to it; it changes only that role in the settings (#67).
+- A model server on another computer needs HTTPS and your explicit `--allow-remote`, because it receives memory content; keys are named with `--credential-ref env:NAME` or `profile:ID` and are never stored in the settings or in memory (#67).
+- `cairnmind doctor` shows, under `memory_models`, which server and model each role uses, whether it answers, where its content is sent and whether this pair of models has passed the evaluations (#67).
+- A passing `cairnmind eval run`, `eval memory` or `eval repository` is recorded for the exact pair of models and setup (servers, context window, reasoning effort) it ran with; answers given with models other than the release's carry `model_evaluation: unevaluated` in their diagnostics until recall and memory have both passed (#67).
+- After a change of embedding model, `cairnmind models set` says that vectors must be rebuilt with `cairnmind rebuild-vectors`; vectors of different models are kept apart, except that an OpenAI-compatible server reports no digest, so other weights served under the same name are not detected (#67).
+- When chat and embeddings run on different servers, one that is down no longer holds back the other's background work (#67).
+- `cairnmind models pull` downloads only the models that run on the local Ollama (#67).
+- Indexing files that replace a current source, and files that were deleted, now counts first what the old source leaves behind and writes each file in one transaction, up to eight small files together. The journal events of a transaction are stored in one statement. After every file of a project changed, indexing again needs about half the database requests and time on real code (Cairnmind's own source: 47% of the requests, 50% of the time), and about a quarter to a third on trees of very small files (#102).
+- In the default Focus layout the activity column now sits beside the focused view from 160 columns. The other views keep running out of sight in the same window at the same size, so switching views no longer resizes an assistant you are not looking at (#149).
+- More -> Settings -> Activity column shows or hides that column; the choice is remembered and is on by default (#149).
+- The key of the view in focus (for example Ctrl+B 1) now moves the keyboard back from the activity column, in Focus and in Cockpit (#149).
+- Memory extraction no longer turns the protocol of a session into proposed records. The launcher's first message, Codex's environment block and a client's tool calls are left out, and conversation messages are told that requests to the assistant, one-off questions and the assistant's narration of its own actions are not project knowledge. On the new evaluation set the share of proposals a person would reject fell from 65% to 29%, with no kept record lost (#160).
+- New command `cairnmind eval extraction` measures, with the local model, what extraction proposes from built-in agent, Claude Code and Codex conversations against the records a person would keep (#160).
+
 ## 0.10.0
 
 - When the Copilot agent starts a new session, for example after its tool list changes, it must read and acknowledge memory again and read a file whole again before it can replace or delete that file. Before, the engine still counted what the earlier session had read (#157).

@@ -86,6 +86,7 @@ These run real local models and are not part of CI:
 ```bash
 cairnmind eval run              # 20 recall cases with the local knowledge agent
 cairnmind eval memory           # extraction, portable transfer and cited recall
+cairnmind eval extraction       # what extraction proposes from conversations
 cairnmind eval run --clients    # adds the Codex → Claude Code → Codex hand-off; uses your client quotas
 ```
 
