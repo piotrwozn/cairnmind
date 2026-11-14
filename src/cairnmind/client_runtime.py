@@ -157,6 +157,10 @@ class NativeRuntime:
         info = self.socket.lstat()
         if info.st_uid != os.getuid() or not stat.S_ISSOCK(info.st_mode):
             raise ValueError("Native terminal socket is not owned by this user")
+        # tmux answers display-message for a missing target with exit 0 and empty fields, so a run whose
+        # session is gone from a server that still holds other runs is asked about by exact name first.
+        if self._tmux("has-session", "-t", "=" + row["tmux_session"], check=False).returncode:
+            return None
         result = self._tmux("display-message", "-p", "-t", row["tmux_session"],
             "#{session_name}\t#{@cairnmind_run_id}\t#{@cairnmind_generation}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_dead_status}", check=False)
         if result.returncode:

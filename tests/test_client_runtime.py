@@ -269,6 +269,19 @@ def test_private_server_loss_marks_interrupted_and_requires_explicit_supported_r
     assert fresh['id'] != row['id'] and fresh['generation'] == row['generation']+1
 
 
+def test_session_gone_from_a_shared_server_is_ended_not_a_foreign_identity(native):
+    # tmux answers display-message for a missing target with exit 0 and empty fields (#154): while the
+    # server keeps other runs, a run whose session is gone is ended, and stopping it is not an error.
+    runtime, project, _ = native
+    first, second = runtime.start_project(project)['runs']
+    runtime._tmux('kill-session', '-t', first['tmux_session'])
+    assert runtime.get_run(first['id'])['lifecycle'] == 'interrupted'
+    stopped = runtime.stop(first['id'], first['generation'])
+    assert stopped['lifecycle'] == 'exited' and stopped['stopped'] is True
+    assert runtime.stop(first['id'], first['generation'])['lifecycle'] == 'exited'
+    assert runtime.get_run(second['id'])['lifecycle'] == 'running'
+
+
 def test_native_stop_refuses_changed_process_identity(native):
     runtime, project, _ = native
     row = runtime.start(project,'codex')
