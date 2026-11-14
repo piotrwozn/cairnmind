@@ -29,6 +29,7 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
+from conftest import time_budget
 from cairnmind import client_auth
 from cairnmind.client_runtime import NativeRuntime
 from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
@@ -134,7 +135,7 @@ class LiveServer:
         self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [reserved]} if reserved else {},
                                        daemon=True)
         self.thread.start()
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + time_budget(15)
         while not self.server.started and self.thread.is_alive() and time.monotonic() < deadline:
             time.sleep(.02)
         assert self.server.started, "Real Uvicorn server did not start"
@@ -274,7 +275,7 @@ def receive_until(ws, expected, timeout=6):
     if isinstance(expected, str):
         expected = expected.encode()
     result = b""
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + time_budget(timeout)
     while expected not in result:
         event = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
         if event.get("type") == "output":
@@ -284,7 +285,7 @@ def receive_until(ws, expected, timeout=6):
 
 
 def receive_control(ws, expected, timeout=6):
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + time_budget(timeout)
     while True:
         event = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
         if event.get("type") == "control" and event.get("controller") is expected:
@@ -292,7 +293,8 @@ def receive_control(ws, expected, timeout=6):
 
 
 def eventually(assertion, timeout=5):
-    deadline = time.monotonic() + timeout
+    # A wait for a state to appear: under coverage every pane process starts and draws more slowly.
+    deadline = time.monotonic() + time_budget(timeout)
     while True:
         try:
             return assertion()
@@ -398,7 +400,7 @@ def test_real_operational_login_has_no_project_identity_or_archived_output(termi
 
 async def read_pty_until(fd, expected, timeout=8):
     expected = expected.encode() if isinstance(expected, str) else expected
-    data, deadline = b"", asyncio.get_running_loop().time() + timeout
+    data, deadline = b"", asyncio.get_running_loop().time() + time_budget(timeout)
     while expected not in data:
         assert asyncio.get_running_loop().time() < deadline, data[-2000:]
         try:
@@ -540,7 +542,7 @@ def test_real_outer_operational_login_destroys_only_its_secret_history(terminal_
 
 
 async def wait_async(predicate, timeout=10):
-    deadline = asyncio.get_running_loop().time() + timeout
+    deadline = asyncio.get_running_loop().time() + time_budget(timeout)
     while not predicate():
         assert asyncio.get_running_loop().time() < deadline, "Actual terminal projection did not refresh"
         await asyncio.sleep(.04)
