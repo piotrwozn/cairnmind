@@ -30,7 +30,7 @@ def register(memory_app, initialized):
 
         Includes the secrets scan (private keys, key and token shapes, passwords in connection strings,
         random strings, and personal data when the project turns it on); no secret is printed."""
-        from cairnmind.memory_published_check import check_directory
+        from cairnmind.memory_published_check import check_directory, releases_in
         from cairnmind.memory_published_release import checkout_rules
         from cairnmind.memory_published_secrets import SecretRulesError
         from cairnmind.terminal_safe import safe_text
@@ -45,6 +45,9 @@ def register(memory_app, initialized):
         if errors:
             raise typer.Exit(1)
         typer.echo(f"valid: {len(tree['records'])} records and {len(tree['plans'])} plans of {tree['project_id']}")
+        # A release is a claim in the file, like an audit: listed so that a reviewer sees every one.
+        for line in releases_in(tree):
+            typer.echo(safe_text(line))
 
     @memory_app.command("import-published")
     def memory_import_published(ctx: typer.Context, path: Path,

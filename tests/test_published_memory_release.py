@@ -7,13 +7,16 @@ from typer.testing import CliRunner
 
 from cairnmind import cli
 from cairnmind.api_credentials import CredentialStore
+from cairnmind.memory import MemoryConflict
 from cairnmind.memory_published import Publisher
 from cairnmind.memory_published_check import check_directory
 from cairnmind.memory_published_import import PublishedImporter
-from cairnmind.memory_published_release import SecretsRefused, release
+from cairnmind.memory_published_release import (
+    SecretsRefused, checkout_rules, import_rules, registered_secrets, release,
+)
 from cairnmind.service import create_app
 from cairnmind.store import Store
-from test_published_memory import commit, folder_of, published_bytes, repository, reviewed, teammate
+from test_published_memory import commit, folder_of, git, published_bytes, repository, reviewed, teammate
 from test_published_memory_secrets import KEY_BLOCK, SHAPES
 
 
@@ -109,3 +112,44 @@ def test_the_release_route_and_command_refuse_a_coding_session(ada, monkeypatch)
     refused = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "memory", "release", "team", record["id"],
                                            "--reason", "Anything."])
     assert refused.exit_code != 0 and "A coding session cannot release a record" in refused.output
+
+
+def test_a_rule_turned_on_after_publishing_never_deadlocks_and_a_teammates_file_is_reported_not_blocking(ada):
+    store, pid, root = ada["store"], ada["project"], ada["root"]
+    own = reviewed(store, pid, "fact", "Ask ada@example.org about deploys.", "deploy-owner")
+    Publisher(store).publish(pid)
+    commit(root, "ada memory")
+    bo = teammate(ada, "bo", "Bo Lee")
+    PublishedImporter(bo["store"]).import_published(folder_of(bo["root"]), bo["project"])
+    other = reviewed(bo["store"], bo["project"], "fact", "Ask bo@example.org about releases.", "release-owner")
+    Publisher(bo["store"]).publish(bo["project"])
+    commit(bo["root"], "bo memory")
+    git(root, "fetch", "-q", str(bo["root"]), "main")
+    git(root, "merge", "-q", "--no-edit", "FETCH_HEAD")
+    (root / ".cairnmind").mkdir()
+    (root / ".cairnmind" / "publication.toml").write_text('[personal]\ndetect = ["email"]\n')
+    with pytest.raises(SecretsRefused) as refused:
+        Publisher(store).publish(pid)
+    assert f"fact/{own['id']}.md: email in text" in str(refused.value) and other["id"] not in str(refused.value)
+    release(store, pid, own["id"], "The deploy owner's work address, agreed to be shared.")
+    result = Publisher(store).publish(pid)
+    assert result["status"] == "written" and f"fact/{own['id']}.md" in result["written"]
+    assert result["not_ours"]["hits"] == [f"fact/{other['id']}.md: email in text"]
+    assert "bo@example.org" not in str(result) and f"fact/{other['id']}.md" not in result["written"]
+    assert Publisher(store).publish(pid)["status"] == "unchanged"
+    # The import applies the checkout's patterns too: nothing comes in that this store would refuse.
+    with pytest.raises(MemoryConflict, match=f"fact/{other['id']}.md: email found in text"):
+        PublishedImporter(store).import_published(folder_of(root), pid)
+    assert check_directory(folder_of(root), checkout_rules(folder_of(root)))[1] == [
+        (f"fact/{other['id']}.md", "email found in text")]
+
+
+def test_the_import_refuses_this_machines_registered_secrets_and_session_keys_are_not_claimed(ada):
+    store = ada["store"]
+    rules = import_rules(folder_of(ada["root"]), store.settings)
+    assert store.settings.token in rules.registered and store.settings.arcade_password in rules.registered
+    other = CredentialStore(store.settings)
+    other.set("openai-main", "plain-session-key-1", persist=False)
+    assert "plain-session-key-1" in other.registered_values()
+    # A new instance, as the memory service builds, holds only the saved keys (documented, not claimed).
+    assert "plain-session-key-1" not in registered_secrets(store.settings, environ={})

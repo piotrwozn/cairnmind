@@ -367,7 +367,9 @@ class Publisher:
                 raise MemoryConflict("The published memory cannot be read: " + _listing(errors))
             identity = project.get("publication_id")
             if "FORMAT.json" in existing:
-                tree, errors = check_files(existing, rules)
+                # The structure only: what is already there was scanned when it was written, and a rule added
+                # since (or a teammate's file) must not block the records this store publishes, nor a release.
+                tree, errors = check_files(existing, secrets=False)
                 if errors:
                     raise MemoryConflict("The published memory is invalid; fix or import it first: " + _listing(errors))
                 if tree["project_id"] != identity:
@@ -379,9 +381,13 @@ class Publisher:
             merged = {**existing, **files, "FORMAT.json": existing.get("FORMAT.json", format_bytes(identity)),
                       ".gitattributes": existing.get(".gitattributes", GITATTRIBUTES),
                       ".gitignore": existing.get(".gitignore", GITIGNORE)}
-            _, errors = check_files(merged, rules)
+            whole, errors = check_files(merged, secrets=False)
             if errors:
                 raise MemoryConflict("Publishing would leave an invalid tree: " + _listing(errors))
+            # Files this store does not write (a teammate's records, or ones held here) are reported, never
+            # rewritten and never a reason to refuse: they are released or fixed where they were written.
+            ours = {path_of(m) for m in built["models"]}
+            others = [hit for hit in scan(whole, rules) if hit["path"] not in ours]
             changed = sorted(path for path, data in merged.items() if existing.get(path) != data)
             result = {"status": "preview" if preview else "written" if changed else "unchanged",
                       "destination": str(folder), "project_id": identity, "written": changed if not preview else [],
@@ -390,6 +396,10 @@ class Publisher:
                       "records": sum(m["kind"] != "plan" for m in built["models"]),
                       "plans": sum(m["kind"] == "plan" for m in built["models"]),
                       "held": _held(built["held"]), "git": "nothing was staged, committed or pushed"}
+            if others:
+                result["not_ours"] = {"hits": [described(hit) for hit in others[:50]], "total": len(others),
+                                      "hint": "files this store does not write hold values the secrets gate refuses; "
+                                              "they were left as they are: fix or release them where they were written"}
             if preview or not changed:
                 return result
             for path in changed:

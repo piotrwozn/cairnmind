@@ -86,6 +86,16 @@ def checkout_rules(directory, config=None) -> Rules:
     return Rules()
 
 
+def import_rules(directory, settings) -> Rules:
+    """The rules `memory import-published` applies: the checkout's personal patterns, as CI applies them,
+    and this machine's registered secrets, so that nothing this store would refuse to publish comes in."""
+    try:
+        base = checkout_rules(directory)
+    except SecretRulesError as exc:
+        raise SecretsRefused(f"Import refused: {CONFIG}: {exc}") from None
+    return Rules(registered_secrets(settings), base.personal, base.patterns)
+
+
 def release_sources(tx, project_id):
     """{record_id: {source_id: row}} of every release this store holds: its own and imported ones."""
     rows = [clean_row(row) for row in tx.query(
