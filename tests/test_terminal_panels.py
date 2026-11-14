@@ -328,6 +328,42 @@ async def test_native_profile_model_override_is_explicit_and_does_not_start_clie
 
 
 @pytest.mark.asyncio
+async def test_sessions_tell_rows_apart_offer_stop_only_while_live_and_confirm_it(tmp_path, monkeypatch):
+    # #154: identical rows, Stop process on an ended session and no word after a stop.
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    base = {"client": "codex", "worktree": "/w", "project_id": "project-a", "slot_id": "codex", "generation": 1,
+            "memory": {"acknowledged": False}}
+    runs = [{**base, "id": "aaaaaaa111", "lifecycle": "exited", "created_at": 1_700_000_000},
+            {**base, "id": "bbbbbbb222", "lifecycle": "running", "created_at": 1_700_003_600}]
+    answer = broker.request
+
+    def request(method, path, **kwargs):
+        value = answer(method, path, **kwargs)
+        return {**value, "runs": deepcopy(runs)} if path == "/api/state" else value
+
+    broker.request = request
+    stopped, seen, notices = [], [], []
+    monkeypatch.setattr("cairnmind.workspace.stop_run", lambda settings, run_id, *args: stopped.append(run_id))
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        monkeypatch.setattr(app, "notice", lambda value, kind="info": notices.append(value))
+        for run_id in ("aaaaaaa111", "bbbbbbb222"):
+            async def pick(screen, run_id=run_id):
+                seen.append(screen.choices)
+                return run_id if len(seen) % 2 else "stop" if "stop" in [v for _, v in screen.choices] else None
+            monkeypatch.setattr(app, "push_screen_wait", pick)
+            app.sessions()
+            await settle(app, pilot)
+    labels = [label for label, _ in seen[0]]
+    assert len(set(labels)) == 2 and "aaaaaaa" in labels[0] and "bbbbbbb" in labels[1]
+    assert "exited" not in labels[0]
+    assert {"stop", "interrupt", "takeover"}.isdisjoint(value for _, value in seen[1])
+    assert "stop" in [value for _, value in seen[3]]
+    assert stopped == ["bbbbbbb222"] and "The session was stopped." in notices
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(70, 18), (95, 24)])
 async def test_current_inspector_view_label_is_visible_in_actual_pane_render(tmp_path, monkeypatch, size):
     settings, broker, workspace = setup(tmp_path, monkeypatch)

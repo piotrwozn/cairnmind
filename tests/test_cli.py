@@ -134,3 +134,26 @@ def test_cli_evaluation_skip_claude_is_explicit_and_remains_not_run(tmp_path, mo
     assert result.exit_code == 3
     assert calls[0]["clients"] is True and calls[0]["skip_claude"] is True
     assert json.loads(result.output)["status"] == "not_run"
+
+
+def test_bracketed_words_in_option_help_survive_rich_rendering():
+    # Typer renders help through Rich, which drops an unescaped [word] as a style tag (#154).
+    import typer.main
+    root = typer.main.get_command(app)
+    found = []
+
+    def walk(command, path):
+        if hasattr(command, "commands"):  # a group; this Typer carries its own copy of click
+            for name, child in command.commands.items():
+                walk(child, [*path, name])
+            return
+        for param in command.params:
+            for word in re.findall(r"\\?\[[a-z_]+\]", getattr(param, "help", None) or ""):
+                found.append((path, word.lstrip("\\")))
+
+    walk(root, [])
+    assert found, "the --warn-over help names its [usage] table"
+    runner = CliRunner()
+    for path, word in found:
+        result = runner.invoke(app, [*path, "--help"], terminal_width=240, env={"COLUMNS": "240"})
+        assert result.exit_code == 0 and word in result.output, (path, word)

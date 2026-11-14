@@ -245,6 +245,7 @@ CATALOG = {
     "Review was not retried. The current version was reloaded.": "Ocena nie została ponowiona. Odczytano aktualną wersję.",
     "Memory updates": "Aktualizacje pamięci", "Account login": "Logowanie konta",
     "Memory acknowledged": "Pamięć potwierdzona", "Memory acknowledgement required": "Wymagane potwierdzenie pamięci",
+    "The session was stopped.": "Sesja została zatrzymana.",
     "Memory graph · Connecting…": "Graf pamięci · Łączenie…", "Memory graph": "Graf pamięci",
     "No nodes in this scope.": "Brak węzłów w tym zakresie.", "nodes": "węzłów", "relationships": "relacji",
     "paused": "pauza", "moving": "ruch", "n: next page": "n: następna strona", "limited view, g: groups": "ograniczony widok, g: grupy",
@@ -415,7 +416,7 @@ CATALOG.update({
     "The mapped assistant cannot be launched for a plan step.":
         "Przypisanego asystenta nie można uruchomić dla kroku planu.",
     # Plan stages for the built-in API agent and Copilot (#125)
-    "default model": "model domyślny",
+    "default model": "model domyślny", "Built-in agent": "Wbudowany agent",
     "The assistant of this stage changed since it was mapped. Confirm it in More → Plan stages; nothing was started.":
         "Asystent tego etapu zmienił się od przypisania. Potwierdź go w Więcej → Etapy planu; "
         "nic nie zostało uruchomione.",
