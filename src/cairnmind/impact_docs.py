@@ -133,10 +133,12 @@ def _distinctive(name):
 def written_as_code(name, text):
     """Whether ``text`` (a record's evidence) names the definition ``name`` the way a page must to count.
 
-    The same rule as for documentation: a distinctive name anywhere, any other only as code. A record
-    without a quote keeps its link, since there is nothing to judge it by.
+    The same rule as for documentation: a distinctive name anywhere, any other only as code. A dotted
+    field name such as ``Settings.port`` is compound, so it counts anywhere too: extraction links a
+    field only when the quote writes it whole. A record without a quote keeps its link, since there
+    is nothing to judge it by.
     """
-    if not isinstance(text, str) or not text.strip() or _distinctive(name):
+    if not isinstance(text, str) or not text.strip() or _distinctive(name) or "." in name:
         return True
     return name in _mentions(text, re.compile(r"(?<![\w$])(" + re.escape(name) + r")(?![\w$])"))
 

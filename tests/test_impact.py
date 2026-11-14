@@ -723,7 +723,8 @@ def test_a_file_name_with_a_leading_blank_or_bytes_that_are_not_utf8_is_still_re
 
 def test_a_record_is_linked_through_a_plain_word_only_when_its_evidence_writes_it_as_code(workspace):
     store, pid, root, records = workspace
-    api = "def current(state):\n    return state\n\n\ndef status(job):\n    return job\n\n\ndef load_rows(job):\n    return []\n"
+    api = ("def current(state):\n    return state\n\n\ndef status(job):\n    return job\n\n\ndef load_rows(job):\n"
+           "    return []\n\n\nclass Settings:\n    port = 8000\n")
     commit_files(root, {"src/api.py": api})
     index_project(store, pid)
     note = records["rule"]["source_ids"][0]
@@ -738,18 +739,20 @@ def test_a_record_is_linked_through_a_plain_word_only_when_its_evidence_writes_i
                                 "metadata": {"evidence": "Call status(job), or `current` for the state."}}, [note])
     distinct = store.remember(pid, {"kind": "fact", "key": "rows", "content": "Rows are loaded lazily.",
                                     "metadata": {"evidence": "load_rows is lazy"}}, [note])
+    field = store.remember(pid, {"kind": "constraint", "key": "port", "content": "Move the service port.",
+                                 "metadata": {"evidence": "Change Settings.port to 9000 before release."}}, [note])
     for record, labels in ((prose, ("current", "status")), (code, ("current", "status", "load_rows")),
-                           (distinct, ("load_rows",))):
+                           (distinct, ("load_rows",)), (field, ("Settings.port",))):
         for label in labels:
             link(store, pid, record, symbol(label), note)
     (root / "src" / "api.py").write_text(api.replace("return state", "return None").replace("return job", "return 0")
-                                         .replace("return []", "return ()"))
+                                         .replace("return []", "return ()").replace("8000", "9000"))
     (root / ".memory" / "cairnmind" / "objects").mkdir(parents=True)
     (root / ".memory" / "cairnmind" / "objects" / f"{'a' * 64}.json").write_text("{}")
     report = build_impact(store, pid, "HEAD")
     named = {row["title"]: [entry["symbol"] for entry in row["links"]] for row in report["records"]}
-    # "current" and "status" in a sentence are words, not the functions; load_rows is distinctive anywhere.
-    # A published memory snapshot in the worktree is not a changed file.
+    # "current" and "status" in a sentence are words, not the functions; load_rows is distinctive anywhere,
+    # and so is a dotted field name written in prose. A published memory snapshot is not a changed file.
     assert [entry["path"] for entry in report["changed_files"]] == ["src/api.py"]
     assert named == {"Reading a job goes through status.": ["current", "load_rows", "status"],
-                     "Rows are loaded lazily.": ["load_rows"]}
+                     "Rows are loaded lazily.": ["load_rows"], "Move the service port.": ["Settings.port"]}
