@@ -59,6 +59,23 @@ class ProviderError(ValueError):
         super().__init__(self.message)
 
 
+OLLAMA_BYTES_PER_TOKEN = 2  # Measured 2.4-3.8 UTF-8 bytes per token on real agent prompts; 2 stays above.
+OLLAMA_MESSAGE_FRAMING = 16  # Role and template markers around each chat message.
+OLLAMA_TEMPLATE_FRAMING = 1024  # System template and tool-list framing.
+
+
+def ollama_prompt_estimate(messages, tools):
+    """An upper estimate of the prompt tokens of one Ollama chat request.
+
+    Counting UTF-8 bytes as tokens overstated real prompts 2.5-3.8 times and
+    refused small agent steps at the default window. Tool schemas are part of
+    the serialized prompt, so they get no separate framing.
+    """
+    prompt = _json({"messages": messages, "tools": tools}).encode("utf-8")
+    return (-(-len(prompt) // OLLAMA_BYTES_PER_TOKEN) + OLLAMA_MESSAGE_FRAMING * len(messages)
+            + OLLAMA_TEMPLATE_FRAMING)
+
+
 def _json(value):
     try:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
@@ -208,7 +225,8 @@ def _error_code(status, raw=None):
                                          "billing_hard_limit", "out of credits", "credit_balance")):
         return "quota_exhausted"
     if any(term in observed for term in ("context_length_exceeded", "maximum context length", "prompt is too long",
-                                         "input is too long", "model_context_window_exceeded")):
+                                         "input is too long", "model_context_window_exceeded",
+                                         "exceeds the context length")):
         return "context_limit"
     # A refusal that names the tool definitions: OpenAI's param "tools[0].parameters" or "Invalid schema for
     # function", Anthropic's "tools.0.custom.input_schema: ...", a compatible server's "tools" field.
@@ -458,12 +476,9 @@ class Provider:
             if tools:
                 payload["tools"] = [{"type": "function", "function": t} for t in tools]
             # Ollama otherwise silently truncates old chat messages to its
-            # configured context. Use an explicit window and a conservative
-            # byte-based upper estimate (not a fabricated tokenizer count),
-            # with room for role/tool template framing and generated output.
-            prompt = _json({"messages": payload["messages"], "tools": payload.get("tools", [])}).encode("utf-8")
-            budget = len(prompt) + 128 * len(messages) + 256 * len(tools) + 1024 + maximum
-            if budget > window:
+            # configured context; truncate/shift=False make it refuse instead.
+            # The pre-check keeps a request that cannot fit from reaching it.
+            if ollama_prompt_estimate(payload["messages"], payload.get("tools", [])) + maximum > window:
                 raise ProviderError("context_limit")
             await self._ollama_context()
             return await self._post("api/chat", payload, self._ollama, on_delta)

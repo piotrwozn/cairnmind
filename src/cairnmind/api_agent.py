@@ -17,6 +17,8 @@ from uuid import uuid4
 
 from jsonschema import Draft202012Validator
 
+from .agent_reads import ReadLedger, projected_read
+
 
 SYSTEM = """You are Cairnmind's programming agent. Answer in the user's language.
 The user selected one registered project/worktree. Use only the supplied tools.
@@ -143,7 +145,9 @@ class AgentEngine:
         self._prepared = False
         self._acknowledged = False
         self._last_packet = None
+        self._acked_packet = None
         self._context = []
+        self._reads = ReadLedger()  # what file content the current model context has seen (#157)
         self._closed = False
         self._turn_task = None
         self._lock = asyncio.Lock()
@@ -276,6 +280,8 @@ class AgentEngine:
             projection.update(host_context_truncated=True, full_result_archived=True,
                               full_result_journal_event=event["id"],
                               next_step="Read smaller tool slices or read_source for the complete archived result.")
+            if message.get("name") == "read_file":
+                projected_read(projection)
             sources = archive.get("source_ids") or []
             if len(sources) >= event["seq"] and isinstance(sources[event["seq"] - 1], str):
                 projection["full_result_source_id"] = sources[event["seq"] - 1]
@@ -464,12 +470,16 @@ class AgentEngine:
                     "Read the complete ready packet using resume_context before its exact ACK."])
         result = await self.memory.execute(name, arguments)
         if name == "resume_context":
-            self._acknowledged = False
             packet = result.get("packet") if isinstance(result, dict) else None
+            # The service hands back the same packet while nothing changed, and its ACK stays valid; reading
+            # it again must not leave the run asking for an ACK the workspace shows as given (#157).
+            self._acknowledged = (self._acknowledged and isinstance(packet, dict) and result.get("status") == "ready"
+                                  and self._acked_packet == (packet.get("id"), packet.get("hash")))
             if packet and self._redact(packet) != packet:
                 # Never let the model acknowledge a hash after silently
                 # changing the authoritative bytes it was supposed to read.
                 self._last_packet = None
+                self._acknowledged, self._acked_packet = False, None  # a kept ACK never survives this refusal
                 self._memory_partial = {"status": "unavailable", "unknowns": [
                     "The authoritative packet contains credential material; it was not delivered or acknowledged."]}
                 return self._error("credential_in_packet", **self._memory_partial)
@@ -481,6 +491,7 @@ class AgentEngine:
                                   and result.get("packet_hash") == arguments.get("packet_hash"))
             if not self._acknowledged:
                 return self._error("resume_required", unknowns=["The service did not accept the exact ACK."])
+            self._acked_packet = (result["packet_id"], result["packet_hash"])
             await self._notify("status", {"memory": "acknowledged", "packet_id": result["packet_id"]})
         return result
 
@@ -527,6 +538,10 @@ class AgentEngine:
                     # Archived at once: the service then marks this session's later memory writes degraded.
                     await self._checked_archive()
                 return result
+            if name in {"write_file", "delete_file"}:
+                refused = self._reads.refusal(arguments.get("path"), arguments.get("expected_sha256"), name)
+                if refused is not None:
+                    return refused
             self.tools.current_tool_call_id = call_id
             try:
                 return await self.tools.execute(name, arguments)
@@ -557,9 +572,14 @@ class AgentEngine:
                                          "arguments": call["arguments"]})
         await self._notify("tool_start", {"tool_call_id": call["id"], "name": call["name"],
                                            "arguments": call["arguments"]})
-        result = self._redact(await self._dispatch(call["name"], call["arguments"], call["id"]))
+        raw = await self._dispatch(call["name"], call["arguments"], call["id"])
+        result = self._redact(raw)
         delivered = await self._message({"role": "tool", "tool_call_id": call["id"],
                                          "name": call["name"], "content": _json(result)})
+        if call["name"] not in self.mcp.catalogue:
+            # Masking is told apart from file text that merely contains the mask's words (#157).
+            self._reads.observe(call["name"], json.loads(delivered["content"]),
+                                masked=result != raw or delivered["content"] != _json(result))
         await self._notify("tool_result", {"tool_call_id": call["id"], "name": call["name"],
                                             "result": result})
         return json.loads(delivered["content"]) if self.run["client"] == "copilot" else result
@@ -635,6 +655,7 @@ class AgentEngine:
             return prepared
         # A checkpoint is inspected, explicitly labelled prior state; the
         # current packet still has to be read and acknowledged by the model.
+        self._reads.clear()
         self._context = [{"role": "user", "content": _json({
             "host": "Context renewed from durable evidence; read resume_context and ACK before continuing.",
             "checkpoint": summary["checkpoint"], "state": summary["state"],
@@ -793,6 +814,7 @@ class AgentEngine:
                     # restored through the archived memory packet, not a blind
                     # replay of all old messages and unbounded tool output.
                     self._context = []
+                    self._reads.clear()
                 elif self._acknowledged:
                     await self._fresh()
                     if self._memory_partial is not None:
