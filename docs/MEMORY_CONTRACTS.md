@@ -342,8 +342,11 @@ shows it.
 
 A checkout path is checked when it is chosen and again at every use: it must be an absolute path to
 an existing directory inside a Git checkout, with no symbolic link on the way (as everywhere in memory
-packages), and it may not be or lie inside Cairnmind's data directory, a registered project's files,
-or any project's memory directory. A project with no publication identity yet that publishes into a
+packages, and no control characters in it), and it may not be or lie inside Cairnmind's data
+directory, a registered project's files, or any project's memory directory. Nor may it contain a
+registered project root or share a Git repository with one: a package beside a project in its own
+repository would sit outside every reserved directory, and whoever registers that repository's top
+level would index it as code. A project with no publication identity yet that publishes into a
 checkout already holding other packages is refused, as `FORMAT.json` refuses it in the repository:
 import this project's package first (which binds it), or start a new one with
 `memory publish PROJECT --new-package`.
@@ -351,4 +354,6 @@ import this project's package first (which binds it), or start a new one with
 Changing the carrier moves nothing. The command says where the earlier package is and how many files
 it has, to import it first if teammates published there, then to publish to write the package at the
 new place, and to remove the earlier files in a commit of one's own once the team reads from the new
-place. The secrets gate (#171) runs on what is about to be written, before any carrier is written to.
+place. `memory status` keeps naming it afterwards: under `published` it shows `other_package` (a
+package left in the repository while a checkout is used) and `previous_carrier` with
+`previous_package` (what the carrier before the last change still holds). The secrets gate (#171) runs on what is about to be written, before any carrier is written to.

@@ -22,6 +22,7 @@ from .terminal_safe import safe_text
 
 CARRIERS = ("repository", "checkout")
 SETTING = "publication_carrier"
+SETTING_PREVIOUS = "publication_carrier_previous"
 DEFAULT = {"kind": "repository"}
 _MAX_PATH = 4096
 
@@ -42,7 +43,8 @@ def identity_of(project):
 def checkout_path(store, project_id, raw):
     """A checkout path, validated: absolute, a real directory in a Git checkout, with no symbolic link on the way,
     and not inside Cairnmind's data, a registered project's files or any project's memory."""
-    if not isinstance(raw, str) or not raw or len(raw) > _MAX_PATH or "\x00" in raw or safe_text(raw) != raw:
+    if (not isinstance(raw, str) or not raw or len(raw) > _MAX_PATH or safe_text(raw) != raw
+            or any(ord(c) < 0x20 or c in "  " for c in raw)):
         raise ValueError("A checkout path must be a plain absolute path")
     given = Path(raw).expanduser()
     if not given.is_absolute():
@@ -66,11 +68,23 @@ def checkout_path(store, project_id, raw):
                                  "the repository carrier (the default) writes there")
             raise ValueError(f"The checkout path {path} is inside the files of project {name}, "
                              "which would index the package as its code")
+        top = _git_top(root)
+        if root.is_relative_to(path) or (top is not None and top == _git_top(path)):
+            # A package beside a project in its own repository sits outside every reserved directory: whoever
+            # registers that repository's top level would index and fingerprint it as code (#174).
+            raise ValueError(f"The checkout path {path} shares a Git repository with project {name} ({root}); "
+                             "use the repository carrier (the default) there, or a checkout of a separate repository")
     if not path.is_dir():
         raise ValueError(f"The checkout path {path} is not an existing directory")
-    if not any((folder / ".git").exists() for folder in (path, *path.parents)):
+    if _git_top(path) is None:
         raise ValueError(f"The checkout path {path} is not in a Git checkout; clone the memory repository first")
     return path
+
+
+def _git_top(path):
+    """The nearest directory at or above path holding .git (read from the file system, no git command)."""
+    path = Path(path)
+    return next((folder for folder in (path, *path.parents) if (folder / ".git").exists()), None)
 
 
 def destination(store, project, root, carrier=None):
@@ -114,8 +128,24 @@ def carrier_status(store, project, root):
     """`memory status` → published: the carrier, and a package left at the repository place when it is not used."""
     carrier = carrier_of(store, project["id"])
     result = {"carrier": carrier}
+    in_repository = Path(root) / PUBLISHED_RELATIVE
     if carrier["kind"] != "repository":
-        result["other_package"] = package_at(Path(root) / PUBLISHED_RELATIVE)
+        result["other_package"] = package_at(in_repository)
+    # The carrier before the last change, and any package still there, so status keeps naming it after the
+    # one-off message of `memory carrier` scrolled away.
+    row = one_row(store, "SELECT FROM memory_settings WHERE id=:id", {"id": project["id"]}, False) or {}
+    previous = row.get(SETTING_PREVIOUS)
+    if isinstance(previous, dict) and previous.get("kind") in CARRIERS:
+        result["previous_carrier"] = dict(previous)
+        try:
+            folder = destination(store, project, root, dict(previous))[1]
+        except ValueError as exc:  # The earlier checkout moved or became a link.
+            result["previous_package"] = {"error": str(exc)}
+        else:
+            # Already reported as other_package, or the same place as now: nothing more to say.
+            repeated = folder == in_repository and "other_package" in result
+            same = carrier["kind"] == previous["kind"] == "repository" or previous == carrier
+            result["previous_package"] = None if repeated or same else package_at(folder)
     return result
 
 
@@ -152,12 +182,12 @@ def configure(store, project_id, kind, path=None, worktree=None):
     if new != old:
         with store.transaction() as tx:
             if tx.query("SELECT id FROM memory_settings WHERE id=:id", {"id": project_id}):
-                update_document(tx, "memory_settings", {SETTING: new, "updated_at": utc_now()}, "id=:id",
-                                {"id": project_id})
+                update_document(tx, "memory_settings", {SETTING: new, SETTING_PREVIOUS: old, "updated_at": utc_now()},
+                                "id=:id", {"id": project_id})
             else:
                 insert_document(tx, "memory_settings", {
                     "id": project_id, "project_id": project_id, "enabled": False, "interval_minutes": 15,
-                    "worktree": str(root), SETTING: new, "updated_at": utc_now()})
+                    "worktree": str(root), SETTING: new, SETTING_PREVIOUS: old, "updated_at": utc_now()})
     earlier = package_at(earlier_folder) if earlier_folder is not None and earlier_folder != folder else None
     result = {"status": "configured" if new != old else "unchanged", "carrier": new, "destination": str(folder),
               "previous_carrier": old, "earlier_package": earlier, "already_there": package_at(folder),

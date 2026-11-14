@@ -92,6 +92,20 @@ def test_the_same_package_through_the_repository_and_a_checkout_imports_to_the_s
     assert back["earlier_package"] == {"destination": str(memory / pid), "files": len(first)}
     assert str(memory / pid) in back["message"]
     assert configure(store, pid, "repository")["status"] == "unchanged"
+    # Status keeps naming the earlier checkout package after the one-off message is gone.
+    status = publication_status(store, pid)
+    assert status["previous_carrier"] == {"kind": "checkout", "path": str(memory)}
+    assert status["previous_package"] == {"destination": str(memory / pid), "files": len(first)}
+    # From one checkout to another: the first one is still named, beside the package left in the repository.
+    second = repository(ada["tmp"] / "memory2")
+    configure(store, pid, "checkout", str(memory))
+    configure(store, pid, "checkout", str(second))
+    status = publication_status(store, pid)
+    assert status["previous_package"] == {"destination": str(memory / pid), "files": len(first)}
+    assert status["other_package"] == {"destination": str(in_repository), "files": len(first)}
+    # Back from that checkout to the repository the package is there, so nothing earlier to repeat.
+    configure(store, pid, "repository")
+    assert publication_status(store, pid)["previous_package"] is None
 
 
 def test_a_checkout_path_is_validated_every_time_it_is_used(ada):
@@ -102,7 +116,13 @@ def test_a_checkout_path_is_validated_every_time_it_is_used(ada):
     (tmp / "plain").mkdir()
     os.symlink(memory, tmp / "linked")
     (memory / "sub").mkdir()
+    (memory / "nl\nname").mkdir()  # A real directory: the name alone is refused, not its absence.
+    mono = repository(tmp / "mono")  # #174: a project registered below the top level of its repository.
+    (mono / "docs").mkdir()
+    (mono / "beside").mkdir()
+    store.add_project("nested", mono / "docs")
     refusals = {
+        str(memory / "nl\nname"): "plain absolute path",
         "memory": "must be absolute",
         str(tmp / "missing"): "not an existing directory",
         str(tmp / "plain"): "not in a Git checkout",
@@ -114,6 +134,11 @@ def test_a_checkout_path_is_validated_every_time_it_is_used(ada):
         str(root / ".memory" / "cairnmind-published"): "inside the memory of project team",
         str(store.data_dir): "Cairnmind's own data directory",
         str(memory) + "‮": "plain absolute path",
+        str(memory) + "\nsub": "plain absolute path",
+        str(memory) + "\tsub": "plain absolute path",
+        str(memory) + " ": "plain absolute path",
+        str(mono): "shares a Git repository with project nested",
+        str(mono / "beside"): "shares a Git repository with project nested",
     }
     for path, reason in refusals.items():
         with pytest.raises(ValueError, match=reason):
@@ -170,6 +195,13 @@ def test_a_checkout_that_holds_another_package_needs_an_import_or_a_new_package(
     carol_project = carol.add_project("solo", repository(tmp_path / "carol-code"))["id"]
     reviewed(carol, carol_project, "fact", "Carol keeps her own memory.", "own")
     configure(carol, carol_project, "checkout", str(memory))
+    headers = {"Authorization": f"Bearer {carol.settings.token}"}
+    with TestClient(create_app(carol.settings, start_worker=False)) as client:
+        body = {"project": "solo", "preview": True}
+        assert client.post("/memory/publish", headers=headers, json=body).status_code == 409
+        preview = client.post("/memory/publish", headers=headers, json={**body, "new_package": True})
+        assert preview.status_code == 200 and preview.json()["status"] == "preview"
+        assert preview.json()["destination"] == str(memory / carol_project) and not (memory / carol_project).exists()
     assert Publisher(carol).publish(carol_project, new_package=True)["destination"] == str(memory / carol_project)
 
 
