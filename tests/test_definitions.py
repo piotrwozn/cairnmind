@@ -368,6 +368,20 @@ def test_keys_of_a_toml_file_are_found_as_definitions(workspace):  # noqa: F811
     assert found and found[0]["definition"] == "project.version" and 'version = "7.7.7"' in found[0]["text"]
 
 
+def test_a_name_with_one_question_word_is_found_through_its_file(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "journal.py").write_text("FLUSH_TIMEOUT = 7\n")
+    (root / "pkg" / "billing.py").write_text("RETRY_TIMEOUT = 9\n")
+    (root / "pkg" / "ledger.py").write_text("class JournalWriter:\n    flush_delay: int = 3\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "What is the timeout of the journal?", [], {})
+    # One word of the name and one of its file name: found; the billing timeout shares no second word.
+    assert [item["definition"] for item in found] == ["FLUSH_TIMEOUT"]
+    found = agent._definitions(project["id"], "How long is the delay of the journal writer?", [], {})
+    assert [item["definition"] for item in found] == ["JournalWriter.flush_delay"]  # through its class
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
@@ -382,5 +396,6 @@ def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # 
     assert found and len(found) <= MAX_DEFINITIONS
     print(f"definitions={len(found)} queries={len(counted)}")
     # Project, roots, the worktree's sources (two), code names, word names, names made of question
-    # words; then one freshness check per definition.
-    assert len(counted) <= 8 + 12 * len(found)
+    # words, names with one question word in a file or class with one; then one freshness check per
+    # definition.
+    assert len(counted) <= 9 + 12 * len(found)

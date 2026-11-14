@@ -22,8 +22,12 @@ are resolved by exact name:
   dropped). The question words used are those that can be name words: NAME_STOPWORDS and words
   under three letters are left out, the longest MAX_PATTERN_WORDS are kept. The database applies
   this as a regular expression in its own bounded read, so only such names come back;
+- a constant or field is also a candidate when one word of its name is a question word and its
+  file name (or, for a field, its class) has a question word too (``FLUSH_TIMEOUT`` in
+  ``journal.py`` for "What is the timeout of the journal?"; see ``context_patterns``);
 - each kind of match has its own read of at most MAX_ROWS rows, after the worktree filter:
-  code names (any kind), word names (constants and fields), names made of question words;
+  code names (any kind), word names (constants and fields), names made of question words, names
+  with one question word in a file or class with one;
 - candidates are ranked: a name the question writes as code first; then a full match, a name
   of at least two question words with nothing else but filler words (``answer_tokens``; not
   ``MAX_REPORTED``, which has one); then a primary file before a test, lock or minified file;
@@ -170,15 +174,35 @@ def name_word_pattern(question: str) -> str | None:
     return f"^(?=(?:.*[_-])?{real}(?:[_-]|$))(?:{word}[_-])+{word}$"
 
 
+def context_patterns(question: str) -> tuple[str, str, str] | None:
+    """Regular expressions (name, file, owner) for a name that has one question word, in a file
+    or a class whose name has one too; None without a usable word.
+
+    The name pattern wants a question word as a whole word of a lower-case name (``flush_timeout``
+    for "timeout"); the file pattern a question word as a whole word of the last part of a
+    lower-case path (``journal.py``, ``journal_writer.py``); the owner pattern a question word
+    anywhere in a lower-case class name (``journalwriter``), which ``relevance`` then compares
+    by its words.
+    """
+    words = pattern_words(question)
+    if not words:
+        return None
+    real = "(?:" + "|".join(re.escape(word) for word in words) + ")(?:s|es|ed|ing)?"
+    return (f"^(?:.*[_-])?{real}(?:[_-].*)?$",
+            f"^(?:.*/)?(?:[^/]*[^a-z0-9/])?{real}(?:[^a-z0-9/][^/]*)?$",
+            f".*{real}.*")
+
+
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
     """Ranked definition rows of this worktree for the names in ``question`` and ``texts``.
 
     The worktree's current sources are read first (as search reads them), and the node queries
     keep only symbols of those sources, ordered by label, path and line, each at most MAX_ROWS:
-    the matches of code names (any kind), of word names (constants and fields), and of names made
-    of question words (``name_word_pattern``). Every bound applies after the worktree filter and
+    the matches of code names (any kind), of word names (constants and fields), of names made
+    of question words (``name_word_pattern``), and of names with one question word in a file or
+    class with one (``context_patterns``). Every bound applies after the worktree filter and
     to one kind of match, so one kind cannot crowd out another, and the same index gives the same
-    rows; three queries at most. A row is
+    rows; four queries at most. A row is
     ``{"node_id", "source_id", "symbol", "path", "named", "relevance", ...}`` with ``path``
     relative to the worktree root.
     """
@@ -211,6 +235,17 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
             "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :pattern)) "
             f"{order} LIMIT {MAX_ROWS}",
             {"project": project_id, "eligible": eligible, "pattern": pattern}) if row["id"] not in known]
+        known = {row["id"] for row in rows}
+    context = context_patterns(question)
+    if context:
+        rows += [row for row in store.query(
+            select + "((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :name "
+            "AND (metadata.owner.toLowerCase() MATCHES :owner OR metadata.path.toLowerCase() MATCHES :file)) "
+            "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :name "
+            "AND metadata.path.toLowerCase() MATCHES :file)) "
+            f"{order} LIMIT {MAX_ROWS}",
+            {"project": project_id, "eligible": eligible, "name": context[0], "file": context[1],
+             "owner": context[2]}) if row["id"] not in known]
     found = []
     for row in rows:
         symbol = json_value(row.get("metadata"), {})
