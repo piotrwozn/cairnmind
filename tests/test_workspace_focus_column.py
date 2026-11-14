@@ -176,6 +176,7 @@ def test_switching_views_keeps_the_column_every_process_and_every_coding_pane_si
         workspace._layout()
         workspace.focus("client1")
         before = geometry(workspace)
+        caught_up(workspace, before)
         logged = settled(workspace)
         column = workspace.activity_pane()
         for _ in range(3):
@@ -188,6 +189,20 @@ def test_switching_views_keeps_the_column_every_process_and_every_coding_pane_si
         assert settled(workspace) == logged
     assert {role: value[1:] for role, value in after.items()} == {role: value[1:] for role, value in before.items()}
     assert logged["client1"][-1] == logged["client2"][-1] == f"{160 - ACTIVITY_WIDTH - 1} {before['client1'][2]}"
+
+
+def caught_up(workspace, found, timeout=30):
+    """Wait until each coding pane process has logged the size tmux gives its pane now.
+
+    The pane has its size in tmux before the process logs it: on a slow machine the SIGWINCH and its
+    handling can come more than a second later, so a quiet second alone cannot stand for it.
+    """
+    wanted = {role: [str(found[role][1]), str(found[role][2])] for role in ("client1", "client2")}
+    deadline = time.monotonic() + timeout
+    while any(sizes_logged(workspace, role)[-2:] != size for role, size in wanted.items()):
+        if time.monotonic() > deadline:
+            return  # the assertions after it say which size the process never got
+        time.sleep(.05)
 
 
 def settled(workspace):
