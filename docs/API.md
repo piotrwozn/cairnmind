@@ -1,4 +1,4 @@
-# Cairnmind 0.9.0: API, Ollama and Copilot connections
+# Cairnmind 0.10.0: API, Ollama and Copilot connections
 
 `cairnmind` opens the project's terminal workspace. A named connection defines the client, the model and the limits, and a project assistant uses one of those connections. You can assign several assistants to a project and explicitly start the one you want. Cairnmind's own agent handles direct APIs; Copilot has a separate adapter built on the official Python SDK. The interface is in English by default; **More → Settings → Language → Polski** switches it to Polish.
 

@@ -388,7 +388,7 @@ The automated tests need no Ollama, no models and no signed-in coding clients; t
 
 ## Status and roadmap
 
-Version 0.9.0 is the current release and the first under the name Cairnmind; see the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from DevBrain 0.8.0 is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Both are in [docs/UPGRADING.md](docs/UPGRADING.md).
+Version 0.10.0 is the current release; 0.9.0 was the first under the name Cairnmind. See the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from 0.9.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Both are in [docs/UPGRADING.md](docs/UPGRADING.md).
 
 Planned work is tracked in [issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 

@@ -3,7 +3,7 @@
 New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing installation with data you want to keep.
 
 - [From DevBrain 0.8.0 to Cairnmind 0.9.0](#from-devbrain-080-to-cairnmind-090)
-- [From 0.9.0 to the next release](#from-090-to-the-next-release)
+- [From 0.9.0 to 0.10.0](#from-090-to-0100)
 - [From 0.7.2 to 0.8.0](#from-072-to-080)
 
 A direct upgrade from 0.7.2 to 0.9.0 was not tested. Upgrade a 0.7.2 installation to 0.8.0 first.
@@ -70,9 +70,19 @@ There is no automatic rollback.
 4. With the service stopped (`devbrain stop`), restore the backup: `devbrain restore ~/devbrain-backup-0.8.0.devbrain.json.gz`.
 5. In each project, put back the configuration that 0.8.0 wrote, and do not run `devbrain install` over the entries written by 0.9.0: 0.8.0 does not recognise them and would add its hooks next to them. `cairnmind install` left a copy of every file it changed next to it, named `<file>.devbrain-backup-<number>`: `.mcp.json`, `.codex/config.toml`, `.codex/hooks.json`, `.claude/settings.local.json`, `AGENTS.md` and `CLAUDE.md`. Copy the earliest copy made during the upgrade back over each file; it names the Python of the `devbrain` tool, which exists again.
 
-## From 0.9.0 to the next release
+## From 0.9.0 to 0.10.0
 
-Finish and close running coding sessions and the workspace (`cairnmind workspace stop`), then run the installer and `cairnmind install <project>` for each project. The installer stops the interface broker and the knowledge service of the installed version itself; it refuses to continue while a workspace or a coding session started from it is running, in any data directory, because the new version names its terminal sessions differently and would not find them. Set `CAIRNMIND_INSTALL_STOP_WORKSPACE=1` to let it close them. Scheduled daily backups of both names are pruned together; the safety copies written before a restore or a schema change are never pruned. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
+Finish and close running coding sessions and the workspace (`cairnmind workspace stop`), then get 0.10.0 and run the installer:
+
+```bash
+mkdir -p ~/src && cd ~/src
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.10.0/cairnmind-0.10.0.tar.gz
+tar -xzf cairnmind-0.10.0.tar.gz
+cd cairnmind-0.10.0
+bash scripts/install-wsl.sh
+```
+
+Then run `cairnmind install <project>` for each project. The installer stops the interface broker and the knowledge service of the installed version itself; it refuses to continue while a workspace or a coding session started from it is running, in any data directory, because the new version names its terminal sessions differently and would not find them. Set `CAIRNMIND_INSTALL_STOP_WORKSPACE=1` to let it close them. Scheduled daily backups of both names are pruned together; the safety copies written before a restore or a schema change are never pruned. Upgrade every machine and every collaborator that shares a project's repository together: a version up to 0.9.0 does not read what this one writes there.
 
 - **Data directory.** An existing `~/.local/share/devbrain` is used where it is. Only an installation with no data yet starts in `~/.local/share/cairnmind`. If both directories hold data, the earlier one is used and `cairnmind doctor` says so under `environment_notes`.
 - **Variables.** `CAIRNMIND_HOME`, `CAIRNMIND_ARCADE_URL` and the others are the names to use. A `DEVBRAIN_*` variable in your shell profile keeps working; when both spellings of a configuration variable are set, the new one wins and `cairnmind doctor` reports a pair that disagrees.
