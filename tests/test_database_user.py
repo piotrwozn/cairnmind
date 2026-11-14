@@ -1,7 +1,7 @@
 """A dedicated database user on the real engine: created once as root, then used for everything (#72)."""
 from __future__ import annotations
 
-from contextlib import contextmanager, suppress
+from contextlib import closing, contextmanager, suppress
 from dataclasses import replace
 import json
 import os
@@ -48,7 +48,8 @@ def dedicated_user(tmp_path, monkeypatch, arcade_test_engine):
         yield data, name, secret, root_secret, admin_file
     finally:
         try:
-            ArcadeClient(root_settings).server_command(f"drop user {name}")
+            with closing(ArcadeClient(root_settings)) as client:
+                client.server_command(f"drop user {name}")
         except ArcadeError:
             pass
 
@@ -84,12 +85,14 @@ def test_a_dedicated_user_is_created_once_and_then_indexes_and_reads(dedicated_u
     # The user has no rights on the server or on another database.
     other = replace(settings, arcade_database=settings.arcade_database + "_other")
     root = replace(settings, arcade_user="root", arcade_password=root_secret)
-    ArcadeClient(replace(root, arcade_database=other.arcade_database)).ensure_database()
-    with pytest.raises(ArcadeError) as refused:
-        ArcadeClient(other).query("SELECT 1 AS ok")
+    with closing(ArcadeClient(replace(root, arcade_database=other.arcade_database))) as client:
+        client.ensure_database()
+    with closing(ArcadeClient(other)) as client, pytest.raises(ArcadeError) as refused:
+        client.query("SELECT 1 AS ok")
     assert refused.value.status_code in (401, 403)
-    with pytest.raises(ArcadeError):
-        ArcadeClient(settings).server_command("create database " + settings.arcade_database + "_more")
+    with closing(ArcadeClient(settings)) as client, pytest.raises(ArcadeError):
+        client.server_command("create database " + settings.arcade_database + "_more")
+    store.client.close()
     assert secret not in str(refused.value)
 
 
@@ -228,4 +231,5 @@ def test_a_remote_url_a_dedicated_user_and_a_password_file_index_and_read(dedica
             Store(data, settings=replace(settings, arcade_user="root"))
         # Without the private authority, the certificate is not trusted.
         with pytest.raises(ArcadeError, match="certificate"):
-            ArcadeClient(replace(settings, arcade_ca_file="")).query("SELECT 1 AS ok")
+            with closing(ArcadeClient(replace(settings, arcade_ca_file=""))) as client:
+                client.query("SELECT 1 AS ok")
