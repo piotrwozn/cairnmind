@@ -7,7 +7,7 @@ import secrets
 import fcntl
 import tempfile
 import hashlib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
@@ -157,11 +157,18 @@ class Settings:
     token: str = ""
     arcade_url: str = "http://127.0.0.1:2480"
     arcade_user: str = "root"
-    arcade_password: str = ""
+    arcade_password: str = field(default="", repr=False)
     arcade_database: str = ""
     arcade_version: str = "26.11.1"
     java_executable: str = ""
     tmux_executable: str = ""
+    # Database access outside this machine (#72): a private file holding the password, and the PEM file of
+    # a private certificate authority. Both are absolute paths; see database_credentials.
+    arcade_password_file: str = ""
+    arcade_ca_file: str = ""
+    # Set by load and never saved: where the password came from ("password"), why it cannot be used
+    # ("problem"), and the values load put in place of the stored ones ("kept": field -> (stored, loaded)).
+    _origin: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def url(self) -> str:
@@ -181,37 +188,61 @@ class Settings:
                 if not obj.token:
                     obj.token = secrets.token_urlsafe(32)
                     changed = True
-                if not obj.arcade_password:
+                # Only the managed engine on this machine gets a generated password, kept in config.json
+                # as before (#72): a remote database's password comes from the environment or a file.
+                from .database_credentials import is_loopback
+                if obj._origin.get("password") == "none" and is_loopback(obj.arcade_url):
                     obj.arcade_password = secrets.token_urlsafe(32)
+                    obj._origin["password"] = "config"
+                    obj._origin["kept"].pop("arcade_password", None)
                     changed = True
                 if changed:
                     obj.save()
                 return obj
         values = json.loads(path.read_text()) if path.exists() else {}
         values.pop("data_dir", None)
-        values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__}
-        for field, name in (("arcade_url", "ARCADE_URL"),
-                            ("arcade_user", "ARCADE_USER"),
-                            ("arcade_password", "ARCADE_PASSWORD"),
-                            ("arcade_database", "ARCADE_DATABASE"),
-                            ("java_executable", "JAVA_EXECUTABLE"),
-                            ("tmux_executable", "TMUX_EXECUTABLE")):
-            override = env_value(name)
+        values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__ and not k.startswith("_")}
+        stored = dict(values)
+        kept = {}
+        for name, variable in (("arcade_url", "ARCADE_URL"),
+                               ("arcade_user", "ARCADE_USER"),
+                               ("arcade_database", "ARCADE_DATABASE"),
+                               ("arcade_password_file", "ARCADE_PASSWORD_FILE"),
+                               ("arcade_ca_file", "ARCADE_CA_FILE"),
+                               ("java_executable", "JAVA_EXECUTABLE"),
+                               ("tmux_executable", "TMUX_EXECUTABLE")):
+            override = env_value(variable)
             if override is not None:
-                values[field] = override
+                values[name] = override
+                kept[name] = (stored.get(name), override)
+        # The password: the environment, then arcade_password_file, then config.json for this machine only.
+        from .database_credentials import resolve_password
+        password, source, problem = resolve_password(values)
+        if password != stored.get("arcade_password", ""):
+            kept["arcade_password"] = (stored.get("arcade_password"), password)
+        values["arcade_password"] = password
         if not values.get("arcade_database"):
             # The default prefix is part of the name of every existing database: it does not change.
             prefix = env_value("ARCADE_DB_PREFIX", "devbrain")
             if not prefix.replace("_", "").isalnum():
                 raise ValueError("Invalid ArcadeDB database prefix")
             values["arcade_database"] = prefix + "_" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
-        obj = cls(data_dir=root, **values)
+        obj = cls(data_dir=root, **values, _origin={"password": source, "problem": problem, "kept": kept})
         return obj
 
     def save(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         values = asdict(self)
+        values.pop("_origin", None)
         values["data_dir"] = str(self.data_dir)
+        # A value load took from the environment or a password file stays out of config.json while it is
+        # unchanged: config.json keeps what it had (#72). A value changed since load is saved.
+        for name, (stored, loaded) in (self._origin or {}).get("kept", {}).items():
+            if values.get(name) == loaded:
+                if stored is None:
+                    values.pop(name, None)
+                else:
+                    values[name] = stored
         path = self.data_dir / "config.json"
         # Atomic, owner-readable configuration, including the local bearer token.
         fd, name = tempfile.mkstemp(prefix=".config-", dir=self.data_dir)
