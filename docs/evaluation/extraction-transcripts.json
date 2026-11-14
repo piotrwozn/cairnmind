@@ -1,0 +1,179 @@
+{
+  "format_version": 1,
+  "description": "Invented conversations for cairnmind eval extraction (#160). Each event is what the built-in agent journals (client api) or what Claude Code and Codex write to their transcripts. expect.keep lists the records a person would keep from that event; every other proposed record is one a person would reject. A record matches a kept item when each regular expression of match is found in its content, ignoring case. expect.label names why an event holds nothing to keep.",
+  "transcripts": [
+    {
+      "id": "agent-trial",
+      "client": "api",
+      "note": "The shape of the 0.10.0 trial: resume, ACK, a one-off question answered with a tool, then one real decision.",
+      "events": [
+        {"event": {"role": "assistant", "content": "I'll start by calling resume_context to read the current packet.",
+                   "tool_calls": [{"id": "call_1", "name": "resume_context", "arguments": {}}]},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"role": "assistant", "content": "The packet is ready. Acknowledging the resume with the packet ID, its hash and a readback of no active plan or task.",
+                   "tool_calls": [{"id": "call_2", "name": "ack_resume", "arguments": {"packet_id": "pkt_3f2a", "packet_hash": "9c1e77", "readback": {"plan": null, "task": null}}}]},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"role": "user", "content": "What time is it in Warsaw right now?"},
+         "expect": {"label": "one_off", "keep": []}},
+        {"event": {"role": "assistant", "content": "I'll use the time tool to determine the current time in Warsaw.",
+                   "tool_calls": [{"id": "call_3", "name": "mcp_time_get_current_time", "arguments": {"timezone": "Europe/Warsaw"}}]},
+         "expect": {"label": "one_off", "keep": []}},
+        {"event": {"role": "user", "content": "Thanks. By the way, we decided yesterday that the upload service stores original photos in S3-compatible object storage, not on the local disk of the API server."},
+         "expect": {"label": "kept", "keep": [{"id": "originals-object-storage", "kind": "decision", "match": ["s3|object storage"]}]}},
+        {"event": {"role": "assistant", "content": "Understood. I'll save that as a project decision so later sessions see it.",
+                   "tool_calls": [{"id": "call_4", "name": "remember", "arguments": {"record": {"kind": "decision", "content": "Original photos are stored in S3-compatible object storage."}, "sources": []}}]},
+         "expect": {"label": "narration", "keep": []}}
+      ]
+    },
+    {
+      "id": "agent-planning",
+      "client": "api",
+      "note": "Constraints and a task stated by the person, a finding reported by the assistant, and the assistant narrating its tool use.",
+      "events": [
+        {"event": {"role": "assistant", "content": "Reading the resume packet first.",
+                   "tool_calls": [{"id": "call_1", "name": "resume_context", "arguments": {}}]},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"role": "assistant", "content": "Packet read; sending the exact ACK with both readback entries set to null.",
+                   "tool_calls": [{"id": "call_2", "name": "ack_resume", "arguments": {"packet_id": "pkt_81c0", "packet_hash": "e04b19", "readback": {"plan": null, "task": null}}}]},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"role": "user", "content": "Before the beta, thumbnails must never be generated synchronously in the upload request. The upload endpoint has a 300 ms latency budget."},
+         "expect": {"label": "kept", "keep": [
+           {"id": "thumbnails-not-synchronous", "kind": "constraint", "match": ["thumbnail", "synchron|request|inline|asynchron|background"]},
+           {"id": "upload-latency-budget", "kind": "constraint", "match": ["300 ?ms"]}]}},
+        {"event": {"role": "assistant", "content": "Got it. Let me look at the current upload handler to see where thumbnails are made.",
+                   "tool_calls": [{"id": "call_3", "name": "read_file", "arguments": {"path": "src/upload/handler.py"}}]},
+         "expect": {"label": "narration", "keep": []}},
+        {"event": {"role": "assistant", "content": "In src/upload/handler.py the thumbnail is generated inline inside handle_upload(), so the upload request currently violates the new constraint. Moving thumbnail generation to the job queue would fix it."},
+         "expect": {"label": "kept", "keep": [{"id": "thumbnail-inline-today", "kind": "fact", "match": ["thumbnail", "inline|handle_upload|queue"]}]}},
+        {"event": {"role": "user", "content": "Yes. Add a task: move thumbnail generation to the background worker, with a test that the upload request returns before the thumbnail exists."},
+         "expect": {"label": "kept", "keep": [{"id": "task-thumbnail-worker", "kind": "task", "match": ["thumbnail", "worker|queue|background"]}]}},
+        {"event": {"role": "user", "content": "Can you show me the diff of the last commit?"},
+         "expect": {"label": "one_off", "keep": []}},
+        {"event": {"role": "assistant", "content": "Running git show --stat HEAD to display the last commit.",
+                   "tool_calls": [{"id": "call_4", "name": "run_command", "arguments": {"command": "git show --stat HEAD"}}]},
+         "expect": {"label": "narration", "keep": []}}
+      ]
+    },
+    {
+      "id": "agent-memory-project",
+      "client": "api",
+      "note": "A project about the resume protocol itself: protocol names are project knowledge here, so a filter on tool names would lose these records.",
+      "events": [
+        {"event": {"role": "assistant", "content": "Calling resume_context to read the packet before anything else.",
+                   "tool_calls": [{"id": "call_1", "name": "resume_context", "arguments": {}}]},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"role": "user", "content": "Decision for the server: resume_context must return the packet hash in every response, also for a partial packet, because clients need it to explain why no ACK is possible."},
+         "expect": {"label": "kept", "keep": [{"id": "resume-context-hash", "kind": "decision", "match": ["resume_context|packet", "hash"]}]}},
+        {"event": {"role": "user", "content": "We still need a test that ack_resume rejects a stale packet hash with a 409 response."},
+         "expect": {"label": "kept", "keep": [{"id": "task-ack-stale-hash", "kind": "task", "match": ["ack", "stale|409"]}]}},
+        {"event": {"role": "assistant", "content": "I'll search the tests for ack_resume first to see what is covered.",
+                   "tool_calls": [{"id": "call_2", "name": "search_code", "arguments": {"query": "ack_resume"}}]},
+         "expect": {"label": "narration", "keep": []}}
+      ]
+    },
+    {
+      "id": "agent-polish",
+      "client": "api",
+      "note": "A conversation in Polish: a one-off question, a request for this conversation and a real decision.",
+      "events": [
+        {"event": {"role": "assistant", "content": "Najpierw czytam pakiet wznowienia przez resume_context.",
+                   "tool_calls": [{"id": "call_1", "name": "resume_context", "arguments": {}}]},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"role": "user", "content": "Która jest teraz godzina w Tokio?"},
+         "expect": {"label": "one_off", "keep": []}},
+        {"event": {"role": "user", "content": "Ustaliliśmy, że publiczne API wersjonujemy w ścieżce (/v1/, /v2/), a nie w nagłówku Accept."},
+         "expect": {"label": "kept", "keep": [{"id": "api-version-in-path", "kind": "decision", "match": ["/v1|ścieżc|path"]}]}},
+        {"event": {"role": "user", "content": "Pokaż mi proszę listę plików w katalogu src/api."},
+         "expect": {"label": "one_off", "keep": []}},
+        {"event": {"role": "assistant", "content": "Sprawdzam zawartość katalogu src/api.",
+                   "tool_calls": [{"id": "call_2", "name": "list_files", "arguments": {"path": "src/api"}}]},
+         "expect": {"label": "narration", "keep": []}}
+      ]
+    },
+    {
+      "id": "agent-finding-with-action",
+      "client": "api",
+      "note": "The assistant reports a real finding in the same message in which it calls a tool.",
+      "events": [
+        {"event": {"role": "user", "content": "The nightly report job keeps sending yesterday's numbers. Find out why."},
+         "expect": {"label": "kept", "keep": [{"id": "nightly-report-bug", "kind": "task", "match": ["report", "yesterday|previous day"]}]}},
+        {"event": {"role": "assistant", "content": "Found it: the scheduler computes the report date in local time while the database stores timestamps in UTC, so after midnight UTC the job still selects the previous day. I'll open the scheduler to change the date calculation.",
+                   "tool_calls": [{"id": "call_1", "name": "read_file", "arguments": {"path": "src/reports/scheduler.py"}}]},
+         "expect": {"label": "kept", "keep": [{"id": "scheduler-local-time", "kind": "fact", "match": ["local time|utc"]}]}},
+        {"event": {"role": "user", "content": "From now on every date in the reports module is computed in UTC; never use local time there."},
+         "expect": {"label": "kept", "keep": [{"id": "reports-utc", "kind": "constraint", "match": ["utc"]}]}}
+      ]
+    },
+    {
+      "id": "claude-session",
+      "client": "claude",
+      "note": "Claude Code launched by Cairnmind: the launcher's first message, tool plumbing, a decision mixed with a request, and a one-off question.",
+      "events": [
+        {"event": {"type": "user", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:00:00Z",
+                   "message": {"role": "user", "content": "Cairnmind verified session 4c2b9e7f1a3d4e5f8a6b7c8d9e0f1a2b. First call the Cairnmind MCP tool resume_context and read the complete packet it returns. The returned packet is authoritative: if ready, call ack_resume with its exact ID/hash and active plan/task ID+version readback. The launcher prepared file is /home/dev/.local/share/cairnmind/runtime/packets/4c2b9e7f.json; use it as a fallback only when its packet ID/hash match the returned packet. If the returned packet has a different ID, use its current ID/hash and readback. If partial or unavailable, report its unknowns and do not attempt ACK, checkpoint or other shared-memory writes. Context delivery is not an ACK. Preserve native permissions."}},
+         "expect": {"label": "host", "keep": []}},
+        {"event": {"type": "assistant", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:00:04Z",
+                   "message": {"role": "assistant", "content": [
+                     {"type": "text", "text": "I'll read the resume packet first."},
+                     {"type": "tool_use", "id": "toolu_01", "name": "mcp__cairnmind__resume_context", "input": {}}]}},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"type": "user", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:00:05Z",
+                   "message": {"role": "user", "content": [
+                     {"type": "tool_result", "tool_use_id": "toolu_01", "content": "{\"status\": \"ready\", \"packet\": {\"id\": \"pkt_77d1\", \"hash\": \"b81f0c\"}}"}]}},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"type": "assistant", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:00:07Z",
+                   "message": {"role": "assistant", "content": [
+                     {"type": "tool_use", "id": "toolu_02", "name": "mcp__cairnmind__ack_resume", "input": {"packet_id": "pkt_77d1", "packet_hash": "b81f0c", "readback": {"plan": null, "task": null}}}]}},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"type": "user", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:01:00Z",
+                   "message": {"role": "user", "content": "We're switching database migrations from hand-written SQL files to Alembic, that's decided. Keep the old SQL files under migrations/legacy/ for reference. Please run the linter afterwards."}},
+         "expect": {"label": "kept", "keep": [
+           {"id": "migrations-alembic", "kind": "decision", "match": ["alembic"]},
+           {"id": "legacy-sql-kept", "kind": "constraint", "match": ["legacy"]}]}},
+        {"event": {"type": "assistant", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:04:00Z",
+                   "message": {"role": "assistant", "content": [
+                     {"type": "text", "text": "Done: I created alembic.ini, moved the 14 SQL files to migrations/legacy/ and I'm running the linter now."},
+                     {"type": "tool_use", "id": "toolu_03", "name": "Bash", "input": {"command": "ruff check ."}}]}},
+         "expect": {"label": "narration", "keep": []}},
+        {"event": {"type": "user", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:05:00Z",
+                   "message": {"role": "user", "content": "Is pytest-xdist installed here?"}},
+         "expect": {"label": "one_off", "keep": []}},
+        {"event": {"type": "assistant", "sessionId": "6a1d2c3e-0b4f-4e8a-9c7d-1f2e3a4b5c6d", "cwd": "/home/dev/tidepool", "timestamp": "2026-11-10T09:05:03Z",
+                   "message": {"role": "assistant", "content": [
+                     {"type": "text", "text": "Yes, pytest-xdist 3.6 is installed in the virtual environment."}]}},
+         "expect": {"label": "one_off", "keep": []}}
+      ]
+    },
+    {
+      "id": "codex-session",
+      "client": "codex",
+      "note": "Codex launched by Cairnmind: its environment message, the launcher's first message, tool plumbing and project knowledge.",
+      "events": [
+        {"event": {"timestamp": "2026-11-11T14:00:00Z", "type": "response_item",
+                   "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>\n  <cwd>/home/dev/tidepool</cwd>\n  <approval_policy>on-request</approval_policy>\n  <sandbox_mode>workspace-write</sandbox_mode>\n  <network_access>restricted</network_access>\n  <shell>bash</shell>\n</environment_context>"}]}},
+         "expect": {"label": "host", "keep": []}},
+        {"event": {"timestamp": "2026-11-11T14:00:00Z", "type": "response_item",
+                   "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Cairnmind verified session 9e8d7c6b5a4f4e3d2c1b0a9f8e7d6c5b. First call the Cairnmind MCP tool resume_context and read the complete packet it returns. The returned packet is authoritative: if ready, call ack_resume with its exact ID/hash and active plan/task ID+version readback. The launcher prepared file is /home/dev/.local/share/cairnmind/runtime/packets/9e8d7c6b.json; use it as a fallback only when its packet ID/hash match the returned packet. If the returned packet has a different ID, use its current ID/hash and readback. If partial or unavailable, report its unknowns and do not attempt ACK, checkpoint or other shared-memory writes. Context delivery is not an ACK. Preserve native permissions."}]}},
+         "expect": {"label": "host", "keep": []}},
+        {"event": {"timestamp": "2026-11-11T14:00:03Z", "type": "response_item",
+                   "payload": {"type": "function_call", "name": "mcp__cairnmind__resume_context", "arguments": "{}", "call_id": "call_a1"}},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"timestamp": "2026-11-11T14:00:06Z", "type": "response_item",
+                   "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "The resume packet is ready (pkt_5520). I acknowledged it with plan and task readback null, so shared-memory writes are allowed now."}]}},
+         "expect": {"label": "protocol", "keep": []}},
+        {"event": {"timestamp": "2026-11-11T14:02:00Z", "type": "response_item",
+                   "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "From now on the project uses ruff instead of flake8; I already removed the flake8 config. Run ruff on the src directory and fix what it reports."}]}},
+         "expect": {"label": "kept", "keep": [{"id": "ruff-instead-of-flake8", "kind": "decision", "match": ["ruff"]}]}},
+        {"event": {"timestamp": "2026-11-11T14:02:04Z", "type": "response_item",
+                   "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Running ruff check src now."}]}},
+         "expect": {"label": "narration", "keep": []}},
+        {"event": {"timestamp": "2026-11-11T14:06:00Z", "type": "response_item",
+                   "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Open question for the team: should the image resizer keep EXIF location data, or strip it on upload? Nobody has decided yet."}]}},
+         "expect": {"label": "kept", "keep": [{"id": "exif-question", "kind": "question", "match": ["exif|location"]}]}},
+        {"event": {"timestamp": "2026-11-11T14:07:00Z", "type": "response_item",
+                   "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What's the weather like in Berlin today?"}]}},
+         "expect": {"label": "one_off", "keep": []}}
+      ]
+    }
+  ]
+}
