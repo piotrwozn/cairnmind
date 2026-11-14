@@ -219,3 +219,19 @@ def test_toml_top_level_keys_and_invalid_files():
     assert {s["name"] for s in broken["symbols"]} == {"good", "t.later"}
     # A lock file in TOML syntax is not configuration: it stays text.
     assert analyze_code(Path("uv.lock"), 'version = 1\n')["language"] == "text"
+
+
+def test_a_deeply_nested_toml_value_is_reported_and_does_not_stop_the_parse():
+    # The standard parser recurses into arrays; a few KB of brackets must not raise.
+    deep = "first = 1\nvalue = " + "[" * 5000 + "]" * 5000 + "\n[t]\nlater = 2\n"
+    result = analyze_code(Path("deep.toml"), deep)
+    assert result["errors"] and "nested too deeply" in result["errors"][0]
+    assert {s["name"] for s in result["symbols"]} == {"first", "value", "t.later"}
+
+
+def test_a_parameter_records_the_columns_of_its_own_text():
+    line = 'def connect(host, port=7311, label="zażółć", timeout=5):\n    pass\n'
+    found = {s["member"]: s for s in analyze_code(Path("c.py"), line)["symbols"] if s["kind"] == "parameter"}
+    encoded = line.encode("utf-8")
+    texts = {name: encoded[s["column_start"]:s["column_end"]].decode() for name, s in found.items()}
+    assert texts == {"port": "port=7311", "label": 'label="zażółć"', "timeout": "timeout=5"}

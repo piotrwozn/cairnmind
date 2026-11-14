@@ -138,8 +138,9 @@ def _python_parameter_defaults(root: Any) -> list[dict[str, Any]]:
 
     A value written only as a default (``def connect(host, port=7311)``) has no other definition.
     ``owner`` is the function's bare name and ``member`` the parameter's, as for a class field; the
-    lines are those of the parameter. A default of None, a lambda's parameter and an unpacked
-    parameter are left out.
+    lines are those of the parameter, and ``column_start``/``column_end`` (UTF-8 byte offsets in
+    its first and last line) mark its own text on a line it shares with others. A default of
+    None, a lambda's parameter and an unpacked parameter are left out.
     """
     found: list[dict[str, Any]] = []
     for node in _walk(root):
@@ -156,7 +157,8 @@ def _python_parameter_defaults(root: Any) -> list[dict[str, Any]]:
                 continue
             member = _text(name)
             found.append({"name": f"{owner}.{member}", "kind": "parameter", "owner": owner, "member": member,
-                          "line_start": parameter.start_point.row + 1, "line_end": parameter.end_point.row + 1})
+                          "line_start": parameter.start_point.row + 1, "line_end": parameter.end_point.row + 1,
+                          "column_start": parameter.start_point.column, "column_end": parameter.end_point.column})
     return found
 
 
@@ -239,8 +241,12 @@ def _toml_keys(content: str) -> tuple[list[dict[str, Any]], list[str]]:
     errors: list[str] = []
     try:
         tomllib.loads(content)
-    except tomllib.TOMLDecodeError as exc:
+    except ValueError as exc:  # tomllib.TOMLDecodeError is one
         errors.append(f"Syntax error: {exc}")
+    except RecursionError:
+        # The standard parser recurses into arrays and inline tables; a value nested a few hundred
+        # levels deep in an untrusted file must not stop indexing. The line scan below is iterative.
+        errors.append("Syntax error: the file is nested too deeply to be read")
     lines = content.split("\n")
     symbols: list[dict[str, Any]] = []
     table: list[str] | None = []
