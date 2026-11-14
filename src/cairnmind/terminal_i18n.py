@@ -245,6 +245,7 @@ CATALOG = {
     "Review was not retried. The current version was reloaded.": "Ocena nie została ponowiona. Odczytano aktualną wersję.",
     "Memory updates": "Aktualizacje pamięci", "Account login": "Logowanie konta",
     "Memory acknowledged": "Pamięć potwierdzona", "Memory acknowledgement required": "Wymagane potwierdzenie pamięci",
+    "The session was stopped.": "Sesja została zatrzymana.",
     "Memory graph · Connecting…": "Graf pamięci · Łączenie…", "Memory graph": "Graf pamięci",
     "No nodes in this scope.": "Brak węzłów w tym zakresie.", "nodes": "węzłów", "relationships": "relacji",
     "paused": "pauza", "moving": "ruch", "n: next page": "n: następna strona", "limited view, g: groups": "ograniczony widok, g: grupy",

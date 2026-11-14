@@ -1218,10 +1218,9 @@ class SidebarApp(BasePanel):
         try:
             await self.load_state()
             runs = self.data.get("runs", [])
+            from .terminal_activity_data import run_is_live, session_label
             # The memory state comes before the folder, so a narrow list cuts the path, never the state.
-            choices = [(f"{r.get('client')} · {r.get('lifecycle', r.get('state'))} · " +
-                        self.t("Memory acknowledged" if r.get("memory", {}).get("acknowledged") else "Memory acknowledgement required")
-                        + f" · {r.get('worktree') or self.t('Account login')}", r["id"]) for r in runs]
+            choices = [(session_label(r, self.t), r["id"]) for r in runs]
             if not choices:
                 self.notice(self.t("Brak uruchomionych sesji."))
                 return
@@ -1229,7 +1228,9 @@ class SidebarApp(BasePanel):
             if not identifier:
                 return
             run = next(r for r in runs if r["id"] == identifier)
-            action = await self.push_screen_wait(ChoiceModal(self.t("Operacja na sesji"), [(self.t("Pokaż / dołącz bez nowego procesu"), "show"), (self.t("Przejmij sterowanie"), "takeover"), (self.t("Przerwij bieżącą operację"), "interrupt"), (self.t("Zatrzymaj proces"), "stop")] + ([(self.t("Wznów zapisaną sesję"), "resume"), (self.t("Nowa sesja z pamięcią projektu"), "new")] if run.get("project_id") else [])))
+            # An ended run has no process: stopping, interrupting or taking control of it is not offered.
+            live = [(self.t("Przejmij sterowanie"), "takeover"), (self.t("Przerwij bieżącą operację"), "interrupt"), (self.t("Zatrzymaj proces"), "stop")] if run_is_live(run) else []
+            action = await self.push_screen_wait(ChoiceModal(self.t("Operacja na sesji"), [(self.t("Pokaż / dołącz bez nowego procesu"), "show"), *live] + ([(self.t("Wznów zapisaną sesję"), "resume"), (self.t("Nowa sesja z pamięcią projektu"), "new")] if run.get("project_id") else [])))
             from . import workspace as manager
             if action == "show":
                 await asyncio.to_thread(manager.select_run, self.settings, identifier, self.workspace_id)
@@ -1237,6 +1238,7 @@ class SidebarApp(BasePanel):
                 await asyncio.to_thread(manager.take_control, self.settings, identifier, self.workspace_id)
             elif action == "stop":
                 await asyncio.to_thread(manager.stop_run, self.settings, identifier, run.get("generation"), self.workspace_id)
+                self.notice("The session was stopped.")
             elif action == "interrupt":
                 await self.request("POST", f"/api/client-runs/{identifier}/interrupt", json={"generation": run.get("generation")})
             elif action == "resume":
