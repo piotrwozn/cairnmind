@@ -205,6 +205,21 @@ def test_launch_is_idempotent_and_never_accepts_arbitrary_executable(cockpit):
     assert good.status_code == 200 and runtime.stopped == ["run-codex"]
 
 
+def test_a_run_the_runtime_does_not_know_is_not_found(cockpit, monkeypatch):
+    # #161: it was a 400, which `workspace stop --clients` could not tell from a refused stop.
+    from cairnmind.client_runtime import UnknownRun
+    settings, app, client, runtime, project, *_ = cockpit
+    login(app, client)
+
+    def unknown(identifier):
+        raise UnknownRun("Unknown native run")
+    monkeypatch.setattr(runtime, "get_run", unknown)
+    missing = client.get("/api/client-runs/forgotten")
+    assert missing.status_code == 404 and missing.json()["detail"] == "Unknown native run"
+    monkeypatch.setattr(runtime, "get_run", lambda identifier: (_ for _ in ()).throw(ValueError("Invalid native run ID")))
+    assert client.get("/api/client-runs/forgotten").status_code == 400  # any other refusal is unchanged
+
+
 def test_proxy_preserves_conflict_and_does_not_expose_token_or_recover_checks(cockpit):
     settings, app, client, runtime, project, requests, _ = cockpit
     headers = login(app, client)

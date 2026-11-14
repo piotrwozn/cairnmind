@@ -364,7 +364,7 @@ class ImpactView:
         if form is None:
             return
         if scope != self._scope_version or self.impact_key()[:2] != (project, worktree):
-            self.notice_for(about(project, worktree), self.t("Projekt zmienił się podczas oceny. Niczego nie zapisano."),
+            self.notice_for(about(project, worktree), self.t("The project changed during review. Nothing was saved."),
                             "warn")
             return
         note = str(form.get("note") or "").strip()
