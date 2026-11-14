@@ -648,7 +648,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pid = project(body.project)["id"]
         if body.preview:
             scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
-            return await asyncio.to_thread(Publisher(store).publish, pid, scope, preview=True)
+            return await asyncio.to_thread(Publisher(store).publish, pid, scope, preview=True,
+                                           new_package=body.new_package)
         scope, authorize = await asyncio.to_thread(
             memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
         return await asyncio.to_thread(Publisher(store).publish, pid, scope, authorize=authorize,
