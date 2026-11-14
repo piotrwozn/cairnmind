@@ -130,21 +130,95 @@ def test_one_project_is_measured_alone(tmp_path):
     assert collections["projects"]["rows"] == 1
     assert report["project"] == {"id": project["id"], "name": "demo"}
     assert all(row["project_id"] == project["id"] for row in report["vectors"]["types"])
+    # Rows that belong to no project are not shown as a measured zero.
+    for name in ("journal_state", "ingestion_inbox"):
+        assert collections[name] == {"name": name, "rows": None, "bytes": None, "sampled": False,
+                                     "store_wide": True}, name
+    assert not collections["sources"]["store_wide"]
+    assert re.search(r"journal_state\s+store-wide, not per project", report["text"])
+    whole = {row["name"]: row for row in measure(Store.open_readonly(store.settings))["collections"]}
+    assert whole["journal_state"]["rows"] == 1 and not whole["journal_state"]["store_wide"]
+
+
+def test_sampling_covers_the_whole_collection_whatever_its_ids_look_like(tmp_path, monkeypatch):
+    import cairnmind.store_size as store_size
+    store, project, _ = filled(tmp_path, notes=400)
+    # Rows of uneven length, so that a sample from one end of a collection would be far off.
+    for number in range(300):
+        store.snapshot(project["id"], f"manual://u{number:04d}", "y" * (100, 9000, 2000, 500, 6000)[number % 5],
+                       "manual")
+    monkeypatch.setattr(store_size, "EXACT_ROWS", 50)
+    reader = Store.open_readonly(store.settings)
+    # Journal ids are "<epoch>:<seq>" with one epoch: not spread over any key space.
+    rows = direct(store, "journal_events")[0]
+    sample = store_size._Collection(reader, "journal_events").sample(rows, "seq, ")
+    assert len(sample) == len({row["rid"] for row in sample}) == store_size.SAMPLE_POINTS * store_size.SAMPLE_WINDOW
+    first = min(row["seq"] for row in store.query("SELECT seq FROM journal_events"))
+    seqs = sorted(row["seq"] - first for row in sample)
+    assert seqs[0] < rows / 8 and seqs[-1] > rows * 7 / 8, (rows, seqs[0], seqs[-1])
+    report = store_size.measure(reader)
+    collections = {row["name"]: row for row in report["collections"]}
+    for name in ("journal_events", "sources"):
+        count, size = direct(store, name)
+        assert collections[name]["sampled"] is True and collections[name]["rows"] == count, name
+        print(f"{name}: estimate {collections[name]['bytes']} against {size}")
+        assert abs(collections[name]["bytes"] - size) / size < 0.03, name
+
+
+def test_chunks_of_a_source_that_is_not_found_are_shown_as_such(tmp_path, monkeypatch):
+    import cairnmind.store_size as store_size
+    store, project, _ = filled(tmp_path)
+    note = store.query("SELECT id FROM sources WHERE uri='manual://note'")[0]["id"]
+    chunks = direct(store, "chunks", " WHERE source_id=:s", {"s": note})
+    original = store_size._source_kinds
+
+    def without_note(*args):  # as if the note had been removed between the two queries
+        kinds = original(*args)
+        kinds.pop(note)
+        return kinds
+
+    monkeypatch.setattr(store_size, "_source_kinds", without_note)
+    report = store_size.measure(Store.open_readonly(store.settings))
+    missing = [row for row in report["chunks"]["kinds"] if not row["source_found"]]
+    assert missing == [{"kind": None, "source_found": False, "current": {"rows": chunks[0], "bytes": chunks[1]},
+                        "replaced": {"rows": 0, "bytes": 0}}]
+    assert report["chunks"]["kinds"][-1] is missing[0]
+    assert "(source not found)" in report["text"]
+
+
+def test_a_vector_type_name_that_is_not_an_identifier_is_not_queried():
+    from cairnmind.store_size import _vector_types
+
+    class Schema:
+        def query(self, sql, params=None):
+            if "schema:types" in sql:
+                return [{"name": "vector_ab12"}, {"name": "vector_x` FROM sources --"}, {"name": "vector_indexes"}]
+            return [{"type_name": "vector_ab12", "namespace": "n", "dimension": 4, "project_id": "p"}]
+
+    assert [row["name"] for row in _vector_types(Schema(), None)] == ["vector_ab12"]
 
 
 def test_above_the_exact_limit_bytes_are_sampled_within_one_percent(tmp_path, monkeypatch):
     import cairnmind.store_size as store_size
     store, project, _ = filled(tmp_path, notes=400)
     monkeypatch.setattr(store_size, "EXACT_ROWS", 50)
-    report = store_size.measure(Store.open_readonly(store.settings), project["id"])
+    reader = Store.open_readonly(store.settings)
+    report = store_size.measure(reader)
     sources = next(row for row in report["collections"] if row["name"] == "sources")
-    rows, size = direct(store, "sources", " WHERE project_id=:p", {"p": project["id"]})
+    rows, size = direct(store, "sources")
     assert sources["sampled"] is True and sources["rows"] == rows
     assert abs(sources["bytes"] - size) / size < 0.01
     manual = next(row for row in report["sources"]["kinds"] if row["kind"] == "manual")
-    expected = direct(store, "sources", " WHERE project_id=:p AND kind='manual'", {"p": project["id"]})
+    expected = direct(store, "sources", " WHERE kind='manual' AND is_current=true")
     assert manual["current"]["rows"] == expected[0] and report["sources"]["sampled"] is True
     assert abs(manual["current"]["bytes"] - expected[1]) / expected[1] < 0.01
+    # One project's rows are summed exactly even above the limit: through the project index a sample
+    # would cost more than the sum.
+    alone = store_size.measure(reader, project["id"])
+    sources = next(row for row in alone["collections"] if row["name"] == "sources")
+    assert (sources["rows"], sources["bytes"], sources["sampled"]) == (
+        *direct(store, "sources", " WHERE project_id=:p", {"p": project["id"]}), False)
+    assert alone["sources"]["sampled"] is False
 
 
 def sql_sent(monkeypatch):

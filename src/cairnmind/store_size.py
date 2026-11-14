@@ -10,10 +10,18 @@ What it costs, so that a large store is not slow to measure:
   replaced, state) in one GROUP BY pass each, which the engine runs without returning any text.
 - Bytes are the length of each row's JSON form, measured in the engine (``@this.toJSON().length()``), so
   the text is never sent here. For a collection of at most EXACT_ROWS rows the lengths are summed exactly.
-  Above that, SAMPLE_POINTS windows of SAMPLE_WINDOW rows are read from random points of the unique id
-  index and the mean is multiplied by the exact count; such figures are marked ``sampled``.
+  Above that, SAMPLE_POINTS windows of SAMPLE_WINDOW rows are read at random positions, one in each
+  equal part of the collection (``SKIP``/``LIMIT`` in storage order, so the windows do not depend on how
+  ids look), and the mean is multiplied by the exact count; such figures are marked ``sampled``. The engine
+  measures only the rows of a window, not the rows it skips. Many small windows rather than a few large
+  ones, because rows written together (one bucket, one ingestion) tend to be alike.
+- One project's rows are always summed exactly: the engine reaches them through the project index, where a
+  window at an offset costs about as much as reading every row up to it, so sampling would cost more.
 - Chunks are grouped by the kind of their source, which needs one row per source: its id and kind
-  (sources are paged by id) and its chunk count. These rows carry no text.
+  (sources are paged by id) and its chunk count. These rows carry no text; their number grows with the
+  number of sources.
+- The figures are not one snapshot: each is its own query, so a row the service writes meanwhile can be
+  counted in one figure and not in another. Chunks whose source is not found are shown as such.
 - Disk use is a walk over the data directory that reads file sizes only.
 """
 from __future__ import annotations
@@ -25,20 +33,20 @@ import time
 
 from .brief import _line
 from .config import BACKUP_SUFFIXES
+from .sql import IDENTIFIER, quote_name
 from .terminal_safe import safe_text
 
 EXACT_ROWS = 1000
-SAMPLE_POINTS = 8
-SAMPLE_WINDOW = 32
+SAMPLE_POINTS = 32
+SAMPLE_WINDOW = 8
 KIND_PAGE = 10000
 # A fixed seed: the same store gives the same figures each time it is measured.
 SEED = 184
 STATES = ("current", "replaced")
+# Collections whose rows belong to no project: for one project they are shown as store-wide, not as 0.
+STORE_WIDE = ("journal_state", "ingestion_inbox")
 _LENGTH = "@this.toJSON().length()"
-
-
-def _quote(name: str) -> str:
-    return f"`{name}`"
+_MISSING = object()  # the kind of chunks whose source is not found
 
 
 class _Collection:
@@ -52,7 +60,7 @@ class _Collection:
     def query(self, select, where="", params=None, tail=""):
         # The caller's condition (a range of ids) comes first: the engine then walks the id index.
         condition = " AND ".join(part for part in (where, self.where) if part)
-        return self.store.query(f"SELECT {select} FROM {_quote(self.name)}{' WHERE ' if condition else ''}"
+        return self.store.query(f"SELECT {select} FROM {quote_name(self.name)}{' WHERE ' if condition else ''}"
                                 f"{condition}{tail}",
                                 {**self.params, **(params or {})})
 
@@ -64,15 +72,18 @@ class _Collection:
         found = self.query(f"sum({_LENGTH}) AS b")
         return int(found[0].get("b") or 0) if found else 0
 
-    def sample(self, fields=""):
-        """Rows of up to SAMPLE_POINTS windows from random points of the id index, each with its length."""
+    def sample(self, rows: int, fields=""):
+        """Up to SAMPLE_POINTS windows of SAMPLE_WINDOW rows, one at a random position in each equal part of
+        the ``rows`` rows, each row with its length. Positions are offsets, so the windows cover the whole
+        collection whatever its ids look like."""
         generator, seen, sample = random.Random(SEED), set(), []
-        for _ in range(SAMPLE_POINTS):
-            start = f"{generator.getrandbits(32):08x}"
-            for row in self.query(f"id, {fields}{_LENGTH} AS b", "id >= :origin", {"origin": start},
-                                  f" ORDER BY id LIMIT {SAMPLE_WINDOW}"):
-                if row.get("id") not in seen:
-                    seen.add(row.get("id"))
+        part = rows / SAMPLE_POINTS
+        for point in range(SAMPLE_POINTS):
+            offset = int(point * part + generator.random() * max(0.0, part - SAMPLE_WINDOW))
+            for row in self.query(f"@rid AS rid, {fields}{_LENGTH} AS b",
+                                  tail=f" SKIP {offset} LIMIT {SAMPLE_WINDOW}"):
+                if row.get("rid") not in seen:
+                    seen.add(row.get("rid"))
                     sample.append(row)
         return sample
 
@@ -80,9 +91,9 @@ class _Collection:
 def _measure(collection, fields=""):
     """(rows, bytes, sampled, sample) of a collection; the sample is empty when the bytes are exact."""
     rows = collection.rows()
-    if rows <= EXACT_ROWS:
+    if rows <= EXACT_ROWS or collection.project_id:
         return rows, collection.exact_bytes() if rows else 0, False, []
-    sample = collection.sample(fields)
+    sample = collection.sample(rows, fields)
     if not sample:
         return rows, None, True, []
     return rows, round(sum(int(row.get("b") or 0) for row in sample) / len(sample) * rows), True, sample
@@ -105,11 +116,17 @@ def _state(value) -> str:
     return "current" if value is True else "replaced"
 
 
-def _kinds(groups):
-    """{(kind, state): {rows, bytes}} as a list of kinds, each with its current and replaced rows."""
-    kinds = sorted({kind for kind, _ in groups}, key=lambda kind: (str(kind)))
-    return [{"kind": kind, **{state: groups.get((kind, state), {"rows": 0, "bytes": 0}) for state in STATES}}
-            for kind in kinds]
+def _kinds(groups, found=False):
+    """{(kind, state): {rows, bytes}} as a list of kinds, each with its current and replaced rows.
+
+    With ``found`` each entry says whether its source was found; chunks of a missing source have kind None."""
+    listed = []
+    for kind in sorted({kind for kind, _ in groups}, key=lambda kind: (kind is _MISSING, str(kind))):
+        entry = {"kind": None if kind is _MISSING else kind}
+        if found:
+            entry["source_found"] = kind is not _MISSING
+        listed.append({**entry, **{state: groups.get((kind, state), {"rows": 0, "bytes": 0}) for state in STATES}})
+    return listed
 
 
 def _sources(store, project_id):
@@ -139,18 +156,22 @@ def _source_kinds(store, project_id):
 def _chunks(store, project_id):
     collection = _Collection(store, "chunks", project_id)
     rows, size, sampled, sample = _measure(collection, "source_id, is_current, ")
-    kinds = _source_kinds(store, project_id)
     select = "source_id, is_current, count(*) AS n" + ("" if sampled else f", sum({_LENGTH}) AS b")
+    # The chunk groups first, then the kinds: a source written in between is then only among the kinds.
+    per_source = collection.query(select, tail=" GROUP BY source_id, is_current")
+    kinds = _source_kinds(store, project_id)
+
+    def key(row):
+        return kinds.get(row.get("source_id"), _MISSING), _state(row.get("is_current"))
+
     groups = {}
-    for row in collection.query(select, tail=" GROUP BY source_id, is_current"):
-        group = groups.setdefault((kinds.get(row.get("source_id")), _state(row.get("is_current"))),
-                                  {"rows": 0, "bytes": 0})
+    for row in per_source:
+        group = groups.setdefault(key(row), {"rows": 0, "bytes": 0})
         group["rows"] += int(row.get("n") or 0)
         group["bytes"] += int(row.get("b") or 0)
     if sampled:
-        _estimate(groups, sample, lambda row: (kinds.get(row.get("source_id")), _state(row.get("is_current"))),
-                  rows, size)
-    return (rows, size, sampled), {"sampled": sampled, "kinds": _kinds(groups)}
+        _estimate(groups, sample, key, rows, size)
+    return (rows, size, sampled), {"sampled": sampled, "kinds": _kinds(groups, found=True)}
 
 
 def _vector_types(store, project_id):
@@ -160,8 +181,10 @@ def _vector_types(store, project_id):
     from .store import EXPORT_TYPES
     registry = {row.get("type_name"): row for row in store.query(
         "SELECT type_name, namespace, dimension, project_id FROM vector_indexes")}
+    # A name that is not a plain identifier is not one the product made, and is not queried.
     names = sorted(str(row.get("name")) for row in store.query("SELECT name FROM schema:types")
-                   if str(row.get("name", "")).startswith("vector_") and row.get("name") not in EXPORT_TYPES)
+                   if str(row.get("name", "")).startswith("vector_") and row.get("name") not in EXPORT_TYPES
+                   and IDENTIFIER.fullmatch(str(row.get("name"))))
     found = []
     for name in names:
         entry = registry.get(name) or {}
@@ -177,6 +200,9 @@ def _collections(store, project_id):
     measured = {}
     for name in EXPORT_TYPES:
         if name in ("sources", "chunks"):
+            continue
+        if project_id and name in STORE_WIDE:
+            measured[name] = (None, None, False)
             continue
         key = "id" if name == "projects" else "project_id"
         measured[name] = _measure(_Collection(store, name, project_id, key))[:3]
@@ -263,7 +289,8 @@ def measure(store, project_id: str | None = None) -> dict:
         "method": {"exact_rows": EXACT_ROWS, "sample_rows": SAMPLE_POINTS * SAMPLE_WINDOW,
                    "bytes": "length of each row's JSON form in the engine; equal to UTF-8 bytes for ASCII text"},
         "collections": [{"name": name, "rows": measured[name][0], "bytes": measured[name][1],
-                         "sampled": measured[name][2]} for name in order],
+                         "sampled": measured[name][2], "store_wide": bool(project_id) and name in STORE_WIDE}
+                        for name in order],
         "sources": sources, "chunks": chunks,
         "vectors": {"types": vectors,
                     "namespaces": sorted(namespaces.values(), key=lambda row: str(row["namespace"]))},
@@ -290,6 +317,10 @@ def _name(value, limit=40) -> str:
     return "(none)" if value is None else _line(value, limit) or "(blank)"
 
 
+def _kind(row) -> str:
+    return "(source not found)" if row.get("source_found") is False else _name(row["kind"])
+
+
 def render(report) -> str:
     """The report for a person: counts and sizes only, with every name from the store made safe."""
     project = report["project"]
@@ -297,11 +328,12 @@ def render(report) -> str:
              f"Bytes are approximate ({report['method']['bytes']}); ~ marks a figure estimated from "
              f"{report['method']['sample_rows']} sampled rows.", "", "Collections"]
     width = max(len(row["name"]) for row in report["collections"])
-    lines += [f"  {row['name']:<{width}}  {row['rows']:>10}  {_size(row['bytes'], row['sampled']):>12}"
+    lines += [f"  {row['name']:<{width}}  store-wide, not per project" if row["store_wide"] else
+              f"  {row['name']:<{width}}  {row['rows']:>10}  {_size(row['bytes'], row['sampled']):>12}"
               for row in report["collections"]]
     for title, part in (("Sources by kind", report["sources"]), ("Chunks by source kind", report["chunks"])):
         lines += ["", f"{title}: current / replaced"]
-        lines += [f"  {_name(row['kind']):<20}  {row['current']['rows']:>8} "
+        lines += [f"  {_kind(row):<20}  {row['current']['rows']:>8} "
                   f"{_size(row['current']['bytes'], part['sampled']):>11}  /  {row['replaced']['rows']:>8} "
                   f"{_size(row['replaced']['bytes'], part['sampled']):>11}" for row in part["kinds"]] or ["  none"]
     lines += ["", "Vectors by namespace"]
