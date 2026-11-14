@@ -57,6 +57,25 @@ def register(memory_app, initialized):
                        json={"path": str(selected), "project": project, "dry_run": dry_run, "bind": bind,
                              "take_published": list(take_published or [])}))
 
+    @memory_app.command("import-commit")
+    def memory_import_commit(ctx: typer.Context, revision: str,
+                             project: Annotated[str, typer.Option("--project")],
+                             worktree: Path | None = None, dry_run: bool = False,
+                             bind: Annotated[bool, typer.Option(
+                                 "--bind", help="Replace the project's publication identity with the commit's.")] = False):
+        """Import the published memory of a commit (the main branch after a merge) and re-check every quoted
+        passage against that commit's code: still there anchors a record, gone leaves it orphaned. Nothing
+        imported is verified. Reads Git only; writes nothing to the repository."""
+        from cairnmind.cli import output, request
+        from cairnmind.config import Settings
+        if revision.startswith("-"):
+            raise typer.BadParameter("REVISION must be a commit name such as HEAD, a branch or a commit ID")
+        if not dry_run:
+            ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        output(request(ctx.obj, "POST", "/memory/import-commit", start_service=not dry_run,
+                       json={"revision": revision, "project": project, "dry_run": dry_run, "bind": bind,
+                             "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
+
     @memory_app.command("show-published")
     def memory_show_published(ctx: typer.Context, path: Path,
                               kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,

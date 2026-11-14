@@ -11,7 +11,7 @@ content. Nothing imported is verified, and no review is written as this machine'
 from __future__ import annotations
 
 from .memory_published import version_projection
-from .memory_published_check import check_directory, record_row, stub_row
+from .memory_published_check import check_directory, check_files, record_row, stub_row
 from .memory_published_format import J, canonical_uuid, projection, reviewed_by, same, sha256_text
 from .sql import clean_row, evidence_time, insert_document, json_text, one_row, update_document, utc_now
 
@@ -54,10 +54,13 @@ class PublishedImporter:
     def __init__(self, store):
         self.store = store
 
-    def import_published(self, directory, project_id, *, dry_run=False, bind=False, take_published=(), authorize=None):
+    def import_published(self, directory, project_id, *, dry_run=False, bind=False, take_published=(), authorize=None,
+                         after=None):
+        """`directory` is a path or a {relative path: bytes} map (a commit read from Git, #172). `after(tx, tree,
+        result)` runs in the same transaction once the tree is applied, before a dry run is rolled back."""
         from .memory import MemoryConflict
         from .memory_published import _listing
-        tree, errors = check_directory(directory)
+        tree, errors = check_files(directory) if isinstance(directory, dict) else check_directory(directory)
         if errors:
             raise MemoryConflict("The published memory was refused: " + _listing(errors))
         take = set(take_published or ())
@@ -73,6 +76,8 @@ class PublishedImporter:
                 if authorize is not None:
                     authorize()
                 self._apply(tx, tree, project_id, bind, take, result)
+                if after is not None:
+                    after(tx, tree, result)
                 if dry_run:
                     raise _DryRun(result)
         except _DryRun as done:

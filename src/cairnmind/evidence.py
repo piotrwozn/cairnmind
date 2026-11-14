@@ -17,7 +17,9 @@ go stale, change the portable state hash and travel wrongly to another machine.
 - ``unverified``: the record rests on file snapshots imported from another machine,
   and the local files have not been indexed yet, so nothing can be said; or it rests only on
   sources imported from a published memory directory (``unverified_by: published_elsewhere``),
-  which were seen on another machine and never here.
+  which were seen on another machine and never here. Once `memory import-commit` compared such a
+  file source with the code of a commit (#172), it stands or is gone like a local one: anchored when
+  the quoted passage (or, without one, the same content) is there, orphaned when it is not.
 - ``degraded``: an external client's session (whose conversation Cairnmind cannot read)
   wrote the record, or the record rests only on sources such a session wrote; or the built-in
   agent wrote it, or the text it rests on, after a third-party MCP tool result in its session
@@ -141,7 +143,7 @@ def evidence_states(store, project_id, records, *, quotes=True):
     for record in records:
         cited = [source_id for source_id in dict.fromkeys(record.get("source_ids") or []) if isinstance(source_id, str)]
         counts = {"current": 0, "replaced": 0, "gone": 0, "pending": 0}
-        replaced, external, third_party, published = [], 0, 0, 0
+        replaced, external, third_party, published, compared, statements = [], 0, 0, 0, 0, 0
         for source_id in cited:
             source = sources.get(source_id)
             if source is not None and _is_audit(source):
@@ -154,17 +156,22 @@ def evidence_states(store, project_id, records, *, quotes=True):
                 continue
             if source is not None and source.get("kind") == "published":
                 # A source imported from a published directory (#170) was seen elsewhere, not here: only a
-                # re-check against local files (#172) could anchor it. It never stands on its own.
-                published += 1
-                verdict, replacement = "pending", None
+                # re-check against the code of an imported commit (#172) can anchor it.
+                verdict, replacement = published_verdict(_metadata(source), _metadata(record).get("evidence")), None
+                published += verdict == "pending"
+                compared += verdict != "pending"
+                statements += verdict == "pending" and not _published_file(_metadata(source))
             else:
                 verdict, replacement = (("gone", None) if source is None else verdicts.get(source_id, ("current", None)))
             counts[verdict] += 1
             if verdict == "replaced":
                 replaced.append((source_id, replacement))
+        # A statement seen elsewhere (a conversation, a note) can never be compared; once an imported file
+        # source was compared with a commit's code (#172), such statements no longer hold the record back.
+        pending = counts["pending"] - (statements if compared else 0)
         state = ("degraded" if degraded_origin(_metadata(record))
                  else "anchored" if counts["current"] else "evidence_replaced" if counts["replaced"]
-                 else "unverified" if counts["pending"] else "degraded" if external else "orphaned")
+                 else "unverified" if pending else "degraded" if external else "orphaned")
         quote = _metadata(record).get("evidence")
         survives = None
         if quotes and state == "evidence_replaced" and isinstance(quote, str) and quote.strip():
@@ -184,6 +191,29 @@ def evidence_states(store, project_id, records, *, quotes=True):
             # Only for this cause, so every other result stays exactly what it was.
             result[record["id"]]["degraded_by"] = "third_party_tool"
     return result
+
+
+def _published_file(metadata):
+    reference = metadata.get("published") if isinstance(metadata, dict) else None
+    return isinstance(reference, dict) and reference.get("kind") in _FILE_KINDS
+
+
+def published_verdict(metadata, quote):
+    """The verdict on an imported source stub (#172): pending until `memory import-commit` compared it with the
+    code of a commit. Then the record's quoted passage decides when it was compared (still there: current;
+    gone: gone); without one, the file decides (same content: current; changed: replaced; gone: gone)."""
+    checked = metadata.get("rechecked") if isinstance(metadata, dict) else None
+    if not isinstance(checked, dict):
+        return "pending"
+    if checked.get("file") == "gone":
+        return "gone"
+    quotes = checked.get("quotes") if isinstance(checked.get("quotes"), dict) else {}
+    if isinstance(quote, str) and quote.strip():
+        from cairnmind.memory_published_format import sha256_text
+        found = quotes.get(sha256_text(quote.replace("\r\n", "\n")))
+        if isinstance(found, bool):
+            return "current" if found else "gone"
+    return {"same": "current", "changed": "replaced"}.get(checked.get("file"), "pending")
 
 
 THIRD_PARTY_WRITTEN = ("Written after a third-party tool result in a built-in agent session, or resting only "
