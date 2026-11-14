@@ -76,7 +76,7 @@ cairnmind models set --role embedding --provider openai_compatible --base-url ht
 # a model server in the company network, chat only, key in an environment variable
 cairnmind models set --role chat --provider openai_compatible --base-url https://models.example.com/v1 \
   --model qwen3-32b --credential-ref env:MODELS_API_KEY --allow-remote
-# back to the local Ollama
+# back to the local Ollama (the one at ollama_url in the settings)
 cairnmind models set --role chat --provider ollama --model qwen3.5:9b
 ```
 
@@ -86,10 +86,10 @@ cairnmind models set --role chat --provider ollama --model qwen3.5:9b
 - Before saving, the command makes one test call: a short chat request with a JSON schema, or one embedding, whose dimension it reports. Nothing is saved when the test fails. The test sends only a fixed probe text.
 - The same transport rules as for coding connections apply: HTTPS unless the server is this computer, no key or password in the address. A key is named by `--credential-ref`, `env:NAME` or `profile:ID`, never typed into the command. The knowledge service is a separate process: an `env:` variable must be visible to it, and a `profile:` key must be saved on this computer (**Remember on this computer**); a key kept only for the workspace session cannot reach it.
 - **A server on another computer receives memory content**: source text, conversation transcripts, records and your questions. Cairnmind refuses such a server unless you pass `--allow-remote`. `cairnmind doctor` shows, under `memory_models`, the server, the model, whether it answers, and where each role's content is sent.
-- The service reads these settings when it starts: stop it and start Cairnmind again after a change.
-- **Changing the embedding model** changes the vectors. Vectors of different models are never mixed: each is stored under the model's identity and its dimension, and search uses only the current model's vectors. Run `cairnmind rebuild-vectors PROJECT` for each project after the change; until the new vectors exist, search falls back to full-text search. A running service also queues missing vectors for the current model on its own, as it does after `models pull`. A model on an OpenAI-compatible server reports no digest, so its identity is its name and server: weights replaced behind the same name are not detected.
+- `models set` changes only the two settings of that role in `config.json`; engine settings given by environment variables stay temporary. The service reads these settings when it starts: stop it and start Cairnmind again after a change. When the two roles are on different servers and one is down, the background work of the other role goes on.
+- **Changing the embedding model** changes the vectors. Vectors of different models are kept apart: each is stored under the model's identity and its dimension, and search uses only the current model's vectors. Run `cairnmind rebuild-vectors PROJECT` for each project after the change; until the new vectors exist, search falls back to full-text search. A running service also queues missing vectors for the current model on its own, as it does after `models pull`. A model on an OpenAI-compatible server reports no digest, so its identity is its name and server: other weights served under the same name (for example another quantization loaded under the same id) are not detected, and if their dimension is the same, their vectors are searched together with the earlier ones. After replacing a model behind the same name on such a server, run `rebuild-vectors`.
 - **Changing only the chat model** needs no rebuild.
-- A pair of models is **evaluated** once `cairnmind eval run` and `cairnmind eval memory` have both passed with exactly those models (see [EVALUATION.md](EVALUATION.md)). Until then, with any models other than the release's, answers carry `"model_evaluation": "unevaluated"` in their diagnostics, and `doctor` shows `"evaluated": false`. The label informs; it does not block answers.
+- A pair of models is **evaluated** once `cairnmind eval run` and `cairnmind eval memory` have both passed with exactly those models and the same setup: each role's server, the chat context window and the reasoning effort (see [EVALUATION.md](EVALUATION.md)). Until then, with any models other than the release's, answers carry `"model_evaluation": "unevaluated"` in their diagnostics, and `doctor` shows `"evaluated": false`. The label informs; it does not block answers.
 
 `cairnmind models pull` downloads only the models that run on the local Ollama.
 
