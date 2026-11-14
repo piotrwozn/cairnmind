@@ -130,3 +130,27 @@ def test_every_command_the_menu_lists_is_accepted_by_the_workspace_state(tmp_pat
             continue
         request = menu_request(tmp_path / row[3], row)
         assert request["action"] == row[3] and request["target_role"] == "sidebar", row
+
+
+def test_ui_command_option_takes_every_command_of_the_menu_and_of_the_state(tmp_path, monkeypatch):
+    """`--ui-command` used to list eight of the twelve commands, so `ask`, `brief`, `next_stage` and `notices`
+    worked from the menu and were refused on the command line."""
+    import sys
+
+    from cairnmind import workspace
+    from cairnmind.terminal_commands import COMMANDS
+    from cairnmind.workspace_state import UI_COMMANDS
+
+    assert {row[3] for row in COMMANDS if row[2] == "command"} <= set(UI_COMMANDS)
+    assert len(UI_COMMANDS) == len(set(UI_COMMANDS))
+    for action in UI_COMMANDS:
+        calls = []
+        monkeypatch.setattr(workspace.WorkspaceManager, "request_command", lambda self, value: calls.append(value))
+        monkeypatch.setattr(sys, "argv", ["workspace", "--data-dir", str(tmp_path / "data"), "--ui-command", action])
+        workspace.main()
+        assert calls == [action]
+        state = WorkspaceState(Settings(data_dir=tmp_path / "state"))
+        state.update({"command_request": {"id": "one", "action": action, "target_role": "sidebar"}})
+    monkeypatch.setattr(sys, "argv", ["workspace", "--data-dir", str(tmp_path / "data"), "--ui-command", "no_such"])
+    with pytest.raises(SystemExit):
+        workspace.main()
