@@ -479,6 +479,7 @@ class AgentEngine:
                 # Never let the model acknowledge a hash after silently
                 # changing the authoritative bytes it was supposed to read.
                 self._last_packet = None
+                self._acknowledged, self._acked_packet = False, None  # a kept ACK never survives this refusal
                 self._memory_partial = {"status": "unavailable", "unknowns": [
                     "The authoritative packet contains credential material; it was not delivered or acknowledged."]}
                 return self._error("credential_in_packet", **self._memory_partial)

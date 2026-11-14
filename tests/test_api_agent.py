@@ -769,3 +769,26 @@ async def test_a_changed_packet_still_needs_a_new_ack(setup):
     result = await agent.turn("Check the plan")
     assert result["status"] == "resume_required"
     assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
+
+
+@pytest.mark.asyncio
+async def test_a_kept_ack_ends_when_the_same_packet_is_refused_for_credential_material(setup):
+    # #157 review: the kept ACK outlived credential_in_packet, and the next turn stopped as partial at once.
+    memory = Memory()
+
+    def leaked(messages, tools):
+        memory.packet = {**memory.packet, "records": [{"content": "Leaked sk-sensitive-packet"}]}
+        return reply(call("resume_context"))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        leaked, reply(text="Read the packet again."))
+    agent = engine(setup, provider, memory, key="sk-sensitive-packet")
+    first = await agent.turn("Check the plan")
+    assert first["status"] == "partial" and tools_results(agent)[-1]["error_code"] == "credential_in_packet"
+    assert agent._acknowledged is False
+    asked = len(provider.requests)
+    second = await agent.turn("Continue")
+    assert len(provider.requests) == asked + 1  # the model is asked again instead of a stop before it
+    assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
+    assert second["status"] == "resume_required"
