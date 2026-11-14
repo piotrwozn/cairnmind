@@ -9,6 +9,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
 from .cockpit_state import CockpitState
+from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
 
@@ -171,8 +172,13 @@ def ask_summary(result, translate) -> str:
     """Readable view of an /ask result: answer, cited quotes, unknowns and coverage."""
     if not isinstance(result, dict):
         return translate("The memory service returned no answer.")
-    lines = [translate("Status") + ": " + str(result.get("status", "unknown")), "",
-             str(result.get("answer") or translate("No verified answer.")).strip()]
+    status = str(result.get("status", "unknown"))
+    answer = str(result.get("answer") or translate("No verified answer.")).strip()
+    if status != "complete":
+        # Not a verified answer: the agent wrote one of its fixed sentences (or kept the model's text,
+        # which fixed_message leaves exactly as it is).
+        answer = fixed_message(answer, translate)
+    lines = [translate("Status") + ": " + translate(ASK_STATUS.get(status, status)), "", answer]
     sources = [source for source in result.get("sources", []) if isinstance(source, dict)][:8]
     if sources:
         lines += ["", translate("Sources") + ":"]
@@ -182,7 +188,7 @@ def ask_summary(result, translate) -> str:
                 where += f" ({source['line_start']}-{source.get('line_end', source['line_start'])})"
             quote = " ".join(str(source.get("quote", "")).split())
             lines.append(f"- {where}" + (f': "{quote[:240]}"' if quote else ""))
-    unknowns = [str(item) for item in result.get("unknowns", [])][:8]
+    unknowns = [fixed_message(item, translate) for item in result.get("unknowns", [])][:8]
     if unknowns:
         lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]
     coverage = result.get("coverage")

@@ -1,6 +1,8 @@
 """Small explicit terminal catalog. User content and API identifiers are never translated."""
 from __future__ import annotations
 
+from .terminal_i18n_messages import MESSAGES
+
 
 CATALOG = {
     "Invalid assistant selections": "Niepoprawna lista wyborów asystenta",
@@ -567,6 +569,7 @@ CATALOG.update({
         "XDG_DATA_HOME. Serwer, którego program, argument lub wartość wskazuje ścieżkę w katalogu tego "
         "projektu, nie zostanie uruchomiony.",
 })
+CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

@@ -811,22 +811,23 @@ class KnowledgeAgent:
                 except (ValueError, OSError):
                     current = {}
                 if current.get("status") != "fresh" or set(current.get("run_ids", [])) != set(check["run_ids"]):
-                    return self._result("partial", "Stan weryfikacji zmienił się podczas odpowiedzi; odczytaj go ponownie.",
-                                        evidence, ["Nie można potwierdzić aktualności odczytanej weryfikacji maszynowej."],
+                    return self._result("partial", "The verification state changed during the answer; read it again.",
+                                        evidence,
+                                        ["The machine verification that was read could not be confirmed as current."],
                                         started, code="source_stale"), False
         try:
             output = parse_object(text)
         except (ValueError, TypeError):
-            return self._result("partial", "Model nie zwrócił odpowiedzi z poprawnymi cytowaniami.", evidence,
-                                ["Niepoprawny format odpowiedzi lokalnego modelu."], started, code="invalid_json"), True
+            return self._result("partial", "The model did not return an answer with valid citations.", evidence,
+                                ["The local model's answer has an invalid format."], started, code="invalid_json"), True
         answer = output.get("answer")
         answer_errors = []
         if answer_schema is None:
             if not isinstance(answer, str) or not answer.strip():
-                return self._result("partial", "Brak zweryfikowanej odpowiedzi.", evidence,
-                                    ["Model nie podał treści odpowiedzi."], started, code="missing_answer"), True
+                return self._result("partial", "No verified answer.", evidence,
+                                    ["The model gave no answer text."], started, code="missing_answer"), True
         elif "answer" not in output:
-            answer_errors.append("Odpowiedź nie zawiera pola answer wymaganego przez answer_schema.")
+            answer_errors.append("The response has no answer field, which answer_schema requires.")
         else:
             decoded = answer
             # The public API remains a string, while models can emit the typed JSON
@@ -838,32 +839,33 @@ class KnowledgeAgent:
                 try:
                     decoded = json.loads(answer)
                 except (ValueError, TypeError):
-                    answer_errors.append("Pole answer nie zawiera poprawnych danych JSON dla answer_schema.")
+                    answer_errors.append("The answer field holds no valid JSON for answer_schema.")
             if not answer_errors:
                 answer_errors.extend(answer_contract_errors(decoded, answer_schema))
             if not answer_errors:
                 try:
                     answer = json.dumps(decoded, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
                 except (TypeError, ValueError):
-                    answer_errors.append("Pole answer zawiera niepoprawną wartość JSON.")
+                    answer_errors.append("The answer field holds an invalid JSON value.")
                 else:
                     if len(answer) > self.settings.answer_tokens * 5:
-                        answer_errors.append("Odpowiedź JSON przekracza budżet odpowiedzi; zawęź pytanie.")
+                        answer_errors.append("The JSON answer exceeds the answer budget; narrow the question.")
         unknowns = output.get("unknowns", [])
         invalid_unknowns = not isinstance(unknowns, list)
         if not isinstance(unknowns, list):
-            unknowns = ["Model zwrócił niepoprawną listę braków wiedzy."]
+            unknowns = ["The model returned an invalid list of unknowns."]
         contract_failed = bool(answer_errors)
         sources, invalid, freshness_failure = [], answer_errors, False
         citations = output.get("citations", [])
         if not isinstance(citations, list):
             citations = []
-            invalid.append("Niepoprawny format cytowań.")
+            invalid.append("Invalid citation format.")
         if len(citations) > 8:
-            unknowns.append("Pomijam część cytowań z powodu budżetu odpowiedzi; zawęź pytanie, aby odczytać szczegóły.")
+            unknowns.append("Some citations are left out because of the answer budget; "
+                            "narrow the question to read the details.")
         for citation in citations[:20]:
             if not isinstance(citation, dict):
-                invalid.append("Niepoprawne cytowanie.")
+                invalid.append("Invalid citation.")
                 continue
             source_id, quote = citation.get("source_id"), citation.get("quote")
             if quote is None:
@@ -871,7 +873,7 @@ class KnowledgeAgent:
                 # often answers with that name. The passage is checked against the source all the same.
                 quote = citation.get("quote_excerpt")
             if not isinstance(source_id, str) or source_id not in evidence:
-                invalid.append("Model wskazał źródło, którego nie odczytał.")
+                invalid.append("The model cited a source it did not read.")
                 continue
             try:
                 # A file may have changed while the model was generating its answer.
@@ -880,18 +882,18 @@ class KnowledgeAgent:
                                       current=not evidence[source_id].get("_historical_requested", False),
                                       worktree=worktree)
             except (ValueError, OSError):
-                invalid.append("Nie można potwierdzić aktualności źródła.")
+                invalid.append("The source could not be confirmed as current.")
                 freshness_failure = True
                 continue
             content = source_text(source)
             if not isinstance(quote, str) or not quote.strip() or quote not in content:
-                invalid.append("Cytowany fragment nie występuje w sprawdzonej wersji źródła.")
+                invalid.append("The quoted passage does not occur in the checked version of the source.")
                 if (source["id"], source["sha256"]) != inspected:
                     freshness_failure = True
                 continue
             if len(quote.strip()) < min(MIN_QUOTE_CHARS, len(content.strip())):
                 # A one-character substring occurs in almost any source and proves nothing.
-                invalid.append("Cytowany fragment jest zbyt krótki, aby był dowodem.")
+                invalid.append("The quoted passage is too short to be evidence.")
                 continue
             if len(sources) >= 8:
                 continue
@@ -905,13 +907,13 @@ class KnowledgeAgent:
                             "created_at": source["created_at"], "metadata": public_source_metadata(source.get("metadata"))})
         if invalid:
             # Do not show potentially invented facts as a grounded synthesis.
-            return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.",
+            return self._result("partial", "The model's answer could not be verified in the sources.",
                                 evidence, [*unknowns, *invalid], started, sources,
                                 code="source_stale" if freshness_failure else
                                      "answer_contract_invalid" if contract_failed else "citation_invalid"), not freshness_failure
         if not sources:
-            return self._result("partial", "Brak wystarczających źródeł do potwierdzonej odpowiedzi.",
-                                evidence, [*unknowns, "Odpowiedź nie zawiera zweryfikowanych cytowań."],
+            return self._result("partial", "There are not enough sources for a confirmed answer.",
+                                evidence, [*unknowns, "The answer has no verified citations."],
                                 started, [], code="missing_evidence"), True
         result = self._result("partial" if unknowns else "complete", answer, evidence, unknowns, started, sources,
                               code="unknowns_invalid" if invalid_unknowns else None)
@@ -964,9 +966,9 @@ class KnowledgeAgent:
                                             "unsupported" if reason else "failed")
         if supported:
             return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
-        gap = ("Cytaty nie potwierdzają odpowiedzi: " + reason if reason else
-               "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.")
-        return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.",
+        gap = ("The quotes do not support the answer: " + reason if reason else
+               "Could not check whether the quotes support the answer.")
+        return self._result("partial", "The model's answer could not be verified in the sources.",
                             evidence, [*result.get("unknowns", []), gap], started, result["sources"],
                             code="answer_unsupported" if reason else "support_unverified")
 
@@ -1048,8 +1050,8 @@ class KnowledgeAgent:
                 context_chars = max(12000, self.settings.num_ctx * 2)
                 for _step in range(self.settings.max_steps):
                     if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > context_chars:
-                        return self._result("partial", "Analiza osiągnęła budżet kontekstu; zawęź pytanie.",
-                                            evidence, ["Przekroczono budżet odczytanych źródeł."], started,
+                        return self._result("partial", "The analysis reached the context budget; narrow the question.",
+                                            evidence, ["The budget for read sources was exceeded."], started,
                                             code="context_budget")
                     response = await self.ollama.chat(messages, tools=TOOLS)
                     diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
@@ -1069,7 +1071,7 @@ class KnowledgeAgent:
                         if _step + 1 >= self.settings.max_steps:
                             diagnostics["repair_outcome"] = "budget_exhausted"
                             return self._repair_fallback(validated, started,
-                                "Brak pozostałych kroków na poprawę formatu lub cytowań odpowiedzi.")
+                                "No steps were left to correct the answer's format or citations.")
                         catalog = self._citation_catalog(project_id, evidence, candidate, worktree=worktree)
                         if not catalog:
                             diagnostics["repair_outcome"] = "missing_evidence"
@@ -1079,7 +1081,7 @@ class KnowledgeAgent:
                         if compact is None:
                             diagnostics["repair_outcome"] = "budget_exhausted"
                             return self._repair_fallback(validated, started,
-                                "Brak budżetu kontekstu na poprawę formatu lub cytowań odpowiedzi.")
+                                "No context budget was left to correct the answer's format or citations.")
                         repair_messages, schema = compact
                         # Structured generation is tool-free; discovery keeps its native tool protocol.
                         diagnostics["repair_attempted"] = True
@@ -1090,7 +1092,7 @@ class KnowledgeAgent:
                         if repaired_message.get("tool_calls"):
                             diagnostics["repair_outcome"] = "failed"
                             return self._repair_fallback(validated, started,
-                                "Model zwrócił narzędzia zamiast poprawionej odpowiedzi.")
+                                "The model returned tool calls instead of a corrected answer.")
                         repaired_text = self._carry_verified_citations(
                             candidate, str(repaired_message.get("content", "")), evidence)
                         result, still_repairable = await asyncio.to_thread(
@@ -1101,8 +1103,8 @@ class KnowledgeAgent:
                         judged = result
                         return await self._support_gate(question, result, evidence, started, diagnostics)
                     if not isinstance(calls, list) or len(calls) > 6:
-                        return self._result("partial", "Model zwrócił niepoprawną listę narzędzi.", evidence,
-                                            ["Niepoprawny protokół narzędzi modelu."], started,
+                        return self._result("partial", "The model returned an invalid list of tool calls.", evidence,
+                                            ["The model broke the tool protocol."], started,
                                             code="tool_protocol_invalid")
                     messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": calls})
                     for call in calls:
@@ -1120,30 +1122,31 @@ class KnowledgeAgent:
                             result = {"error": str(exc)[:250]}
                         messages.append({"role": "tool", "tool_name": name,
                                          "content": json.dumps(result, ensure_ascii=False)})
-                return self._result("partial", "Analiza osiągnęła limit kroków; zawęź pytanie.", evidence,
-                                    ["Przekroczono limit kroków agenta."], started, code="step_budget")
+                return self._result("partial", "The analysis reached its step limit; narrow the question.", evidence,
+                                    ["The agent's step limit was exceeded."], started, code="step_budget")
         except TimeoutError:
             if judged is not None and judged.get("status") == "complete":
                 # The answer and its quotes were verified; only the support check ran out of time.
                 # Not complete, as when the check gives no verdict; the repair outcome stands.
                 diagnostics["support_check"] = "failed"
-                return self._result("partial", "Nie udało się zweryfikować odpowiedzi modelu w źródłach.", evidence,
+                return self._result("partial", "The model's answer could not be verified in the sources.", evidence,
                                     [*judged.get("unknowns", []),
-                                     "Kontrola poparcia odpowiedzi nie zakończyła się w limicie czasu analizy."],
+                                     "The support check of the answer did not finish within the analysis time limit."],
                                     started, judged["sources"], code="support_unverified")
             diagnostics["repair_outcome"] = "budget_exhausted" if diagnostics["repair_attempted"] else "not_needed"
             if repair_fallback is not None:
                 return self._repair_fallback(repair_fallback, started,
-                    "Poprawa formatu lub cytowań nie zakończyła się w limicie czasu analizy.")
-            return self._result("partial" if evidence else "unavailable", "Przekroczono czas lokalnej analizy.",
-                                evidence, ["Lokalny model nie zakończył pracy w limicie czasu."], started, code="timeout")
+                    "Correcting the format or citations did not finish within the analysis time limit.")
+            return self._result("partial" if evidence else "unavailable", "The local analysis ran out of time.",
+                                evidence, ["The local model did not finish within the time limit."], started,
+                                code="timeout")
         except OllamaUnavailable as exc:
             if diagnostics["repair_attempted"]:
                 diagnostics["repair_outcome"] = "unavailable"
             if repair_fallback is not None:
                 return self._repair_fallback(repair_fallback, started,
-                    "Lokalny model nie był dostępny podczas poprawy formatu lub cytowań.")
-            return self._result("unavailable", "Lokalny model wiedzy jest niedostępny.", evidence,
+                    "The local model was unavailable while correcting the format or citations.")
+            return self._result("unavailable", "The local knowledge model is unavailable.", evidence,
                                 [str(exc)], started, code="model_unavailable")
 
     async def extract(self, job: dict) -> None:
