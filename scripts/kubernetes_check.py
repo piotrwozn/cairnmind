@@ -237,7 +237,8 @@ def volume_snapshot(files: dict[str, Path], work: Path, expected: list) -> None:
     hold_volume()
     archive = work / "arcadedb-volume.tgz"
     with archive.open("wb") as handle:
-        volume_pod("tar", "--numeric-owner", "-C", "/var/lib/arcadedb", "-czf", "-", ".", stdout=handle)
+        volume_pod("tar", "--numeric-owner", "-C", "/var/lib/arcadedb", "-czf", "-", ".", stdout=handle,
+                   stdin=subprocess.DEVNULL)
     release_volume()
     kubectl("-n", DATABASE, "delete", "pvc", "data-arcadedb-0", "--wait=true", "--timeout=120s")
     kubectl("apply", "-f", str(MANIFESTS / "backup" / "data-claim.yaml"))
