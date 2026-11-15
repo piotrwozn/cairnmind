@@ -186,6 +186,11 @@ class ArcadeClient:
         return self._result(self._request("POST", f"/api/v1/command/{quote(self.database)}",
             json={"language": "sql", "command": sql, "params": params or {}, "limit": -1}))
 
+    def script(self, sql: str, params: dict | None = None) -> list[dict]:
+        """Several statements separated by semicolons, in one request; the result is the last statement's."""
+        return self._result(self._request("POST", f"/api/v1/command/{quote(self.database)}",
+            json={"language": "sqlscript", "command": sql, "params": params or {}, "limit": -1}))
+
     def server_info(self) -> dict:
         return self._request("GET", "/api/v1/server?mode=basic", timeout=2).json()
 

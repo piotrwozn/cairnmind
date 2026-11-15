@@ -73,11 +73,20 @@ def dump(store, pid):
 
 def row_by_row(monkeypatch):
     """Indexing as it was before: every new or replaced file in its own three transactions, every deleted file in
-    one of its own, every graph row looked up singly."""
+    one of its own, every graph row looked up and written singly."""
     monkeypatch.setattr(ingest, "_write_files", lambda store, project_id, batch: [None] * len(batch))
     monkeypatch.setattr(ingest, "_deactivate_sources",
                         lambda store, source_ids: [ingest._deactivate_source(store, item) for item in source_ids])
     monkeypatch.setattr(Store, "prefetch_graph", lambda self, tx, nodes, edges: None)
+    monkeypatch.setattr(Store, "write_graph", graph_row_by_row)
+
+
+def graph_row_by_row(self, tx, project_id, nodes, edges):
+    """The graph rows written as before issue #167: one upsert, and one request at least, per row."""
+    for item in nodes:
+        self.upsert_node(item, tx)
+    for item in edges:
+        self.upsert_edge(item, tx)
 
 
 def counted(monkeypatch):

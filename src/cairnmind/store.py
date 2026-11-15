@@ -28,6 +28,8 @@ LOOKUP_INDEXES = (("chunks", "source_id"), ("nodes", "source_id"), ("edges", "so
                   ("record_revisions", "record_id"), ("check_runs", "task_id"), ("session_events", "session_id"),
                   ("resume_packets", "session_id"))
 LOOKUP_INDEX_SET = 1
+# Graph rows written by one request of Store.write_graph (issue #167).
+GRAPH_ROWS_PER_REQUEST = 250
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}
 STATUSES = {"proposed", "confirmed", "disputed", "superseded"}
 TASK_STATES = {"todo", "in_progress", "needs_test", "needs_review", "done", "blocked"}
@@ -842,6 +844,20 @@ class Store:
         if tx is None:
             with self.transaction() as native:
                 return self.upsert_node(node, native)
+        node, existing = self._checked_node(tx, node)
+        with self._keeping(tx) as known:
+            if existing:
+                # The project, checked above, lets a transaction that resets the project's graph skip reading
+                # the row before and after: the journal names no single node of a graph it reports as reset.
+                update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
+            else:
+                tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
+            if known is not None:
+                known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
+        return node
+
+    def _checked_node(self, tx, node):
+        """The vertex upsert_node writes, after its checks, and the stored row with its ID if there is one."""
         node = {"metadata": {}, **node}
         for key in ("id", "project_id", "kind", "label"):
             if not isinstance(node.get(key), str):
@@ -859,21 +875,31 @@ class Store:
             tx, "SELECT FROM nodes WHERE id=:id", {"id": node["id"]}, False))
         if existing and existing.get("project_id") != node["project_id"]:
             raise ValueError("Graph vertex belongs to another project")
-        with self._keeping(tx) as known:
-            if existing:
-                # The project, checked above, lets a transaction that resets the project's graph skip reading
-                # the row before and after: the journal names no single node of a graph it reports as reset.
-                update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
-            else:
-                tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
-            if known is not None:
-                known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
-        return node
+        return node, existing
 
     def upsert_edge(self, edge, tx=None):
         if tx is None:
             with self.transaction() as native:
                 return self.upsert_edge(edge, native)
+        edge, existing = self._checked_edge(tx, edge)
+        with self._keeping(tx) as known:
+            if known is not None:
+                known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
+            if existing:
+                # The project is the checked one, as in upsert_node.
+                mine = {"id": edge["id"], "project_id": edge["project_id"]}
+                if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
+                    tx.command("DELETE FROM edges WHERE id=:id", mine)
+                else:
+                    update_document(tx, "edges", edge, "id=:id", mine)
+                    return edge
+            tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
+                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
+                       {"from_id": edge["from_id"], "to_id": edge["to_id"]})
+        return edge
+
+    def _checked_edge(self, tx, edge):
+        """The edge upsert_edge writes, after its checks, and the stored row with its ID if there is one."""
         edge = {"status": "observed", **edge}
         for key in ("id", "project_id", "from_id", "to_id", "kind"):
             if not isinstance(edge.get(key), str):
@@ -894,21 +920,96 @@ class Store:
             tx, "SELECT FROM edges WHERE id=:id", {"id": edge["id"]}, False))
         if existing and existing.get("project_id") != edge["project_id"]:
             raise ValueError("Graph edge belongs to another project")
-        with self._keeping(tx) as known:
-            if known is not None:
-                known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
+        return edge, existing
+
+    def write_graph(self, tx, project_id, nodes, edges):
+        """Write graph rows as upsert_node, then upsert_edge, would for each, with one request per group of rows.
+
+        Every row passes the checks of its upsert before its group is written. Grouped only in a transaction
+        that reports the project's graph as reset, whose journal needs no single row; otherwise row by row.
+        A group the database did not write in full fails the transaction, which then leaves the graph as it was.
+        """
+        from .journal import JournalTransaction
+        nodes, edges = list(nodes), list(edges)
+        if not isinstance(tx, JournalTransaction) or (tx.reset_reason is None and project_id not in tx.graph_resets):
+            for item in nodes:
+                self.upsert_node(item, tx)
+            for item in edges:
+                self.upsert_edge(item, tx)
+            return
+        for rows, kind in ((nodes, "node"), (edges, "edge")):
+            if any(not isinstance(item, dict) or item.get("project_id") != project_id for item in rows):
+                raise ValueError(f"Every graph {kind} of a grouped write belongs to its project")
+            if len({item.get("id") for item in rows}) != len(rows):
+                raise ValueError(f"A grouped graph write names a {kind} twice")
+        created, updated = [], []
+        for item in nodes:
+            node, existing = self._checked_node(tx, item)
+            (updated if existing else created).append(node)
+            if tx.known is not None:
+                tx.known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
+        with self._keeping(tx):
+            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
+                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
+                # The project names the reset graph, so the journal reads nothing for this statement.
+                stored = tx.command("CREATE VERTEX nodes CONTENT :rows", {"rows": part, "project_id": project_id})
+                if len(stored) != len(part):
+                    raise RuntimeError("The database did not create every graph vertex of a group")
+            for offset in range(0, len(updated), GRAPH_ROWS_PER_REQUEST):
+                statements, params = [], {}
+                for index, node in enumerate(updated[offset:offset + GRAPH_ROWS_PER_REQUEST]):
+                    statements.append(f"UPDATE nodes SET {','.join(f'{quote_name(key)}=:u{index}_{key}' for key in node)} "
+                                      f"WHERE id=:w{index}")
+                    params.update({f"u{index}_{key}": value for key, value in node.items()})
+                    params[f"w{index}"] = node["id"]
+                tx.script(statements, params, project_id)
+        created, existing_edges = [], []
+        for item in edges:
+            edge, existing = self._checked_edge(tx, item)
             if existing:
-                # The project is the checked one, as in upsert_node.
-                mine = {"id": edge["id"], "project_id": edge["project_id"]}
-                if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
-                    tx.command("DELETE FROM edges WHERE id=:id", mine)
-                else:
-                    update_document(tx, "edges", edge, "id=:id", mine)
-                    return edge
-            tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
-                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
-                       {"from_id": edge["from_id"], "to_id": edge["to_id"]})
-        return edge
+                existing_edges.append(item)
+            else:
+                created.append(edge)
+                if tx.known is not None:
+                    tx.known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
+        with self._keeping(tx):
+            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
+                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
+                statements, params = [], {"ids": [edge["id"] for edge in part]}
+                for index, edge in enumerate(part):
+                    statements.append(f"CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:f{index}) "
+                                      f"TO (SELECT FROM nodes WHERE id=:t{index}) CONTENT :e{index}")
+                    params.update({f"f{index}": edge["from_id"], f"t{index}": edge["to_id"], f"e{index}": edge})
+                # CREATE EDGE writes nothing, without an error, when an endpoint is not found: count what it wrote.
+                statements.append("SELECT count(*) AS n FROM edges WHERE id IN :ids")
+                found = tx.script(statements, params, project_id)
+                if not found or found[0].get("n") != len(part):
+                    raise RuntimeError("The database did not create every graph edge of a group")
+        for item in existing_edges:  # rare here: an edge that is kept is not written again
+            self.upsert_edge(item, tx)
+
+    def remove_graph_nodes(self, tx, project_id, identifiers):
+        """Delete the project's vertices among `identifiers` that no edge names, one group per request.
+
+        The same rows go as when each one was checked and deleted on its own: a vertex that an edge
+        still names (a knowledge record's relationship, say) is kept, so that edge never dangles.
+        A group the database did not delete in full fails the transaction, which then leaves the graph as it was.
+        """
+        identifiers = sorted({identifier for identifier in identifiers if isinstance(identifier, str)})
+        for offset in range(0, len(identifiers), GRAPH_ROWS_PER_REQUEST):
+            part = identifiers[offset:offset + GRAPH_ROWS_PER_REQUEST]
+            named = set()
+            for row in tx.query("SELECT from_id,to_id FROM edges WHERE from_id IN :ids OR to_id IN :ids", {"ids": part}):
+                named.update((row.get("from_id"), row.get("to_id")))
+            unlinked = [identifier for identifier in part if identifier not in named]
+            if not unlinked:
+                continue
+            # The project names the graph a reset transaction reports, so the journal reads nothing for this statement.
+            deleted = tx.command("DELETE FROM nodes WHERE project_id=:project AND id IN :ids",
+                                 {"project": project_id, "ids": unlinked})
+            count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
+            if isinstance(count, int) and count != len(unlinked):
+                raise RuntimeError("The database did not delete every graph vertex of a group")
 
     def _record_graph(self, tx, record):
         node_id = f"record:{record['id']}"

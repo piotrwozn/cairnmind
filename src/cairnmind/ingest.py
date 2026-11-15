@@ -1033,23 +1033,17 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             changed_nodes, new_edges = list(nodes.values()), list(edges.values())
         # What the upserts look up row by row is read here in a few requests; the checks stay theirs.
         store.prefetch_graph(tx, changed_nodes, new_edges)
-        for item in changed_nodes:
-            store.upsert_node(item, tx=tx)
-        for item in new_edges:
-            store.upsert_edge(item, tx=tx)
+        # The transaction reports the graph as reset, so its rows are written in groups (issue #167).
+        store.write_graph(tx, project_id, changed_nodes, new_edges)
         if hasattr(tx, "known"):
             tx.known = None
         previous_nodes = tx.query(
             "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
             {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
         )
-        for row in previous_nodes:
-            if row["id"] not in nodes:
-                # Knowledge-record relationships referencing a removed code node must
-                # not silently become dangling. Retain the archived node in that case.
-                linked = tx.query("SELECT id FROM edges WHERE from_id=:id OR to_id=:id LIMIT 1", {"id": row["id"]})
-                if not linked:
-                    tx.command("DELETE FROM nodes WHERE id=:id", {"id": row["id"]})
+        # Knowledge-record relationships referencing a removed code node must not silently
+        # become dangling: such a node is retained. The rest go in groups (issue #167).
+        store.remove_graph_nodes(tx, project_id, [row["id"] for row in previous_nodes if row["id"] not in nodes])
         # This marker commits atomically with the native vertex/edge replacement.
         # An interrupted/failed graph transaction can never claim completion.
         tx.command(
