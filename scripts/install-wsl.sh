@@ -206,7 +206,9 @@ else
     "$cairnmind_bin" init
     "$cairnmind_bin" engine status
 fi
-"$cairnmind_bin" doctor
+# Only what needs attention is printed; `cairnmind doctor` shows the full report (#244).
+printf '\nChecking the installation...\n'
+"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention
 
 if [[ "$upgraded_from_devbrain" == true ]]; then
     # Hooks and MCP entries in existing projects name the removed interpreter.

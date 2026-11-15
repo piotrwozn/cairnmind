@@ -96,7 +96,7 @@ Set the database name explicitly (`arcade_database`, `CAIRNMIND_ARCADE_DATABASE`
 | `cairnmind db create-user` | The one step that signs in as `root`: it creates the database and the dedicated user, after checking the server's version. Run once per database; run again for the same user and database it changes nothing, and for a user that exists without its database it creates the database. |
 | `cairnmind init` and every command that writes | Open the database they were given. When it does not exist they stop and name `cairnmind db create-user`; they never create it. When the server does not answer they say where they looked and that no engine is started here. |
 | `cairnmind doctor` | The `arcadedb` block says `mode`, `host`, `url`, `user`, `transport`, `password_source`, the server's `version` and `supported_versions`; `java` says it is not needed; `store_writer` says whether this installation writes the store or only reads it. |
-| `cairnmind status` | Adds `storage` (mode, host, address) beside `writer`. |
+| `cairnmind status` | Asks the running service, which only the installation that writes the store runs; adds `storage` (mode, host, address) beside `writer`. On a reader it says so and names `cairnmind store writer` and `cairnmind doctor`, which show the role there. |
 | `cairnmind store size` | Counts rows as always; says that the database files and the server log are on the server and cannot be measured from here. |
 | `cairnmind eval run`, `eval memory`, `eval repository` | Refused: they create and drop temporary databases. Run them on an installation with the engine on this machine. |
 
@@ -269,9 +269,11 @@ There are two kinds of backup. Take the logical one regularly; add a volume snap
 The logical backup is a checksummed, compressed JSON export of everything Cairnmind keeps in the database: projects, records and their history, sources, the graph, jobs and stored vectors. It is read over the HTTP API, so it works the same against a container as against the local engine, and it does not depend on the ArcadeDB version.
 
 ```bash
-cairnmind backup "$HOME/backups/"                       # an existing folder: a new timestamped file in it
+cairnmind backup "$HOME/backups/"                       # a folder (created when missing): a new timestamped file in it
 cairnmind backup "$HOME/backups/before-upgrade.cairnmind.json.gz"
 ```
+
+A destination that is an existing folder, or a path ending in `/` (a missing folder is then created, readable by you only), gets a new file with a dated name; any other path is the file itself. A reader can make a backup too: it only reads the store.
 
 To restore it into a server, for example a new empty one:
 

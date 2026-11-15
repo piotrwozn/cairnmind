@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 0.9.x | Yes |
-| 0.8.x | Security fixes only |
+| 0.11.x | Yes |
+| 0.10.x | Security fixes only |
 | Older | No |
 
 ## Reporting a vulnerability

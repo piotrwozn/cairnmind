@@ -75,19 +75,48 @@ def initialized(command):
 
 
 def entrypoint() -> None:
+    _NOTICES_SHOWN.clear()
     try:
         app()
     except (ValueError, OSError, ArcadeError, httpx.HTTPError, OllamaUnavailable) as exc:
-        typer.echo(f"Cairnmind: {exc}", err=True)
+        from cairnmind.store_writer import StoreNotWriter
+        if not (isinstance(exc, StoreNotWriter) and str(exc) in _NOTICES_SHOWN):
+            # The reader's notice was printed when the store opened: the refusal is not said twice (#244).
+            typer.echo(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}", err=True)
         raise SystemExit(1) from None
 
 
-def store_for(settings: Settings):
+def _shortened(text: str, limit: int = 200) -> str:
+    from cairnmind.terminal_safe import safe_text
+    text = safe_text(text)
+    return text if len(text) <= limit else text[:limit // 2 - 1] + "…" + text[-(limit // 2):]
+
+
+def _os_error_text(exc: OSError) -> str:
+    """An operating-system error about a path as a sentence, with a long path shortened (#244)."""
+    import errno
+    if exc.errno is None or exc.filename is None:
+        return str(exc)
+    import os
+    path = _shortened(os.fsdecode(exc.filename) if isinstance(exc.filename, bytes) else str(exc.filename))
+    if exc.errno == errno.ENOENT:
+        return f"{path} does not exist."
+    if exc.errno == errno.ENAMETOOLONG:
+        return f"The path is too long for this system: {path}"
+    return f"{exc.strerror or 'The path cannot be used'}: {path}"
+
+
+_NOTICES_SHOWN: set[str] = set()
+
+
+def store_for(settings: Settings, *, notice: bool = True):
+    """The full store. notice=False for a command that only reads it on a reader, as backup and export do."""
     from cairnmind.store import Store
     store = Store(settings.data_dir)
-    if store.not_writer:
+    if store.not_writer and notice:
         # Another installation writes this database (#70): reads work, every write is refused with this reason.
         typer.echo(f"Cairnmind: {store.not_writer}", err=True)
+        _NOTICES_SHOWN.add(store.not_writer)
     return store
 
 
@@ -196,16 +225,46 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             # One that met a service starting at the same moment is waited for, as before.
             said = last_log_line(log)
             if "already running" not in said:
-                raise typer.BadParameter(f"The service stopped at start: {said}")
+                # The service's own prefix is not repeated (#244).
+                raise ServiceDidNotStart(f"The service stopped at start: {said.removeprefix('Cairnmind: ')}")
             process = None
         time.sleep(0.2)
-    raise typer.BadParameter(f"The service did not start. Check {log}; port {settings.port} may be in use.")
+    raise ServiceDidNotStart(f"The service did not start. Check {log}; port {settings.port} may be in use.")
+
+
+class ServiceDidNotStart(ValueError):
+    """The knowledge service did not start. A command shows it as a refusal, not as a wrong argument (#244);
+    the workspace and the cockpit, which call ensure_service too, get an ordinary error with the reason."""
+
+
+def _ensure_service_or_refuse(settings: Settings) -> None:
+    try:
+        ensure_service(settings)
+    except ServiceDidNotStart as exc:
+        refuse(str(exc))
 
 
 def refuse(message: str, code: int = 2):
     """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code)
+
+
+def _service_unavailable(settings: Settings) -> str:
+    """Why a diagnostic that asks the running service got no answer, and what to do. A reader never runs the
+    service (#70), so it is not told to start one (#244)."""
+    from cairnmind.store_writer import inspect
+    try:
+        role = inspect(settings)
+    except Exception:  # noqa: BLE001 - the role only chooses the advice; the refusal is given either way
+        role = {}
+    if role.get("role") in {"reader", "lost"}:
+        from cairnmind.terminal_safe import safe_text
+        return (f"{safe_text(role.get('reason') or '')} This command asks the running service, which only the "
+                "writer runs. Here `cairnmind store writer` and `cairnmind doctor` show this installation's role, "
+                "and the commands that only read the store work.").strip()
+    return ("The existing Cairnmind service is unavailable; diagnostics do not start it. "
+            "Run `cairnmind serve` explicitly.")
 
 
 class ServiceRefusal(Exception):
@@ -247,7 +306,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
     # session=False sends no session of the launched agent (a replay asks for the logged scope, #15);
     # raise_refusal=True raises ServiceRefusal instead of ending the command.
     if start_service:
-        ensure_service(settings)
+        _ensure_service_or_refuse(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
         refuse("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
@@ -293,8 +352,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             response = client.request(method, settings.url + path, **kwargs)
         except httpx.HTTPError:
             if not start_service:
-                refuse("The existing Cairnmind service is unavailable; diagnostics do not start it. "
-                       "Run `cairnmind serve` explicitly.")
+                refuse(_service_unavailable(settings))
             raise
         if not response.is_success:
             try:
@@ -324,7 +382,7 @@ def _launch_terminal_workspace(ctx: typer.Context, *, takeover: bool = False) ->
     # Check before initialization: redirected CLI diagnostics must never create
     # configuration, launch a browser or silently start interactive processes.
     if not _interactive_terminal():
-        raise typer.BadParameter(
+        refuse(
             "Run `cairnmind` in an interactive terminal. "
             "Available commands: `cairnmind --help`; status: `cairnmind workspace status`.")
     from cairnmind.workspace import launch_workspace
@@ -399,8 +457,9 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 @app.command()
 @initialized
 def init(ctx: typer.Context):
-    """Create the store, or open the one a connect-only installation was given. Downloads no models and
-    changes no client configuration."""
+    """Create the store, or open the one a connect-only installation was given.
+
+    Downloads no models and changes no client configuration."""
     store = store_for(ctx.obj)
     result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
     if getattr(store, "not_writer", None):
@@ -469,7 +528,7 @@ def engine_stop(ctx: typer.Context):
     # service runs: it says so, instead of asking to stop the service first (#68).
     nothing_here = connect_only(ctx.obj) and not local_process_recorded(ctx.obj)
     if not nothing_here and service_alive(ctx.obj):
-        raise typer.BadParameter("Run cairnmind stop first; the knowledge service is using ArcadeDB")
+        refuse("Run cairnmind stop first; the knowledge service is using ArcadeDB")
     with _engine_command():
         output(stop_engine(ctx.obj))
 
@@ -493,6 +552,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         False, "--contract", help="Show only the client contract: every check with its evidence line."),
            output_format: Annotated[str, typer.Option(
                "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json"):
+    """Report Python, Java, tmux, the engine, Ollama, the models and the coding clients. Read-only."""
     if output_format not in ("json", "text"):
         raise typer.BadParameter("--format must be json or text.")
     if output_format == "text" and not contract:
@@ -545,7 +605,7 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise typer.BadParameter("The service is already running for this store.")
+            refuse("The service is already running for this store.")
         api = create_app(settings, background_inference=not defer_background_inference)
         server = uvicorn.Server(uvicorn.Config(api, host=settings.host, port=settings.port, log_level="info"))
         api.state.shutdown = lambda: setattr(server, "should_exit", True)
@@ -565,10 +625,10 @@ def stop(ctx: typer.Context):
 @projects_app.command("add")
 @initialized
 def project_add(ctx: typer.Context, name: str, root: Path):
-    store = store_for(ctx.obj)
-    root = root.expanduser().resolve(strict=True)
+    root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
+    store = store_for(ctx.obj)
     project = store.add_project(name, root)
     from cairnmind.ingest import index_project, register_default_histories
     result = index_project(store, project["id"])
@@ -597,6 +657,7 @@ def project_root(ctx: typer.Context, project: str, path: Path):
 @app.command()
 @initialized
 def index(ctx: typer.Context, project: str):
+    """Index the project's files again through the service, which it starts when needed."""
     output(request(ctx.obj, "POST", "/ingest", json={"project": project}))
 
 
@@ -614,6 +675,7 @@ def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None =
         answer_schema: Path | None = None,
         log: Annotated[bool, typer.Option("--log", help="Keep this answer and its citations in the project's "
                                           "answer log, for `cairnmind eval replay`.")] = False):
+    """Answer a question from the project's memory, with the sources it cites. Starts the service when needed."""
     payload = {"project": project, "question": question,
                "worktree": str(worktree.resolve()) if worktree else None}
     if log:
@@ -627,6 +689,7 @@ def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None =
 @app.command()
 @initialized
 def context(ctx: typer.Context, project: str, worktree: Path | None = None):
+    """Show the context a coding session starts with: checkpoint, tasks and records. Starts the service when needed."""
     output(request(ctx.obj, "GET", "/context", params={"project": project,
                    **({"worktree": str(worktree.resolve())} if worktree else {})}))
 
@@ -747,6 +810,7 @@ def usage(ctx: typer.Context, project: str,
 
 @app.command()
 def status(ctx: typer.Context, project: str | None = None):
+    """Ask the running service for its queue, store and model state. Starts nothing."""
     output(request(ctx.obj, "GET", "/status", start_service=False,
                    params={"project": project} if project else {}))
 
@@ -775,13 +839,24 @@ def store_writer_show(ctx: typer.Context):
     output(inspect(ctx.obj))
 
 
+# What `store takeover` without --yes suggests, by the role it read (#244).
+TAKEOVER_NEXT = {
+    "writer": "This installation is already the writer; nothing to do.",
+    "unknown": ("The role could not be read. Start the engine with `cairnmind engine start` and run this again, "
+                "or pass --yes, which starts it and makes this installation the writer."),
+    None: "Run `cairnmind store takeover --yes` to make this installation the writer.",
+}
+
+
 @store_app.command("takeover")
 @initialized
 def store_takeover(ctx: typer.Context,
                    yes: Annotated[bool, typer.Option("--yes", help="Take over writing; without it nothing changes.")] = False,
                    note: Annotated[str | None, typer.Option(help="Why, kept with the change (one line).")] = None):
-    """Make this installation the store's writer. The previous writer stops at its next write; its running jobs
-    go back to the queue. The change, with its time, host and note, is kept in the store."""
+    """Make this installation the store's writer.
+
+    The previous writer stops at its next write; its running jobs go back to the queue. The change, with its
+    time, host and note, is kept in the store."""
     from cairnmind.store_writer import inspect, take_over_at, valid_note
     # Moving the writer is a person's decision, as a verdict is: a coding session cannot make it.
     if session_value("SESSION_ID"):
@@ -792,8 +867,7 @@ def store_takeover(ctx: typer.Context,
         raise typer.BadParameter(str(exc), param_hint="--note") from None
     if not yes:
         current = inspect(ctx.obj)
-        output({"taken_over": False, **current,
-                "next": "Run `cairnmind store takeover --yes` to make this installation the writer."})
+        output({"taken_over": False, **current, "next": TAKEOVER_NEXT.get(current.get("role"), TAKEOVER_NEXT[None])})
         raise typer.Exit(1)
     output(take_over_at(ctx.obj.data_dir, note))
 
@@ -878,6 +952,7 @@ def jobs_retry(ctx: typer.Context, project: str, job_id: str,
 
 @app.command()
 def records(ctx: typer.Context, project: str, history: bool = False):
+    """List the project's records as JSON; --history adds the replaced ones. Read-only; starts nothing."""
     store = store_for_read(ctx.obj)
 
     def read():
@@ -923,7 +998,11 @@ def source(ctx: typer.Context, source_id: str):
 
 @app.command()
 @initialized
-def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
+def remember(ctx: typer.Context, project: str,
+             content: Annotated[str, typer.Argument(
+                 metavar="CONTENT", help="The text to keep. Text that begins with - goes last, after --, with the "
+                                         "options before it: `cairnmind remember PROJECT --kind decision -- '-text'`.")],
+             kind: str = "fact",
              source_id: Annotated[list[str] | None, typer.Option("--source")] = None,
              confirmed: bool = False, key: str | None = None):
     """Store a finding as proposed. --confirmed stores it as confirmed, for a person in their own terminal."""
@@ -961,6 +1040,7 @@ def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
 @app.command()
 @initialized
 def checkpoint(ctx: typer.Context, project: str, state_file: Path):
+    """Store where work stands, from a JSON file, as the project's checkpoint. Starts the service when needed."""
     output(request(ctx.obj, "POST", "/checkpoint", json={"project": project,
                    "state": json.loads(state_file.read_text(encoding="utf-8"))}))
 
@@ -1060,10 +1140,21 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
 
 @plans_app.command("save")
 @initialized
-def plan_save(ctx: typer.Context, project: str, input_json: Path,
-              idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
-              expected_version: int | None = None, task_versions: Path | None = None,
-              worktree: Path | None = None, activate: bool = False):
+def plan_save(ctx: typer.Context,
+              project: Annotated[str, typer.Argument(metavar="PROJECT", help="The project's name, id or folder.")],
+              input_json: Annotated[Path, typer.Argument(
+                  metavar="INPUT_JSON", help="A JSON file with plan and steps; the format is in docs/WORKFLOW.md.")],
+              idempotency_key: Annotated[str, typer.Option(
+                  "--idempotency-key", help="Any text naming this save. The same key with the same file returns "
+                                            "the earlier result instead of saving twice; with another file it is "
+                                            "refused.")],
+              expected_version: Annotated[int | None, typer.Option(
+                  help="The plan version you edited; the save is refused if it changed since.")] = None,
+              task_versions: Annotated[Path | None, typer.Option(
+                  help="A JSON file mapping task ids to the versions you saw.")] = None,
+              worktree: Annotated[Path | None, typer.Option(help="The registered worktree the plan is for.")] = None,
+              activate: Annotated[bool, typer.Option(help="Make the saved plan the active one.")] = False):
+    """Save a new version of a plan from a JSON file; --activate makes it the active plan."""
     from cairnmind.plans import PlanManager
     document = json.loads(input_json.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
@@ -1245,6 +1336,10 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
     decision["command"], decision["command_reason"] = next_command(
         decision, _project_handle(store, selected), scope or str(Path(selected["root"]).resolve()),
         slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
+    from cairnmind.config import default_data_dir
+    if decision["command"] and ctx.obj.data_dir != default_data_dir():
+        # The printed command acts on this installation, not on the default one (#244).
+        decision["command"][1:1] = ["--data-dir", str(ctx.obj.data_dir)]
     if as_json:
         output(decision)
         return
@@ -1253,6 +1348,9 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
         typer.echo("Next: " + safe_text(shlex.join(decision["command"])))
     elif decision["command_reason"]:
         typer.echo(FROM_WORKSPACE)
+    from cairnmind.workspace_stage import MAP_HINT, MAP_PROBLEMS
+    if decision.get("problem") in MAP_PROBLEMS:
+        typer.echo(MAP_HINT)  # the remedy the workspace gives for the same decision
 
 
 @checks_app.command("list")
@@ -1365,7 +1463,9 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
 
 @eval_app.command("repository")
 @initialized
-def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = None, report_dir: Path | None = None):
+def eval_repository(ctx: typer.Context, root: Path,
+                    questions: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+                    report_dir: Path | None = None):
     """Ask questions with known answers about a real repository, in a throwaway copy and database.
 
     QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the
@@ -1613,8 +1713,9 @@ def install(ctx: typer.Context, project: str):
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 @initialized
 def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = None):
+    """Start Codex or Claude Code in the project, bound to its memory. Arguments after -- go to the client."""
     from cairnmind.integrations import run_client
-    ensure_service(ctx.obj)
+    _ensure_service_or_refuse(ctx.obj)
     selected = store_for(ctx.obj).resolve_project(project)
     if worktree:
         store = store_for(ctx.obj)
@@ -1655,6 +1756,7 @@ def mcp(ctx: typer.Context,
 @app.command()
 @initialized
 def hook(ctx: typer.Context, client: Annotated[str, typer.Option("--client")]):
+    """Handle one hook event of a coding client, read from standard input. Run by the client, not by hand."""
     from cairnmind.integrations import hook as handle_hook
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -1742,18 +1844,26 @@ def model_pull(ctx: typer.Context):
 
 
 def _retry_jobs(store):
-    store.retry_jobs()
+    return store.retry_jobs()
 
 
 @app.command("retry-jobs")
 @initialized
 def retry_jobs(ctx: typer.Context):
+    """Queue every failed job of every project again, keeping its history. A person's command."""
     if session_value("SESSION_ID"):
         raise typer.BadParameter(
             "A model session cannot retry the jobs of all projects. "
             "Use `cairnmind jobs retry PROJECT JOB_ID --expected-attempts N` with a current ACK.")
-    _retry_jobs(store_for(ctx.obj))
-    output({"retried": True})
+    store = store_for(ctx.obj)
+    if getattr(store, "not_writer", None):
+        # A reader retries nothing, even when nothing failed: the notice already said why, so the refusal
+        # is that one line and exit 1, not a success beside it (#244).
+        from cairnmind.store_writer import StoreNotWriter
+        raise StoreNotWriter(store.not_writer)
+    # What really happened is printed, not a constant.
+    job_ids = list((_retry_jobs(store) or {}).get("job_ids", []))
+    output({"retried": bool(job_ids), "count": len(job_ids), "job_ids": job_ids})
 
 
 @app.command("rebuild-vectors")
@@ -1794,7 +1904,8 @@ def rebuild_vectors(ctx: typer.Context, project: str):
 @app.command()
 @initialized
 def export(ctx: typer.Context, destination: Path, project: str | None = None, markdown: bool = False):
-    store = store_for(ctx.obj)
+    """Write the records and sources, of one project or all, as JSON or Markdown for reading. Not a backup."""
+    store = store_for(ctx.obj, notice=False)  # it only reads, so a reader is not shown the refusal-like notice
     pid = store.resolve_project(project)["id"] if project else None
     data = store.export(pid)
     if markdown:
@@ -1813,20 +1924,30 @@ def export(ctx: typer.Context, destination: Path, project: str | None = None, ma
 
 @app.command()
 @initialized
-def backup(ctx: typer.Context, destination: Path):
-    output({"backup": str(store_for(ctx.obj).backup(destination))})
+def backup(ctx: typer.Context, destination: Annotated[str, typer.Argument(
+        metavar="DESTINATION", help="A file, or a folder for a file with a dated name; a path ending in / is a "
+                                    "folder and is created when missing.")]):
+    """Write a compressed, checksummed backup of the whole store. Reads only: also works on a reader."""
+    # Taken as typed: a Path would drop the trailing slash that says the destination is a folder (#244).
+    target = Path(destination).expanduser()
+    if destination.endswith(("/", os.sep)):
+        target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    output({"backup": str(store_for(ctx.obj, notice=False).backup(target))})
 
 
 @app.command()
 @initialized
-def restore(ctx: typer.Context, source: Path):
+def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
+        exists=True, dir_okay=False, readable=True, help="A backup file written by `cairnmind backup`.")]):
+    """Replace the store with a backup, after a safety backup of the current one. The service must be stopped."""
+    # A missing path or a folder is refused while the arguments are read, before the store or engine is touched.
     with (ctx.obj.data_dir / "service.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise typer.BadParameter("Run cairnmind stop first; the service still holds the store lock")
+            refuse("Run cairnmind stop first; the service still holds the store lock")
         if service_alive(ctx.obj):
-            raise typer.BadParameter("Run cairnmind stop first; restoring requires a stopped service")
+            refuse("Run cairnmind stop first; restoring requires a stopped service")
         store = store_for(ctx.obj)
         store.restore(source)
     from cairnmind.confirmation_upgrade import report
@@ -1838,6 +1959,7 @@ def restore(ctx: typer.Context, source: Path):
 @initialized
 def forget(ctx: typer.Context, project: str,
            delete_project: Annotated[bool, typer.Option("--delete-project", help="Explicitly delete the project's data")] = False):
+    """Delete a project and all its memory from the store. Backups are not changed; only a restore brings it back."""
     if not delete_project:
         raise typer.BadParameter("Deleting requires --delete-project. Existing backups stay unchanged.")
     store = store_for(ctx.obj)
