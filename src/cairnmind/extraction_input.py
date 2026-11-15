@@ -175,7 +175,8 @@ def extraction_request(source: dict, mask=None) -> dict | None:
         if role == "user" and HOST_MESSAGE.match(segments[0]):
             return None
         if role == "assistant" and source["kind"] == "transcript":
-            spoken = _without_tool_calls(source, mask if metadata.get("masked") else None)
+            masked = mask is not None and metadata.get("masked")
+            spoken = _without_tool_calls(source, mask) if masked else _without_tool_calls(source)
             if spoken is not None:
                 if not spoken:
                     return None
