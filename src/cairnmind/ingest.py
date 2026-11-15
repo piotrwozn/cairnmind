@@ -28,6 +28,7 @@ from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, memory_bindings,
                                     nested_reserved)
+from cairnmind.secret_mask import Masker, ingest_masker, masked_metadata
 from cairnmind.sql import json_text as _json_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -1236,7 +1237,8 @@ def reparse_history_sources(store, path: Path, project_id: str, client: str = "a
     project_id = store.resolve_project(project_id)["id"]
     _validate_reparse_options(client, limit, deadline)
     with _ingestion_lock(store, "history", str(path), deadline=deadline):
-        return _reparse_history_sources_locked(store, path, project_id, client, limit, deadline=deadline)
+        return _reparse_history_sources_locked(store, path, project_id, client, limit, deadline=deadline,
+                                               masker=ingest_masker(store.settings))
 
 
 def _validate_reparse_options(client: str, limit: int, deadline: float | None) -> None:
@@ -1249,8 +1251,10 @@ def _validate_reparse_options(client: str, limit: int, deadline: float | None) -
 
 
 def _reparse_history_sources_locked(store, path: Path, project_id: str | None, client: str = "auto",
-                                    limit: int = 1000, *, deadline: float | None = None) -> dict:
+                                    limit: int = 1000, *, deadline: float | None = None,
+                                    masker: Masker | None = None) -> dict:
     _validate_reparse_options(client, limit, deadline)
+    masker = masker or Masker()
     counts = {"repaired": 0, "unchanged": 0, "errors": []}
     sources = store.query(
         "SELECT FROM sources WHERE is_current=true AND kind='transcript_unknown' "
@@ -1294,10 +1298,12 @@ def _reparse_history_sources_locked(store, path: Path, project_id: str | None, c
             continue
         # Old unknown records were indexed as their raw JSON. Understood
         # metadata schemas have the same raw text view, so retain every chunk
-        # identity and embedding. Only their derived role changes.
+        # identity and embedding. Only their derived role changes. A raw view
+        # whose known secrets were replaced (#182) was chunked masked.
+        view = masker.mask(content)[0] if metadata.get("masked") else content
         expected = {
             _identifier(source["project_id"], source["id"], number, first, last, text): (text, first, last)
-            for number, (text, first, last) in enumerate(_chunks(content))
+            for number, (text, first, last) in enumerate(_chunks(view))
         }
         with store.transaction() as tx:
             store._require_project(tx, source["project_id"])
@@ -1362,10 +1368,15 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
         return counts
     if not path.is_file():
         raise ValueError(f"History does not exist: {path}")
+    # Secrets that cannot be read cannot be kept out: nothing is imported then, and the cursor stays.
+    try:
+        masker = ingest_masker(store.settings)
+    except ValueError as exc:
+        raise ValueError(f"Transcript import refused: {exc}") from None
     # The cursor may already be at EOF, and snapshot() intentionally returns
     # the same immutable source for identical raw bytes. Repair the narrow
     # known metadata compatibility gap independently of append ingestion.
-    reparsed = _reparse_history_sources_locked(store, path, project_id, client)
+    reparsed = _reparse_history_sources_locked(store, path, project_id, client, masker=masker)
     counts["errors"].extend(reparsed["errors"])
     cursors = store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(path)})
     row = cursors[0] if cursors else None
@@ -1442,16 +1453,22 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
                 # Immutable event URIs keep old evidence valid when a client
                 # rotates/replaces a file and reuses its byte offsets.
                 event_hash = hashlib.sha256(raw).hexdigest()
+                # Known secrets are replaced in the readable view and in the chunks written from it (#182).
+                # A line without a normalized view is chunked from its raw text, so that text is masked too.
+                # The raw line is archived as received: its hash, URI and identity do not change.
+                normalized, kinds = masker.mask(normalized)
+                indexed, raw_kinds = (normalized, []) if normalized else masker.mask(text)
                 source = store.snapshot(
                     resolved, f"transcript://{detected}/{_identifier(path, session_id)}/{event_offset}/{event_hash}", text,
                     kind="transcript" if recognized else "transcript_unknown",
-                    metadata={"client": detected, "role": role, "session_id": session_id, "cwd": cwd,
-                              "import_path": str(path), "byte_offset": event_offset, "normalized_text": normalized,
-                              "schema_warning": reason, "source_timestamp": event.get("timestamp"),
-                              "transcript_parser_revision": TRANSCRIPT_PARSER_REVISION},
+                    metadata=masked_metadata(
+                        {"client": detected, "role": role, "session_id": session_id, "cwd": cwd,
+                         "import_path": str(path), "byte_offset": event_offset, "normalized_text": normalized,
+                         "schema_warning": reason, "source_timestamp": event.get("timestamp"),
+                         "transcript_parser_revision": TRANSCRIPT_PARSER_REVISION}, kinds or raw_kinds),
                 )
                 counts["archived"] += 1
-                counts["chunks"] += _write_chunks(store, resolved, source["id"], normalized or text, {"role": role})
+                counts["chunks"] += _write_chunks(store, resolved, source["id"], indexed, {"role": role})
                 if normalized and role in {"user", "assistant"}:
                     store.enqueue("extract", resolved, {"source_id": source["id"]}, f"extract:{source['id']}")
                 # Assignment moves this exact event into the project's archive.

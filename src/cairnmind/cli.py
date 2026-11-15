@@ -794,8 +794,11 @@ def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
         record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
         if key is not None:
             record["key"] = key
+        # Known secrets are replaced in the note's indexed view (#182); the note itself is kept as typed.
+        from cairnmind.secret_mask import note_metadata
         sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
-                                              {"role": "user", "origin": "cli"})["id"]]
+                                              note_metadata(store.settings, content,
+                                                            {"role": "user", "origin": "cli"}))["id"]]
         if confirmed:
             result = confirmation.remember_as_person(store, pid, record, sources)
         else:

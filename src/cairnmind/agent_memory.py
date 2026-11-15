@@ -266,6 +266,8 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
         source_rows = []
         tainted = None  # the server of the first third-party result in this session, once there is one
         from .ingest import _write_chunks
+        from .secret_mask import ingest_masker, masked_metadata
+        masker = ingest_masker(settings)
         for event in events:
             if time.monotonic() > deadline:
                 raise TimeoutError("Own-agent archive preparation exceeded its deadline")
@@ -283,6 +285,9 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
             normalized = data.get("content") if isinstance(data, dict) else None
             if not isinstance(normalized, str) or not normalized.strip():
                 normalized = json_text(data)
+            # The journal already replaced the secrets it knew when it wrote the event; known secrets and key
+            # shapes are replaced again in the indexed view (#182). The archived public event is not changed.
+            normalized, masked_kinds = masker.mask(normalized)
             metadata = {"client": owner["client"], "role": role, "session_id": sid,
                         "agent_session_id": sid, "agent_sequence": seq,
                         "agent_event_hash": event["hash"],
@@ -291,6 +296,7 @@ def archive_agent_target(store, settings, session: dict, target: dict, deadline:
                         "origin": "agent_runtime", "archive_parser_revision": 1,
                         "archive_view": "public-agent-event-v1",
                         "normalized_text": normalized, "source_timestamp": event.get("created_at")}
+            metadata = masked_metadata(metadata, masked_kinds)
             server = _mcp_server(event)
             if server is None and tainted and not _persons(event):
                 # After a third-party result anything the agent says or does may restate it: its messages,

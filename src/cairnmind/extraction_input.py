@@ -112,12 +112,13 @@ def _lines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _without_tool_calls(source: dict) -> list[str] | None:
+def _without_tool_calls(source: dict, mask=None) -> list[str] | None:
     """A Claude assistant line's text blocks without its tool_use blocks (the parser writes those as
     ``Tool: name`` and the arguments), or None when the line has no tool_use block.
 
     The blocks keep the archived view's line endings and stay separate: joined, they are no
-    longer one passage of the archived source, which has the tool calls between them."""
+    longer one passage of the archived source, which has the tool calls between them. A block of a
+    masked source is masked the same way before it is looked for in the view."""
     event = _raw_event(source)
     message = event.get("message") if event else None
     content = message.get("content") if isinstance(message, dict) else None
@@ -127,6 +128,8 @@ def _without_tool_calls(source: dict) -> list[str] | None:
     archived = source_text(source)
     blocks = (_lines(block["text"]) for block in content
               if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str))
+    if mask is not None:
+        blocks = (mask(block)[0] for block in blocks)
     return [block for block in blocks if block.strip() and block in archived]
 
 
@@ -149,7 +152,7 @@ def source_text(source: dict) -> str:
     return _lines(normalized if isinstance(normalized, str) and normalized else source["content"])
 
 
-def extraction_request(source: dict) -> dict | None:
+def extraction_request(source: dict, mask=None) -> dict | None:
     """The text, instruction and prompt extraction gives the model for ``source``.
 
     None when the source is never extracted: Cairnmind's own synthesis must not become
@@ -157,6 +160,8 @@ def extraction_request(source: dict) -> dict | None:
     (HOST_MESSAGE) or an assistant line holding only tool calls is protocol, not knowledge.
     ``segments`` are the parts of ``text`` a quote may come from, each a literal passage of the
     archived source (``source_text``), so that the check at commit keeps every allowed quote.
+    ``mask`` (secret_mask.Masker.mask) replaces known secrets in the text blocks read from a masked
+    source's raw line (#182); without it such a block is not found in the view and is left out.
     """
     metadata = json_value(source.get("metadata"), {})
     if not isinstance(metadata, dict):
@@ -170,7 +175,7 @@ def extraction_request(source: dict) -> dict | None:
         if role == "user" and HOST_MESSAGE.match(segments[0]):
             return None
         if role == "assistant" and source["kind"] == "transcript":
-            spoken = _without_tool_calls(source)
+            spoken = _without_tool_calls(source, mask if metadata.get("masked") else None)
             if spoken is not None:
                 if not spoken:
                     return None
