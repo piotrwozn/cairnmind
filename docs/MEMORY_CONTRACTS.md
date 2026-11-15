@@ -135,7 +135,18 @@ through, and it holds for every route:
   `A person confirmed record <id> (<kind>), and this write is not a person's
   act: ... Only a person takes a confirmation away. Nothing was saved. ...`
   (HTTP 400, never 409: there is nothing to read again and retry), and it says
-  what to do instead; see "Changing what a person confirmed" below.
+  what to do instead; see "Changing what a person confirmed" below. When the
+  write would change what was confirmed, the error names what would differ:
+  `text`, `key`, `supersedes` or `metadata.<field>`.
+- A write that is not a person's act and changes nothing of what was confirmed
+  is stored (progress on a task, or a write that only cites a source), and it
+  does not make the confirmation worth less. The record keeps every source it
+  had, the note of the person's act among them: the write adds its sources and
+  never replaces the list. A write that stores nothing new does not stamp its
+  origin on the record either, so an external session cannot turn a record a
+  person confirmed into one of degraded origin by writing it back unchanged.
+  Progress an external session reports on a confirmed task is something that
+  session wrote: the task then carries its origin mark, and stays confirmed.
 - A confirmation that is not a person's verdict given here can still end
   without a person: one a package brought (`by: import`) and evaluation seed
   data. A write that changes what such a confirmation covers and asks for no
@@ -168,13 +179,34 @@ What they can do, and what the refusal tells them:
 - **A plan step.** A plan save that changes or removes a step a person
   confirmed is refused as a whole, and the error names the step (`Step 'key' of
   this plan (task <id>) was confirmed by a person ...`). A save that leaves such
-  steps exactly as they are is stored: it may add steps, change steps that are
-  not confirmed, and change the plan's title, goal and constraints. The person
-  disputes the step in the inspector, after which a session's save may rewrite
-  it, or saves the plan with `cairnmind plan save` in their own terminal; a
-  step the person changes this way is proposed until they confirm it, and one
-  they remove is archived, without a lapsed mark. `cairnmind plan adopt` gives
-  each adopted task a plan key, so it follows the same rule.
+  steps exactly as they are is stored: it may add steps and change steps that
+  are not confirmed. "Exactly" means every field of the stored step, as `plan
+  show` returns it: criteria that are declared again without their
+  `criterion_checks` drop that link, which is a change, and the error names it
+  (`metadata.criterion_checks would differ from the confirmed version`). The
+  person disputes the step in the inspector, after which a session's save may
+  rewrite it, or saves the plan with `cairnmind plan save` in their own
+  terminal; a step the person changes this way is proposed until they confirm
+  it, and one they remove is archived, without a lapsed mark.
+- **A plan's title, goal and constraints.** A person who confirms a plan
+  confirms these with its steps (the audit hashes them), and later sessions
+  read the constraints as the plan's rules. While at least one step still
+  carries the confirmation given with the plan (`route: confirm_plan`), a save
+  that is not a person's act and changes the title, the goal or the constraints
+  is refused as a whole and says which of them (`A person confirmed this plan
+  with its title, goal and constraints ...`). A save that leaves them out, or
+  sends them unchanged, is stored. The person changes them with `cairnmind
+  plan save` in their own terminal; once they have disputed every step they
+  confirmed with the plan, nothing of it is confirmed and a session may change
+  them again. A step confirmed one by one in the inspector, or before the
+  rule, does not cover the plan's own fields.
+- **Adopting old tasks.** `cairnmind plan adopt` gives each adopted task a
+  plan key, which changes what was confirmed. On a task a person confirmed, or
+  one confirmed before the rule, it works only in the person's own terminal;
+  elsewhere it is refused and says so (`Task '<key>' (task <id>) ... The person
+  runs `cairnmind plan adopt` in their own terminal`). Up to 0.10.0 `tasks add`
+  stored every task as confirmed, so the tasks of an old group all count as
+  confirmed before the rule.
 - **The checkpoint record** is the one exception. It is a slot that holds the
   latest reported state, not a statement, and every session writes it. If a
   person confirmed it in the inspector, the next `checkpoint` is still stored:
@@ -186,7 +218,12 @@ What they can do, and what the refusal tells them:
 A person takes their own confirmation away by disputing the record in the
 inspector, by a conflict decision, by saving a plan in their own terminal, or
 by an import run with `--replace-confirmed`. A disputed record is no longer a
-person's confirmation, and any writer may change it.
+person's confirmation, and any writer may change it, its status included: a
+session can set a record a person disputed back to `proposed`. Only a
+confirmation is kept. The store records who confirmed a record and not who
+disputed it, and a session may dispute a record itself, so it cannot tell a
+person's dispute from a session's; an import is the one place that treats
+every local dispute as a verdict (see "Confirmed elsewhere").
 
 Nothing writes in the background over a person's confirmation: extraction
 only adds records, verification writes check runs and never a task record, and
