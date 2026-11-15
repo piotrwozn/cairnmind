@@ -68,7 +68,7 @@ def test_a_confirmed_record_no_person_covered_can_be_confirmed_again_but_not_twi
     inspector = Inspector(store)
     confirmed = inspector.review(pid, record["id"], "confirm", 1)["record"]
     assert confirmed["version"] == 2
-    with pytest.raises(ValueError, match="conflict"):
+    with pytest.raises(ValueError, match="Already confirmed by a person here"):
         inspector.review(pid, record["id"], "confirm", 2)
     # An edit after the review is not covered by it any more, so a person may confirm it again.
     edited = person_edit(store, pid, {"id": record["id"], "expected_version": 2, "content": "Agents may write notes."},
