@@ -143,14 +143,24 @@ def _variants(payload, project_id, source_id):
     cases["not-a-number"] = (json_text(good).encode().replace(
         b'"format_version":5', b'"format_version":5,"format_version_x":NaN'), False)
     cases["broken-utf8"] = (json_text(good).encode().replace("Zażółć".encode(), b"Za\xff"), False)
+    # A lone surrogate is valid JSON but cannot be encoded for the checksum. The key sorts after "zzz...",
+    # so the file keeps the order every writer produces and takes the streamed path.
+    surrogate = b'"\\ud800"'
+    for name, envelope in (("surrogate-key-foreign-format", {"format": "foreign"}), ("surrogate-key", {})):
+        copy = json.loads(json.dumps(payload))
+        copy["zzz_surrogate"] = [{"id": 1}]
+        cases[name] = (json_text(_sealed(copy, **envelope)).encode().replace(b'"zzz_surrogate"', surrogate), False)
+    copy = json.loads(json.dumps(payload))
+    copy["vector_data"]["zzz_surrogate"] = []
+    cases["surrogate-vector-type"] = (json_text(_sealed(copy)).encode().replace(b'"zzz_surrogate"', surrogate), False)
     return cases
 
 
 def _outcome(read):
     try:
         return "ok", read()
-    except UnicodeDecodeError:
-        return "UnicodeDecodeError", ""  # its message names a position inside the piece being decoded
+    except UnicodeError as exc:
+        return type(exc).__name__, ""  # its message names a position inside the piece being coded
     except Exception as exc:  # noqa: BLE001 - the comparison is of the kind and the message of any error
         return type(exc).__name__, str(exc)
 

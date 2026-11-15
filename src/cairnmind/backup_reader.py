@@ -145,7 +145,10 @@ class _Canonical:
 
     def text(self, piece: str) -> None:
         if self.error is None:
-            self.sha.update(piece.encode())
+            try:
+                self.sha.update(piece.encode())
+            except UnicodeEncodeError as exc:  # a lone surrogate in a key: raised in the old order
+                self.error = exc
 
     def value(self, prefix: str, value) -> None:
         if self.error is None:
