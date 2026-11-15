@@ -340,6 +340,8 @@ The ArcadeDB schema stays at version 4, the profile format at 2, and the adminis
 
 Archiving does not wait for the GPU. Status shows archiving, indexing, model processing and the queue separately. The portable backup contains a consistent export of sources and database state; it does not contain credentials or model weights. Automatic backup runs while the service is running and keeps the seven most recent copies.
 
+A store has one writer: the installation that first opened it, named in the database. An installation is its data directory, identified by `installation.json` there; a copy of that directory on another machine or under another path gets an identity of its own and does not write as the original. A second installation pointed at the same database (for example a server on another host, #72) reads it only: commands that read work, a command that writes stops with one line naming the writer, and its service does not start. `cairnmind store writer` shows which installation writes and what this one is; `doctor` and `status` show the same. To move writing to this installation, a person runs `cairnmind store takeover --yes [--note TEXT]`; the change is kept in the store, the jobs the previous writer was running go back to the queue, and the previous writer stops at its next write. For a store used from one machine nothing changes.
+
 `store size [PROJECT] [--json]` reports how large the store is. Like the other commands that only read, it never starts the engine or the service and changes nothing; it prints counts and sizes, never the text of a record or a source. It lists:
 
 - every collection (the tables of the schema, `nodes`, `edges` and each `vector_*` type) with its rows and approximate bytes;
