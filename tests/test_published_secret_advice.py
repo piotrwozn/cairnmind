@@ -47,7 +47,7 @@ def test_the_held_list_tells_a_terminal_confirmation_from_a_proposal_and_shows_w
     typed = as_person(store, pid, {"kind": "decision", "key": "agents", "content": "Agents may write facts."},
                       [first["id"]])
     second = store.snapshot(pid, "note://proposal", "x", "note")
-    proposed = store.remember(pid, {"kind": "fact", "key": "hidden", "content": "Line one\x1b[31m red‮ and "
+    proposed = store.remember(pid, {"kind": "fact", "key": "hid‮den\x1b[31m", "content": "Line one\x1b[31m red‮ and "
                                     + "a long tail " * 20}, [second["id"]])
     held = {item["id"]: item for item in Publisher(store).publish(pid, preview=True)["held"]["items"]}
     assert held[typed["id"]]["reason"].startswith("confirmed in a terminal, which writes no audit that travels")
@@ -56,5 +56,32 @@ def test_the_held_list_tells_a_terminal_confirmation_from_a_proposal_and_shows_w
     assert (held[typed["id"]]["key"], held[typed["id"]]["excerpt"]) == ("agents", "Agents may write facts.")
     excerpt = held[proposed["id"]]["excerpt"]
     # The record's own text, cut to one short line, with nothing in it that a terminal would act on.
-    assert held[proposed["id"]]["key"] == "hidden" and len(excerpt) <= 80 and excerpt.endswith("…")
+    assert len(excerpt) <= 80 and excerpt.endswith("…")
     assert "\x1b" not in excerpt and "‮" not in excerpt and excerpt.startswith("Line one")
+    # The key a session wrote is as untrusted as the text: no bidi override, no escape sequence (#239 review).
+    key = held[proposed["id"]]["key"]
+    assert key.startswith("hid") and "‮" not in key and "\x1b" not in key, repr(key)
+
+
+def test_the_held_list_prints_no_value_the_secrets_gate_refuses(ada, monkeypatch):  # noqa: F811
+    import json
+    store, pid = ada["store"], ada["project"]
+    monkeypatch.setenv("OPENAI_API_KEY", "plain env key 22")
+    source = store.snapshot(pid, "note://proposal", "x", "note")
+    in_text = store.remember(pid, {"kind": "fact", "key": "connect", "content": "plain env key 22 is the key"},
+                             [source["id"]])
+    in_key = store.remember(pid, {"kind": "fact", "key": "plain env key 22", "content": "The service key."},
+                            [source["id"]])
+    shaped = store.remember(pid, {"kind": "fact", "key": "ci", "content": f"CI uses {SHAPES['github_token']}."},
+                            [source["id"]])
+    clean = store.remember(pid, {"kind": "fact", "key": "plain", "content": "Nothing secret here."}, [source["id"]])
+    result = Publisher(store).publish(pid, preview=True)
+    printed = json.dumps(result, ensure_ascii=False)
+    assert "plain env key 22" not in printed and SHAPES["github_token"] not in printed
+    held = {item["id"]: item for item in result["held"]["items"]}
+    for record in (in_text, in_key, shaped):
+        item = held[record["id"]]
+        assert item["key"] is None and item["excerpt"] is None and "secrets gate" in item["withheld"], item
+        assert item["reason"] == "proposed, not yet confirmed; review it in the inspector"
+    assert (held[clean["id"]]["key"], held[clean["id"]]["excerpt"]) == ("plain", "Nothing secret here.")
+    assert "withheld" not in held[clean["id"]]

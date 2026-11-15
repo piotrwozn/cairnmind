@@ -17,7 +17,7 @@ from pathlib import Path
 from .memory_published_carrier import carrier_of, destination as carrier_destination, unbound_in_checkout
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
 from .memory_published_release import REGISTERED_ADVICE, SecretsRefused, publication_rules, release_sources
-from .memory_published_secrets import REGISTERED, described
+from .memory_published_secrets import REGISTERED, described, scan_text
 from .memory_published_format import (
     GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, canonical_uuid, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
     clean_value, derive_covered, derive_plan_covered, path_of, plan_hash, projection, ref_class, render, same,
@@ -408,7 +408,7 @@ class Publisher:
                       "files": len(merged), "bytes": sum(len(data) for data in merged.values()),
                       "records": sum(m["kind"] != "plan" for m in built["models"]),
                       "plans": sum(m["kind"] == "plan" for m in built["models"]),
-                      "held": _held(built["held"], built["labels"]), "git": "nothing was staged, committed or pushed"}
+                      "held": _held(built["held"], built["labels"], rules), "git": "nothing was staged, committed or pushed"}
             if others:
                 result["not_ours"] = {"hits": [described(hit) for hit in others[:50]], "total": len(others),
                                       "hint": "files this store does not write hold values the secrets gate refuses; "
@@ -498,10 +498,23 @@ def _excerpt(text, limit=80):
     return line if len(line) <= limit else line[:limit - 1] + "…"
 
 
-def _held(held, labels=None):
+WITHHELD = ("its key or text holds a value the secrets gate refuses, so neither is shown; read the record in the "
+            "inspector")
+
+
+def _label(identifier, kind, reason, label, rules):
+    """One held entry. A held record is never scanned for publishing, so its key and text are scanned here, and
+    shown only when nothing in them is a value the gate refuses (#239): a held record prints no secret either."""
+    key, text = label or (None, None)
+    item = {"id": identifier, "kind": kind, "reason": reason, "key": _excerpt(key, 120), "excerpt": _excerpt(text)}
+    if rules is not None and any(scan_text(value, rules) for value in (key, text) if isinstance(value, str)):
+        item.update(key=None, excerpt=None, withheld=WITHHELD)
+    return item
+
+
+def _held(held, labels=None, rules=None):
     labels = labels or {}
-    items = [{"id": identifier, "kind": kind, "reason": reason, "key": (labels.get(identifier) or (None, None))[0],
-              "excerpt": _excerpt((labels.get(identifier) or (None, None))[1])}
+    items = [_label(identifier, kind, reason, labels.get(identifier), rules)
              for identifier, (kind, reason) in sorted(held.items())]
     reasons = {}
     for item in items:
