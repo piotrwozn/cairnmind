@@ -20,6 +20,7 @@ from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
 from .backup_reader import opened_backup
+from .path_spelling import lies_in
 from .store_backup import payload_digest, streamed_backup, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
@@ -64,7 +65,7 @@ def validate_scope(scope) -> None:
     for pattern in scope:
         parts = pattern.replace("\\", "/").split("/")
         if pattern.startswith(("/", "!", "#", "./")) or "\\" in pattern or "\0" in pattern or "\n" in pattern \
-                or ".." in parts or ".git" in parts or re.match(r"^[A-Za-z]:", pattern):
+                or ".." in parts or ".git" in {part.casefold() for part in parts} or re.match(r"^[A-Za-z]:", pattern):
             raise ValueError("scope patterns must stay inside the worktree, cannot negate and cannot start with # or ./")
     try:
         import pathspec
@@ -700,7 +701,7 @@ class Store:
     def require_safe_project_root(self, root):
         path = str(Path(root).expanduser().resolve())
         if ((self.data_dir / "credentials" / "api-keys.json").exists()
-                and self.data_dir.is_relative_to(Path(path))):
+                and lies_in(self.data_dir, path)):
             raise ValueError("Project root cannot contain Cairnmind's private credential store")
         return path
 

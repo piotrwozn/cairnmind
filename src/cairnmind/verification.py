@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 
 from .sql import clean_row, insert_document, json_text, utc_now
 from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
+from .path_spelling import lies_in
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 # Check profiles are declared in the first file. The second is where versions up to 0.9.0 looked.
@@ -54,6 +55,12 @@ def _git(root, *args) -> bytes:
     return result.stdout
 
 
+def _names_git(path) -> bool:
+    """Whether a part of the path is `.git` in any letter case: on a file system that ignores case `.GIT` is
+    `.git` (#230)."""
+    return ".git" in {part.casefold() for part in Path(path).parts}
+
+
 def _input_patterns(extra_inputs):
     if extra_inputs is None:
         return []
@@ -61,7 +68,7 @@ def _input_patterns(extra_inputs):
         raise ValueError("extra_inputs must be a list of relative paths/globs")
     for pattern in extra_inputs:
         path = Path(pattern)
-        if path.is_absolute() or ".." in path.parts or ".git" in path.parts or "\\" in pattern or "\0" in pattern:
+        if path.is_absolute() or ".." in path.parts or _names_git(path) or "\\" in pattern or "\0" in pattern:
             raise ValueError("extra_inputs must stay inside the registered worktree")
         if is_reserved_memory(path):
             raise ValueError("extra_inputs cannot name reserved portable memory artifacts")
@@ -169,14 +176,14 @@ def _manifest(root, patterns, nested=()):
         if not matches:
             unknowns.append(f"extra input has no matches: {pattern}")
         for match in matches:
-            if ".git" in Path(match).parts or reserved(match):
+            if _names_git(match) or reserved(match):
                 continue
             path = root / match
             if not path.resolve().is_relative_to(root):
                 unknowns.append(f"external extra input: {match}")
             elif path.is_dir() and not path.is_symlink():
                 for child in path.rglob("*"):
-                    if (".git" not in child.relative_to(root).parts
+                    if (not _names_git(child.relative_to(root))
                             and not reserved(child.relative_to(root))
                             and (child.is_file() or child.is_symlink())):
                         paths.add(child.relative_to(root).as_posix())
@@ -447,7 +454,7 @@ def _cleanup_run_artifacts(settings, active):
     if directory.is_symlink() or directory.resolve().parent != output_root:
         return
     worktree = Path(active["worktree"]).resolve()
-    if directory.is_relative_to(worktree) or worktree.is_relative_to(directory):
+    if lies_in(directory, worktree) or lies_in(worktree, directory):
         return
     descriptor = directory / "active.json"
     if descriptor.is_symlink() or not descriptor.is_file():
@@ -579,7 +586,7 @@ def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -
         raise ValueError("Unknown check profile")
     profile = profiles[profile_id]
     output_root = (Path(settings.data_dir) / "checks").resolve()
-    if output_root.is_relative_to(root):
+    if lies_in(output_root, root):  # also spelled with other letter case (#230)
         raise ValueError("Check output directory must be outside the working tree")
     run_id, started_at = str(uuid4()), utc_now()
     output_dir = output_root / run_id
