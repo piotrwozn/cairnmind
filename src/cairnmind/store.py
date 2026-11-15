@@ -720,6 +720,9 @@ class Store:
         name, path = name.strip(), self.require_safe_project_root(root)
         if not name:
             raise ValueError("Project name must not be empty")
+        if len(name) > 256:
+            # The limit of the service's route, for every route (#238).
+            raise ValueError("Project name must be at most 256 characters")
         with self.transaction() as tx:
             existing = one_row(tx, "SELECT FROM projects WHERE name=:name OR root=:root", {"name": name, "root": path}, False)
             if existing:

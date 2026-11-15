@@ -122,6 +122,18 @@ def test_a_model_runtime_failure_of_a_job_has_its_own_category(error, code):
         assert "context length" in shown["error"]
 
 
+def test_a_project_name_is_at_most_256_characters_on_every_route(store, tmp_path):
+    from typer.testing import CliRunner
+    from cairnmind import cli
+    with pytest.raises(ValueError, match="^Project name must be at most 256 characters"):
+        store.add_project("n" * 257, tmp_path / "long")
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "project", "add", "n" * 3000,
+                                          str(tmp_path / "long")])
+    assert result.exit_code != 0
+    assert store.list_projects() == []
+    assert store.add_project("n" * 256, tmp_path / "long")["name"] == "n" * 256
+
+
 def source(store, project, text="We decided to keep the queue in the database."):
     return store.snapshot(project["id"], "conversation://one", text, "transcript")
 
