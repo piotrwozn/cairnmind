@@ -1,4 +1,4 @@
-"""The `memory` commands of published team memory (#170, #171), registered on the CLI's memory group."""
+"""The `memory` commands of published team memory (#170, #171, #172), registered on the CLI's memory group."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -73,6 +73,25 @@ def register(memory_app, initialized):
                        json={"path": str(selected), "project": project, "dry_run": dry_run, "bind": bind,
                              "take_published": list(take_published or [])}))
 
+    @memory_app.command("import-commit")
+    def memory_import_commit(ctx: typer.Context, revision: str,
+                             project: Annotated[str, typer.Option("--project")],
+                             worktree: Path | None = None, dry_run: bool = False,
+                             bind: Annotated[bool, typer.Option(
+                                 "--bind", help="Replace the project's publication identity with the commit's.")] = False):
+        """Import the published memory of a commit (the main branch after a merge) and re-check every quoted
+        passage against that commit's code: still there anchors a record, gone leaves it orphaned. Nothing
+        imported is verified. Reads Git only; writes nothing to the repository."""
+        from cairnmind.cli import output, request
+        from cairnmind.config import Settings
+        if revision.startswith("-"):
+            raise typer.BadParameter("REVISION must be a commit name such as HEAD, a branch or a commit ID")
+        if not dry_run:
+            ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        output(request(ctx.obj, "POST", "/memory/import-commit", start_service=not dry_run,
+                       json={"revision": revision, "project": project, "dry_run": dry_run, "bind": bind,
+                             "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
+
     @memory_app.command("show-published")
     def memory_show_published(ctx: typer.Context, path: Path,
                               kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
@@ -113,6 +132,48 @@ def register(memory_app, initialized):
         output(request(ctx.obj, "POST", f"/inspector/records/{record}/release",
                        json={"project": project, "reason": reason,
                              "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
+
+    @memory_app.command("diff")
+    def memory_diff(ctx: typer.Context, base: str, head: str,
+                    project_root: Annotated[Path, typer.Option(
+                        "--project-root", help="The project's directory in the Git repository (default: here).")] = Path("."),
+                    markdown: Annotated[bool, typer.Option(
+                        "--markdown", help="A bounded Markdown comment for a pull request.")] = False,
+                    max_chars: Annotated[int, typer.Option("--max-chars", min=2000, max=60000)] = 60000,
+                    as_json: Annotated[bool, typer.Option("--json", help="The comparison as JSON.")] = False):
+        """Compare the published memory of two commits, without a store, service or model.
+
+        Exit 0 when the head's published memory would import, 1 when it would not, 2 on a usage error.
+        The head is held to the secrets scan of `check-published`, with the head commit's
+        .cairnmind/publication.toml; no secret is printed."""
+        from cairnmind.cli import output, refuse
+        from cairnmind.memory_published_diff import compare, render_markdown, render_text
+        from cairnmind.memory_published_git import published_files
+        from cairnmind.memory_published_release import commit_config_text
+        from cairnmind.memory_published_secrets import SecretRulesError, load_rules
+        root = project_root.expanduser().absolute()
+        try:
+            base_commit, base_files, base_errors = published_files(root, base)
+            head_commit, head_files, head_errors = published_files(root, head)
+            rules = load_rules(commit_config_text(root, head_commit))
+        except (ValueError, SecretRulesError) as exc:
+            refuse(str(exc), 2)
+        # The base is only compared with: what of it can be read is used, and each entry left out is counted.
+        report = (compare(base_files, head_files, rules) if not head_errors
+                  else {"status": "refused", "errors": head_errors, "entries": [], "counts": [], "skipped": 0})
+        if base_errors and not head_errors:
+            if base_files:
+                report["skipped"] += len(base_errors)
+            else:
+                report["base_unreadable"] = True
+        if as_json:
+            output({"base": base_commit, "head": head_commit, **report})
+        elif markdown:
+            typer.echo(render_markdown(report, base_commit, head_commit, max_chars), nl=False)
+        else:
+            typer.echo(render_text(report, base_commit, head_commit), nl=False)
+        if report["status"] == "refused":
+            raise typer.Exit(1)
 
     @memory_app.command("confirm-plan")
     @initialized

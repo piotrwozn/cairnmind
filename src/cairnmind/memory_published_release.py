@@ -86,14 +86,33 @@ def checkout_rules(directory, config=None) -> Rules:
     return Rules()
 
 
-def import_rules(directory, settings) -> Rules:
+def import_rules(directory, settings, *, config=None) -> Rules:
     """The rules `memory import-published` applies: the checkout's personal patterns, as CI applies them,
-    and this machine's registered secrets, so that nothing this store would refuse to publish comes in."""
+    and this machine's registered secrets, so that nothing this store would refuse to publish comes in.
+
+    A tree read from a commit (#172) has no directory: `directory` is None and `config` is the text of
+    the commit's `.cairnmind/publication.toml`, or None when it has none."""
     try:
-        base = checkout_rules(directory)
+        base = load_rules(config) if directory is None else checkout_rules(directory)
     except SecretRulesError as exc:
         raise SecretsRefused(f"Import refused: {CONFIG}: {exc}") from None
     return Rules(registered_secrets(settings), base.personal, base.patterns)
+
+
+def commit_config_text(root, commit):
+    """The text of the project's `.cairnmind/publication.toml` at a commit, held to the rules of the file on
+    disk (a regular file, at most 64 KiB, UTF-8); None when the commit has none."""
+    from .memory_published_git import GitReadError, file_at
+    try:
+        data = file_at(root, commit, CONFIG.as_posix(), 64 * 1024)
+    except GitReadError as exc:
+        raise SecretRulesError(f"{CONFIG.name}: {exc}") from None
+    if data is None:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise SecretRulesError(f"{CONFIG.name} is not UTF-8") from None
 
 
 def release_sources(tx, project_id):

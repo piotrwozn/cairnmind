@@ -3,7 +3,7 @@
 A review, a conflict decision and a plan confirmation each write an audit source. The audit names who
 acted (`git config user.name` of the project, read when the act happens, never at publish time), the
 branch and the commit, and hashes exactly what was judged: the text, the kind, key and replaced record,
-and for a task what it asks for.
+the quoted passage (#172), and for a task what it asks for.
 A published revision is covered only by such an audit, so an agent's later edit is never published as
 something a person confirmed.
 """
@@ -13,7 +13,8 @@ import json
 import subprocess
 from uuid import uuid4
 
-from .memory_published_format import J, audit_covers, identity_hash, plan_hash, row_definition_hash, sha256_text
+from .memory_published_format import (J, audit_covers, evidence_hash, identity_hash, plan_hash, row_definition_hash,
+                                      sha256_text)
 from .sql import clean_row, one_row, utc_now
 
 
@@ -39,9 +40,15 @@ def record_identity(record) -> str:
     return identity_hash(record["kind"], record["key"], record.get("supersedes"))
 
 
+def record_evidence(record):
+    """The hash of the passage the record quotes, or None: a published quote must be this one (#172)."""
+    return evidence_hash((record.get("metadata") or {}).get("evidence"))
+
+
 def definition_fields(record) -> dict:
-    """What a review hashes besides the text: kind, key and supersedes, and for a task what it asks for."""
-    fields = {"identity_sha256": record_identity(record)}
+    """What a review hashes besides the text: kind, key and supersedes, the quoted passage, and for a task
+    what it asks for."""
+    fields = {"identity_sha256": record_identity(record), "evidence_sha256": record_evidence(record)}
     if record["kind"] == "task":
         fields["definition_sha256"] = row_definition_hash(record["content"], record.get("metadata"))
     return fields
@@ -108,7 +115,8 @@ def confirm_plan(store, project_id, plan_id, expected_plan_version, reason=None)
                  "content_sha256": {task["id"]: sha256_text(task["content"]) for task in tasks},
                  "definition_sha256": {task["id"]: row_definition_hash(task["content"], task["metadata"])
                                        for task in tasks},
-                 "identity_sha256": {task["id"]: record_identity(task) for task in tasks}}
+                 "identity_sha256": {task["id"]: record_identity(task) for task in tasks},
+                 "evidence_sha256": {task["id"]: record_evidence(task) for task in tasks}}
         source = store.snapshot(project_id, "review://" + str(uuid4()), J(audit), "manual",
                                 {"origin": "local_user_review", "role": "user", "plan_id": plan_id})
         version, saved = plan["version"], []

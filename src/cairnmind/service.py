@@ -212,6 +212,17 @@ class MemoryPublishBody(MemorySnapshotBody):
     preview: bool = Field(default=False, strict=True)
 
 
+class MemoryImportCommitBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    revision: str = Field(min_length=1, max_length=256)
+    project: str = Field(min_length=1)
+    worktree: str | None = Field(default=None, max_length=4096)
+    dry_run: bool = Field(default=False, strict=True)
+    bind: bool = Field(default=False, strict=True)
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
 class MemoryImportPublishedBody(BaseModel):
     model_config = {"extra": "forbid"}
     path: str = Field(min_length=1, max_length=4096)
@@ -658,6 +669,23 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         result = await asyncio.to_thread(PublishedImporter(store).import_published, body.path, pid,
                                          dry_run=body.dry_run, bind=body.bind, take_published=body.take_published,
                                          authorize=authorize)
+        if not body.dry_run:
+            cache.clear()
+        return result
+
+    @app.post("/memory/import-commit", dependencies=auth)
+    async def memory_import_commit(body: MemoryImportCommitBody):
+        # The main-branch import (#172): a commit's published memory, re-checked against that commit's code.
+        from cairnmind.memory_published_main import import_commit
+        pid = project(body.project)["id"]
+        authorize = None
+        if body.dry_run:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+        else:
+            scope, authorize = await asyncio.to_thread(memory_write_authorization, pid, body.worktree,
+                                                       body.session_id, body.packet_id)
+        result = await asyncio.to_thread(import_commit, store, pid, body.revision, worktree=scope,
+                                         dry_run=body.dry_run, bind=body.bind, authorize=authorize)
         if not body.dry_run:
             cache.clear()
         return result

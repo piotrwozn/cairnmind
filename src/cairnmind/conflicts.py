@@ -148,7 +148,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         raise ValueError("Superseding requires the ID of the finding to keep")
     if action != "supersede" and keep is not None:
         raise ValueError("Only superseding takes a finding to keep")
-    from .memory_acts import act_context, identity_hash, row_definition_hash
+    from .memory_acts import act_context, identity_hash, record_evidence, row_definition_hash
     context = act_context(store, project_id)  # Who decided, on which branch and commit (#170).
     with store.transaction() as tx:
         rows = {identifier: one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
@@ -176,7 +176,9 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
                  "previous_status": {record_id: candidate["status"], other_id: existing["status"]},
                  "status": "confirmed" if action == "supersede" else None,
                  "content_sha256": {identifier: hashlib.sha256(row["content"].encode()).hexdigest()
-                                    for identifier, row in rows.items()}}
+                                    for identifier, row in rows.items()},
+                 # The quoted passage each finding carries: a published quote must be this one (#172).
+                 "evidence_sha256": {identifier: record_evidence(row) for identifier, row in rows.items()}}
         if any(row["kind"] == "task" for row in rows.values()):
             audit["definition_sha256"] = {identifier: row_definition_hash(row["content"], row.get("metadata"))
                                           for identifier, row in rows.items() if row["kind"] == "task"}

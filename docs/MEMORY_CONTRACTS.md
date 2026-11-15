@@ -132,7 +132,11 @@ A record state travels only when a person's act covers it:
   acceptance criteria, their check links and its scope), and whose `identity_sha256` equals the hash
   of the record's kind, key and `supersedes`; the state's status must be what the act decided. Audits
   recorded before #170 carry no `identity_sha256`: for them only the text, the status and a task's
-  definition are covered, so the kind, key and `supersedes` of such a revision rest on the file alone;
+  definition are covered, so the kind, key and `supersedes` of such a revision rest on the file alone.
+  Audits recorded since #172 also carry `evidence_sha256`, the hash of the passage the record quoted
+  (CRLF normalised; null without one): a published quote must be that passage, while a withheld quote
+  (null) is always allowed. A quote no audit hashes can be edited in a file unnoticed, so it never
+  decides anchoring (see "Import on the main branch");
 - a finding typed in the workspace form and saved as confirmed, at its first version only;
 - after one of these, a task's progress (a state that differs only in `state`), or a mechanical
   supersession (status `superseded` with text, key, `supersedes` and definition unchanged) when what
@@ -274,18 +278,20 @@ tree as above, then applies it in one transaction, all or nothing:
   IDs that belong to another local project are refused, as for
   the archive. A repeat import of the same tree writes nothing, and `--dry-run` writes nothing.
 
-Laptop import never deletes: a file that is absent says nothing. After a published import, a full
+Laptop import never deletes: a file that is absent says nothing (the main-branch import below reports
+it as withdrawn and still changes nothing). After a published import, a full
 archive from another machine no longer imports into the same project (its baseline differs): the
 archive is one person's backup.
 
 ## Trust
 
 Nothing imported is verified. No check run is published, so imported tasks are never fresh; reported
-flags are never published; imported state `done` is historical progress. An imported source is never
-anchored here: a record resting only on such sources is `unverified` with
+flags are never published; imported state `done` is historical progress. An imported source is not
+anchored by the import: a record resting only on such sources is `unverified` with
 `unverified_by: published_elsewhere`, and an imported review neither anchors a record nor counts as
-this machine's own review. No field in a file can raise trust above "reviewed elsewhere, not
-verified here".
+this machine's own review. Only `memory import-commit` (below) can anchor an imported file source, by
+finding its passage in the code of a commit, and that is a fact about this commit's code, not
+verification. No field in a file can raise trust above "reviewed elsewhere, not verified here".
 
 What import cannot check: that the named person confirmed anything (a hand-written file can carry a
 forged audit with a matching hash; the passage is visible in the diff, and accountability comes from
@@ -305,6 +311,94 @@ why degraded records are never published); that a statement is true.
   when both branches redefine the plan.
 - Conflicts Git cannot see (two active records with one kind and key, a dependency cycle across
   branches, two steps with one key) are refused by `check-published` on the merge commit.
+
+## Reading a change
+
+`memory diff BASE HEAD [--project-root DIR] [--markdown] [--max-chars N] [--json]` compares the
+published memory of two commits with no store, service, network or model. It reads the directory of
+each commit with `git ls-tree` and `git cat-file` (nothing is checked out or written); the project
+root is the directory it runs on, so a project in a subdirectory of a repository reads its own
+directory. The entries of a commit are held to the rules of a directory on disk (only the static
+files and `<kind>/<uuid>.md`, no links or submodules, the budgets above), and the head must pass every
+check of `check-published`. Records are compared by ID:
+
+- a new file is `added` (a new task is `opened`, or `closed` when it arrives done);
+- new revisions of a known file are `changed`, `superseded` or `disputed`; a task whose state becomes
+  `done` is `closed`, one that leaves `done` is `opened` again; a plan with a new definition is
+  `redefined`;
+- a removed file is `withdrawn`;
+- a head file that keeps only the first of the base's revisions, byte for byte, is `reverted` (a
+  `git revert` of the change that appended the rest; the head still imports, and a store that has the
+  dropped revisions stays ahead), shown with its text now and before, and without the dropped
+  revisions' reviewers;
+- a head file whose revisions differ from the base's is an error: published revisions are only ever
+  appended.
+
+The base is only compared with: a base entry that would not be accepted (a stray file, say) is left
+out and counted, and the rest of the base is still compared. When the base's directory cannot be read
+at all (a link in its place, or over the package budget), the output says so and every head record
+shows as added. A link, submodule or file in place of `.memory` or of the published directory is
+refused in a head, as it is on disk.
+
+Each entry carries the text it has now (and the text before, when it changed), the person and branch
+its file says acted on it (a claim, never verified), and its quoted passage with its path and lines,
+or its sources when it quotes nothing. Exit 0 when the head would import, 1 when it would not (the
+problems are listed with their paths), 2 when a commit cannot be read.
+
+The text form passes every value from a file through the same terminal escaping as the rest of the
+product. The Markdown form is a pull request comment. Text from records, quotes and error listings
+goes into four-space literal blocks, where Markdown renders nothing; short values (names, branches,
+paths) go into code spans whose fence is longer than any run of backticks in them. Every heading,
+sentence and HTML tag around them is written by Cairnmind, so a record cannot add markup, mentions,
+links, headings or a copy of the comment's marker. Blocks are cut at 40 lines or 4,000 characters,
+the first entries are open, later ones are folded into one `<details>`, the rest are only counted,
+and the comment is at most 60,000 characters (`--max-chars` lowers it). Its first line is the marker
+`<!-- cairnmind-memory-diff -->`, and its second says `changed`, `unchanged` or `refused`.
+
+## The pull request workflow
+
+`.github/workflows/memory.yml` runs on every pull request of this repository and can be copied as it
+is. It checks out the merge commit with its history, runs `memory diff` from the base commit to it,
+writes the Markdown to the job summary and, through `scripts/memory_pr_comment.sh`, posts it as one
+comment or updates the comment it posted before (found by the marker and the workflow's own account).
+A pull request that changes no published memory gets no comment, unless one exists to update. The
+job fails when the head would not import (conflict markers, a broken or hand-edited file), after the
+comment says why. It needs no secret, ArcadeDB or model: the default token, with permission to write
+pull request comments, is enough. A pull request from a fork gets a read-only token from GitHub, so
+the comment is skipped there and only the check and the job summary remain. It is not a required
+check, and the required jobs `lint`, `fast-tests` and `full-tests` are unchanged.
+
+## Import on the main branch
+
+`memory import-commit REVISION --project P [--worktree W] [--dry-run] [--bind]` is what a CI job or a
+server runs after a merge. It reads the published directory of the commit from the project's
+repository (nothing is checked out), imports it exactly as `import-published` does, and in the same
+transaction compares every imported file source with the project's files at that commit:
+
+- whether the file is still at its path, and whether its content is the one that was published;
+- whether each passage a record quotes from it is still there.
+
+The result is kept on the source stub as `rechecked` (`file`: `same`, `changed` or `gone`; the hash of
+each quoted passage and whether it was found; the path; the commit where this result was first
+seen) and changes only when the result does. Evidence reads it: a record whose quoted passage is
+still there is `anchored`, one whose passage or file is gone is `orphaned` (shown so in the command's
+output and the inspector), and a record without a quote follows its file (`anchored` when it is the
+same, `evidence_replaced` when it changed). Once a file source was compared, a conversation or note
+seen elsewhere, which can never be compared, no longer keeps the record `unverified`; a record
+resting only on such statements stays `unverified`. A full local source with the same ID (the
+author's own machine) is left to local indexing. Files over 32 MiB are left unchecked.
+
+Only a quote whose covering review hashed it (`evidence_sha256`) is compared; a record whose quote no
+audit hashes is judged by its file, as if it quoted nothing. A passage is compared with the project's
+own files only: paths inside a `.memory` directory (the published files, which always hold their own
+quotes, and the archive), at any depth, read as gone.
+
+The output adds `commit`, `rechecked` (the sources whose result changed), `unchecked`, `evidence`
+(the imported records by state, with path and first line) and `withdrawn`: records imported earlier
+whose file is no longer in the commit. They are reported, never deleted or changed. A repeat import of
+the same commit writes nothing; a later commit that changes only code writes only the results that
+changed. Anchoring is never verification: no check run, flag or review is written, and the reviewer a
+file names stays a claim. No model is called.
 
 ## Publishing
 
