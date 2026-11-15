@@ -68,11 +68,18 @@ def quote_name(name):
     return f"`{name}`"
 
 
+# What a missing row is called in the refusal, by the collection the query reads (#244); any other is a record.
+MISSING_KIND = {"plans": "Plan", "sessions": "Session", "sources": "Source", "projects": "Project", "jobs": "Job",
+                "check_runs": "Check run", "resume_packets": "Resume packet"}
+_FROM = re.compile(r"\bFROM\s+`?([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+
+
 def one_row(tx, sql, params=None, required=True):
     rows = tx.query(sql, params)
     if not rows:
         if required:
-            raise ValueError("Record does not exist")
+            table = _FROM.search(sql)
+            raise ValueError(f"{MISSING_KIND.get(table.group(1) if table else '', 'Record')} does not exist")
         return None
     return clean_row(rows[0])
 

@@ -81,7 +81,7 @@ def load_questions(path: Path, root: Path) -> list[dict]:
     except (OSError, ValueError) as exc:
         raise ValueError(f"Cannot read the question file {path}: {exc}") from None
     questions = data.get("questions") if isinstance(data, dict) else None
-    if data.get("format_version") != 1 or not isinstance(questions, list) or not questions:
+    if not isinstance(data, dict) or data.get("format_version") != 1 or not isinstance(questions, list) or not questions:
         raise ValueError("A question file needs format_version 1 and a nonempty questions list")
     resolved, seen = [], set()
     for item in questions:
