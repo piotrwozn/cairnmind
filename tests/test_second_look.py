@@ -50,6 +50,8 @@ async def test_an_unknown_answer_gets_one_look_at_the_whole_chunks(workspace):  
     assert second[0]["line_start"] == 1 and second[0]["line_end"] == text.count("\n") + 1
     assert len(model.support_calls) == 1  # the second answer is judged like any other
     assert "_hits_in_part" not in result["diagnostics"]
+    # The whole chunks fill the context: the second look is offered no tools, the first pass is.
+    assert model.calls[0]["tools"] and model.calls[2]["tools"] is None
 
 
 async def test_a_second_look_that_finds_nothing_leaves_the_first_result(workspace):  # noqa: F811

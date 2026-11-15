@@ -1172,7 +1172,9 @@ class KnowledgeAgent:
                         return self._result("partial", "The analysis reached the context budget; narrow the question.",
                                             evidence, ["The budget for read sources was exceeded."], started,
                                             code="context_budget")
-                    response = await self.ollama.chat(messages, tools=TOOLS)
+                    # The second look fills the context with whole chunks: a search on top of them
+                    # would end in the context guard, so that pass answers from what it is shown.
+                    response = await self.ollama.chat(messages, tools=None if whole else TOOLS)
                     diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
                                                   _model_diagnostics(response, "discovery")]
                     message = response["message"]
