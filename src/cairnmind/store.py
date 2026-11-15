@@ -1104,7 +1104,7 @@ class Store:
             self.upsert_node({"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
                               "source_id": source_id, "metadata": {"source_id": source_id, "source_kind": source["kind"]}}, tx)
             edge(target, "supported_by", source_id)
-        for dependency in record["metadata"].get("depends_on", []):
+        for dependency in record["metadata"].get("depends_on") or []:
             target = f"record:{dependency}"
             if tx.query("SELECT id FROM nodes WHERE id=:id", {"id": target}):
                 edge(target, "depends_on", record["source_ids"][0])
@@ -1176,6 +1176,9 @@ class Store:
             updates = {key: value for key, value in updates.items() if key not in CONFLICT_REVIEW_METADATA
                        and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
+        if "depends_on" in metadata and metadata["depends_on"] is None:
+            # A model's metadata may say depends_on: null; that is no dependencies, not a failed write (#238).
+            del metadata["depends_on"]
         if kind == "task":
             if "acceptance_criteria" in updates:
                 # A criteria list that is declared again says everything about its links: what the
