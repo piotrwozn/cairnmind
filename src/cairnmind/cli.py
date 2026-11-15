@@ -694,7 +694,7 @@ def store_takeover(ctx: typer.Context,
                    note: Annotated[str | None, typer.Option(help="Why, kept with the change (one line).")] = None):
     """Make this installation the store's writer. The previous writer stops at its next write; its running jobs
     go back to the queue. The change, with its time, host and note, is kept in the store."""
-    from cairnmind.store_writer import inspect, take_over, valid_note
+    from cairnmind.store_writer import inspect, take_over_at, valid_note
     # Moving the writer is a person's decision, as a verdict is: a coding session cannot make it.
     if session_value("SESSION_ID"):
         refuse("A coding session cannot take over writing the store; only a person can, outside the session.")
@@ -707,8 +707,7 @@ def store_takeover(ctx: typer.Context,
         output({"taken_over": False, **current,
                 "next": "Run `cairnmind store takeover --yes` to make this installation the writer."})
         raise typer.Exit(1)
-    from cairnmind.store import Store
-    output(take_over(Store(ctx.obj.data_dir), note))
+    output(take_over_at(ctx.obj.data_dir, note))
 
 
 @jobs_app.command("list")
