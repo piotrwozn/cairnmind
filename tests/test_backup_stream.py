@@ -23,6 +23,8 @@ from cairnmind.sql import json_text
 from cairnmind.store import EXPORT_TYPES, Store
 from cairnmind.store_size import _backups
 
+from conftest import as_person
+
 FIXTURE_0_10_0 = Path(__file__).parent / "fixtures" / "backup-0.10.0.cairnmind.json.gz"
 # A fixed limit for the Python memory a backup may use at its peak, and a store several times larger.
 MEMORY_LIMIT = 12 * 2**20
@@ -48,8 +50,8 @@ def varied(store, tmp_path):
     store.restore(FIXTURE_0_10_0)
     project = store.add_project("second", tmp_path / "second")
     source = store.snapshot(project["id"], "conversation://two", "Linia dwa \"cytat\" \\ \U0001F600", "transcript")
-    store.remember(project["id"], {"kind": "fact", "key": "quote", "content": "Zażółć \t tab </script>",
-                                   "status": "confirmed"}, [source["id"]])
+    as_person(store, project["id"], {"kind": "fact", "key": "quote", "content": "Zażółć \t tab </script>"},
+              [source["id"]])
     return project
 
 

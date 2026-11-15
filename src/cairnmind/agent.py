@@ -16,8 +16,7 @@ from jsonschema import Draft202012Validator
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
-from .extraction_input import (EXTRACTION_SCHEMA, EXTRACTION_TOKENS, REPAIR_TOKENS, TASK_STATE_INSTRUCTION,
-                               extraction_request, extractor_stamp)
+from .extraction_input import EXTRACTION_SCHEMA, EXTRACTION_TOKENS, REPAIR_TOKENS, extraction_request, extractor_stamp
 from .extraction_input import extraction_schema as _extraction_schema
 from .extraction_input import repair_prompt, source_text
 from .memory_egress import ASK, HELD_BACK_SOURCE, HELD_BACK_UNKNOWN, REMOTE_NOT_ALLOWED, ask_gate, held_back_class

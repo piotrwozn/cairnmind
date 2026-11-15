@@ -13,6 +13,8 @@ from cairnmind.backup_reader import opened_backup
 from cairnmind.sql import json_text
 from cairnmind.store import EXPORT_TYPES, RESTORE_TYPES, Store
 
+from conftest import as_person
+
 FIXTURE_0_10_0 = Path(__file__).parent / "fixtures" / "backup-0.10.0.cairnmind.json.gz"
 MEMORY_LIMIT = 12 * 2**20
 ROW_TEXT = 30_000
@@ -56,8 +58,8 @@ def _backup_payload(store, tmp_path):
     store.restore(FIXTURE_0_10_0)
     project = store.add_project("second", tmp_path / "second")
     source = store.snapshot(project["id"], "conversation://two", "Linia dwa \"cytat\" \\ \U0001F600", "transcript")
-    store.remember(project["id"], {"kind": "fact", "key": "quote", "content": "Zażółć \t tab </script>",
-                                   "status": "confirmed"}, [source["id"]])
+    as_person(store, project["id"], {"kind": "fact", "key": "quote", "content": "Zażółć \t tab </script>"},
+              [source["id"]])
     payload = json.loads(gzip.decompress(store.backup(tmp_path / "base.cairnmind.json.gz").read_bytes()))["payload"]
     payload["records"].append({"id": "task-1", "kind": "task", "project_id": project["id"], "source_ids": [source["id"]]})
     payload["plans"].append({"id": "plan-1", "project_id": project["id"], "step_ids": ["task-1"]})
