@@ -112,6 +112,8 @@ GOLDEN = {'record/anchored/en': 'Refresh tokens rotate on every use.\n'
                        '\n'
                        'Sources: 2\n'
                        '\n'
+                       'Confirmation: confirmed before only a person could confirm; who confirmed it was not recorded\n'
+                       '\n'
                        'Stated: 2026-11-10\n'
                        '\n'
                        'Evidence: at least one supporting source still stands',
@@ -147,6 +149,8 @@ GOLDEN = {'record/anchored/en': 'Refresh tokens rotate on every use.\n'
                        'Status: confirmed\n'
                        '\n'
                        'Version: 3\n'
+                       '\n'
+                       'Confirmation: confirmed before only a person could confirm; who confirmed it was not recorded\n'
                        '\n'
                        'Evidence: the source changed; the quoted passage is gone',
  'record/hostile/en': 'Harmless.\n'
@@ -268,6 +272,8 @@ GOLDEN = {'record/anchored/en': 'Refresh tokens rotate on every use.\n'
                        '\n'
                        'Źródła: 2\n'
                        '\n'
+                       'Potwierdzenie: potwierdzone, zanim potwierdzać mógł tylko człowiek; nie zapisano, kto to zrobił\n'
+                       '\n'
                        'Dowód z dnia: 2026-11-10\n'
                        '\n'
                        'Dowody: co najmniej jedno źródło nadal obowiązuje',
@@ -303,6 +309,8 @@ GOLDEN = {'record/anchored/en': 'Refresh tokens rotate on every use.\n'
                        'Stan: confirmed\n'
                        '\n'
                        'Wersja: 3\n'
+                       '\n'
+                       'Potwierdzenie: potwierdzone, zanim potwierdzać mógł tylko człowiek; nie zapisano, kto to zrobił\n'
                        '\n'
                        'Dowody: źródło się zmieniło; cytowanego fragmentu już w nim nie ma',
  'record/hostile/pl': 'Harmless.\n'
@@ -485,7 +493,11 @@ def test_an_evidence_sentence_takes_the_colour_of_its_state_and_none_is_green():
 
 def test_a_state_is_coloured_only_by_its_exact_word():
     _, parts = built("record/anchored/en")
-    assert styles(parts, "confirmed") == [theme.style("value")]  # neutral: the evidence may be weak
+    # Neutral: the evidence may be weak. The second part is the line that says who confirmed it (#177),
+    # here a record from before only a person could confirm; it is plain text too.
+    assert [text for _, text in parts if "confirmed" in text] == [
+        "confirmed", "confirmed before only a person could confirm; who confirmed it was not recorded"]
+    assert styles(parts, "confirmed") == [theme.style("value"), theme.style("value")]
     _, parts = built("record/task/en")
     assert styles(parts, "needs_review") == [theme.style("warn")]
     assert [role for role, text in parts if text.startswith("Warning: ")] == ["warn-strong"]

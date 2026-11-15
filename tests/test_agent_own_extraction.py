@@ -20,6 +20,7 @@ from cairnmind.agent import KnowledgeAgent
 from cairnmind.agent_journal import AgentJournal
 from cairnmind.memory import MemoryManager
 from cairnmind.sessions import SessionManager
+from cairnmind.inspector import Inspector
 from cairnmind.store import EXTRACTION_MARK, Store
 
 PROMPT = ("In inventory.txt change only line 250. We decided that inventory.txt stays sorted by item name, "
@@ -135,8 +136,8 @@ async def test_a_person_confirming_or_editing_the_sessions_own_proposal_makes_th
     mid_turn_archive(store, manager, sid)
     [proposal] = await extract_queued(store, [decision()])
     manager.require_ack(sid)
-    store.remember(project["id"], {"id": proposal["id"], "expected_version": 1, "status": "confirmed"},
-                   proposal["source_ids"])
+    # The person confirms it in the inspector (#177): no other write can store that status.
+    Inspector(store).review(project["id"], proposal["id"], "confirm", 1)
     with pytest.raises(ValueError, match="resume_required"):
         manager.require_ack(sid)
 

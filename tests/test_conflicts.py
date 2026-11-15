@@ -13,6 +13,8 @@ from cairnmind.inspector import Inspector, InspectorNotFound
 from cairnmind.inspector_api import attach_inspector_routes
 from cairnmind.store import Store
 
+from conftest import as_person
+
 
 @pytest.fixture
 def workspace(tmp_path):
@@ -29,8 +31,8 @@ def pair(store, project, *, kind="decision", key="session-ttl", old="Sessions la
     """An existing finding and a later one that extraction marked as a possible conflict."""
     first = store.snapshot(project["id"], f"transcript://{key}/old", old, "transcript",
                            {"source_timestamp": old_time} if old_time else {})
-    existing = store.remember(project["id"], {"kind": kind, "key": key, "content": old, "status": "confirmed"},
-                              [first["id"]])
+    # The existing finding is one a person confirmed (#177): only a person's route stores that status.
+    existing = as_person(store, project["id"], {"kind": kind, "key": key, "content": old}, [first["id"]])
     second = store.snapshot(project["id"], f"transcript://{key}/new", new, "transcript",
                             {"source_timestamp": new_time} if new_time else {})
     candidate = store.remember(project["id"], {"kind": kind, "key": f"{key}~abc", "content": new, "metadata": {

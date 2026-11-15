@@ -20,6 +20,8 @@ from cairnmind.memory_published_import import PublishedImporter
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
 
+from conftest import as_person
+
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 
 
@@ -108,8 +110,8 @@ def test_only_acts_of_a_person_are_published_and_publishing_twice_changes_no_fil
     decision = reviewed(store, pid, "decision", "ArcadeDB is the only storage engine.", "storage",
                         quote="The active backend is ArcadeDB.")
     source = store.snapshot(pid, "note://cli", "Agents may write facts.", "note")
-    unreviewed = store.remember(pid, {"kind": "fact", "status": "confirmed", "content": "Agents may write facts."},
-                                [source["id"]])
+    # Confirmed on the command line by a person (#177): confirmed here, but not an act that travels.
+    unreviewed = as_person(store, pid, {"kind": "fact", "content": "Agents may write facts."}, [source["id"]])
     with store.transaction():
         typed = save_finding(store, pid, "8d2e4f60-1a3b-4c5d-9e7f-0a1b2c3d4e5f",
                              "Cairnmind never stages, commits or pushes.", "constraint", "confirmed")["record"]
@@ -159,7 +161,7 @@ def test_an_agent_edit_after_a_review_stays_local_until_a_person_reviews_it(ada)
     source = store.snapshot(pid, "note://agent", "Use local storage.", "note")
     changed = store.remember(pid, {"id": record["id"], "expected_version": record["version"],
                                    "content": "Use local storage."}, [*record["source_ids"], source["id"]])
-    assert changed["status"] == "confirmed"  # The store keeps the status; the file does not trust it.
+    assert changed["status"] == "proposed"  # Not a person's write: what was confirmed changed (#177).
     assert publisher.publish(pid)["status"] == "unchanged" and published_bytes(root) == before
     Inspector(store).review(pid, record["id"], "confirm", changed["version"])
     assert publisher.publish(pid)["written"] == [f"decision/{record['id']}.md"]

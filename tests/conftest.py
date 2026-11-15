@@ -100,6 +100,45 @@ def plain_words(text: str) -> str:
     return " ".join(_BOX.sub(" ", _ANSI.sub("", text)).split())
 
 
+def as_person(store, project_id, record, sources=None):
+    """Store `record` the way a person does on the command line in their own terminal (#177).
+
+    This helper stands for a person: it calls the function `cairnmind remember --confirmed` calls after
+    it has found a terminal and no coding session. A test that needs a confirmed record and is not about
+    how it was confirmed uses this instead of asking the store for the status, which only a person's
+    route may do.
+    """
+    from cairnmind.confirmation import remember_as_person
+    return remember_as_person(store, project_id, {"status": "confirmed", **record}, sources)
+
+
+def confirmed_before_rule(store, record_id):
+    """Turn a stored record into one that was confirmed before only a person could confirm (#177).
+
+    Writes the rows directly, as an old store holds them: status confirmed and no confirmation mark.
+    """
+    from cairnmind.sql import clean_row, update_document
+    with store.transaction() as tx:
+        row = clean_row(tx.query("SELECT FROM records WHERE id=:id", {"id": record_id})[0])
+        row["status"] = "confirmed"
+        row["metadata"] = {key: value for key, value in row["metadata"].items() if key != "confirmation"}
+        update_document(tx, "records", {"status": "confirmed", "metadata": row["metadata"]},
+                        "id=:id", {"id": record_id})
+        update_document(tx, "record_revisions", {"snapshot": row}, "id=:id",
+                        {"id": f"{record_id}:{row['version']}"})
+    return row
+
+
+@pytest.fixture
+def person_terminal(monkeypatch):
+    """The command line as a person runs it: a terminal on both ends and no coding session (#177).
+
+    CliRunner has no terminal, so without this fixture a CLI test is what an agent's command is.
+    """
+    import cairnmind.confirmation as confirmation
+    monkeypatch.setattr(confirmation, "person_at_terminal", lambda *args, **kwargs: True)
+
+
 @pytest.hookimpl(trylast=True)  # after the tmp_path plugin has set up the base directory
 def pytest_configure(config):
     global MCP_FIXTURE

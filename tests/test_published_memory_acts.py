@@ -19,6 +19,8 @@ from cairnmind.memory_published_format import definition_hash, identity_hash, pl
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
 
+from conftest import as_person
+
 
 @pytest.fixture
 def workspace(tmp_path):
@@ -60,9 +62,9 @@ def test_a_review_audit_names_the_person_branch_and_commit_and_hashes_a_task_def
 def test_a_confirmed_record_no_person_covered_can_be_confirmed_again_but_not_twice(workspace):
     store, pid, root, _ = workspace
     source = store.snapshot(pid, "note://cli", "Agents may write facts.", "note")
-    # What `remember --confirmed` or `tasks add` writes: confirmed, but no person's act.
-    record = store.remember(pid, {"kind": "fact", "status": "confirmed", "content": "Agents may write facts."},
-                            [source["id"]])
+    # What `remember --confirmed` or `tasks add` writes in a person's terminal (#177): confirmed here,
+    # but with no review that hashes what was judged, so no act that travels covers it.
+    record = as_person(store, pid, {"kind": "fact", "content": "Agents may write facts."}, [source["id"]])
     inspector = Inspector(store)
     confirmed = inspector.review(pid, record["id"], "confirm", 1)["record"]
     assert confirmed["version"] == 2
@@ -71,6 +73,7 @@ def test_a_confirmed_record_no_person_covered_can_be_confirmed_again_but_not_twi
     # An edit after the review is not covered by it any more, so a person may confirm it again.
     edited = store.remember(pid, {"id": record["id"], "expected_version": 2, "content": "Agents may write notes."},
                             confirmed["source_ids"])
+    assert edited["status"] == "proposed"  # The edit was not a person's: it is proposed again (#177).
     assert inspector.review(pid, record["id"], "confirm", edited["version"])["record"]["status"] == "confirmed"
 
 
@@ -115,8 +118,8 @@ def test_a_coding_session_cannot_confirm_a_plan_from_the_command_line(workspace,
 def test_a_conflict_decision_and_a_typed_finding_name_the_person(workspace):
     store, pid, root, commit = workspace
     first = store.snapshot(pid, "transcript://old", "Sessions last a day.", "transcript")
-    existing = store.remember(pid, {"kind": "decision", "key": "ttl", "content": "Sessions last a day.",
-                                    "status": "confirmed"}, [first["id"]])
+    existing = as_person(store, pid, {"kind": "decision", "key": "ttl", "content": "Sessions last a day."},
+                         [first["id"]])
     second = store.snapshot(pid, "transcript://new", "Sessions last an hour.", "transcript")
     candidate = store.remember(pid, {"kind": "decision", "key": "ttl~a", "content": "Sessions last an hour.",
                                      "metadata": {"possible_conflicts": [existing["id"]], "suggested_key": "ttl"}},

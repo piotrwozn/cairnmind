@@ -19,6 +19,7 @@ from cairnmind.config import Settings
 from cairnmind.plans import PlanManager
 from cairnmind.service import create_app
 from cairnmind.sessions import SessionManager
+from cairnmind.inspector import Inspector
 from cairnmind.store import Store
 from cairnmind.verification import run_check
 
@@ -128,8 +129,7 @@ def test_only_the_latest_checkpoint_is_reported_and_its_age_survives_a_later_edi
     record = store.checkpoint(project["id"], {"summary": "B", "next": ["ship"]})
     saved = datetime.fromisoformat(store.get_source(record["source_ids"][-1])["created_at"])
     # A review of the record moves updated_at; the checkpoint was still saved when its snapshot was written.
-    store.remember(project["id"], {"id": record["id"], "expected_version": record["version"], "status": "confirmed"},
-                   record["source_ids"])
+    Inspector(store).review(project["id"], record["id"], "confirm", record["version"])
     brief = build_brief(store, project["id"], now=saved + timedelta(days=3, minutes=5))
     assert lines(brief, "reported") == ["Checkpoint summary: B", "Checkpoint next: ship"]
     assert "db down" not in brief["text"]
