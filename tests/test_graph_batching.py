@@ -45,10 +45,20 @@ def index_both(grouped, first, single, second, monkeypatch, *, forget=False):
     return result, seen
 
 
+def misdirected(store, pid):
+    """Edges whose stored vertices are not the ones their content names. dump() names an edge by from_id and to_id
+    alone, so an edge written backwards would still compare equal there."""
+    return store.query("SELECT id, out.id AS o, in.id AS i, from_id, to_id FROM edges WHERE project_id=:p "
+                       "AND (out.id <> from_id OR in.id <> to_id OR out IS NULL OR in IS NULL)", {"p": pid})
+
+
 def assert_same(grouped, first, single, second, step):
     one, other = dump(grouped, first), dump(single, second)
     for part in one:
         assert one[part] == other[part], (step, part)
+    assert one["edges"], step
+    assert misdirected(grouped, first) == [], step
+    assert misdirected(single, second) == [], step
 
 
 def test_the_grouped_graph_is_the_row_by_row_graph_for_edited_renamed_and_deleted_files(tmp_path, monkeypatch):
