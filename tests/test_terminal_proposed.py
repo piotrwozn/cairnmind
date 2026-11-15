@@ -9,7 +9,8 @@ from textual.widgets import DataTable, Input, Select, Static, TextArea
 from cairnmind.stale_proposed import MAX_DAYS
 from cairnmind.terminal_i18n import tr
 from cairnmind.terminal_inspector import _VIEWS, InspectorApp
-from cairnmind.terminal_proposed import BASIS_WORDS, DAYS_ERROR, days_error
+from cairnmind.terminal_proposed import (BASIS_WORDS, DAYS_ERROR, SUMMARY_ONE_DAY, TEXT_WIDTH, days_error,
+                                        list_summary)
 from cairnmind.terminal_ui import FormModal
 from test_terminal_panels import settle, setup
 
@@ -89,6 +90,33 @@ async def test_the_list_shows_age_kind_id_sources_and_evidence_time_as_literal_t
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("width", [80, 95, 120])
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_narrow_pane_keeps_the_text_on_screen_and_crops_the_id_first(tmp_path, monkeypatch, language, width):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    record = {**ITEMS[1], "id": "3f2b6a1e-9c4d-4e8f-a1b2-c3d4e5f60718"}  # record ids are 36-character UUIDs
+    monkeypatch.setitem(globals(), "ITEMS", [record])
+    Proposed(broker)
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(width, 40)) as pilot:
+        await open_view(app, pilot)
+        table = app.query_one("#inspector-rows", DataTable)
+        columns = table.ordered_columns
+        assert sum(column.get_render_width(table) for column in columns) <= table.size.width
+        assert columns[5].width >= TEXT_WIDTH  # the text a person judges the finding by
+        assert columns[2].width < 36 and columns[1].width >= len(tr("fact", language))  # the id gave way, not the kind
+        assert cells(table, record["id"])[2] == record["id"]  # cropped on screen only; Enter opens the whole record
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_the_summary_says_one_day_in_the_singular(language):
+    one = list_summary({"items": [], "total": 0}, 1, lambda text, **values: tr(text, language, **values))
+    assert one == tr(SUMMARY_ONE_DAY, language, count=0)
+    assert ("1 day or" if language == "en" else "1 dnia:") in one and "1 days" not in one and "1 dni:" not in one
+
+
+@pytest.mark.asyncio
 async def test_an_entry_is_reviewed_through_the_inspector_review_and_then_leaves_the_list(tmp_path, monkeypatch):
     settings, broker, workspace = setup(tmp_path, monkeypatch)
     proposed = Proposed(broker)
@@ -151,6 +179,6 @@ def test_the_days_field_takes_a_whole_number_in_range(value, error):
 def test_every_word_the_view_shows_is_translated():
     words = [*BASIS_WORDS.values(), "Proposed", "Days untouched", "Kind", "Newest evidence", DAYS_ERROR,
              "Proposed findings not updated for {days} days or more: {count} · oldest first · read only.",
-             "Only the {shown} oldest are shown.", "Open one to confirm or dispute it.",
+             SUMMARY_ONE_DAY, "Only the {shown} oldest are shown.", "Open one to confirm or dispute it.",
              "Not updated for at least this many days"]
     assert [word for word in words if tr(word, "pl") == word] == []

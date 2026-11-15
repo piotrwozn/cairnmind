@@ -69,6 +69,8 @@ CATALOG = {
     "mixed times": "czasy mieszane", "time unknown": "czas nieznany",
     "Proposed findings not updated for {days} days or more: {count} · oldest first · read only.":
         "Proponowane ustalenia bez zmian od co najmniej {days} dni: {count} · najstarsze najpierw · tylko odczyt.",
+    "Proposed findings not updated for 1 day or more: {count} · oldest first · read only.":
+        "Proponowane ustalenia bez zmian od co najmniej 1 dnia: {count} · najstarsze najpierw · tylko odczyt.",
     "Only the {shown} oldest are shown.": "Pokazano tylko {shown} najstarszych.",
     "Open one to confirm or dispute it.": "Otwórz jedno, aby je potwierdzić lub zakwestionować.",
     "Not updated for at least this many days": "Bez zmian od co najmniej tylu dni",

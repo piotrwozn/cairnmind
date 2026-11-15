@@ -19,6 +19,10 @@ from .terminal_ui import Field, FormModal
 # How the newest evidence time is known (sql.evidence_time), as the cell says it, before translation.
 BASIS_WORDS = {"stated": "stated time", "observed": "at the latest", "mixed": "mixed times", "unknown": "time unknown"}
 DAYS_ERROR = "Enter a whole number from 0 to 3650."  # stale_proposed.MAX_DAYS, a fixed sentence of the catalog
+SUMMARY = "Proposed findings not updated for {days} days or more: {count} · oldest first · read only."
+SUMMARY_ONE_DAY = "Proposed findings not updated for 1 day or more: {count} · oldest first · read only."
+TEXT_WIDTH, ID_WIDTH = 30, 8  # the narrowest text column worth reading; an id cropped to its first cells
+GIVE_WAY = (2, 4, 0, 3)  # Id, Newest evidence, Days untouched, Sources: the columns that narrow for the text
 
 
 def _line(value, limit=160):
@@ -41,8 +45,7 @@ def evidence_cell(row, translate):
 
 def list_summary(result, days, translate):
     total = result.get("total", 0) if type(result.get("total")) is int else 0
-    text = translate("Proposed findings not updated for {days} days or more: {count} · oldest first · read only.",
-                     days=days, count=total)
+    text = translate(SUMMARY_ONE_DAY if days == 1 else SUMMARY, days=days, count=total)
     if result.get("truncated"):
         text += " " + translate("Only the {shown} oldest are shown.", shown=len(result.get("items") or []))
     if total:
@@ -95,12 +98,23 @@ class ProposedView:
         self.fit_columns()
 
     def fit_proposed_columns(self, table, free):
-        """Every column but the text keeps its longest cell (at least its heading); the text takes what is left."""
-        def longest(index, heading):
-            return max([cell_len(self.t(heading)), *(cell_len(str(cell)) for cell in table.get_column_at(index))])
+        """Every column but the text keeps its longest cell (at least its heading); the text takes what is left.
+
+        The text is what a person reads to judge a finding, so it keeps at least TEXT_WIDTH cells while the
+        others can give way, in GIVE_WAY order: the id first (Enter opens the whole record), then the evidence
+        cell down to its date, then the headings of the two number columns down to their numbers.
+        """
+        def cells(index):
+            return [cell_len(str(cell)) for cell in table.get_column_at(index)]
         headings = ("Days untouched", "Kind", "Id", "Sources", "Newest evidence")
-        widths = [longest(index, heading) for index, heading in enumerate(headings)]
+        widths = [max([cell_len(self.t(heading)), *cells(index)]) for index, heading in enumerate(headings)]
         widths[2] = min(widths[2], 36)
+        floors = {2: ID_WIDTH, 4: 10, 0: max([3, *cells(0)]), 3: max([3, *cells(3)])}
+        for index in GIVE_WAY:
+            short = TEXT_WIDTH - (free - sum(widths))
+            if short <= 0:
+                break
+            widths[index] = max(min(floors[index], widths[index]), widths[index] - short)
         return [*widths, max(10, free - sum(widths))]
 
     @work(group="inspector-filters", exclusive=True, exit_on_error=False)
