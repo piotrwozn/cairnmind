@@ -163,6 +163,10 @@ def test_retry_jobs_says_what_it_retried(reader, tmp_path, monkeypatch, capsys):
     code, shown = entry(monkeypatch, capsys, "--data-dir", str(first.data_dir), "retry-jobs")
     assert code in (0, None), shown.err
     assert json.loads(shown.out) == {"retried": False, "count": 0, "job_ids": []}
+    # A reader with nothing to retry is refused too: the notice is the one line, beside no result.
+    code, shown = entry(monkeypatch, capsys, "--data-dir", str(data_dir), "retry-jobs")
+    assert code == 1 and shown.out == "" and len(shown.err.strip().splitlines()) == 1, (shown.out, shown.err)
+    assert "only reads this store" in shown.err
     pid = first.resolve_project("demo")["id"]
     first.enqueue("extract", pid, {"source_id": "s"}, "job-244")
     job = first.claim_job("inference", 60, ["extract"])
@@ -232,6 +236,12 @@ def test_a_missing_file_or_a_too_long_path_is_a_sentence(tmp_path, monkeypatch, 
     assert len(shown.err) < 300 and "…" in shown.err and "Errno" not in shown.err
 
 
+def test_an_error_with_a_bytes_path_shows_the_path_as_text():
+    import errno
+    said = cli._os_error_text(FileNotFoundError(errno.ENOENT, "No such file", b"/tmp/bytes"))
+    assert said == "/tmp/bytes does not exist."
+
+
 def test_a_missing_row_is_named_by_its_kind():
     from cairnmind.sql import one_row
     empty = SimpleNamespace(query=lambda sql, params=None: [])
@@ -251,6 +261,24 @@ def test_a_question_file_of_another_shape_is_refused_in_a_sentence(tmp_path, con
     path.write_text(content)
     with pytest.raises(ValueError, match="format_version 1 and a nonempty questions list"):
         load_questions(path, tmp_path)
+
+
+def test_a_question_file_that_is_missing_or_a_folder_is_a_sentence(tmp_path, monkeypatch):
+    from cairnmind.repository_evaluation import load_questions
+    for path, said in ((tmp_path / "missing.json", f"The question file {tmp_path / 'missing.json'} does not exist."),
+                       (tmp_path, f"The question file {tmp_path} is a folder, not a file.")):
+        with pytest.raises(ValueError) as refused:
+            load_questions(path, tmp_path)
+        assert str(refused.value) == said and "Errno" not in str(refused.value)
+    # Through the command, Click says the option's file does not exist, before anything else starts.
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr(cli, "_managed_only", lambda *args: pytest.fail("the command ran"))
+    data = tmp_path / "memory"
+    Settings.load(data, create=True)
+    shown = runner.invoke(cli.app, ["--data-dir", str(data), "eval", "repository", str(tmp_path),
+                                    "--questions", str(tmp_path / "missing.json")])
+    assert shown.exit_code == 2 and "does not exist" in plain_words(shown.output)
+    assert "Errno" not in shown.output
 
 
 # --- What the installer prints of doctor -------------------------------------------------------------------------
@@ -284,6 +312,24 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
         assert doctor_attention.main() == 0
         printed = capsys.readouterr().out.splitlines()
         assert printed[0].startswith(first) and printed[-1].endswith("cairnmind doctor")
+    # Ollama down: one line for one cause, not again for each model role at the same address.
+    down = {**healthy, "ollama": {"available": False, "url": "http://127.0.0.1:11434"},
+            "memory_models": {"chat": {"reachable": False, "base_url": "http://127.0.0.1:11434/"},
+                              "embedding": {"reachable": False, "base_url": "http://127.0.0.1:11434"},
+                              "judge": {"reachable": False, "base_url": "http://elsewhere:8000/v1"}}}
+    lines = doctor_attention.attention(down)
+    assert lines == ["Ollama does not answer; local models need `ollama serve`.",
+                     "The judge model server at http://elsewhere:8000/v1 does not answer."]
+    # A slow first start of Java is not worded as Java missing.
+    slow = {**healthy, "java": {"on_path": True, "executable": "/usr/bin/java", "error": "Java did not answer "
+                                "-version within 4 seconds (a first start can be slow)"}}
+    assert doctor_attention.attention(slow) == [
+        "Java did not answer: Java did not answer -version within 4 seconds (a first start can be slow)"]
+    old = {**healthy, "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": False, "version": "11"}}
+    assert doctor_attention.attention(old) == ["Java 21 or newer is needed for the engine: 11"]
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"environment_notes": "abc"})))
+    assert doctor_attention.main() == 0
+    assert capsys.readouterr().out.startswith("The doctor report could not be read.")
     script = (Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh").read_text()
     assert '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention' in script
 

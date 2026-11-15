@@ -265,6 +265,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
                 pass
         except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:  # a reply of another shape
             result["ollama"]["error"] = type(exc).__name__
+        # The address asked, so a reader of the report can tell a model server at the same address (#244).
+        result["ollama"]["url"] = settings.ollama_url
         from .memory_models import doctor_models
         result["memory_models"] = doctor_models(settings, client)
         try:
