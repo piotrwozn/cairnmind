@@ -4,6 +4,11 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- A store now has one writer, the installation that first opened it, named in the database; another installation that points at the same database reads it only, and a command that writes stops with one line naming the writer (#70).
+- An installation is identified by installation.json in its data directory, so a copy of that directory on another machine or under another path gets an identity of its own instead of writing as the original (#70).
+- `cairnmind store takeover --yes [--note TEXT]` lets a person move writing to this installation; the change is recorded in the store, the previous writer's running jobs go back to the queue, and the previous writer stops at its next write. It also works when this release cannot read the store as a reader, for example when its schema belongs to another release (#70).
+- `cairnmind store writer`, `doctor` (store_writer) and `status` (writer) show which installation writes the store and whether this one is the writer, a reader, or has lost the role (#70).
+- The service does not start on an installation that only reads the store. A running service pauses its background work when another installation takes over and resumes on its own once writing is taken back. Starting a service that exits at once now reports its last log line instead of waiting a minute (#70).
 - Tooling: the fast test tier in CI runs with four processes, now that a stopped agent command waits for its process group (#175). The time-sensitive tests found by running the whole suite repeatedly on a loaded four-core machine wait for a state instead of a moment (#175).
 - The built-in agent no longer has to read and acknowledge its resume packet again when memory proposed from its own conversation is extracted while it works. A record that is confirmed, edited, written by anyone else or brought in by a memory package, and a code change, still make the acknowledgement stale (#168).
 - The built-in agent's approval dialog for a command or a third-party tool call now lists the files the agent created, changed or deleted since your last approval, at most 20 with a count of the rest, in English and Polish. Line breaks and control characters in a file name are shown as escapes, so a name cannot pass itself off as the app's own text (#176).
