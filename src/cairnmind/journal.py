@@ -187,6 +187,25 @@ class JournalTransaction:
         self._record(table, before, after)
         return result
 
+    def script(self, statements, params, project_id):
+        """Graph statements of one project sent in one request, the last of which may be a SELECT that checks them.
+
+        Only in a transaction that reports that project's graph as reset: the journal then names no single
+        node or edge of it, so it needs none of the rows these statements write (see ``command``).
+        """
+        if self.reset_reason is None and project_id not in self.graph_resets:
+            raise ValueError("Grouped graph statements need a transaction that reports the project's graph as reset")
+        if not isinstance(statements, list) or not statements:
+            raise ValueError("Grouped graph statements require a list of statements")
+        for index, sql in enumerate(statements):
+            parsed = mutation(sql) if isinstance(sql, str) else None
+            checking = isinstance(sql, str) and index == len(statements) - 1 and sql.lstrip().upper().startswith("SELECT ")
+            if (not checking and (parsed is None or parsed[1] not in {"nodes", "edges"})) or ";" in sql:
+                raise ValueError("Grouped graph statements may only write nodes and edges")
+        if self.known is not None and not self.keeps_known:
+            self.known = None
+        return self.native.script(";\n".join(statements), params)
+
     def touch(self, project_id, entity_type, entity_id=None, op="upsert"):
         if (not isinstance(entity_type, str) or not _IDENTIFIER.fullmatch(entity_type)
                 or op not in {"upsert", "delete", "reset"}
