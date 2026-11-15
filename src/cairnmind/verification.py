@@ -33,6 +33,19 @@ class _RunReferencesGone(ValueError):
     """Concurrent deletion won over recording check evidence."""
 
 
+def _name(value) -> str:
+    """A profile name as a message may show it: a plain short name, or a placeholder (names come from input)."""
+    text = value if isinstance(value, str) else ""
+    return text if 0 < len(text) <= 64 and all(c.isascii() and (c.isalnum() or c in "._-") for c in text) else "?"
+
+
+def unknown_profile_message(profile_id, profiles) -> str:
+    """Names the profile asked for and the ones this worktree declares, so the fix is in the message."""
+    declared = ", ".join(sorted(_name(name) for name in profiles)[:10]) or "none"
+    return (f"Unknown check profile: {_name(profile_id)}. This worktree declares: {declared}. "
+            f"See cairnmind check profiles PROJECT.")
+
+
 def _hash(value) -> str:
     return hashlib.sha256(json_text(value).encode()).hexdigest()
 
@@ -576,7 +589,7 @@ def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -
         raise ValueError("Check task must be an active task in the project")
     profiles = load_profiles(store, project_id, root)
     if profile_id not in profiles:
-        raise ValueError("Unknown check profile")
+        raise ValueError(unknown_profile_message(profile_id, profiles))
     profile = profiles[profile_id]
     output_root = (Path(settings.data_dir) / "checks").resolve()
     if output_root.is_relative_to(root):

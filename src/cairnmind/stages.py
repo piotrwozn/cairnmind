@@ -289,18 +289,8 @@ _REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Ev
             "blocked": "Every remaining step is blocked."}
 
 
-def describe(decision: dict, translate=lambda text: text) -> str:
-    """Readable lines. Fixed text is translated; stored names are appended, never formatted in."""
+def _stage_lines(decision: dict, translate) -> list[str]:
     lines = []
-    if decision.get("plan"):
-        plan = decision["plan"]
-        lines.append(translate("Plan") + ": " + str(plan.get("title") or plan.get("id"))
-                     + " (v" + str(plan.get("version")) + ")")
-    task = decision.get("task")
-    if task:
-        lines.append(translate("Step") + ": " + task["content"] + " [" + display_word(task["state"], translate)
-                     + ", v"
-                     + str(task.get("version")) + "]")
     if decision.get("stage"):
         lines.append(translate("Stage") + ": " + translate(decision["stage"]))
     if decision.get("slot_id"):
@@ -313,6 +303,30 @@ def describe(decision: dict, translate=lambda text: text) -> str:
         else:
             named = assistant_name(decision, translate)
         lines.append(translate("Assistant") + ": " + named)
+    return lines
+
+
+def stage_head(decision: dict, translate=lambda text: text) -> str:
+    """`Stage: … · Assistant: …` on one line: what a notice cut to its first rows must still say."""
+    return " · ".join(_stage_lines(decision, translate))
+
+
+def describe(decision: dict, translate=lambda text: text, *, head=False) -> str:
+    """Readable lines. Fixed text is translated; stored names are appended, never formatted in.
+
+    `head` leaves out the stage and assistant lines, for text shown under `stage_head`."""
+    lines = []
+    if decision.get("plan"):
+        plan = decision["plan"]
+        lines.append(translate("Plan") + ": " + str(plan.get("title") or plan.get("id"))
+                     + " (v" + str(plan.get("version")) + ")")
+    task = decision.get("task")
+    if task:
+        lines.append(translate("Step") + ": " + task["content"] + " [" + display_word(task["state"], translate)
+                     + ", v"
+                     + str(task.get("version")) + "]")
+    if not head:
+        lines += _stage_lines(decision, translate)
     if decision.get("client") in AGENT_CLIENTS:
         named = " · ".join(str(value) for value in (decision.get("provider"), decision.get("model")) if value)
         lines.append(translate("Model") + ": " + (named or translate("default model")))
