@@ -4,8 +4,10 @@
 # user over the server's TLS and check what `cairnmind doctor` sees. Exit status 0 only when every step
 # passed. The CI job kubernetes-manifests runs it as the Job in connection-check.yaml.
 #
+# The installation is connect-only (#68): it never installs or starts an engine, here or anywhere.
+#
 # Environment: the usual Cairnmind settings, all required here:
-#   CAIRNMIND_ARCADE_URL            https://arcadedb.cairnmind-db.svc:2490
+#   CAIRNMIND_ARCADE_CONNECT_URL    https://arcadedb.cairnmind-db.svc:2490
 #   CAIRNMIND_ARCADE_USER           the dedicated user, not root
 #   CAIRNMIND_ARCADE_DATABASE       the database name
 #   CAIRNMIND_ARCADE_PASSWORD_FILE  the user's password, a mounted Secret
@@ -13,7 +15,7 @@
 # and ARCADEDB_ADMIN_PASSWORD_FILE, the root password (a mounted Secret), used by create-user only.
 set -eu
 
-: "${CAIRNMIND_ARCADE_URL:?}" "${CAIRNMIND_ARCADE_USER:?}" "${CAIRNMIND_ARCADE_DATABASE:?}"
+: "${CAIRNMIND_ARCADE_CONNECT_URL:?}" "${CAIRNMIND_ARCADE_USER:?}" "${CAIRNMIND_ARCADE_DATABASE:?}"
 : "${CAIRNMIND_ARCADE_PASSWORD_FILE:?}" "${CAIRNMIND_ARCADE_CA_FILE:?}" "${ARCADEDB_ADMIN_PASSWORD_FILE:?}"
 python=${PYTHON:-python3}
 work=$(mktemp -d)
@@ -33,16 +35,29 @@ cairnmind engine status > "$work/status.json"
 cairnmind init > /dev/null
 cairnmind doctor > "$work/doctor.json"
 
-"$python" - "$work/status.json" "$work/doctor.json" "$work/user.json" <<'PY'
+echo "== index a small project from inside the cluster, and read it back"
+mkdir "$work/project"
+printf 'def answer():\n    return 42\n' > "$work/project/answer.py"
+cairnmind project add in-cluster "$work/project" > "$work/project.json"
+
+echo "== engine commands say that nothing is managed here"
+if cairnmind engine start > "$work/start.txt" 2>&1; then
+    echo "FAILED: engine start did not refuse" >&2
+    exit 1
+fi
+grep -q "only connects to ArcadeDB" "$work/start.txt" || { cat "$work/start.txt" >&2; exit 1; }
+[ ! -e "$data/arcade" ] && [ ! -e "$data/runtime" ] || { echo "FAILED: engine files in $data" >&2; exit 1; }
+
+"$python" - "$work/status.json" "$work/doctor.json" "$work/user.json" "$work/project.json" <<'PY'
 import json
 import os
 import sys
 
-status, doctor, user = (json.load(open(path)) for path in sys.argv[1:])
+status, doctor, user, project = (json.load(open(path)) for path in sys.argv[1:])
 database = doctor["arcadedb"]
 print(json.dumps({key: database.get(key) for key in (
-    "available", "version", "version_matches", "database", "database_available", "user", "transport",
-    "password_source")}, indent=1))
+    "mode", "host", "available", "version", "version_matches", "database", "database_available", "user",
+    "transport", "password_source")}, indent=1))
 expected = os.environ["CAIRNMIND_ARCADE_USER"]
 problems = [text for ok, text in (
     (user.get("signed_in") is True and user.get("user") == expected, "create-user did not sign in as the new user"),
@@ -52,6 +67,9 @@ problems = [text for ok, text in (
     (database.get("user") == expected, "doctor does not use the dedicated user"),
     (database.get("password_source") == "file", "the password does not come from the mounted file"),
     (str(database.get("transport", "")).startswith("https"), "the connection is not over TLS"),
+    (status.get("mode") == "connect" and database.get("mode") == "connect", "the installation is not connect-only"),
+    ("java" not in status and doctor.get("java", {}).get("needed") is False, "Java was looked for"),
+    (project.get("indexed", {}).get("changed") == 1, "the project was not indexed"),
 ) if not ok]
 for text in problems:
     print("FAILED:", text, file=sys.stderr)
