@@ -319,14 +319,18 @@ _LATER = itertools.count(LATER_RANKS)
 REPAIR_CATALOG_CHARS = 12000
 
 
-def _show(source: dict, text: str, rank: int | None = None) -> None:
+def _show(source: dict, text: str, rank: int | None = None, item_id=None) -> None:
     """Register a passage of ``source`` that the model is shown, so a repair can cite it again.
 
     Every passage is kept with the earliest place it was shown; ``_catalog_excerpt`` stays the
-    latest one, for callers that need a single excerpt.
+    latest one, for callers that need a single excerpt. ``item_id`` is the ID the passage was
+    shown under beside its source ID (a search hit's chunk ID, ``definition:...``): a model
+    sometimes cites that one, and validation then knows which source it stands for.
     """
     rank = next(_LATER) if rank is None else rank
     source["_catalog_excerpt"] = text
+    if isinstance(item_id, str) and item_id and item_id not in source.setdefault("_catalog_items", []):
+        source["_catalog_items"].append(item_id)
     passages = source.setdefault("_catalog_passages", [])
     for item in passages:
         if item[1] == text:
@@ -517,7 +521,7 @@ class KnowledgeAgent:
             previous = evidence.get(alias, {})
             checks.update(previous.get("_checked_machine_scopes", {}))
             if previous.get("sha256") == source["sha256"]:
-                markers = ("_catalog_excerpt", "_catalog_passages") + (
+                markers = ("_catalog_excerpt", "_catalog_passages", "_catalog_items") + (
                     ("_historical_requested",) if not current else ())
                 for marker in markers:
                     if marker in previous:
@@ -556,7 +560,7 @@ class KnowledgeAgent:
                     value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
             if register and isinstance(value.get("text"), str) and value["text"] in source_text(source):
-                _show(source, value["text"])
+                _show(source, value["text"], item_id=value.get("id"))
             # The source checked just above, not the chunk, says whether an external session wrote it.
             result.append(with_source_origin(value, source))
         return result
@@ -915,6 +919,12 @@ class KnowledgeAgent:
                 # The catalog the model is shown names its passages "quote_excerpt", and the model
                 # often answers with that name. The passage is checked against the source all the same.
                 quote = citation.get("quote_excerpt")
+            if isinstance(source_id, str) and source_id not in evidence:
+                # The ID of a passage the model was shown (a hit's chunk ID) stands for its source.
+                shown_as = {source["id"] for source in evidence.values()
+                            if source_id in source.get("_catalog_items", ())}
+                if len(shown_as) == 1:
+                    source_id = shown_as.pop()
             if not isinstance(source_id, str) or source_id not in evidence:
                 invalid.append("The model cited a source it did not read.")
                 continue
@@ -1145,7 +1155,7 @@ class KnowledgeAgent:
                 for position, item in enumerate(initial):
                     source = evidence.get(item["source_id"])
                     if source is not None and isinstance(item.get("text"), str) and item["text"] in source_text(source):
-                        _show(source, item["text"], position)
+                        _show(source, item["text"], position, item.get("id"))
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
                           "citation_catalog": self._citation_catalog(

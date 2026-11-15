@@ -7,9 +7,10 @@ Markdown code span without its backticks, and a quote of several lines skips one
 span, so the citation that is recorded and shown is always the source's own text:
 
 - the quote as it is, if the source holds it;
-- otherwise the passage that equals the quote once every run of whitespace counts as one space
-  and backticks are left out, on both sides. Words, digits and every other character must still
-  match in order, so no word of the quote may be missing from the source or added to it;
+- otherwise the passage that equals the quote once whitespace and backticks are left out on both
+  sides: a model joins wrapped lines with a space, and re-spaces a list it copies from code
+  (``"-a", "-b"`` for two lines of arguments). Every other character must still match in order,
+  so no word, digit or sign of the quote may be missing from the source or added to it;
 - otherwise, for a quote of several lines, its longest run of whole lines that is found by the
   two rules above and is at least ``minimum`` characters long (the first such run on a tie).
 
@@ -22,17 +23,13 @@ _IGNORED = "`"
 
 
 def _normalized(text: str) -> tuple[str, list[int]]:
-    """``text`` with whitespace runs as one space and backticks removed, and for every character
-    of the result the index in ``text`` it came from."""
+    """``text`` without whitespace and backticks, and for every character of the result the index
+    in ``text`` it came from."""
     result: list[str] = []
     origin: list[int] = []
     for index, char in enumerate(text):
-        if char in _IGNORED:
+        if char in _IGNORED or char.isspace():
             continue
-        if char.isspace():
-            if result and result[-1] == " ":
-                continue
-            char = " "
         result.append(char)
         origin.append(index)
     return "".join(result), origin
@@ -44,7 +41,7 @@ def _span(quote: str, content: str, normalized: tuple[str, list[int]] | None) ->
         return start, start + len(quote)
     if normalized is None:
         return None
-    wanted = _normalized(quote)[0].strip()
+    wanted = _normalized(quote)[0]
     if not wanted:
         return None
     text, origin = normalized

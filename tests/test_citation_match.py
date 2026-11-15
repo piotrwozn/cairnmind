@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import json
 import time
+from uuid import uuid4
 
 import pytest
 
-from test_knowledge import FakeOllama, document, workspace  # noqa: F401  (workspace is a fixture)
+from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
 from cairnmind.agent import MIN_QUOTE_CHARS, KnowledgeAgent
 from cairnmind.citation_match import locate_quote
@@ -34,6 +35,14 @@ def test_joined_lines_and_missing_backticks_give_the_passage_of_the_source():
     quote = "7 when a parcel or pallet is oversized (bulky). A label"
     assert quote not in MARKDOWN
     assert found(quote, MARKDOWN) == "7 when a parcel or pallet is\noversized (`bulky`). A label"
+
+
+def test_a_list_copied_with_other_spacing_gives_the_lines_of_the_source():
+    source = 'command = [van, "--crates=12", "--straps=4",\n           "--route=north",\n           "--seal"]\n'
+    quote = 'command = [van, "--crates=12","--straps=4", "--route=north", "--seal"]'
+    assert found(quote, source) == source.strip()
+    assert found('command = [van, "--crates=12", "--straps=5",', source) is None
+    assert found('command = [van, "--crates=12", "--route=north"', source) is None
 
 
 @pytest.mark.parametrize("quote", [
@@ -105,6 +114,22 @@ def test_a_quote_from_a_source_the_model_was_not_shown_is_not_assigned(workspace
     result = KnowledgeAgent(store, settings, FakeOllama())._final(
         output, project["id"], {shown["id"]: shown, hidden["id"]: hidden}, time.monotonic())
     assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+
+
+async def test_the_id_of_a_shown_hit_stands_for_its_source(workspace):  # noqa: F811
+    store, project, settings = workspace
+    source, chunk_id = document(store, project, CODE)
+    other, other_chunk = document(store, project, MARKDOWN, uri="notes://shipping")
+    # The model writes the hit's own ID where the source ID belongs; the quote is checked as ever.
+    model = FakeOllama([final(chunk_id, "PARCELS_A_VAN = 37", "Thirty-seven.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "PARCELS_A_VAN parcels shipping zone")
+    assert result["status"] == "complete" and len(model.calls) == 1
+    assert result["sources"][0]["id"] == source["id"] and result["sources"][0]["quote"] == "PARCELS_A_VAN = 37"
+    # An ID that was never shown, and a quote the hit's source does not hold, stay refused.
+    for cited, quote in ((str(uuid4()), "PARCELS_A_VAN = 37"), (chunk_id, "PARCELS_A_VAN = 38 invented")):
+        refused = FakeOllama([final(cited, quote, "Thirty-seven."), final(cited, quote, "Thirty-seven.")])
+        result = await KnowledgeAgent(store, settings, refused).ask(project["id"], "PARCELS_A_VAN parcels shipping zone")
+        assert result["status"] == "partial" and not result["sources"]
 
 
 def test_one_failed_citation_fails_the_answer_until_the_repair_was_tried(workspace):  # noqa: F811
