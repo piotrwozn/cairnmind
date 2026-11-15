@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import random
+import stat
 import time
 
 from .brief import _line
@@ -249,6 +250,24 @@ def _backups(directory: Path) -> dict:
     return {"path": str(directory), **groups, "safety": safety}
 
 
+def _old_engine_logs(log: Path) -> dict:
+    """The engine.log.<n> copies that engine.rotate_log keeps beside engine.log (#190); links are not counted."""
+    files = total = 0
+    if log.parent.is_dir() and not log.parent.is_symlink():
+        for path in log.parent.iterdir():
+            suffix = path.name[len(log.name) + 1:]
+            if not path.name.startswith(log.name + ".") or not suffix.isdigit():
+                continue
+            try:
+                info = os.lstat(path)
+            except OSError:
+                continue  # removed while listing
+            if stat.S_ISREG(info.st_mode):
+                files += 1
+                total += info.st_size
+    return {"path": str(log.parent), "exists": files > 0, "files": files, "bytes": total}
+
+
 def _disk(settings) -> dict:
     data = Path(settings.data_dir)
     agents = data / "runtime" / "agents"
@@ -259,7 +278,9 @@ def _disk(settings) -> dict:
                 "files": journals["files"], "bytes": journals["bytes"]}
     return {"data_dir": _tree(data), "databases": _tree(data / "arcade" / "databases"),
             "database": _tree(data / "arcade" / "databases" / settings.arcade_database),
-            "engine_log": _tree(data / "arcade" / "engine.log"), "engine_logs": _tree(data / "arcade" / "log"),
+            "engine_log": _tree(data / "arcade" / "engine.log"),
+            "old_engine_logs": _old_engine_logs(data / "arcade" / "engine.log"),
+            "engine_logs": _tree(data / "arcade" / "log"),
             "backups": _backups(data / "backups"), "agent_journals": journals}
 
 
@@ -364,7 +385,7 @@ def render(report) -> str:
     lines += ["", "Disk" + (" (the whole data directory, not only this project)" if project else ""),
               f"  data directory   {_size(disk['data_dir']['bytes']):>12}  {safe_text(disk['data_dir']['path'])}"]
     for label, key in (("databases", "databases"), ("this database", "database"), ("engine.log", "engine_log"),
-                       ("engine logs", "engine_logs")):
+                       ("old engine.log", "old_engine_logs"), ("engine logs", "engine_logs")):
         part = disk[key]
         lines.append(f"  {label:<15}  {_size(part['bytes']) if part['exists'] else 'absent':>12}")
     backups = disk["backups"]

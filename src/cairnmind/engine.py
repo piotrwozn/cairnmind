@@ -229,8 +229,17 @@ def start_engine(settings: Settings) -> dict:
                    f"-Darcadedb.server.httpIncomingPort={port}",
                    f"-Djava.util.logging.config.file={state / 'config' / 'arcadedb-log.properties'}",
                    "-cp", str(home / "lib" / "*"), "com.arcadedb.server.ArcadeDBServer"]
-        rotate_log(state / "engine.log", settings.engine_log_bytes, settings.engine_log_copies)
+        note = b""
+        try:
+            rotate_log(state / "engine.log", settings.engine_log_bytes, settings.engine_log_copies)
+        except OSError as exc:
+            # Rotation is housekeeping: when the filesystem refuses it, the engine still starts and appends.
+            note = (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
+                    "appending to it\n").encode()
         with (state / "engine.log").open("ab") as log:
+            if note:
+                log.write(note)
+                log.flush()
             process = subprocess.Popen(command, cwd=state, stdin=subprocess.DEVNULL,
                                        stdout=log, stderr=log, start_new_session=True)
         pid_file = state / "process.json"
