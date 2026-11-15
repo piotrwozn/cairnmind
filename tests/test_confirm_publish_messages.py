@@ -99,6 +99,44 @@ def test_an_unknown_revision_is_named_as_unknown_and_other_git_failures_keep_the
         resolve(plain, "HEAD")
 
 
+def test_check_published_exits_2_for_a_path_that_is_no_directory_and_names_what_is_wrong(workspace, tmp_path):  # noqa: F811
+    from typer.testing import CliRunner
+
+    from cairnmind import cli
+    from cairnmind.memory_published import Publisher
+    store, pid, root, _ = workspace
+    source = store.snapshot(pid, "note://check", "Use cookies.", "note")
+    record = store.remember(pid, {"kind": "decision", "content": "Use cookies."}, [source["id"]])
+    Inspector(store).review(pid, record["id"], "confirm", 1)
+    Publisher(store).publish(pid)
+    folder = root / ".memory" / "cairnmind-published"
+
+    def check(path):
+        result = CliRunner().invoke(cli.app, ["memory", "check-published", str(path)])
+        return result.exit_code, " ".join(result.output.split())
+
+    assert check(folder)[0] == 0
+    a_file = tmp_path / "a-file"
+    a_file.write_text("x")
+    for path in (tmp_path / "nonexistent", a_file):
+        code, words = check(path)
+        # The message box wraps a long path, so only the start of the error is compared.
+        assert code == 2 and "Invalid value for PATH" in words, words
+    path = folder / "decision" / f"{record['id']}.md"
+    original = path.read_text()
+    path.write_text("")
+    code, words = check(folder)
+    assert code == 1 and "the file is empty" in words and "line break" not in words, words
+    created = next(line for line in original.split("\n") if line.startswith("created_at: "))
+    path.write_text(original.replace(created, 'created_at: "2026-11-15T10:00:00"'))
+    code, words = check(folder)
+    assert code == 1 and "created_at: it must be an ISO 8601 time with a time zone" in words, words
+    kind = next(line for line in original.split("\n") if line.startswith("kind: "))
+    path.write_text(original.replace(kind, kind.replace("decision", "opinion"), 1))
+    code, words = check(folder)
+    assert code == 1 and "invalid kind" in words and "created_at" not in words, words
+
+
 def test_the_refusal_for_a_confirmed_checkpoint_record_points_to_the_checkpoint_tool(workspace):  # noqa: F811
     from cairnmind.confirmation import ConfirmationRefused
     store, pid, _, _ = workspace
