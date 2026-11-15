@@ -71,6 +71,14 @@ confirmed elsewhere (see "Only a person confirms a record" below): the dry run
 and the import both report `confirmed_records` with the number of such records,
 the names the package gives for who confirmed them, and how many name nobody.
 
+An import is run only by a person. `POST /memory/import`, `/memory/import-published`
+and `/memory/import-commit` refuse a request that names a session, except its dry
+run, which writes nothing. An import that would put another text or status in
+the place of a record that was confirmed or disputed on this machine is refused
+and lists those records (`replaces_confirmed_here` in the dry run); the person
+applies it with `--replace-confirmed`. In the workspace and the inspector the
+import dialog states the number before the person applies the import.
+
 ## Only a person confirms a record
 
 A record has the status `confirmed` only because a person confirmed it. The rule
@@ -83,18 +91,27 @@ through, and it holds for every route:
   of note that route writes. Nothing in a request, a record or a file opens an
   act, and an act opened while the write belongs to a session is refused.
 - A write keeps `confirmed` when it does not change what was confirmed: the
-  text, the kind, the key, the record it replaces, the quoted passage, and for a
-  task its plan, step key, dependencies, acceptance criteria and their check
-  links, required profiles and test and review requirements. Task progress
-  (`metadata.state`, reported evidence, check runs), a declared scope and a
-  proposed command are not part of it.
+  text, the kind, the key, the record it replaces, the quoted passage and every
+  metadata field. A field is covered unless it is named as not covered, so a
+  summary, a next step or any other text a writer puts beside a confirmed record
+  ends the confirmation like a changed text does. Not covered are the fields the
+  store derives, the bookkeeping of conflict decisions, and on a task its
+  progress: `metadata.state`, reported evidence, check runs, a declared scope, a
+  proposed command and its placement in a plan. Of these only the path patterns
+  of a task's scope are text a writer chooses.
 - Any other write that asks for `confirmed` is refused and stores nothing. The
   error is `Only a person can store a record as confirmed, ...` (HTTP 400), and
   it says what to do: store the record as proposed and let the person confirm it.
 - A write that does not ask for a status and changes what was confirmed is
-  stored as `proposed`, with `confirmation.by = "lapsed"` on that version. This
-  is how a session's edit of a confirmed decision, a new checkpoint over a
-  confirmed one, or a plan save that rewrites a confirmed step is stored.
+  stored as `proposed`, with `confirmation.by = "lapsed"`. This is how a
+  session's edit of a confirmed decision, a new checkpoint over a confirmed one,
+  or a plan save that rewrites a confirmed step is stored.
+- A write that is not a person's act and sets another status on a confirmed
+  record (`proposed`, `disputed`, `superseded`), or replaces it with a new record
+  through `supersedes`, is stored and leaves the same mark with the new status.
+  Taking a confirmation away is never silent. The mark stays on later versions
+  until a person confirms or disputes the record. A person's dispute or conflict
+  decision leaves no such mark.
 
 The person's routes, and how each is told from a session or an agent:
 
@@ -130,9 +147,25 @@ What the rule does not claim. The service has one local token for all its
 routes, and the command line trusts the terminal it is given. A program that
 already runs as the same user can read that token and call a person's route,
 fake a terminal, or write to the database. The rule separates a person from the
-tools Cairnmind hands to a model and from the commands a model runs; it is not a
-defence against code running as the user. The built-in agent's approval dialog,
-which shows the exact command, remains the gate for its commands.
+tools Cairnmind hands to a model and from the commands a model runs as they are;
+it is not a defence against code running as the user.
+
+This limit is reachable from a coding session whose shell commands run without
+the person's approval. Such a shell passes the command line check by removing
+the session variables and opening a pseudo-terminal, for example
+`env -u CAIRNMIND_SESSION_ID -u CLAUDECODE script -qec "cairnmind remember ... --confirmed" /dev/null`
+or Python's `pty.spawn`; the record is then stored as confirmed by a person on
+the command line, under the Git name of the user. The same shell can read the
+service token from the settings file and call the inspector's review route or
+`POST /findings` without a session, run an import without the session variable,
+or stop the service and restore a prepared backup (`cairnmind restore` writes
+the rows of a backup as they are, marks included). A check on the command line
+alone cannot close this, because every check the command can make, the shell
+can answer. What limits it today is the client's own approval of commands: the
+built-in agent asks the person to approve each command and shows it in full,
+and a coding client does so unless the person turned that off. A record such a
+command confirmed says `on the command line` in its confirmation line, and the
+command line never writes an act that published memory carries.
 
 ### How a confirmation is recorded and shown
 
@@ -144,7 +177,7 @@ can neither send it nor remove it, and a package never carries it.
 | `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at` |
 | `import` | Confirmed elsewhere and brought by a package. Never verified here. | `package` (`archive` or `published`), `where`, `confirmed_by` (claims: name, action, branch, commit, time), `imported_at`, `version` |
 | `seed` | Written by `cairnmind eval` into its own store. Not a person. | `route`, `source_id`, `version` |
-| `lapsed` | Proposed again, on the version that lost its confirmation. | `confirmed_version`, `version` |
+| `lapsed` | No longer confirmed: a write that was not a person's act changed what was confirmed or set another status. Kept until a person gives a verdict again. | `confirmed_version`, `version`, `status` |
 
 A confirmed record without the field was confirmed before this rule existed
 (0.10.0 or earlier). Its status is kept, nothing is claimed about who confirmed
@@ -153,13 +186,18 @@ confirmed it was not recorded". No migration rewrites such records: the rule is
 applied when a record is read. The person can confirm such a record in the
 inspector, once, and it is then theirs.
 
-Where it is shown: the inspector's record view (line "Confirmation", in English
-and Polish), `memory show` (line `confirmed:`, read from the package's own
-notes), the record lists and search hits of `ask`, `context` and the inspector
-(`confirmed_by`, and for an import the sentence in `confirmation`), and each
-confirmed record of a resume packet (`confirmed_by`: `person`, `import`,
-`before_rule` or `seed`). Names, branches, commits and paths in that line come
-from memory or from a package and are escaped.
+Where it is shown: the inspector's record view and each side of its conflict
+view (line "Confirmation", in English and Polish), the inspector's list rows
+(after the state: "confirmed elsewhere", "confirmed before the rule" or
+"confirmation lapsed"; a person's own confirmation adds nothing), `memory show`
+(line `confirmed:`, read from the package's own notes), the record lists of
+`context` and the inspector (`confirmed_by`, and for an import the sentence in
+`confirmation`), the search hits of `ask` as the answering model gets them
+(`confirmed_by`, and the sentence for every confirmation that is not a person's
+here), and each confirmed record of a resume packet (`confirmed_by`: `person`,
+`import`, `before_rule` or `seed`). Names, branches, commits and paths in that
+line come from memory or from a package and are escaped; they are never
+translated, and the words that stand for a missing value are.
 
 ### Confirmed elsewhere
 
@@ -184,10 +222,20 @@ and where, and it never becomes this machine's own confirmation:
   they were. A local person's confirm replaces the mark with their own.
 - A later local write follows the rule above: progress keeps the imported
   confirmation, a changed statement makes the record proposed again.
-- An import never rewrites a version. A local record that diverged from a
-  package, for example one a person disputed here, refuses the import;
-  `--take-published` is refused inside a coding session, because putting the
-  published side over a local record is a person's choice.
+- An import never rewrites a version, and it never replaces a verdict given
+  here without the person's choice. A record counts as having one when it is
+  confirmed or disputed and that version was not itself written by an import: a
+  person's confirmation, a confirmation from before the rule (nothing says it
+  was not a person's) and any dispute. When a package moves such a record on and
+  leaves it confirmed and saying the same (progress on a task), the confirmation
+  given here is kept. When it brings another text or status, the import is
+  refused with the list, and `--replace-confirmed` applies it; the record is
+  then confirmed elsewhere, like anything else the package brings. A record that
+  diverged from a published file refuses the import as before, and
+  `--take-published` names it.
+- Only a person runs an import, `--replace-confirmed` and `--take-published`. A
+  request that names a session is refused, because an import brings records that
+  count as confirmed, and a session can prepare the files it imports.
 
 ## Validation budgets and quality evaluation
 
@@ -450,8 +498,13 @@ tree as above, then applies it in one transaction, all or nothing:
   `by: import`: confirmed elsewhere, by whom the file says, never this machine's own (#177);
 - the result and the dry run report `confirmed_records`: how many records the tree brings as
   confirmed, and the names its files give for who confirmed them;
-- `--take-published` is refused inside a coding session: it can put the published side over a
-  record a person confirmed or disputed here, and that choice is a person's;
+- a record that was confirmed or disputed on this machine (and whose head no import wrote) is not
+  fast-forwarded to another text or status without the person's choice: the import is refused with
+  the paths, the dry run lists them as `replaces_confirmed_here`, and `--replace-confirmed` applies
+  it. A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
+  given here (#177);
+- the import itself, `--replace-confirmed` and `--take-published` are refused inside a coding
+  session; only the dry run is open to one. `memory import-commit` follows the same rules;
 - plans are applied after their tasks. A diverged plan refuses the import; `--take-published` takes
   records only, so the team resolves it in Git by keeping the definition the importing store holds;
   IDs that belong to another local project are refused, as for
