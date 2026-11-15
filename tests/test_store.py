@@ -10,7 +10,7 @@ import pytest
 
 from cairnmind.store import Store
 
-from conftest import as_person
+from conftest import as_person, person_edit
 from cairnmind.verification import run_check, verification_status
 
 
@@ -90,8 +90,11 @@ def test_record_version_conflict_and_supersede_history(store, project):
     s = source(store, project)
     first = as_person(store, project["id"], {"kind": "decision", "key": "auth", "content": "Use tokens"}, [s["id"]])
     assert first["status"] == "confirmed"
-    changed = store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "Use signed tokens"}, [s["id"]])
-    # A write that is not a person's changed what the person confirmed: it is proposed again (#177).
+    # Only a person changes what a person confirmed (#177): any other write is refused and stores nothing.
+    with pytest.raises(ValueError, match="Only a person takes a confirmation away"):
+        store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "Use signed tokens"}, [s["id"]])
+    changed = person_edit(store, project["id"], {"id": first["id"], "expected_version": 1, "content": "Use signed tokens"}, [s["id"]])
+    # The person changed it and has not confirmed the new text yet.
     assert changed["version"] == 2 and changed["status"] == "proposed"
     with pytest.raises(ValueError, match="version conflict"):
         store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "stale update"}, [s["id"]])

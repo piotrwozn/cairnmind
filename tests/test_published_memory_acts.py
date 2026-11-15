@@ -19,7 +19,7 @@ from cairnmind.memory_published_format import definition_hash, identity_hash, pl
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
 
-from conftest import as_person
+from conftest import as_person, person_edit
 
 
 @pytest.fixture
@@ -71,9 +71,9 @@ def test_a_confirmed_record_no_person_covered_can_be_confirmed_again_but_not_twi
     with pytest.raises(ValueError, match="conflict"):
         inspector.review(pid, record["id"], "confirm", 2)
     # An edit after the review is not covered by it any more, so a person may confirm it again.
-    edited = store.remember(pid, {"id": record["id"], "expected_version": 2, "content": "Agents may write notes."},
-                            confirmed["source_ids"])
-    assert edited["status"] == "proposed"  # The edit was not a person's: it is proposed again (#177).
+    edited = person_edit(store, pid, {"id": record["id"], "expected_version": 2, "content": "Agents may write notes."},
+                         confirmed["source_ids"])
+    assert edited["status"] == "proposed"  # Changed by the person, and not confirmed again yet (#177).
     assert inspector.review(pid, record["id"], "confirm", edited["version"])["record"]["status"] == "confirmed"
 
 
