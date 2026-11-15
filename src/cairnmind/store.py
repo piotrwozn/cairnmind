@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import threading
@@ -148,6 +149,15 @@ class JobNotFoundError(ValueError):
     """No job is visible in the requested project."""
 
 
+class KeyTaken(ValueError):
+    """Another current record of the same kind holds the key of this write; it names that record (#238)."""
+
+    def __init__(self, record_id):
+        self.record_id = record_id
+        super().__init__(f"Active record key already exists: record {record_id} holds it. Update that record "
+                         "using its id and expected_version, or store this one under another key")
+
+
 def validate_task_state(value):
     """Validate a supplied task state without coercing or inferring a value."""
     if not isinstance(value, str) or value not in TASK_STATES:
@@ -275,6 +285,8 @@ class Store:
     # Set when another installation took over writing after this store was opened: every write is refused.
     _writer_lost = None
     installation = None
+    # False in the service: its working directory is not the caller's, so resolve_project refuses a relative path.
+    relative_paths = True
     _writable = None
     # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
     not_ready = None
@@ -708,6 +720,9 @@ class Store:
         name, path = name.strip(), self.require_safe_project_root(root)
         if not name:
             raise ValueError("Project name must not be empty")
+        if len(name) > 256:
+            # The limit of the service's route, for every route (#238).
+            raise ValueError("Project name must be at most 256 characters")
         with self.transaction() as tx:
             existing = one_row(tx, "SELECT FROM projects WHERE name=:name OR root=:root", {"name": name, "root": path}, False)
             if existing:
@@ -732,12 +747,28 @@ class Store:
     def list_projects(self):
         return [clean_row(row) for row in self.query("SELECT FROM projects ORDER BY name")]
 
-    def resolve_project(self, identifier):
+    def resolve_project(self, identifier, *, recorded: bool = False):
+        """The project of an id, a name, or a path inside one of its registered folders (#238).
+
+        A value that matches no id or name is read as a path only when it is written as one (absolute,
+        holding a separator, or starting with "." or "~") and the path exists; anything else is an
+        unknown project, so a mistyped name never falls back to the working directory's project. A
+        store whose working directory is not the caller's (the service, relative_paths False) refuses
+        a relative path. recorded=True is for an absolute working directory a client recorded (a
+        transcript or a hook event): it names a place, typed by nobody, that may since have been removed.
+        """
         value = str(identifier)
         project = one_row(self, "SELECT FROM projects WHERE id=:value OR name=:value", {"value": value}, False)
         if project:
             return project
-        path = Path(value).expanduser().resolve()
+        if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
+            raise ValueError(f"Unknown project: {value}")
+        written = Path(value).expanduser()
+        if not written.is_absolute() and (recorded or not self.relative_paths):
+            raise ValueError(f"Unknown project: {value} (a relative path is not accepted here; give an absolute one)")
+        path = written.resolve()
+        if not recorded and not path.exists():
+            raise ValueError(f"Unknown project: {value} (no such file or folder)")
         candidates = [r for r in self.query("SELECT FROM project_roots")
                       if path == Path(r["path"]) or Path(r["path"]) in path.parents]
         if candidates:
@@ -1085,7 +1116,7 @@ class Store:
             self.upsert_node({"id": target, "project_id": record["project_id"], "kind": "source", "label": source["uri"],
                               "source_id": source_id, "metadata": {"source_id": source_id, "source_kind": source["kind"]}}, tx)
             edge(target, "supported_by", source_id)
-        for dependency in record["metadata"].get("depends_on", []):
+        for dependency in record["metadata"].get("depends_on") or []:
             target = f"record:{dependency}"
             if tx.query("SELECT id FROM nodes WHERE id=:id", {"id": target}):
                 edge(target, "depends_on", record["source_ids"][0])
@@ -1157,6 +1188,9 @@ class Store:
             updates = {key: value for key, value in updates.items() if key not in CONFLICT_REVIEW_METADATA
                        and not (old and key == "possible_conflicts")}
         metadata.update({key: value for key, value in updates.items() if key not in DERIVED_RECORD_METADATA})
+        if "depends_on" in metadata and metadata["depends_on"] is None:
+            # A model's metadata may say depends_on: null; that is no dependencies, not a failed write (#238).
+            del metadata["depends_on"]
         if kind == "task":
             if "acceptance_criteria" in updates:
                 # A criteria list that is declared again says everything about its links: what the
@@ -1279,7 +1313,9 @@ class Store:
         active_key = json_text([project_id, kind, key]) if status != "superseded" else None
         collision = one_row(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
         if collision and collision["id"] != record_id:
-            raise ValueError("Active record key already exists; update using id and expected_version")
+            # A record a person confirmed is refused as such: updating it by id would only be refused again.
+            self._keep_verdict(one_row(tx, "SELECT FROM records WHERE id=:id", {"id": collision["id"]}), "key")
+            raise KeyTaken(collision["id"])
         now = utc_now()
         result = {"id": record_id, "project_id": project_id, "kind": kind, "key": key, "content": content, "status": status,
                   "source_ids": list(dict.fromkeys(sources)), "version": old["version"] + 1 if old else 1, "supersedes": supersedes,
@@ -1564,12 +1600,20 @@ class Store:
             (("transcript eof is unknown",),
              "capture_not_initialized", "The original event did not capture a finite transcript horizon."),
             (("arcadedb",), "storage_error", "The storage request failed."),
+            # The texts of ollama.OllamaUnavailable (#238); a model call that timed out is the model's, not the job's,
+            # and is still called a timeout.
+            (("runtime reported a context-length limit",), "model_context_length",
+             "The model refused an input longer than its context length."),
+            (("response read timed out", "local request timed out"), "model_timeout",
+             "The model runtime did not answer in time."),
+            (("ollama /api/", "runtime reported", "runtime rejected", "runtime returned", "embedding model returned",
+              "local model returned"), "model_runtime_error", "The model runtime refused or failed the request."),
             (("timeout", "timed out"), "job_timeout", "The job exceeded its execution budget."),
         )
         for needles, code, message in categories:
             if any(needle in text for needle in needles):
                 return {"error_code": diagnostics.get("code", code), "error": message}
-        return {"error_code": diagnostics.get("code", "legacy_job_error"),
+        return {"error_code": diagnostics.get("code", "job_error"),
                 "error": "The job failed; its original error is retained in the database and export."}
 
     def retry_job(self, project_id, job_id, expected_attempts, *, include_omissions=False):

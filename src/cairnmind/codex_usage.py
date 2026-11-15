@@ -83,7 +83,7 @@ def waiting_in_inbox(store, project_id: str, start) -> int:
         cwd = row.get("cwd")
         if cwd not in ours:
             try:
-                ours[cwd] = cwd is None or store.resolve_project(cwd)["id"] == project_id
+                ours[cwd] = cwd is None or store.resolve_project(cwd, recorded=True)["id"] == project_id
             except ValueError:
                 ours[cwd] = False
         waiting += ours[cwd]

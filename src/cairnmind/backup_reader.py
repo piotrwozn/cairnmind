@@ -39,6 +39,9 @@ _MISMATCH = object()
 _ABSENT = object()  # no payload key in the envelope
 _OBJECT = object()  # the payload is an object, read member by member
 CORRUPT = "Invalid or corrupt Cairnmind backup"
+# A file that was read whole and valid once, and differs when it is read again (#238).
+CHANGED = ("The backup file changed while it was being read for the restore; nothing was changed. "
+           "Check the file or copy it again, then restore it again")
 # What the in-memory reader turns into the message above; the stream reader wraps the same kinds.
 WRAPPED = (OSError, EOFError, KeyError, TypeError, json.JSONDecodeError)
 
@@ -302,9 +305,13 @@ class StreamedBackup:
         self._digest = self._last_digest
         self.skipped = _check_index(index, canonical)
         failures = {}
-        for kind, key, name, row in self._pass():
-            if kind == "row" and name is None and key in types["export"] and key not in self.skipped:
-                _check_row(index, failures, key, row, types)
+        try:
+            for kind, key, name, row in self._pass():
+                if kind == "row" and name is None and key in types["export"] and key not in self.skipped:
+                    _check_row(index, failures, key, row, types)
+        except (*WRAPPED, Unusual) as exc:
+            # The first pass read the whole file: one the second cannot read has changed since.
+            raise ValueError(CHANGED) from exc
         _raise_first(index, failures, types)
         self.vector_indexes = index.vector_indexes
 
@@ -318,7 +325,7 @@ class StreamedBackup:
             pass
         self._last_digest = raw.sha.hexdigest()
         if self._digest is not None and self._last_digest != self._digest:
-            raise ValueError("Backup checksum mismatch")
+            raise ValueError(CHANGED)
 
     def rows(self, collections, vectors=False) -> Iterator[tuple]:
         """``("row", collection, row)`` in file order, then with ``vectors`` ``("vector", type, row)``, a row
@@ -335,7 +342,8 @@ class StreamedBackup:
                         for row in value:
                             yield "vector", name, row
         except (OSError, EOFError, json.JSONDecodeError, Unusual) as exc:
-            raise ValueError(CORRUPT) from exc
+            # This file was validated whole before: one that cannot be read now has changed since.
+            raise ValueError(CHANGED) from exc
 
 
 class LoadedBackup:

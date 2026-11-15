@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -26,6 +27,16 @@ def runtime_dir(settings: Settings) -> Path:
 
 
 LOG_BYTES, LOG_COPIES, MAX_LOG_COPIES = 10 * 1024 * 1024, 3, 20
+
+
+def stopped_engine_advice(error: str) -> str:
+    """What `engine status` says for a transport failure: only a refused connection means "not running";
+    a timeout or a broken answer may come from an engine that is starting or busy, so it keeps its cause."""
+    cause = error.partition("(")[2].partition(")")[0]
+    if cause == "ConnectError":
+        return "Local ArcadeDB is not running; start it with `cairnmind engine start`."
+    return (f"Local ArcadeDB is not reachable ({cause or 'unknown error'}); it may be starting or busy. "
+            "If it is stopped, start it with `cairnmind engine start`.")
 
 
 def rotate_log(path: Path, limit, copies) -> bool:
@@ -55,6 +66,16 @@ def rotate_log(path: Path, limit, copies) -> bool:
     else:
         path.unlink()
     return True
+
+
+def log_settings_problems(settings: Settings) -> list[str]:
+    """A line for each engine log setting that rotate_log replaces by its default, so it is not silent (#238)."""
+    rules = (("engine_log_bytes", settings.engine_log_bytes, LOG_BYTES, "a whole number of bytes above 0",
+              lambda value: type(value) is int and value > 0),
+             ("engine_log_copies", settings.engine_log_copies, LOG_COPIES, f"a whole number from 0 to {MAX_LOG_COPIES}",
+              lambda value: type(value) is int and 0 <= value <= MAX_LOG_COPIES))
+    return [f"cairnmind: {name} in config.json is {repr(value)[:80]}, not {rule}; using {default}"
+            for name, value, default, rule, valid in rules if not valid(value)]
 
 
 def resolve_java(settings: Settings) -> str | None:
@@ -173,6 +194,9 @@ def engine_status(settings: Settings) -> dict:
             result["problem"] = refused
     except ArcadeError as exc:
         result["error"] = str(exc)
+        if not connect_only(settings) and result["error"].startswith("Local ArcadeDB is unavailable"):
+            # The client's generic advice names this very command (#238).
+            result["error"] = stopped_engine_advice(result["error"])
     except ValueError as exc:
         if not connect_only(settings):
             raise
@@ -253,14 +277,20 @@ def start_engine(settings: Settings) -> dict:
                    f"-Darcadedb.server.httpIncomingPort={port}",
                    f"-Djava.util.logging.config.file={state / 'config' / 'arcadedb-log.properties'}",
                    "-cp", str(home / "lib" / "*"), "com.arcadedb.server.ArcadeDBServer"]
-        note = b""
+        problems = log_settings_problems(settings)
+        for line in problems:
+            print(line, file=sys.stderr)
+        note = "".join(line + "\n" for line in problems).encode()
         try:
             rotate_log(state / "engine.log", settings.engine_log_bytes, settings.engine_log_copies)
         except OSError as exc:
             # Rotation is housekeeping: when the filesystem refuses it, the engine still starts and appends.
-            note = (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
-                    "appending to it\n").encode()
-        with (state / "engine.log").open("ab") as log:
+            note += (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
+                     "appending to it\n").encode()
+        # Private like the other files of the data directory, whatever the umask (#238); a link is not followed.
+        fd = os.open(state / "engine.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "ab") as log:
             if note:
                 log.write(note)
                 log.flush()

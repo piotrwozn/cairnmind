@@ -345,6 +345,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     if not settings.token:
         raise ValueError("Run cairnmind init to create a local authentication token")
     store = Store(settings.data_dir)
+    # A caller sends a path as an absolute one; a relative one would be read from the service's directory (#238).
+    store.relative_paths = False
     if store.not_writer:
         # The service writes sessions, jobs and the queue: it runs only for the store's writer (#70).
         raise StoreNotWriter(store.not_writer)

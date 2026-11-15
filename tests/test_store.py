@@ -48,8 +48,12 @@ def configure_real_check(project):
 
 def test_project_roots_resolve_longest_and_aliases(store, project, tmp_path):
     nested = store.add_project("nested", tmp_path / "repo" / "child")
+    # A path resolves only when it exists (#238).
+    (tmp_path / "repo" / "child").mkdir(parents=True)
+    (tmp_path / "repo" / "child" / "file.py").write_text("")
     assert store.resolve_project(tmp_path / "repo" / "child" / "file.py")["id"] == nested["id"]
     alias = tmp_path / "worktree"
+    (alias / "src").mkdir(parents=True)
     store.add_project_root(project["id"], alias)
     assert store.resolve_project(alias / "src")["id"] == project["id"]
     assert store.add_project("example", tmp_path / "repo")["id"] == project["id"]
