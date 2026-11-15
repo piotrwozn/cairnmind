@@ -36,6 +36,63 @@ def test_a_backup_into_a_folder_that_cannot_be_written_says_so_plainly(tmp_path,
     assert not any(path.name.startswith(TEMPORARY_PREFIX) for path in tmp_path.rglob("*"))
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_engine_log_is_private_whatever_the_umask(tmp_path, monkeypatch, existing):
+    import os
+    from cairnmind import engine
+    from cairnmind.arcade import ArcadeError
+    from test_store_prune import fake_engine
+    settings = fake_engine(tmp_path, monkeypatch, engine_log_bytes=1000, engine_log_copies=2)
+    log = settings.data_dir / "arcade" / "engine.log"
+    if existing:
+        log.parent.mkdir(parents=True)
+        log.write_bytes(b"o" * 10)
+        log.chmod(0o644)
+    previous = os.umask(0o022)
+    try:
+        with pytest.raises(ArcadeError, match="exited during startup"):
+            engine.start_engine(settings)
+    finally:
+        os.umask(previous)
+    assert log.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("name,value", [("engine_log_bytes", "2000"), ("engine_log_bytes", 0),
+                                        ("engine_log_bytes", -5), ("engine_log_copies", 99),
+                                        ("engine_log_copies", "2")])
+def test_an_invalid_log_setting_is_reported_where_the_engine_starts(tmp_path, monkeypatch, capsys, name, value):
+    from cairnmind import engine
+    from cairnmind.arcade import ArcadeError
+    from test_store_prune import fake_engine
+    settings = fake_engine(tmp_path, monkeypatch, **{name: value})
+    assert engine.log_settings_problems(settings) and len(engine.log_settings_problems(settings)) == 1
+    with pytest.raises(ArcadeError, match="exited during startup"):
+        engine.start_engine(settings)
+    said = capsys.readouterr().err
+    assert name in said and repr(value) in said and "config.json" in said
+    assert name.encode() in (settings.data_dir / "arcade" / "engine.log").read_bytes()
+
+
+def test_valid_log_settings_report_nothing(tmp_path):
+    from cairnmind import engine
+    from cairnmind.config import Settings
+    assert engine.log_settings_problems(Settings(tmp_path / "data", engine_log_bytes=2000, engine_log_copies=0)) == []
+
+
+def test_engine_status_of_a_stopped_engine_says_to_start_it(tmp_path):
+    import socket
+    from cairnmind import engine
+    from cairnmind.config import Settings
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    status = engine.engine_status(Settings(tmp_path / "data", arcade_url=f"http://127.0.0.1:{port}",
+                                           arcade_database="status_test"))
+    assert status["available"] is False
+    assert "engine status" not in status["error"]
+    assert "cairnmind engine start" in status["error"] and "not running" in status["error"]
+
+
 def source(store, project, text="We decided to keep the queue in the database."):
     return store.snapshot(project["id"], "conversation://one", text, "transcript")
 
