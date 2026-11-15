@@ -195,6 +195,11 @@ class MemoryModels:
             return await self.embedding_client.model_identity(name)
         return await self.chat_client.model_identity(name)
 
+    async def model_digest(self, name: str) -> str | None:
+        if name == self.settings.embedding_model:
+            return await self.embedding_client.model_digest(name)
+        return await self.chat_client.model_digest(name)
+
     async def identities(self) -> dict:
         return {"chat": await self.chat_client.model_identity(self.settings.chat_model),
                 "embedding": await self.embedding_client.model_identity(self.settings.embedding_model)}
