@@ -101,7 +101,7 @@ def test_two_installations_opening_a_store_without_a_writer_at_once_get_one_writ
     first = Store(tmp_path / "first")
     client = ArcadeClient(first.settings)
     directories = [second_installation(tmp_path, first, name) for name in ("one", "two")]
-    for round_ in range(3):
+    for round_ in range(12):
         client.command("DELETE FROM devbrain_meta WHERE name='writer'")
         client.command("UPDATE journal_state REMOVE writer WHERE id='current'")
         opened, errors = {}, []
@@ -148,6 +148,31 @@ def test_a_takeover_moves_writing_and_the_previous_writer_stops_at_its_next_writ
     assert not writer.read_only
     writer.snapshot(pid, "note://new-writer", "Written by the new writer.", "note")
     assert take_over(writer)["taken_over"] is False
+
+
+def test_two_takeovers_at_once_leave_one_writer_that_the_row_and_the_head_agree_on(tmp_path):
+    first = Store(tmp_path / "first")
+    readers = [Store(second_installation(tmp_path, first, name)) for name in ("one", "two")]
+    for round_ in range(6):
+        results, errors = [], []
+
+        def take(store):
+            try:
+                results.append(take_over(store, f"round {round_}"))
+            except ArcadeError as exc:  # the other takeover committed between this one's read and its commit
+                errors.append(exc)
+
+        threads = [threading.Thread(target=take, args=(store,)) for store in readers]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(60)
+        assert results, (round_, errors)
+        row = writer_row(first)
+        assert row["installation_id"] == head(first)["writer"] == row["history"][-1]["installation_id"], round_
+        assert row["installation_id"] in {store.installation.id for store in readers}
+        for store in readers:
+            store._writer_lost = None  # each round starts from stores that may take over again
 
 
 def test_a_write_in_flight_during_a_takeover_does_not_commit(tmp_path):

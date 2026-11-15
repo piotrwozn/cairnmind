@@ -199,6 +199,10 @@ def settle(client, me: Installation) -> dict | None:
     if row and head and head[0].get("writer") == me.id:
         return None
     with client.transaction() as tx:
+        # The head first: the engine refuses an update of a record only when it changed after this transaction
+        # read it, so a claim committed after this read makes this commit fail, and one committed before it is
+        # seen in the writer row read next (a page read for the first time shows the latest commit).
+        tx.query("SELECT writer FROM journal_state WHERE id='current'")
         row = read_writer(tx)
         if row and row.get("installation_id") != me.id:
             return row
@@ -255,6 +259,7 @@ def take_over(store, note: str | None = None) -> dict:
     me = store.installation.id
     client = getattr(store, "_writable", None) or store.client
     with store._lock(), client.transaction() as native:
+        native.query("SELECT writer FROM journal_state WHERE id='current'")  # first, as in settle
         row = read_writer(native)
         previous = row.get("installation_id") if row else None
         if previous == me:
