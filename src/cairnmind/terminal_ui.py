@@ -81,6 +81,12 @@ class FieldError(ValueError):
         self.field = field
 
 
+def replaces_here(preview) -> bool:
+    """Whether an import preview says it replaces records confirmed or disputed on this machine (#177)."""
+    found = preview.get("replaces_confirmed_here") if isinstance(preview, dict) else None
+    return isinstance(found, dict) and type(found.get("total")) is int and found["total"] > 0
+
+
 def summary_text(value, language="en"):
     """Readable, bounded status; full structured payload is an explicit detail view."""
     if isinstance(value, str):
@@ -109,6 +115,11 @@ def summary_text(value, language="en"):
         names = [safe_text(name)[:80] for name in (brought.get("confirmed_by") or [])[:8] if isinstance(name, str)]
         if names:
             lines.append(tr("Confirmed by, as the package says: {names}", language, names=", ".join(names)))
+    if replaces_here(value):
+        # Said before the person agrees: applying the import is then their choice to replace them.
+        lines.append(tr("Replaces {count} records that were confirmed or disputed on this computer. "
+                        "Applying the import puts the imported text or status in their place.",
+                        language, count=value["replaces_confirmed_here"]["total"]))
     for key in ("message", "summary", "status", "state", "code", "reason"):
         item = value.get(key)
         if isinstance(item, (str, int, float, bool)):

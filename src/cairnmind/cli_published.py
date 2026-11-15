@@ -84,7 +84,10 @@ def register(memory_app, initialized):
                                     "--bind", help="Replace the project's publication identity with the directory's.")] = False,
                                 take_published: Annotated[list[str] | None, typer.Option(
                                     "--take-published",
-                                    help="A diverged record ID: append the published version locally; nothing is removed.")] = None):
+                                    help="A diverged record ID: append the published version locally; nothing is removed.")] = None,
+                                replace_confirmed: Annotated[bool, typer.Option(
+                                    "--replace-confirmed", help="Let the files replace records that were confirmed or "
+                                    "disputed on this machine; the dry run lists them.")] = False):
         """Import a merged published memory directory; nothing imported is shown as verified."""
         from cairnmind.cli import output, refuse, request
         from cairnmind.config import Settings
@@ -98,14 +101,18 @@ def register(memory_app, initialized):
             ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
         output(request(ctx.obj, "POST", "/memory/import-published", start_service=not dry_run,
                        json={"path": str(selected), "project": project, "dry_run": dry_run, "bind": bind,
-                             "take_published": list(take_published or [])}))
+                             "take_published": list(take_published or []),
+                             **({"replace_confirmed": True} if replace_confirmed else {})}))
 
     @memory_app.command("import-commit")
     def memory_import_commit(ctx: typer.Context, revision: str,
                              project: Annotated[str, typer.Option("--project")],
                              worktree: Path | None = None, dry_run: bool = False,
                              bind: Annotated[bool, typer.Option(
-                                 "--bind", help="Replace the project's publication identity with the commit's.")] = False):
+                                 "--bind", help="Replace the project's publication identity with the commit's.")] = False,
+                             replace_confirmed: Annotated[bool, typer.Option(
+                                 "--replace-confirmed", help="Let the commit replace records that were confirmed or "
+                                 "disputed on this machine; the dry run lists them.")] = False):
         """Import the published memory of a commit (the main branch after a merge) and re-check every quoted
         passage against that commit's code: still there anchors a record, gone leaves it orphaned. Nothing
         imported is verified. Reads Git only; writes nothing to the repository."""
@@ -117,6 +124,7 @@ def register(memory_app, initialized):
             ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
         output(request(ctx.obj, "POST", "/memory/import-commit", start_service=not dry_run,
                        json={"revision": revision, "project": project, "dry_run": dry_run, "bind": bind,
+                             **({"replace_confirmed": True} if replace_confirmed else {}),
                              "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
 
     @memory_app.command("show-published")

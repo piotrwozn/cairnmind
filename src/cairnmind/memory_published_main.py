@@ -90,7 +90,8 @@ def _claimed(record):
     return safe_text(f"{last.get('action')} by {last.get('name')}{where} (claimed by the file; not verified here)")
 
 
-def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, bind=False, authorize=None):
+def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, bind=False, authorize=None,
+                  replace_confirmed=False):
     from .evidence import evidence_states
     from .memory import MemoryConflict
     from .memory import MemoryManager
@@ -133,7 +134,8 @@ def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, 
         raise SecretsRefused(f"Import refused: {exc}") from None
     rules = import_rules(None, store.settings, config=config)
     result = PublishedImporter(store).import_published(files, project_id, dry_run=dry_run, bind=bind,
-                                                       authorize=authorize, after=after, rules=rules)
+                                                       authorize=authorize, after=after, rules=rules,
+                                                       replace_confirmed=replace_confirmed)
     tree = seen["tree"]
     result.update(base)
     result["rechecked"] = sorted(seen["changed"])

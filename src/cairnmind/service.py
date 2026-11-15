@@ -204,6 +204,7 @@ class MemoryImportBody(MemoryInspectBody):
     root: str = Field(min_length=1)
     name: str | None = None
     dry_run: bool = Field(default=False, strict=True)
+    replace_confirmed: bool = Field(default=False, strict=True)
     packet_id: str | None = None
 
 
@@ -220,6 +221,7 @@ class MemoryImportCommitBody(BaseModel):
     worktree: str | None = Field(default=None, max_length=4096)
     dry_run: bool = Field(default=False, strict=True)
     bind: bool = Field(default=False, strict=True)
+    replace_confirmed: bool = Field(default=False, strict=True)
     session_id: str | None = None
     packet_id: str | None = None
 
@@ -231,6 +233,7 @@ class MemoryImportPublishedBody(BaseModel):
     dry_run: bool = Field(default=False, strict=True)
     bind: bool = Field(default=False, strict=True)
     take_published: list[str] = Field(default_factory=list, max_length=1000)
+    replace_confirmed: bool = Field(default=False, strict=True)
     session_id: str | None = None
     packet_id: str | None = None
 
@@ -595,6 +598,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, authorize_enable)
         return enable_background(pid)
 
+    def person_imports(body):
+        """A memory import writes records that count as confirmed and can move on what a person confirmed
+        here, so only a person runs it (#177): never a request that names a session. A dry run writes
+        nothing and stays open to a session."""
+        if body.session_id and not body.dry_run:
+            from cairnmind.confirmation import IMPORT_IN_SESSION
+            raise ValueError(IMPORT_IN_SESSION)
+
     def memory_write_authorization(pid: str, requested: str | None,
                                    session_id: str | None, packet_id: str | None):
         """Keep file-lock -> DB-lock ordering, rechecking the actor in core's transaction."""
@@ -642,9 +653,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pid = inspected["project"]["id"]
         def restore(scope, authorize=None):
             selected_memory_scope(pid, body.root, scope)
+            person_imports(body)  # After the scope checks: a session learns of another project's memory as before.
             return memory.import_snapshot(
                 body.path, body.root, body.name, body.dry_run,
-                expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize)
+                expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize,
+                replace_confirmed=body.replace_confirmed)
         if body.dry_run:
             scope = await asyncio.to_thread(read_scope, pid, body.root, body.session_id)
             return await asyncio.to_thread(restore, scope)
@@ -685,11 +698,13 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         from cairnmind.memory_published_import import PublishedImporter
         pid = project(body.project)["id"]
         authorize = None
-        if body.take_published and body.session_id:
-            # Putting the published side over a record that diverged here can replace a person's own
-            # confirmation or dispute (#177): that choice is a person's, never a coding session's.
-            raise ValueError("Taking the published side of a diverged record is chosen only by a person, "
-                             "not inside a coding session")
+        if (body.take_published or body.replace_confirmed) and body.session_id:
+            # Putting the published side over a record that diverged here, or over one confirmed or disputed
+            # here, replaces a person's own verdict (#177): that choice is a person's, never a coding
+            # session's, and a session cannot preview it as if it were one.
+            raise ValueError("Taking the published side of a record that diverged here, or that was confirmed or "
+                             "disputed here, is chosen only by a person, not inside a coding session")
+        person_imports(body)
         if body.dry_run:
             await asyncio.to_thread(read_scope, pid, None, body.session_id)
         else:
@@ -697,7 +712,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                                                    body.packet_id)
         result = await asyncio.to_thread(PublishedImporter(store).import_published, body.path, pid,
                                          dry_run=body.dry_run, bind=body.bind, take_published=body.take_published,
-                                         authorize=authorize)
+                                         authorize=authorize, replace_confirmed=body.replace_confirmed)
         if not body.dry_run:
             cache.clear()
         return result
@@ -708,13 +723,15 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         from cairnmind.memory_published_main import import_commit
         pid = project(body.project)["id"]
         authorize = None
+        person_imports(body)
         if body.dry_run:
             scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
         else:
             scope, authorize = await asyncio.to_thread(memory_write_authorization, pid, body.worktree,
                                                        body.session_id, body.packet_id)
         result = await asyncio.to_thread(import_commit, store, pid, body.revision, worktree=scope,
-                                         dry_run=body.dry_run, bind=body.bind, authorize=authorize)
+                                         dry_run=body.dry_run, bind=body.bind, authorize=authorize,
+                                         replace_confirmed=body.replace_confirmed)
         if not body.dry_run:
             cache.clear()
         return result

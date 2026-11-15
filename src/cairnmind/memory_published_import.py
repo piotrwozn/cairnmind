@@ -105,7 +105,7 @@ class PublishedImporter:
         self.store = store
 
     def import_published(self, directory, project_id, *, dry_run=False, bind=False, take_published=(), authorize=None,
-                         after=None, rules=None):
+                         after=None, rules=None, replace_confirmed=False):
         """`directory` is a path or a {relative path: bytes} map (a commit read from Git, #172). `after(tx, tree,
         result)` runs in the same transaction once the tree is applied, before a dry run is rolled back.
 
@@ -134,6 +134,11 @@ class PublishedImporter:
                 # A map read from a commit (#172) is the project's own directory by construction: it is read at
                 # the project root's prefix, so _own_directory (#174) only judges a path.
                 self._apply(tx, tree, project_id, bind, take, result, directory)
+                replaced = result["replaces_confirmed_here"]["records"]
+                if replaced and not replace_confirmed and not dry_run:
+                    # A verdict a person gave here is never replaced by a file without that person's choice (#177).
+                    from .confirmation import replaces_refusal
+                    raise MemoryConflict(replaces_refusal(replaced))
                 if after is not None:
                     after(tx, tree, result)
                 if dry_run:
@@ -161,7 +166,12 @@ class PublishedImporter:
         self._stubs(tx, tree, project_id, result)
         plans = {i: m for i, m in tree["plans"].items()}
         written, diverged, foreign = {}, [], []
-        heads = {}
+        heads, kept, replaced = {}, {}, []
+        from .confirmation import MARK, local_verdict, said
+
+        def statement(model, index):
+            row = record_row(project_id, model, model["revisions"][index], 0)
+            return said(row["kind"], row["content"], row["key"], row["supersedes"], row["metadata"])
         for record_id, model in sorted(tree["records"].items()):
             path = tree["paths"][record_id]
             versions = [clean_row(r)["snapshot"] for r in tx.query(
@@ -182,6 +192,16 @@ class PublishedImporter:
                 matches = [k for k, value in enumerate(published) if same(value, local[-1])]
                 if matches:
                     plan, start = list(range(matches[-1] + 1, len(published))), "advanced"
+                    head, last = versions[-1], model["revisions"][-1]
+                    if local_verdict(head):
+                        # The files move on a record that was confirmed or disputed here (#177). When they leave
+                        # it confirmed and saying the same (progress on a task), the confirmation given here is
+                        # kept. Anything else replaces that verdict, which only a person chooses.
+                        if (head["status"] == "confirmed" == last["status"]
+                                and statement(model, matches[-1]) == statement(model, len(published) - 1)):
+                            kept[record_id] = (head.get("metadata") or {}).get(MARK)
+                        else:
+                            replaced.append(path)
                 elif record_id in take:
                     # Every published revision after the part both histories share, as new local versions: the
                     # local ones stay, and the next publication follows the published history from there.
@@ -201,10 +221,12 @@ class PublishedImporter:
         if diverged:
             raise MemoryConflict("These records diverged from the published memory; re-apply your change after "
                                  "--take-published, or resolve the conflict by taking one side: " + ", ".join(diverged))
+        from .confirmation import REPLACES_NOTE
+        result["replaces_confirmed_here"] = {"total": len(replaced), "records": sorted(replaced), "note": REPLACES_NOTE}
         # What the files bring as confirmed (#177): kept as confirmed elsewhere, with who each file says
         # reviewed it; the preview and the result both say how many, and that none is this machine's own.
-        brought = [model for model, _, _, numbers in written.values()
-                   if numbers and model["revisions"][numbers[-1]]["status"] == "confirmed"]
+        brought = [model for record_id, (model, _, _, numbers) in written.items()
+                   if numbers and model["revisions"][numbers[-1]]["status"] == "confirmed" and record_id not in kept]
         claimed = [(reviewed_by(model, model["revisions"]) or [{}])[-1].get("name") for model in brought]
         result["confirmed_records"] = {
             "total": len(brought), "confirmed_by": sorted({str(name) for name in claimed if name})[:50],
@@ -218,7 +240,9 @@ class PublishedImporter:
             version = old["version"] if old else 0
             for index in numbers:
                 version += 1
-                heads[record_id] = self._write(tx, project_id, model, index, version, path, plans, now)
+                heads[record_id] = self._write(tx, project_id, model, index, version, path, plans, now,
+                                               keep=(kept[record_id],) if record_id in kept and index == numbers[-1]
+                                               else None)
         touched_plans = self._plans(tx, project_id, tree, written, heads, result, now)
         for task_id, model in tree["records"].items():
             head = heads.get(task_id)
@@ -306,7 +330,7 @@ class PublishedImporter:
             wanted["step_index"] = steps.index(task_id)
         return wanted
 
-    def _write(self, tx, project_id, model, index, version, path, plans, now):
+    def _write(self, tx, project_id, model, index, version, path, plans, now, keep=None):
         revision = model["revisions"][index]
         row = record_row(project_id, model, revision, version)
         metadata = row["metadata"]
@@ -321,7 +345,12 @@ class PublishedImporter:
         metadata["publication"] = {"path": path, "revision": index + 1, "imported_at": now, "version": version,
                                    "reviewed_by": reviews}
         metadata.pop("confirmation", None)
-        if row["status"] == "confirmed":
+        if keep is not None:
+            # The confirmation given here stands: the files changed nothing it covers. A record from before
+            # the rule had no mark and gets none.
+            if isinstance(keep[0], dict):
+                metadata["confirmation"] = keep[0]
+        elif row["status"] == "confirmed":
             # Confirmed elsewhere (#177): the file's own claim of who reviewed it, never a local act.
             from .confirmation import import_mark
             metadata["confirmation"] = import_mark("published", path, reviews, now, version)

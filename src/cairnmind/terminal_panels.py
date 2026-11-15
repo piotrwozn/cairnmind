@@ -22,7 +22,7 @@ from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
 from .terminal_i18n_messages import broker_error_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
-                          LocalizedModal, MessageModal, remeasure_buttons, summary_text)
+                          LocalizedModal, MessageModal, remeasure_buttons, replaces_here, summary_text)
 
 
 class ConfirmModal(MessageModal):
@@ -779,7 +779,9 @@ class SidebarApp(BasePanel):
         approve = await self.push_screen_wait(ConfirmModal(self.t("Import this project memory?"), preview, approve=self.t("Import memory"), consent=True))
         if not approve:
             return
-        result = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": False})
+        # The preview the person just approved listed what the import replaces of this machine's own verdicts.
+        result = await self.request("POST", "/api/memory/import", json={
+            **payload, "dry_run": False, "replace_confirmed": replaces_here(preview)})
         project = result.get("project")
         if project:
             await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")

@@ -198,7 +198,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
     elif (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
             "/memory/snapshot", "/memory/import", "/memory/publish", "/memory/import-published",
-            "/memory/carrier"})
+            "/memory/import-commit", "/memory/carrier"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
         if session_id:
@@ -1291,7 +1291,10 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
-                  dry_run: bool = False):
+                  dry_run: bool = False,
+                  replace_confirmed: Annotated[bool, typer.Option(
+                      "--replace-confirmed", help="Let the package replace records that were confirmed or disputed "
+                      "on this machine; the dry run lists them.")] = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())
@@ -1299,6 +1302,8 @@ def memory_import(ctx: typer.Context, path: Path,
     if not dry_run:
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     payload = {"path": selected, "root": str(root.expanduser().resolve()), "dry_run": dry_run}
+    if replace_confirmed:
+        payload["replace_confirmed"] = True
     if name is not None:
         payload["name"] = name
     output(request(ctx.obj, "POST", "/memory/import", start_service=not dry_run, json=payload))

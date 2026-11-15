@@ -736,7 +736,7 @@ class MemoryManager:
                     entry.unlink()
 
     def import_snapshot(self, path, root, name=None, dry_run=False, *, expected_snapshot_id=None, expected_project_id=None,
-                        authorize=None):
+                        authorize=None, replace_confirmed=False):
         path, raw, manifest, payload = _load_snapshot(path)
         project_id, snapshot_id = manifest["project"]["id"], manifest["snapshot_id"]
         if ((expected_snapshot_id is not None and expected_snapshot_id != snapshot_id)
@@ -822,19 +822,32 @@ class MemoryManager:
             # here or moves this store's head on. It is kept as confirmed elsewhere, with who the package
             # says confirmed it, and is never this machine's own confirmation. A head that does not move
             # keeps the mark this store gave it.
-            from .confirmation import archive_claims, import_mark
+            from .confirmation import REPLACES_NOTE, archive_claims, import_mark, local_verdict, replaces_refusal, said
             package_sources = {row["id"]: row for row in payload["sources"]}
             # Read from the rows: the captured state above leaves local marks out, as a package does.
             local_marks = {row["id"]: row.get("mark") for row in tx.query(
                 "SELECT id,metadata.confirmation AS mark FROM records WHERE project_id=:project",
                 {"project": project_id})} if current else {}
-            marks, imported_at, names, unnamed, brought = {}, utc_now(), set(), 0, 0
+            marks, imported_at, names, unnamed, brought, replaced = {}, utc_now(), set(), 0, 0, []
             for row in payload["records"]:
                 old = existing["records"].get(row["id"])
+                mine = local_marks.get(row["id"]) if isinstance(local_marks.get(row["id"]), dict) else None
+                head = {**old, "metadata": {**(old.get("metadata") or {}), "confirmation": mine}} if old else None
                 if old and old["version"] == row["version"]:
-                    if isinstance(local_marks.get(row["id"]), dict):
-                        marks[row["id"]] = local_marks[row["id"]]
-                elif row["status"] == "confirmed":
+                    if mine:
+                        marks[row["id"]] = mine
+                    continue
+                if (local_verdict(head) and old["status"] == "confirmed" == row["status"] and said(
+                        old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata")) == said(
+                        row["kind"], row["content"], row["key"], row.get("supersedes"), row.get("metadata"))):
+                    # The package moves on a record confirmed here and leaves it confirmed and saying the
+                    # same (progress on a task): the confirmation given here is kept.
+                    if mine:
+                        marks[row["id"]] = mine
+                    continue
+                if local_verdict(head):
+                    replaced.append(row["id"])
+                if row["status"] == "confirmed":
                     claims = archive_claims(row, package_sources)
                     marks[row["id"]] = {**import_mark("archive", manifest["origin_root"], claims, imported_at,
                                                       row["version"]), "snapshot_id": snapshot_id}
@@ -844,8 +857,13 @@ class MemoryManager:
             result["confirmed_records"] = {
                 "total": brought, "confirmed_by": sorted(names)[:50], "without_a_name": unnamed,
                 "note": "confirmed elsewhere; kept as confirmed, shown as imported, never verified here"}
+            # A verdict a person gave here is never replaced by a package without that person's choice (#177).
+            result["replaces_confirmed_here"] = {"total": len(replaced), "records": sorted(replaced)[:200],
+                                                 "note": REPLACES_NOTE}
             if dry_run:
                 return result
+            if replaced and not replace_confirmed:
+                raise MemoryConflict(replaces_refusal(sorted(replaced)))
             from .journal import Journal
             Journal.reset(tx, reason="memory_import")
             if not current:
