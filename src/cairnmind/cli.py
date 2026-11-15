@@ -655,10 +655,10 @@ def store_size(ctx: typer.Context, project: Annotated[str | None, typer.Argument
 @initialized
 def store_drop_replaced_chunks(
         ctx: typer.Context,
-        batch: Annotated[int, typer.Option(min=1, max=1000, help="Chunks deleted per transaction.")] = 200,
+        batch: Annotated[int, typer.Option(min=1, max=1000, help="Rows (chunks or vectors) deleted per transaction.")] = 200,
         max_batches: Annotated[int | None, typer.Option(
             min=1, help="Stop after this many transactions; run again to go on.")] = None):
-    """Delete the chunks that earlier releases kept for replaced sources; prints how many rows went.
+    """Delete the chunks that earlier releases kept for replaced sources, in every project; prints how many rows went.
 
     Nothing searches them. Every source stays with its full text and hash, so evidence citing an old version
     is still readable and checkable. Short transactions, safe to stop and run again (#186)."""

@@ -180,12 +180,18 @@ def test_the_cleanup_removes_what_older_releases_kept_in_short_resumable_runs(tm
 
     partial = drop_replaced_chunks(store, batch=2, max_batches=1)
     assert partial["complete"] is False and partial["removed"]["chunks"] == 2 and partial["transactions"] == 1
-    assert len(stale_chunks(store, pid)) == len(stale) - 2
+    left = stale_chunks(store, pid)
+    assert len(left) == len(stale) - 2
+    # A stopped run still counts the sources it deleted chunks of.
+    gone = {row["id"] for row in left}
+    assert partial["sources"] == len({row["source_id"] for row in stale if row["id"] not in gone}) >= 1
 
     rest = drop_replaced_chunks(store, batch=2)
     assert rest["complete"] is True
     assert partial["removed"]["chunks"] + rest["removed"]["chunks"] == len(stale)
     assert rest["removed"]["embeddings"] == 1 and rest["sources"] == 2
+    # Every transaction is counted: the chunk batches and the one that deleted the left-over vector.
+    assert rest["transactions"] == -(-len(left) // 2) + 1
     assert stale_chunks(store, pid) == []
     assert hits() == found  # search never read them: the same hits in the same order
     # Nothing that is evidence went: every source with its text, the record that cites the old one, current chunks.
@@ -198,6 +204,57 @@ def test_the_cleanup_removes_what_older_releases_kept_in_short_resumable_runs(tm
         drop_replaced_chunks(store, batch=0)
     with pytest.raises(ValueError):
         drop_replaced_chunks(store, max_batches=0)
+
+
+def test_a_run_whose_last_allowed_batch_empties_the_store_is_complete(tmp_path):
+    store = Store(tmp_path / "memory")
+    (tmp_path / "repo").mkdir()
+    pid = store.add_project("p", tmp_path / "repo")["id"]
+    legacy(store, pid, "file://a.py")
+    stale = len(stale_chunks(store, pid))
+    done = drop_replaced_chunks(store, batch=stale, max_batches=1)
+    assert done == {"removed": {"chunks": stale, "embeddings": 0, "vector_rows": 0}, "sources": 1,
+                    "transactions": 1, "complete": True}
+
+
+def test_left_over_vectors_go_in_batches_counted_as_transactions(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    (tmp_path / "repo").mkdir()
+    pid = store.add_project("p", tmp_path / "repo")["id"]
+    old, _ = legacy(store, pid, "file://a.py", lines=3)
+    for n in range(5):
+        store.command("INSERT INTO embeddings CONTENT :row", {"row": {
+            "id": f"left-over-{n}", "chunk_id": f"x{n}", "source_id": old["id"], "project_id": pid,
+            "namespace": "n", "vector": [1.0], "dimension": 1}})
+    stale = len(stale_chunks(store, pid))
+    sizes = []
+    real = store.transaction
+
+    def watched():
+        context = real()
+        tx = context.__enter__()
+        command = tx.command
+
+        def counting(sql, params=None):
+            if sql.startswith("DELETE FROM"):
+                sizes.append(len(params["ids"]))
+            return command(sql, params)
+        tx.command = counting
+
+        class Wrapped:
+            def __enter__(self):
+                return tx
+
+            def __exit__(self, *exc):
+                return context.__exit__(*exc)
+        return Wrapped()
+    monkeypatch.setattr(store, "transaction", watched)
+    stopped = drop_replaced_chunks(store, batch=2, max_batches=-(-stale // 2) + 1)
+    assert stopped["complete"] is False and stopped["removed"]["embeddings"] == 2
+    rest = drop_replaced_chunks(store, batch=2)
+    assert rest["complete"] is True and rest["removed"]["embeddings"] == 3 and rest["transactions"] == 2
+    assert max(sizes) <= 2 and len(sizes) == stopped["transactions"] + rest["transactions"]
+    assert vector_rows(store, [old["id"]]) == 0 and stale_chunks(store, pid) == []
 
 
 def test_the_command_reports_the_rows_it_removed(tmp_path):
