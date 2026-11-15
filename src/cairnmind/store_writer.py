@@ -67,6 +67,10 @@ INSTALLATION_FILE = "installation.json"
 HISTORY_LIMIT = 20
 NOTE_LIMIT = 200
 TAKEOVER_COMMAND = "cairnmind store takeover --yes"
+# The engine refused the takeover's commit: the journal head changed after the takeover read it.
+REFUSED_TAKEOVER = ("The store changed while this takeover ran: its writer wrote to it, or another installation "
+                    f"claimed it or took it over. Nothing was changed here. Run `{TAKEOVER_COMMAND}` again; while "
+                    "the writer keeps writing, this can happen more than once.")
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._:@/+-]")
@@ -211,6 +215,31 @@ def head_writer(reader) -> str | None:
     return rows[0].get("writer") if rows else None
 
 
+def read_fence(reader) -> tuple[dict | None, str | None]:
+    """The writer row and the installation the journal head names, as one commit left them.
+
+    ``reader`` is a client outside a transaction. A transaction does not give one view of two records here
+    (measured: a record read for the first time shows the latest commit, one read before keeps its old
+    value), so the row is read again after the head: every claim and takeover changes the row, and a row
+    that did not change means no takeover was committed between the reads.
+    """
+    row = read_writer(reader)
+    for _ in range(3):
+        named = head_writer(reader) if row else None
+        again = read_writer(reader)
+        if again == row:
+            break
+        row = again
+    return row, named
+
+
+def fence_reason(row: dict | None, named, me: str) -> str | None:
+    """Why this installation does not write a store with this row and head; None when it does."""
+    if not row or row.get("installation_id") != me:
+        return lost_reason(row)
+    return mixed_reason(row, named) if named and named != me else None
+
+
 def mixed_reason(row: dict, head) -> str:
     """For a store whose writer row and journal head name different installations (left by a takeover race
     of a build before the fix): what holds until a person repairs it."""
@@ -278,20 +307,22 @@ def recheck(store) -> None:
     """A store that lost the role reads the writer row again: a person may have taken writing back here."""
     if not store._writer_lost:
         return
-    row = read_writer(getattr(store, "_writable", None) or store.client)
-    store._writer_lost = None if row and row.get("installation_id") == store.installation.id else lost_reason(row)
+    client = getattr(store, "_writable", None) or store.client
+    row, named = read_writer(client), None
+    if row and row.get("installation_id") == store.installation.id:
+        row, named = read_fence(client)  # the head too: it may name another installation (mixed_reason)
+    store._writer_lost = fence_reason(row, named, store.installation.id)
 
 
 def require_writer(store) -> None:
-    """For a write that does not pass through the journal (schema statements, restore): one read."""
-    recheck(store)
-    if store._writer_lost:
-        raise StoreWriterLost(store._writer_lost)
+    """For a write that does not pass through the journal (schema statements, restore): the row and the head
+    are read first, and either one naming another installation refuses it."""
     if store.not_writer:
         raise StoreNotWriter(store.not_writer)
-    row = read_writer(store.client)
-    if row and row.get("installation_id") != store.installation.id:
-        store._writer_lost = lost_reason(row)
+    row, named = read_fence(store.client)
+    # A store without a writer row (one being created or claimed) is refused only when it had lost the role.
+    store._writer_lost = fence_reason(row, named, store.installation.id) if row or store._writer_lost else None
+    if store._writer_lost:
         raise StoreWriterLost(store._writer_lost)
 
 
@@ -378,8 +409,7 @@ def take_over_at(data_dir: Path, note: str | None = None) -> dict:
     except ArcadeError as exc:
         if "ConcurrentModification" not in exc.exception_name:
             raise
-        raise StoreNotWriter("Another installation claimed or took over this store at the same moment, so nothing "
-                             f"was changed here. Run `{TAKEOVER_COMMAND}` again to take over from it.") from None
+        raise StoreNotWriter(REFUSED_TAKEOVER) from None
     if not store.not_ready or not result["taken_over"]:
         return result
     # Now that this installation is the writer, open the store as the writer: that upgrades the schema it can
@@ -396,15 +426,17 @@ def take_over_at(data_dir: Path, note: str | None = None) -> dict:
 def state(store) -> dict:
     """What `status` and `doctor` say about the writer role of this store's installation."""
     me = store.installation
-    row = read_writer(store.client)
-    if store._writer_lost and row and row.get("installation_id") == me.id:
+    row, named = read_fence(store.client)
+    mine = bool(row) and row.get("installation_id") == me.id
+    mixed = bool(row) and bool(named) and named != row.get("installation_id")
+    if store._writer_lost and mine and not mixed:
         store._writer_lost = None  # taken back by a person since the role was lost
-    if store._writer_lost:
+    if store._writer_lost and not mine:
         store._writer_lost = lost_reason(row)
         role, reason = "lost", store._writer_lost
     elif row is None:
         role, reason = "none", "No installation is recorded as the writer; the next one that opens the store for writing becomes it."
-    elif row.get("installation_id") == me.id:
+    elif mine:
         role, reason = "writer", None
     else:
         role, reason = "reader", reader_reason(me, row)
@@ -413,8 +445,6 @@ def state(store) -> dict:
         result["copied_from"] = label(me.copied_from)
     if reason:
         result["reason"] = reason
-    named = head_writer(store.client) if row else None
-    mixed = bool(named) and named != row.get("installation_id")
     if mixed:
         result["head_writer"], result["problem"] = label(named), mixed_reason(row, named)
     if mixed or role in {"reader", "lost"}:

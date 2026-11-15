@@ -33,11 +33,13 @@ class Paused:
 
     def __init__(self, monkeypatch, point: str, work):
         self.reached, self.go, self.result, self.error = threading.Event(), threading.Event(), None, None
+        self.paused = False
         name = {"after_head": "read_writer", "before_stamp": "stamp"}[point]
         original = getattr(store_writer, name)
 
         def stopping(client, *args):
             if threading.current_thread() is self.thread and client.session_id and not self.reached.is_set():
+                self.paused = True
                 self.reached.set()
                 assert self.go.wait(60), "the paused transaction was never released"
             return original(client, *args)
@@ -48,12 +50,15 @@ class Paused:
             except Exception as exc:  # noqa: BLE001 - looked at by the test
                 self.error = exc
             finally:
-                self.reached.set()  # a transaction that ended before the point (it had nothing to change)
+                self.reached.set()  # so that a transaction that ended before the point fails the test at once
 
         monkeypatch.setattr(store_writer, name, stopping)
         self.thread = threading.Thread(target=run)
         self.thread.start()
         assert self.reached.wait(60), "the transaction did not reach the point"
+        # Without this a transaction that never gets to the point would turn the test into a sequential run.
+        assert self.paused and self.thread.is_alive(), (
+            f"the transaction ended without stopping at {point}", self.result, self.error)
 
     def resume(self):
         self.go.set()
@@ -64,10 +69,9 @@ class Paused:
 
 def agreed_writer(store: Store) -> str:
     """The one installation that the writer row, its last change and the journal head all name."""
-    client = ArcadeClient(store.settings)
-    with client.transaction(commit=False) as reader:  # one view of both records
-        rows = reader.query("SELECT FROM devbrain_meta WHERE name='writer'")
-        named = reader.query("SELECT writer FROM journal_state WHERE id='current'")[0]["writer"]
+    reader = ArcadeClient(store.settings)  # nothing else runs when a test calls this
+    rows = reader.query("SELECT FROM devbrain_meta WHERE name='writer'")
+    named = reader.query("SELECT writer FROM journal_state WHERE id='current'")[0]["writer"]
     assert len(rows) == 1, [row.get("installation_id") for row in rows]
     assert rows[0]["installation_id"] == named == rows[0]["history"][-1]["installation_id"]
     return named
@@ -80,8 +84,11 @@ def make_mixed(store: Store, row: Store, in_head: Store) -> None:
     client.command("UPDATE journal_state SET writer=:id WHERE id='current'", {"id": in_head.installation.id})
 
 
-@pytest.mark.parametrize("point", ["after_head", "before_stamp"])
-@pytest.mark.parametrize("writer_before", ["first", "paused", "other"])
+# No ("before_stamp", "paused"): a takeover by the installation that is the writer already returns before the
+# stamp, so nothing can be stopped there (the same installation stopped after the head read is the CI order).
+@pytest.mark.parametrize("point,writer_before", [
+    ("after_head", "first"), ("after_head", "paused"), ("after_head", "other"),
+    ("before_stamp", "first"), ("before_stamp", "other")])
 def test_a_takeover_that_overlaps_another_never_leaves_the_row_and_the_head_apart(
         tmp_path, monkeypatch, point, writer_before):
     first = Store(tmp_path / "first")
@@ -97,13 +104,10 @@ def test_a_takeover_that_overlaps_another_never_leaves_the_row_and_the_head_apar
         assert took["taken_over"] is True and agreed_writer(first) == other.installation.id
         assert take_over(paused)["taken_over"] is True
         assert agreed_writer(first) == paused.installation.id
-    elif stopped.result["taken_over"]:
-        # It committed on top of the other one's takeover, with both records its own.
-        assert agreed_writer(first) == paused.installation.id
     else:
-        # It was the writer when it read the row, so it changed nothing: the other one's takeover stands.
-        assert writer_before == "paused" and took["taken_over"] is True
-        assert agreed_writer(first) == other.installation.id
+        # It committed on top of the other one's takeover, with both records its own.
+        assert stopped.result["taken_over"] is True, stopped.result
+        assert agreed_writer(first) == paused.installation.id
 
 
 def test_the_order_that_failed_in_ci_the_writer_takes_over_again_while_another_takes_over(tmp_path, monkeypatch):
@@ -123,10 +127,52 @@ def test_the_order_that_failed_in_ci_the_writer_takes_over_again_while_another_t
     assert take_over(two, "again")["taken_over"] is False
     assert take_over(Store(first.data_dir))["taken_over"] is True
     stopped.resume()
-    assert isinstance(stopped.error, StoreNotWriter) and "at the same moment" in str(stopped.error), stopped.error
+    assert isinstance(stopped.error, StoreNotWriter) and str(stopped.error) == store_writer.REFUSED_TAKEOVER
+    assert "another installation claimed it or took it over" in str(stopped.error)
     assert agreed_writer(first) == first.installation.id
     assert store_writer.take_over_at(one.data_dir)["taken_over"] is True
     assert agreed_writer(first) == one.installation.id
+
+
+@pytest.mark.parametrize("point", ["after_head", "before_stamp"])
+def test_a_takeover_refused_because_the_writer_wrote_meanwhile_says_so_and_changes_nothing(
+        tmp_path, monkeypatch, point):
+    """Every journaled write of the writer changes the head, so a takeover that overlaps one is refused too.
+    Nobody else claimed anything then, and the text must not send the person looking for another installation."""
+    first = Store(tmp_path / "first")
+    pid = project(tmp_path, first)
+    directory = second_installation(tmp_path, first, "two")
+    for attempt in range(2):  # a writer that keeps writing refuses it again
+        stopped = Paused(monkeypatch, point, lambda: store_writer.take_over_at(directory))
+        first.snapshot(pid, f"note://meanwhile/{point}/{attempt}", "Written during the takeover.", "note")
+        stopped.resume()
+        assert isinstance(stopped.error, StoreNotWriter) and not isinstance(stopped.error, StoreWriterLost)
+        assert str(stopped.error) == store_writer.REFUSED_TAKEOVER, stopped.error
+        assert "its writer wrote to it" in str(stopped.error) and "more than once" in str(stopped.error)
+        assert "Nothing was changed here" in str(stopped.error) and "cairnmind store takeover --yes" in str(stopped.error)
+        assert agreed_writer(first) == first.installation.id
+        assert len(writer_row(first)["history"]) == 1
+    first.snapshot(pid, f"note://after/{point}", "The writer still writes.", "note")
+    assert store_writer.take_over_at(directory)["taken_over"] is True
+    assert agreed_writer(first) == store_writer.installation(directory).id
+
+
+def test_a_takeover_between_the_reads_of_the_row_and_the_head_is_not_reported_as_a_broken_store(tmp_path, monkeypatch):
+    first = Store(tmp_path / "first")
+    two = Store(second_installation(tmp_path, first, "two"))
+    original, took = store_writer.head_writer, []
+
+    def after_a_takeover(reader):
+        if not took:
+            took.append(take_over(two))
+        return original(reader)
+
+    monkeypatch.setattr(store_writer, "head_writer", after_a_takeover)
+    shown = first.writer_state()
+    assert took and took[0]["taken_over"] is True
+    assert "problem" not in shown and "head_writer" not in shown, shown
+    assert shown["role"] == "reader" and shown["writer"]["installation"] == two.installation.id
+    assert shown == first.writer_state()
 
 
 @pytest.mark.parametrize("point", ["after_head", "before_stamp"])
@@ -190,8 +236,21 @@ def test_a_store_left_with_row_and_head_apart_is_reported_and_the_next_takeover_
         doctor = json.loads(runner.invoke(app, ["--data-dir", str(directory), "doctor"]).output)
         assert doctor["store_writer"]["problem"] == shown["problem"]
     assert "problem" in one.writer_state() and "problem" in two.writer_state()
-    # Opening the store on the installation the row names does not move the fence without a person.
-    assert not Store(one.data_dir).read_only and head(first)["writer"] == two.installation.id
+    # Opening the store on the installation the row names does not move the fence without a person, and runs
+    # no schema statement on a store another installation is committing to.
+    refusal = "journal head names installation " + two.installation.id[:8]
+    with monkeypatch.context() as patch:
+        prepared = []
+        patch.setattr(Store, "_prepare_schema", lambda self: prepared.append(self))
+        opened = Store(one.data_dir)
+    assert not prepared and not opened.read_only and head(first)["writer"] == two.installation.id
+    assert opened.list_projects()[0]["id"] == pid
+    for store in (opened, one):  # a new process and one that was running
+        with pytest.raises(StoreWriterLost, match=refusal):
+            store.command("CREATE DOCUMENT TYPE writer_race_probe IF NOT EXISTS")
+        with pytest.raises(StoreWriterLost, match=refusal):
+            store.add_project("refused", tmp_path)
+    assert "writer_race_probe" not in {row["name"] for row in first.client.query("SELECT name FROM schema:types")}
     # The head is the fence, so at most one of them commits: the one the head names, from a process that was
     # already running. The one the row names is refused there, and told what is wrong.
     two.snapshot(pid, "note://head", "Written by the installation the head names.", "note")
