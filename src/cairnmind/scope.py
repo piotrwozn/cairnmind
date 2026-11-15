@@ -121,27 +121,30 @@ def path_states(store, project_id: str, worktree=None, *, known: dict | None = N
     ``known`` is the map of an earlier observation: a file whose size, times, mode and inode equal
     what it holds is not read again.
     """
-    from cairnmind.memory_paths import GIT_PATHSPEC, is_reserved_memory
-    from cairnmind.verification import _git, _root
+    from cairnmind.memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
+    from cairnmind.verification import _git, _root, require_git_tree
     root = _root(store, project_id, worktree)
     result = {"status": "unknown", "worktree": str(root), "head": None, "reasons": [], "paths": {}}
     try:
-        if Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve() != root:
-            raise ValueError("the registered root is not the root of a Git worktree")
+        below = require_git_tree(root)
+        nested = nested_reserved(store, root)
         try:
             head = _git(root, "rev-parse", "--verify", "HEAD").decode("ascii").strip()
         except ValueError:
             head = None  # no first commit yet: the files can still be compared
         names = set()
         for arguments in (("ls-files", "-z"), ("ls-files", "--others", "--exclude-standard", "-z")):
-            names.update(os.fsdecode(item) for item in _git(root, *arguments, *GIT_PATHSPEC).split(b"\0") if item)
+            names.update(os.fsdecode(item) for item in _git(root, *arguments, *git_pathspec(nested)).split(b"\0")
+                         if item)
         paths = {}
         for name in sorted(names):
-            if is_reserved_memory(name) or _MANAGED.match_file(name):
+            if is_reserved_memory(name) or is_reserved_below(name, nested) or _MANAGED.match_file(name):
                 continue
             entry = _entry(root, name, (known or {}).get(name))
             if entry is not None:
                 paths[name] = entry
+        if below and not paths:
+            raise ValueError("Git lists no file of the registered root")
         result.update(status="fresh", head=head, paths=paths)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result["reasons"] = [_shown(f"the worktree cannot be read: {type(exc).__name__}: {exc}", 300)]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 
 
 # Snapshots are written to the first directory. The second is where versions up to 0.9.0 wrote
@@ -35,6 +36,73 @@ def is_reserved_memory(relative: str | Path) -> bool:
         return False
     path = Path(os.path.normpath(relative))
     return not path.is_absolute() and any(path.is_relative_to(directory) for directory in RESERVED_DIRECTORIES)
+
+
+def nested_reserved(store, base: str | Path) -> tuple[Path, ...]:
+    """The reserved directories of every registered project root strictly below ``base``, relative to it (#174).
+
+    One repository can hold several projects, each registered at its own subdirectory and publishing
+    its memory there. What one project's memory writes is then neither indexed, fingerprinted nor
+    scope-checked as code of a project registered above it. A directory of the same name that is no
+    registered project's is ordinary files.
+
+    A root counts by where it lies in its repository, not only by its path: in another worktree of the
+    same repository, a project registered at ``services/a`` of the main checkout still reserves
+    ``services/a/.memory/...`` there.
+    """
+    base = Path(base).resolve()
+    roots = {Path(row["path"]).resolve() for row in store.query("SELECT path FROM project_roots")
+             if isinstance(row.get("path"), str) and row["path"]}
+    below = {root.relative_to(base) for root in roots if root != base and root.is_relative_to(base)}
+    place = _repository_place(base) if roots else None
+    if place is not None:
+        common, prefix = place
+        for root in roots:
+            other = _repository_place(root)
+            if other is not None and other[0] == common and len(other[1]) > len(prefix) \
+                    and other[1][:len(prefix)] == prefix:
+                below.add(Path(*other[1][len(prefix):]))
+    return tuple(sorted(relative / directory for relative in below for directory in RESERVED_DIRECTORIES))
+
+
+def _repository_place(path: Path) -> tuple[Path, tuple[str, ...]] | None:
+    """(common Git directory, parts of the path below its worktree's top), or None outside Git.
+
+    Read from the files where they say it (a `.git` directory), so that no process is started for
+    each registered root; a `.git` file (a linked worktree or a submodule) is asked of Git.
+    """
+    for top in (path, *path.parents):
+        marker = top / ".git"
+        try:
+            if marker.is_dir():
+                return marker.resolve(), path.relative_to(top).parts
+            if not marker.exists():
+                continue
+        except OSError:
+            return None
+        try:
+            result = subprocess.run(["git", "-C", str(path), "rev-parse", "--git-common-dir", "--show-prefix"],
+                                    capture_output=True, timeout=20, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+        except (OSError, subprocess.SubprocessError):
+            return None
+        lines = os.fsdecode(result.stdout).split("\n")
+        if result.returncode or len(lines) < 2 or not lines[0]:
+            return None
+        return (path / lines[0]).resolve(), Path(lines[1]).parts
+    return None
+
+
+def is_reserved_below(relative: str | Path, directories: tuple[Path, ...]) -> bool:
+    """Whether a path relative to a root lies in one of ``directories`` (from nested_reserved)."""
+    if not directories or ".memory" not in os.fspath(relative).lower():
+        return False
+    path = Path(os.path.normpath(relative))
+    return not path.is_absolute() and any(path.is_relative_to(directory) for directory in directories)
+
+
+def git_pathspec(directories: tuple[Path, ...] = ()) -> tuple[str, ...]:
+    """GIT_PATHSPEC, also leaving out ``directories``; taken literally, since they are names of real folders."""
+    return (*GIT_PATHSPEC, *(f":(exclude,literal){directory.as_posix()}" for directory in directories))
 
 
 def snapshot_directory(root: str | Path) -> Path | None:

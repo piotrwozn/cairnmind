@@ -117,6 +117,49 @@ identity differs is refused ("belongs to X; import it first"); importing binds a
 and `--bind` replaces a binding explicitly (the way out when two branches each created
 `FORMAT.json`, which Git shows as an add/add conflict in that one file).
 
+## One directory per project in a repository
+
+One repository can hold the projects of several teams, each registered at its own subdirectory
+(`cairnmind project add team-a ~/src/monorepo/services/a`). Each publishes into its own root, never into the
+repository's top level: `services/a/.memory/cairnmind-published/`. The paths in its source
+references are relative to that root (`src/app.py`, not `services/a/src/app.py`), so the project
+can move inside the repository. A project registered at the repository root works as before.
+
+- The reserved directories (`.memory/cairnmind`, `.memory/devbrain` and
+  `.memory/cairnmind-published`) are reserved at the root of every registered project. A project
+  registered higher up, such as one at the repository root, neither indexes nor fingerprints the
+  memory directories of the projects registered below it, and they are not in its scope or impact
+  checks. Writing one project's memory, by `memory publish`, `memory snapshot` or an import, therefore
+  makes no other project's checks or acknowledgements stale. This holds in every worktree of the
+  repository: a project registered at `services/a` of the main checkout reserves
+  `services/a/.memory/...` in a second worktree too. A directory of the same name where no project
+  is registered is ordinary files.
+- A project registered at a subdirectory is that directory: its code state, checks and scope cover
+  the files below it, listed by Git relative to it, and nothing else. An uncommitted edit outside the
+  directory, such as shared code in `services/common` or a configuration file at the repository root
+  that a check reads, does not make that project's checks stale, and `extra_inputs` cannot name a file
+  outside it. Only the next commit does: HEAD is the repository's, so a commit anywhere in the
+  repository, a memory-only commit included, makes the checks of every project in it stale, as a
+  commit always did. A project whose checks depend on code outside its directory should be registered
+  at a directory that holds that code.
+- A subdirectory the repository ignores (listed in a `.gitignore`), or one in which Git lists no file,
+  has no fresh code state: Git would see no edit there. Its checks and scope stay unknown.
+- Each project imports only its own directory. `memory import-published` refuses a
+  `.memory/cairnmind-published` directory held by another local project's root, or by any other
+  directory of the project's own repository, registered here or not. The path is resolved first,
+  symbolic links in its parents included, and its name compared without case. This is a guard against
+  mistakes inside one repository, not a proof of where a directory came from: a copy of another team's
+  directory taken elsewhere is decided by its `FORMAT.json` and the binding alone, and on a machine
+  where that team's records are not held, nothing else stops it. If Git does not answer while the guard
+  runs, the import is refused.
+
+A `CODEOWNERS` file lets each team review its own memory:
+
+```
+/services/a/.memory/cairnmind-published/  @example-org/team-a
+/services/b/.memory/cairnmind-published/  @example-org/team-b
+```
+
 ## What is published, and whose act it is
 
 Records of kind decision, constraint, fact and task, and plans. Checkpoints, proposed wordings,

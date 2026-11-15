@@ -26,7 +26,8 @@ from cairnmind.arcade import ArcadeError
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
-from cairnmind.memory_paths import bound_metadata, imported_source_ids, is_memory_path, memory_bindings
+from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, memory_bindings,
+                                    nested_reserved)
 from cairnmind.sql import json_text as _json_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -142,6 +143,12 @@ def _is_secret(path: Path) -> bool:
 def _roots(store, project: dict) -> list[Path]:
     rows = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
     return list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(r["path"]).resolve() for r in rows]]))
+
+
+def _excluded(store, root: Path) -> tuple[Path, ...]:
+    """What a walk of a root leaves out besides its own reserved memory: the data directory, and the
+    memory directories of the projects registered below the root (#174), which are their memory."""
+    return (store.data_dir, *(root / directory for directory in nested_reserved(store, root)))
 
 
 def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None):
@@ -495,7 +502,7 @@ def _tree_state(store, project_id: str) -> tuple[str, int, bool]:
         if not root.is_dir():
             entries.append([str(root), None])
             continue
-        for path in _files(root, excluded=(store.data_dir,), errors=errors):
+        for path in _files(root, excluded=_excluded(store, root), errors=errors):
             try:
                 status = os.stat(path, follow_symlinks=False)
             except OSError:
@@ -665,7 +672,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             counts["errors"].append(f"Project root unavailable: {root}")
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
-        for path in _files(root, excluded=(store.data_dir,), errors=walk_errors):
+        for path in _files(root, excluded=_excluded(store, root), errors=walk_errors):
             name = str(path)
             try:
                 # Before the file is opened: an edit made while it is read then shows as a new identity.
@@ -1532,6 +1539,7 @@ def current_source(store, source_id: str) -> dict:
     excluded_directory = any(part in EXCLUDED_DIRS for root in allowed_roots for part in path.relative_to(root).parts[:-1])
     if (path.is_symlink() or not allowed_roots or _is_secret(path) or excluded_directory
             or any(is_memory_path(path, root) for root in roots)
+            or any(path.is_relative_to(base) for root in allowed_roots for base in _excluded(store, root))
             or path.resolve().is_relative_to(store.data_dir)):
         raise ValueError("Source path is outside registered roots or excluded")
     if not path.is_file():
