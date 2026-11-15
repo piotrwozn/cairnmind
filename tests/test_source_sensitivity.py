@@ -103,6 +103,32 @@ def test_read_source_and_memory_records_return_the_class_without_writing_anythin
     assert "\"sensitivity\"" not in json.dumps(after)
 
 
+def test_a_source_an_earlier_version_cited_still_counts():
+    sources = {"doc": {"kind": "document", "metadata": {}}, "chat": {"kind": "transcript", "metadata": {}}}
+    assert record_sensitivity({"source_ids": ["doc"], "metadata": {}}, sources, ["chat"]) == "conversation"
+    assert record_sensitivity({"source_ids": ["doc"], "metadata": {}}, sources, ["doc"]) == "project"
+
+
+def test_an_update_that_cites_only_a_project_file_does_not_lower_the_class(workspace):
+    store, project = workspace
+    pid = project["id"]
+    chat = store.snapshot(pid, "conversation://1", "User: we chose Postgres.", "transcript")
+    doc = store.snapshot(pid, "notes://ledger", "The ledger module.", "document")
+    record = store.remember(pid, {"kind": "decision", "content": "Postgres holds the ledger."}, [chat["id"]])
+    # A client confirms the decision and cites the file that implements it; the text stays the same.
+    updated = store.remember(pid, {"id": record["id"], "expected_version": record["version"]}, [doc["id"]])
+    assert updated["source_ids"] == [doc["id"]] and updated["content"] == record["content"]
+    inspector = Inspector(store)
+    assert inspector.record(pid, record["id"])["sensitivity"] == "conversation"
+    page = {item["id"]: item for item in inspector.page("records", pid)["items"]}
+    assert page[record["id"]]["sensitivity"] == "conversation"
+    # A record that only ever cited project material stays project.
+    plain = store.remember(pid, {"kind": "fact", "content": "The ledger module exists."}, [doc["id"]])
+    plain = store.remember(pid, {"id": plain["id"], "expected_version": plain["version"],
+                                 "content": "The ledger module exists, in one file."}, [doc["id"]])
+    assert inspector.record(pid, plain["id"])["sensitivity"] == "project"
+
+
 def test_an_external_sessions_source_is_third_party_in_the_inspector(workspace):
     store, project = workspace
     pid = project["id"]

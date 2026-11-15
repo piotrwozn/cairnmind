@@ -11,8 +11,9 @@ nor go stale, and a row written before this existed gets one without being rewri
 - third_party: text from outside: written by an external client's session (history unarchived), or
   degraded by a third-party tool result.
 
-A record's class is the highest class among the sources behind it, and conversation when it has none
-or one cannot be read. A record an external session wrote is third_party whatever it cites.
+A record's class is the highest class among the sources behind it, now or in any earlier version, and
+conversation when it has none or one cannot be read. A record an external session wrote is third_party
+whatever it cites.
 """
 from __future__ import annotations
 
@@ -72,18 +73,34 @@ def _source_ids(row: Mapping) -> list:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
-def rollup(record: Mapping, class_of: Callable[[str], str]) -> str:
-    """A record's class from the class of each source id behind it, as the module docstring says."""
+def rollup(record: Mapping, class_of: Callable[[str], str], earlier: Iterable[str] = ()) -> str:
+    """A record's class from the class of each source id behind it, as the module docstring says.
+
+    ``earlier``: the source ids its earlier versions cited (``earlier_source_ids``). An update replaces the
+    sources and may keep the text, so a class taken from the current sources alone could be lowered by
+    citing a project file for text that came from a conversation. A class never goes down.
+    """
     # A record carries its mark in its metadata, a plan at its top level.
     if outside_origin(record.get("metadata")) or outside_origin(record):
         return "third_party"
-    ids = _source_ids(record)
+    ids = list(dict.fromkeys([*_source_ids(record), *earlier]))
     return highest(class_of(i) for i in ids) if ids else "conversation"
 
 
-def record_sensitivity(record: Mapping, sources: Mapping[str, Mapping | None]) -> str:
+def record_sensitivity(record: Mapping, sources: Mapping[str, Mapping | None], earlier: Iterable[str] = ()) -> str:
     """The highest class among the record's sources, given as rows by id; a missing one is conversation."""
-    return rollup(record, lambda i: source_sensitivity(sources[i]) if sources.get(i) else "conversation")
+    return rollup(record, lambda i: source_sensitivity(sources[i]) if sources.get(i) else "conversation", earlier)
+
+
+def earlier_source_ids(reader, record_ids: Iterable[str]) -> dict[str, set[str]]:
+    """The source ids each record's stored versions (record_revisions) cited, by record id, in bounded queries."""
+    wanted = list(dict.fromkeys(i for i in record_ids if isinstance(i, str)))
+    found: dict[str, set[str]] = {}
+    for start in range(0, len(wanted), 500):
+        for row in reader.query("SELECT record_id,snapshot.source_ids AS source_ids FROM record_revisions "
+                                "WHERE record_id IN :ids", {"ids": wanted[start:start + 500]}):
+            found.setdefault(row["record_id"], set()).update(_source_ids(row))
+    return found
 
 
 def source_rows(reader, ids: Iterable[str]) -> dict[str, dict]:
@@ -98,7 +115,9 @@ def source_rows(reader, ids: Iterable[str]) -> dict[str, dict]:
 
 
 def record_classes(reader, records: Iterable[Mapping]) -> dict[str, str]:
-    """The class of each record, by record id, reading every source behind them once."""
+    """The class of each record, by record id, reading every source behind them, now or before, once."""
     records = list(records)
-    rows = source_rows(reader, (i for record in records for i in _source_ids(record)))
-    return {record["id"]: record_sensitivity(record, rows) for record in records}
+    earlier = earlier_source_ids(reader, (record["id"] for record in records))
+    rows = source_rows(reader, [*(i for record in records for i in _source_ids(record)),
+                                *(i for ids in earlier.values() for i in ids)])
+    return {record["id"]: record_sensitivity(record, rows, earlier.get(record["id"], ())) for record in records}

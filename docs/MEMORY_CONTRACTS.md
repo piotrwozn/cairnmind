@@ -73,7 +73,8 @@ function (`cairnmind.sensitivity`, also `store.source_sensitivity` and
 and the origin mark the service writes. The class is stored nowhere, not in the
 database and not in a package, so a client cannot set it, it cannot go stale,
 and a row written before classes existed gets one without being rewritten or
-migrated. An imported package gets the same classes as the store it came from.
+migrated. An imported record is judged by the sources and origin mark the
+package carries for it.
 
 | Class | Sources |
 | --- | --- |
@@ -83,16 +84,20 @@ migrated. An imported package gets the same classes as the store it came from.
 
 A record's class is the highest of the classes of the sources behind it
 (project < conversation < third_party), and `conversation` when it has none or
-one of them cannot be read. A record or plan whose own origin mark says an
-external session or a third-party result wrote it is `third_party`. The class
+one of them cannot be read. The sources its earlier versions cited count too
+(`record_revisions`): an update replaces the sources and may keep the text, so
+citing a project file never lowers the class of text that came from a
+conversation. `cairnmind memory show` reads a package, which carries no
+revisions, so there a record is judged by its current sources. A record or plan
+whose own origin mark says an external session or a third-party result wrote it
+is `third_party`. The class
 says how private text is, not whether it is true: the origin mark and the
 evidence state still say that.
 
 The inspector returns the class as `sensitivity` for a source (`/inspector/sources`
 and a source's detail, which `read_source` uses) and a record (`/inspector/records`,
 which `memory_records` uses, and a record's detail). The terminal detail view and
-`cairnmind memory show` print it. Which classes may go to a memory model server on
-another computer is the setting `memory_remote_classes` (see [API.md](API.md#the-knowledge-agents-models)).
+`cairnmind memory show` print it.
 
 ## Validation budgets and quality evaluation
 
