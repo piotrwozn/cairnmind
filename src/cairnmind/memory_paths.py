@@ -25,17 +25,27 @@ PUBLISHED_RELATIVE = Path(".memory/cairnmind-published")
 RESERVED_DIRECTORIES = (*MEMORY_DIRECTORIES, PUBLISHED_RELATIVE)
 # Pathspecs that keep Git from listing the reserved directories at all: a snapshot of a large project
 # holds tens of thousands of objects, and the worktree is listed at every code-state capture (#158).
-# Case-sensitive like is_reserved_memory on Linux; that check still filters what Git lists.
+# Case-sensitive in Git; is_reserved_memory, which ignores case, still filters what Git lists.
 GIT_PATHSPEC = ("--", ".", *(f":(exclude){directory.as_posix()}" for directory in RESERVED_DIRECTORIES))
+
+
+def _in_reserved(path: Path, directory: Path) -> bool:
+    """Whether ``path`` lies in ``directory``, whose last two names (`.memory/<name>`) are compared without
+    case: on a file system that ignores case `.Memory/Cairnmind` is the reserved directory (#230). The
+    names before them (the place of a project registered below a root) are compared exactly."""
+    size = len(directory.parts)
+    head = size - 2
+    return (len(path.parts) >= size and path.parts[:head] == directory.parts[:head]
+            and tuple(part.casefold() for part in path.parts[head:size]) == directory.parts[head:])
 
 
 def is_reserved_memory(relative: str | Path) -> bool:
     # Called for every file of a worktree: a path that does not mention the directory
-    # cannot normalise into it. Lower-cased, because path comparison ignores case on Windows.
-    if ".memory" not in os.fspath(relative).lower():
+    # cannot normalise into it. Case-folded, because the reserved names are compared without case.
+    if ".memory" not in os.fspath(relative).casefold():
         return False
     path = Path(os.path.normpath(relative))
-    return not path.is_absolute() and any(path.is_relative_to(directory) for directory in RESERVED_DIRECTORIES)
+    return not path.is_absolute() and any(_in_reserved(path, directory) for directory in RESERVED_DIRECTORIES)
 
 
 def nested_reserved(store, base: str | Path) -> tuple[Path, ...]:
@@ -94,10 +104,10 @@ def _repository_place(path: Path) -> tuple[Path, tuple[str, ...]] | None:
 
 def is_reserved_below(relative: str | Path, directories: tuple[Path, ...]) -> bool:
     """Whether a path relative to a root lies in one of ``directories`` (from nested_reserved)."""
-    if not directories or ".memory" not in os.fspath(relative).lower():
+    if not directories or ".memory" not in os.fspath(relative).casefold():
         return False
     path = Path(os.path.normpath(relative))
-    return not path.is_absolute() and any(path.is_relative_to(directory) for directory in directories)
+    return not path.is_absolute() and any(_in_reserved(path, directory) for directory in directories)
 
 
 def git_pathspec(directories: tuple[Path, ...] = ()) -> tuple[str, ...]:
