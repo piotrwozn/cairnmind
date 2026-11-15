@@ -302,6 +302,37 @@ def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[
     return "\n".join(lines[first:last + 1])[:size], first, last
 
 
+# Hits asked for beyond INITIAL_HITS, to fill the places of hits that show a passage twice.
+SPARE_HITS = 10
+
+
+def distinct_hits(hits: list[dict], query: str, limit: int) -> list[dict]:
+    """The first ``limit`` hits that each show a passage the hits before them do not.
+
+    Chunks of one file overlap, and where lines are long they start a line or two apart, so
+    several hits can show the same excerpt (``question_excerpt``) of the same source. A hit is
+    left out when its excerpt is the text of an earlier hit's excerpt of that source, or lies
+    within the lines of one; the next hit takes its place. The order of the hits is kept.
+    """
+    kept: list[dict] = []
+    texts: set[tuple] = set()
+    spans: dict[Any, list[tuple[int, int]]] = {}
+    for hit in hits:
+        excerpt, first, last = question_excerpt(str(hit.get("text", "")), query)
+        source_id, start = hit.get("source_id"), hit.get("line_start")
+        span = (start + first, start + last) if isinstance(start, int) else None
+        if (source_id, excerpt) in texts or (span is not None and any(
+                begin <= span[0] and span[1] <= end for begin, end in spans.get(source_id, []))):
+            continue
+        texts.add((source_id, excerpt))
+        if span is not None:
+            spans.setdefault(source_id, []).append(span)
+        kept.append(hit)
+        if len(kept) >= limit:
+            break
+    return kept
+
+
 # Order in which passages were shown: the initial evidence takes its positions (0..), anything
 # shown later (a search or a read during the question) takes a number after them.
 LATER_RANKS = 1000
@@ -1064,14 +1095,16 @@ class KnowledgeAgent:
         try:
             async with asyncio.timeout(self.settings.ask_timeout):
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
-                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
+                # More hits than are shown: a hit that repeats a passage gives its place to the next.
+                wanted = INITIAL_HITS + SPARE_HITS
+                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, wanted,
                                                   worktree=worktree)
-                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree, question,
-                                                  False)
-                hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
+                initial = await asyncio.to_thread(self._hits, distinct_hits(lexical, question, INITIAL_HITS),
+                                                  project_id, evidence, worktree, question, False)
+                hybrid = await self.retriever.asearch(project_id, question, wanted, worktree=worktree)
                 if hybrid:
-                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree, question,
-                                                      False)
+                    initial = await asyncio.to_thread(self._hits, distinct_hits(hybrid, question, INITIAL_HITS),
+                                                      project_id, evidence, worktree, question, False)
                 # Definitions of names the question and the hits use take the places of the
                 # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
                 definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
