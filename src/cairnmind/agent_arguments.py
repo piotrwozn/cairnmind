@@ -14,6 +14,9 @@ from .terminal_safe import safe_text
 _TYPES = {"string", "integer", "number", "boolean", "object", "array", "null"}
 _RANGE = {"minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "pattern",
           "format", "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties", "multipleOf"}
+# Built-in tools whose expected_sha256 is the hash read_file returned. A third-party tool's field of the same
+# name means whatever that tool says, so it gets no advice about these tools.
+HASH_TOOLS = {"write_file", "edit_file", "delete_file"}
 HASH_HINT = ("expected_sha256 is null to create a new file with write_file, or else the sha256 that read_file "
              "returned for the current version of the file.")
 
@@ -37,8 +40,9 @@ def _hint(error) -> str:
     return "does not fit the tool's schema"
 
 
-def argument_problem(schema, arguments) -> dict | None:
-    """{argument, keyword, hint} for the most relevant error, or None when the arguments fit."""
+def argument_problem(schema, arguments, tool: str | None = None) -> dict | None:
+    """{argument, keyword, hint} for the most relevant error, or None when the arguments fit. `tool` names a
+    built-in tool; only HASH_TOOLS get HASH_HINT, never a third-party tool."""
     error = best_match(Draft202012Validator(schema).iter_errors(arguments))
     if error is None:
         return None
@@ -57,7 +61,12 @@ def argument_problem(schema, arguments) -> dict | None:
     else:
         hint = _hint(error)
     argument = "/".join(path)
-    hint = f"{argument or 'The arguments'} {hint}."
-    if path[:1] == ["expected_sha256"]:
+    if argument:
+        hint = f"{argument} {hint}."
+    elif keyword == "additionalProperties":
+        hint = f"The call {hint}."
+    else:
+        hint = "The call does not fit the tool's schema."
+    if tool in HASH_TOOLS and path[:1] == ["expected_sha256"]:
         hint += " " + HASH_HINT
     return {"argument": argument, "keyword": keyword, "hint": hint}
