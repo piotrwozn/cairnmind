@@ -28,7 +28,7 @@ What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cai
 
 The columns are kinds of tools, not products; a particular tool may do more than its column says. The last row is the price: Cairnmind is the heaviest of the four to install.
 
-Planned, not there yet: shared project memory for a team and read-only views above a single project. The steps are on the [features board](https://github.com/users/piotrwozn/projects/2).
+Shared memory for a team works through Git ([Team memory](#team-memory)). Planned, not there yet: read-only views above a single project. The steps are on the [features board](https://github.com/users/piotrwozn/projects/2).
 
 ## Who it is for
 
@@ -159,6 +159,8 @@ cairnmind status --project my-app
 
 `ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer.
 
+`run`, `ask` and `context` start the knowledge service (and the engine) when needed. `status`, `jobs list`, `jobs show` and `memory status` ask the running service and start nothing: start it first with `cairnmind serve`, or open the workspace. `project list`, `store size` and the other commands that only read the store need the running engine and start nothing either ([Data and backups](#data-and-backups)). An installation that only reads a store another installation writes never runs the service; there `cairnmind store writer` shows its role.
+
 ### Cursor, Cline, Zed and other MCP clients
 
 A client the launcher cannot start uses the same memory through an **external session**. Cairnmind cannot read or archive such a client's conversation, so its session is evidence-degraded: it can ask, read the resume packet, acknowledge it and write, but nothing it writes is ever shown or counted as verified. Start the service first (`cairnmind serve`, or the workspace), then give the client this stdio MCP server:
@@ -213,6 +215,8 @@ cairnmind plan next my-app
 cairnmind plan list my-app
 cairnmind task list my-app
 ```
+
+The format of `plan.json`, with an example, is in [docs/WORKFLOW.md](docs/WORKFLOW.md#a-whole-plan-in-one-transaction).
 
 Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` and `blocked`. A separate `proposed`/`confirmed` status describes how certain a finding is. A `done` result remains part of the execution history; a later code change can turn its verification to `stale`. The plan format, check profiles and MCP calls are described in [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
@@ -328,11 +332,22 @@ cairnmind eval memory
 
 This is an explicit test against a real Ollama: extraction of a fact, a decision and a task, transfer between two isolated databases, and reconstruction of a sourced answer. It requires all expected findings; an empty extraction result fails the scenario. It does not start Codex or Claude. Exit codes: `0` success, `1` failure, `3` required models missing.
 
+### Team memory
+
+A snapshot carries one person's whole memory. To share what a team agreed on, publish it: only records a person confirmed (decisions, constraints, facts and tasks, and plans) are written, one readable file per record, to `.memory/cairnmind-published/` in the repository, and they go through review like code.
+
+1. Confirm the records in the memory inspector (`Ctrl+B i`); a proposed record is never published.
+2. `cairnmind memory publish my-app --preview` shows what would be written and what is held back, and why; `cairnmind memory publish my-app` writes it. Every publication first passes a secrets scan.
+3. Commit the directory with `git add .memory/cairnmind-published && git commit` and open a pull request; Cairnmind never stages, commits or pushes. `cairnmind memory diff BASE HEAD` (or the `.github/workflows/memory.yml` workflow) shows the change for review, and `cairnmind memory check-published DIR` checks a directory in CI without a store or model.
+4. After the merge, each teammate imports it: `cairnmind memory import-published ~/src/my-app/.memory/cairnmind-published --project my-app`, or `cairnmind memory import-commit main --project my-app`, which also checks every quoted passage against that commit's code. Add `--dry-run` first to see what it would change. Nothing imported is shown as verified or as confirmed by you.
+
+Another clone or worktree of the same repository is a folder of the same project: register it with `cairnmind project root my-app ~/src/my-app-other` before publishing or importing there. The format, the trust rules, the secrets scan and the CI workflow are in [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md#published-memory-version-1).
+
 ## Data and backups
 
 The default data directory is `~/.local/share/cairnmind` for a new installation. An installation that already has data in `~/.local/share/devbrain` keeps using that directory where it is; nothing is moved or copied. Choose another one with `CAIRNMIND_HOME` or the global `--data-dir` option. Variables are spelled `CAIRNMIND_*`; the earlier `DEVBRAIN_*` spelling is still read. For a configuration variable the new spelling wins when both are set; `cairnmind doctor` reports a pair that disagrees. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `cairnmind stop` stops the knowledge service; once clients are closed, `cairnmind engine stop` stops the database without deleting data. A [connect-only installation](docs/DEPLOYMENT.md#connect-only-installations) (`CAIRNMIND_ARCADE_CONNECT_URL`) has no `arcade/` folder and no engine: its database runs elsewhere, the `engine install`, `start` and `stop` commands say so and do nothing, and `engine status` reports the server it connects to.
 
-Commands that only read the store never start the engine, create the data directory, configuration or database, or upgrade the schema: `project list`, `records`, `source`, `task list`, `plan list`, `plan show`, `plan next`, `plan contract` without `--write`, `check profiles`, `memory orphans`, `memory extraction-stats`, `impact`, `usage` and `store size`. When the engine is not running, the store was never created or its schema needs an upgrade, they stop at once with one line that says what to run, `cairnmind engine start` or `cairnmind init`. `brief` still starts a stopped engine, as do the commands that write and `check list`, `export` and `backup`. On a connect-only installation no command starts an engine: when the server does not answer, each of them says where it looked.
+Commands that only read the store never start the engine, create the data directory, configuration or database, or upgrade the schema: `project list`, `records`, `source`, `task list`, `plan list`, `plan show`, `plan next`, `plan contract` without `--write`, `check profiles`, `memory orphans`, `memory extraction-stats`, `impact`, `usage`, `proposed`, `answers list`, `answers show` and `store size`. When the engine is not running, the store was never created or its schema needs an upgrade, they stop at once with one line that says what to run, `cairnmind engine start` or `cairnmind init`. `brief` still starts a stopped engine, as do the commands that write and `check list`, `export` and `backup`. On a connect-only installation no command starts an engine: when the server does not answer, each of them says where it looked.
 
 ```bash
 cairnmind export ~/memory.json --project my-app

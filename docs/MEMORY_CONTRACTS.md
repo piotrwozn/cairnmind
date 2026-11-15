@@ -470,7 +470,10 @@ validation are unchanged.
 
 A path depends only on immutable identity: record and plan IDs are UUIDs and a record's kind
 never changes. There is no manifest, index or counter, so no file is shared by all publications;
-the three static files are written once and are the same on every branch. Nothing else may be in
+the three static files are written once and are the same on every branch. A second worktree or clone
+of the repository is a root of the same project only once it is registered with
+`cairnmind project root PROJECT PATH`; until then publishing or importing there is refused because the
+memory worktree is not a registered project root. Nothing else may be in
 the directory: unknown entries, subdirectories and symbolic links are refused by name. The
 directory is reserved like the archive: it is not indexed and does not count as project code, so
 a commit that only changes memory changes no code fingerprint (it still moves HEAD). The publish
@@ -860,8 +863,11 @@ string of a source reference. One hit refuses the whole publication with a non-z
 names each file (and so the record), the field and the kind of hit, never any part of the value or
 its hash. Files already in the directory that this store does not write (a teammate's records, or
 records held here) are scanned too, but a hit there does not refuse: it is listed under `not_ours`,
-with the advice to fix or release it where it was written, and the file is left as it is. So a rule
-turned on after a publish, or a teammate's file, never blocks this store's own records or a release.
+with the advice to fix or release it where it was written, and the file is left as it is. So a
+teammate's file never blocks this store's own records or a release. This store's own records, on the
+other hand, are scanned with the rules in force now, also those published before: a rule turned on
+after a publish (for example `detect = ["email"]`) refuses the next publish until the value is removed
+from the record or the record is released, just as CI would refuse that file.
 Format characters (Unicode category Cf, such as zero-width spaces and soft hyphens) are removed
 before the scan, so a secret split by an invisible character is still found.
 
