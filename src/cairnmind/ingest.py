@@ -145,23 +145,51 @@ def _roots(store, project: dict) -> list[Path]:
     return list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(r["path"]).resolve() for r in rows]]))
 
 
-def _excluded(store, root: Path) -> tuple[Path, ...]:
-    """What a walk of a root leaves out besides its own reserved memory: the data directory, and the
-    memory directories of the projects registered below the root (#174), which are their memory."""
-    return (store.data_dir, *(root / directory for directory in nested_reserved(store, root)))
+class _NestedMemory:
+    """The memory directories of the projects registered below a root (#174), which are their memory.
+
+    Every such directory lies under a `.memory` directory, so the registered roots are only read once a
+    path below the root has a part of that name: a walk or a freshness check of a tree with none costs
+    no query, as before #174."""
+
+    def __init__(self, store, root: Path):
+        self.store, self.root, self._bases = store, root, None
+
+    def covers(self, path: Path) -> bool:
+        try:
+            parts = path.relative_to(self.root).parts
+        except ValueError:
+            return False
+        if ".memory" not in (part.casefold() for part in parts):
+            return False
+        if self._bases is None:
+            self._bases = tuple(self.root / directory for directory in nested_reserved(self.store, self.root))
+        return any(path.is_relative_to(base) for base in self._bases)
 
 
-def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None):
+def _walk_args(store, root: Path, errors: list[OSError]):
+    """(excluded, errors, nested) for _files: what a walk of a root leaves out besides its own reserved
+    memory, the data directory and the memory directories of the projects registered below it (#174)."""
+    return (store.data_dir,), errors, _NestedMemory(store, root)
+
+
+def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None,
+           nested: _NestedMemory | None = None):
     """Walk with nested gitignore rules. Symlinks are deliberately not followed.
 
     A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
-    and its caller must not treat the files it did not see as deleted.
+    and its caller must not treat the files it did not see as deleted. `nested`: the memory
+    directories of projects registered below the root (#174), also left out.
     """
     rules: dict[Path, pathspec.GitIgnoreSpec] = {}
+
+    def left_out(path: Path) -> bool:
+        return any(path.is_relative_to(base) for base in excluded) or (nested is not None and nested.covers(path))
+
     for directory, dirs, names in os.walk(root, followlinks=False,
                                           onerror=errors.append if errors is not None else None):
         folder = Path(directory)
-        if is_memory_path(folder, root) or any(folder.is_relative_to(base) for base in excluded):
+        if is_memory_path(folder, root) or left_out(folder):
             dirs[:] = []
             continue
         ignore = folder / ".gitignore"
@@ -188,7 +216,7 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
             # and not text of this project: its rows are not indexed as sources.
             and not (folder.name == ".memory" and name in ("cairnmind", "devbrain"))
-            and not any((folder / name).is_relative_to(base) for base in excluded)
+            and not left_out(folder / name)
             and not ignored(folder / name, True)
         )
         for name in sorted(names):
@@ -502,7 +530,7 @@ def _tree_state(store, project_id: str) -> tuple[str, int, bool]:
         if not root.is_dir():
             entries.append([str(root), None])
             continue
-        for path in _files(root, excluded=_excluded(store, root), errors=errors):
+        for path in _files(root, *_walk_args(store, root, errors)):
             try:
                 status = os.stat(path, follow_symlinks=False)
             except OSError:
@@ -672,7 +700,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             counts["errors"].append(f"Project root unavailable: {root}")
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
-        for path in _files(root, excluded=_excluded(store, root), errors=walk_errors):
+        for path in _files(root, *_walk_args(store, root, walk_errors)):
             name = str(path)
             try:
                 # Before the file is opened: an edit made while it is read then shows as a new identity.
@@ -1539,7 +1567,7 @@ def current_source(store, source_id: str) -> dict:
     excluded_directory = any(part in EXCLUDED_DIRS for root in allowed_roots for part in path.relative_to(root).parts[:-1])
     if (path.is_symlink() or not allowed_roots or _is_secret(path) or excluded_directory
             or any(is_memory_path(path, root) for root in roots)
-            or any(path.is_relative_to(base) for root in allowed_roots for base in _excluded(store, root))
+            or any(_NestedMemory(store, root).covers(path) for root in allowed_roots)
             or path.resolve().is_relative_to(store.data_dir)):
         raise ValueError("Source path is outside registered roots or excluded")
     if not path.is_file():
