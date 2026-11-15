@@ -20,7 +20,8 @@ import tempfile
 from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
-from .store import EXTRACTION_MARK, KINDS, STATUSES, TASK_STATES, validate_criterion_links
+from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
+                    validate_extractor_stamp)
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
@@ -60,12 +61,25 @@ def _without_local_mark(record):
     """A record without the local extraction worker's mark (#168).
 
     The mark lets this machine's own api session keep its ACK. A package never carries it
-    in or out, so an imported record always counts as somebody else's write.
+    in or out, so an imported record always counts as somebody else's write. An extractor stamp (#192)
+    travels, but only one the store would accept on an extracted record (_carried_stamp).
     """
     metadata = record.get("metadata")
     if isinstance(metadata, dict) and EXTRACTION_MARK in metadata:
-        record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTION_MARK}
+        metadata = record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTION_MARK}
+    if isinstance(metadata, dict) and EXTRACTOR_STAMP in metadata and not _carried_stamp(metadata):
+        record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTOR_STAMP}
     return record
+
+
+def _carried_stamp(metadata):
+    """Whether a record's extractor stamp (#192) is one the extraction worker could have written: well formed,
+    on a record with origin automatic_extraction. A package carrying anything else loses it on the way in."""
+    try:
+        validate_extractor_stamp(metadata[EXTRACTOR_STAMP])
+    except ValueError:
+        return False
+    return metadata.get("origin") == "automatic_extraction"
 
 
 def _logical(table, original):

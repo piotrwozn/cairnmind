@@ -10,25 +10,29 @@ import asyncio
 import copy
 import json
 from pathlib import Path
+import re
 import subprocess
 import time
 
 import pytest
 
+import cairnmind.agent as agent_module
 import cairnmind.extraction_input as extraction_input
+import cairnmind.memory as memory_module
+import cairnmind.memory_models as memory_models
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.config import Settings
 from cairnmind.extraction_evaluation import run_extraction_evaluation
-from cairnmind.extraction_input import EXTRACTOR_VERSION, extractor_fingerprint
+from cairnmind.extraction_input import EXTRACTOR_VERSION, extractor_fingerprint, extractor_stamp
 from cairnmind.memory import MemoryManager
 from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.retrieval import public_record
-from cairnmind.store import Store
+from cairnmind.store import EXTRACTOR_MODEL_CHARS, Store, validate_extractor_stamp
 
 # One line per extractor version. Changing an instruction or the schema changes the fingerprint: bump
 # EXTRACTOR_VERSION in extraction_input.py and add its fingerprint here; never edit an earlier line.
 PINNED_FINGERPRINTS = {
-    1: "143797a6e4b1f54ddb041bda9b05e258b83a4c63ab35fc042472e9fc5d29102c",
+    1: "47babfb3205ae8de11ee144c3acab4797d532ff03bd60b2087a1242996fcbfea",
 }
 
 QUOTE = "Use auth.py for explicit authentication."
@@ -59,6 +63,51 @@ def test_the_schema_and_the_passage_windows_are_part_of_the_fingerprint(monkeypa
     monkeypatch.undo()
     monkeypatch.setattr(extraction_input, "PASSAGE_CHARS", 401)
     assert extractor_fingerprint() != before
+
+
+@pytest.mark.parametrize("name, value", [
+    ("REPAIR_DRAFT_CHARS", 2001), ("EXTRACTION_TOKENS", 1801), ("REPAIR_TOKENS", 3601),
+    # How the prompt is built and which messages are skipped, not only the named instructions.
+    ("public_source_metadata", lambda metadata: {}),
+    ("HOST_MESSAGE", re.compile(r"(?!)")),
+    ("_without_tool_calls", lambda source: None),
+])
+def test_the_built_request_the_correction_and_the_budgets_are_part_of_the_fingerprint(monkeypatch, name, value):
+    before = extractor_fingerprint()
+    monkeypatch.setattr(extraction_input, name, value)
+    assert extractor_fingerprint() != before
+
+
+def test_the_extract_job_sends_the_correction_and_the_budgets_the_fingerprint_covers(workspace):
+    store, _, source, job, settings = workspace
+    calls = []
+
+    class Invalid(Model):
+        async def chat(self, messages, *args, **kwargs):
+            calls.append((messages, kwargs))
+            if len(calls) == 1:
+                return {"message": {"content": "not json " * 400}, "done_reason": "length"}
+            return await super().chat(messages, *args, **kwargs)
+
+    asyncio.run(KnowledgeAgent(store, settings, ollama=Invalid()).extract(job))
+    request = extraction_input.extraction_request(store.get_source(source["id"]))
+    assert json.loads(calls[1][0][1]["content"]) == extraction_input.repair_prompt(
+        source["id"], request["text"], "output_truncated", "not json " * 400)
+    assert calls[0][1]["options"]["num_predict"] == min(extraction_input.EXTRACTION_TOKENS, settings.answer_tokens)
+    assert calls[1][1]["options"]["num_predict"] <= extraction_input.REPAIR_TOKENS
+    assert calls[0][1]["format"] == extraction_input.extraction_schema(request["text"], request["segments"])
+
+
+@pytest.mark.parametrize("name", ["", "m" * 395, "m" * 1000, "qwen3.5:9b", "a@b"])
+@pytest.mark.parametrize("digest", [DIGEST, "sha256:" + "f" * 128, None])
+def test_the_stamp_is_always_one_the_store_accepts(name, digest):
+    stamp = extractor_stamp(name, digest)
+    assert validate_extractor_stamp(stamp) == stamp
+    assert stamp["model"].endswith("@" + (digest or "unknown"))
+    if name and len(name) + 1 + len(digest or "unknown") <= EXTRACTOR_MODEL_CHARS:
+        assert stamp["model"].startswith(name + "@")
+    # Two long names that share their start still get different stamps.
+    assert extractor_stamp("m" * 999 + "x", digest)["model"] != extractor_stamp("m" * 999 + "y", digest)["model"]
 
 
 @pytest.fixture
@@ -132,6 +181,55 @@ async def test_a_model_without_a_digest_is_written_as_unknown_and_never_fails_ex
     [record] = extracted(store, project)
     assert record["metadata"]["extractor"] == expected(settings, digest=None)
     assert store.job_status(project["id"], job["id"])["diagnostics"]["code"] == "ok"
+
+
+def test_a_slow_model_list_near_the_deadline_never_costs_the_extraction(workspace, monkeypatch):
+    store, project, _, job, settings = workspace
+    # The model uses half the time limit; a lookup allowed its own 10 s would outlast the rest.
+    monkeypatch.setattr(agent_module, "EXTRACTION_TIMEOUT", 6.0)
+
+    class Slow(Model):
+        async def chat(self, messages, *args, **kwargs):
+            await asyncio.sleep(3)
+            return await super().chat(messages, *args, **kwargs)
+
+        async def model_digest(self, name):
+            await asyncio.sleep(30)
+            return DIGEST
+
+    asyncio.run(KnowledgeAgent(store, settings, ollama=Slow()).extract(job))
+    [record] = extracted(store, project)
+    assert record["metadata"]["extractor"] == expected(settings, digest=None)
+    assert store.job_status(project["id"], job["id"])["diagnostics"]["code"] == "ok"
+
+
+async def test_no_lookup_is_made_when_the_deadline_leaves_no_room(tmp_path):
+    asked = []
+
+    class Counting(Model):
+        async def model_digest(self, name):
+            asked.append(name)
+            return DIGEST
+
+    agent = KnowledgeAgent(None, Settings(data_dir=tmp_path), ollama=Counting())
+    assert (await agent.extractor_stamp(time.monotonic()))["model"].endswith("@unknown")
+    assert asked == []
+    assert (await agent.extractor_stamp(time.monotonic() + 60))["model"].endswith("@" + DIGEST)
+
+
+def test_a_long_chat_model_name_still_extracts_with_a_bounded_stamp(tmp_path):
+    (tmp_path / "project").mkdir()
+    store = Store(tmp_path / "memory")
+    project = store.add_project("long-name", tmp_path / "project")
+    source = store.snapshot(project["id"], "note://policy", QUOTE, "note")
+    store.enqueue("extract", project["id"], {"source_id": source["id"]}, "policy")
+    job = store.claim_job("stamp-worker", lease_seconds=120, kinds=["extract"])
+    settings = Settings(data_dir=store.data_dir, chat_model="m" * 395)
+    asyncio.run(KnowledgeAgent(store, settings, ollama=Model()).extract(job))
+    [record] = extracted(store, project)
+    stamp = record["metadata"]["extractor"]
+    assert stamp == extractor_stamp(settings.chat_model, DIGEST)
+    assert len(stamp["model"]) <= EXTRACTOR_MODEL_CHARS and stamp["model"].startswith("m" * 100)
 
 
 async def test_a_model_reply_cannot_set_the_stamp(workspace):
@@ -266,3 +364,52 @@ def test_the_stamp_survives_portable_memory_export_and_import_without_the_local_
     assert "extraction_source_id" not in restored["metadata"]
     [revision] = target.record_history(record["id"])
     assert revision["metadata"]["extractor"] == stamp
+
+
+def test_without_an_adapter_the_evaluation_uses_the_client_of_the_extract_job(tmp_path, monkeypatch):
+    built = []
+
+    class Profiled(Model):
+        async def model_identity(self, name):
+            return f"{name}@{DIGEST}"
+
+    def from_settings(settings, **_kwargs):
+        built.append(settings)
+        return Profiled(digest=None)
+
+    monkeypatch.setattr(memory_models, "from_settings", from_settings)
+    path = tmp_path / "set.json"
+    path.write_text(json.dumps({"format_version": 1, "transcripts": [{"id": "t", "client": "api", "events": [
+        {"event": {"role": "user", "content": QUOTE},
+         "expect": {"label": "kept", "keep": [{"id": "auth", "kind": "decision", "match": ["auth"]}]}}]}]}),
+        encoding="utf-8")
+    settings = Settings(data_dir=tmp_path / "data")
+    report = run_extraction_evaluation(settings, path, runs=1, report_dir=tmp_path / "reports")
+    # A server that lists no digest (an OpenAI-compatible profile) gives name@unknown here as on the records.
+    assert built == [settings] and report["extractor"] == expected(settings, digest=None)
+    assert report["inference"] == "local_ollama"
+
+
+@pytest.mark.parametrize("stamp, origin", [
+    ({"version": 99, "prompt_sha256": "f" * 16, "model": "x@" + DIGEST, "extra": 1}, "automatic_extraction"),
+    ("1@unknown", "automatic_extraction"),
+    ({"version": 1, "prompt_sha256": "a" * 16, "model": "m@" + DIGEST}, "api"),
+    ({"version": 1, "prompt_sha256": "a" * 16, "model": "m@" + DIGEST}, None),
+])
+def test_a_package_cannot_carry_a_stamp_the_worker_could_not_have_written(stamp, origin):
+    metadata = {"extractor": stamp, **({"origin": origin} if origin else {})}
+    record = {"id": "r", "metadata": dict(metadata)}
+    revision = {"id": "v", "snapshot": {"id": "r", "metadata": dict(metadata)}}
+    memory_module._strip_local_marks("records", record)
+    memory_module._strip_local_marks("record_revisions", revision)
+    assert "extractor" not in record["metadata"] and "extractor" not in revision["snapshot"]["metadata"]
+    # The portable state hash reads rows the same way, so a package and the store compare equal.
+    assert "extractor" not in memory_module._logical("records", {"id": "r", "metadata": dict(metadata)})["metadata"]
+
+
+def test_a_package_keeps_a_stamp_the_worker_could_have_written():
+    stamp = {"version": 1, "prompt_sha256": "a" * 16, "model": "m@" + DIGEST}
+    record = {"id": "r", "metadata": {"extractor": stamp, "origin": "automatic_extraction",
+                                      "extraction_source_id": "s"}}
+    memory_module._strip_local_marks("records", record)
+    assert record["metadata"] == {"extractor": stamp, "origin": "automatic_extraction"}

@@ -32,7 +32,7 @@ from . import __version__
 from .agent_memory import extracted_message
 from .config import Settings
 from .ingest import _event_text
-from .ollama import Ollama, OllamaUnavailable
+from .ollama import OllamaUnavailable
 from .sql import json_text
 
 CLIENTS = {"api", "claude", "codex"}
@@ -193,15 +193,18 @@ def run_extraction_evaluation(settings: Settings, transcripts_path: Path, *, run
                               report_dir: Path | None = None, ollama=None) -> dict:
     """Run the production extraction on every transcript ``runs`` times and write a report."""
     from .agent import KnowledgeAgent
+    from .memory_models import from_settings, inference_report
 
     if type(runs) is not int or not 1 <= runs <= 20:
         raise ValueError("runs must be an integer from 1 to 20")
     transcripts = load_transcripts(transcripts_path)
     started = time.monotonic()
-    model = ollama or Ollama(settings)
+    # The client the extract job uses (memory_models.from_settings), so that the report measures the same
+    # server and its stamp equals the records' also with a configured model profile.
+    model = ollama or from_settings(settings)
     report = {"format_version": 1, "cairnmind_version": __version__, "evaluation_mode": "transcript_extraction",
-              "inference": "injected_adapter" if ollama is not None else "local_ollama", "status": "not_run",
-              "model": settings.chat_model, "transcripts": str(transcripts_path), "runs": [],
+              **({"inference": "injected_adapter"} if ollama is not None else inference_report(settings)),
+              "status": "not_run", "model": settings.chat_model, "transcripts": str(transcripts_path), "runs": [],
               "limits": ["Invented conversations; they show the kinds of noise seen in a trial, not every project.",
                          "Matching is by regular expressions over the proposed content; read the records too."]}
     agent = KnowledgeAgent(None, settings, ollama=model)
