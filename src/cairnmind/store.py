@@ -1241,6 +1241,13 @@ class Store:
                 # A replacement that is not a person's act takes a confirmed record out of use: it says so.
                 previous["metadata"] = {**(previous.get("metadata") or {}),
                                         mark_name: lowered(previous, "superseded", previous["version"] + 1)}
+            act = getattr(self._local, "person_act", None)
+            if conflict_review and act:
+                # A conflict decision judged both findings (#239): the replaced one's last version cites its audit,
+                # so that version travels as the person's act and not as a mechanical supersession.
+                cited = previous.get("source_ids") or []
+                cited = json.loads(cited) if isinstance(cited, str) else cited
+                previous["source_ids"] = list(dict.fromkeys([*cited, act["source_id"]]))
             previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=utc_now())
             update_document(tx, "records", previous, "id=:id", {"id": supersedes})
             self._revision(tx, previous)
