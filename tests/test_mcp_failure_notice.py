@@ -80,6 +80,26 @@ def test_an_unknown_run_is_refused(runtime):  # noqa: F811
         runner.record_mcp_failure(**report(run, run_id="f" * 32))
 
 
+@pytest.mark.parametrize("lifecycle", ["stopping", "exited"])
+def test_a_report_racing_a_stop_is_refused(runtime, monkeypatch, lifecycle):  # noqa: F811
+    # The run passes the first check, then moves on before the report is written: the write refuses it.
+    runner, _, project, _, _ = runtime
+    run = started_run(runner, project, [mcp_server("gone", command="/nonexistent/server", args=())])
+    checked = runner.agent_configuration
+
+    def check_then_stop(run_id, generation):
+        config = checked(run_id, generation)
+        with runner._locked():
+            rows = runner._read()
+            next(row for row in rows if row["id"] == run_id)["lifecycle"] = lifecycle
+            runner._save(rows)
+        return config
+    monkeypatch.setattr(runner, "agent_configuration", check_then_stop)
+    with pytest.raises(ValueError, match="no longer running"):
+        runner.record_mcp_failure(**report(run))
+    assert "mcp_failures" not in runner.registry.read_text()
+
+
 def test_the_private_route_takes_only_the_fixed_fields(runtime):  # noqa: F811
     runner, _, project, _, _ = runtime
     run = started_run(runner, project, [mcp_server("gone", command="/nonexistent/server", args=())])
@@ -242,6 +262,62 @@ async def test_the_sidebar_shows_only_a_validated_failure_of_a_live_run(tmp_path
         assert not any(SECRET in text or "evil" in text or "old" in text for text in texts)
         # The extra field is not shown; the id and the code it came with are.
         assert sum("MCP server b " in text for text in texts) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_sidebar_forgets_a_run_that_left_the_live_list(tmp_path, monkeypatch):
+    runs = []
+    app, project = await sidebar_with(tmp_path, monkeypatch, lambda: runs)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        runs[:] = [api_run(project, [{"server_id": "gone", "code": "start_failed"}])]
+        await app.load_state()
+        assert app._mcp_failures_shown == {("run-a", 1, "gone")}
+        runs[:] = [api_run(project, [{"server_id": "gone", "code": "start_failed"}], lifecycle="exited")]
+        await app.load_state()
+        assert app._mcp_failures_shown == set()
+        runs[:] = []
+        await app.load_state()
+        assert app._mcp_failures_shown == set()
+
+
+class NoticeSink:
+    """What announce() needs of the sidebar, recording where each notice went."""
+
+    def __init__(self, project):
+        self.workspace_data = {"project_id": project["id"], "worktree": project["root"]}
+        self.projects = {project["id"]: project}
+        self.posted = []
+
+    def t(self, value, **values):
+        return value.format(**values)
+
+    def notice_for(self, subject, text, kind):
+        self.posted.append(("line", text, kind))
+
+    def notice_elsewhere(self, subject, text, kind):
+        self.posted.append(("notices", text, kind))
+
+
+def test_the_cockpit_state_carries_the_report_to_the_project_shown(runtime):  # noqa: F811
+    # No rewriting of the rows: the real /api/state, its enrich() step, and the run's own project and folder.
+    from cairnmind.mcp_failure_notice import announce
+    runner, _, project, _, _ = runtime
+    run = started_run(runner, project, [mcp_server("gone", command="/nonexistent/server", args=())])
+    app = broker_for(runner)
+    origin = "http://127.0.0.1:8766"
+    with TestClient(app, base_url=origin) as client:
+        bearer = {"Authorization": "Bearer " + runner.settings.token}
+        assert client.post("/_control/agent/mcp_failure", headers=bearer, json=report(run)).status_code == 200
+        client.post("/auth/exchange", json={"ticket": app.state.browser_sessions.ticket()}, headers={"Origin": origin})
+        state = client.get("/api/state")
+    assert state.status_code == 200
+    row = next(row for row in state.json()["runs"] if row["id"] == run["id"])
+    assert row["mcp_failures"] == [{"server_id": "gone", "code": "start_failed"}]
+    sink = NoticeSink(project)
+    announce(sink, state.json()["runs"])
+    assert [(where, kind) for where, _, kind in sink.posted] == [("line", "warn")]
+    assert "gone" in sink.posted[0][1] and REASON_EN in sink.posted[0][1]
 
 
 @pytest.mark.asyncio
