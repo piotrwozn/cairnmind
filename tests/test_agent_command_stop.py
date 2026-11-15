@@ -56,6 +56,13 @@ async def wait_for(path):
 async def started_child(executor, command=CHILD_IGNORING_TERM):
     task = asyncio.create_task(executor.execute("run_command", {"command": command}))
     await wait_for(executor.worktree / "child.pid")
+    # The child can write its file before the spawn has returned to the executor. A cancellation in that
+    # window is another path (stopped without an entry in _stopping; it has its own test below), and a slow
+    # runner landed in it. These tests are about a command the executor has registered as running.
+    deadline = time.monotonic() + 5
+    while not executor._running:
+        assert time.monotonic() < deadline, "the executor never registered the command as running"
+        await asyncio.sleep(.005)
     return task, int((executor.worktree / "child.pid").read_text())
 
 
