@@ -210,6 +210,7 @@ class MemoryImportBody(MemoryInspectBody):
 class MemoryPublishBody(MemorySnapshotBody):
     model_config = {"extra": "forbid"}
     preview: bool = Field(default=False, strict=True)
+    new_package: bool = Field(default=False, strict=True)
 
 
 class MemoryImportCommitBody(BaseModel):
@@ -230,6 +231,16 @@ class MemoryImportPublishedBody(BaseModel):
     dry_run: bool = Field(default=False, strict=True)
     bind: bool = Field(default=False, strict=True)
     take_published: list[str] = Field(default_factory=list, max_length=1000)
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
+class MemoryCarrierBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    project: str = Field(min_length=1)
+    kind: str = Field(min_length=1, max_length=32)
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+    worktree: str | None = None
     session_id: str | None = None
     packet_id: str | None = None
 
@@ -651,10 +662,22 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pid = project(body.project)["id"]
         if body.preview:
             scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
-            return await asyncio.to_thread(Publisher(store).publish, pid, scope, preview=True)
+            return await asyncio.to_thread(Publisher(store).publish, pid, scope, preview=True,
+                                           new_package=body.new_package)
         scope, authorize = await asyncio.to_thread(
             memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
-        return await asyncio.to_thread(Publisher(store).publish, pid, scope, authorize=authorize)
+        return await asyncio.to_thread(Publisher(store).publish, pid, scope, authorize=authorize,
+                                       new_package=body.new_package)
+
+    @app.post("/memory/carrier", dependencies=auth)
+    async def memory_carrier(body: MemoryCarrierBody):
+        # Where published memory goes (#173): a person's choice, never a coding session's; nothing is moved.
+        from cairnmind.memory_published_carrier import configure
+        pid = project(body.project)["id"]
+        if body.session_id:
+            raise ValueError("Where published memory goes is chosen only by a person, not inside a coding session")
+        worktree = str(Path(body.worktree).expanduser().resolve()) if body.worktree else None
+        return await asyncio.to_thread(configure, store, pid, body.kind, body.path, worktree)
 
     @app.post("/memory/import-published", dependencies=auth)
     async def memory_import_published(body: MemoryImportPublishedBody):
