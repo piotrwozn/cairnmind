@@ -242,6 +242,8 @@ cairnmind doctor          # arcadedb: "database_available": true, "user": "cairn
                           # "transport": "https (certificate verification on)", "password_source": "file"
 ```
 
+A store has one writer: the installation that first opened it. If another installation ran `init` on this database before yours (the connection check Job below does), yours only reads, and a write is refused with the name of the writer. `cairnmind store writer` shows which installation writes, and `cairnmind store takeover --yes` makes yours the writer; the other one stops at its next write.
+
 From inside the cluster the address is `https://arcadedb.cairnmind-db.svc:2490`, and the pod needs the label `cairnmind.io/database-client: "true"`. `check/connection-check.yaml` is that check as a Job; `check/connection-check.sh` lists the settings it uses.
 
 ### Cairnmind in a pod: the password from a mounted Secret

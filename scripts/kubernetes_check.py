@@ -207,6 +207,10 @@ def port_forward_check(files: dict[str, Path], work: Path) -> list:
         tree.mkdir()
         (tree / "README.md").write_text("# Demo\n\nA project for the Kubernetes check.\n")
         cairnmind("init")
+        # The connection check Job opened the store first, so it is the writer and this installation reads
+        # only (one writer per store). Writing from here is a takeover, as the guide says.
+        taken = cairnmind("store", "takeover", "--yes", "--note", "kubernetes check: backup and restore")
+        print(f"this installation took over writing: {taken}")
         cairnmind("project", "add", "demo", str(tree))
         # Not --confirmed: only a person in their own terminal confirms, and this check has none.
         cairnmind("remember", "demo", "The Kubernetes check wrote this record.", "--key", "k8s-check")
