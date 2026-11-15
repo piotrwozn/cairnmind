@@ -380,3 +380,34 @@ def test_portable_snapshot_keeps_api_sources_done_and_no_session_authority(works
     assert resumed["status"] == "ready"
     assert resumed["packet"]["no_history"] is False
     assert not SessionManager(new, new.settings).status(resumed["session_id"])["acknowledged"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,body,code", [
+    (400, {"detail": "Only a person can store\x1b[31m it", "refusal": "confirmation"}, "confirmation_refused"),
+    (409, {"detail": "Active record key already exists; update using id and expected_version"}, "key_exists"),
+    (400, {"detail": "Only a person can store it"}, None),  # not marked by the service: no text passes
+    (409, {"detail": "Active record key already exists", "refusal": "confirmation"}, "key_exists"),
+    (500, {"detail": "Active record key already exists"}, None),
+    (400, ["refusal", "confirmation"], None),
+])
+async def test_only_a_marked_refusal_or_a_known_conflict_becomes_a_refusal_for_the_model(tmp_path, status, body, code):
+    # #240: the service's refusal of a confirmation is marked; a key that exists gets a fixed hint.
+    from cairnmind.agent_memory import KEY_EXISTS_HINT, MemoryRefusal
+    from cairnmind.config import Settings
+    transport = httpx.MockTransport(lambda request: httpx.Response(status, json=body))
+    worktree = tmp_path / "project"
+    worktree.mkdir()
+    memory = AgentMemoryClient(Settings(tmp_path / "data"), "project-one", worktree, "session-one",
+                               transport=transport)
+    memory.packet_id = "packet-1"
+    with pytest.raises(RuntimeError) as raised:
+        await memory.execute("remember", {"record": {"kind": "fact"}, "sources": ["s"]})
+    if code is None:
+        assert not isinstance(raised.value, MemoryRefusal)
+        return
+    assert isinstance(raised.value, MemoryRefusal) and raised.value.code == code
+    if code == "key_exists":
+        assert raised.value.message == KEY_EXISTS_HINT
+    else:
+        assert raised.value.message == "Only a person can store\\x1b[31m it"

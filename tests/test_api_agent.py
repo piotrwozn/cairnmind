@@ -792,3 +792,60 @@ async def test_a_kept_ack_ends_when_the_same_packet_is_refused_for_credential_ma
     assert len(provider.requests) == asked + 1  # the model is asked again instead of a stop before it
     assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
     assert second["status"] == "resume_required"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_arcade(tmp_path):
+    # #240: the store's "only a person confirms" refusals reached the model as a bare tool_failed, or as a
+    # state_conflict that sends it to read and retry; a key that exists came back as tool_failed.
+    from conftest import as_person
+    from cairnmind.confirmation import REFUSED
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    root.joinpath("app.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    store = Store(tmp_path / "data")
+    project = store.add_project("refusals", root)
+    source = store.snapshot(project["id"], "doc://notes", "The engine is ArcadeDB.")["id"]
+    confirmed = as_person(store, project["id"], {"kind": "fact", "key": "engine", "content": "ArcadeDB"}, [source])
+    store.remember(project["id"], {"kind": "fact", "key": "proposed-one", "content": "One"}, [source])
+    sid = uuid4().hex
+    run = {"id": uuid4().hex, "generation": 1, "project_id": project["id"],
+           "worktree": str(root), "session_id": sid, "client": "api"}
+    memory = AgentMemoryClient(store.settings, project["id"], root, sid,
+                               transport=httpx.ASGITransport(app=create_app(store.settings, start_worker=False)))
+
+    def ack(messages, tools):
+        packet = json.loads(messages[-1]["content"])["packet"]
+        return reply(call("ack_resume", {"packet_id": packet["id"], "packet_hash": packet["hash"],
+                                           "readback": {"plan": None, "task": None}}))
+
+    remember = [
+        {"record": {"kind": "fact", "key": "new-one", "content": "Two", "status": "confirmed"}, "sources": [source]},
+        {"record": {"id": confirmed["id"], "expected_version": confirmed["version"], "kind": "fact",
+                    "key": "engine", "content": "PostgreSQL"}, "sources": [source]},
+        {"record": {"kind": "fact", "key": "proposed-one", "content": "Changed"}, "sources": [source]},
+    ]
+    provider = ScriptedProvider(reply(call("resume_context")), ack,
+                                reply(*(call("remember", arguments) for arguments in remember)),
+                                reply(text="Stored nothing."))
+    profile = {"id": "local", "client": "api", "provider": "ollama", "model": "fixture", "limits": {}}
+    agent = AgentEngine(store.settings, run, profile, provider=provider, memory=memory)
+    try:
+        result = await agent.turn("Remember these")
+        assert len(tools_results(agent)) == 5, result
+        refused, kept, exists = tools_results(agent)[-3:]
+        assert refused["error_code"] == "confirmation_refused" and refused["message"] == REFUSED
+        assert kept["error_code"] == "confirmation_refused"
+        assert kept["message"].startswith(f"A person confirmed record {confirmed['id']} (fact)")
+        assert "Nothing was saved" in kept["message"] and "possible_conflicts" in kept["message"]
+        assert exists["error_code"] == "key_exists"
+        assert "expected_version" in exists["message"] and "Changed" not in exists["message"]
+        assert not store.query("SELECT FROM records WHERE `key`='new-one'")
+        assert store.query("SELECT FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["content"] == "ArcadeDB"
+    finally:
+        await agent.close()

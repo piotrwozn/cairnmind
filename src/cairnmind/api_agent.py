@@ -561,6 +561,10 @@ class AgentEngine:
         except _ArchiveIncomplete:
             return self._error("archive_incomplete", unknowns=self._memory_partial["unknowns"])
         except Exception as exc:
+            from .agent_memory import MemoryRefusal
+            if isinstance(exc, MemoryRefusal):
+                # The service's refusal of a confirmation, or a fixed hint: what to do instead (#240).
+                return self._error(exc.code, message=exc.message)
             # Native/service/provider messages can contain document or HTTP
             # text. Only a fixed classification crosses the tool boundary.
             text = str(exc).lower()

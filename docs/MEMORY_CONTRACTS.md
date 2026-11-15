@@ -138,6 +138,10 @@ through, and it holds for every route:
   what to do instead; see "Changing what a person confirmed" below. When the
   write would change what was confirmed, the error names what would differ:
   `text`, `key`, `supersedes` or `metadata.<field>`.
+- Both refusals carry `"refusal": "confirmation"` beside `detail`. The built-in
+  agent hands the model that text as the tool result `confirmation_refused`
+  with its `message`, so the model does not take it for an outage or a conflict
+  to retry; no other service text reaches the model.
 - A write that is not a person's act and changes nothing of what was confirmed
   is stored (progress on a task, or a write that only cites a source), and it
   does not make the confirmation worth less. The record keeps every source it
