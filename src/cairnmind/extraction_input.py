@@ -117,8 +117,13 @@ def _without_tool_calls(source: dict, mask=None) -> list[str] | None:
     ``Tool: name`` and the arguments), or None when the line has no tool_use block.
 
     The blocks keep the archived view's line endings and stay separate: joined, they are no
-    longer one passage of the archived source, which has the tool calls between them. A block of a
-    masked source is masked the same way before it is looked for in the view."""
+    longer one passage of the archived source, which has the tool calls between them.
+
+    A block of a masked source is masked the same way before it is looked for in the view (#182): with the
+    rule for a value cut off at its end or start, or without it, since inside the whole view the block's
+    edges are not the text's edges. Either form is used only when it is a passage of the masked view, so
+    nothing is shown that the view does not show. A block found in neither form raises ValueError (the
+    known secrets changed since the import): the source is then failed, not silently left unextracted."""
     event = _raw_event(source)
     message = event.get("message") if event else None
     content = message.get("content") if isinstance(message, dict) else None
@@ -126,11 +131,20 @@ def _without_tool_calls(source: dict, mask=None) -> list[str] | None:
             isinstance(block, dict) and block.get("type") == "tool_use" for block in content):
         return None
     archived = source_text(source)
-    blocks = (_lines(block["text"]) for block in content
-              if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str))
-    if mask is not None:
-        blocks = (mask(block)[0] for block in blocks)
-    return [block for block in blocks if block.strip() and block in archived]
+    blocks = [_lines(block["text"]) for block in content
+              if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)]
+    if mask is None:
+        return [block for block in blocks if block.strip() and block in archived]
+    spoken = []
+    for block in blocks:
+        if not block.strip():
+            continue
+        found = next((form for form in (mask(block)[0], mask(block, fragments=False)[0]) if form in archived), None)
+        if found is None:
+            raise ValueError("A text block of a masked source is not part of its masked view: "
+                             "the known secrets changed since it was imported")
+        spoken.append(found)
+    return spoken
 
 
 def _visible(segments: list[str]) -> list[str]:
@@ -145,10 +159,16 @@ def _visible(segments: list[str]) -> list[str]:
 
 
 def source_text(source: dict) -> str:
-    """Keep raw bytes intact; cite the readable text view with normalized line endings."""
+    """Keep raw bytes intact; cite the readable text view with normalized line endings.
+
+    A line with no normalized view whose raw text had known secrets replaced (#182) is read through that
+    masked raw view, ``metadata.indexed_text``: the chunks, the ask agent, citations and a snapshot's
+    rebuilt chunks never see the raw secret."""
     metadata = json_value(source.get("metadata"), {})
-    normalized = (metadata.get("normalized_text") if isinstance(metadata, dict)
-                  and not metadata.get("path") and source["kind"] not in {"code", "file"} else None)
+    readable = isinstance(metadata, dict) and not metadata.get("path") and source["kind"] not in {"code", "file"}
+    normalized = metadata.get("normalized_text") if readable else None
+    if readable and not (isinstance(normalized, str) and normalized) and metadata.get("masked"):
+        normalized = metadata.get("indexed_text")
     return _lines(normalized if isinstance(normalized, str) and normalized else source["content"])
 
 
@@ -161,7 +181,8 @@ def extraction_request(source: dict, mask=None) -> dict | None:
     ``segments`` are the parts of ``text`` a quote may come from, each a literal passage of the
     archived source (``source_text``), so that the check at commit keeps every allowed quote.
     ``mask`` (secret_mask.Masker.mask) replaces known secrets in the text blocks read from a masked
-    source's raw line (#182); without it such a block is not found in the view and is left out.
+    source's raw line (#182), and raises ValueError when a block no longer matches the view; without
+    it such a block is not found in the view and is left out.
     """
     metadata = json_value(source.get("metadata"), {})
     if not isinstance(metadata, dict):

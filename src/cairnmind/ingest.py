@@ -28,7 +28,7 @@ from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, memory_bindings,
                                     nested_reserved)
-from cairnmind.secret_mask import Masker, ingest_masker, masked_metadata
+from cairnmind.secret_mask import ingest_masker, masked_metadata
 from cairnmind.sql import json_text as _json_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -1237,8 +1237,7 @@ def reparse_history_sources(store, path: Path, project_id: str, client: str = "a
     project_id = store.resolve_project(project_id)["id"]
     _validate_reparse_options(client, limit, deadline)
     with _ingestion_lock(store, "history", str(path), deadline=deadline):
-        return _reparse_history_sources_locked(store, path, project_id, client, limit, deadline=deadline,
-                                               masker=ingest_masker(store.settings))
+        return _reparse_history_sources_locked(store, path, project_id, client, limit, deadline=deadline)
 
 
 def _validate_reparse_options(client: str, limit: int, deadline: float | None) -> None:
@@ -1251,10 +1250,8 @@ def _validate_reparse_options(client: str, limit: int, deadline: float | None) -
 
 
 def _reparse_history_sources_locked(store, path: Path, project_id: str | None, client: str = "auto",
-                                    limit: int = 1000, *, deadline: float | None = None,
-                                    masker: Masker | None = None) -> dict:
+                                    limit: int = 1000, *, deadline: float | None = None) -> dict:
     _validate_reparse_options(client, limit, deadline)
-    masker = masker or Masker()
     counts = {"repaired": 0, "unchanged": 0, "errors": []}
     sources = store.query(
         "SELECT FROM sources WHERE is_current=true AND kind='transcript_unknown' "
@@ -1299,8 +1296,12 @@ def _reparse_history_sources_locked(store, path: Path, project_id: str | None, c
         # Old unknown records were indexed as their raw JSON. Understood
         # metadata schemas have the same raw text view, so retain every chunk
         # identity and embedding. Only their derived role changes. A raw view
-        # whose known secrets were replaced (#182) was chunked masked.
-        view = masker.mask(content)[0] if metadata.get("masked") else content
+        # whose known secrets were replaced (#182) was chunked from the masked
+        # view kept beside it.
+        view = metadata.get("indexed_text") if metadata.get("masked") else content
+        if not isinstance(view, str):
+            counts["errors"].append(f"Transcript source {source['id']}: raw chunk projection does not match")
+            continue
         expected = {
             _identifier(source["project_id"], source["id"], number, first, last, text): (text, first, last)
             for number, (text, first, last) in enumerate(_chunks(view))
@@ -1376,7 +1377,7 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     # The cursor may already be at EOF, and snapshot() intentionally returns
     # the same immutable source for identical raw bytes. Repair the narrow
     # known metadata compatibility gap independently of append ingestion.
-    reparsed = _reparse_history_sources_locked(store, path, project_id, client, masker=masker)
+    reparsed = _reparse_history_sources_locked(store, path, project_id, client)
     counts["errors"].extend(reparsed["errors"])
     cursors = store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(path)})
     row = cursors[0] if cursors else None
@@ -1455,17 +1456,21 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
                 event_hash = hashlib.sha256(raw).hexdigest()
                 # Known secrets are replaced in the readable view and in the chunks written from it (#182).
                 # A line without a normalized view is chunked from its raw text, so that text is masked too.
-                # The raw line is archived as received: its hash, URI and identity do not change.
+                # The raw line is archived as received: its hash, URI and identity do not change. That masked
+                # raw view is kept as metadata.indexed_text, which every reader of the readable view uses
+                # (extraction_input.source_text); normalized_text stays empty, so the line is still not extracted.
                 normalized, kinds = masker.mask(normalized)
                 indexed, raw_kinds = (normalized, []) if normalized else masker.mask(text)
+                event_metadata = {"client": detected, "role": role, "session_id": session_id, "cwd": cwd,
+                                  "import_path": str(path), "byte_offset": event_offset, "normalized_text": normalized,
+                                  "schema_warning": reason, "source_timestamp": event.get("timestamp"),
+                                  "transcript_parser_revision": TRANSCRIPT_PARSER_REVISION}
+                if raw_kinds:
+                    event_metadata["indexed_text"] = indexed
                 source = store.snapshot(
                     resolved, f"transcript://{detected}/{_identifier(path, session_id)}/{event_offset}/{event_hash}", text,
                     kind="transcript" if recognized else "transcript_unknown",
-                    metadata=masked_metadata(
-                        {"client": detected, "role": role, "session_id": session_id, "cwd": cwd,
-                         "import_path": str(path), "byte_offset": event_offset, "normalized_text": normalized,
-                         "schema_warning": reason, "source_timestamp": event.get("timestamp"),
-                         "transcript_parser_revision": TRANSCRIPT_PARSER_REVISION}, kinds or raw_kinds),
+                    metadata=masked_metadata(event_metadata, kinds or raw_kinds),
                 )
                 counts["archived"] += 1
                 counts["chunks"] += _write_chunks(store, resolved, source["id"], indexed, {"role": role})

@@ -1247,16 +1247,14 @@ class KnowledgeAgent:
         return extractor_stamp(self.settings.chat_model, digest)
 
     def _secret_mask(self, source: dict):
-        """The ingestion masker's ``mask`` for a source whose view was masked (#182), else None. None too when
-        the secrets cannot be read: a text block of the raw line is then left out, never shown unmasked."""
+        """The ingestion masker's ``mask`` for a source whose view was masked (#182), else None. Raises
+        ValueError when the secrets cannot be read, so the job fails and is retried instead of the source
+        being skipped for good."""
         metadata = json_value(source.get("metadata"), {})
         if not isinstance(metadata, dict) or not metadata.get("masked"):
             return None
         from .secret_mask import ingest_masker
-        try:
-            return ingest_masker(self.settings).mask
-        except ValueError:
-            return None
+        return ingest_masker(self.settings).mask
 
     async def propose(self, source: dict, diagnostics: dict) -> list[dict] | None:
         """The grounded records the model proposes for one source, before anything is stored.
@@ -1265,7 +1263,10 @@ class KnowledgeAgent:
         Raises ValueError, with the diagnostics code set, when the output stays invalid. The
         extraction job and ``cairnmind eval extraction`` both read proposals from here.
         """
-        request = extraction_request(source, self._secret_mask(source))
+        diagnostics["code"] = "secrets_unreadable"
+        mask = self._secret_mask(source)
+        diagnostics["code"] = "masked_view_changed"
+        request = extraction_request(source, mask)
         if request is None:
             diagnostics["code"] = "source_skipped"
             return None
