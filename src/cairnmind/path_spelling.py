@@ -95,3 +95,42 @@ def ignores_case(directory: Path) -> bool:
         own, swapped = path_identity(candidate), path_identity(candidate.parent / name.swapcase())
         return own is not None and own == swapped
     return False
+
+
+def relative_on_disk(path, base) -> Path | None:
+    """`path` relative to `base`, both resolved, each name spelled as the directory lists it; None when `path`
+    does not lie strictly below `base`. On a file system that ignores case `REPO/Services/Alpha` below `Repo`
+    is `services/alpha`, the names a walk of `Repo` sees. A name that cannot be read is kept as given."""
+    path, base = Path(path), Path(base)
+    if path.is_relative_to(base):
+        parts = path.relative_to(base).parts
+    else:
+        wanted = path_identity(base)
+        top = None if wanted is None else next(
+            (parent for parent in path.parents if path_identity(parent) == wanted), None)
+        if top is None:
+            return None
+        parts = path.relative_to(top).parts
+    if not parts:
+        return None
+    spelled, folder = [], base
+    for part in parts:
+        name = _listed_name(folder, part)
+        spelled.append(name)
+        folder = folder / name
+    return Path(*spelled)
+
+
+def _listed_name(folder: Path, part: str) -> str:
+    """The name under which `folder` lists its entry `part` (the same entry, by identity); `part` itself when
+    it is listed or cannot be read."""
+    try:
+        wanted = identity(os.stat(folder / part, follow_symlinks=False))
+        with os.scandir(folder) as entries:
+            names = [entry.name for entry in entries]
+        if part in names:
+            return part
+        return next((name for name in names
+                     if identity(os.stat(folder / name, follow_symlinks=False)) == wanted), part)
+    except OSError:
+        return part

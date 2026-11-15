@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import subprocess
 
+from .path_spelling import relative_on_disk
+
 
 # Snapshots are written to the first directory. The second is where versions up to 0.9.0 wrote
 # them: it is still read, and still reserved, so that a package left there is neither indexed
@@ -63,7 +65,9 @@ def nested_reserved(store, base: str | Path) -> tuple[Path, ...]:
     base = Path(base).resolve()
     roots = {Path(row["path"]).resolve() for row in store.query("SELECT path FROM project_roots")
              if isinstance(row.get("path"), str) and row["path"]}
-    below = {root.relative_to(base) for root in roots if root != base and root.is_relative_to(base)}
+    # Below `base` by identity too, spelled as a walk of `base` lists the names: on a file system that ignores
+    # case a project registered as `REPO/Services/Alpha` is the folder `services/alpha` of `Repo` (#230).
+    below = {relative for relative in (relative_on_disk(root, base) for root in roots) if relative is not None}
     place = _repository_place(base) if roots else None
     if place is not None:
         common, prefix = place
