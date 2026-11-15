@@ -490,7 +490,7 @@ class Store:
 
     def init(self):
         from .arcade import ArcadeError
-        from .store_writer import read_writer, settle
+        from .store_writer import claimed_meanwhile, read_writer, settle
         with self._lock():
             types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
             writer = read_writer(self.client) if "devbrain_meta" in types else None
@@ -498,7 +498,16 @@ class Store:
                 # Another installation writes this database: no schema statement, no upgrade and no write here.
                 self._open_as_reader(writer)
                 return
-            self._prepare_schema()
+            try:
+                self._prepare_schema()
+            except ArcadeError as exc:
+                # Another installation, on any machine, is creating this store at the same moment and its
+                # commit came first (#68): this one opens it as a reader, as it would a moment later.
+                other = claimed_meanwhile(self.client, self.installation, exc)
+                if other is None:
+                    raise
+                self._open_as_reader(other)
+                return
             try:
                 other = settle(self.client, self.installation)
             except ArcadeError:
