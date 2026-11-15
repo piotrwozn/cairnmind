@@ -277,6 +277,35 @@ def test_a_mounted_secret_of_another_user_is_refused(tmp_path, monkeypatch):
     assert "of this user" in refused_secret(tmp_path, named)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens any file")
+@pytest.mark.parametrize("blocked", ["the file", "its folder"])
+def test_an_ordinary_file_that_cannot_be_opened_says_why_and_not_the_link_rule(tmp_path, blocked):
+    folder = tmp_path / "private"
+    folder.mkdir()
+    named = private_file(folder / "db-password", SECRET)
+    locked = named if blocked == "the file" else folder
+    os.chmod(locked, 0o000 if blocked == "the file" else 0o600)
+    try:
+        message = refused_secret(tmp_path, named)
+    finally:
+        os.chmod(locked, 0o600 if blocked == "the file" else 0o700)
+    assert "cannot be opened (Permission denied)" in message and "link" not in message
+
+
+def test_a_file_that_becomes_a_link_before_it_is_opened_is_refused_with_the_link_rule(tmp_path, monkeypatch):
+    target = private_file(tmp_path / "db-password", SECRET)
+    named = tmp_path / "link"
+    named.symlink_to(target)
+    regular = os.lstat(target)
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):  # the check sees the regular file it was before the swap
+        return regular if str(path) == str(named) else real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    assert "a link is followed only as Kubernetes mounts a secret" in refused_secret(tmp_path, named)
+
+
 def test_a_stored_password_is_not_used_for_a_remote_host(tmp_path):
     root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind",
                   arcade_password=STORED)

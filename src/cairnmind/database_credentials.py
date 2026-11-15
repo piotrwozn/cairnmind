@@ -16,6 +16,7 @@ No function here returns, logs or puts the password in a message: messages name 
 """
 from __future__ import annotations
 
+import errno
 import os
 import re
 import ssl
@@ -105,8 +106,11 @@ def read_private_file(path: str, setting: str) -> str:
         fd = _open_mounted_secret(path, setting) if mounted else os.open(path, _READ)
     except FileNotFoundError:
         raise ValueError(f"{setting} names {path}, which does not exist.") from None
-    except OSError:
-        raise ValueError(f"{setting} names {path}, which cannot be read safely ({LINK_RULE}).") from None
+    except OSError as error:
+        if error.errno == errno.ELOOP:  # it became a link between the check and the open
+            raise ValueError(f"{setting} names {path}, a symbolic link: {LINK_RULE}.") from None
+        reason = os.strerror(error.errno) if error.errno else "unknown error"
+        raise ValueError(f"{setting} names {path}, which cannot be opened ({reason}).") from None
     with os.fdopen(fd, "rb") as handle:
         info = os.fstat(handle.fileno())
         if mounted:
