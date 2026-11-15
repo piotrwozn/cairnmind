@@ -38,6 +38,10 @@ def filled(tmp_path, *, notes=0):
     _write_chunks(store, pid, old["id"], old["content"])
     new = store.snapshot(pid, "file://app.py", SECRET + "\n" + "changed\n" * 120, "document")
     _write_chunks(store, pid, new["id"], new["content"])
+    # Replacing deletes the old chunks (#186); a store written by an earlier release still holds such a chunk.
+    store.command("INSERT INTO chunks CONTENT :row", {"row": {
+        "id": "chunk-kept-by-an-earlier-release", "project_id": pid, "source_id": old["id"],
+        "text": SECRET + "\n" + "line\n" * 80, "line_start": 1, "line_end": 81, "metadata": {}, "is_current": False}})
     note = store.snapshot(pid, "manual://note", SECRET + " note", "manual")
     _write_chunks(store, pid, note["id"], note["content"])
     store.remember(pid, {"kind": "fact", "content": SECRET + " fact"}, [note["id"]])

@@ -839,7 +839,11 @@ class MemoryManager:
                                 update_document(tx, "sources", {"is_current": row["is_current"],
                                     "current_key": json_text([project_id, row["uri"]]) if row["is_current"] else None},
                                      "id=:id", {"id": row["id"]})
-                                update_document(tx, "chunks", {"is_current": row["is_current"]}, "source_id=:id", {"id": row["id"]})
+                                if row["is_current"]:
+                                    update_document(tx, "chunks", {"is_current": True}, "source_id=:id", {"id": row["id"]})
+                                else:  # no longer current: its chunks and vectors go, as on a replacement (#186)
+                                    self.store.drop_chunks(tx, [row["id"]])
+                                    self.store._delete_old_vectors(tx, [row["id"]])
                             continue
                         foreign_file = row["kind"] in {"code", "document", "file"} and isinstance(row["metadata"].get("path"), str)
                         current_source = row["is_current"] and not foreign_file
@@ -890,6 +894,8 @@ class MemoryManager:
                 if tx.query("SELECT id FROM chunks WHERE source_id=:source LIMIT 1", {"source": source["id"]}):
                     continue
                 saved = one_row(tx, "SELECT is_current FROM sources WHERE id=:id", {"id": source["id"]})
+                if saved.get("is_current") is False:
+                    continue  # nothing searches a chunk of a source that is not current (#186)
                 for number, (text, first, last) in enumerate(_chunks(source_text(source))):
                     insert_document(tx, "chunks", {"id": _identifier(project_id, source["id"], number, first, last, text),
                         "project_id": project_id, "source_id": source["id"], "text": text,
