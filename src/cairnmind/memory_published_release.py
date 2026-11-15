@@ -24,6 +24,13 @@ from .sql import clean_row, utc_now
 
 RELEASE_ORIGIN = "local_user_release"
 CONFIG = Path(".cairnmind") / "publication.toml"
+# What a person can do about a registered secret in a record (#239). Every version a person confirmed is
+# published, so a later text without the value does not take it out of the record's history.
+REGISTERED_WHY = ("Every version a person confirmed is published, so changing the text later does not take the value "
+                  "out, and the record keeps publishing refused until the value is no longer registered here (for a "
+                  "credential: rotate it, then remove the old value from Cairnmind's saved keys and from the "
+                  "environment the Cairnmind service runs in).")
+REGISTERED_ADVICE = "A registered secret is never released. " + REGISTERED_WHY
 
 
 class SecretsRefused(MemoryConflict):
@@ -154,7 +161,7 @@ def release(store, project_id, record_id, reason, worktree=None):
     path = f"{model['kind']}/{record_id}.md"
     hits = model_hits(model, path, rules)
     if any(hit["kind"] == REGISTERED for hit in hits):
-        raise SecretsRefused(f"A registered secret is never released; remove it from the record ({path})")
+        raise SecretsRefused(f"A registered secret is never released ({path}). " + REGISTERED_WHY)
     if not hits:
         raise ValueError("Nothing in this record needs a release")
     released = sorted(({"field": h["field"], "kind": h["kind"], "value_sha256": h["value_sha256"]} for h in hits), key=J)

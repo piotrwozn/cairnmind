@@ -16,8 +16,8 @@ from pathlib import Path
 
 from .memory_published_carrier import carrier_of, destination as carrier_destination, unbound_in_checkout
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
-from .memory_published_release import SecretsRefused, publication_rules, release_sources
-from .memory_published_secrets import described
+from .memory_published_release import REGISTERED_ADVICE, SecretsRefused, publication_rules, release_sources
+from .memory_published_secrets import REGISTERED, described
 from .memory_published_format import (
     GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, canonical_uuid, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
     clean_value, derive_covered, derive_plan_covered, path_of, plan_hash, projection, ref_class, render, same,
@@ -361,7 +361,7 @@ class Publisher:
             if hits:
                 raise SecretsRefused("Publishing refused, nothing was written: " + "; ".join(
                     described(hit) for hit in hits[:50]) + (f"; and {len(hits) - 50} more" if len(hits) > 50 else "")
-                    + ". Remove the value, or read the record and release it with `cairnmind memory release`.")
+                    + "." + _secret_advice({hit["kind"] for hit in hits}))
             # folder.parent is <root>/.memory for the repository carrier, the checkout for a checkout (#173).
             if any(p.is_symlink() for p in (folder.parent, folder)):
                 raise ValueError("Memory publication needs a real directory, not a symbolic link")
@@ -449,6 +449,19 @@ def _writable(model):
         parse_file(data)
     except ValueError as exc:
         raise Held(f"it cannot be written in the published format: {exc}") from None
+
+
+def _secret_advice(kinds):
+    """What a person can do about the hits: `memory release` never takes a registered secret (#239)."""
+    advice = ""
+    if REGISTERED in kinds:
+        # Every version a person confirmed is published, so a later text without the value does not help.
+        advice += (" " + REGISTERED_ADVICE)
+    if kinds - {REGISTERED}:
+        advice += (" For the other values: remove the value, or read the record and release it with"
+                   " `cairnmind memory release`." if REGISTERED in kinds else
+                   " Remove the value, or read the record and release it with `cairnmind memory release`.")
+    return advice
 
 
 def _listing(errors):
