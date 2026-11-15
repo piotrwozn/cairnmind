@@ -165,7 +165,12 @@ Additional root-facing methods needed:
   and records the id and the fields the cross references use, and whether the source hash was right). A
   second pass checks every cross reference against it. Only then is the before-restore copy made and the
   store changed; the inserts read the file three more times (documents, then vertices, then edges and
-  vectors) inside the one restore transaction. Every check, its order and its message are those of
+  vectors) inside the one restore transaction, and write the rows in groups (`restore_groups.py`, #219): a
+  document or vector group is one `INSERT ... CONTENT :rows` of one type, at most 250 rows or about 1 MiB of
+  JSON text; vertices and edges go per project through `prefetch_graph` and `write_graph` (#167), with the
+  checks of `upsert_node` and `upsert_edge`; a second copy of a vertex or edge id starts a new group, so it
+  updates the first as row by row did. A group the engine stores only in part fails the transaction. Every
+  check, its order and its message are those of
   `Store._validated_backup`, which still loads the rare file that is valid JSON in a layout no writer
   produced (keys out of sorted order or repeated, a document that is not an object). Each later pass compares
   a digest of the bytes it read with the first pass, so a file changed during a restore is refused and the
@@ -173,7 +178,8 @@ Additional root-facing methods needed:
   as in 0.10.0: those of `upsert_node` and `upsert_edge`, a vector entry that is not a list or a vector row
   that is not an object, and repeated ids that hit a unique index; their refusal is undone by the rollback.
   A failure at any point before the commit leaves the store as it was. Python memory
-  is bounded by the largest row plus the index; the engine still holds the restore transaction itself.
+  is bounded by the largest row (or one group) plus the index; the engine still holds the restore transaction
+  itself.
 
 ## Ingestion (ingestion agent owns)
 
