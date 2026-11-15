@@ -291,6 +291,22 @@ def test_a_one_word_name_is_never_a_full_match():
     assert relevance("How many tokens may an answer have?", {"name": "ANSWER_TOKENS"}, "pkg/a.py")[1] == 1
 
 
+def test_a_name_that_is_only_a_filler_word_is_not_a_match():
+    """A constant called DEFAULT says nothing about what a question on "the default delay" asks:
+    it must not take the place of the setting among the few definitions shown."""
+    from cairnmind.definitions import relevance
+    question = "What is the default delay of a retry, in seconds?"
+    rows = [{"symbol": {"name": "DEFAULT", "kind": "constant"}, "path": "pkg/carrier.py"},
+            {"symbol": {"name": "Options.send_delay", "kind": "field", "owner": "Options", "member": "send_delay"},
+             "path": "pkg/options.py"},
+            {"symbol": {"name": "MAX", "kind": "constant"}, "path": "pkg/limits.py"}]
+    assert [row["symbol"]["name"] for row in rank_definitions(question, rows)] == ["Options.send_delay"]
+    assert relevance(question, rows[0]["symbol"], rows[0]["path"])[2] == 0
+    # Written as code it is still found, and beside a question word a filler word counts as before.
+    assert rank_definitions("What does `DEFAULT` hold in carrier.py?", rows[:1])
+    assert relevance(question, {"name": "DEFAULT_DELAY", "kind": "constant"}, "pkg/a.py")[1:3] == (0, 2)
+
+
 def test_of_two_one_word_matches_the_one_whose_file_shares_a_word_ranks_first():
     rows = [{"symbol": {"name": "TIMEOUT", "kind": "constant"}, "path": "pkg/billing.py"},
             {"symbol": {"name": "TIMEOUT", "kind": "constant"}, "path": "pkg/journal.py"}]

@@ -150,8 +150,10 @@ def _match(question: str, symbol: dict, path: str) -> tuple[int, int, int, int, 
     # plain word match, not a name the question spells out.
     full = int(len(matched) >= 2 and not unmatched)
     context = {_stem(word) for word in _words(str(symbol.get("owner", ""))) | _words(PurePosixPath(path).stem)}
-    return (named, full, sum(is_asked(word) for word in own), sum(is_asked(word) for word in context),
-            frozenset(word for word in own if is_asked(word)))
+    # A filler word counts beside a question word of the name (DEFAULT_PORT), never by itself: a
+    # constant called DEFAULT or MAX is not what a question about "the default ..." asks for.
+    shared = frozenset(word for word in own if is_asked(word)) if matched else frozenset()
+    return named, full, len(shared), sum(is_asked(word) for word in context), shared
 
 
 def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
