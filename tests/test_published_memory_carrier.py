@@ -165,7 +165,8 @@ def test_the_secrets_gate_refuses_before_a_checkout_is_written(ada, monkeypatch)
     store, pid, memory = ada["store"], ada["pid"], ada["memory"]
     reviewed(store, pid, "decision", "Use cookies.", "auth")
     configure(store, pid, "checkout", str(memory))
-    monkeypatch.setattr(memory_published, "scan", lambda models: [
+    # scan(models, rules): the gate of #171 passes the publication rules.
+    monkeypatch.setattr(memory_published, "scan", lambda models, rules=None: [
         {"path": "decision/x.md", "field": "text", "kind": "private key"}])
     with pytest.raises(MemoryConflict, match="private key in text"):
         Publisher(store).publish(pid)
