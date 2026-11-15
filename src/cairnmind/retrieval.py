@@ -714,7 +714,8 @@ class Retriever:
             entry["sources"] = entry.pop("source_ids")
             entries.append(entry)
         # A share of the budget goes to the newest proposed findings, so they are seen beside many
-        # confirmed records (#188). Checkpoints and tasks, finished or not, keep their own places.
+        # confirmed records (#188), and select_entries reserves another for the decisions and constraints in
+        # force, so open tasks do not push them out (#241). Checkpoints and tasks keep their own places.
         reserve = [record.get("status") == "proposed" and record["kind"] not in ("checkpoint", "task")
                    for record in records]
         # 7000 since #177: a confirmed record says who confirmed it and cites that note, about 60 characters

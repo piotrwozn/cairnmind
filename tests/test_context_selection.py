@@ -310,3 +310,42 @@ def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
     assert {flag for kind, status, flag in seen.values() if kind == "task"} == {False}
     assert {status for kind, status, flag in seen.values() if kind == "task"} == {"proposed"}
     assert seen[finding["id"]][2] is True and finding["id"] in shown_ids(context)
+
+
+def open_tasks(store, project, count, evidence):
+    """Open tasks of the size the 0.11.0 trial measured, about 1,200 characters each in the context (#241)."""
+    return [store.remember(project["id"], {
+        "kind": "task", "key": f"open-{index}", "content": f"Open step {index}: " + "acceptance details " * 30,
+        "metadata": {"state": "todo", "acceptance_criteria": [f"Criterion {n} of step {index} holds." for n in range(8)],
+                     "requires_test": True, "required_profiles": ["unit"]}}, [evidence["id"]])
+        for index in range(count)]
+
+
+def test_rules_in_force_are_seen_beside_many_open_tasks_and_some_tasks_are_counted_as_omitted(workspace):
+    from cairnmind.context_selection import entry_size
+
+    store, project, settings = workspace
+    evidence = source(store, project)
+    rules = [remember(store, project, {"kind": "constraint", "key": "tokens", "status": "confirmed",
+                                       "content": "Never log tokens."}, evidence),
+             remember(store, project, {"kind": "decision", "key": "gateway", "status": "confirmed",
+                                       "content": "Payments go through the gateway module only."}, evidence),
+             remember(store, project, {"kind": "constraint", "key": "local", "status": "confirmed",
+                                       "content": "All inference stays on this machine."}, evidence)]
+    # Updated after the rules, as in the trial: the open tasks and a new finding are the newest records.
+    tasks = open_tasks(store, project, 8, evidence)
+    finding = proposed_finding(store, project, 0)
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    shown = shown_ids(context)
+    by_id = {item["id"]: item for item in context["records"]}
+    assert all(entry_size(by_id[task["id"]]) > 1000 for task in tasks if task["id"] in by_id)
+    assert {rule["id"] for rule in rules} <= shown
+    assert finding["id"] in shown
+    # Tasks get the rest: some are shown, first, and the others are counted, not lost.
+    assert context["records"][0]["kind"] == "task"
+    assert 0 < sum(task["id"] in shown for task in tasks) < len(tasks)
+    assert {"kind": "task", "status": "proposed", "count": context["omitted_records"]} in \
+        context["omitted_by_kind_status"]
+    # The presentation order of #213 is kept among what is shown.
+    kinds = [item["kind"] for item in context["records"]]
+    assert kinds == sorted(kinds, key=lambda kind: {"task": 1, "constraint": 2, "decision": 2}.get(kind, 4))
