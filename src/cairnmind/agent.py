@@ -302,8 +302,6 @@ def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[
     return "\n".join(lines[first:last + 1])[:size], first, last
 
 
-# Hits asked for beyond INITIAL_HITS, to fill the places of hits that show a passage twice.
-SPARE_HITS = 10
 # The second look (``KnowledgeAgent.ask``): a chunk is shown whole, up to the size ingest cuts
 # chunks to; the room kept free in the context guard for the reply and one repair; the short
 # catalog beside whole passages; the results that ask for it; the time that must be left.
@@ -312,33 +310,6 @@ WHOLE_RESERVE_CHARS = 4000
 WHOLE_CATALOG_CHARS = 1500
 SECOND_LOOK_CODES = ("insufficient_evidence", "missing_evidence")
 SECOND_LOOK_MIN_SECONDS = 5.0
-
-
-def distinct_hits(hits: list[dict], query: str, limit: int) -> list[dict]:
-    """The first ``limit`` hits that each show a passage the hits before them do not.
-
-    Chunks of one file overlap, and where lines are long they start a line or two apart, so
-    several hits can show the same excerpt (``question_excerpt``) of the same source. A hit is
-    left out when its excerpt is the text of an earlier hit's excerpt of that source, or lies
-    within the lines of one; the next hit takes its place. The order of the hits is kept.
-    """
-    kept: list[dict] = []
-    texts: set[tuple] = set()
-    spans: dict[Any, list[tuple[int, int]]] = {}
-    for hit in hits:
-        excerpt, first, last = question_excerpt(str(hit.get("text", "")), query)
-        source_id, start = hit.get("source_id"), hit.get("line_start")
-        span = (start + first, start + last) if isinstance(start, int) else None
-        if (source_id, excerpt) in texts or (span is not None and any(
-                begin <= span[0] and span[1] <= end for begin, end in spans.get(source_id, []))):
-            continue
-        texts.add((source_id, excerpt))
-        if span is not None:
-            spans.setdefault(source_id, []).append(span)
-        kept.append(hit)
-        if len(kept) >= limit:
-            break
-    return kept
 
 
 # Order in which passages were shown: the initial evidence takes its positions (0..), anything
@@ -1123,17 +1094,28 @@ class KnowledgeAgent:
         try:
             async with asyncio.timeout(self.settings.ask_timeout if timeout is None else timeout):
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
-                # More hits than are shown: a hit that repeats a passage gives its place to the next.
-                wanted = INITIAL_HITS + SPARE_HITS
-                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, wanted,
-                                                  worktree=worktree)
-                chosen = distinct_hits(lexical, question, INITIAL_HITS)
-                await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question, False)
-                hybrid = await self.retriever.asearch(project_id, question, wanted, worktree=worktree)
+                chosen = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
+                                                 worktree=worktree)
+                initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
+                                                  False)
+                hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
-                    chosen = distinct_hits(hybrid, question, INITIAL_HITS)
-                # Chunks longer than their excerpt: what a second look can still show.
-                in_part = [hit for hit in chosen if len(str(hit.get("text", ""))) > EXCERPT_CHARS]
+                    chosen = hybrid
+                    initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
+                                                      False)
+                # Chunks longer than their excerpt, each stretch of a file once (chunks overlap):
+                # what a second look can still show.
+                in_part, taken = [], []
+                for hit in chosen:
+                    first, last = hit.get("line_start"), hit.get("line_end")
+                    if (len(str(hit.get("text", ""))) <= EXCERPT_CHARS or not isinstance(first, int)
+                            or not isinstance(last, int)):
+                        continue
+                    if any(source == hit["source_id"] and first <= end and begin <= last
+                           for source, begin, end in taken):
+                        continue
+                    taken.append((hit["source_id"], first, last))
+                    in_part.append(hit)
                 diagnostics["_hits_in_part"] = len(in_part)
                 context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
                 system = {"role": "system", "content": SYSTEM + (TYPED_ANSWER_INSTRUCTION if answer_schema else "")}
@@ -1153,8 +1135,6 @@ class KnowledgeAgent:
                         return self._result("partial", "There are not enough sources for a confirmed answer.",
                                             evidence, ["No whole passage fits the context budget."], started)
                 else:
-                    initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree,
-                                                      question, False)
                     # Definitions of names the question and the hits use take the places of the
                     # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
                     definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,

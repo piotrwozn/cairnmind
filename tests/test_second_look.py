@@ -91,6 +91,23 @@ async def test_the_second_look_keeps_to_the_time_limit_of_the_question(workspace
     assert len(model.calls) == 2
 
 
+async def test_overlapping_chunks_of_a_file_are_read_whole_once(workspace):  # noqa: F811
+    from uuid import uuid4
+    store, project, settings = workspace
+    lines = long_chunk().split("\n")
+    source = store.snapshot(project["id"], "notes://engine", "\n".join(lines), "document")
+    for start in (0, 1, 2):  # three chunks of one file, each starting one line later
+        store.command("INSERT INTO chunks CONTENT :doc", {"doc": {
+            "id": str(uuid4()), "project_id": project["id"], "source_id": source["id"],
+            "text": "\n".join(lines[start:]), "line_start": start + 1, "line_end": len(lines),
+            "metadata": {}, "is_current": True}})
+    model = FakeOllama([UNKNOWN, UNKNOWN, final(source["id"], ANSWER, "1024 MB.")])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], "How much Java heap does the engine get?")
+    assert result["status"] == "complete"
+    second = evidence_of(model.calls[2])
+    assert len(second) == 1 and ANSWER in second[0]["text"]
+
+
 async def test_whole_passages_stay_within_the_context_guard(workspace):  # noqa: F811
     store, project, settings = workspace
     for index in range(8):
