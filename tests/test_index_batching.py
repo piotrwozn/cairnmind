@@ -34,6 +34,12 @@ def dump(store, pid):
         names[row["id"]] = f"source:{row['uri']}:{row['sha256'][:8]}"
     for row in chunks.values():
         names[row["id"]] = f"chunk:{names[row['source_id']]}:{row['line_start']}-{row['line_end']}"
+    # The chunks of a replaced source are deleted with it (#186), but the embedding jobs written with them still
+    # name them: their identifiers are worked out again from the source text, as indexing made them.
+    for row in sources.values():
+        for number, (text, first, last) in enumerate(ingest._chunks(row["content"])):
+            names.setdefault(ingest._identifier(pid, row["id"], number, first, last, text),
+                             f"chunk:{names[row['id']]}:{first}-{last}")
 
     def named(value):
         text = json.dumps(value, sort_keys=True, default=str)
@@ -527,8 +533,9 @@ def test_a_failure_in_a_group_of_replacements_leaves_every_file_of_it_as_it_was(
     stale = store.query("SELECT id FROM sources WHERE project_id=:p AND is_current=false", {"p": pid})
     assert {row["id"] for row in stale} == {old[uri] for uri in replaced}
     chunks = store.query("SELECT source_id,is_current FROM chunks WHERE project_id=:p", {"p": pid})
-    assert all(row["is_current"] == (row["source_id"] not in {r["id"] for r in stale}) for row in chunks)
-    assert {row["source_id"] for row in chunks} == {row["id"] for row in current.values()} | {row["id"] for row in stale}
+    # The chunks of a replaced source went in the transaction that replaced it (#186); the rest are all current.
+    assert all(row["is_current"] for row in chunks)
+    assert {row["source_id"] for row in chunks} == {row["id"] for row in current.values()}
 
     ingest.index_project(store, pid)  # the next run completes what failed
     with monkeypatch.context() as patch:

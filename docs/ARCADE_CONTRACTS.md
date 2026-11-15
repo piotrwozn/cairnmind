@@ -63,6 +63,8 @@ resume_packets,resume_acks,session_events,check_runs. Legacy task groups do not
 implicitly become managed plans, and historical reports do not become machine runs.
 Public field names same as old schema but JSON properties are real maps/lists;
 is_current is BOOLEAN. Chunk IDs deterministic string UUID/hash (not integers).
+Only a current source has chunks: the transaction that replaces or deactivates a source
+deletes its chunks and vectors, and keeps the source row with its content and sha256.
 Native graph records use public id/from_id/to_id props plus native @rid and in/out.
 
 Storage supplies `upsert_node(node:dict,tx=None)` / `upsert_edge(edge:dict,tx=None)`

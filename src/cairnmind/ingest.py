@@ -224,6 +224,8 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                 raise ValueError("Chunk source does not belong to the requested project")
             if is_verdict_source(sources[0]) or is_mcp_source(sources[0]):
                 return 0  # a person's verdict on an impact list is never searchable text
+            if sources[0].get("is_current") is False:
+                return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
             existing = tx.query("SELECT id FROM chunks WHERE source_id=:source", {"source": source_id})
             ids = []
             if not existing:
@@ -259,7 +261,7 @@ def _deactivate_together(store, tx, source_ids: list[str]) -> None:
     """What ``snapshot`` and ``_deactivate_source`` do to one replaced source, for several in one statement each."""
     params = {"sources": source_ids}
     tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id IN :sources", params)
-    tx.command("UPDATE chunks SET is_current=false WHERE source_id IN :sources", params)
+    store.drop_chunks(tx, source_ids)
     tx.command(f"UPDATE nodes SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_NODE_KINDS}", params)
     tx.command(f"UPDATE edges SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_EDGE_KINDS}", params)
     store._delete_old_vectors(tx, source_ids)
@@ -279,15 +281,15 @@ def _vector_tables(store) -> int:
 def _hanging_events(store, source_ids: list[str], vector_tables: int) -> dict[str, int]:
     """The journal events that deactivating each of these sources writes, counted before anything is written.
 
-    One for the source, one per chunk, node and edge that ``_deactivate_together`` deactivates, one per
-    vector it deletes. On real code the graph rows of the old source outweigh what the new one writes.
+    One for the source, one per chunk it deletes, one per node and edge it deactivates, one per vector it
+    deletes. On real code the graph rows of the old source outweigh what the new one writes.
     """
     weights = dict.fromkeys(source_ids, 1)
     if not source_ids:
         return weights
     live = "(is_current=true OR is_current IS NULL)"
     for table, condition, times in (
-            ("chunks", live, 1),
+            ("chunks", "true", 1),
             ("nodes", f"{live} AND kind NOT IN {_KEPT_NODE_KINDS}", 1),
             ("edges", f"{live} AND kind NOT IN {_KEPT_EDGE_KINDS}", 1),
             ("embeddings", "true", 1 + vector_tables)):
@@ -407,7 +409,7 @@ def _source_before(store, project_id: str, uri: str):
 def _deactivate_source(store, source_id: str) -> None:
     with store.transaction() as tx:
         tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id=:source", {"source": source_id})
-        tx.command("UPDATE chunks SET is_current=false WHERE source_id=:source", {"source": source_id})
+        store.drop_chunks(tx, [source_id])
         tx.command(f"UPDATE nodes SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_NODE_KINDS}",
                    {"source": source_id})
         tx.command(f"UPDATE edges SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_EDGE_KINDS}",

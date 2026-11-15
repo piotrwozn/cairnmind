@@ -353,7 +353,7 @@ def test_snapshot_invalidates_native_ann_and_lexical_current_flags(store, projec
     store.command("INSERT INTO embeddings CONTENT :row", {"row": row})
     store.command(f"INSERT INTO {index['type_name']} CONTENT :row", {"row": row})
     source(store, project, "Replacement authentication design")
-    assert store.query("SELECT is_current FROM chunks WHERE id='old-chunk'")[0]["is_current"] is False
+    assert not store.query("SELECT id FROM chunks WHERE id='old-chunk'")  # deleted with its source's version (#186)
     assert store.query("SELECT count(*) AS total FROM embeddings")[0]["total"] == 0
     assert store.query(f"SELECT count(*) AS total FROM {index['type_name']}")[0]["total"] == 0
 

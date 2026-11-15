@@ -628,6 +628,16 @@ class Store:
             if name and IDENTIFIER.fullmatch(name) and name.startswith("vector_"):
                 tx.command(f"DELETE FROM {quote_name(name)} WHERE source_id IN :ids", {"ids": source_ids})
 
+    @staticmethod
+    def drop_chunks(tx, source_ids):
+        """Delete the chunks of sources that stop being current, in the transaction that replaces them (#186).
+
+        Nothing reads a chunk of a source that is not current: search, vectors and the reparse of a transcript take
+        current chunks only, and an import rebuilds chunks from the source text. The source itself, its text and
+        its hash stay, so evidence that cites the old version can still be read and checked."""
+        if source_ids:
+            tx.command("DELETE FROM chunks WHERE source_id IN :ids", {"ids": list(source_ids)})
+
     def snapshot(self, project_id, uri, content, kind="document", metadata=None):
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
@@ -640,7 +650,7 @@ class Store:
             if existing:
                 params = {"id": existing["id"]}
                 update_document(tx, "sources", {"is_current": False, "current_key": None}, "id=:id", params)
-                update_document(tx, "chunks", {"is_current": False}, "source_id=:id", params)
+                self.drop_chunks(tx, [existing["id"]])
                 update_document(tx, "nodes", {"is_current": False}, "source_id=:id AND kind NOT IN ['source','decision','task','fact','constraint','question','preference','checkpoint']", params)
                 update_document(tx, "edges", {"is_current": False}, "source_id=:id AND kind NOT IN ['supported_by','depends_on','supersedes']", params)
                 self._delete_old_vectors(tx, [existing["id"]])
