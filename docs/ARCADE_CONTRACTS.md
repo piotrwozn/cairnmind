@@ -87,6 +87,17 @@ Additional root-facing methods needed:
   native graph reconstructed via helpers on restore, credentials excluded, transactional
   snapshot export; native engine backup optional extra. Choose `.cairnmind.json.gz` backup (`.devbrain.json.gz` up to 0.9.0)
   default and validate manifest/hash before destructive restore. Backups remain source complete.
+- whole-database backup (`Store.backup`, the daily backup and the `before-*` safety copies, `store_backup.py`, #196):
+  written as a stream inside one transaction under the writer lock. Each type is read in record id order
+  (`WHERE @rid > :rid ORDER BY @rid LIMIT n`, the page size adapting to the row size), each row serialized
+  with `json_text`, hashed and compressed as it comes; Python memory stays bounded by a page, not by the store.
+  The file is unchanged: envelope 1, keys in `json_text` order (`format`, `payload`, `sha256`, `version`),
+  the bytes the in-memory writer produced, so every earlier restore reads it. It is written under a temporary
+  `.cairnmind-backup-*` name in the destination folder and moved into place only when complete and synced;
+  a partial file left by a killed process has no gzip trailer and is refused. Restore still loads the whole
+  file before validating it (its checksum no longer builds a second copy of the payload text): validating
+  cross references before the first deletion needs the whole payload, and the engine holds the restore
+  transaction in memory in any case.
 
 ## Ingestion (ingestion agent owns)
 
