@@ -124,6 +124,25 @@ async def test_an_approved_call_is_journaled_in_order_and_marked_third_party(set
 
 
 @pytest.mark.asyncio
+async def test_refused_third_party_arguments_say_which_argument_without_its_value(setup):
+    # #240: a bare invalid_tool_arguments; now the argument, the schema keyword and a fixed hint.
+    memory = Memory()
+    requests = []
+    provider = ScriptedProvider(*acked(memory, call("mcp_files_echo", {"text": 7}, "c1"),
+                                       call("mcp_files_echo", {"text": "a", "secret_extra": "hidden-value"}, "c2")))
+    engine = agent(setup, provider, memory, approve=lambda request: requests.append(request) or True)
+    try:
+        await engine.turn("Call it")
+        wrong, extra = results(engine)["c1"], results(engine)["c2"]
+        assert wrong["error_code"] == "invalid_tool_arguments" and wrong["third_party_untrusted"] is True
+        assert (wrong["argument"], wrong["keyword"]) == ("text", "type") and "string" in wrong["hint"]
+        assert extra["keyword"] == "additionalProperties" and "secret_extra" in extra["hint"]
+        assert "hidden-value" not in json.dumps(extra) and requests == []
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
 async def test_a_result_claiming_approval_changes_nothing(setup):
     memory = Memory()
     requests = []

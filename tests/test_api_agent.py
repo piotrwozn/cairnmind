@@ -849,3 +849,25 @@ async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_
         assert store.query("SELECT FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["content"] == "ArcadeDB"
     finally:
         await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_arguments_say_which_argument_and_why_without_its_value(setup):
+    # #240: write_file with expected_sha256 "" came back as a bare invalid_tool_arguments.
+    memory = Memory()
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("write_file", {"path": "app.py", "content": "VALUE=1\n", "expected_sha256": "not-a-hash"}),
+              call("write_file", {"path": "app.py", "content": "VALUE=1\n"})),
+        reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        await agent.turn("Create app.py")
+        bad_hash, missing = tools_results(agent)[-2:]
+        assert bad_hash["error_code"] == missing["error_code"] == "invalid_tool_arguments"
+        assert bad_hash["argument"] == "expected_sha256" and "not-a-hash" not in json.dumps(bad_hash)
+        assert "null" in bad_hash["hint"] and "read_file" in bad_hash["hint"]
+        assert missing["keyword"] == "required" and "expected_sha256" in missing["hint"]
+        assert not setup[3].joinpath("app.py").exists()
+    finally:
+        await agent.close()

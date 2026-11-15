@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from .agent_write_guard import ChangeLedger, without_changed_files
 from .mcp_host import MAX_ARGUMENT_BYTES, McpHost, _canonical
-from .mcp_schema import affordable, valid_arguments
+from .mcp_schema import affordable, argument_problem, valid_arguments
 from .terminal_safe import safe_text
 
 # The approval dialog prints the whole request; a request whose text would be longer is refused, so what
@@ -114,7 +114,8 @@ class McpTools:
                                                        "tool": entry["tool"], "reason": "validation_timeout"})
             return {"ok": False, "error_code": "tool_withdrawn", **base}
         if not valid:
-            return {"ok": False, "error_code": "invalid_tool_arguments", **base}
+            return {"ok": False, "error_code": "invalid_tool_arguments", **await argument_problem(schema, arguments),
+                    **base}
         action_id = uuid4().hex
         request = {"kind": "mcp_tool", "action_id": action_id, "server_id": entry["server_id"],
                    "tool": entry["tool"], "name": name, "arguments": deepcopy(arguments),

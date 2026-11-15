@@ -524,7 +524,8 @@ class AgentEngine:
             return self._error("invalid_tool_call")
         # A third-party schema is checked by McpTools.call, off the event loop and with a time bound.
         if name not in self.mcp.catalogue and not Draft202012Validator(schema["parameters"]).is_valid(arguments):
-            return self._error("invalid_tool_arguments")
+            from .agent_arguments import argument_problem
+            return self._error("invalid_tool_arguments", **(argument_problem(schema["parameters"], arguments) or {}))
         if self._redact(arguments) != arguments:
             return self._error("credential_in_tool_arguments")
         if self._compaction is not None:
