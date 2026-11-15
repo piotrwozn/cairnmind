@@ -200,8 +200,12 @@ def public_record(record: dict, *, content_limit: int = 500, metadata_budget: in
     item["source_ids_total"] = len(sources)
     if len(sources) > 8:
         item["source_ids_truncated"] = True
-    item["metadata"] = public_metadata(record.get("metadata"), RECORD_METADATA_KEYS, metadata_budget)
     metadata = json_value(record.get("metadata"), {})
+    # The confirmation mark is shown as confirmed_by below, so it is not a field the bounded view left out:
+    # counting it would mark every confirmed record as truncated.
+    shown = ({key: value for key, value in metadata.items() if key != "confirmation"}
+             if isinstance(metadata, dict) else metadata)
+    item["metadata"] = public_metadata(shown, RECORD_METADATA_KEYS, metadata_budget)
     if _confirmed_by({**record, "metadata": metadata}):
         # Only on a confirmed record: person (here), import (confirmed elsewhere, never verified here),
         # before_rule (nobody recorded), seed, or lapsed on a record that lost its confirmation (#177).
@@ -670,7 +674,9 @@ class Retriever:
         # confirmed records (#188). Checkpoints and tasks, finished or not, keep their own places.
         reserve = [record.get("status") == "proposed" and record["kind"] not in ("checkpoint", "task")
                    for record in records]
-        budget = max(2500, 6500 - len(json.dumps(workflow, ensure_ascii=False)))
+        # 7000 since #177: a confirmed record says who confirmed it and cites that note, about 60 characters
+        # each, and the same number of records as before must fit.
+        budget = max(2500, 7000 - len(json.dumps(workflow, ensure_ascii=False)))
         selected, omitted = select_entries(entries, reserve, budget)
         return {
             "project": {k: project[k] for k in ("id", "name", "root")}, "records": selected,

@@ -174,7 +174,7 @@ def test_newest_finding_of_real_size_is_seen_beside_an_active_plan(workspace):
         "metadata": {"extracted_by": "local-model", "origin": "document", "evidence": "quoted line " * 40,
                      "scope": "src/importer"}}, [source(store, project)["id"]])
     context = Retriever(store, settings, NoModel()).context(project["id"])
-    budget = max(2500, 6500 - len(json.dumps(context["workflow"], ensure_ascii=False)))
+    budget = max(2500, 7000 - len(json.dumps(context["workflow"], ensure_ascii=False)))
     shown = {item["id"]: item for item in context["records"]}
     assert context["workflow"]["plan"] and newest["id"] in shown
     # The case the review measured: the finding is larger than the plain share of the budget.
@@ -200,18 +200,34 @@ def test_newest_reservable_entry_is_taken_before_shorter_older_ones():
 
 def finished_tasks(store, project, count, status="confirmed", words=25):
     evidence = source(store, project)
-    return [store.remember(project["id"], {
+    return [remember(store, project, {
         "kind": "task", "key": f"finished-{status}-{index}", "status": status,
         "content": f"Finished step {index}: " + "completed work " * words, "metadata": {"state": "done"}},
-        [evidence["id"]]) for index in range(count)]
+        evidence) for index in range(count)]
+
+
+def remember(store, project, record, evidence):
+    """Store a record; a confirmed one the way a person does (#177), the only way the store accepts."""
+    if record.get("status") == "confirmed":
+        return as_person(store, project["id"], record, [evidence["id"]])
+    return store.remember(project["id"], record, [evidence["id"]])
+
+
+def test_a_confirmed_record_is_not_shown_as_truncated_because_of_its_confirmation_mark(workspace):
+    store, project, settings = workspace
+    record = remember(store, project, {"kind": "decision", "key": "plain", "status": "confirmed",
+                                       "content": "Plain decision."}, source(store, project))
+    [entry] = Retriever(store, settings, NoModel()).context(project["id"])["records"]
+    assert entry["id"] == record["id"] and entry["confirmed_by"] == "person"
+    assert "truncated" not in entry["metadata"] and "omitted_fields" not in entry["metadata"]
 
 
 def test_constraint_in_force_is_seen_beside_many_finished_tasks(workspace):
     store, project, settings = workspace
     evidence = source(store, project)
-    constraint = store.remember(project["id"], {
+    constraint = remember(store, project, {
         "kind": "constraint", "key": "local-only", "status": "confirmed",
-        "content": "All inference stays on this machine."}, [evidence["id"]])
+        "content": "All inference stays on this machine."}, evidence)
     # Finished later, so each one is more recently updated than the constraint (#213).
     finished_tasks(store, project, 30)
     finished_tasks(store, project, 10, status="proposed")
@@ -232,7 +248,7 @@ def test_context_order_is_active_work_then_rules_in_force_then_findings_then_fin
         record = {"kind": kind, "key": key, "status": status, "content": f"{kind} {key}."}
         if state:
             record["metadata"] = {"state": state}
-        group[store.remember(project["id"], record, [evidence["id"]])["id"]] = place
+        group[remember(store, project, record, evidence)["id"]] = place
 
     # Stored in the reverse of the expected order, so update time alone would give the wrong one.
     add(5, "task", "done-confirmed", "confirmed", "done")

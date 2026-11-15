@@ -29,6 +29,8 @@ from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.retrieval import public_record
 from cairnmind.store import EXTRACTOR_MODEL_CHARS, Store, validate_extractor_stamp
 
+from conftest import as_person
+
 # One line per extractor version. Changing an instruction or the schema changes the fingerprint: bump
 # EXTRACTOR_VERSION in extraction_input.py and add its fingerprint here; never edit an earlier line.
 PINNED_FINGERPRINTS = {
@@ -252,8 +254,10 @@ def test_a_client_can_neither_set_nor_change_nor_clear_the_stamp(workspace):
                                             "status": "proposed"}, [source["id"]],
                             extracted_from=source["id"], extractor=stamp)
     assert record["metadata"]["extractor"] == stamp
-    changed = store.remember(project["id"], {"id": record["id"], "expected_version": 1, "status": "confirmed",
-                                             "metadata": {"extractor": forged}}, [source["id"]])
+    # Confirmed the way a person does (#177): the store refuses that status from any other write.
+    changed = as_person(store, project["id"], {"id": record["id"], "expected_version": 1,
+                                               "metadata": {"extractor": forged}}, [source["id"]])
+    assert changed["status"] == "confirmed"
     # A review or an edit keeps how the record was made; the local #168 mark is dropped as before.
     assert changed["metadata"]["extractor"] == stamp and "extraction_source_id" not in changed["metadata"]
     cleared = store.remember(project["id"], {"id": record["id"], "expected_version": 2,

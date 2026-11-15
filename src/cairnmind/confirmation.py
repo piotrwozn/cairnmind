@@ -44,7 +44,8 @@ SEED_SOURCE = ("seed://", "evaluation_seed")
 # What the store derives and the bookkeeping of the conflict inbox: no client can write them.
 UNCOVERED_METADATA = frozenset({
     "evidence_earliest", "evidence_latest", "evidence_basis", "supersede_warning",
-    "supersede_replaced_evidence_latest", "extraction_source_id", "origin_client", "origin_session_id",
+    "supersede_replaced_evidence_latest", "extraction_source_id", "extractor", "origin_client",
+    "origin_session_id",
     "origin_history", "origin_evidence", "publication", "confirmation", "conflicts_resolved",
     "conflict_decisions", "conflict_scope_note", "superseded_ids", "superseded_by", "possible_conflicts"})
 # On a task only: progress (state, reported evidence, check runs), a declared scope, a proposed command and
