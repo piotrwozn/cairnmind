@@ -17,13 +17,17 @@ A question file is JSON: ``{"format_version": 1, "questions": [{"id", "question"
 match, multi-line), so that a changed default does not make the question wrong. ``"forms"`` adds
 written forms of the value that also count for that question: ``"{}m"`` (the value with a unit),
 ``"{word}"`` (a number as its English word), ``"{gb} GB"`` (a whole number of megabytes in
-gigabytes: 2048 as 2).
+gigabytes: 2048 as 2). ``{"absent": true}`` marks a question about a thing the repository does
+not have: it needs no ``file``, has no accepted form, and is right only when its answer is not
+complete.
 
 Scoring is mechanical. A question is *complete* when the answer's status is complete (its
 citations verified and the support check agreed). It is *right* when an accepted form occurs in
 the answer as a whole token, ignoring case: not inside a longer word or number (``7`` is not in
 ``17``, ``7.5``, ``7,168`` or ``7m``); ``45.0`` also counts as ``45``. A complete answer without
-an accepted form counts as *complete and wrong*. The acceptance figure is complete and right.
+an accepted form counts as *complete and wrong*, and so does every complete answer to a question
+marked absent. The acceptance figure is complete and right; a file with absent questions passes
+only when each of them was also refused.
 """
 from __future__ import annotations
 
@@ -85,13 +89,18 @@ def load_questions(path: Path, root: Path) -> list[dict]:
         raise ValueError("A question file needs format_version 1 and a nonempty questions list")
     resolved, seen = [], set()
     for item in questions:
+        answer = item.get("answer") if isinstance(item, dict) and isinstance(item.get("answer"), dict) else {}
+        absent = answer.get("absent") is True
         if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key]
-                                                  for key in ("id", "question", "file")):
+                                                  for key in ("id", "question", *(() if absent else ("file",)))):
             raise ValueError("Every question needs id, question and file")
         if item["id"] in seen:
             raise ValueError(f"Question id {item['id']!r} is used twice")
         seen.add(item["id"])
-        answer = item.get("answer") if isinstance(item.get("answer"), dict) else {}
+        if absent:
+            resolved.append({"id": item["id"], "question": item["question"], "file": None, "accepted": [],
+                             "absent": True})
+            continue
         forms = answer.get("forms", [])
         if not isinstance(forms, list) or not all(isinstance(form, str) and form for form in forms):
             raise ValueError(f"{item['id']}: forms must be a list of strings")
@@ -142,21 +151,29 @@ def case_result(case: dict, result: dict, root: Path, calls: int, seconds: float
     status = result.get("status")
     answer = str(result.get("answer", ""))
     diagnostics = result.get("diagnostics") or {}
+    absent = bool(case.get("absent"))
     return {"id": case["id"], "question": case["question"], "file": case["file"], "accepted": case["accepted"],
+            **({"absent": True} if absent else {}),
             "status": status, "code": diagnostics.get("code"), "support_check": diagnostics.get("support_check"),
-            "right": status == "complete" and answer_is_right(answer, case["accepted"]),
+            # An absent question is right when it was refused; it is never complete and right.
+            "right": (status != "complete" if absent else
+                      status == "complete" and answer_is_right(answer, case["accepted"])),
             "answer": answer[:600], "citations": citations, "model_calls": calls, "seconds": round(seconds, 1)}
 
 
 def summarize(rows: list[dict]) -> dict:
-    """Counts over the report rows; status passed when complete-and-right reaches PASS_SHARE."""
+    """Counts over the report rows; status passed when complete-and-right reaches PASS_SHARE of the
+    questions that have an answer and every question marked absent was refused."""
     complete = sum(row["status"] == "complete" for row in rows)
     right = sum(row["status"] == "complete" and row["right"] for row in rows)
-    required = math.ceil(PASS_SHARE * len(rows))
+    absent = [row for row in rows if row.get("absent")]
+    refused = sum(row["status"] != "complete" for row in absent)
+    required = math.ceil(PASS_SHARE * (len(rows) - len(absent)))
     return {"asked": len(rows), "complete": complete, "complete_and_right": right,
             "complete_and_wrong": complete - right, "not_complete": len(rows) - complete,
             "required_complete_and_right": required,
-            "status": "passed" if rows and right >= required else "failed"}
+            **({"absent": len(absent), "absent_refused": refused} if absent else {}),
+            "status": "passed" if rows and right >= required and refused == len(absent) else "failed"}
 
 
 def tracked_files(root: Path, excluded: list[str]) -> list[str]:
