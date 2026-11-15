@@ -204,7 +204,7 @@ What they can do, and what the refusal tells them:
   plan key, which changes what was confirmed. On a task a person confirmed, or
   one confirmed before the rule, it works only in the person's own terminal;
   elsewhere it is refused and says so (`Task '<key>' (task <id>) ... The person
-  runs `cairnmind plan adopt` in their own terminal`). Up to 0.10.0 `tasks add`
+  runs `cairnmind plan adopt` in their own terminal`). Up to 0.10.0 `task add`
   stored every task as confirmed, so the tasks of an old group all count as
   confirmed before the rule.
 - **The checkpoint record** is the one exception. It is a slot that holds the
@@ -238,7 +238,7 @@ The person's routes, and how each is told from a session or an agent:
 | Conflict decision (`POST /inspector/conflicts/resolve`) | The route, as above. The finding chosen to stand becomes confirmed. |
 | Plan confirmation (`POST /inspector/plans/{id}/confirm`, `memory confirm-plan`) | The route; the command also requires a person's terminal (below). |
 | Workspace form (`POST /findings` without `session_id`) | The absence of a session. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
-| Command line: `remember --confirmed`, `tasks add`, `memory confirm-plan`, and `plan save` or `plan adopt` when they change a confirmed step | No session variable (`CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` or their earlier spellings), no marker of a coding client (`CLAUDECODE`, `CODEX_THREAD_ID`), and a terminal on both standard input and standard output. |
+| Command line: `remember --confirmed`, `task add`, `memory confirm-plan`, and `plan save` or `plan adopt` when they change a confirmed step | No session variable (`CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` or their earlier spellings), no marker of a coding client (`CLAUDECODE`, `CODEX_THREAD_ID`), and a terminal on both standard input and standard output. |
 
 A command line confirmation leaves a note of its own (`person://`, origin
 `cli_person`) with the person's Git name, branch and commit. Like a review's
@@ -249,7 +249,7 @@ published.
 
 A command that does not pass the last test is not a person: `remember
 --confirmed` and `memory confirm-plan` are refused with what to do instead, and
-`tasks add` stores the task as proposed and says so, and `plan save` or `plan
+`task add` stores the task as proposed and says so, and `plan save` or `plan
 adopt` is refused when it would change or remove a step a person confirmed
 (any other save is stored). This covers a coding
 client's shell (it carries the session or the client's marker), the built-in
@@ -553,7 +553,7 @@ A record state travels only when a person's act covers it:
 
 Only a person stores a record as confirmed at all (#177, "Only a person confirms a record" above):
 session, MCP and agent writes are proposed, and a confirmed record an agent edits becomes proposed
-again. `remember --confirmed` and `tasks add` in a person's terminal confirm a record locally, but
+again. `remember --confirmed` and `task add` in a person's terminal confirm a record locally, but
 they write no audit that hashes what was judged, so they are not acts that travel. Such records,
 and records confirmed before that rule existed, stay local until a person reviews them; the
 inspector allows confirming a confirmed record again when no review, conflict decision, plan
