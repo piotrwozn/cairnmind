@@ -109,10 +109,17 @@ def contents(client) -> dict:
 
 @pytest.mark.parametrize("cut, lands", [
     ({"number": 3, "matching": b"DELETE FROM"}, "before"),
-    ({"number": 40, "matching": b"INSERT INTO"}, "before"),
+    # Rows go in groups since #219: one request is one group of rows of one type.
+    ({"number": 3, "matching": b"INSERT INTO"}, "before"),
+    ({"number": 2, "matching": b"INSERT INTO", "after_server": True}, "before"),
+    ({"number": 1, "matching": b"CREATE VERTEX nodes CONTENT :rows"}, "before"),
+    ({"number": 1, "matching": b"CREATE VERTEX nodes CONTENT :rows", "after_server": True}, "before"),
+    ({"number": 1, "matching": b"CREATE EDGE edges", "after_server": True}, "before"),
     ({"number": 2, "matching": b"/api/v1/commit/"}, "before"),
     ({"number": 2, "matching": b"/api/v1/commit/", "after_server": True}, "after"),
-], ids=["while deleting", "while inserting", "commit never arrives", "commit applied, answer lost"])
+], ids=["while deleting", "while inserting", "a group of documents applied, answer lost", "a group of vertices",
+        "a group of vertices applied, answer lost", "a group of edges applied, answer lost", "commit never arrives",
+        "commit applied, answer lost"])
 def test_a_restore_cut_anywhere_leaves_the_old_data_or_the_backup_never_a_mixture(tmp_path, relay, cut, lands):
     root = tmp_path / "repo"
     tree(root, files=6)
