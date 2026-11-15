@@ -224,11 +224,23 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             # One that met a service starting at the same moment is waited for, as before.
             said = last_log_line(log)
             if "already running" not in said:
-                # Not a wrong argument: no usage frame (#244). The service's own prefix is not repeated.
-                refuse(f"The service stopped at start: {said.removeprefix('Cairnmind: ')}")
+                # The service's own prefix is not repeated (#244).
+                raise ServiceDidNotStart(f"The service stopped at start: {said.removeprefix('Cairnmind: ')}")
             process = None
         time.sleep(0.2)
-    refuse(f"The service did not start. Check {log}; port {settings.port} may be in use.")
+    raise ServiceDidNotStart(f"The service did not start. Check {log}; port {settings.port} may be in use.")
+
+
+class ServiceDidNotStart(ValueError):
+    """The knowledge service did not start. A command shows it as a refusal, not as a wrong argument (#244);
+    the workspace and the cockpit, which call ensure_service too, get an ordinary error with the reason."""
+
+
+def _ensure_service_or_refuse(settings: Settings) -> None:
+    try:
+        ensure_service(settings)
+    except ServiceDidNotStart as exc:
+        refuse(str(exc))
 
 
 def refuse(message: str, code: int = 2):
@@ -263,7 +275,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
     # session=False sends no session of the launched agent (a replay asks for the logged scope, #15);
     # raise_refusal=True raises ServiceRefusal instead of ending the command.
     if start_service:
-        ensure_service(settings)
+        _ensure_service_or_refuse(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
         refuse("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
@@ -1650,7 +1662,7 @@ def install(ctx: typer.Context, project: str):
 def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = None):
     """Start Codex or Claude Code in the project, bound to its memory. Arguments after -- go to the client."""
     from cairnmind.integrations import run_client
-    ensure_service(ctx.obj)
+    _ensure_service_or_refuse(ctx.obj)
     selected = store_for(ctx.obj).resolve_project(project)
     if worktree:
         store = store_for(ctx.obj)

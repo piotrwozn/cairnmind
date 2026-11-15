@@ -95,6 +95,9 @@ def test_a_service_that_stops_at_start_is_a_refusal_without_the_services_own_pre
     said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(tmp_path / "memory"), "index", "demo"]))
     assert said == ("Error: The service stopped at start: This installation only reads this store; "
                     "abc12345 writes it.")
+    # The workspace and the cockpit call it outside a command: there it is an ordinary error, nothing printed.
+    with pytest.raises(cli.ServiceDidNotStart, match="^The service stopped at start: This installation"):
+        cli.ensure_service(Settings.load(tmp_path / "memory"))
 
 
 def test_a_service_that_never_answers_is_a_refusal(tmp_path, monkeypatch):
