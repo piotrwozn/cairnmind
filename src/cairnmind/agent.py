@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import itertools
 import json
@@ -14,6 +15,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .answer_contract import answer_contract_errors, prepare_answer_schema
+from .citation_match import locate_quote
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .extraction_input import TASK_STATE_INSTRUCTION, extraction_request, source_text
@@ -784,9 +786,45 @@ class KnowledgeAgent:
                answer_schema: dict | None = None) -> dict:
         return self._validate_final(text, project_id, evidence, started, worktree, answer_schema)[0]
 
+    def _quoted_source(self, quote: str, cited: dict, project_id: str, evidence: dict, worktree=None):
+        """The one other shown source that holds ``quote``, checked as current, with the span; or None.
+
+        A model that copies a passage faithfully sometimes writes the source ID of another passage
+        it was shown. The quote is then looked for in the other sources of this question whose text
+        the model saw (``_show``); it is taken only if exactly one of them holds it, so the citation
+        never points at a source chosen by guess. An ID the model was never given is not helped.
+        """
+        found = []
+        for source in {item["id"]: item for item in evidence.values()}.values():
+            if (source["id"] == cited["id"] or source.get("project_id") != project_id
+                    or not isinstance(source.get("_catalog_excerpt"), str)):
+                continue
+            if locate_quote(quote, source_text(source), MIN_QUOTE_CHARS) is not None:
+                found.append(source)
+        if len(found) != 1:
+            return None
+        try:
+            source = self._source(found[0]["id"], project_id, evidence,
+                                  current=not found[0].get("_historical_requested", False), worktree=worktree)
+        except (ValueError, OSError):
+            return None
+        span = locate_quote(quote, source_text(source), MIN_QUOTE_CHARS)
+        return (source, span) if span is not None else None
+
     def _validate_final(self, text: str, project_id: str, evidence: dict, started: float,
-                        worktree=None, answer_schema: dict | None = None) -> tuple[dict, bool]:
-        """Return the unchanged public view and whether output-only repair is safe."""
+                        worktree=None, answer_schema: dict | None = None, *,
+                        drop_invalid: bool = False) -> tuple[dict, bool]:
+        """Return the unchanged public view and whether output-only repair is safe.
+
+        A quote is accepted as the passage of the source it stands for (``locate_quote``): literal,
+        or literal but for line breaks and backticks, or the literal lines of a quote that skipped
+        some; the recorded quote is always the source's own text. A quote that the cited source
+        does not hold but exactly one other shown source does is recorded for that source.
+        With ``drop_invalid`` (the validation after the one repair) citations that still fail are
+        left out when at least one citation verified, the answer meets its contract and no source
+        went stale: the answer then rests on the verified citations alone, the support check
+        judges it on those, and ``diagnostics.citations_dropped`` counts what was left out.
+        """
         answer_schema = prepare_answer_schema(answer_schema)
         # Code can change while the local model composes its answer. Apply the
         # same last-moment freshness check used for quoted files to machine runs.
@@ -848,11 +886,13 @@ class KnowledgeAgent:
         if not isinstance(unknowns, list):
             unknowns = ["The model returned an invalid list of unknowns."]
         contract_failed = bool(answer_errors)
+        droppable = drop_invalid and not contract_failed
         sources, invalid, freshness_failure = [], answer_errors, False
         citations = output.get("citations", [])
         if not isinstance(citations, list):
             citations = []
             invalid.append("Invalid citation format.")
+            droppable = False  # nothing to leave out: the list itself is wrong
         if len(citations) > 8:
             unknowns.append("Some citations are left out because of the answer budget; "
                             "narrow the question to read the details.")
@@ -879,11 +919,19 @@ class KnowledgeAgent:
                 freshness_failure = True
                 continue
             content = source_text(source)
-            if not isinstance(quote, str) or not quote.strip() or quote not in content:
+            floor = min(MIN_QUOTE_CHARS, len(content.strip()))
+            span = locate_quote(quote, content, floor) if isinstance(quote, str) else None
+            if span is None and isinstance(quote, str) and (source["id"], source["sha256"]) == inspected:
+                elsewhere = self._quoted_source(quote, source, project_id, evidence, worktree)
+                if elsewhere is not None:
+                    source, span = elsewhere
+                    content = source_text(source)
+            if span is None:
                 invalid.append("The quoted passage does not occur in the checked version of the source.")
                 if (source["id"], source["sha256"]) != inspected:
                     freshness_failure = True
                 continue
+            quote = content[span[0]:span[1]]
             if len(quote.strip()) < min(MIN_QUOTE_CHARS, len(content.strip())):
                 # A one-character substring occurs in almost any source and proves nothing.
                 invalid.append("The quoted passage is too short to be evidence.")
@@ -891,13 +939,15 @@ class KnowledgeAgent:
             if len(sources) >= 8:
                 continue
             quote = quote[:750]
-            before = content.split(quote, 1)[0]
-            start = before.count("\n") + 1
+            start = content[:span[0]].count("\n") + 1
             sources.append({"id": source["id"], "uri": source["uri"], "sha256": source["sha256"],
                             "kind": source["kind"], "quote": quote, "line_start": start,
                             "line_end": start + quote.count("\n"), "is_current": bool(source["is_current"]),
                             "view": "normalized_text" if content != source["content"] else "content",
                             "created_at": source["created_at"], "metadata": public_source_metadata(source.get("metadata"))})
+        dropped = 0
+        if invalid and droppable and sources and not freshness_failure:
+            dropped, invalid = len(invalid), []
         if invalid:
             # Do not show potentially invented facts as a grounded synthesis.
             return self._result("partial", "The model's answer could not be verified in the sources.",
@@ -918,6 +968,8 @@ class KnowledgeAgent:
             except (ValueError, TypeError):
                 pass
         result["coverage"] = quote_coverage(covered, [source["quote"] for source in sources])
+        if dropped:
+            result["diagnostics"]["citations_dropped"] = dropped
         return result, invalid_unknowns
 
     async def ask(self, project_id: str, question: str, worktree=None,
@@ -1092,8 +1144,10 @@ class KnowledgeAgent:
                         repaired_text = self._carry_verified_citations(
                             candidate, str(repaired_message.get("content", "")), evidence)
                         result, still_repairable = await asyncio.to_thread(
-                            self._validate_final, repaired_text,
+                            functools.partial(self._validate_final, drop_invalid=True), repaired_text,
                             project_id, evidence, started, worktree, answer_schema)
+                        if result["diagnostics"].get("citations_dropped"):
+                            diagnostics["citations_dropped"] = result["diagnostics"]["citations_dropped"]
                         diagnostics["repair_outcome"] = ("failed" if still_repairable or
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
                         judged = result
