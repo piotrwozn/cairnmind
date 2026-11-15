@@ -87,6 +87,23 @@ def replaces_here(preview) -> bool:
     return isinstance(found, dict) and type(found.get("total")) is int and found["total"] > 0
 
 
+def package_size_lines(size, language="en"):
+    """The package against its limits and, near one of them, the warning (#191). Figures only: nothing from memory."""
+    try:
+        rows, data = size["rows"], size["bytes"]
+        lines = [tr("Package (estimate): {rows} of {row_limit} rows, {size} of {size_limit}", language,
+                    rows=int(rows["used"]), row_limit=int(rows["limit"]),
+                    size=f"{int(data['used']) / 1048576:.1f} MB", size_limit=f"{int(data['limit']) / 1048576:.0f} MB")]
+        names = [tr(name.replace("_", " "), language) for name in size.get("warning") or []
+                 if name in {"rows", "bytes", "manifest_bytes"}]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return []
+    if names:
+        lines.append(tr("Near the publication limit ({names}). Publishing stops at the limit.", language,
+                        names=", ".join(names)))
+    return lines
+
+
 def summary_text(value, language="en"):
     """Readable, bounded status; full structured payload is an explicit detail view."""
     if isinstance(value, str):
@@ -106,6 +123,7 @@ def summary_text(value, language="en"):
                    if type(counts.get(key)) is int]
         if entries:
             lines.append(" · ".join(entries))
+    lines.extend(package_size_lines(value.get("package_size"), language))
     brought = value.get("confirmed_records")
     if isinstance(brought, dict) and type(brought.get("total")) is int and brought["total"] > 0:
         # What an import brings as confirmed (#177), before the person agrees to it. The names are the

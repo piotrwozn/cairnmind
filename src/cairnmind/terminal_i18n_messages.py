@@ -447,6 +447,12 @@ CONFIRMATION_MESSAGES = {
         "Potwierdzone gdzie indziej: {count}. Pozostają potwierdzone, są pokazywane jako zaimportowane "
         "i nie są tutaj zweryfikowane.",
     "Confirmed by, as the package says: {names}": "Potwierdzone przez, według paczki: {names}",
+    # The size of the package against its publication limits (terminal_ui.summary_text, #191).
+    "Package (estimate): {rows} of {row_limit} rows, {size} of {size_limit}":
+        "Paczka (szacunek): {rows} z {row_limit} wierszy, {size} z {size_limit}",
+    "Near the publication limit ({names}). Publishing stops at the limit.":
+        "Blisko limitu publikacji ({names}). Publikacja zatrzymuje się na limicie.",
+    "rows": "wiersze", "bytes": "bajty", "manifest bytes": "bajty manifestu",
     "Replaces {count} records that were confirmed or disputed on this computer. "
     "Applying the import puts the imported text or status in their place.":
         "Zastępuje rekordy potwierdzone lub zakwestionowane na tym komputerze: {count}. "
