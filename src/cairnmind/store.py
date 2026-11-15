@@ -1845,26 +1845,9 @@ class Store:
             tx.command("DELETE FROM nodes")
             for collection in reversed(DOCUMENT_TYPES):
                 tx.command(f"DELETE FROM {quote_name(collection)}")
-            # Documents first (projects and sources before the graph that checks them), then vertices,
-            # then edges and vectors; a streamed file is read once for each of the three.
-            for _, collection, original in source.rows(DOCUMENT_TYPES):
-                row = dict(original)
-                if collection == "jobs" and row.get("state") == "running":
-                    row.update(state="pending", worker=None, lease_until=None)
-                if collection == "journal_state":
-                    # The backup's head may name the writer of the time it was made, or none.
-                    row["writer"] = self.installation.id
-                insert_document(tx, collection, row)
-            for _, _, node in source.rows(("nodes",)):
-                self.upsert_node(node, tx)
-            for kind, name, row in source.rows(("edges",), vectors=True):
-                if kind == "row":
-                    self.upsert_edge(row, tx)
-                    continue
-                if not isinstance(name, str) or not name.startswith("vector_"):
-                    raise ValueError("Invalid vector type in backup")
-                if row is not None:
-                    insert_document(tx, name, row)
+            # The rows go in groups of a few hundred per request, with the checks of row by row (#219).
+            from .restore_groups import write_restored
+            write_restored(self, tx, source)
 
     def forget_project(self, project_id):
         with self.transaction() as tx:
