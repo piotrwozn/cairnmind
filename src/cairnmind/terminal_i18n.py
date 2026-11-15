@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
+from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
@@ -257,6 +258,7 @@ CATALOG = {
     "Local setup only. Use Connect GitHub account to sign in; Choose model checks available models.": "To stan lokalnej konfiguracji. Połącz konto GitHub służy do logowania; Wybierz model sprawdza dostępne modele.",
     "The project changed. Close this form and open it again.": "Projekt zmienił się. Zamknij formularz i otwórz go ponownie.",
     "Enter a whole number from 1 to 10080.": "Wpisz liczbę całkowitą od 1 do 10080.",
+    "Enter a whole number from {minimum} to {maximum}.": "Wpisz liczbę całkowitą od {minimum} do {maximum}.",
     "{count} items · read only": "{count} wpisów · tylko odczyt", "More pages available": "Dalsza strona dostępna",
     "1 item · read only": "1 wpis · tylko odczyt",
     "Review saved with an audit note.": "Ocena zapisana z audytem.", "Save dispute": "Zapisz zakwestionowanie",
@@ -624,6 +626,7 @@ CATALOG.update({
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
+CATALOG.update(CONNECTION_HINT_MESSAGES)  # a connection key that is missing or unusable (#243)
 CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
