@@ -108,7 +108,10 @@ Additional root-facing methods needed:
   `Store._validated_backup`, which still loads the rare file that is valid JSON in a layout no writer
   produced (keys out of sorted order or repeated, a document that is not an object). Each later pass compares
   a digest of the bytes it read with the first pass, so a file changed during a restore is refused and the
-  transaction rolled back. A failure at any point before the commit leaves the store as it was. Python memory
+  transaction rolled back. Some structural checks still run only inside that transaction, after its deletes,
+  as in 0.10.0: those of `upsert_node` and `upsert_edge`, a vector entry that is not a list or a vector row
+  that is not an object, and repeated ids that hit a unique index; their refusal is undone by the rollback.
+  A failure at any point before the commit leaves the store as it was. Python memory
   is bounded by the largest row plus the index; the engine still holds the restore transaction itself.
 
 ## Ingestion (ingestion agent owns)
