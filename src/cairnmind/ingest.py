@@ -1004,13 +1004,9 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
             {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
         )
-        for row in previous_nodes:
-            if row["id"] not in nodes:
-                # Knowledge-record relationships referencing a removed code node must
-                # not silently become dangling. Retain the archived node in that case.
-                linked = tx.query("SELECT id FROM edges WHERE from_id=:id OR to_id=:id LIMIT 1", {"id": row["id"]})
-                if not linked:
-                    tx.command("DELETE FROM nodes WHERE id=:id", {"id": row["id"]})
+        # Knowledge-record relationships referencing a removed code node must not silently
+        # become dangling: such a node is retained. The rest go in groups (issue #167).
+        store.remove_graph_nodes(tx, project_id, [row["id"] for row in previous_nodes if row["id"] not in nodes])
         # This marker commits atomically with the native vertex/edge replacement.
         # An interrupted/failed graph transaction can never claim completion.
         tx.command(

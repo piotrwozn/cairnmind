@@ -826,6 +826,29 @@ class Store:
         for item in existing_edges:  # rare here: an edge that is kept is not written again
             self.upsert_edge(item, tx)
 
+    def remove_graph_nodes(self, tx, project_id, identifiers):
+        """Delete the project's vertices among `identifiers` that no edge names, one group per request.
+
+        The same rows go as when each one was checked and deleted on its own: a vertex that an edge
+        still names (a knowledge record's relationship, say) is kept, so that edge never dangles.
+        A group the database did not delete in full fails the transaction, which then leaves the graph as it was.
+        """
+        identifiers = sorted({identifier for identifier in identifiers if isinstance(identifier, str)})
+        for offset in range(0, len(identifiers), GRAPH_ROWS_PER_REQUEST):
+            part = identifiers[offset:offset + GRAPH_ROWS_PER_REQUEST]
+            named = set()
+            for row in tx.query("SELECT from_id,to_id FROM edges WHERE from_id IN :ids OR to_id IN :ids", {"ids": part}):
+                named.update((row.get("from_id"), row.get("to_id")))
+            unlinked = [identifier for identifier in part if identifier not in named]
+            if not unlinked:
+                continue
+            # The project names the graph a reset transaction reports, so the journal reads nothing for this statement.
+            deleted = tx.command("DELETE FROM nodes WHERE project_id=:project AND id IN :ids",
+                                 {"project": project_id, "ids": unlinked})
+            count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
+            if isinstance(count, int) and count != len(unlinked):
+                raise RuntimeError("The database did not delete every graph vertex of a group")
+
     def _record_graph(self, tx, record):
         node_id = f"record:{record['id']}"
         self.upsert_node({"id": node_id, "project_id": record["project_id"], "kind": record["kind"],
