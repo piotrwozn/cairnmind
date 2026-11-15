@@ -359,8 +359,9 @@ def init(ctx: typer.Context):
     if getattr(store, "not_writer", None):
         result["writer"] = store.writer_state()
     from cairnmind.confirmation_upgrade import report
-    if report(store.confirmations_before_rule):
-        result["confirmations_before_rule"] = report(store.confirmations_before_rule)
+    marks = report(getattr(store, "confirmations_before_rule", None))
+    if marks:
+        result["confirmations_before_rule"] = marks
     output(result)
 
 
@@ -1635,7 +1636,7 @@ def restore(ctx: typer.Context, source: Path):
         store = store_for(ctx.obj)
         store.restore(source)
     from cairnmind.confirmation_upgrade import report
-    marks = report(store.confirmations_before_rule)
+    marks = report(getattr(store, "confirmations_before_rule", None))
     output({"restored": True, **({"confirmations_before_rule": marks} if marks else {})})
 
 
