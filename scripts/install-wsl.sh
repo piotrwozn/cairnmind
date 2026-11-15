@@ -9,6 +9,10 @@ Usage: bash scripts/install-wsl.sh [--pull-models]
 Installs Cairnmind as a uv tool together with ArcadeDB 26.11.1 (about 86 MB,
 archive verified with SHA-256), starts the engine and initialises local memory.
 Requires Java 21+ and tmux 3.4+. Does not change Codex or Claude Code configuration.
+
+With CAIRNMIND_ARCADE_CONNECT_URL set, the installation only connects to a database
+that runs elsewhere (docs/DEPLOYMENT.md): no ArcadeDB is downloaded, no engine is
+started and Java is not needed.
 Does not download models or the Copilot runtime by default; prepare Copilot in the terminal UI.
 
   --pull-models  Download both models after installation (several GB; Ollama must be running).
@@ -33,20 +37,26 @@ if [[ "$(uname -s)" != Linux ]]; then
     exit 1
 fi
 
-if ! command -v java >/dev/null 2>&1; then
-    printf 'Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n' >&2
-    exit 1
-fi
-java_version_output="$(java -version 2>&1)"
-java_version_pattern='version "([0-9]+)'
-if [[ ! "$java_version_output" =~ $java_version_pattern ]]; then
-    printf 'Cannot detect the Java version. Check java -version; Java 21+ is required.\n' >&2
-    exit 1
-fi
-java_major="${BASH_REMATCH[1]}"
-if (( java_major < 21 )); then
-    printf 'Found Java %s. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n' "$java_major" >&2
-    exit 1
+# Connect-only: the database runs elsewhere and this installation never starts an engine, so Java is
+# needed only for the engine Cairnmind manages itself.
+connect_url="${CAIRNMIND_ARCADE_CONNECT_URL:-${DEVBRAIN_ARCADE_CONNECT_URL:-}}"
+
+if [[ -z "$connect_url" ]]; then
+    if ! command -v java >/dev/null 2>&1; then
+        printf 'Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n' >&2
+        exit 1
+    fi
+    java_version_output="$(java -version 2>&1)"
+    java_version_pattern='version "([0-9]+)'
+    if [[ ! "$java_version_output" =~ $java_version_pattern ]]; then
+        printf 'Cannot detect the Java version. Check java -version; Java 21+ is required.\n' >&2
+        exit 1
+    fi
+    java_major="${BASH_REMATCH[1]}"
+    if (( java_major < 21 )); then
+        printf 'Found Java %s. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n' "$java_major" >&2
+        exit 1
+    fi
 fi
 
 if ! command -v tmux >/dev/null 2>&1; then
@@ -172,15 +182,25 @@ if [[ ! -x "$cairnmind_bin" ]]; then
     exit 1
 fi
 
-printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
-arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
-if [[ -n "$arcade_dist" ]]; then
-    "$cairnmind_bin" engine install --distribution "$arcade_dist"
+if [[ -n "$connect_url" ]]; then
+    printf '\nThis installation only connects to the database at %s; no engine is installed.\n' "$connect_url"
+    # The database and its user are created once, by a person (cairnmind db create-user): until then
+    # these two commands say what is missing, and the installation itself is complete.
+    if ! "$cairnmind_bin" engine status || ! "$cairnmind_bin" init; then
+        printf '\nThe database is not ready for this installation yet. Follow docs/DEPLOYMENT.md,\n' >&2
+        printf '"Connect-only installations", then run: cairnmind init\n' >&2
+    fi
 else
-    "$cairnmind_bin" engine install
+    printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
+    arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
+    if [[ -n "$arcade_dist" ]]; then
+        "$cairnmind_bin" engine install --distribution "$arcade_dist"
+    else
+        "$cairnmind_bin" engine install
+    fi
+    "$cairnmind_bin" init
+    "$cairnmind_bin" engine status
 fi
-"$cairnmind_bin" init
-"$cairnmind_bin" engine status
 "$cairnmind_bin" doctor
 
 if [[ "$upgraded_from_devbrain" == true ]]; then
