@@ -138,6 +138,47 @@ def test_after_a_person_accepts_the_kind_this_project_is_ready_and_another_is_no
         act_as_person(fixture.store, fixture.pid, "claude", "future-claude-record", route="cli", withdraw=True)
 
 
+def person_notes(fixture):
+    return fixture.store.query("SELECT count(*) AS n FROM sources WHERE project_id=:project AND uri LIKE 'person://%'",
+                               {"project": fixture.pid})[0]["n"]
+
+
+def test_accepting_a_kind_that_is_already_accepted_writes_no_audit_note(fixture):
+    fixture.accept()
+    assert person_notes(fixture) == 1
+    again = fixture.accept(note="Clicked twice")
+    assert again["status"] == "already_accepted" and again["project_id"] == fixture.pid
+    # Nothing changed, so no second note says a person accepted something.
+    assert person_notes(fixture) == 1
+    assert again["acceptance"]["note"] == "Claude Code bookkeeping, not a decision"
+
+
+def test_the_overview_reads_every_page_and_says_when_it_stopped_early(fixture, monkeypatch):
+    # Thousands of records of an accepted kind must not hide a new kind further on.
+    other = {**FUTURE, "type": "another-future-record"}
+    fixture.transcript(fixture.pid, MODE, *[FUTURE] * 5, other)
+    fixture.accept()
+    monkeypatch.setattr(record_kinds, "_PAGE", 2)
+    view = record_kinds.overview(fixture.store, fixture.pid)
+    assert view["complete"] is True and view["scanned"] == 6
+    assert [item["kind"] for item in view["blocking"]] == ["another-future-record"]
+    assert view["accepted"][0]["records"] == 5
+    # Over the limit: the view knows it did not read everything.
+    cut = record_kinds.overview(fixture.store, fixture.pid, limit=4)
+    assert cut["complete"] is False and cut["scanned"] == 4
+    exact = record_kinds.overview(fixture.store, fixture.pid, limit=6)
+    assert exact["complete"] is True and exact["scanned"] == 6
+
+
+def test_every_record_type_the_reader_interprets_is_a_known_kind():
+    # A technical record a later release adds to the reader is never acceptable when malformed.
+    import inspect
+    assert ingest.CLAUDE_TECHNICAL_RECORDS | ingest.CODEX_TECHNICAL_RECORDS <= record_kinds.KNOWN_KINDS
+    reader = inspect.getsource(ingest._event_text)
+    for kind in record_kinds._INTERPRETED_KINDS:
+        assert f'"{kind}"' in reader, kind
+
+
 def test_doctor_lists_what_a_person_accepted(fixture):
     fixture.accept()
     [row] = record_kinds.doctor_view(fixture.store)

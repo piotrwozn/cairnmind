@@ -22,6 +22,7 @@ import json
 import re
 
 from .confirmation import PERSON_ROUTES, person_mark, person_source
+from .ingest import CLAUDE_TECHNICAL_RECORDS, CODEX_TECHNICAL_RECORDS
 from .sql import one_row, update_document, utc_now
 from .terminal_safe import safe_text
 
@@ -30,17 +31,18 @@ WITHDRAWN_FIELD = "withdrawn_record_kinds"
 CLIENTS = ("claude", "codex", "unknown")
 KIND_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}")
 _VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}")
-# Every record type the reader interprets itself (ingest._event_text): a malformed one is never an unknown kind.
-KNOWN_KINDS = frozenset({
-    "mode", "permission-mode", "session-owner", "atis-latch", "attachment", "api-request-shape", "api-request",
-    "last-prompt", "cost-state", "ai-title", "tools-used", "user", "assistant", "progress", "system", "summary",
-    "file-history-snapshot", "queue-operation", "world_state", "token_usage_record", "session_meta",
-    "turn_context", "event_msg", "response_item"})
+# The record types ingest._event_text names in its own branches, besides its technical record sets.
+_INTERPRETED_KINDS = {"user", "assistant", "progress", "system", "summary", "file-history-snapshot",
+                      "queue-operation", "session_meta", "turn_context", "event_msg", "response_item"}
+# Every record type the reader interprets itself: a malformed one is never an unknown kind. Built from the
+# reader's own technical sets, so a technical record a later release adds is known here at once.
+KNOWN_KINDS = frozenset(_INTERPRETED_KINDS | CLAUDE_TECHNICAL_RECORDS | CODEX_TECHNICAL_RECORDS)
 MAX_NOTE = 1000
 MAX_ACCEPTED = 64
 MAX_WITHDRAWN = 20
 EXCERPT = 300
-LIST_LIMIT = 5000
+LIST_LIMIT = 20000
+_PAGE = 1000
 
 REFUSED = ("Only a person accepts an unknown transcript record kind, and this is not a person's act. Nothing was "
            "stored. The person runs `cairnmind record-kind accept` in their own terminal, or accepts it in the "
@@ -195,30 +197,44 @@ def act_as_person(store, project_id, client, kind, note=None, *, route, withdraw
     route by being the authenticated request that names no session.
     """
     check(client, kind, note, withdraw=withdraw)
-    with store.transaction():
-        text = note.strip() if isinstance(note, str) and note.strip() else f"withdraw {client} {kind}"
-        written = person_source(store, project_id, text, route=route,
-                                action="withdraw_record_kind" if withdraw else "accept_record_kind")
-        with store.person_act(route, written["id"]):
-            return set_acceptance(store, project_id, client, kind, note, withdraw=withdraw)
+    try:
+        with store.transaction():
+            text = note.strip() if isinstance(note, str) and note.strip() else f"withdraw {client} {kind}"
+            written = person_source(store, project_id, text, route=route,
+                                    action="withdraw_record_kind" if withdraw else "accept_record_kind")
+            with store.person_act(route, written["id"]):
+                result = set_acceptance(store, project_id, client, kind, note, withdraw=withdraw)
+            if result["status"] == "already_accepted":
+                # Nothing changed, so no audit note says a person accepted something: roll the note back.
+                raise _Unchanged(result)
+            return result
+    except _Unchanged as unchanged:
+        return {"project_id": project_id, **unchanged.result}
+
+
+class _Unchanged(Exception):
+    def __init__(self, result):
+        super().__init__("unchanged")
+        self.result = result
 
 
 def overview(reader, project_id, limit=LIST_LIMIT) -> dict:
     """The unknown kinds in the project's archived transcripts, and what a person accepted or withdrew.
 
     Read-only. `blocking` are kinds nobody accepted, each with how many records, one example (escaped and
-    cut) and where it is; `malformed` counts unknown records no acceptance can cover.
+    cut) and where it is; `malformed` counts unknown records no acceptance can cover. The records are read
+    in pages, up to `limit` of them; `complete` is false when more were left unread, and the view says so.
     """
-    from .ingest import UNKNOWN_TRANSCRIPT_WARNING
     row = _project_row(reader, project_id)
     standing = _entries(row.get(FIELD))
     keys = {(entry["client"], entry["kind"]) for entry in standing}
-    rows = reader.query(
-        "SELECT id,kind,content,metadata FROM sources WHERE project_id=:project AND is_current=true "
-        "AND kind='transcript_unknown' AND metadata.schema_warning=:warning ORDER BY id LIMIT :limit",
-        {"project": project_id, "warning": UNKNOWN_TRANSCRIPT_WARNING, "limit": limit})
     groups, counts, malformed = {}, {}, 0
-    for source in rows:
+    scanned, complete = 0, True
+    for source in _unknown_rows(reader, project_id, limit):
+        if source is None:
+            complete = False
+            break
+        scanned += 1
         found = unknown_kind(source, source.get("content"))
         if found is None:
             malformed += 1
@@ -239,7 +255,31 @@ def overview(reader, project_id, limit=LIST_LIMIT) -> dict:
             "blocking": [item for item in found_kinds if (item["client"], item["kind"]) not in keys],
             "accepted": [{**entry, "records": counts.get((entry["client"], entry["kind"]), 0)} for entry in standing],
             "withdrawn": _entries(row.get(WITHDRAWN_FIELD), MAX_WITHDRAWN), "malformed": malformed,
-            "scanned": len(rows), "complete": len(rows) < limit}
+            "scanned": scanned, "complete": complete}
+
+
+def _unknown_rows(reader, project_id, limit):
+    """The project's unknown transcript records in id order, a page at a time; None after `limit` when more remain."""
+    from .ingest import UNKNOWN_TRANSCRIPT_WARNING
+    after, seen = None, 0
+    while True:
+        size = min(_PAGE, limit - seen + 1)  # one more than may be read, to learn whether more remain
+        parameters = {"project": project_id, "warning": UNKNOWN_TRANSCRIPT_WARNING, "limit": size}
+        if after is not None:
+            parameters["position"] = after
+        page = reader.query(
+            "SELECT id,kind,content,metadata FROM sources WHERE project_id=:project AND is_current=true "
+            "AND kind='transcript_unknown' AND metadata.schema_warning=:warning"
+            + (" AND id > :position" if after is not None else "") + " ORDER BY id LIMIT :limit", parameters)
+        for source in page:
+            if seen >= limit:
+                yield None
+                return
+            seen += 1
+            yield source
+        if len(page) < size:
+            return
+        after = page[-1]["id"]
 
 
 def doctor_view(reader) -> list[dict]:
