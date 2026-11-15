@@ -1,8 +1,8 @@
 """What the secrets gate (#171) needs from this machine, and a person's release of one record.
 
 The registered secrets are the ones the agent journal already redacts (the service token and the
-ArcadeDB password), the keys saved in the credential store, and the credential variables that the
-runtime strips from child environments. They exist only here, never in CI. Personal-data patterns
+ArcadeDB password), the keys saved in the credential store, the values behind the `env:` references of
+the saved profiles, and the credential variables that the runtime strips from child environments. They exist only here, never in CI. Personal-data patterns
 come from the project's `.cairnmind/publication.toml`, which CI reads from the same checkout.
 
 A release is a person's act: after reading the record, they let its current hits through with a
@@ -11,7 +11,6 @@ beside its sources, cited by no revision, and honoured only for the exact values
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -25,7 +24,6 @@ from .sql import clean_row, utc_now
 
 RELEASE_ORIGIN = "local_user_release"
 CONFIG = Path(".cairnmind") / "publication.toml"
-_ENVIRONMENT_SUFFIXES = ("_API_KEY", "_AUTH_TOKEN", "_GITHUB_TOKEN")
 
 
 class SecretsRefused(MemoryConflict):
@@ -33,17 +31,13 @@ class SecretsRefused(MemoryConflict):
 
 
 def registered_secrets(settings, environ=None):
-    """The secrets registered with Cairnmind on this machine. Unreadable credentials refuse, never pass."""
-    from .api_credentials import CredentialStore, credential_environment_names
-    environ = os.environ if environ is None else environ
-    values = [getattr(settings, "token", None), getattr(settings, "arcade_password", None)]
+    """The secrets registered with Cairnmind on this machine (secret_mask.registered_secrets, which ingestion
+    shares). Unreadable credentials or profiles refuse, never pass."""
+    from .secret_mask import registered_secrets as known
     try:
-        values += CredentialStore(settings).registered_values()
+        return known(settings, environ)
     except ValueError as exc:
-        raise SecretsRefused(f"The saved API keys cannot be read, so they cannot be kept out: {exc}") from None
-    names = set(credential_environment_names())
-    values += [value for name, value in environ.items() if name in names or name.endswith(_ENVIRONMENT_SUFFIXES)]
-    return [value for value in values if isinstance(value, str) and value]
+        raise SecretsRefused(f"The secrets registered here cannot be read, so they cannot be kept out: {exc}") from None
 
 
 def _read_config(path):

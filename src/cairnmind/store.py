@@ -1305,7 +1305,9 @@ class Store:
         if not isinstance(state, dict):
             raise ValueError("Checkpoint state must be an object")
         content = json_text(state)
-        source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint", {"origin": "client"})
+        from .secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+        source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint",
+                               note_metadata(self.settings, content, {"origin": "client"}))
         with self.transaction() as tx:
             old = one_row(tx, "SELECT FROM records WHERE project_id=:project AND kind='checkpoint' AND `key`='latest' AND status!='superseded'", {"project": project_id}, False)
             record = {"kind": "checkpoint", "key": "latest", "content": content, "metadata": state}

@@ -93,9 +93,12 @@ def load_transcripts(path: Path) -> list[dict]:
     return data["transcripts"]
 
 
-def transcript_sources(transcript: dict) -> list[dict]:
+def transcript_sources(transcript: dict, masker=None) -> list[dict]:
     """The sources the product would archive for this transcript's events, each with ``extracted``
-    (whether the product would give it to extraction) and the event's ``expect``."""
+    (whether the product would give it to extraction) and the event's ``expect``. With ``masker``
+    (secret_mask.Masker) the readable view has its known secrets replaced, as ingestion does (#182)."""
+    from .secret_mask import Masker, masked_metadata
+    masker = masker or Masker()
     sources = []
     for index, item in enumerate(transcript["events"]):
         event = item["event"]
@@ -116,6 +119,8 @@ def transcript_sources(transcript: dict) -> list[dict]:
                       "metadata": {"client": detected, "role": role, "session_id": transcript["id"],
                                    "normalized_text": normalized}}
             extracted = bool(normalized) and role in {"user", "assistant"}
+        view, kinds = masker.mask(source["metadata"]["normalized_text"])
+        source["metadata"] = masked_metadata({**source["metadata"], "normalized_text": view}, kinds)
         source["id"] = f"eval:{transcript['id']}:{index}"
         source["project_id"] = "eval"
         sources.append({"source": source, "extracted": extracted, "index": index, "expect": item["expect"]})
@@ -172,10 +177,12 @@ def _diagnostics() -> dict:
 
 
 async def _run_once(agent, transcripts: list[dict]) -> tuple[list[dict], list[dict]]:
+    from .secret_mask import ingest_masker
     results, failures = [], []
+    masker = ingest_masker(agent.settings)
     for transcript in transcripts:
         proposals = {}
-        for item in transcript_sources(transcript):
+        for item in transcript_sources(transcript, masker):
             if not item["extracted"]:
                 continue
             diagnostics = _diagnostics()

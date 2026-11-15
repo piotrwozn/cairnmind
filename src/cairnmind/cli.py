@@ -863,8 +863,11 @@ def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
         record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
         if key is not None:
             record["key"] = key
+        # Known secrets are replaced in the note's indexed view (#182); the note itself is kept as typed.
+        from cairnmind.secret_mask import note_metadata
         sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
-                                              {"role": "user", "origin": "cli"})["id"]]
+                                              note_metadata(store.settings, content,
+                                                            {"role": "user", "origin": "cli"}))["id"]]
         if confirmed:
             result = confirmation.remember_as_person(store, pid, record, sources)
         else:
@@ -910,7 +913,9 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
     # agent's command or a script there is no person (#177): the task is stored as proposed, and says so.
     person = confirmation.person_at_terminal()
     with actor_write(store, ctx.obj, pid):
-        src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual", {"role": "user"})
+        from cairnmind.secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+        src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual",
+                             note_metadata(store.settings, text, {"role": "user"}))
         record = {"kind": "task", "content": title, "status": "confirmed" if person else "proposed",
                   "metadata": metadata}
         if person:
