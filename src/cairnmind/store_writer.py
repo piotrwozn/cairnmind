@@ -172,12 +172,20 @@ def read_writer(reader) -> dict | None:
     return rows[0] if rows else None
 
 
+def _note(value) -> dict:
+    """The note of a takeover (#242): free text another installation wrote, shown as inert text, one line."""
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    from .terminal_safe import safe_text
+    return {"note": safe_text(" ".join(value.split()), limit=NOTE_LIMIT)}
+
+
 def describe(row: dict | None) -> dict | None:
     """The writer row as it may be shown: identifiers and labels only, each made safe to print."""
     if not row:
         return None
-    history = [{key: label(entry.get(key)) for key in ("installation_id", "previous", "host", "at", "how")
-                if entry.get(key) is not None}
+    history = [{**{key: label(entry.get(key)) for key in ("installation_id", "previous", "host", "at", "how")
+                   if entry.get(key) is not None}, **_note(entry.get("note"))}
                for entry in (row.get("history") or [])[-HISTORY_LIMIT:] if isinstance(entry, dict)]
     return {"installation": label(row.get("installation_id")), "host": label(row.get("host")),
             "since": label(row.get("since")), "history": history}
