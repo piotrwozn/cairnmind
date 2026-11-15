@@ -8,10 +8,8 @@ import gzip
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import re
-import tempfile
 import threading
 import time
 from uuid import uuid4
@@ -19,6 +17,8 @@ from uuid import uuid4
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
+from .backup_reader import opened_backup
+from .store_backup import payload_digest, streamed_backup, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -44,6 +44,8 @@ LEGACY_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, "nodes", "edges")
 V03_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, "nodes", "edges")
 V04_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, "nodes", "edges")
 EXPORT_TYPES = (*DOCUMENT_TYPES, "nodes", "edges")
+# What restore checks a backup against; an earlier format's payload has the later types empty.
+RESTORE_TYPES = {"export": EXPORT_TYPES, "v03": V03_DOCUMENT_TYPES, "v04": V04_DOCUMENT_TYPES, "v05": V05_DOCUMENT_TYPES}
 MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
     "plan_ref", "step_key", "required_profiles", "plan_context_hash", "depends_on", "acceptance_criteria",
     "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals", "scope",
@@ -519,12 +521,11 @@ class Store:
                 return
             # Snapshot only existing types. Hold the writer lock through
             # backup, additive DDL, and the version-last commit.
-            with self.client.transaction() as tx:
-                payload = self._export_snapshot(tx, None,
-                    LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
-                    version + 1)
             destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
-            self._write_backup(destination, payload)
+            with self.client.transaction() as tx:
+                self._write_backup(destination, streamed_export(tx,
+                    LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
+                    version + 1))
         collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
                        else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
                        else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
@@ -1661,31 +1662,13 @@ class Store:
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
             destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
-        return self._write_backup(destination, self.export())
+        # Rows are read, hashed and compressed a page at a time inside one transaction; the file is moved
+        # into place only after that transaction commits (#196).
+        return streamed_backup(self.transaction, destination, EXPORT_TYPES, 5)
 
     @staticmethod
     def _write_backup(destination, payload):
-        destination = Path(destination).expanduser().resolve()
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        envelope = {"format": BACKUP_FORMATS[0], "version": 1, "sha256": hashlib.sha256(json_text(payload).encode()).hexdigest(), "payload": payload}
-        fd, name = tempfile.mkstemp(prefix=".cairnmind-backup-", dir=destination.parent)
-        temporary = Path(name)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
-                    compressed.write(json_text(envelope).encode())
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            temporary.replace(destination)
-            directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-            return destination
-        finally:
-            temporary.unlink(missing_ok=True)
+        return write_backup(destination, payload)
 
     @staticmethod
     def _validated_backup(path):
@@ -1695,7 +1678,7 @@ class Store:
             if not isinstance(envelope, dict) or envelope.get("format") not in BACKUP_FORMATS or envelope.get("version") != 1:
                 raise ValueError("This file is not a supported Cairnmind ArcadeDB backup")
             payload = envelope["payload"]
-            if hashlib.sha256(json_text(payload).encode()).hexdigest() != envelope.get("sha256"):
+            if payload_digest(payload) != envelope.get("sha256"):
                 raise ValueError("Backup checksum mismatch")
             if not isinstance(payload, dict):
                 raise ValueError("Backup payload must be an object")
@@ -1763,12 +1746,17 @@ class Store:
 
     def restore(self, backup):
         """Restore validated data atomically. Stop Cairnmind workers before calling."""
-        payload = self._validated_backup(Path(backup).expanduser().resolve())
+        # The file is validated in two passes over it before anything changes, and read a third time for
+        # the inserts; it is never held in memory whole (#196, backup_reader).
         from .store_writer import require_writer
-        require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
-        self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
+        with opened_backup(Path(backup).expanduser().resolve(), self._validated_backup, RESTORE_TYPES) as source:
+            require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
+            self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
+            self._restore_from(source)
+
+    def _restore_from(self, source):
         # DDL is deliberately outside the data transaction; no live data has been removed.
-        for registry in payload["vector_indexes"]:
+        for registry in source.vector_indexes:
             name, dimension = registry.get("type_name"), registry.get("dimension")
             if not isinstance(name, str) or not name.startswith("vector_") or type(dimension) is not int or dimension <= 0:
                 raise ValueError("Invalid vector namespace in backup")
@@ -1788,23 +1776,25 @@ class Store:
             tx.command("DELETE FROM nodes")
             for collection in reversed(DOCUMENT_TYPES):
                 tx.command(f"DELETE FROM {quote_name(collection)}")
-            for collection in DOCUMENT_TYPES:
-                for original in payload[collection]:
-                    row = dict(original)
-                    if collection == "jobs" and row.get("state") == "running":
-                        row.update(state="pending", worker=None, lease_until=None)
-                    if collection == "journal_state":
-                        # The backup's head may name the writer of the time it was made, or none.
-                        row["writer"] = self.installation.id
-                    insert_document(tx, collection, row)
-            for node in payload["nodes"]:
+            # Documents first (projects and sources before the graph that checks them), then vertices,
+            # then edges and vectors; a streamed file is read once for each of the three.
+            for _, collection, original in source.rows(DOCUMENT_TYPES):
+                row = dict(original)
+                if collection == "jobs" and row.get("state") == "running":
+                    row.update(state="pending", worker=None, lease_until=None)
+                if collection == "journal_state":
+                    # The backup's head may name the writer of the time it was made, or none.
+                    row["writer"] = self.installation.id
+                insert_document(tx, collection, row)
+            for _, _, node in source.rows(("nodes",)):
                 self.upsert_node(node, tx)
-            for edge in payload["edges"]:
-                self.upsert_edge(edge, tx)
-            for name, rows in payload.get("vector_data", {}).items():
+            for kind, name, row in source.rows(("edges",), vectors=True):
+                if kind == "row":
+                    self.upsert_edge(row, tx)
+                    continue
                 if not isinstance(name, str) or not name.startswith("vector_"):
                     raise ValueError("Invalid vector type in backup")
-                for row in rows:
+                if row is not None:
                     insert_document(tx, name, row)
 
     def forget_project(self, project_id):

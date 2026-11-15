@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from cairnmind import __version__
 from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
+from cairnmind.store_backup import stale_temporaries
 
 log = logging.getLogger(__name__)
 # How often background work that lost the writer role looks again whether a person took it back (#70).
@@ -422,6 +423,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 from cairnmind.verification import recover_interrupted_runs
                 await asyncio.to_thread(recover_interrupted_runs, store, settings)
                 backup_dir = settings.data_dir / "backups"
+                # A backup killed midway leaves its temporary file; one a day old is no longer being written.
+                for stale in stale_temporaries(backup_dir, 86400):
+                    stale.unlink(missing_ok=True)
                 backups = daily_backups(backup_dir)
                 if not backups or time.time() - backups[-1].stat().st_mtime > 86400:
                     backup_dir.mkdir(exist_ok=True)

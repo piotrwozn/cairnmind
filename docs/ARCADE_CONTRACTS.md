@@ -124,6 +124,32 @@ Additional root-facing methods needed:
   native graph reconstructed via helpers on restore, credentials excluded, transactional
   snapshot export; native engine backup optional extra. Choose `.cairnmind.json.gz` backup (`.devbrain.json.gz` up to 0.9.0)
   default and validate manifest/hash before destructive restore. Backups remain source complete.
+- whole-database backup (`Store.backup`, the daily backup and the `before-*` safety copies, `store_backup.py`, #196):
+  written as a stream inside one transaction under the writer lock. Each type is read in record id order
+  (`WHERE @rid > :rid ORDER BY @rid LIMIT n`, the page size adapting to the row size), each row serialized
+  with `json_text`, hashed and compressed as it comes; Python memory stays bounded by a page, not by the store.
+  The file is unchanged: envelope 1, keys in `json_text` order (`format`, `payload`, `sha256`, `version`),
+  the bytes the in-memory writer produced, so every earlier restore reads it. It is written under a temporary
+  `.cairnmind-backup-*` name in the destination folder while the transaction is open, then synced and moved
+  into place only after the transaction commits, so a failed commit leaves no file (the before-schema copy
+  is the exception: its read-only transaction ends after the move, and a failure there stops the migration
+  before any change). A partial file left by a killed process has no gzip trailer and is refused; the store
+  size view counts it under other backups and the service removes it once it is a day old.
+- restore (`Store.restore`, `backup_reader.py`, #196): reads the same envelope 1 in pieces, never whole. A
+  first pass walks the document one row at a time with the standard library decoder, recomputes the checksum
+  over the rows serialized with `json_text`, and keeps only a bounded index (project ids; for sources, nodes
+  and records the id and the fields the cross references use, and whether the source hash was right). A
+  second pass checks every cross reference against it. Only then is the before-restore copy made and the
+  store changed; the inserts read the file three more times (documents, then vertices, then edges and
+  vectors) inside the one restore transaction. Every check, its order and its message are those of
+  `Store._validated_backup`, which still loads the rare file that is valid JSON in a layout no writer
+  produced (keys out of sorted order or repeated, a document that is not an object). Each later pass compares
+  a digest of the bytes it read with the first pass, so a file changed during a restore is refused and the
+  transaction rolled back. Some structural checks still run only inside that transaction, after its deletes,
+  as in 0.10.0: those of `upsert_node` and `upsert_edge`, a vector entry that is not a list or a vector row
+  that is not an object, and repeated ids that hit a unique index; their refusal is undone by the rollback.
+  A failure at any point before the commit leaves the store as it was. Python memory
+  is bounded by the largest row plus the index; the engine still holds the restore transaction itself.
 
 ## Ingestion (ingestion agent owns)
 
