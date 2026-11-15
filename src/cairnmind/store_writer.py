@@ -22,6 +22,15 @@ changes data already reads that row and updates it in the same commit (journal.J
 .flush), so the check costs no extra round trip, and the database fences it: a transaction whose
 read of the head is older than a takeover fails on commit with a conflict instead of writing.
 
+The engine (ArcadeDB 26.11.1) decides a conflict per record and at commit, and only for a record the
+transaction really changed: an UPDATE that sets the values a record already has in the transaction's
+view is dropped, so it neither writes nor conflicts, and a WHERE clause is evaluated on that view
+too. A takeover that read the head, then lost a race, then wrote the writer row and "stamped" the
+head with the identifier its old view already showed would therefore commit the row alone, and leave
+the row naming one installation and the head another. So every stamp also writes ``writer_change``,
+a value that is new each time: a claim or a takeover always changes the head, and of two that overlap
+the second commit fails whole (the person runs the command again and takes over from the first).
+
 A takeover (``cairnmind store takeover --yes``) is a person's act. It rewrites both rows, records
 who took over from whom, when, from which host and with which note, and puts the jobs the previous
 writer was running back to pending, so that only the new writer's worker runs them. The previous
@@ -187,7 +196,29 @@ def lost_reason(row: dict | None) -> str:
 
 
 def stamp(tx, installation_id: str) -> None:
-    tx.command("UPDATE journal_state SET writer=:writer WHERE id='current'", {"writer": installation_id})
+    """Name the writer in the journal head, always as a change of that record (see the module text)."""
+    tx.command("UPDATE journal_state SET writer=:writer,writer_change=:change WHERE id='current'",
+               {"writer": installation_id, "change": uuid4().hex})
+
+
+def head_writer(reader) -> str | None:
+    """The installation the journal head names; None for a store without a head, or a head that names none."""
+    from .arcade import ArcadeError
+    try:
+        rows = reader.query("SELECT writer FROM journal_state WHERE id='current'")
+    except ArcadeError:  # a store of another release without the type
+        return None
+    return rows[0].get("writer") if rows else None
+
+
+def mixed_reason(row: dict, head) -> str:
+    """For a store whose writer row and journal head name different installations (left by a takeover race
+    of a build before the fix): what holds until a person repairs it."""
+    return (f"The writer row names installation {short(row.get('installation_id'))} on {label(row.get('host'))}, "
+            f"but the journal head names installation {short(head)}: two takeovers ran at the same time. Until it "
+            f"is repaired, a process of {short(head)} that was already running can still commit, and a running "
+            f"process of {short(row.get('installation_id'))} is refused. Run `{TAKEOVER_COMMAND}` on the "
+            "installation that should write this store.")
 
 
 def settle(client, me: Installation) -> dict | None:
@@ -195,7 +226,7 @@ def settle(client, me: Installation) -> dict | None:
 
     Called by Store.init with the local writer lock held. Writes nothing when the role is already
     recorded for this installation. Two installations that claim one new store at the same time both
-    update the journal head, so one of them fails on commit; Store.init then reads again.
+    change the journal head (stamp), so one of them fails on commit; Store.init then reads again.
     """
     row = read_writer(client)
     if row and row.get("installation_id") != me.id:
@@ -207,10 +238,14 @@ def settle(client, me: Installation) -> dict | None:
         # The head first: the engine refuses an update of a record only when it changed after this transaction
         # read it, so a claim committed after this read makes this commit fail, and one committed before it is
         # seen in the writer row read next (a page read for the first time shows the latest commit).
-        tx.query("SELECT writer FROM journal_state WHERE id='current'")
+        heads = tx.query("SELECT writer FROM journal_state WHERE id='current'")
         row = read_writer(tx)
         if row and row.get("installation_id") != me.id:
             return row
+        if row and heads and heads[0].get("writer") not in (None, me.id):
+            # The row names this installation and the head another one (mixed_reason). Opening a store never
+            # moves the fence away from an installation: writes are refused until a person runs the takeover.
+            return None
         if row is None:
             now = utc_now()
             insert_document(tx, "devbrain_meta", {
@@ -232,7 +267,10 @@ def check_head(store, head: dict | None, native) -> None:
         if head:
             stamp(native, me)
         return
-    store._writer_lost = lost_reason(row)
+    # The row may name this installation while the head names another (mixed_reason). Not repaired here: this
+    # transaction may have read the row before a takeover and the head after it.
+    store._writer_lost = mixed_reason(row, recorded) if row and row.get("installation_id") == me and recorded \
+        else lost_reason(row)
     raise StoreWriterLost(store._writer_lost)
 
 
@@ -276,15 +314,22 @@ def take_over(store, note: str | None = None) -> dict:
     ready = not getattr(store, "not_ready", None)
     with store._lock(), client.transaction() as native:
         has_head = ready or "journal_state" in {row.get("name") for row in native.query("SELECT name FROM schema:types")}
-        # The head first, as in settle.
-        has_head = has_head and bool(native.query("SELECT writer FROM journal_state WHERE id='current'"))
+        # The head first, as in settle: the stamp below changes it, so a claim or a takeover committed after
+        # this read makes this commit fail, and one committed before it is seen in the writer row read next.
+        heads = native.query("SELECT writer FROM journal_state WHERE id='current'") if has_head else []
+        has_head, named = bool(heads), heads[0].get("writer") if heads else None
         row = read_writer(native)
         previous = row.get("installation_id") if row else None
-        if previous == me:
+        # The row names this installation and the head another one (mixed_reason): the head is put right.
+        repair = previous == me and named not in (None, me)
+        if previous == me and not repair:
             store._writer_lost = None
             return {"taken_over": False, "reason": "This installation is already the writer.", "writer": describe(row)}
+        if repair:
+            previous = named
         now, host = utc_now(), label(socket.gethostname())
-        entry = {"installation_id": me, "previous": previous, "host": host, "at": now, "how": "takeover"}
+        entry = {"installation_id": me, "previous": previous, "host": host, "at": now,
+                 "how": "repair" if repair else "takeover"}
         if note:
             entry["note"] = note
         history = [*(row.get("history") or []), entry][-HISTORY_LIMIT:] if row else [entry]
@@ -301,8 +346,11 @@ def take_over(store, note: str | None = None) -> dict:
             released = release_running_jobs(tx, now)
             tx.flush()
     store._writer_lost = None
-    return {"taken_over": True, "previous": label(previous) if previous else None, "released_jobs": released,
-            "writer": describe({**values, "history": history})}
+    result = {"taken_over": True, "previous": label(previous) if previous else None, "released_jobs": released,
+              "writer": describe({**values, "history": history})}
+    if repair:
+        result["repaired"] = "The writer row already named this installation; the journal head now does too."
+    return result
 
 
 def release_running_jobs(tx, now: str) -> int:
@@ -325,7 +373,13 @@ def take_over_at(data_dir: Path, note: str | None = None) -> dict:
     from .store import Store
     note = valid_note(note)
     store = Store(data_dir, for_takeover=True)
-    result = take_over(store, note)
+    try:
+        result = take_over(store, note)
+    except ArcadeError as exc:
+        if "ConcurrentModification" not in exc.exception_name:
+            raise
+        raise StoreNotWriter("Another installation claimed or took over this store at the same moment, so nothing "
+                             f"was changed here. Run `{TAKEOVER_COMMAND}` again to take over from it.") from None
     if not store.not_ready or not result["taken_over"]:
         return result
     # Now that this installation is the writer, open the store as the writer: that upgrades the schema it can
@@ -359,7 +413,11 @@ def state(store) -> dict:
         result["copied_from"] = label(me.copied_from)
     if reason:
         result["reason"] = reason
-    if role in {"reader", "lost"}:
+    named = head_writer(store.client) if row else None
+    mixed = bool(named) and named != row.get("installation_id")
+    if mixed:
+        result["head_writer"], result["problem"] = label(named), mixed_reason(row, named)
+    if mixed or role in {"reader", "lost"}:
         result["next"] = TAKEOVER_COMMAND
     return result
 
