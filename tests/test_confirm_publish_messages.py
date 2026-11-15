@@ -69,3 +69,31 @@ def test_a_refusal_for_a_command_without_a_terminal_names_piped_or_redirected_in
     for result in (plan, remember):
         assert result.exit_code == 2 and "piped or redirected" in " ".join(result.output.split()), result.output
     assert "piped or redirected" in record_kinds.CLI_REFUSED and "piped or redirected" in confirmation.CLI_REFUSED
+
+
+def test_adopting_a_confirmed_legacy_task_names_it_by_its_text_and_its_id_once(workspace):  # noqa: F811
+    from cairnmind.confirmation import ConfirmationRefused
+    from cairnmind.plans import PlanManager
+    from conftest import as_person
+    store, pid, _, _ = workspace
+    source = store.snapshot(pid, "note://legacy", "Ship the importer", "note")
+    task = as_person(store, pid, {"kind": "task", "content": "Ship the importer",
+                                  "metadata": {"state": "todo", "plan_id": "old-group", "step_index": 1}},
+                     [source["id"]])
+    with pytest.raises(ConfirmationRefused) as refused:
+        PlanManager(store).adopt_legacy(pid, "old-group", idempotency_key="adopt-1")
+    words = " ".join(str(refused.value).split())
+    assert f"Task 'Ship the importer' (task {task['id']})" in words, words
+    assert words.count(task["id"]) == 1, words
+
+
+def test_the_refusal_for_a_confirmed_checkpoint_record_points_to_the_checkpoint_tool(workspace):  # noqa: F811
+    from cairnmind.confirmation import ConfirmationRefused
+    store, pid, _, _ = workspace
+    saved = store.checkpoint(pid, {"goal": "Ship", "next": "Write tests"})
+    confirmed = Inspector(store).review(pid, saved["id"], "confirm", saved["version"])["record"]
+    with pytest.raises(ConfirmationRefused) as refused:
+        store.remember(pid, {"id": saved["id"], "expected_version": confirmed["version"], "content": "{}"},
+                       confirmed["source_ids"])
+    words = " ".join(str(refused.value).split())
+    assert "checkpoint tool" in words and "under another key" not in words, words

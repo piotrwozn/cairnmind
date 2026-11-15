@@ -134,6 +134,10 @@ def kept_refusal(record, change, status=None, differs=()) -> str:
     elif kind == "task":
         instead = ("report progress on it as before (state, evidence, check runs, scope), or store a new proposed "
                    "task; the person disputes this one in the inspector, or changes it in their own terminal.")
+    elif kind == "checkpoint":
+        # There is one checkpoint record per project: a second one under another key is not a way out (#239).
+        instead = ("save the new state with the checkpoint tool (`checkpoint`), which replaces the checkpoint record; "
+                   "the earlier confirmation then lapses.")
     else:
         instead = (f"store what you found as a new proposed {kind} under another key and tell the person; "
                    "they dispute this record or confirm the new one in the inspector.")
@@ -142,13 +146,17 @@ def kept_refusal(record, change, status=None, differs=()) -> str:
             + instead)
 
 
-def kept_step_refusal(step_key, refusal, adoption=False) -> str:
-    """The same refusal for a plan save, with the step named; an adoption has its own sentence."""
+def kept_step_refusal(step_key, refusal, adoption=False, title=None) -> str:
+    """The same refusal for a plan save, with the step named; an adoption has its own sentence.
+
+    An adopted legacy task's step key is its ID, so an adoption names the task by its text (#239).
+    """
     would = _would(refusal.change, refusal.status, refusal.differs)
     if refusal.change == "status" and refusal.status == "superseded":
         would = "remove it from the plan"
     if adoption:
-        return (f"Task {str(step_key)[:200]!r} (task {refusal.record_id}) was confirmed by a person, or before "
+        name = _clean(title, 200) if isinstance(title, str) and title.strip() else str(step_key)[:200]
+        return (f"Task {name!r} (task {refusal.record_id}) was confirmed by a person, or before "
                 "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
                 f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
                 "The person runs `cairnmind plan adopt` in their own terminal; the adopted steps are then proposed "
