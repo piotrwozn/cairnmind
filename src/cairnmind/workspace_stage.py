@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 
+from .check_profile_messages import check_error_text
 from .terminal_i18n_messages import display_word
 from .terminal_notices import about
 from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
@@ -58,7 +59,7 @@ def check_summary(result: dict, translate) -> str:
     for reason in (result.get("reasons") or [])[:10]:
         lines.append("- " + str(reason))
     if result.get("error"):
-        lines.append(translate("Error") + ": " + str(result["error"]))
+        lines.append(translate("Error") + ": " + check_error_text(result["error"], translate))
     if result.get("id"):
         lines.append(translate("Check run") + ": " + str(result["id"]))
     lines.append(translate("The task state is unchanged. Update it after you review the result."))
@@ -105,11 +106,12 @@ async def _shown(app, scope) -> bool:
 
 def _outcome(app, profile, result=None, error=None) -> str:
     if error is not None or _not_run(result):
-        return app.t("The check could not run") + ": " + profile + " · " + str(error if error is not None else result["error"])
+        return (app.t("The check could not run") + ": " + profile + " · "
+                + check_error_text(error if error is not None else result["error"], app.t))
     verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
     return (app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
             + (" " + app.t("Outcome") + ": " + display_word(result["outcome"], app.t) if result.get("outcome") else "")
-            + (" · " + str(result["error"]) if result.get("error") else ""))
+            + (" · " + check_error_text(result["error"], app.t) if result.get("error") else ""))
 
 
 def _deliver(app, scope, subject, text, current=None) -> None:

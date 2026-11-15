@@ -21,6 +21,7 @@ import tomllib
 import threading
 from uuid import UUID, uuid4
 
+from .check_profile_messages import unknown_profile_message
 from .sql import clean_row, insert_document, json_text, utc_now
 from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 
@@ -31,19 +32,6 @@ _PROFILE_PATHS = (Path(".cairnmind/checks.toml"), Path(".devbrain/checks.toml"))
 
 class _RunReferencesGone(ValueError):
     """Concurrent deletion won over recording check evidence."""
-
-
-def _name(value) -> str:
-    """A profile name as a message may show it: a plain short name, or a placeholder (names come from input)."""
-    text = value if isinstance(value, str) else ""
-    return text if 0 < len(text) <= 64 and all(c.isascii() and (c.isalnum() or c in "._-") for c in text) else "?"
-
-
-def unknown_profile_message(profile_id, profiles) -> str:
-    """Names the profile asked for and the ones this worktree declares, so the fix is in the message."""
-    declared = ", ".join(sorted(_name(name) for name in profiles)[:10]) or "none"
-    return (f"Unknown check profile: {_name(profile_id)}. This worktree declares: {declared}. "
-            f"See cairnmind check profiles PROJECT.")
 
 
 def _hash(value) -> str:
