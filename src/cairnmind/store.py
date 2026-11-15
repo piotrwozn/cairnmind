@@ -497,13 +497,20 @@ class Store:
 
     def init(self):
         from .arcade import ArcadeError
-        from .store_writer import claimed_meanwhile, read_writer, settle
+        from .store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
         with self._lock():
             types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
-            writer = read_writer(self.client) if "devbrain_meta" in types else None
+            writer, named = read_writer(self.client) if "devbrain_meta" in types else None, None
+            if writer and "journal_state" in types:
+                writer, named = read_fence(self.client)
             if writer and writer.get("installation_id") != self.installation.id:
                 # Another installation writes this database: no schema statement, no upgrade and no write here.
                 self._open_as_reader(writer)
+                return
+            if writer and named not in (None, self.installation.id):
+                # The row names this installation and the journal head another one: no schema statement and no
+                # write here either, until a person runs the takeover (store_writer.mixed_reason).
+                self._writer_lost = mixed_reason(writer, named)
                 return
             try:
                 self._prepare_schema()
