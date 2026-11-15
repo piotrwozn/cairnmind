@@ -41,6 +41,7 @@ EXACT_ROWS = 1000
 SAMPLE_POINTS = 32
 SAMPLE_WINDOW = 8
 KIND_PAGE = 10000
+SAFETY_SHOWN = 10  # safety backups listed by name in the text report
 # A fixed seed: the same store gives the same figures each time it is measured.
 SEED = 184
 STATES = ("current", "replaced")
@@ -242,7 +243,10 @@ def _backups(directory: Path) -> dict:
                      "before_restore" if path.name.startswith("before-restore-") else "other")
             groups[group]["count"] += 1
             groups[group]["bytes"] += path.stat().st_size
-    return {"path": str(directory), **groups}
+    # Each safety backup by name (#190): nothing deletes them but `cairnmind store prune-backups`.
+    from .store_prune import safety_backups
+    safety = [{key: entry[key] for key in ("name", "kind", "bytes", "modified")} for entry in safety_backups(directory)]
+    return {"path": str(directory), **groups, "safety": safety}
 
 
 def _disk(settings) -> dict:
@@ -324,6 +328,18 @@ def _kind(row) -> str:
     return "(source not found)" if row.get("source_found") is False else _name(row["kind"])
 
 
+def _safety_lines(safety) -> list[str]:
+    """The safety backups, newest first, at most SAFETY_SHOWN of them; the JSON report lists them all."""
+    if not safety:
+        return []
+    lines = ["  safety backups (newest first; delete old ones with `cairnmind store prune-backups --keep K`)"]
+    lines += [f"    {entry['modified']}  {_size(entry['bytes']):>10}  {_name(entry['name'], 90)}"
+              for entry in safety[:SAFETY_SHOWN]]
+    if len(safety) > SAFETY_SHOWN:
+        lines.append(f"    and {len(safety) - SAFETY_SHOWN} older (see --json)")
+    return lines
+
+
 def render(report) -> str:
     """The report for a person: counts and sizes only, with every name from the store made safe."""
     project = report["project"]
@@ -355,6 +371,7 @@ def render(report) -> str:
     for label, key in (("scheduled", "scheduled"), ("before-schema", "before_schema"),
                        ("before-restore", "before_restore"), ("other", "other")):
         lines.append(f"  backups {label:<15} {backups[key]['count']:>4} file(s) {_size(backups[key]['bytes']):>12}")
+    lines += _safety_lines(backups["safety"])
     journals = disk["agent_journals"]
     lines.append(f"  agent journals   {journals['sessions']:>4} session(s) {_size(journals['bytes']):>12}")
     lines.append(f"Measured in {report['elapsed_seconds']:.3f} s.")
