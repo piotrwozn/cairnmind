@@ -1024,14 +1024,15 @@ class KnowledgeAgent:
         return {**result, "diagnostics": diagnostics}
 
     async def _support_gate(self, project_id: str, question: str, result: dict, evidence: dict, started: float,
-                            diagnostics: dict) -> dict:
+                            diagnostics: dict, *, plain: bool = True) -> dict:
         """Keep a complete answer complete only if its sources name the question's subject and one
         judge call finds that its quotes state the answer.
 
         Anything else (not complete, so no call) passes unchanged. The subject check (subject.py)
         comes first and asks no model: a name of the question's subject that no quoted source has
-        ends the answer as below, with the code answer_unsupported and no judge call. A "no", an
-        unparsed reply or a failed call of the judge
+        ends the answer as below, with the code answer_unsupported and no judge call. It reads
+        only a ``plain`` question: one asked with an answer schema is a caller's instruction, whose
+        field names are not subjects. A "no", an unparsed reply or a failed call of the judge
         yields the result of a failed citation validation: partial, the answer withheld,
         the verified quotes kept as sources, the judge's reason in unknowns. The code is
         answer_unsupported when the judge said no and support_unverified when it gave no verdict.
@@ -1040,7 +1041,7 @@ class KnowledgeAgent:
         if result.get("status") != "complete":
             return result
         unnamed = await asyncio.to_thread(unnamed_subject, self.store, project_id, question,
-                                          result["sources"], evidence)
+                                          result["sources"], evidence) if plain else []
         if unnamed:
             diagnostics["support_check"] = "subject_missing"
             return self._result("partial", "The model's answer could not be verified in the sources.",
@@ -1194,7 +1195,8 @@ class KnowledgeAgent:
                         )
                         if not repairable:
                             judged = validated
-                            return await self._support_gate(project_id, question, validated, evidence, started, diagnostics)
+                            return await self._support_gate(project_id, question, validated, evidence, started, diagnostics,
+                                                            plain=answer_schema is None)
                         repair_fallback = validated
                         diagnostics["validation_codes"] = [validated["diagnostics"]["code"]]
                         if _step + 1 >= self.settings.max_steps:
@@ -1232,7 +1234,8 @@ class KnowledgeAgent:
                         diagnostics["repair_outcome"] = ("failed" if still_repairable or
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
                         judged = result
-                        return await self._support_gate(project_id, question, result, evidence, started, diagnostics)
+                        return await self._support_gate(project_id, question, result, evidence, started, diagnostics,
+                                                        plain=answer_schema is None)
                     if not isinstance(calls, list) or len(calls) > 6:
                         return self._result("partial", "The model returned an invalid list of tool calls.", evidence,
                                             ["The model broke the tool protocol."], started,

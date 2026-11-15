@@ -47,6 +47,9 @@ REPOSITORY = Path(__file__).resolve().parents[1]
     # A pasted value (a token, a hash, a commit, an id) is not a name.
     ("Where is authenticate? token Zx3kQ9_vB7-mN2pL5rT8wY1cF4hJ6dG0sA", []),
     ("What did commit d489cee change, and what is 7f3a9b2c-11de-4a5b-9c3d-2e1f0a9b8c7d?", []),
+    # Days and months are capitalised by the language; in headline case every word is.
+    ("What changed since Monday in the November notes?", []),
+    ("What Is The Default Zookeeper Port Of The Local Service?", []),
     # A lower-case product name without backticks has no shape to go by: a known limit.
     ("What is the default haproxy port?", []),
     # Each name once, in order.
@@ -97,6 +100,11 @@ def test_every_name_must_be_somewhere_and_a_question_without_names_misses_nothin
     assert missing_subject("What is the default Zookeeper port?", passages) == []
     assert missing_subject("What is the default Zookeeper port of Consul?", passages) == ["Consul"]
     assert missing_subject("What is the default port?", []) == []
+    # Three names or more are context as well as subject: half of them must be there.
+    rich = "With Consul behind Vault on Debian I see zookeeper_port refused; what is its default?"
+    assert subject_terms(rich) == ["Consul", "Vault", "Debian", "zookeeper_port"]
+    assert missing_subject(rich, [*passages, "the Consul agent"]) == []
+    assert missing_subject(rich, passages) == ["Consul", "Vault", "Debian"]
     # An oversized or hostile question costs bounded work and never raises: a word longer than any
     # name is not one, and only the first names are checked.
     assert missing_subject("A " + "Consul" * 50000 + " (((" + "\\" * 50, passages) == []
@@ -169,6 +177,21 @@ async def test_the_project_s_own_name_and_its_directories_are_never_missing(work
     result, _ = await _asked(store, project, settings, "On which port does Gadgetlib listen by default?",
                              path="settings/config.py")
     assert result["status"] == "partial" and result["diagnostics"]["support_check"] == "subject_missing"
+
+
+async def test_a_question_asked_with_an_answer_schema_is_a_caller_s_instruction_and_is_not_read(workspace):  # noqa: F811
+    # The recall evaluation and the agents ask this way: the question names the fields to fill
+    # ("answer_schema", "next_action"), which no source has to repeat.
+    store, project, settings = workspace
+    uri = str(Path(project["root"]) / "src/example/config.py")
+    source, _ = document(store, project, CONFIG, uri=uri, metadata={"relative_path": "src/example/config.py"})
+    contract = {"type": "object", "properties": {"port": {"type": "integer"}}, "required": ["port"],
+                "additionalProperties": False}
+    model = FakeOllama([final(source["id"], "port: int = 8765", {"port": 8765})])
+    result = await KnowledgeAgent(store, settings, model).ask(
+        project["id"], "Retrieve the service port. Put an object matching the caller-provided answer_schema "
+                       "in the answer field, with exactly the field service_port_value.", answer_schema=contract)
+    assert result["status"] == "complete" and len(model.support_calls) == 1
 
 
 def test_the_gap_of_a_refused_subject_is_translated_and_the_names_are_kept():

@@ -14,8 +14,8 @@ What counts as a name is decided by the written shape of the word, never by a li
 
 - an identifier: a word with an underscore, a dot between letters (``pyproject.toml``), a capital
   inside (``ArcadeDB``), or letters and digits together (``qwen3``);
-- a proper name: a capitalised word that does not begin a sentence (``Redis``, ``Java``);
-- one word alone between backticks (```redis```).
+- a proper name: a capitalised word that does not begin a sentence (``Consul``, ``Java``);
+- one word alone between backticks (```consul```).
 
 Left out: words of the language and words every project has (GENERIC: default, port, file,
 value, setting ...), abbreviations written in capitals only (URL, GPU, TTL are more often common
@@ -23,13 +23,17 @@ words than names), numbers and versions, pasted values (a token, a hash, an id: 
 run with a digit, or a word with single characters between its digits and capitals), and the
 project's own names, which the caller passes. A question without such a word is not checked at
 all: the gate then does not apply. A product name written in lower case without backticks has no
-shape to go by and is not read either; such a question rests on the support check alone.
+shape to go by and is not read either; such a question rests on the support check alone. So does
+a question written in headline case, where a capital says nothing, and one asked with an answer
+schema, which is a caller's instruction full of field names (the caller of ``unnamed_subject``
+leaves those out). A question with one or two names needs every one of them in a quoted source;
+with three or more, which is a question with context, at least half.
 
 A name matches without regard to case, across ``_``, ``-``, ``.`` and spaces where the name itself
 has a seam (``num_ctx`` in "num ctx", ``ArcadeDB`` in "arcade_db"), split once where it has none
-(``Elasticsearch`` in "elastic_search"), as a part of an identifier (``Redis`` in ``redisPort`` or
-``redis_port``), with a plural or possessive ending, and with the one-letter ending of an inflected
-form ("Redisa", "Javy"). A compound name whose first part has five letters or more is also found
+(``Zookeeper`` in "zoo_keeper"), as a part of an identifier (``Consul`` in ``consulPort`` or
+``consul_port``), with a plural or possessive ending, and with the one-letter ending of an inflected
+form ("Consula", "Javy"). A compound name whose first part has five letters or more is also found
 by that part alone, because identifiers shorten it that way (``arcade_url`` for ArcadeDB).
 """
 from __future__ import annotations
@@ -50,6 +54,8 @@ STOP = frozenset("""
 a an and are as at be by can did do does for from has have how i if in is it its may must no not
 of on or our should than that the their then there these this those to was were what when where
 which who whom whose why will with would you your e.g i.e etc ok yes
+monday tuesday wednesday thursday friday saturday sunday january february march april june july
+august september october november december
 co czy dla ile jak jaka jaki jakie jest która które który na nie od po się są ten to w z że
 """.split())
 # Words every project has: naming one of them does not name a subject.
@@ -109,6 +115,10 @@ def subject_terms(question: str, own_names: Iterable[str] = ()) -> list[str]:
     own = {_key(name) for name in own_names if name}
     alone = {match.start(1) for match in _CODE.finditer(question)
              if _WORD.fullmatch(match.group(1))}
+    # In a question written in headline case (most words capitalised) a capital names nothing.
+    inner = [match.group() for match in _WORD.finditer(question)
+             if _letters(match.group()) >= 2 and not _starts_sentence(question, match.start())]
+    headline = len(inner) >= 4 and sum(word[0].isupper() for word in inner) * 2 > len(inner)
     found: dict[str, str] = {}
     for match in _WORD.finditer(question):
         word = match.group().strip("_")
@@ -118,7 +128,8 @@ def subject_terms(question: str, own_names: Iterable[str] = ()) -> list[str]:
             continue
         if folded.endswith("s") and folded[:-1] in GENERIC:
             continue
-        named = word[0].isupper() and not word.isupper() and not _starts_sentence(question, match.start())
+        named = (word[0].isupper() and not word.isupper() and not headline
+                 and not _starts_sentence(question, match.start()))
         if _identifier(word) or named or (match.start() in alone and _letters(word) >= 3):
             found.setdefault(_key(word), word)
     return list(found.values())[:MAX_TERMS]
@@ -129,7 +140,7 @@ def _key(word: str) -> str:
 
 
 def _spread(text: str) -> str:
-    """``text`` folded, with a space where an identifier changes case (redisPort: redis port)."""
+    """``text`` folded, with a space where an identifier changes case (consulPort: consul port)."""
     return _CAMEL.sub(" ", str(text)).casefold()
 
 
@@ -142,11 +153,11 @@ def _patterns(term: str) -> list[str]:
     patterns = [whole + r"(?:e?s)?"]
     plain = len(parts) == 1 and key.isalpha()
     if plain and len(key) >= 6:
-        # A name without a seam of its own, written in two parts: elastic_search, Elastic Search.
+        # A name without a seam of its own, written in two parts: zoo_keeper, Zoo Keeper.
         patterns += [re.escape(key[:cut]) + r"[\s_.\-]" + re.escape(key[cut:]) + r"(?:e?s)?"
                      for cut in range(3, len(key) - 2)]
     if plain and len(key) >= 5:
-        patterns.append(re.escape(key[:-1]))  # an inflected name: Redisa for Redis
+        patterns.append(re.escape(key[:-1]))  # an inflected name: Consula for Consul
     if plain and len(key) >= 4 and key[-1] in _VOWELS:
         patterns.append(re.escape(key[:-1]) + "[" + _VOWELS + "]")  # Javy for Java
     camel = [part for part in _CAMEL.split(term) if part]
@@ -168,14 +179,22 @@ def names_directory(term: str, paths: Iterable[str]) -> bool:
     return any(_key(part) == key for path in paths for part in str(path).replace("\\", "/").split("/")[:-1])
 
 
-def missing_subject(question: str, passages: Iterable[str], own_names: Iterable[str] = ()) -> list[str]:
-    """The subject names of ``question`` that none of ``passages`` mentions; empty when all are there
-    or the question has none."""
-    terms = subject_terms(question, own_names)
-    if not terms:
-        return []
+def _absent(terms: list[str], passages: Iterable[str]) -> list[str]:
     texts = [str(passage) for passage in passages if passage]
     return [term for term in terms if not any(mentions(term, text) for text in texts)]
+
+
+def missing_subject(question: str, passages: Iterable[str], own_names: Iterable[str] = ()) -> list[str]:
+    """The subject names of ``question`` that none of ``passages`` mentions, when they are too many
+    for the answer to stand; otherwise empty.
+
+    With one or two names every one must be there. A question with three or more names carries
+    context besides its subject (where it was seen, what else was tried), and which of them is the
+    subject cannot be told: then at least half of them must be there.
+    """
+    terms = subject_terms(question, own_names)
+    missing = _absent(terms, passages)
+    return missing if len(missing) > (0 if len(terms) < 3 else len(terms) // 2) else []
 
 
 def unnamed_subject(store, project_id: str, question: str, sources: list[dict], evidence: dict) -> list[str]:
@@ -190,19 +209,18 @@ def unnamed_subject(store, project_id: str, question: str, sources: list[dict], 
     whole = {source["id"]: source for source in evidence.values()}
     passages = [text for cite in support_citations(sources) for text in (cite["quote"], cite["path"])]
     passages += [source_text(whole[source["id"]]) for source in sources if source.get("id") in whole]
-    if not missing_subject(question, passages):
+    if not _absent(subject_terms(question), passages):
         return []
     project = store.query("SELECT name, root FROM projects WHERE id=:id", {"id": project_id})
     name, root = (str(project[0].get("name") or ""), str(project[0].get("root") or "")) if project else ("", "")
-    missing = missing_subject(question, passages, [name, *name.split(), PurePosixPath(root).name])
-    unnamed = []
-    for term in missing:
+    own = [name, *name.split(), PurePosixPath(root).name]
+    for term in _absent(subject_terms(question, own), passages):
         rows = store.query(
             "SELECT uri FROM sources WHERE project_id=:project AND is_current=true "
             "AND uri.toLowerCase() LIKE :part LIMIT 50",
             {"project": project_id, "part": "%/" + term.casefold() + "/%"}) if root else []
         # LIKE treats '_' as a wildcard, and the directories above the root are not parts of the project.
         inside = [str(row.get("uri", ""))[len(root):] for row in rows if str(row.get("uri", "")).startswith(root)]
-        if not names_directory(term, inside):
-            unnamed.append(term)
-    return unnamed
+        if names_directory(term, inside):
+            own.append(term)
+    return missing_subject(question, passages, own)
