@@ -21,7 +21,8 @@ from cairnmind.agent_tools import ToolExecutor
 from cairnmind.config import Settings
 from cairnmind.ingest import current_source, index_project
 from cairnmind.mcp_servers import inside_worktree
-from cairnmind.memory_paths import is_memory_path, is_reserved_below, is_reserved_memory
+from cairnmind.memory_paths import (RESERVED_DIRECTORIES, is_memory_path, is_reserved_below, is_reserved_memory,
+                                    nested_reserved)
 from cairnmind.store import Store, validate_scope
 from cairnmind.verification import _input_patterns
 
@@ -159,6 +160,22 @@ def test_a_server_in_the_worktree_spelled_with_other_case_is_refused(caseless):
     assert not refused(sys.executable, [str(caseless / "wt-other" / "srv.py")])
 
 
+def test_a_short_alias_of_the_worktree_inside_a_shell_command_is_refused(caseless):
+    worktree = caseless / "worktreelongname"
+    worktree.mkdir()
+    (worktree / "srv.py").write_text("print()\n")
+    alias = caseless / "WORKTR~1"
+    if not alias.is_dir() or alias.stat().st_ino != worktree.stat().st_ino:
+        pytest.skip("This directory gives no short 8.3 alias (8.3 names are off on its volume)")
+
+    def refused(script):
+        return inside_worktree({"id": "x", "command": "/bin/sh", "args": ["-c", script], "env": {}}, worktree)
+    for script in (f"cd {alias}&&python3 srv.py", f"cd {alias}||exit", f"python3 {alias}/srv.py|cat",
+                   f"x=`ls {alias}`", f"x=$(cat {alias}/srv.py)", f"python3 <{alias}/srv.py", f"'{alias}'/srv.py"):
+        assert refused(script), script
+    assert not refused(f"cd {caseless / 'other'}&&python3 srv.py")
+
+
 def test_a_directory_that_differs_only_in_case_stays_outside_where_case_counts(tmp_path):
     if _ignores_case(tmp_path):
         pytest.skip("tmp_path ignores letter case here; the case-sensitive behaviour is tested on Linux")
@@ -185,6 +202,32 @@ def test_reserved_directories_below_keep_the_case_of_their_project():
     assert is_reserved_below("services/a/.Memory/Cairnmind/x.md", below)
     assert not is_reserved_below("services/A-other/.memory/cairnmind/x.md", below)
     assert not is_reserved_below(".memory/notes.md", below)
+
+
+def test_memory_of_a_nested_project_registered_with_other_case_is_not_code_of_its_parent(caseless, tmp_path):
+    store = Store(tmp_path / "memory")
+    root = caseless / "Repo"
+    published = root / "services" / "alpha" / ".memory" / "cairnmind-published"
+    published.mkdir(parents=True)
+    (published / "note.md").write_text("# note\n")
+    (root / "public.py").write_text("value = 1\n")
+    parent = store.add_project("parent", root)
+    store.add_project("alpha", caseless / "REPO" / "Services" / "Alpha")
+    assert nested_reserved(store, root) == tuple(Path("services/alpha") / directory
+                                                 for directory in sorted(RESERVED_DIRECTORIES))
+    index_project(store, parent["id"])
+    assert {Path(row["uri"]).name for row in store.query("SELECT * FROM sources")} == {"public.py"}
+
+
+def test_a_nested_project_keeps_its_place_where_case_counts(tmp_path):
+    if _ignores_case(tmp_path):
+        pytest.skip("tmp_path ignores letter case here; the case-sensitive behaviour is tested on Linux")
+    (tmp_path / "repo" / "Alpha").mkdir(parents=True)
+    (tmp_path / "repo" / "alpha").mkdir()
+    rows = [{"path": str(tmp_path / "repo")}, {"path": str(tmp_path / "repo" / "Alpha")},
+            {"path": str(tmp_path / "repo" / "gone" / "beta")}, {"path": str(tmp_path / "REPO" / "x")}]
+    store = SimpleNamespace(query=lambda *_: rows)
+    assert {path.parts[0] for path in nested_reserved(store, tmp_path / "repo")} == {"Alpha", "gone"}
 
 
 def test_git_in_any_spelling_is_refused_in_scope_and_verification_inputs():

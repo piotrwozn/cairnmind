@@ -85,7 +85,9 @@ def validate_server(value) -> dict:
     return {"id": identifier, "command": command, "args": list(args), "env": dict(env)}
 
 
-_SEPARATORS = re.compile(r"[=:,;\s]+")
+# Shell operators and quotes split too: `cd /path/WORKTR~1&&srv` names the folder before '&&', and only the
+# resolved token sees that a short 8.3 alias is the worktree (#230).
+_SEPARATORS = re.compile(r"[=:,;\s&|<>`$()'\"]+")
 _PATH_CHARACTER = re.compile(r"[A-Za-z0-9._-]")
 
 
@@ -105,8 +107,8 @@ def _normal(text: str) -> str:
 
 
 def _tokens(text: str):
-    """Every piece of a value that can be a path: split on '=', ':', ',', ';' and whitespace, and in each
-    piece also the part from its first '/' on (an option such as '-f/path')."""
+    """Every piece of a value that can be a path: split on '=', ':', ',', ';', whitespace, quotes and the shell
+    operators, and in each piece also the part from its first '/' on (an option such as '-f/path')."""
     for token in _SEPARATORS.split(text):
         token = token.strip("'\"()[]{}")
         if token:
