@@ -304,6 +304,14 @@ def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[
 
 # Hits asked for beyond INITIAL_HITS, to fill the places of hits that show a passage twice.
 SPARE_HITS = 10
+# The second look (``KnowledgeAgent.ask``): a chunk is shown whole, up to the size ingest cuts
+# chunks to; the room kept free in the context guard for the reply and one repair; the short
+# catalog beside whole passages; the results that ask for it; the time that must be left.
+WHOLE_PASSAGE_CHARS = 6000
+WHOLE_RESERVE_CHARS = 4000
+WHOLE_CATALOG_CHARS = 1500
+SECOND_LOOK_CODES = ("insufficient_evidence", "missing_evidence")
+SECOND_LOOK_MIN_SECONDS = 5.0
 
 
 def distinct_hits(hits: list[dict], query: str, limit: int) -> list[dict]:
@@ -550,7 +558,7 @@ class KnowledgeAgent:
         return source
 
     def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "",
-              register: bool = True) -> list[dict]:
+              register: bool = True, size: int = EXCERPT_CHARS) -> list[dict]:
         """Model-visible hits: each text is the excerpt of its chunk that matches ``query``.
 
         ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk. With
@@ -572,7 +580,7 @@ class KnowledgeAgent:
                              line_end=len(source_text(source)[:2200].splitlines()), refreshed=True)
             else:
                 text = str(value.get("text", ""))
-                value["text"], first, last = question_excerpt(text, query)
+                value["text"], first, last = question_excerpt(text, query, size)
                 if value["text"] != text and isinstance(hit.get("line_start"), int):
                     value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
@@ -1011,6 +1019,24 @@ class KnowledgeAgent:
                                   "context_limit_chars": max(12000, context_tokens(self.settings) * 2)}}
         started = time.monotonic()
         result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
+        in_part = diagnostics.pop("_hits_in_part", 0)
+        left = self.settings.ask_timeout - (time.monotonic() - started)
+        if (in_part and answer_schema is None and left > SECOND_LOOK_MIN_SECONDS and result.get("status") == "partial"
+                and result.get("diagnostics", {}).get("code") in SECOND_LOOK_CODES):
+            # The model found no answer in the excerpts. A hit shows 900 characters of a chunk of up
+            # to 6000, chosen by the question's words, and the line that answers often has none of
+            # them: one more pass reads the best chunks whole. Only a complete answer replaces the
+            # first result; anything else leaves it as it was.
+            again = {**diagnostics, "model_calls": [], "validation_codes": [], "repair_attempted": False,
+                     "repair_outcome": "not_needed"}
+            second = await self._ask_impl(project_id, question, worktree, answer_schema, again,
+                                          whole=True, timeout=left)
+            again.pop("_hits_in_part", None)
+            if second.get("status") == "complete":
+                diagnostics.update(again, second_look="answered")
+                result = {**second, "elapsed_seconds": round(time.monotonic() - started, 3)}
+            else:
+                diagnostics["second_look"] = "no_answer"
         diagnostics["code"] = result.get("diagnostics", {}).get("code", "unavailable")
         label = await answer_label(self.settings, self.ollama)  # None with the release's models
         if label:
@@ -1082,7 +1108,9 @@ class KnowledgeAgent:
         return None
 
     async def _ask_impl(self, project_id: str, question: str, worktree, answer_schema: dict | None,
-                        diagnostics: dict) -> dict:
+                        diagnostics: dict, *, whole: bool = False, timeout: float | None = None) -> dict:
+        """One pass over the question. ``whole`` is the second look (see ``ask``): the evidence is
+        then the whole chunks of the first hits that the first pass showed in part, no definitions."""
         answer_schema = prepare_answer_schema(answer_schema)
         project_id = self.store.resolve_project(project_id)["id"]
         if not isinstance(question, str) or not question.strip() or len(question) > 16000:
@@ -1093,42 +1121,59 @@ class KnowledgeAgent:
         started = time.monotonic()
         self.retriever.warnings.clear()
         try:
-            async with asyncio.timeout(self.settings.ask_timeout):
+            async with asyncio.timeout(self.settings.ask_timeout if timeout is None else timeout):
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
                 # More hits than are shown: a hit that repeats a passage gives its place to the next.
                 wanted = INITIAL_HITS + SPARE_HITS
                 lexical = await asyncio.to_thread(self.retriever.search, project_id, question, wanted,
                                                   worktree=worktree)
-                initial = await asyncio.to_thread(self._hits, distinct_hits(lexical, question, INITIAL_HITS),
-                                                  project_id, evidence, worktree, question, False)
+                chosen = distinct_hits(lexical, question, INITIAL_HITS)
+                await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question, False)
                 hybrid = await self.retriever.asearch(project_id, question, wanted, worktree=worktree)
                 if hybrid:
-                    initial = await asyncio.to_thread(self._hits, distinct_hits(hybrid, question, INITIAL_HITS),
-                                                      project_id, evidence, worktree, question, False)
-                # Definitions of names the question and the hits use take the places of the
-                # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
-                definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
-                                                      evidence, worktree)
-                if definitions:
-                    initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
+                    chosen = distinct_hits(hybrid, question, INITIAL_HITS)
+                # Chunks longer than their excerpt: what a second look can still show.
+                in_part = [hit for hit in chosen if len(str(hit.get("text", ""))) > EXCERPT_CHARS]
+                diagnostics["_hits_in_part"] = len(in_part)
+                context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
+                system = {"role": "system", "content": SYSTEM + (TYPED_ANSWER_INSTRUCTION if answer_schema else "")}
+                # We retain complete tool exchanges, but stop before the local context is flooded.
+                context_chars = max(12000, context_tokens(self.settings) * 2)
+                if whole:
+                    room = (context_chars - len(json.dumps(system, ensure_ascii=False))
+                            - len(json.dumps(context, ensure_ascii=False)) - WHOLE_RESERVE_CHARS)
+                    initial = []
+                    for item in await asyncio.to_thread(self._hits, in_part, project_id, evidence, worktree,
+                                                        question, False, WHOLE_PASSAGE_CHARS):
+                        room -= len(json.dumps(json.dumps(item, ensure_ascii=False), ensure_ascii=False))
+                        if room < 0:
+                            break  # in the order of the hits: the best chunks that fit
+                        initial.append(item)
+                    if not initial:
+                        return self._result("partial", "There are not enough sources for a confirmed answer.",
+                                            evidence, ["No whole passage fits the context budget."], started)
+                else:
+                    initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree,
+                                                      question, False)
+                    # Definitions of names the question and the hits use take the places of the
+                    # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
+                    definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
+                                                          evidence, worktree)
+                    if definitions:
+                        initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
                 # Only now is it known which hits the model gets: register those, in their order.
                 for position, item in enumerate(initial):
                     source = evidence.get(item["source_id"])
                     if source is not None and isinstance(item.get("text"), str) and item["text"] in source_text(source):
                         _show(source, item["text"], position)
-                context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
-                          "citation_catalog": self._citation_catalog(project_id, evidence, worktree=worktree,
-                                                                     budget=4000, excerpt_chars=600)}
+                          "citation_catalog": self._citation_catalog(
+                              project_id, evidence, worktree=worktree,
+                              budget=WHOLE_CATALOG_CHARS if whole else 4000, excerpt_chars=600)}
                 if answer_schema is not None:
                     prompt["answer_schema"] = answer_schema
-                messages = [
-                    {"role": "system", "content": SYSTEM + (TYPED_ANSWER_INSTRUCTION if answer_schema else "")},
-                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-                ]
-                # We retain complete tool exchanges, but stop before the local context is flooded.
-                context_chars = max(12000, context_tokens(self.settings) * 2)
+                messages = [system, {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}]
                 for _step in range(self.settings.max_steps):
                     if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > context_chars:
                         return self._result("partial", "The analysis reached the context budget; narrow the question.",
