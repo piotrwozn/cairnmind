@@ -2,12 +2,17 @@
 
 New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing installation with data you want to keep.
 
+- [From 0.10.0 to 0.11.0](#from-0100-to-0110)
 - [From DevBrain 0.8.0 to Cairnmind 0.9.0](#from-devbrain-080-to-cairnmind-090)
 - [From 0.9.0 to 0.10.0](#from-090-to-0100)
 - [From 0.10.0 to 0.11.0](#from-0100-to-0110)
 - [From 0.7.2 to 0.8.0](#from-072-to-080)
 
 A direct upgrade from 0.7.2 to 0.9.0 was not tested. Upgrade a 0.7.2 installation to 0.8.0 first.
+
+## From 0.10.0 to 0.11.0
+
+- **Resume packets.** The packet now says where each record comes from (`origin`) and its `schema_version` is 2 ([CONTRACTS.md](CONTRACTS.md)). A packet prepared by 0.10.0 is never current after the upgrade, so the acknowledgement a coding session gave for it goes stale (`packet_changed`): a session that was running through the upgrade has its writes refused until it calls `resume_context` and acknowledges the new packet. Nothing else has to be done; the next resume does it.
 
 ## From DevBrain 0.8.0 to Cairnmind 0.9.0
 

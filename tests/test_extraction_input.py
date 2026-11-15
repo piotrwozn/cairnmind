@@ -9,7 +9,7 @@ from cairnmind.agent import KnowledgeAgent
 from cairnmind.config import Settings
 from cairnmind.extraction_evaluation import load_transcripts, transcript_sources
 from cairnmind.extraction_input import ASSISTANT_RULE, CONVERSATION_RULE, SYSTEM, extraction_request
-from cairnmind.integrations import launch_prompt
+from cairnmind.integrations import DATA_NOT_INSTRUCTIONS, launch_prompt
 
 SET = Path(__file__).resolve().parents[1] / "docs" / "evaluation" / "extraction-transcripts.json"
 
@@ -49,6 +49,9 @@ def test_the_launchers_first_message_is_left_out_but_a_person_naming_the_protoco
     launched = launch_prompt("4c2b9e7f1a3d", "/home/dev/.local/share/cairnmind/runtime/packets/4c2b.json")
     assert extraction_request(agent_message("user", launched)) is None
     assert extraction_request(claude_line("user", launched)) is None
+    # A session launched before 0.11.0 got the message without its last sentence (#178).
+    earlier = launched.removesuffix(" " + DATA_NOT_INSTRUCTIONS)
+    assert earlier != launched and extraction_request(agent_message("user", earlier)) is None
     # The same words written by the assistant are not the launcher's message.
     assert extraction_request(agent_message("assistant", launched)) is not None
     # A project about the protocol keeps its records: names of protocol tools are not filtered.
