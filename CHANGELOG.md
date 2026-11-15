@@ -4,6 +4,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- Project context now lists the checkpoint and open tasks first, then decisions and constraints in force, other confirmed records, new findings, and finished tasks last, so finished tasks no longer push rules still in force out of the limited space (#213).
 - Tooling: the fast test tier in CI runs with four processes, now that a stopped agent command waits for its process group (#175). The time-sensitive tests found by running the whole suite repeatedly on a loaded four-core machine wait for a state instead of a moment (#175).
 - The built-in agent no longer has to read and acknowledge its resume packet again when memory proposed from its own conversation is extracted while it works. A record that is confirmed, edited, written by anyone else or brought in by a memory package, and a code change, still make the acknowledgement stale (#168).
 - The built-in agent's approval dialog for a command or a third-party tool call now lists the files the agent created, changed or deleted since your last approval, at most 20 with a count of the rest, in English and Polish. Line breaks and control characters in a file name are shown as escapes, so a name cannot pass itself off as the app's own text (#176).
