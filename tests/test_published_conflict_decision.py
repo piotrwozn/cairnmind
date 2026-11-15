@@ -60,6 +60,34 @@ def test_keeping_the_replacement_publishes_it_and_the_rejected_decision_as_super
     assert old["id"] not in rows or rows[old["id"]]["status"] == "superseded"
 
 
+def test_publishing_writes_again_a_published_file_that_went_missing_and_refuses_a_conflict_with_a_way_out(ada):  # noqa: F811
+    from cairnmind.inspector import Inspector
+    from cairnmind.memory import MemoryConflict
+    import pytest
+
+    from conftest import person_edit
+    store, pid, root = ada["store"], ada["project"], ada["root"]
+    old = reviewed(store, pid, "decision", "Sessions last a day.", "ttl")
+    # A replacement the person writes in their terminal and then reviews: the replaced record is superseded
+    # mechanically, which a reader accepts only beside its replacement.
+    source = store.snapshot(pid, "note://replacement", "Sessions last an hour.", "note")
+    new = person_edit(store, pid, {"kind": "decision", "key": "ttl-2", "content": "Sessions last an hour.",
+                                   "supersedes": old["id"]}, [source["id"]])
+    Inspector(store).review(pid, new["id"], "confirm", new["version"])
+    Publisher(store).publish(pid)
+    assert head(folder_of(root), "decision", old["id"])["covered"]["by"] == "superseded"
+    commit(root, "Replace the day-long sessions")
+    path = folder_of(root) / f"decision/{new['id']}.md"
+    original = path.read_bytes()
+    path.unlink()  # Only the replacement's file: the replaced one now names nothing in the tree.
+    result = Publisher(store).publish(pid)
+    assert result["written"] == [f"decision/{new['id']}.md"] and path.read_bytes() == original
+    assert check_directory(folder_of(root))[1] == []
+    path.write_bytes(b"<<<<<<< ours\n" + original + b"=======\n>>>>>>> theirs\n")
+    with pytest.raises(MemoryConflict, match=r"resolve the conflict, or restore the file with `git checkout -- <path>`"):
+        Publisher(store).publish(pid)
+
+
 def test_keeping_a_replacement_an_external_session_wrote_still_withdraws_the_rejected_decision(ada):  # noqa: F811
     store, pid, root = ada["store"], ada["project"], ada["root"]
     old = reviewed(store, pid, "decision", "Sessions last a day.", "ttl")

@@ -379,9 +379,12 @@ class Publisher:
             if "FORMAT.json" in existing:
                 # The structure only: what is already there was scanned when it was written, and a rule added
                 # since (or a teammate's file) must not block the records this store publishes, nor a release.
-                tree, errors = check_files(existing, secrets=False)
+                # Each file alone (#239): what holds between files is checked on the merged tree below, since the files
+                # this store writes may complete it (one that went missing is written again).
+                tree, errors = check_files(existing, secrets=False, whole=False)
                 if errors:
-                    raise MemoryConflict("The published memory is invalid; fix or import it first: " + _listing(errors))
+                    raise MemoryConflict("The published memory is invalid; resolve the conflict, or restore the file "
+                                         "with `git checkout -- <path>`, then publish again: " + _listing(errors))
                 if tree["project_id"] != identity:
                     raise MemoryConflict(f"The published memory here belongs to {tree['project_id']}; import it first")
                 self._compare(tree, built)
