@@ -17,6 +17,8 @@ import time
 from uuid import uuid4
 
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
+# The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
+from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
 

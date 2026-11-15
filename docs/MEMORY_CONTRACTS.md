@@ -65,6 +65,35 @@ Text chunks are rebuilt from archived source views during import; semantic
 embeddings and current-code analysis rebuild locally. Original paths remain
 provenance, with local scope bindings kept separately.
 
+## Sensitivity classes
+
+Every source and record has a sensitivity class, computed on each read by one
+function (`cairnmind.sensitivity`, also `store.source_sensitivity` and
+`store.record_sensitivity`) from what the store already holds: the source kind
+and the origin mark the service writes. The class is stored nowhere, not in the
+database and not in a package, so a client cannot set it, it cannot go stale,
+and a row written before classes existed gets one without being rewritten or
+migrated. An imported package gets the same classes as the store it came from.
+
+| Class | Sources |
+| --- | --- |
+| `project` | code, document, file, check_output, check_profile, verification, test_result, plan |
+| `conversation` | transcript, transcript_unknown, agent_transcript, manual (`remember`), checkpoint, findings, and any other kind |
+| `third_party` | any kind written by an external client's session (`origin_history: unarchived`) or degraded by a third-party tool result (`origin_evidence: degraded`) |
+
+A record's class is the highest of the classes of the sources behind it
+(project < conversation < third_party), and `conversation` when it has none or
+one of them cannot be read. A record or plan whose own origin mark says an
+external session or a third-party result wrote it is `third_party`. The class
+says how private text is, not whether it is true: the origin mark and the
+evidence state still say that.
+
+The inspector returns the class as `sensitivity` for a source (`/inspector/sources`
+and a source's detail, which `read_source` uses) and a record (`/inspector/records`,
+which `memory_records` uses, and a record's detail). The terminal detail view and
+`cairnmind memory show` print it. Which classes may go to a memory model server on
+another computer is the setting `memory_remote_classes` (see [API.md](API.md#the-knowledge-agents-models)).
+
 ## Validation budgets and quality evaluation
 
 Version 1 limits an individual JSON object to 16 MiB, a manifest to 32 MiB, and a

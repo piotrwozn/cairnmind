@@ -225,6 +225,7 @@ CATALOG = {
     "Records": "Ustalenia", "Sources": "Źródła", "Plans": "Plany", "Tasks": "Zadania",
     "Stated": "Dowód z dnia", "Observed no later than": "Zaobserwowano nie później niż",
     "Mixed evidence": "Dowody mieszane", "Warning": "Ostrzeżenie",
+    "Sensitivity": "Wrażliwość", "conversation": "rozmowa", "third party": "strona trzecia",
     "The superseded finding had newer evidence": "Zastąpione ustalenie miało nowsze dowody",
     "Checks": "Testy", "Queue": "Kolejka", "Unassigned": "Nieprzypisane", "Snapshot": "Snapshot",
     "Filter loaded page…": "Filtruj załadowaną stronę…", "List": "Lista", "Filters": "Filtry",
