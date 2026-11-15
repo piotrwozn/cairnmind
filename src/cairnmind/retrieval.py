@@ -12,7 +12,7 @@ from typing import Any
 
 from .arcade import ArcadeError
 from .config import Settings
-from .context_selection import select_entries
+from .context_selection import context_place, select_entries
 from .memory_paths import bound_metadata, memory_bindings
 from .memory_models import from_settings
 
@@ -632,13 +632,12 @@ class Retriever:
         project = self.store.resolve_project(project_id)
         workflow = self.workflow(project["id"], worktree)
         records = self.records(project["id"], worktree=worktree)
-        # Recent checkpoint first, tasks needing attention next, then decisions. Within each
-        # group the store's order (most recently updated first) is kept by the stable sort.
+        # The checkpoint and open tasks first, then decisions and constraints in force, other
+        # confirmed records, new findings, finished tasks last (#213). Within each group the
+        # store's order (most recently updated first) is kept by the stable sort.
         def order(record):
-            return (record["kind"] != "checkpoint", not open_task(record), record.get("status") != "confirmed")
-
-        def open_task(record):
-            return record["kind"] == "task" and json_value(record.get("metadata"), {}).get("state") != "done"
+            finished = json_value(record.get("metadata"), {}).get("state") == "done"
+            return context_place(record["kind"], record.get("status"), finished)
 
         records = [record for record in records if record.get("status") != "superseded"]
         records.sort(key=order)
