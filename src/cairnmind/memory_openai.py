@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import time
 from typing import Any
 
@@ -112,6 +113,10 @@ class OpenAICompatible(Ollama):
         self.label = "Model server" if self.label == "Ollama" else "Local model server"
         self.tag = server_tag(profile["base_url"])
         self.reasoning_effort = profile.get("reasoning_effort")
+        # The service sets this to False until its start check has answered (memory_fingerprint, #212).
+        self.fingerprint_checked = True
+        # Where the stored answer lives: the installation's data directory (memory_models._client).
+        self.fingerprint_dir = Path(settings.data_dir)
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
         options = {"num_predict": self.settings.answer_tokens, "temperature": 0}
@@ -154,12 +159,20 @@ class OpenAICompatible(Ollama):
         self._model_cache = (time.monotonic(), result)
         return result
 
-    async def model_identity(self, name: str) -> str:
-        """The server and the model name. Such servers report no digest, so swapped weights behind
-        the same name are not detected; the vector dimension is still part of every vector index."""
+    async def listed_identity(self, name: str) -> str:
+        """The server and the model name, when the server lists the model. Such servers report no digest."""
         cached = self._model_cache
         data = cached[1] if cached and time.monotonic() - cached[0] < 30 else await self.models()
         if any(model.get("name") == name for model in data["models"]):
             return f"{name}@{self.tag}"
         raise OllamaUnavailable(f"{self.label} does not list the configured {self.role} model",
                                 endpoint="/models", error_code="model_not_found")
+
+    async def model_identity(self, name: str) -> str:
+        """The server and the model name; for the embedding role also the generation of its weights, which
+        a fixed request detects (memory_fingerprint, #212). The dimension is part of every vector index."""
+        base = await self.listed_identity(name)
+        if self.role != "embedding":
+            return base
+        from .memory_fingerprint import identity
+        return identity(self.fingerprint_dir, base, checked=self.fingerprint_checked)

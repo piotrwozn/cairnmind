@@ -1601,11 +1601,26 @@ def rebuild_vectors(ctx: typer.Context, project: str):
     settings = ctx.obj
     store = store_for(settings)
     pid = store.resolve_project(project)["id"]
-    namespace = asyncio.run(from_settings(settings).model_identity(settings.embedding_model))
+    from cairnmind import memory_fingerprint
+
+    async def identity():
+        models = from_settings(settings)
+        try:
+            # An OpenAI-compatible embedding role: the fixed request first; changed weights are accepted
+            # here and get a new namespace, apart from every earlier vector (#212).
+            client = memory_fingerprint.client_of(models)
+            checked = await memory_fingerprint.check(client, accept=True) if client is not None else None
+            return await models.model_identity(settings.embedding_model), checked
+        finally:
+            await models.aclose()
+
+    namespace, fingerprint = asyncio.run(identity())
     store.delete_embeddings(pid)
     held: dict = {}
     count = schedule_embeddings(store, namespace, settings=settings, report=held)
     result = {"project": pid, "missing_vectors_queued": count, "namespace": namespace, "sources_preserved": True}
+    if fingerprint is not None:
+        result["embedding_fingerprint"] = fingerprint
     if held.get("embedding_held_back"):
         # Chunks of a class the remote embedding server may not receive (memory_remote_classes, #181).
         result["vectors_held_back"] = held["embedding_held_back"]
