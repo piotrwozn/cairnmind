@@ -201,14 +201,20 @@ def test_a_reader_takes_over_a_store_that_this_release_cannot_read_as_a_reader(t
 
 def test_two_takeovers_at_once_leave_one_writer_that_the_row_and_the_head_agree_on(tmp_path):
     first = Store(tmp_path / "first")
+    """The orders are chosen one by one in test_store_writer_race; here the threads race as they will.
+
+    From the second round on one of the two is the writer already, which is the case that once left the
+    row naming one installation and the head the other.
+    """
     readers = [Store(second_installation(tmp_path, first, name)) for name in ("one", "two")]
     for round_ in range(6):
-        results, errors = [], []
+        results, errors, start = [], [], threading.Barrier(2)
 
         def take(store):
             try:
-                results.append(take_over(store, f"round {round_}"))
-            except ArcadeError as exc:  # the other takeover committed between this one's read and its commit
+                start.wait(30)
+                results.append((store.installation.id, take_over(store, f"round {round_}")))
+            except Exception as exc:  # noqa: BLE001 - every outcome is checked below
                 errors.append(exc)
 
         threads = [threading.Thread(target=take, args=(store,)) for store in readers]
@@ -216,12 +222,20 @@ def test_two_takeovers_at_once_leave_one_writer_that_the_row_and_the_head_agree_
             thread.start()
         for thread in threads:
             thread.join(60)
-        assert results, (round_, errors)
-        row = writer_row(first)
-        assert row["installation_id"] == head(first)["writer"] == row["history"][-1]["installation_id"], round_
-        assert row["installation_id"] in {store.installation.id for store in readers}
-        for store in readers:
-            store._writer_lost = None  # each round starts from stores that may take over again
+        assert not any(thread.is_alive() for thread in threads), round_  # nothing is read while a takeover runs
+        # A takeover either returned or was refused whole by the engine because the other one committed first.
+        assert len(results) + len(errors) == 2 and results, (round_, errors)
+        assert all(isinstance(exc, ArcadeError) and "ConcurrentModification" in exc.exception_name
+                   for exc in errors), (round_, errors)
+        client = ArcadeClient(first.settings)
+        with client.transaction(commit=False) as reader:  # one view of both records
+            row = store_writer.read_writer(reader)
+            named = reader.query("SELECT writer FROM journal_state WHERE id='current'")[0]["writer"]
+        assert row["installation_id"] == named == row["history"][-1]["installation_id"], round_
+        # The writer is an installation whose takeover returned: one that took over in this round, or the one
+        # that was the writer already and whose takeover therefore changed nothing.
+        assert row["installation_id"] in {installation for installation, _ in results}, round_
+        assert any(result["taken_over"] for _, result in results) or round_, results
 
 
 def test_a_write_in_flight_during_a_takeover_does_not_commit(tmp_path):
