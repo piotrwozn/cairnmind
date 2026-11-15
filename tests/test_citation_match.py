@@ -221,3 +221,20 @@ async def test_after_the_repair_the_answer_rests_on_its_verified_citations_and_i
     refused = await KnowledgeAgent(store, settings, refusing).ask(project["id"], "PARCELS_A_VAN parcels")
     assert refused["status"] == "partial" and refused["diagnostics"]["code"] == "answer_unsupported"
     assert "Thirty-seven parcels." not in refused["answer"]
+
+
+def test_a_whole_shown_passage_can_be_quoted_with_the_value_at_its_end(workspace):  # noqa: F811
+    # Issue #241: a passage is shown at up to EXCERPT_CHARS characters, so a quote of all of it must
+    # survive the schema, the prompt and validation; the value of a setting is often its last line.
+    from cairnmind.agent import EXCERPT_CHARS, SYSTEM
+    lines = [f"    # Depot rule {index}: crates are stacked by weight and labelled on two sides." for index in range(10)]
+    passage = "\n".join([*lines, "    crate_limit: int = 431"])
+    assert 750 < len(passage) <= EXCERPT_CHARS
+    result, _ = _validated(workspace, [(0, passage)], [f"class Depot:\n{passage}\n"], answer="431.")
+    assert result["status"] == "complete"
+    assert result["sources"][0]["quote"].endswith("crate_limit: int = 431")
+    store, _, settings = workspace
+    catalog = [{"source_id": "s", "quote_excerpt": passage}]
+    schema = KnowledgeAgent(store, settings, FakeOllama())._answer_schema(catalog)
+    assert schema["properties"]["citations"]["items"]["properties"]["quote"]["maxLength"] == EXCERPT_CHARS
+    assert f"quotes of at most {EXCERPT_CHARS} characters" in SYSTEM
