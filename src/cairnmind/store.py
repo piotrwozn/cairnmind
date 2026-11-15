@@ -497,13 +497,20 @@ class Store:
 
     def init(self):
         from .arcade import ArcadeError
-        from .store_writer import claimed_meanwhile, read_writer, settle
+        from .store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
         with self._lock():
             types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
-            writer = read_writer(self.client) if "devbrain_meta" in types else None
+            writer, named = read_writer(self.client) if "devbrain_meta" in types else None, None
+            if writer and "journal_state" in types:
+                writer, named = read_fence(self.client)
             if writer and writer.get("installation_id") != self.installation.id:
                 # Another installation writes this database: no schema statement, no upgrade and no write here.
                 self._open_as_reader(writer)
+                return
+            if writer and named not in (None, self.installation.id):
+                # The row names this installation and the journal head another one: no schema statement and no
+                # write here either, until a person runs the takeover (store_writer.mixed_reason).
+                self._writer_lost = mixed_reason(writer, named)
                 return
             try:
                 self._prepare_schema()
@@ -601,7 +608,10 @@ class Store:
         with self.client.transaction() as tx:
             if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
                 insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
-            if version is None:
+            # Read again here, not from the start of this method: another installation that is creating the
+            # same store may have committed its row in between. Then it also committed the head above, so this
+            # transaction inserts neither; when both insert the head, the unique id refuses the second commit.
+            if not tx.query("SELECT name FROM devbrain_meta WHERE name='schema_version'"):
                 insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
             else:
                 update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
@@ -623,7 +633,8 @@ class Store:
         except ArcadeError:
             return
         with self.client.transaction() as tx:
-            if recorded is None:
+            # Read again, as for schema_version: another installation may have recorded it in between.
+            if not tx.query("SELECT name FROM devbrain_meta WHERE name='lookup_indexes'"):
                 insert_document(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})
             else:
                 update_document(tx, "devbrain_meta", {"value": LOOKUP_INDEX_SET}, "name='lookup_indexes'", {})
