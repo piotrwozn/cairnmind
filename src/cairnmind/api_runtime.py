@@ -238,6 +238,8 @@ class RuntimeSupervisor(NativeRuntime):
                 raise UnknownRun("Unknown native run")
             if row.get("generation") != generation:
                 raise ValueError("Native run generation changed")
+            if row.get("lifecycle") not in {"starting", "running"}:  # it moved on while the report was checked
+                raise ValueError("Native run is no longer running")
             kept = [r for r in row.get("mcp_failures") or [] if isinstance(r, dict)]
             if any(r.get("server_id") == server_id for r in kept):
                 return {"recorded": False}
