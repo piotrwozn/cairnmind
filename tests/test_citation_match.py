@@ -13,7 +13,7 @@ import pytest
 
 from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
 
-from cairnmind.agent import MIN_QUOTE_CHARS, KnowledgeAgent
+from cairnmind.agent import CITATIONS_LEFT_OUT, MIN_QUOTE_CHARS, KnowledgeAgent
 from cairnmind.citation_match import locate_quote
 
 MARKDOWN = ("# Shipping\n\nZone codes are 0 for local, 1 for national and 7 when a parcel or pallet is\n"
@@ -62,9 +62,57 @@ def test_a_quote_that_skips_lines_keeps_its_longest_literal_run_of_whole_lines()
     assert quote not in CODE
     assert found(quote, CODE) == "# Depot bounds: vans loaded per shift.\nVANS_A_SHIFT = 2900"
     # Equal runs: the first one. A run shorter than the minimum is not evidence.
-    assert found("PARCELS_A_VAN = 37\nLABEL_GAP = 3_000_000", CODE) == "PARCELS_A_VAN = 37"
-    assert found("LABEL_GAP = 3\ninvented line of text", CODE, minimum=14) is None
-    assert found("LABEL_GAP = 3\ninvented line of text", CODE, minimum=13) == "LABEL_GAP = 3"
+    assert found("PARCELS_A_VAN = 37\nLABEL_GAP = 3\nVANS_A_SHIFT = 2900", CODE) == "PARCELS_A_VAN = 37"
+    assert found("LABEL_GAP = 3\nVANS_A", CODE, minimum=14) is None
+    assert found("LABEL_GAP = 3\nVANS_A", CODE, minimum=13) == "LABEL_GAP = 3"
+
+
+@pytest.mark.parametrize("quote", [
+    "PARCELS_A_VAN = 37\nPALLET_ROWS = 999",                    # the second line with another value
+    "PARCELS_A_VAN = 37\nLABEL_GAP = 3_000_000",
+    "LABEL_GAP = 3\ninvented line of text",                    # a line the source does not have
+    "invented line of text\nPARCELS_A_VAN = 37\nLABEL_GAP = 3",
+    "PARCELS_A_VAN = 37\nZone codes are 0 for local",          # a line of another source
+    "VANS_A_SHIFT = 2900\nPARCELS_A_VAN = 37",                 # lines in another order than the source's
+])
+def test_a_quote_of_several_lines_with_a_line_the_source_does_not_have_is_not_found(quote):
+    assert found(quote, CODE, minimum=1) is None
+
+
+@pytest.mark.parametrize("quote, source", [
+    ("the limit is 1000 rows", "the limit is 1 000 rows"),
+    ("the limit is 1 0 rows", "the limit is 10 rows"),
+    ("retries = 15 workers", "retries = 1\n5 workers"),
+    ("the token is in valid state", "the token is invalid state"),
+    ("there is nowhere to go", "there is now here to go"),
+    ("there is now here to go", "there is nowhere\nto go"),
+])
+def test_words_and_numbers_are_not_joined_or_split(quote, source):
+    assert found(quote, source, minimum=1) is None
+
+
+def test_spacing_next_to_a_sign_is_layout():
+    assert found("retries=3, pause = 2", "retries = 3,\n    pause=2\n") == "retries = 3,\n    pause=2"
+    assert found("see the bulky (zone 7 ) rule", "see the `bulky`\n(zone 7) rule") == "see the `bulky`\n(zone 7) rule"
+
+
+def test_the_shortest_quote_is_measured_without_the_layout_of_the_source(workspace):  # noqa: F811
+    nested = "def load(vans):\n    for van in vans:\n        if van:\n            pack({\n                van: {\n                        }\n                    }\n            )\n"
+    for quote in ("}\n}", "} }"):
+        assert len(found(quote, nested)) > MIN_QUOTE_CHARS  # the span holds the source's indentation
+        result, _ = _validated(workspace, [(0, quote)], [nested])
+        assert result["status"] == "partial" and not result["sources"], quote
+        assert "The quoted passage is too short to be evidence." in result["unknowns"]
+    # A source shorter than the minimum may still be quoted whole.
+    result, _ = _validated(workspace, [(0, "GAP = 3")], ["GAP = 3\n"])
+    assert result["status"] == "complete" and result["sources"][0]["quote"] == "GAP = 3"
+
+
+def test_a_citation_with_an_invented_second_line_fails_validation(workspace):  # noqa: F811
+    result, _ = _validated(workspace, [(0, "PARCELS_A_VAN = 37\nPALLET_ROWS = 999")], [CODE],
+                           answer="There are 999 pallet rows.")
+    assert result["status"] == "partial" and result["diagnostics"]["code"] == "citation_invalid"
+    assert not result["sources"] and "999" not in result["answer"]
 
 
 def _validated(workspace, citations, texts, drop_invalid=False, answer="Seven."):  # noqa: F811
@@ -141,6 +189,10 @@ def test_one_failed_citation_fails_the_answer_until_the_repair_was_tried(workspa
     assert result["status"] == "complete" and result["answer"] == "Seven."
     assert [item["quote"] for item in result["sources"]] == ["PARCELS_A_VAN = 37"]
     assert result["diagnostics"]["citations_dropped"] == 1
+    # The result says so where a reader looks, and stays complete.
+    assert CITATIONS_LEFT_OUT in result["freshness"]["warnings"] and not result["unknowns"]
+    kept, _ = _validated(workspace, citations[:1], [CODE], drop_invalid=True)
+    assert CITATIONS_LEFT_OUT not in kept["freshness"]["warnings"]
 
 
 def test_citations_are_never_dropped_when_none_verified(workspace):  # noqa: F811
@@ -161,6 +213,7 @@ async def test_after_the_repair_the_answer_rests_on_its_verified_citations_and_i
     assert result["status"] == "complete" and result["answer"] == "Thirty-seven parcels."
     assert [item["quote"] for item in result["sources"]] == ["PARCELS_A_VAN = 37"]
     assert result["diagnostics"]["citations_dropped"] == 1 and result["diagnostics"]["repair_attempted"]
+    assert CITATIONS_LEFT_OUT in result["freshness"]["warnings"]
     judged = json.loads(model.support_calls[0]["messages"][1]["content"])
     assert [item["quote"] for item in judged["citations"]] == ["PARCELS_A_VAN = 37"]
     # The support check still decides: a "no" withholds the answer.

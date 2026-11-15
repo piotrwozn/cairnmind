@@ -34,6 +34,8 @@ ASK_MESSAGES = {
     "The quoted passage does not occur in the checked version of the source.":
         "Cytowany fragment nie występuje w sprawdzonej wersji źródła.",
     "The quoted passage is too short to be evidence.": "Cytowany fragment jest zbyt krótki, aby był dowodem.",
+    "Citations that could not be verified were left out; the answer rests on the citations shown.":
+        "Pominięto cytowania, których nie udało się zweryfikować; odpowiedź opiera się na pokazanych cytowaniach.",
     "The model's answer could not be verified in the sources.":
         "Nie udało się zweryfikować odpowiedzi modelu w źródłach.",
     "There are not enough sources for a confirmed answer.":

@@ -15,7 +15,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .answer_contract import answer_contract_errors, prepare_answer_schema
-from .citation_match import locate_quote
+from .citation_match import locate_quote, quote_weight
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .extraction_input import EXTRACTION_SCHEMA, EXTRACTION_TOKENS, REPAIR_TOKENS, extraction_request, extractor_stamp
@@ -233,6 +233,7 @@ def parse_object(text: str) -> dict:
 
 
 MIN_QUOTE_CHARS = 12
+CITATIONS_LEFT_OUT = "Citations that could not be verified were left out; the answer rests on the citations shown."
 # Search hits shown to the model at the start of a question, and the size of each hit's text.
 # With the default num_ctx the context guard in ask is 32768 characters of serialized messages.
 # Ten excerpts of this size with the system prompt and the catalog take about 21000-23000 of
@@ -809,8 +810,9 @@ class KnowledgeAgent:
         """Return the unchanged public view and whether output-only repair is safe.
 
         A quote is accepted as the passage of the source it stands for (``locate_quote``): literal,
-        or literal but for whitespace and backticks, or the literal lines of a quote that skipped
-        some; the recorded quote is always the source's own text. A quote that the cited source
+        or literal but for backticks and the spacing beside punctuation, or the longest literal run
+        of a quote whose lines are all in the source and skipped some of the source's between them;
+        the recorded quote is always the source's own text. A quote that the cited source
         does not hold but exactly one other shown source does is recorded for that source, and
         the ID a passage was shown under (a hit's chunk ID) stands for the source it belongs to.
         With ``drop_invalid`` (the validation after the one repair) citations that still fail are
@@ -918,7 +920,7 @@ class KnowledgeAgent:
                 freshness_failure = True
                 continue
             content = source_text(source)
-            floor = min(MIN_QUOTE_CHARS, len(content.strip()))
+            floor = min(MIN_QUOTE_CHARS, quote_weight(content))
             span = locate_quote(quote, content, floor) if isinstance(quote, str) else None
             if span is None and isinstance(quote, str) and (source["id"], source["sha256"]) == inspected:
                 elsewhere = self._quoted_source(quote, source, project_id, evidence, worktree)
@@ -931,8 +933,9 @@ class KnowledgeAgent:
                     freshness_failure = True
                 continue
             quote = content[span[0]:span[1]]
-            if len(quote.strip()) < min(MIN_QUOTE_CHARS, len(content.strip())):
-                # A one-character substring occurs in almost any source and proves nothing.
+            if quote_weight(quote) < floor:
+                # A one-character substring occurs in almost any source and proves nothing, and the
+                # indentation and line breaks of the source between two brackets add nothing to it.
                 invalid.append("The quoted passage is too short to be evidence.")
                 continue
             if len(sources) >= 8:
@@ -969,6 +972,8 @@ class KnowledgeAgent:
         result["coverage"] = quote_coverage(covered, [source["quote"] for source in sources])
         if dropped:
             result["diagnostics"]["citations_dropped"] = dropped
+            # Said in the result itself, without making a verified answer partial.
+            result["freshness"]["warnings"] = [*result["freshness"]["warnings"], CITATIONS_LEFT_OUT][-8:]
         return result, invalid_unknowns
 
     async def ask(self, project_id: str, question: str, worktree=None,
