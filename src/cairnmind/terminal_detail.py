@@ -24,6 +24,8 @@ EVIDENCE_LABELS = {
 }
 _EVIDENCE_TIME = {"stated": "Stated", "observed": "Observed no later than", "mixed": "Mixed evidence"}
 BAR = ("quote-bar", "  | ")
+# The sensitivity class the inspector derives for a source or a record (sensitivity.py, #180).
+SENSITIVITY_LABELS = {"project": "project", "conversation": "conversation", "third_party": "third party"}
 
 
 def joined(parts) -> str:
@@ -56,6 +58,12 @@ def evidence_parts(item, translate):
     if not label:
         return []
     return [labelled(translate("Evidence"), translate(label), evidence_style(item.get("evidence_state")))]
+
+
+def sensitivity_parts(value, translate):
+    """The `Sensitivity:` line of a source or record detail; nothing for a value that is not a class."""
+    label = SENSITIVITY_LABELS.get(value.get("sensitivity")) if isinstance(value, dict) else None
+    return [labelled(translate("Sensitivity"), translate(label))] if label else []
 
 
 def _evidence_date(value):
@@ -95,6 +103,7 @@ def record_parts(value, translate):
         lines.append(labelled(translate("Version"), str(item["version"])))
     if item.get("source_ids"):
         lines.append(labelled(translate("Sources"), str(len(item["source_ids"]))))
+    lines += sensitivity_parts(value, translate)
 
     if isinstance(value.get("record"), dict):
         # Any record detail, including a task opened from the task list.

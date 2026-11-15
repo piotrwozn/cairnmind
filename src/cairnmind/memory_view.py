@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 
 from cairnmind.memory import _load_snapshot
+from cairnmind.sensitivity import record_sensitivity
 from cairnmind.store import STATUSES
 from cairnmind.terminal_safe import safe_text
 
@@ -319,6 +320,7 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
             out.append(_published_line(metadata))
         if _confirmed_line(row, sources):
             out.append(_confirmed_line(row, sources))
+        out.append(f"  sensitivity: {record_sensitivity(row, sources)}")
         if _replaced(row):
             out.append("  replaces: " + ", ".join(named(i) for i in _replaced(row)))
         later = replaced_by(row)
@@ -352,6 +354,7 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
         out += ["", f"[plan] {_line(row['title'])}, version {row['version']}{active}", f"  id: {_line(row['id'])}"]
         if origin(row, row["source_ids"]):
             out.append(origin(row, row["source_ids"]))
+        out.append(f"  sensitivity: {record_sensitivity(row, sources)}")
         if row["goal"].strip():
             out += ["  goal:", *_indented(row["goal"], "  | ")]
         out += [f"  constraint: {_line(item)}" for item in row["constraints"]]

@@ -10,7 +10,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static
 
 from . import terminal_theme
-from .terminal_detail import EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts  # noqa: F401
+from .terminal_detail import (EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts,  # noqa: F401
+                              sensitivity_parts)
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
@@ -406,8 +407,10 @@ class InspectorApp(ImpactView, BasePanel):
             self.source_content = (self.source_content if offset else "") + result.get("text", "")
             source = result.get("source", {})
             header = str(source.get("uri") or self.t("Sources"))
+            # The class the service derived (#180), between the name and the literal text.
+            marked = [("value", "\n"), *line[0]] if (line := sensitivity_parts(result, self.t)) else []
             self.show_detail(result, kind=collection,
-                             parts=[("stored-lead", header), ("stored", "\n\n" + self.source_content)])
+                             parts=[("stored-lead", header), *marked, ("stored", "\n\n" + self.source_content)])
             self.notice(self.t("Literal source · choose Sources for text/raw/metadata · More loads the next part"))
         else:
             self.show_detail(result, kind=collection)

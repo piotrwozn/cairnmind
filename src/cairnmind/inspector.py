@@ -15,6 +15,7 @@ from uuid import uuid4
 from .agent import source_text
 from .memory_paths import bound_metadata, memory_bindings
 from .retrieval import Retriever, public_record, public_source_metadata
+from .sensitivity import record_classes, source_sensitivity
 from .sql import clean_row, json_text, one_row, utc_now
 
 
@@ -129,7 +130,7 @@ class Inspector:
             selected = available[:limit]
             fields = "*"
             if collection == "sources":
-                fields = "id,project_id,uri,kind,sha256,created_at,is_current,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset"
+                fields = "id,project_id,uri,kind,sha256,created_at,is_current,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.origin_history AS origin_history,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset"
             rows = reader.query(f"SELECT {fields} FROM {collection} WHERE project_id=:project AND id IN :ids ORDER BY id",
                                 {"project": pid, "ids": selected}) if selected else []
             items = []
@@ -139,7 +140,9 @@ class Inspector:
                     item = public_record(row, content_limit=1000, metadata_budget=2000)
                     item["project_id"] = pid
                 elif collection == "sources":
-                    item = row
+                    # Derived on read, never stored (#180); the history mark it reads is not listed.
+                    item = {**row, "sensitivity": source_sensitivity(row)}
+                    item.pop("origin_history", None)
                 elif collection == "jobs":
                     item = self.store._public_job(row)
                 elif collection == "check_runs":
@@ -156,8 +159,10 @@ class Inspector:
             # Derived outside the writer lock, like the detail view; the list needs no file bodies.
             from .evidence import evidence_states
             states = evidence_states(self.store, pid, rows, quotes=False)
+            classes = record_classes(self.store, rows)
             for item in items:
                 item["evidence_state"] = states[item["id"]]["evidence_state"]
+                item["sensitivity"] = classes[item["id"]]
         return result
 
     def entity(self, collection, project, identifier, *, worktree=None):
@@ -205,6 +210,7 @@ class Inspector:
         # Derived on every read: a source can change without any write to the record.
         from .evidence import evidence_states
         result["evidence"] = evidence_states(self.store, scope[0]["id"], [row])[row["id"]]
+        result["sensitivity"] = record_classes(self.store, [row])[row["id"]]
         if row["kind"] == "task":
             # A read projection, not the /checks recovery operation. Filesystem
             # capture never holds the shared database writer lock.
@@ -250,7 +256,8 @@ class Inspector:
             end = min(len(text), offset + limit)
             return {"source": {**self._header(row), "metadata": public_source_metadata(row.get("metadata"))},
                 "view": view, "text": text[offset:end], "offset": offset, "next_offset": end if end < len(text) else None,
-                "total_chars": len(text), "truncated": end < len(text), "cursor": _cursor(reader, self.store)}
+                "total_chars": len(text), "truncated": end < len(text), "sensitivity": source_sensitivity(row),
+                "cursor": _cursor(reader, self.store)}
 
     def inbox(self, *, cursor=None, limit=100):
         _limit(limit)

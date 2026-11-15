@@ -1577,9 +1577,13 @@ def rebuild_vectors(ctx: typer.Context, project: str):
     pid = store.resolve_project(project)["id"]
     namespace = asyncio.run(from_settings(settings).model_identity(settings.embedding_model))
     store.delete_embeddings(pid)
-    count = schedule_embeddings(store, namespace)
-    output({"project": pid, "missing_vectors_queued": count, "namespace": namespace,
-            "sources_preserved": True})
+    held: dict = {}
+    count = schedule_embeddings(store, namespace, settings=settings, report=held)
+    result = {"project": pid, "missing_vectors_queued": count, "namespace": namespace, "sources_preserved": True}
+    if held.get("embedding_held_back"):
+        # Chunks of a class the remote embedding server may not receive (memory_remote_classes, #181).
+        result["vectors_held_back"] = held["embedding_held_back"]
+    output(result)
 
 
 @app.command()
