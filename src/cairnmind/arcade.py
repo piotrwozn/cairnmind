@@ -1,6 +1,7 @@
 """ArcadeDB HTTP DAL: native SQL, graph records and server-side transactions.
 
-Credentials are local config data, never interpolated into SQL, URLs or errors.
+Credentials are never interpolated into SQL, URLs or errors. Where the password comes from and which
+addresses are allowed is decided in database_credentials.
 """
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 import os
 import re
+import ssl
 import threading
 from typing import Iterator
 from urllib.parse import quote
@@ -15,6 +17,7 @@ from urllib.parse import quote
 import httpx
 
 from .config import Settings
+from .database_credentials import problem, tls_context
 
 
 class ArcadeError(RuntimeError):
@@ -33,8 +36,9 @@ class _Connections:
     from several threads. A process that was forked makes its own, so no socket is shared across processes.
     """
 
-    def __init__(self, base_url: str, auth: tuple[str, str], transport: httpx.BaseTransport | None):
-        self._base_url, self._auth, self._transport = base_url, auth, transport
+    def __init__(self, base_url: str, auth: tuple[str, str], transport: httpx.BaseTransport | None,
+                 verify: ssl.SSLContext | bool = False):
+        self._base_url, self._auth, self._transport, self._verify = base_url, auth, transport, verify
         self._lock = threading.Lock()
         self._client: httpx.Client | None = None
         self._pid: int | None = None
@@ -42,10 +46,12 @@ class _Connections:
     def client(self) -> httpx.Client:
         with self._lock:
             if self._client is None or self._pid != os.getpid():
-                # HTTP is enforced by the caller; no TLS peer exists here.
-                # Skip unused CA loading, leaving provider HTTPS unchanged.
-                self._client = httpx.Client(base_url=self._base_url, auth=self._auth, verify=False,
-                                            follow_redirects=False, trust_env=False, transport=self._transport)
+                # For https, verify is a context that checks the certificate and the host name, always.
+                # For http, which the caller allows only on loopback, no TLS peer exists: verify=False
+                # only skips loading authorities that would never be used. Redirects are never followed.
+                options = {"transport": self._transport} if self._transport is not None else {}
+                self._client = httpx.Client(base_url=self._base_url, auth=self._auth, verify=self._verify,
+                                            follow_redirects=False, trust_env=False, **options)
                 self._pid = os.getpid()
             return self._client
 
@@ -62,24 +68,41 @@ class _Connections:
             pass
 
 
+def _certificate_refused(exc: BaseException) -> bool:
+    """Whether a connection failed because the server's certificate was not trusted."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(exc):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 class ArcadeClient:
     def __init__(self, settings: Settings, *, session_id: str | None = None,
-                 transport: httpx.BaseTransport | None = None, _connections: _Connections | None = None):
+                 transport: httpx.BaseTransport | None = None, _connections: _Connections | None = None,
+                 administrator: bool = False):
+        """``administrator`` is only for ``cairnmind db create-user``: root, once, over https, on any host."""
         parsed = httpx.URL(settings.arcade_url)
-        if (parsed.scheme != "http" or parsed.host not in {"127.0.0.1", "localhost", "::1"}
-                or parsed.userinfo or parsed.query or parsed.fragment):
-            raise ValueError("ArcadeDB must use a loopback HTTP address")
+        # The rules of #72: http only on loopback, https with verification anywhere, and on another host
+        # neither root nor a password from config.json. The message says which rule was broken.
+        refused = problem(replace(settings, arcade_user="cairnmind") if administrator else settings)
+        if refused:
+            raise ValueError(refused)
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,100}", settings.arcade_database):
             raise ValueError("Invalid ArcadeDB database name")
         # Bind credentials and endpoint for this client and its transactions.
         # Mutating the caller's settings must not redirect an existing session.
         self.settings = replace(settings)
         self._base_url = str(parsed).rstrip("/")
+        self._loopback = parsed.host in {"127.0.0.1", "localhost", "::1"}
         self.database = settings.arcade_database
         self.session_id = session_id
         self.transport = transport
         self._connections = _connections or _Connections(
-            self._base_url, (self.settings.arcade_user, self.settings.arcade_password), transport)
+            self._base_url, (self.settings.arcade_user, self.settings.arcade_password), transport,
+            tls_context(settings) if parsed.scheme == "https" else False)
 
     def close(self) -> None:
         """Close the kept connections. The client stays usable: the next request opens a new one."""
@@ -130,6 +153,11 @@ class ArcadeClient:
                                   exception_name=str(error.get("exception", "")) if isinstance(error, dict) else "")
             return response
         except httpx.HTTPError as exc:
+            if _certificate_refused(exc):
+                raise ArcadeError(f"The certificate of ArcadeDB at {self._base_url} could not be verified; "
+                                  "name a private certificate authority with arcade_ca_file") from None
+            if not self._loopback:
+                raise ArcadeError(f"ArcadeDB at {self._base_url} is unavailable ({type(exc).__name__})") from None
             raise ArcadeError(f"Local ArcadeDB is unavailable ({type(exc).__name__}); "
                               "run cairnmind engine status or cairnmind engine start") from None
 

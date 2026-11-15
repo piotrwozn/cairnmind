@@ -46,7 +46,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_api_credentials", "test_api_panels", "test_api_profiles", "test_api_providers",
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
     "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
-    "test_copilot_adapter", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_view", "test_module_alias",
+    "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view", "test_module_alias",
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parallel_isolation", "test_parsing", "test_readonly_cli",
     "test_runtime_pane", "test_runtime_selection", "test_sample_memory", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
@@ -295,7 +295,7 @@ def mcp_fixture_processes() -> list[int]:
             continue
         try:
             arguments = (entry / "cmdline").read_bytes().split(b"\0")
-            state = (entry / "stat").read_text().rsplit(")", 1)[1].split()[0]
+            state = (entry / "stat").read_text(errors="replace").rsplit(")", 1)[1].split()[0]
         except (OSError, IndexError):
             continue
         if state != "Z" and any(MCP_FIXTURE.encode() in argument for argument in arguments):

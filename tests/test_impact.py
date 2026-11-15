@@ -756,3 +756,18 @@ def test_a_record_is_linked_through_a_plain_word_only_when_its_evidence_writes_i
     assert [entry["path"] for entry in report["changed_files"]] == ["src/api.py"]
     assert named == {"Reading a job goes through status.": ["current", "load_rows", "status"],
                      "Rows are loaded lazily.": ["load_rows"], "Move the service port.": ["Settings.port"]}
+
+
+def test_a_parameter_default_changes_only_when_its_own_text_does():
+    from cairnmind.impact import _definitions
+    old = "@retry(times=3)\ndef connect(host, port=7311, timeout=5):\n    pass\n"
+    new = "@retry(times=4)\ndef connect(host, port=7311, timeout=9):\n    pass\n"
+    before, after = _definitions("net.py", old), _definitions("net.py", new)
+    # The neighbouring parameter and the decorator changed; the port did not.
+    assert sorted(name for name in after if after[name] != before.get(name)) == ["connect", "connect.timeout"]
+    assert after["connect.port"] == ["port=7311"]
+    # A parameter written over several lines keeps all of its text, and a CRLF checkout compares equal.
+    multi = 'def f(\n    a="ż",\n    b=g(\n        1),\n):\n    pass\n'
+    assert _definitions("m.py", multi)["f.b"] == ["b=g(\n        1)"]
+    assert _definitions("m.py", multi)["f.a"] == ['a="ż"']
+    assert _definitions("m.py", multi.replace("\n", "\r\n")) == _definitions("m.py", multi)

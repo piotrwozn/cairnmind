@@ -26,7 +26,7 @@ app = typer.Typer(no_args_is_help=False, pretty_exceptions_enable=False,
                   help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot.")
 projects_app = typer.Typer(help="The registry of projects and their folders.")
 tasks_app = typer.Typer(help="Shared plan steps, their states and verification evidence.")
-models_app = typer.Typer(help="Local Ollama models.")
+models_app = typer.Typer(help="The knowledge agent's models: the local Ollama, or a server you choose.")
 engine_app = typer.Typer(help="The native ArcadeDB engine (Java 21+).")
 plans_app = typer.Typer(help="Versioned plans and a deterministic next step.")
 checks_app = typer.Typer(help="Named project checks and how current their evidence is.")
@@ -37,6 +37,8 @@ jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's job
 memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
 cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
 workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
+store_app = typer.Typer(help="How large the store is. Reads only; starts nothing.")
+db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
 app.add_typer(projects_app, name="project")
 app.add_typer(tasks_app, name="task")
@@ -51,6 +53,8 @@ app.add_typer(jobs_app, name="jobs")
 app.add_typer(memory_app, name="memory")
 app.add_typer(cockpit_app, name="cockpit")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(store_app, name="store")
+app.add_typer(db_app, name="db")
 app.add_typer(answers_app, name="answers")
 
 
@@ -362,6 +366,19 @@ def engine_stop(ctx: typer.Context):
     output(stop_engine(ctx.obj))
 
 
+@db_app.command("create-user")
+@initialized
+def db_create_user(ctx: typer.Context, admin_password_file: Annotated[Path, typer.Option(
+        "--admin-password-file", help="A private file (mode 0600) with the root password of the server.")]):
+    """Create the database and the user arcade_user with rights on it only, signing in once as root.
+
+    The new user's password is the one configured for it: CAIRNMIND_ARCADE_PASSWORD or arcade_password_file.
+    """
+    from cairnmind.database_credentials import admin_password, create_user
+    admin = admin_password(str(admin_password_file.expanduser().absolute()))
+    output(create_user(ctx.obj, admin))
+
+
 @app.command()
 @initialized
 def doctor(ctx: typer.Context, contract: bool = typer.Option(
@@ -616,6 +633,22 @@ def usage(ctx: typer.Context, project: str,
 def status(ctx: typer.Context, project: str | None = None):
     output(request(ctx.obj, "GET", "/status", start_service=False,
                    params={"project": project} if project else {}))
+
+
+@store_app.command("size")
+def store_size(ctx: typer.Context, project: Annotated[str | None, typer.Argument(
+                   help="Measure only this project's rows; the disk use is always the whole data directory.")] = None,
+               as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False):
+    """Rows and approximate bytes per collection, kind and namespace, and the disk use of the data directory.
+
+    Read-only: it never starts the engine or the service and changes nothing. Prints no record or source text."""
+    from cairnmind.store_size import measure
+    store = store_for_read(ctx.obj)
+    report = measure(store, store.resolve_project(project)["id"] if project is not None else None)
+    if as_json:
+        output(report)
+    else:
+        typer.echo(report["text"])
 
 
 @jobs_app.command("list")
@@ -1028,6 +1061,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
     if skip_claude and not clients:
         raise typer.BadParameter("--skip-claude requires --clients")
     result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
+    _record_evaluation(ctx.obj, "recall", result)
     output(result)
     if result.get("status") == "failed":
         raise typer.Exit(1)
@@ -1041,6 +1075,7 @@ def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
     """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
     from cairnmind.memory_evaluation import run_memory_evaluation
     result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
+    _record_evaluation(ctx.obj, "memory", result)
     output(result)
     if result.get("status") != "passed":
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
@@ -1081,9 +1116,17 @@ def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = Non
         result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from None
+    _record_evaluation(ctx.obj, "repository", result)
     output(result)
     if result.get("status") != "passed":
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
+
+
+def _record_evaluation(settings, kind: str, result: dict) -> None:
+    """A passing evaluation is recorded for the pair of models it ran with (doctor and answers read it)."""
+    if result.get("status") == "passed" and not result.get("inference") == "injected_adapter":
+        from cairnmind.memory_models import record_passed
+        result["models_evaluation_recorded"] = record_passed(settings, kind, result.get("model_identities"))
 
 
 @eval_app.command("replay")
@@ -1330,17 +1373,50 @@ def hook(ctx: typer.Context, client: Annotated[str, typer.Option("--client")]):
 @models_app.command("list")
 @initialized
 def model_list(ctx: typer.Context):
-    from cairnmind.ollama import Ollama
-    output(asyncio.run(Ollama(ctx.obj).models()))
+    from cairnmind.memory_models import from_settings
+    output(asyncio.run(from_settings(ctx.obj).models()))
+
+
+@models_app.command("set")
+@initialized
+def model_set(ctx: typer.Context,
+              role: Annotated[str, typer.Option("--role", help="chat (answers, extraction) or embedding.")],
+              provider: Annotated[str, typer.Option("--provider", help="ollama or openai_compatible.")],
+              model: Annotated[str, typer.Option("--model", help="The model's name on that server.")],
+              base_url: Annotated[str | None, typer.Option(
+                  "--base-url", help="The server's address; HTTPS unless it is this computer.")] = None,
+              credential_ref: Annotated[str | None, typer.Option(
+                  "--credential-ref", help="env:NAME or profile:ID naming the key; never the key itself.")] = None,
+              context_window: Annotated[int | None, typer.Option(
+                  "--context-window", help="Chat only: the model's context in tokens.")] = None,
+              reasoning_effort: Annotated[str | None, typer.Option(
+                  "--reasoning-effort", help="Chat on an OpenAI-compatible server only: none, low, medium or high; "
+                                             "none turns thinking off where the server supports it.")] = None,
+              allow_remote: Annotated[bool, typer.Option(
+                  "--allow-remote", help="Consent to send memory content to a server on another computer.")] = False):
+    """Choose the knowledge agent's chat or embedding model and server, after a test call to it."""
+    from cairnmind.memory_models import configure_role
+    try:
+        result = asyncio.run(configure_role(
+            ctx.obj, role, provider=provider, model=model, base_url=base_url, credential_ref=credential_ref,
+            context_window=context_window, reasoning_effort=reasoning_effort, allow_remote=allow_remote))
+    except (ValueError, OllamaUnavailable) as exc:
+        raise typer.BadParameter(str(exc)) from None
+    output(result)
 
 
 @models_app.command("pull")
 @initialized
 def model_pull(ctx: typer.Context):
     """Explicitly download the models (several GB) and record their digests."""
+    from cairnmind.memory_models import profile
     settings = ctx.obj
+    local = [name for role, name in (("chat", settings.chat_model), ("embedding", settings.embedding_model))
+             if profile(settings, role) is None]
+    if not local:
+        raise typer.BadParameter("Neither memory model runs on the local Ollama; install them on their own server.")
     with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900)) as client:
-        for name in (settings.chat_model, settings.embedding_model):
+        for name in local:
             typer.echo(f"Downloading {name}…", err=True)
             with client.stream("POST", settings.ollama_url + "/api/pull", json={"name": name, "stream": True}) as res:
                 res.raise_for_status()
@@ -1364,9 +1440,9 @@ def model_pull(ctx: typer.Context):
     store = store_for(settings)
     from cairnmind.service import schedule_embeddings
     for item in models.get("models", []):
-        if item.get("name") == settings.embedding_model and item.get("digest"):
+        if item.get("name") == settings.embedding_model and item.get("digest") and settings.embedding_model in local:
             schedule_embeddings(store, f"{settings.embedding_model}@{item['digest']}")
-    output({"models": [settings.chat_model, settings.embedding_model], "digests_saved": True})
+    output({"models": local, "digests_saved": True})
 
 
 def _retry_jobs(store):
@@ -1388,12 +1464,12 @@ def retry_jobs(ctx: typer.Context):
 @initialized
 def rebuild_vectors(ctx: typer.Context, project: str):
     """Rebuild the project's derived vectors, keeping sources and history."""
-    from cairnmind.ollama import Ollama
+    from cairnmind.memory_models import from_settings
     from cairnmind.service import schedule_embeddings
     settings = ctx.obj
     store = store_for(settings)
     pid = store.resolve_project(project)["id"]
-    namespace = asyncio.run(Ollama(settings).model_identity(settings.embedding_model))
+    namespace = asyncio.run(from_settings(settings).model_identity(settings.embedding_model))
     store.delete_embeddings(pid)
     count = schedule_embeddings(store, namespace)
     output({"project": pid, "missing_vectors_queued": count, "namespace": namespace,

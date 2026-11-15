@@ -42,7 +42,8 @@ from . import __version__
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
 from .evaluation import MeasuredOllama, _fixture_settings, _git
-from .ollama import Ollama, OllamaUnavailable
+from .memory_models import from_settings
+from .ollama import OllamaUnavailable
 
 PASS_SHARE = 0.8  # complete and right, of all questions
 # Never indexed: the questions and the document that reports the runs (the question file given
@@ -265,7 +266,7 @@ def run_repository_evaluation(settings: Settings, root: Path, questions_path: Pa
     excluded = [*NOT_INDEXED, *([listed.relative_to(root).as_posix()] if listed.is_relative_to(root) else [])]
     files = tracked_files(root, excluded)
     started = time.monotonic()
-    measured = MeasuredOllama(ollama or Ollama(settings))
+    measured = MeasuredOllama(ollama or from_settings(settings))
     report = {"format_version": 1, "cairnmind_version": __version__, "evaluation_mode": "repository_questions",
               "repository": root.name, "questions_file": str(questions_path), "status": "not_run",
               "model": settings.chat_model, "embedding_model": settings.embedding_model, "model_identities": {},

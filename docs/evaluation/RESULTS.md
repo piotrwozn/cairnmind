@@ -1,8 +1,30 @@
 # Results of `cairnmind eval repository` on Cairnmind
 
-**The acceptance figure of issue #104, sixteen of twenty questions complete and right in the worst of three runs, is not met: the worst run on the final tree gave 13 of 20.** The branch is merged as a step; the issue stays open for the next release.
+**The acceptance figure of issue #104, sixteen of twenty questions complete and right in the worst of three runs, is not met: measured the same way, the worst run gave 14 of 20 on the 0.10.0 tree and 15 of 20 after the parsing and definition steps below, a change within the spread of two to three questions between runs.** The issue stays open.
 
 This page is kept out of the copy that the evaluation indexes (see [../EVALUATION.md](../EVALUATION.md)), so that a run cannot read the results of earlier runs. It reports the questions that failed by topic, not by their answers.
+
+## After the parsing and definition steps (next release)
+
+**Still not met: the worst of three runs on the final tree of these steps gave 15 of 20 complete and right; the target is 16.**
+
+Measured on 14 November 2026 from release 0.10.0 (ae7ba4c), with the same models (`qwen3.5:9b` digest 56671c2a…, `qwen3-embedding:0.6b` digest ac6da0df…) and the same twenty questions, three runs per tree, each tree indexed from its own commit (280 files). Other work used the same graphics card during these runs; with the default question timeout of 60 seconds up to nine questions of a run ended in that timeout, which measured the shared card and not retrieval, so these runs set `ask_timeout` to 600 seconds. No question of the runs below took longer than 46 seconds, so the longer timeout ended none of them and the default of 60 seconds would not have ended any either; the earlier series that hit the timeout ran while the card was more heavily shared. The runs at 4326755 further down were made on another tree and day; compare the trees within this table, not with those runs.
+
+| Tree | Run 1 | Run 2 | Run 3 | Worst | Complete and wrong |
+| --- | --- | --- | --- | --- | --- |
+| 0.10.0 | 15 | 14 | 15 | 14 | 1 |
+| + TOML keys as definitions | 16 | 16 | 14 | 14 | 2 |
+| + one question word with its file or class | 16 | 17 | 15 | 15 | 0 |
+| + parameter defaults as definitions | 16 | 17 | 16 | 16 | 1 |
+| + made-up values in the parsing test fixtures (final) | 16 | 17 | 15 | 15 | 0 |
+
+What changed, by question:
+
+- **Required Python version**: never complete on 0.10.0; complete and right in all twelve runs since the keys of `pyproject.toml` are definitions and `requires-python` is shown with the question.
+- **Default question timeout** and **Java heap of the engine**: still never complete. The setting's name (`ask_timeout`) shares no word with the question and is in no file or class that does; the heap is a literal in a list inside a function, which none of these steps makes a definition.
+- **Journal event limit**: the wrong answer quoted from a test (a count of 2) came in four of the twelve runs before the fixture step and in none of the three after it; with three runs that is not a measured effect.
+- The other questions moved by one run here or there in both directions (quotes that were not literal, the support check). The spread between runs of one tree (two to three questions) is as large as the differences between the trees, so steps 3 to 5 cannot be told apart on these twenty questions; none made the figure worse beyond that spread.
+- The questions an implementation never saw were not measured again.
 
 ## The twenty questions of this repository (in-sample)
 
@@ -55,6 +77,6 @@ As measured while this was built: it rejects a value quoted from a test, a lock 
 These are measured on the out-of-sample set, not on the twenty questions above, so that the rules are not shaped on the figure they are judged by:
 
 - A larger model for the support check and for answering. Issue #67 makes the model selectable; most failures above are a model that quotes the right passage and answers from another, or a quote that is not literal.
-- Values from `pyproject.toml` and other TOML or JSON configuration as findable definitions, as module constants and class fields already are, so that a question about the required Python version or the project version reaches the line that states it.
-- A definition reached by one distinctive question word together with its owner or file, for a setting whose name has a word the question does not use (the default question timeout).
-- Parameter defaults of functions as definitions, for a value written only as a default or a literal inside a function (the Java heap of the engine).
+- Values from `pyproject.toml` and other TOML or JSON configuration as findable definitions, as module constants and class fields already are, so that a question about the required Python version or the project version reaches the line that states it. Done for TOML (see the section at the top); JSON is not done, since most JSON files of a repository are data (this one holds seventy memory snapshot objects), and which JSON files count as configuration is still to be decided.
+- A definition reached by one distinctive question word together with its owner or file, for a setting whose name has a word the question does not use (the default question timeout). Done for a name with one question word in a file or class that has one; it does not reach the default question timeout, whose setting, file and class share no word with the question.
+- Parameter defaults of functions as definitions, for a value written only as a default or a literal inside a function (the Java heap of the engine). Done for Python parameter defaults; literals inside a function body (the Java heap) are not definitions yet.

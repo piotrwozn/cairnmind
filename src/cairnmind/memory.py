@@ -20,7 +20,7 @@ import tempfile
 from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
-from .store import KINDS, STATUSES, TASK_STATES, validate_criterion_links
+from .store import EXTRACTION_MARK, KINDS, STATUSES, TASK_STATES, validate_criterion_links
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
@@ -56,6 +56,18 @@ def _manifest_id(manifest):
     return _digest({key: value for key, value in manifest.items() if key != "snapshot_id"})
 
 
+def _without_local_mark(record):
+    """A record without the local extraction worker's mark (#168).
+
+    The mark lets this machine's own api session keep its ACK. A package never carries it
+    in or out, so an imported record always counts as somebody else's write.
+    """
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict) and EXTRACTION_MARK in metadata:
+        record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTION_MARK}
+    return record
+
+
 def _logical(table, original):
     row = {k: deepcopy(v) for k, v in clean_row(original).items() if k not in {"in", "out"}}
     if table == "sources":
@@ -64,6 +76,7 @@ def _logical(table, original):
         row.pop("is_current", None)
     if table == "records":
         row.pop("active_key", None)
+        _without_local_mark(row)
     if table == "record_revisions" and isinstance(row.get("snapshot"), dict):
         row["snapshot"] = _logical("records", row["snapshot"])
     if table == "plan_revisions" and isinstance(row.get("snapshot"), dict):
@@ -331,6 +344,21 @@ def _validate(payload, project_id, active_plan_id=None):
     return maps
 
 
+def _strip_local_marks(table, row):
+    """Drop every extraction mark a package row holds, before it is validated or applied (#168)."""
+    if table == "records":
+        _without_local_mark(row)
+    snapshot = row.get("snapshot") if table in {"record_revisions", "plan_revisions"} else None
+    if not isinstance(snapshot, dict):
+        return
+    if table == "record_revisions":
+        _without_local_mark(snapshot)
+    elif isinstance(snapshot.get("tasks"), list):
+        for task in snapshot["tasks"]:
+            if isinstance(task, dict):
+                _without_local_mark(task)
+
+
 def _check_manifest(path):
     """The manifest alone, checked for format, identity, ancestry and its own checksum; no object is read."""
     path = Path(path).expanduser().absolute()
@@ -407,6 +435,7 @@ def _load_snapshot_impl(path):
             row = _parse(data)
             if not isinstance(row, dict) or row.get("id") != descriptor.get("id"):
                 raise ValueError("Memory object identity mismatch")
+            _strip_local_marks(table, row)
             payload[table].append(row)
     _validate(payload, project["id"], manifest.get("active_plan_id"))
     if manifest.get("state_hash") != _state_hash(payload):

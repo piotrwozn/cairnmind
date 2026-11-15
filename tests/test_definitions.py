@@ -335,6 +335,80 @@ def test_a_test_constant_never_outranks_the_primary_definition_of_the_same_class
     assert [row["symbol"]["name"] for row in ranked] == ["Settings.timeout", "DEFAULT_TIMEOUT"]
 
 
+PYPROJECT = '''[project]
+name = "pkg"
+version = "7.7.7"
+requires-python = ">=9.9"
+
+[tool.pytest.ini_options]
+timeout = 41
+'''
+
+
+def test_a_hyphenated_key_made_of_question_words_matches_the_name_pattern():
+    import re
+
+    from cairnmind.definitions import name_word_pattern, relevance
+    pattern = name_word_pattern("Which Python version does this project require?")
+    assert re.match(pattern, "requires-python") and re.match(pattern, "requires_python")
+    assert not re.match(pattern, "requires-pythonic") and not re.match(pattern, "python")
+    key = {"name": "project.requires-python", "kind": "field", "owner": "project", "member": "requires-python"}
+    assert relevance("Which Python version does this project require?", key, "pyproject.toml") == (0, 1, 2, 1)
+
+
+def test_keys_of_a_toml_file_are_found_as_definitions(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pyproject.toml").write_text(PYPROJECT)
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "Which Python version does this project require?", [], {})
+    assert found and found[0]["definition"] == "project.requires-python" and found[0]["path"] == "pyproject.toml"
+    assert 'requires-python = ">=9.9"' in found[0]["text"]
+    found = agent._definitions(project["id"], "What is the version of the project?", [], {})
+    assert found and found[0]["definition"] == "project.version" and 'version = "7.7.7"' in found[0]["text"]
+
+
+def test_a_name_with_one_question_word_is_found_through_its_file(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "journal.py").write_text("FLUSH_TIMEOUT = 7\n")
+    (root / "pkg" / "billing.py").write_text("RETRY_TIMEOUT = 9\n")
+    (root / "pkg" / "ledger.py").write_text("class JournalWriter:\n    flush_delay: int = 3\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "What is the timeout of the journal?", [], {})
+    # One word of the name and one of its file name: found; the billing timeout shares no second word.
+    assert [item["definition"] for item in found] == ["FLUSH_TIMEOUT"]
+    found = agent._definitions(project["id"], "How long is the delay of the journal writer?", [], {})
+    assert [item["definition"] for item in found] == ["JournalWriter.flush_delay"]  # through its class
+
+
+def test_a_value_written_only_as_a_parameter_default_is_found(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "worker.py").write_text(
+        "def poll(queue, interval_seconds: float = 13.5, label=None):\n    return queue\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    found = agent._definitions(project["id"], "How many seconds is the poll interval by default?", [], {})
+    assert found and found[0]["definition"] == "poll.interval_seconds"
+    assert found[0]["definition_kind"] == "parameter" and "interval_seconds: float = 13.5" in found[0]["text"]
+
+
+def test_a_parameter_that_shares_one_word_with_the_question_is_not_shown():
+    # A parameter's name is local to its function: "size" or "timeout" alone says little about
+    # which value is asked. It counts when the question spells it or names it with its words only.
+    rows = [{"symbol": {"name": "read.timeout", "kind": "parameter", "owner": "read", "member": "timeout"},
+             "path": "pkg/net.py"},
+            {"symbol": {"name": "poll.interval_seconds", "kind": "parameter", "owner": "poll",
+                        "member": "interval_seconds"}, "path": "pkg/worker.py"},
+            {"symbol": {"name": "TIMEOUT", "kind": "constant"}, "path": "pkg/net.py"}]
+    ranked = rank_definitions("What is the read timeout of the poll, in seconds?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["TIMEOUT"]
+    ranked = rank_definitions("What is the poll interval in seconds?", rows)
+    assert [row["symbol"]["name"] for row in ranked] == ["poll.interval_seconds"]
+    ranked = rank_definitions("What does read.timeout default to?", rows)
+    assert [row["symbol"]["name"] for row in ranked][0] == "read.timeout"
+
+
 def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     agent = KnowledgeAgent(store, settings, FakeOllama())
@@ -349,5 +423,6 @@ def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # 
     assert found and len(found) <= MAX_DEFINITIONS
     print(f"definitions={len(found)} queries={len(counted)}")
     # Project, roots, the worktree's sources (two), code names, word names, names made of question
-    # words; then one freshness check per definition.
-    assert len(counted) <= 8 + 12 * len(found)
+    # words, names with one question word in a file or class with one; then one freshness check per
+    # definition.
+    assert len(counted) <= 9 + 12 * len(found)

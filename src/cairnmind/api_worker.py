@@ -362,8 +362,24 @@ class AgentApp(App):
             return False
         if request.get("session_id") != self.run_record.get("session_id"):
             return False
-        body = self.display_text(json.dumps(request, ensure_ascii=False, indent=2)).plain
-        if request.get("kind") == "mcp_tool":
+        from .agent_write_guard import (changed_files_text, file_write_text, valid_changed_files,
+                                        valid_file_write, without_changed_files)
+        if not valid_changed_files(request):
+            return False
+        # The files the agent changed since the last approval, shown under what would run (#176).
+        changes = changed_files_text(request, self.t)
+        changes = "\n\n" + self.display_text(changes, limit=None).plain if changes else ""
+        body = self.display_text(json.dumps(without_changed_files(request), ensure_ascii=False, indent=2)).plain
+        if request.get("kind") == "file_write":
+            # One change to a file that makes another program run something (#176).
+            if not request.get("action_id") or not valid_file_write(request):
+                return False
+            body, changes = self.display_text(file_write_text(request, self.t), limit=None).plain, ""
+            title, note, button = ("Approve one change to a file that configures execution",
+                                   "Coding clients, CI, editors or shells can run what this file says. This is "
+                                   "the change that will be made; a refusal leaves the file as it is.",
+                                   "Write once")
+        elif request.get("kind") == "mcp_tool":
             # One call of a third-party tool: server, tool and the exact arguments, approved once (#126).
             from .mcp_agent import MAX_SHOWN_CHARS, approval_text
             if (not request.get("action_id") or not isinstance(request.get("server_id"), str)
@@ -382,8 +398,8 @@ class AgentApp(App):
         else:
             title, note, button = ("Approve one command", "This command runs with your user account permissions.",
                                    "Run once")
-        self._approval_screen = ConfirmModal(self.t(title), body + "\n\n" + self.t(note), approve=self.t(button),
-                                            consent=True)
+        self._approval_screen = ConfirmModal(self.t(title), body + changes + "\n\n" + self.t(note),
+                                            approve=self.t(button), consent=True)
         try:
             return await self.push_screen_wait(self._approval_screen) is True
         finally:

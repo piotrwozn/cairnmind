@@ -951,9 +951,10 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
                 first, last = label.rsplit(".", 1)
                 if first in namespace:
                     candidates = symbols[namespace[first]].get(last, [])
+            # A call in a parameter's default belongs to the function, not to the parameter.
             owner_candidates = [
                 symbol for group in symbols[path].values() for symbol in group
-                if symbol["line_start"] <= item["line"] <= symbol["line_end"]
+                if symbol["line_start"] <= item["line"] <= symbol["line_end"] and symbol.get("kind") != "parameter"
             ]
             owner = min(owner_candidates, key=lambda s: s["line_end"] - s["line_start"])["id"] if owner_candidates else file_nodes[path]
             if len(candidates) == 1:

@@ -35,9 +35,11 @@ Refresh resume_context and ACK whenever relevant project state/code changes.
 Use memory tools to restore the goal, decisions, plan, task and checkpoint. Cite
 actual inspected source IDs for memory claims. Say when information is missing.
 Read current files before editing; pass their actual sha256 as expected_sha256.
-Edits are worktree-scoped. Commands require the person's one-use approval. Never
-request permission through shell text or hide commands in an alternative tool.
-Do not interpret a refused command as authorization to try a different command.
+Edits are worktree-scoped. Commands require the person's one-use approval, and so
+do changes to files that configure execution (coding clients' settings and hooks,
+MCP and repository instruction files, CI, editor tasks). Never request permission
+through shell text or hide commands in an alternative tool.
+Do not interpret a refused command or change as authorization to try another way.
 Implementation, tests, independent review and human acceptance are distinct.
 Record progress with evidence and versions. Do not mark done without all required
 fresh checks/review; old or imported checks are historical, never local fresh.
@@ -139,7 +141,8 @@ class AgentEngine:
         # ACK gate below offers and admits them like every other effect.
         self.mcp = McpTools(mcp_servers if run["client"] == "api" else [], run=self.run, journal=self.journal,
                             worktree=run["worktree"], reserved=set(self._schemas),
-                            approve=self._approve_command if approve is not None else None)
+                            approve=self._approve_command if approve is not None else None,
+                            changes=getattr(self.tools, "changes", None))
         self._mcp_started = False
         self._emitted = False
         self._prepared = False

@@ -23,4 +23,10 @@ Cairnmind runs locally and keeps sensitive material on your machine. Reports are
 - leaks of API keys, tokens or conversation content into logs, snapshots or exports;
 - access to the local service or broker from outside the loopback interface.
 
+## Database access
+
+The managed local engine listens on loopback and Cairnmind signs in to it as `root`, with a password generated at installation and kept in `config.json` (mode `0600`) in the data directory. An installation from an earlier version keeps working this way; `cairnmind doctor` says where the password comes from.
+
+A database on another host must be reached with `https://`; the certificate and the host name are always verified, against a private authority named by `arcade_ca_file` (an absolute path to a PEM file) or else the system's authorities; as everywhere OpenSSL is used, the variables `SSL_CERT_FILE` and `SSL_CERT_DIR` replace the system's authorities when they are set. Cairnmind never starts a server for such an address and never writes its password into the data directory; it requires the same pinned ArcadeDB release there as on this machine. Cairnmind refuses plain `http://`, the user `root` and a password from `config.json` for such a host, and says which rule was broken. Create a user with rights on the Cairnmind database only, once, with `cairnmind db create-user --admin-password-file FILE`, which signs in as `root` for that step alone. Give the user's password through the variable `CAIRNMIND_ARCADE_PASSWORD` or a file named by `arcade_password_file` (a regular file of your user with mode `0600`). Such a password is never written to `config.json`, and it is masked in the agent journal and in database error messages.
+
 Portable memory snapshots in `.memory/cairnmind/` (and `.memory/devbrain/`, written by versions up to 0.9.0) can contain full conversation text. Review them before committing them to a shared repository.

@@ -262,7 +262,7 @@ def finish_job_if_present(store, job_id: str, error: str | None = None, *, worke
 def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                background_inference: bool = True, ollama=None) -> FastAPI:
     from cairnmind.agent import KnowledgeAgent, extraction_outer_timeout, inference_lease_seconds
-    from cairnmind.ollama import Ollama
+    from cairnmind.memory_models import from_settings, ready_kinds
     from cairnmind.retrieval import Retriever
     from cairnmind.store import Store
     from cairnmind.plans import PlanManager
@@ -275,7 +275,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     if not settings.token:
         raise ValueError("Run cairnmind init to create a local authentication token")
     store = Store(settings.data_dir)
-    model = ollama or Ollama(settings)
+    model = ollama or from_settings(settings)
     retriever = Retriever(store, settings, ollama=model)
     agent = KnowledgeAgent(store, settings, ollama=model, retriever=retriever)
     plans = PlanManager(store)
@@ -382,17 +382,18 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 await background_ready.wait()
                 selected = None if background_inference else tuple(sorted(inference_projects))
                 # Keep pending work pending when Ollama is offline, instead of failing the whole queue.
-                await model.models()
+                # With split model servers, each job kind waits only for the server of its own role.
+                kinds, role_error = await ready_kinds(model)
                 identity = getattr(model, "model_identity", None)
-                if identity:
+                if identity and "embed" in kinds:
                     namespace = await identity(settings.embedding_model)
                     if (namespace != last_namespace or selected != last_projects
                             or time.monotonic() - last_repair > 60):
                         missing = await asyncio.to_thread(schedule_embeddings, store, namespace, project_ids=selected)
                         background_status.update(embedding_namespace=namespace, embedding_missing=missing)
                         last_namespace, last_repair, last_projects = namespace, time.monotonic(), selected
-                background_status["model_error"] = None
-                job = await asyncio.to_thread(store.claim_job, "inference", inference_lease_seconds(), ["embed", "extract"],
+                background_status["model_error"] = str(role_error) if role_error else None
+                job = await asyncio.to_thread(store.claim_job, "inference", inference_lease_seconds(), kinds,
                                               project_ids=selected)
                 if job:
                     try:

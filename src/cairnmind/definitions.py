@@ -10,19 +10,23 @@ are resolved by exact name:
   ``SCHEMA_VERSION``); word names are the question's other search terms, alone and adjacent
   pairs joined by "_" (``schema version`` -> ``schema_version``), each also upper-cased;
 - a candidate is a current symbol node of the project whose label equals a name, or, for a
-  field, whose member (the bare name after ``Owner.``) does; a code name finds any kind of
-  definition, a word name constants and fields only, since a plain word such as "version" or
-  "write" names many functions; code-name matches are read first, word-name matches fill up
-  the rest of the bound;
-- a constant or field is also a candidate when its snake_case name is made only of question
-  words and FILLER_WORDS, with at least one question word and two words in all
-  (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
+  field or a parameter default (``connect.port`` for ``def connect(port=7311)``), whose member
+  (the bare name after ``Owner.``) does; a code name finds any kind of definition, a word name
+  constants and fields only, since a plain word such as "version" or "write" names many
+  functions; code-name matches are read first, word-name matches fill up the rest of the bound;
+- a constant, field or parameter default is also a candidate when its snake_case name (or
+  hyphenated TOML key, ``requires-python``) is made only of question words and FILLER_WORDS,
+  with at least one question word and two words in all (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
   drift report list at most?"). Words compare by a light stem (a trailing "ing", "ed" or "s" is
   dropped). The question words used are those that can be name words: NAME_STOPWORDS and words
   under three letters are left out, the longest MAX_PATTERN_WORDS are kept. The database applies
   this as a regular expression in its own bounded read, so only such names come back;
+- a constant or field is also a candidate when one word of its name is a question word and its
+  file name (or, for a field, its class) has a question word too (``FLUSH_TIMEOUT`` in
+  ``journal.py`` for "What is the timeout of the journal?"; see ``context_patterns``);
 - each kind of match has its own read of at most MAX_ROWS rows, after the worktree filter:
-  code names (any kind), word names (constants and fields), names made of question words;
+  code names (any kind), word names (constants and fields), names made of question words, names
+  with one question word in a file or class with one;
 - candidates are ranked: a name the question writes as code first; then a full match, a name
   of at least two question words with nothing else but filler words (``answer_tokens``; not
   ``MAX_REPORTED``, which has one); then a primary file before a test, lock or minified file;
@@ -45,7 +49,7 @@ MAX_DEFINITION_ATTEMPTS = 8
 MAX_NAMES = 64
 MAX_ROWS = 200  # candidate definitions read per question, after the worktree filter
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
-_KIND_ORDER = {"constant": 0, "field": 0, "function": 1, "method": 1, "class": 2}
+_KIND_ORDER = {"constant": 0, "field": 0, "parameter": 1, "function": 2, "method": 2, "class": 3}
 # Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
 FILLER_WORDS = ("max", "min", "default", "num")
 MAX_PATTERN_WORDS = 8  # question words used to look up names by their words
@@ -125,10 +129,13 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     """Rows ``{"symbol": node metadata, "path": project-relative path, ...}`` in the order shown.
 
     Drops rows whose bare name shares no word with the question (unless the question writes the
-    name) and, per bare name (a field's member), secondary rows when a primary file defines that
-    name. Order: a name the question writes first, then a name made only of question words, then
-    question words in the name, then in its owner and file name, primary before secondary,
-    constants and fields before functions before classes, then path and line for a stable result.
+    name), parameter defaults that are neither named nor a full match (a parameter's name is
+    local to its function: ``size`` or ``timeout`` alone says little), and, per bare name (a
+    field's member), secondary rows when a primary file defines that name. Order: a name the
+    question writes first, then a name made only of question words, then question words in the
+    name, then in its owner and file name, primary before secondary,
+    values before functions before classes (a parameter default after a constant or field), then
+    path and line for a stable result.
     So a one-word overlap (SUPPORT_TOKENS for "tokens") never outranks a full match.
     """
     def bare(row: dict) -> str:
@@ -137,7 +144,7 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     scored = []
     for row in rows:
         named, full, words, context = relevance(question, row["symbol"], row["path"])
-        if named or words:
+        if named or (words and (full or row["symbol"].get("kind") != "parameter")):
             scored.append({**row, "named": named, "full": full, "relevance": words, "file_relevance": context,
                            "secondary": secondary_source(row["path"])})
     primary_names = {bare(row) for row in scored if not row["secondary"]}
@@ -158,14 +165,34 @@ def pattern_words(question: str) -> list[str]:
 
 
 def name_word_pattern(question: str) -> str | None:
-    """A regular expression for a lower-case snake_case name made of question words and filler
-    words, with at least one question word and two words in all; None without a usable word."""
+    """A regular expression for a lower-case name made of question words and filler words, with
+    at least one question word and two words in all, joined by "_" (snake_case) or "-" (a TOML
+    key such as ``requires-python``); None without a usable word."""
     words = pattern_words(question)
     if not words:
         return None
     real = "(?:" + "|".join(re.escape(word) for word in words) + ")(?:s|es|ed|ing)?"
     word = "(?:" + real + "|" + "|".join(FILLER_WORDS) + ")"
-    return f"^(?=(?:.*_)?{real}(?:_|$))(?:{word}_)+{word}$"
+    return f"^(?=(?:.*[_-])?{real}(?:[_-]|$))(?:{word}[_-])+{word}$"
+
+
+def context_patterns(question: str) -> tuple[str, str, str] | None:
+    """Regular expressions (name, file, owner) for a name that has one question word, in a file
+    or a class whose name has one too; None without a usable word.
+
+    The name pattern wants a question word as a whole word of a lower-case name (``flush_timeout``
+    for "timeout"); the file pattern a question word as a whole word of the last part of a
+    lower-case path (``journal.py``, ``journal_writer.py``); the owner pattern a question word
+    anywhere in a lower-case class name (``journalwriter``), which ``relevance`` then compares
+    by its words.
+    """
+    words = pattern_words(question)
+    if not words:
+        return None
+    real = "(?:" + "|".join(re.escape(word) for word in words) + ")(?:s|es|ed|ing)?"
+    return (f"^(?:.*[_-])?{real}(?:[_-].*)?$",
+            f"^(?:.*/)?(?:[^/]*[^a-z0-9/])?{real}(?:[^a-z0-9/][^/]*)?$",
+            f".*{real}.*")
 
 
 def find_definitions(store, retriever, project_id: str, question: str, texts: list[str], worktree=None) -> list[dict]:
@@ -173,10 +200,11 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
 
     The worktree's current sources are read first (as search reads them), and the node queries
     keep only symbols of those sources, ordered by label, path and line, each at most MAX_ROWS:
-    the matches of code names (any kind), of word names (constants and fields), and of names made
-    of question words (``name_word_pattern``). Every bound applies after the worktree filter and
+    the matches of code names (any kind), of word names (constants and fields), of names made
+    of question words (``name_word_pattern``), and of names with one question word in a file or
+    class with one (``context_patterns``). Every bound applies after the worktree filter and
     to one kind of match, so one kind cannot crowd out another, and the same index gives the same
-    rows; three queries at most. A row is
+    rows; four queries at most. A row is
     ``{"node_id", "source_id", "symbol", "path", "named", "relevance", ...}`` with ``path``
     relative to the worktree root.
     """
@@ -205,10 +233,21 @@ def find_definitions(store, retriever, project_id: str, question: str, texts: li
     pattern = name_word_pattern(question)
     if pattern:
         rows += [row for row in store.query(
-            select + "((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :pattern) "
+            select + "((metadata.kind IN ['field', 'parameter'] AND metadata.member.toLowerCase() MATCHES :pattern) "
             "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :pattern)) "
             f"{order} LIMIT {MAX_ROWS}",
             {"project": project_id, "eligible": eligible, "pattern": pattern}) if row["id"] not in known]
+        known = {row["id"] for row in rows}
+    context = context_patterns(question)
+    if context:
+        rows += [row for row in store.query(
+            select + "((metadata.kind = 'field' AND metadata.member.toLowerCase() MATCHES :name "
+            "AND (metadata.owner.toLowerCase() MATCHES :owner OR metadata.path.toLowerCase() MATCHES :file)) "
+            "OR (metadata.kind = 'constant' AND label.toLowerCase() MATCHES :name "
+            "AND metadata.path.toLowerCase() MATCHES :file)) "
+            f"{order} LIMIT {MAX_ROWS}",
+            {"project": project_id, "eligible": eligible, "name": context[0], "file": context[1],
+             "owner": context[2]}) if row["id"] not in known]
     found = []
     for row in rows:
         symbol = json_value(row.get("metadata"), {})

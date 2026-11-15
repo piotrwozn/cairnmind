@@ -17,7 +17,8 @@ import signal
 import stat
 from uuid import uuid4
 
-from .agent_journal import AgentJournal
+from .agent_journal import AgentJournal, JournalError
+from .agent_write_guard import ChangeLedger, change_of, change_preview, configures_execution
 from .config import ENV_PREFIXES
 from .native_worker import process_start
 
@@ -27,6 +28,11 @@ MAX_TEXT_CHARS = 128 * 1024
 MAX_COMMAND_OUTPUT_BYTES = 512 * 1024
 MAX_WALK_ENTRIES = 20000
 MAX_SEARCH_BYTES = 16 * 1024 * 1024
+# Stopping a command's process group: SIGTERM, up to TERM_GRACE_SECONDS for the
+# group to end, SIGKILL to what is left, then up to KILL_WAIT_SECONDS until no
+# process of the group runs. Past that the result says processes may remain.
+TERM_GRACE_SECONDS = 0.5
+KILL_WAIT_SECONDS = 1.0
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _SECRET_ENV = re.compile(r"(?:TOKEN|PASSWORD|SECRET|API_?KEY|AUTHORIZATION|CREDENTIAL)", re.I)
 _FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -97,6 +103,83 @@ def _parts(value, *, allow_root=False):
     return parts
 
 
+def _group_exists(pgid):
+    """False only when the kernel says no process (not even a zombie) has group pgid."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    return True
+
+
+def _group_running(pgid):
+    """Whether a process of group pgid still runs. A zombie has ended and only
+    waits to be reaped; a signalled process counts until the kernel has ended it.
+    It reads every process of the machine, so callers run it off the event loop."""
+    if not _group_exists(pgid):
+        return False
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return True  # cannot tell, so never claim the group has ended
+    group = str(pgid).encode()
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            # comm is arbitrary bytes (cut at 15, maybe inside a letter) and may
+            # contain spaces and closing parentheses; state, ppid, pgrp follow it.
+            fields = Path(f"/proc/{name}/stat").read_bytes().rsplit(b")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if len(fields) <= 2 or fields[2] != group:
+            continue
+        if fields[0] not in {b"Z", b"X"}:
+            return True
+        # /proc lists thread groups: the stat of one whose main thread has
+        # exited says Z while its other threads still run.
+        try:
+            if len(os.listdir(f"/proc/{name}/task")) > 1:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+async def _group_ended(pgid, seconds):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    delay = .002
+    # The /proc scan runs in a thread so that a machine with many processes
+    # does not freeze the loop (and the UI on it) during a stop.
+    while await asyncio.to_thread(_group_running, pgid):
+        now = loop.time()
+        if now >= deadline:
+            return False
+        await asyncio.sleep(min(delay, deadline - now))
+        delay = min(delay * 2, .05)
+    return True
+
+
+async def _settle(task):
+    """Wait until task is done even if the waiter is cancelled meanwhile (the
+    task itself is not cancelled). Returns whether a cancellation arrived."""
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            cancelled = True
+    return cancelled
+
+
+def _stopped(task):
+    """A finished stop task's verdict: True only when the group was confirmed gone."""
+    return not task.cancelled() and task.exception() is None and task.result() is True
+
+
 class ToolExecutor:
     def __init__(self, settings, worktree, *, session_id, run_id, generation, journal=None,
                  approve=None, command_timeout_seconds=120):
@@ -115,8 +198,19 @@ class ToolExecutor:
         self.current_tool_call_id = None
         self._running = {}
         self._starting = {}
+        self._stopping = {}
+        self._left_running = set()  # cancelled actions whose processes were not confirmed gone
         self._interrupted = set()
         self._interrupt_epoch = 0
+        # Files changed since the person's last approval of a command or a third-party call (#176),
+        # read back from the journal so a restart does not forget an unapproved write.
+        self.changes = ChangeLedger()
+        events = getattr(self.journal, "events", None)
+        if callable(events):
+            try:
+                self.changes.replay(events(), lambda value: "/".join(_parts(value)))
+            except (JournalError, OSError, ValueError, TypeError):
+                self.changes.complete = False
 
     @contextmanager
     def _root(self):
@@ -412,28 +506,73 @@ class ToolExecutor:
         return environment
 
     async def _terminate(self, process, birth):
-        current = process_start(process.pid)
+        """Stop the command's process group and wait, bounded, until none of it runs.
+
+        Returns True once no process of the group is left running and False when
+        that could not be confirmed within the bounds: the caller then reports
+        that processes may remain and never claims they are gone (#175). An
+        unexpected failure counts as not confirmed; it never escapes. If the
+        stop itself is cancelled (the event loop ending), SIGKILL is still sent
+        before the cancellation propagates.
+        """
+        try:
+            return await self._signal_group(process.pid, process, birth)
+        except asyncio.CancelledError:
+            self._kill_group(process, birth)
+            raise
+        except Exception:
+            self._kill_group(process, birth)
+            return False
+
+    @staticmethod
+    def _kill_group(process, birth):
+        try:  # best effort, unless the leader id now names another process
+            if process_start(process.pid) in (None, birth):
+                os.killpg(process.pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _signal_group(pgid, process, birth):
+        def send(signum):
+            """False when the group no longer exists at all."""
+            try:
+                os.killpg(pgid, signum)
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                pass  # a member we may not signal (setuid): the wait below decides
+            return True
+
+        current = process_start(pgid)
         # A still-owned leader proves the group. After it has been reaped, an
-        # existing group remains reserved by its children until they exit.
+        # existing group remains reserved by its children until they exit, so
+        # a reused leader id means the group had already ended, and a missing
+        # leader (reaped, whether or not asyncio has recorded it yet) leaves
+        # the id naming only what remains of this group.
         if current is not None and current != birth:
-            return
-        if current is None and process.returncode is None:
-            return
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        try:
-            await asyncio.wait_for(asyncio.shield(process.wait()), 0.5)
-        except asyncio.TimeoutError:
-            pass
-        current = process_start(process.pid)
+            return True
+        if not send(signal.SIGTERM):
+            return True
+        await _group_ended(pgid, TERM_GRACE_SECONDS)
+        current = process_start(pgid)
         if current is not None and current != birth:
-            return
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            return True
+        # Whatever the scan saw, SIGKILL what is left of the group: harmless
+        # to zombies, and it ends a member the scan could misjudge.
+        if not send(signal.SIGKILL):
+            return True
+        # A signal is delivered asynchronously: the processes end when the
+        # kernel next runs them. Do not return before they have.
+        return await _group_ended(pgid, KILL_WAIT_SECONDS)
+
+    def _stop(self, process, birth):
+        """One shared stop per running command, so whoever asked for it can wait for its end."""
+        owner, task = self._stopping.get(process.pid, (None, None))
+        if owner is not process:
+            task = asyncio.ensure_future(self._terminate(process, birth))
+            self._stopping[process.pid] = (process, task)
+        return task
 
     async def interrupt(self):
         self._interrupt_epoch += 1
@@ -443,10 +582,12 @@ class ToolExecutor:
         if starting:
             await asyncio.gather(*(asyncio.shield(task) for task in starting), return_exceptions=True)
             await asyncio.sleep(0)
-        active = list(self._running.items())
-        for pid, (process, birth) in active:
+        stops = []
+        for pid, (process, birth) in list(self._running.items()):
             self._interrupted.add(pid)
-            await self._terminate(process, birth)
+            stops.append(self._stop(process, birth))
+        if stops:
+            await asyncio.shield(asyncio.gather(*stops, return_exceptions=True))
 
     async def close(self):
         await self.interrupt()
@@ -469,7 +610,7 @@ class ToolExecutor:
             cwd = str(self.worktree.joinpath(*parts))
             request = {"action_id": action_id, "command": command, "cwd": cwd,
                        "session_id": self.session_id, "run_id": self.run_id, "generation": self.generation,
-                       "timeout_seconds": timeout, "tool_call_id": call_id}
+                       "timeout_seconds": timeout, "tool_call_id": call_id, **self.changes.fields()}
             self.journal.append("approval_requested", request)
             if self.approve is None:
                 return {"ok": False, "error_code": "approval_required", "message": "This command requires human approval"}
@@ -480,6 +621,7 @@ class ToolExecutor:
             self.journal.append("approval_decided", {**request, "approved": approved})
             if not approved:
                 return {"ok": False, "error_code": "approval_denied", "message": "Command was not approved"}
+            self.changes.approved()  # the person has now seen these files
             if epoch != self._interrupt_epoch:
                 return {"ok": False, "interrupted": True, "error_code": "command_interrupted",
                         "message": "Command was interrupted before execution"}
@@ -497,8 +639,14 @@ class ToolExecutor:
             except asyncio.CancelledError:
                 # Do not lose ownership of a process which exec'd before its
                 # coroutine returned. Finish setup, terminate, then propagate.
-                process = await asyncio.shield(spawn)
-                await asyncio.shield(self._terminate(process, process_start(process.pid)))
+                await _settle(spawn)  # a further cancellation must not lose it either
+                if spawn.cancelled() or spawn.exception() is not None:
+                    raise  # no process was started: the cancellation is what the caller must see
+                process = spawn.result()
+                stop = asyncio.ensure_future(self._terminate(process, process_start(process.pid)))
+                await _settle(stop)
+                if not _stopped(stop):
+                    self._left_running.add(action_id)
                 raise
             finally:
                 self._starting.pop(action_id, None)
@@ -520,32 +668,54 @@ class ToolExecutor:
         wait = asyncio.create_task(process.wait())
         combined = asyncio.gather(wait, *tasks)
         timed_out = False
+
+        async def stop_and_wait():
+            """Stop the group, or join the stop in progress, and wait until it has
+            finished. A cancellation meanwhile is raised only after that (#175)."""
+            stop = self._stop(process, birth)
+            if await _settle(stop):
+                raise asyncio.CancelledError
+            return _stopped(stop)
+
         try:
             if epoch != self._interrupt_epoch:
                 self._interrupted.add(process.pid)
-                await self._terminate(process, birth)
+                await stop_and_wait()
             try:
                 await asyncio.wait_for(asyncio.shield(combined), timeout)
             except asyncio.TimeoutError:
                 timed_out = True
-                await self._terminate(process, birth)
+                await stop_and_wait()
                 try:
                     await asyncio.wait_for(asyncio.shield(combined), 1)
                 except asyncio.TimeoutError:
                     combined.cancel()
                     await asyncio.gather(combined, return_exceptions=True)
+            # The output can end before an interrupt has finished stopping the
+            # group (a process that closed its output, one that ignores SIGTERM):
+            # never return while that stop is still in progress.
+            owner, stop = self._stopping.get(process.pid, (None, None))
+            remaining = owner is process and not await stop_and_wait()
             interrupted = process.pid in self._interrupted
             result = {"ok": process.returncode == 0 and not timed_out and not interrupted,
                       "exit_code": process.returncode, "stdout": buffers[0].decode("utf-8", errors="replace"),
                       "stderr": buffers[1].decode("utf-8", errors="replace"), "stdout_bytes": counts[0],
                       "stderr_bytes": counts[1], "timed_out": timed_out, "interrupted": interrupted,
                       "truncated": any(count > MAX_COMMAND_OUTPUT_BYTES for count in counts)}
+            if remaining:
+                # Signalled with SIGKILL but still running after the bound: the
+                # effect is not finished, so the action stays uncertain.
+                result["processes_remaining"] = True
             if not result["ok"]:
                 result["error_code"] = "command_interrupted" if interrupted else "command_timeout" if timed_out else "command_failed"
             return result
         except asyncio.CancelledError:
             self._interrupted.add(process.pid)
-            await asyncio.shield(self._terminate(process, birth))
+            # Further cancellations (a second Ctrl+C) must not cut this wait short.
+            stop = self._stop(process, birth)
+            await _settle(stop)
+            if not _stopped(stop):
+                self._left_running.add(action_id)
             try:
                 await asyncio.wait_for(asyncio.shield(combined), 1)
             except (asyncio.TimeoutError, asyncio.CancelledError):
@@ -554,11 +724,58 @@ class ToolExecutor:
             raise
         finally:
             self._running.pop(process.pid, None)
+            if self._stopping.get(process.pid, (None,))[0] is process:
+                del self._stopping[process.pid]
             self._interrupted.discard(process.pid)
             for task in [wait, *tasks]:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(wait, *tasks, return_exceptions=True)
+
+    async def _approve_write(self, name, args, parts, action_id, call_id):
+        """One-use approval of a change to a file that configures execution (#176); None when approved.
+
+        The preview is checked against the version the model read, as the effect is, so the change asked
+        about is the change made; a stale or impossible change is refused before anyone is asked."""
+        relative = "/".join(parts)
+        before = None
+        if name == "write_file" and args["expected_sha256"] is None:
+            try:
+                self._read(relative)
+            except FileNotFoundError:
+                pass
+            else:
+                raise FileExistsError(relative)
+        else:
+            _, raw, _ = self._read(relative)
+            self._check_hash(raw, args["expected_sha256"])
+            before = raw.decode("utf-8") if name == "apply_patch" else raw.decode("utf-8", errors="replace")
+        if name == "write_file":
+            after = args["content"]
+        elif name == "apply_patch":
+            if before.count(args["old_text"]) != 1:
+                raise ToolError("patch_ambiguous", "old_text must be nonempty and occur exactly once")
+            after = before.replace(args["old_text"], args["new_text"], 1)
+        else:
+            after = None
+        diff, more = change_preview(before, after)
+        request = {"kind": "file_write", "action_id": action_id, "tool": name, "path": relative,
+                   "change": change_of(name, args), "diff": diff, "diff_more_lines": more,
+                   "session_id": self.session_id, "run_id": self.run_id, "generation": self.generation,
+                   "tool_call_id": call_id}
+        self.journal.append("approval_requested", request)
+        if self.approve is None:
+            return {"ok": False, "error_code": "approval_required", "path": relative,
+                    "message": "A change to a file that configures execution requires human approval"}
+        decision = self.approve(deepcopy(request))
+        if inspect.isawaitable(decision):
+            decision = await decision
+        approved = decision is True
+        self.journal.append("approval_decided", {**request, "approved": approved})
+        if not approved:
+            return {"ok": False, "error_code": "approval_denied", "path": relative,
+                    "message": "The change to this file was not approved"}
+        return None
 
     def _action(self, action_id, name, args, call_id):
         return {"action_id": action_id, "name": name, "arguments": deepcopy(args),
@@ -580,16 +797,21 @@ class ToolExecutor:
         effect = name in _MUTATIONS
         started = False
         try:
-            if effect and name != "run_command":
-                _parts(args["path"])
-                self.journal.append("action_started", self._action(action_id, name, args, call_id))
-                started = True
             if name == "run_command":
                 result = await self._command(args, action_id, call_id)
                 # Approval refusals never count as started side effects.
                 started = result.get("error_code") not in {"approval_required", "approval_denied"}
-            elif name in _MUTATIONS:
-                result = self._file_effect(name, args)
+            elif effect:
+                parts = _parts(args["path"])
+                refused = (await self._approve_write(name, args, parts, action_id, call_id)
+                           if configures_execution(parts) else None)
+                if refused is not None:
+                    result = refused  # a refused change never counts as started
+                else:
+                    self.journal.append("action_started", self._action(action_id, name, args, call_id))
+                    started = True
+                    result = self._file_effect(name, args)
+                    self.changes.record(result["path"], change_of(name, args, result))
             elif name == "read_file":
                 result = self._read_file(args)
             elif name == "list_files":
@@ -598,8 +820,16 @@ class ToolExecutor:
                 result = self._search(args)
         except asyncio.CancelledError:
             # There may have been an effect even if the return value was lost.
-            if effect:
-                self.journal.append("action_interrupted", self._action(action_id, name, args, call_id))
+            # A file change cancelled while the person was still being asked never started (#176).
+            if effect and (started or name == "run_command"):
+                data = self._action(action_id, name, args, call_id)
+                if action_id in self._left_running:
+                    data["processes_remaining"] = True  # SIGKILLed, still running at the bound
+                self.journal.append("action_interrupted", data)
+            self._left_running.discard(action_id)
+            if started and name != "run_command":
+                # The file may have changed: list it as if it did.
+                self.changes.record("/".join(_parts(args["path"])), change_of(name, args))
             raise
         except ToolError as exc:
             result = {"ok": False, "error_code": exc.code, "message": str(exc)}
@@ -616,6 +846,8 @@ class ToolExecutor:
             redacted["masked"] = True  # a registered secret was replaced: this is not the real text (#157)
         result = redacted
         if started:
-            event_type = "action_interrupted" if result.get("interrupted") else "action_completed"
+            # A command whose processes may still run has no settled outcome either.
+            event_type = ("action_interrupted" if result.get("interrupted") or result.get("processes_remaining")
+                          else "action_completed")
             self.journal.append(event_type, {**self._action(action_id, name, args, call_id), "result": result})
         return result

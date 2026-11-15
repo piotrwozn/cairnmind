@@ -30,6 +30,17 @@ async def until(predicate, seconds=15):
         await asyncio.sleep(.05)
 
 
+async def settled(predicate, seconds=5):
+    """Wait, with a bound, for a state that the assertion after it then checks as before.
+
+    A SIGKILL is sent at once but takes effect when the kernel next runs the process: on a loaded
+    machine a killed child is still listed for a moment after the stop that killed it has returned.
+    """
+    deadline = time.monotonic() + seconds
+    while not predicate() and time.monotonic() < deadline:
+        await asyncio.sleep(.02)
+
+
 def host_for(tmp_path, *definitions, **options):
     worktree = tmp_path / "worktree"
     worktree.mkdir(exist_ok=True)
@@ -51,6 +62,7 @@ async def test_a_stop_that_has_begun_completes_when_its_caller_is_cancelled(tmp_
             await task
     finally:
         await host.close()
+    await settled(lambda: mcp_fixture_processes() == [])
     assert mcp_fixture_processes() == []
 
 
@@ -65,7 +77,8 @@ async def test_a_stop_goes_on_when_the_task_awaiting_it_is_cancelled(tmp_path):
         await asyncio.sleep(.3)  # both ignore SIGTERM; the stop waits a second before SIGKILL
         assert {details["pid"], details["child"]} <= set(mcp_fixture_processes())
         stopping.cancel()
-        await asyncio.sleep(2)
+        # Only the SIGKILL of the stop that goes on ends them: nothing else signals them before close().
+        await settled(lambda: mcp_fixture_processes() == [] and host.servers["files"].process is None, 10)
         assert mcp_fixture_processes() == [] and host.servers["files"].process is None
     finally:
         await host.close()
@@ -79,10 +92,12 @@ async def test_a_timeout_kills_the_whole_group_and_close_kills_children_of_a_dea
         first = json.loads((await host.call("mcp_files_children", {}, 10))["content"][0]["text"])
         second = json.loads((await host.call("mcp_two_children", {}, 10))["content"][0]["text"])
         assert (await host.call("mcp_files_slow", {}, 1))["error_code"] == "mcp_call_timeout"
+        await settled(lambda: {first["pid"], first["child"]}.isdisjoint(mcp_fixture_processes()))
         assert {first["pid"], first["child"]}.isdisjoint(mcp_fixture_processes())  # the child ignored SIGTERM
         assert second["child"] in mcp_fixture_processes()
     finally:
         await host.close()
+    await settled(lambda: mcp_fixture_processes() == [])
     assert mcp_fixture_processes() == []
 
 
