@@ -996,10 +996,8 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             changed_nodes, new_edges = list(nodes.values()), list(edges.values())
         # What the upserts look up row by row is read here in a few requests; the checks stay theirs.
         store.prefetch_graph(tx, changed_nodes, new_edges)
-        for item in changed_nodes:
-            store.upsert_node(item, tx=tx)
-        for item in new_edges:
-            store.upsert_edge(item, tx=tx)
+        # The transaction reports the graph as reset, so its rows are written in groups (issue #167).
+        store.write_graph(tx, project_id, changed_nodes, new_edges)
         if hasattr(tx, "known"):
             tx.known = None
         previous_nodes = tx.query(
