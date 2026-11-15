@@ -101,7 +101,10 @@ find matching scoped runs by task_id, never trusts user booleans.
 
 Packet immutable id/hash, project/worktree/client/session/epoch, current scoped
 activeplan/task versions, goal/constraints/nextaction/blockers, code state, bounded
-records+source refs, archivewatermarks. Goal is committed DB state at explicit
+records+source refs, archivewatermarks. schema_version 2: each record has a store-derived
+origin (automatic_extraction|external|unattributed, CONTRACTS.md), the preview is checkpoint,
+confirmed, then the rest with proposed extractions last, and omitted_by_origin counts what is
+left out; a packet of an earlier schema is never current, so its ACK goes stale. Goal is committed DB state at explicit
 captured horizon, no claim to every future transcript byte. First emptyproject ready
 with nohistory explicit. Complete only when known required transcript ranges durably
 archived through EOF; pending/unknownschema/missingrange =>partial. Archive,indexing,

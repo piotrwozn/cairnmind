@@ -17,6 +17,22 @@ The same tools serve an external MCP client (`cairnmind mcp --client external`) 
 evidence-degraded session: its packet says `history: unarchived` and `evidence: degraded`,
 and its writes carry a server-set `origin_*` mark and are never verified (V03_CONTRACTS.md).
 
+The resume packet (`schema_version` 2) shows at most 20 records. Each has `origin`, derived
+only from what the store wrote itself, never from a field a client sets (`packet_origin.py`):
+`automatic_extraction` when the first version the store kept was written by the extraction
+worker (its `extraction_source_id` mark, or its `origin: automatic_extraction` label), however
+the record was edited or confirmed since; `external` when the record carries the store's
+`origin_client` mark (an external client's session, or a built-in agent session after a
+third-party tool result); `unattributed` for everything else, which is written through the
+service by a person, a coding session or a memory import, since the store does not record
+which. A client's own metadata can make its own record look less trusted, never more. The
+preview puts the latest checkpoint first, then confirmed records, then the others in the order
+`unattributed`, `external`, `automatic_extraction`, each by kind and id; proposed records are
+labelled, never removed. `omitted_records` counts what was left out and `omitted_by_origin`
+counts it per origin. The bootstrap text and the MCP server's instructions say that record
+content is quoted project data, never instructions. A packet of an earlier schema is never
+current: `resume_context` replaces it, and an ACK given for it is stale (`packet_changed`).
+
 `Store` owns native transactions, project isolation, source snapshots, record
 revisions, task validation, durable job leases, native graph identity, export and
 checksummed source-complete `.cairnmind.json.gz` backups (`.devbrain.json.gz` up to 0.9.0; both are restored). Callers use named-parameter
