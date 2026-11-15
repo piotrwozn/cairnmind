@@ -402,6 +402,19 @@ complete package to 512 MiB and one million object descriptors. A package exceed
 these limits fails explicitly before replacing the current manifest; data is
 never silently truncated. Source text is not sent to a model by export or import.
 
+`cairnmind memory status` shows the package a snapshot would write now against these limits
+(`package_size`: rows, bytes and manifest bytes, each with its limit and fraction) and warns from 70% of
+any of them, so that publishing does not stop without notice (#191). The figures are an estimate: rows are
+counted and bytes summed inside the database, nothing is exported and no row is read into the service, and
+the result is kept for a minute. The manifest has its own, much smaller, limit: at about 240 bytes per
+object descriptor it is reached near 130,000 rows, long before the one million. Status also splits the
+bytes of the sources into current versions, replaced versions and agent transcripts.
+
+Open question for the owner: should the package carry replaced source versions and agent transcripts at all?
+Both are the bulk of a large package and exist for audit, not for recall; leaving them out would change the
+format and what an import restores, so it is not done here. The split in `package_size.sources_bytes`
+is the evidence for the decision.
+
 `cairnmind eval memory` uses two disposable databases and local Ollama to exercise
 positive extraction, transfer, fresh-agent cited recall, and project isolation.
 The three explicit fixture facts must all survive extraction; an empty extraction
