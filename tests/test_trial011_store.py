@@ -106,6 +106,22 @@ def test_store_size_names_an_empty_leftover_vector_type_for_what_it_is(store):
     assert [row["namespace"] for row in report["vectors"]["namespaces"]] == [None]
 
 
+@pytest.mark.parametrize("error,code", [
+    ("Local Ollama /api/embed returned HTTP 400: runtime reported a context-length limit", "model_context_length"),
+    ("Ollama /api/chat returned HTTP 500: runtime reported a model runner or loading failure", "model_runtime_error"),
+    ("Local Ollama /api/embed returned HTTP 400: runtime rejected the request", "model_runtime_error"),
+    ("Local Ollama /api/chat request failed (ReadTimeout): response read timed out", "model_runtime_error"),
+    ("Embedding model returned a zero vector", "model_runtime_error"),
+    ("something nobody classified", "job_error"),
+])
+def test_a_model_runtime_failure_of_a_job_has_its_own_category(error, code):
+    shown = Store._job_error(error, {})
+    assert shown["error_code"] == code
+    assert "legacy" not in shown["error_code"]
+    if code == "model_context_length":
+        assert "context length" in shown["error"]
+
+
 def source(store, project, text="We decided to keep the queue in the database."):
     return store.snapshot(project["id"], "conversation://one", text, "transcript")
 

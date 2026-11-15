@@ -1597,12 +1597,17 @@ class Store:
             (("transcript eof is unknown",),
              "capture_not_initialized", "The original event did not capture a finite transcript horizon."),
             (("arcadedb",), "storage_error", "The storage request failed."),
+            # The texts of ollama.OllamaUnavailable (#238); a model call that timed out is the model's, not the job's.
+            (("runtime reported a context-length limit",), "model_context_length",
+             "The model refused an input longer than its context length."),
+            (("ollama /api/", "runtime reported", "runtime rejected", "runtime returned", "embedding model returned",
+              "local model returned"), "model_runtime_error", "The model runtime refused or failed the request."),
             (("timeout", "timed out"), "job_timeout", "The job exceeded its execution budget."),
         )
         for needles, code, message in categories:
             if any(needle in text for needle in needles):
                 return {"error_code": diagnostics.get("code", code), "error": message}
-        return {"error_code": diagnostics.get("code", "legacy_job_error"),
+        return {"error_code": diagnostics.get("code", "job_error"),
                 "error": "The job failed; its original error is retained in the database and export."}
 
     def retry_job(self, project_id, job_id, expected_attempts, *, include_omissions=False):
