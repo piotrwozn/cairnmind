@@ -413,8 +413,9 @@ def engine_inspect(ctx: typer.Context):
     from cairnmind.engine import engine_status
     result = engine_status(ctx.obj)
     output(result)
-    if result.get("problem"):
-        # Connect-only (#68): a server of a version this release does not support is refused, not only shown.
+    if result.get("problem") or result.get("available") is None:
+        # Connect-only (#68): a server of a version this release does not support is refused, not only shown,
+        # and so is a configuration that breaks a rule of #72, with which the server was not asked (#242).
         raise typer.Exit(1)
 
 

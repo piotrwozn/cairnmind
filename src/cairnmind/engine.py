@@ -176,7 +176,9 @@ def engine_status(settings: Settings) -> dict:
     except ValueError as exc:
         if not connect_only(settings):
             raise
-        result["error"] = str(exc)  # a broken rule of #72: which one, without sending anything
+        # A broken rule of #72: which one, without sending anything. The server was not asked, so whether it
+        # answers is not known (None), and `engine status` is refused like every other command (#242).
+        result.update(available=None, error=str(exc))
     return result
 
 

@@ -188,7 +188,7 @@ def problem(settings) -> str | None:
             # Connect-only (#68): no engine is started here, so no password is generated for one either.
             from .database_mode import address
             return (f"ArcadeDB at {address(settings)}, which this installation only connects to, needs the "
-                    f"password set where that server runs: {PASSWORD_HELP}.")
+                    f"password set where that server runs: {PASSWORD_HELP}.{_unset(settings)}")
         return None
     if parsed.scheme != "https":
         return (f"ArcadeDB on {parsed.host}, a host other than this machine, must be reached with https://; "
@@ -202,8 +202,28 @@ def problem(settings) -> str | None:
         if origin.get("password") == "config_refused":
             return (f"The password stored in config.json is used only for the engine on this machine, not for "
                     f"{parsed.host}: {PASSWORD_HELP}.")
-        return f"ArcadeDB on {parsed.host} needs a password: {PASSWORD_HELP}."
+        return f"ArcadeDB on {parsed.host} needs a password: {PASSWORD_HELP}.{_unset(settings)}"
     return None
+
+
+def _unset(settings) -> str:
+    """The other settings a command without a password also lacks, and what it would use in their place.
+
+    Only named, not refused (#242): root on this machine and a database name derived from the data directory
+    are what the managed engine has always used, and #72 refuses root only for another host. Named together
+    with the password, a command started from a shell without the variables says everything it lacks at once.
+    """
+    origin = getattr(settings, "_origin", None) or {}
+    missing = []
+    if origin.get("user") == "default":
+        missing.append(f"arcade_user ({settings.arcade_user} would be used)")
+    if origin.get("database") == "derived":
+        missing.append(f"arcade_database (the name {settings.arcade_database}, derived from this data directory's "
+                       "path, would be used)")
+    if not missing:
+        return ""
+    return (" Not set either: " + " and ".join(missing) + ". Set them in config.json, or as CAIRNMIND_ARCADE_USER and "
+            "CAIRNMIND_ARCADE_DATABASE, to the user and the database created for this installation.")
 
 
 def tls_context(settings) -> ssl.SSLContext:
