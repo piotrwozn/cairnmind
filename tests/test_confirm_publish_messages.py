@@ -137,6 +137,39 @@ def test_check_published_exits_2_for_a_path_that_is_no_directory_and_names_what_
     assert code == 1 and "invalid kind" in words and "created_at" not in words, words
 
 
+def test_importing_the_stores_own_snapshot_is_unchanged_and_a_refusal_says_which_reason(workspace, tmp_path):  # noqa: F811
+    from cairnmind.memory import MemoryConflict, MemoryManager
+    from cairnmind.store import Store
+    store, pid, root, _ = workspace
+    source = store.snapshot(pid, "note://snap", "Use cookies.", "note")
+    store.remember(pid, {"kind": "decision", "content": "Use cookies."}, [source["id"]])
+    manager = MemoryManager(store)
+    first = manager.snapshot(pid)
+    for dry_run in (True, False):
+        assert manager.import_snapshot(first["path"], root, dry_run=dry_run)["status"] == "unchanged"
+    store.remember(pid, {"kind": "fact", "content": "The service listens on localhost."}, [source["id"]])
+    with pytest.raises(MemoryConflict) as changed:
+        manager.import_snapshot(first["path"], root, dry_run=True)
+    words = str(changed.value)
+    assert f"changed since its last snapshot {first['snapshot_id']}" in words and "memory snapshot acts" in words
+    assert "diverged" not in words
+    # Two histories from one snapshot: another machine and this store each continue it.
+    second = manager.snapshot(pid)
+    other = Store(tmp_path / "other-database")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    MemoryManager(other).import_snapshot(second["path"], elsewhere)
+    other_source = other.snapshot(pid, "note://other", "Use tokens.", "note")
+    other.remember(pid, {"kind": "constraint", "content": "Use tokens."}, [other_source["id"]])
+    package = MemoryManager(other).snapshot(pid)
+    store.remember(pid, {"kind": "fact", "content": "Only this store knows this."}, [source["id"]])
+    third = manager.snapshot(pid)
+    with pytest.raises(MemoryConflict) as diverged:
+        manager.import_snapshot(package["path"], root, dry_run=True)
+    words = str(diverged.value)
+    assert f"does not continue this store's last snapshot {third['snapshot_id']}" in words and "diverged" in words
+
+
 def test_the_refusal_for_a_confirmed_checkpoint_record_points_to_the_checkpoint_tool(workspace):  # noqa: F811
     from cairnmind.confirmation import ConfirmationRefused
     store, pid, _, _ = workspace

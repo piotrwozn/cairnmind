@@ -786,10 +786,23 @@ class MemoryManager:
                                  {"project": project_id}, False)
                 baseline = published or prior
                 exact_current = existing_payload == payload
-                if ((baseline and (baseline["snapshot_id"] not in manifest.get("ancestors", [])
-                                   or (captured["state_hash"] != baseline["state_hash"] and not exact_current)))
-                        or (not baseline and not exact_current)):
-                    raise MemoryConflict("Memory histories diverged or local knowledge changed")
+                unchanged = bool(baseline) and (captured["state_hash"] == baseline["state_hash"] or exact_current)
+                if baseline and baseline["snapshot_id"] == snapshot_id and unchanged:
+                    # This store's own latest snapshot (#239): a manifest never lists itself among its ancestors.
+                    if not roots:
+                        raise MemoryConflict(f"This snapshot is this store's own, for the root {current['root']}")
+                    return {**result, "status": "unchanged", "project": current}
+                # One reason each (#239); an import never merges two histories, so nothing is imported.
+                if baseline and baseline["snapshot_id"] not in [snapshot_id, *manifest.get("ancestors", [])]:
+                    raise MemoryConflict(f"The package does not continue this store's last snapshot "
+                                         f"{baseline['snapshot_id']}: the two histories diverged, and an import does "
+                                         "not merge them. Nothing was imported.")
+                if (baseline and not unchanged) or (not baseline and not exact_current):
+                    since = f"since its last snapshot {baseline['snapshot_id']}" if baseline else "and it has no snapshot"
+                    raise MemoryConflict(f"Local knowledge of project {current['name']} changed {since}, and an import "
+                                         "does not merge it with the package. Nothing was imported. Record it with "
+                                         f"`cairnmind memory snapshot {current['name']}` before choosing which "
+                                         "history to keep.")
                 focus = one_row(tx, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
                              {"project": project_id, "root": str(root)}, False)
                 selected = focus.get("active_plan_id") if focus else None
