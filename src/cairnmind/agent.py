@@ -1556,7 +1556,8 @@ class KnowledgeAgent:
                 record = self.store.remember(project_id, candidate, [source["id"]], extracted_from=source["id"],
                                              extractor=stamp)
             except ValueError as exc:
-                if "Active record key already exists" not in str(exc):
+                # The key is taken, by a record a person confirmed (VerdictKept "key") or by another one.
+                if "Active record key already exists" not in str(exc) and getattr(exc, "change", None) != "key":
                     raise
                 # A foreground client may have inserted the key after our snapshot.
                 latest = self.store.list_records(project_id)

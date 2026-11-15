@@ -93,7 +93,8 @@ class VerdictKept(ConfirmationRefused):
 
 # What the refused write would have done to the confirmed record.
 _KEPT_CHANGES = {"replace": "replace it (supersedes)", "status": "set its status to {status}",
-                 "change": "change what was confirmed (its text, key or a field beside it)"}
+                 "change": "change what was confirmed (its text, key or a field beside it)",
+                 "key": "store another statement under its key"}
 PLAN_CONTEXT_KEPT = (
     "A person confirmed this plan with its title, goal and constraints, and this save is not a person's act: it "
     "would change its {them}. Only a person takes a confirmation away. Nothing was saved. Save the plan with its "

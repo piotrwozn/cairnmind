@@ -149,6 +149,15 @@ class JobNotFoundError(ValueError):
     """No job is visible in the requested project."""
 
 
+class KeyTaken(ValueError):
+    """Another current record of the same kind holds the key of this write; it names that record (#238)."""
+
+    def __init__(self, record_id):
+        self.record_id = record_id
+        super().__init__(f"Active record key already exists: record {record_id} holds it. Update that record "
+                         "using its id and expected_version, or store this one under another key")
+
+
 def validate_task_state(value):
     """Validate a supplied task state without coercing or inferring a value."""
     if not isinstance(value, str) or value not in TASK_STATES:
@@ -1301,7 +1310,9 @@ class Store:
         active_key = json_text([project_id, kind, key]) if status != "superseded" else None
         collision = one_row(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
         if collision and collision["id"] != record_id:
-            raise ValueError("Active record key already exists; update using id and expected_version")
+            # A record a person confirmed is refused as such: updating it by id would only be refused again.
+            self._keep_verdict(one_row(tx, "SELECT FROM records WHERE id=:id", {"id": collision["id"]}), "key")
+            raise KeyTaken(collision["id"])
         now = utc_now()
         result = {"id": record_id, "project_id": project_id, "kind": kind, "key": key, "content": content, "status": status,
                   "source_ids": list(dict.fromkeys(sources)), "version": old["version"] + 1 if old else 1, "supersedes": supersedes,

@@ -906,19 +906,27 @@ def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
         refuse(confirmation.CLI_REFUSED)
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    with actor_write(store, ctx.obj, pid):
-        record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
-        if key is not None:
-            record["key"] = key
-        # Known secrets are replaced in the note's indexed view (#182); the note itself is kept as typed.
-        from cairnmind.secret_mask import note_metadata
-        sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
-                                              note_metadata(store.settings, content,
-                                                            {"role": "user", "origin": "cli"}))["id"]]
-        if confirmed:
-            result = confirmation.remember_as_person(store, pid, record, sources)
-        else:
-            result = store.remember(pid, record, sources)
+    from cairnmind.store import KeyTaken
+    try:
+        with actor_write(store, ctx.obj, pid):
+            record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
+            if key is not None:
+                record["key"] = key
+            # Known secrets are replaced in the note's indexed view (#182); the note itself is kept as typed.
+            from cairnmind.secret_mask import note_metadata
+            sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
+                                                  note_metadata(store.settings, content,
+                                                                {"role": "user", "origin": "cli"}))["id"]]
+            if confirmed:
+                result = confirmation.remember_as_person(store, pid, record, sources)
+            else:
+                result = store.remember(pid, record, sources)
+    except (KeyTaken, confirmation.VerdictKept) as exc:
+        if getattr(exc, "change", "key") != "key":
+            raise
+        # The key is taken and this command cannot update a record by id: what the person can do (#238).
+        refuse(f"Record {exc.record_id} already holds the key {key!r} for a {kind}. Nothing was saved. Use "
+               "another key, or dispute or decide that record in the inspector.")
     output(result)
 
 
