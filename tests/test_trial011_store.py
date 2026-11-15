@@ -16,6 +16,26 @@ def project(store, tmp_path):
     return store.add_project("example", tmp_path / "repo")
 
 
+@pytest.mark.parametrize("place", ["under a file", "read-only folder"])
+def test_a_backup_into_a_folder_that_cannot_be_written_says_so_plainly(tmp_path, place):
+    import os
+    from cairnmind.store_backup import TEMPORARY_PREFIX, write_temporary
+    if place == "under a file":
+        (tmp_path / "plain-file").write_text("")
+        destination = tmp_path / "plain-file" / "dir" / "x.json.gz"
+    else:
+        if os.geteuid() == 0:
+            pytest.skip("root writes into a read-only folder")
+        (tmp_path / "locked").mkdir(mode=0o500)
+        destination = tmp_path / "locked" / "x.json.gz"
+    with pytest.raises(ValueError) as refused:
+        write_temporary(destination, {})
+    message = str(refused.value)
+    assert message.startswith(f"Cannot write a backup into {destination.parent}: ")
+    assert TEMPORARY_PREFIX not in message and "Errno" not in message
+    assert not any(path.name.startswith(TEMPORARY_PREFIX) for path in tmp_path.rglob("*"))
+
+
 def source(store, project, text="We decided to keep the queue in the database."):
     return store.snapshot(project["id"], "conversation://one", text, "transcript")
 
