@@ -376,8 +376,10 @@ def test_a_name_with_one_question_word_is_found_through_its_file(workspace):  # 
     index_project(store, project["id"])
     agent = KnowledgeAgent(store, settings, FakeOllama())
     found = agent._definitions(project["id"], "What is the timeout of the journal?", [], {})
-    # One word of the name and one of its file name: found; the billing timeout shares no second word.
-    assert [item["definition"] for item in found] == ["FLUSH_TIMEOUT"]
+    # One word of the name and one of its file name: found, and first; the billing timeout shares
+    # no second word. TIMEOUT_SECONDS of the fixture's config.py follows since a unit word stands
+    # in a name like a filler word: it is a name made of the question's "timeout" alone.
+    assert [item["definition"] for item in found] == ["FLUSH_TIMEOUT", "TIMEOUT_SECONDS"]
     found = agent._definitions(project["id"], "How long is the delay of the journal writer?", [], {})
     assert [item["definition"] for item in found] == ["JournalWriter.flush_delay"]  # through its class
 
@@ -426,3 +428,68 @@ def test_resolving_definitions_costs_a_bounded_number_of_queries(workspace):  # 
     # words, names with one question word in a file or class with one; then one freshness check per
     # definition.
     assert len(counted) <= 9 + 12 * len(found)
+
+
+def test_unit_and_joining_words_of_a_name_need_not_be_in_the_question(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "writer.py").write_text(
+        "ROWS_PER_BATCH = 8\nMAX_BLOB_BYTES = 2 * 1024\nBATCH_OWNER_ROWS = 5\n\n\n"
+        "class Options:\n    refresh_seconds: float = 10.0\n    refresh_owner: str = 'x'\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+
+    def names(question):
+        return [item["definition"] for item in agent._definitions(project["id"], question, [], {})]
+
+    # "per", "bytes" and "seconds" say how the value is counted; "owner" is a word of its own.
+    assert names("How many rows does one batch write at most?")[0] == "ROWS_PER_BATCH"
+    assert names("How large may a blob be?") == ["MAX_BLOB_BYTES"]
+    assert names("How often does the refresh run by default?") == ["Options.refresh_seconds"]
+
+
+def test_a_unit_word_alone_is_not_a_match():
+    import re
+
+    from cairnmind.definitions import name_word_pattern, relevance
+    question = "How large may a blob be?"
+    pattern = re.compile(name_word_pattern(question))
+    assert pattern.match("max_blob_bytes") and pattern.match("blob_count")
+    assert not pattern.match("max_bytes") and not pattern.match("bytes_per_count")
+    assert not pattern.match("blob_owner_bytes")
+    # Two question words with a joining word between them are a full match; one is not.
+    assert relevance("How many rows does one batch write?", {"name": "ROWS_PER_BATCH"}, "pkg/w.py")[1] == 1
+    assert relevance(question, {"name": "MAX_BLOB_BYTES"}, "pkg/w.py")[:3] == (0, 0, 1)
+
+
+def test_a_name_word_matches_a_question_word_that_begins_with_it(workspace):  # noqa: F811
+    from cairnmind.definitions import relevance
+    store, project, settings, root = _project(workspace)
+    (root / "pkg" / "engine.py").write_text(
+        "class Engine:\n    arcade_version: str = '26.1'\n    arc_version: str = '1'\n    vers_arcade: int = 2\n")
+    index_project(store, project["id"])
+    agent = KnowledgeAgent(store, settings, FakeOllama())
+    question = "Which ArcadeDB version is installed by default?"
+    found = agent._definitions(project["id"], question, [], {})
+    assert found[0]["definition"] == "Engine.arcade_version"
+    assert relevance(question, {"name": "Engine.arcade_version", "member": "arcade_version"}, "pkg/e.py")[1] == 1
+    # Shorter than PREFIX_CHARS: "arc" is not "arcadedb", and "vers" is not "version".
+    assert relevance(question, {"name": "Engine.arc_version", "member": "arc_version"}, "pkg/e.py")[1] == 0
+    assert relevance(question, {"name": "Engine.vers_arcade", "member": "vers_arcade"}, "pkg/e.py")[1] == 0
+
+
+def test_a_value_ranks_before_a_class_or_function_that_shares_as_many_words():
+    question = "How many steps may the knowledge agent take for one answer by default?"
+    rows = [{"symbol": {"name": "prepare_answer_schema", "kind": "function"}, "path": "pkg/answer_contract.py"},
+            {"symbol": {"name": "AnswerLog", "kind": "class"}, "path": "pkg/answer_log.py"},
+            {"symbol": {"name": "ANSWER_INSTRUCTION", "kind": "constant"}, "path": "pkg/agent.py"},
+            {"symbol": {"name": "ANSWER_FORMAT", "kind": "constant"}, "path": "pkg/formats.py"},
+            {"symbol": {"name": "Settings.max_steps", "kind": "field", "owner": "Settings", "member": "max_steps"},
+             "path": "pkg/config.py"}]
+    ranked = [row["symbol"]["name"] for row in rank_definitions(question, rows)]
+    # Values first; among them the file that shares a word, then the name whose question word
+    # fewer candidate names have: "steps" is in one name, "answer" in four.
+    assert ranked == ["ANSWER_INSTRUCTION", "Settings.max_steps", "ANSWER_FORMAT",
+                      "prepare_answer_schema", "AnswerLog"]
+    # A class that shares more words than any value still comes first.
+    agent = {"symbol": {"name": "KnowledgeAgent", "kind": "class"}, "path": "pkg/agent.py"}
+    assert [row["symbol"]["name"] for row in rank_definitions(question, [*rows, agent])][0] == "KnowledgeAgent"
