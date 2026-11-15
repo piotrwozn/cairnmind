@@ -57,9 +57,9 @@ def _valid(record: Any) -> bool:
             and type(generation) is int and generation >= 0 and type(record.get("changed", False)) is bool)
 
 
-def _read(settings) -> dict:
+def _read(data_dir) -> dict:
     """The stored records by base identity; an unreadable or invalid file counts as none (first check)."""
-    path = Path(settings.data_dir) / FILE
+    path = Path(data_dir) / FILE
     try:
         stat = path.stat()
     except OSError:
@@ -79,21 +79,24 @@ def _read(settings) -> dict:
     return records
 
 
-def _write(settings, records: dict) -> None:
+def _write(data_dir, records: dict) -> None:
     from .memory_models import _write_json
     if len(records) > MAX_RECORDS:  # the oldest checked identities go first
         records = dict(sorted(records.items(), key=lambda item: item[1].get("checked_at", ""))[-MAX_RECORDS:])
-    _write_json(Path(settings.data_dir) / FILE, {"version": 1, "records": records})
+    _write_json(Path(data_dir) / FILE, {"version": 1, "records": records})
 
 
 def _named(base: str, generation: int) -> str:
     return base if generation == 0 else f"{base}~w{generation}"
 
 
-def identity(settings, base: str, *, checked: bool = True) -> str:
+def identity(data_dir, base: str, *, checked: bool = True) -> str:
     """The vector namespace of an OpenAI-compatible embedding model, or OllamaUnavailable while it is
-    changed (CHANGED) or not checked yet in a process that must check first (UNCHECKED)."""
-    record = _read(settings).get(base)
+    changed (CHANGED) or not checked yet in a process that must check first (UNCHECKED).
+
+    data_dir is the installation's data directory, also for a client built for an evaluation copy.
+    """
+    record = _read(data_dir).get(base)
     if record and record.get("changed"):
         raise OllamaUnavailable(CHANGED_TEXT, endpoint="/embeddings", error_code=CHANGED)
     if not checked:
@@ -111,8 +114,10 @@ def similarity(left: list, right: list) -> float:
 
 def client_of(models):
     """The embedding client that needs a fingerprint (an OpenAI-compatible server), or None."""
+    from .memory_models import MemoryModels
     from .memory_openai import OpenAICompatible
-    client = getattr(models, "embedding_client", models)
+    # Only known client types are inspected: a stand-in for the models is never touched.
+    client = models.embedding_client if isinstance(models, MemoryModels) else models
     return client if isinstance(client, OpenAICompatible) and client.role == "embedding" else None
 
 
@@ -121,16 +126,15 @@ async def check(client, *, accept: bool = False) -> dict:
 
     Raises OllamaUnavailable when the server or the model cannot answer; then nothing is stored.
     """
-    settings = client.settings
-    base = await client.listed_identity(settings.embedding_model)
+    base = await client.listed_identity(client.settings.embedding_model)
     vector = [round(float(value), 7) for value in (await client.embed([FINGERPRINT_TEXT]))[0]]
-    path = Path(settings.data_dir)
+    path = Path(client.fingerprint_dir)
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     with (path / LOCK).open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         _cache.pop(path / FILE, None)
-        records = dict(_read(settings))
+        records = dict(_read(path))
         record = records.get(base)
         if record is None:
             record, status, score = {"vector": vector, "generation": 0, "recorded_at": now}, "recorded", None
@@ -150,7 +154,7 @@ async def check(client, *, accept: bool = False) -> dict:
                 record["changed"] = True
         record["checked_at"] = now
         records[base] = record
-        _write(settings, records)
+        _write(path, records)
     client.fingerprint_checked = True
     result = {"status": status, "generation": record["generation"],
               "identity": None if record.get("changed") else _named(base, record["generation"])}
@@ -159,9 +163,9 @@ async def check(client, *, accept: bool = False) -> dict:
     return result
 
 
-def doctor_block(settings, base: str) -> tuple[str | None, dict]:
+def doctor_block(data_dir, base: str) -> tuple[str | None, dict]:
     """Read-only, for doctor: the identity in use (None while changed) and what the stored check says."""
-    record = _read(settings).get(base)
+    record = _read(data_dir).get(base)
     if record is None:
         return base, {"recorded": False, "changed": False,
                       "checked_when": "when the service starts and before rebuild-vectors"}

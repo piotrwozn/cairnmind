@@ -169,7 +169,10 @@ def _client(settings: Settings, role: str, credentials: Settings | None):
     credential = credential_for(settings, role, credentials)
     if row["provider"] == "ollama":
         return Ollama(settings, base_url=row["base_url"], credential=credential, num_ctx=row.get("context_window"))
-    return OpenAICompatible(settings, role, row, credential=credential)
+    client = OpenAICompatible(settings, role, row, credential=credential)
+    # An evaluation copy compares with the installation's stored fingerprint, not an empty one (#212).
+    client.fingerprint_dir = (credentials or settings).data_dir
+    return client
 
 
 class MemoryModels:
@@ -388,7 +391,7 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
             entry["identity"] = f"{model}@{server_tag(row['base_url'])}"
             if role == "embedding":  # other weights behind the same name (#212)
                 from .memory_fingerprint import doctor_block
-                identity, entry["fingerprint"] = doctor_block(settings, entry["identity"])
+                identity, entry["fingerprint"] = doctor_block(settings.data_dir, entry["identity"])
                 if identity is None:
                     del entry["identity"]
                 else:

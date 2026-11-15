@@ -66,7 +66,7 @@ async def test_a_server_that_changes_its_answer_is_detected_at_the_next_start(tm
         await second.model_identity("text-embed")
     assert stopped.value.error_code == memory_fingerprint.CHANGED
     # Another process (doctor, a command) reads the same mark.
-    identity, block = memory_fingerprint.doctor_block(settings, base)
+    identity, block = memory_fingerprint.doctor_block(settings.data_dir, base)
     assert identity is None and block["changed"] and "rebuild-vectors" in block["next"]
 
     # rebuild-vectors accepts the new weights: a new namespace, never the earlier vectors.
@@ -310,3 +310,19 @@ def test_doctor_reports_a_change_and_the_identity_in_use(tmp_path):
     with httpx.Client(transport=httpx.MockTransport(server)) as http:
         later = memory_models.doctor_models(settings, http)["embedding"]
     assert later["identity"] == base + "~w2" and later["fingerprint"]["changed"] is False
+
+
+async def test_an_evaluation_copy_names_the_models_by_the_installations_record(tmp_path):
+    # eval run builds its client for a copy of the settings in a temporary data directory.
+    settings = settings_for(tmp_path)
+    client = memory_models.from_settings(settings).embedding_client
+    client._client = httpx.AsyncClient(base_url=LMSTUDIO["base_url"], transport=httpx.MockTransport(Server(OLD)))
+    base = await client.listed_identity("text-embed")
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / memory_fingerprint.FILE).write_text(json.dumps({"version": 1, "records": {
+        base: {"vector": OLD, "generation": 1}}}))
+    copy = replace(settings, data_dir=tmp_path / "evaluation-copy")
+    evaluated = memory_models.from_settings(copy, credentials=settings).embedding_client
+    evaluated._client = client._client
+    assert await evaluated.model_identity("text-embed") == base + "~w1"
+    await client.aclose()

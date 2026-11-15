@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import time
 from typing import Any
 
@@ -114,6 +115,8 @@ class OpenAICompatible(Ollama):
         self.reasoning_effort = profile.get("reasoning_effort")
         # The service sets this to False until its start check has answered (memory_fingerprint, #212).
         self.fingerprint_checked = True
+        # Where the stored answer lives: the installation's data directory (memory_models._client).
+        self.fingerprint_dir = Path(settings.data_dir)
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
         options = {"num_predict": self.settings.answer_tokens, "temperature": 0}
@@ -172,4 +175,4 @@ class OpenAICompatible(Ollama):
         if self.role != "embedding":
             return base
         from .memory_fingerprint import identity
-        return identity(self.settings, base, checked=self.fingerprint_checked)
+        return identity(self.fingerprint_dir, base, checked=self.fingerprint_checked)
