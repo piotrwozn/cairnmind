@@ -17,7 +17,7 @@ from uuid import uuid4
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
-from .store_backup import payload_digest, streamed_export, write_backup
+from .store_backup import payload_digest, streamed_backup, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -1372,9 +1372,9 @@ class Store:
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
             destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
-        # Rows are read, hashed and compressed a page at a time inside one transaction (#196).
-        with self.transaction() as tx:
-            return self._write_backup(destination, streamed_export(tx, EXPORT_TYPES, 5))
+        # Rows are read, hashed and compressed a page at a time inside one transaction; the file is moved
+        # into place only after that transaction commits (#196).
+        return streamed_backup(self.transaction, destination, EXPORT_TYPES, 5)
 
     @staticmethod
     def _write_backup(destination, payload):

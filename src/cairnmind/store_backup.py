@@ -8,9 +8,11 @@ keys are written in the sorted order of ``json_text``, so the bytes are the ones
 produced and the earlier restore reads the file unchanged. The digest is known only at the end, which
 is where the sorted order puts it anyway.
 
-The file is written under a temporary name in the destination folder and moved into place only when it
-is complete and on disk; a backup that is interrupted leaves no file under the destination name, and
-any partial temporary file left by a killed process ends without its gzip trailer, so restore refuses it.
+The file is written under a temporary name in the destination folder while the transaction is open, and
+synced and moved into place only after the transaction has committed; a backup that is interrupted or
+whose transaction fails leaves no file under the destination name. A partial temporary file left by a
+killed process ends without its gzip trailer, so restore refuses it; the service removes such files
+once they are a day old (``stale_temporaries``).
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ import hashlib
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import Callable, Iterable, Iterator
 
 from .config import BACKUP_FORMATS
@@ -31,6 +34,8 @@ PAGE_ROWS = 1000
 PAGE_BYTES = 2 * 1024 * 1024
 # Serialized text is handed to the compressor in pieces of about this size.
 WRITE_BYTES = 1024 * 1024
+# The name a backup has until it is complete; a killed backup leaves a file with this prefix behind.
+TEMPORARY_PREFIX = ".cairnmind-backup-"
 
 
 class Rows:
@@ -56,6 +61,9 @@ def payload_chunks(value, depth: int = 3) -> Iterator[str]:
             yield ("," if index else "") + text
         yield "]"
     elif depth > 1 and isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            # json_text would turn other keys into strings and sort them as strings; refuse instead.
+            raise TypeError("Backup payload keys must be strings")
         yield "{"
         for index, key in enumerate(sorted(value)):
             yield ("," if index else "") + json_text(key) + ":"
@@ -116,11 +124,14 @@ def streamed_export(tx, collections: Iterable[str], format_version: int) -> dict
     return payload
 
 
-def write_backup(destination, payload: dict) -> Path:
-    """Write ``payload`` (rows in memory, or ``Rows`` read on the way) as a backup at ``destination``."""
+def write_temporary(destination, payload: dict) -> Path:
+    """Compress ``payload`` into a new temporary file next to ``destination`` and return its path.
+
+    The caller moves it into place with ``publish`` or removes it. On any failure here it is removed.
+    """
     destination = Path(destination).expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, name = tempfile.mkstemp(prefix=".cairnmind-backup-", dir=destination.parent)
+    fd, name = tempfile.mkstemp(prefix=TEMPORARY_PREFIX, dir=destination.parent)
     temporary = Path(name)
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -138,7 +149,17 @@ def write_backup(destination, payload: dict) -> Path:
                         pending, size = [], 0
                 compressed.write(b"".join(pending))
                 compressed.write((',"sha256":' + json_text(digest.hexdigest()) + ',"version":1}').encode())
-            handle.flush()
+        return temporary
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def publish(temporary: Path, destination) -> Path:
+    """Sync a complete temporary backup to disk and move it to ``destination``; it is removed on failure."""
+    destination = Path(destination).expanduser().resolve()
+    try:
+        with open(temporary, "rb") as handle:
             os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)
         temporary.replace(destination)
@@ -150,3 +171,34 @@ def write_backup(destination, payload: dict) -> Path:
         return destination
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def write_backup(destination, payload: dict) -> Path:
+    """Write ``payload`` (rows in memory, or ``Rows`` read on the way) as a backup at ``destination``."""
+    return publish(write_temporary(destination, payload), destination)
+
+
+def streamed_backup(transaction, destination, collections: Iterable[str], format_version: int) -> Path:
+    """Read the store inside ``transaction()`` into a temporary file; move it into place only after the commit.
+
+    A transaction that fails to commit leaves no file under ``destination``, and the transaction is not
+    held open while the file is synced to disk.
+    """
+    temporary = None
+    try:
+        with transaction() as tx:
+            temporary = write_temporary(destination, streamed_export(tx, collections, format_version))
+    except BaseException:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
+    return publish(temporary, destination)
+
+
+def stale_temporaries(directory, older_than: float) -> list[Path]:
+    """Temporary files a killed backup left in ``directory`` and last written more than ``older_than`` seconds ago."""
+    directory, cutoff = Path(directory), time.time() - older_than
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    return [path for path in directory.glob(TEMPORARY_PREFIX + "*")
+            if path.is_file() and not path.is_symlink() and path.stat().st_mtime < cutoff]
