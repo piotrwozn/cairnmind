@@ -831,9 +831,10 @@ class KnowledgeAgent:
         """Return the unchanged public view and whether output-only repair is safe.
 
         A quote is accepted as the passage of the source it stands for (``locate_quote``): literal,
-        or literal but for line breaks and backticks, or the literal lines of a quote that skipped
+        or literal but for whitespace and backticks, or the literal lines of a quote that skipped
         some; the recorded quote is always the source's own text. A quote that the cited source
-        does not hold but exactly one other shown source does is recorded for that source.
+        does not hold but exactly one other shown source does is recorded for that source, and
+        the ID a passage was shown under (a hit's chunk ID) stands for the source it belongs to.
         With ``drop_invalid`` (the validation after the one repair) citations that still fail are
         left out when at least one citation verified, the answer meets its contract and no source
         went stale: the answer then rests on the verified citations alone, the support check
