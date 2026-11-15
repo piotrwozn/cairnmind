@@ -65,6 +65,23 @@ Text chunks are rebuilt from archived source views during import; semantic
 embeddings and current-code analysis rebuild locally. Original paths remain
 provenance, with local scope bindings kept separately.
 
+## How an extracted record was made
+
+A record with `origin: automatic_extraction` carries `metadata.extractor`
+beside `extracted_by`: `version` (the hand-bumped `EXTRACTOR_VERSION` of
+`src/cairnmind/extraction_input.py`), `prompt_sha256` (the first 16 hex
+characters of the sha256 over the extraction instructions, the schema and its
+passage windows) and `model` as name@digest. A model server that lists no digest
+(one that is not Ollama) gives name@unknown, and extraction goes on. Such a
+record without `extractor` was extracted before the stamp existed and counts as
+version 0. Only the extraction worker sets the stamp: a model reply that names it
+is rejected, and a client can neither set, change nor clear it; later writes,
+such as a review, keep it. `cairnmind eval extraction` writes the same object
+into its report. The stamp says how a record was made, not who trusts it, so a
+package carries it in and out, unlike the local `extraction_source_id` mark
+(#168) that a package never carries. An imported stamp is what the other
+computer recorded and proves nothing about this one.
+
 ## Validation budgets and quality evaluation
 
 Version 1 limits an individual JSON object to 16 MiB, a manifest to 32 MiB, and a
