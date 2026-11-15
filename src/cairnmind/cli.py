@@ -732,6 +732,35 @@ def store_drop_replaced_chunks(
     output(drop_replaced_chunks(store_for(ctx.obj), batch=batch, max_batches=max_batches))
 
 
+@store_app.command("prune-backups")
+def store_prune_backups(
+        ctx: typer.Context,
+        keep: Annotated[int, typer.Option(min=0, max=1000, help="Safety backups of each kind to keep, newest first.")],
+        yes: Annotated[bool, typer.Option("--yes", help="Delete without asking again.")] = False):
+    """Delete old safety backups (before-schema-*, before-restore-*), keeping the newest K of each kind.
+
+    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled
+    backups and backups you named are never touched. Starts no engine (#190)."""
+    from cairnmind.confirmation import person_at_terminal
+    from cairnmind.store_prune import delete_backups, prune_plan
+    directory = ctx.obj.data_dir / "backups"
+    plan = prune_plan(directory, keep)
+    if not person_at_terminal():
+        refuse("Only a person can delete safety backups: run this command in your own terminal, outside a "
+               "coding session. Nothing was deleted.")
+    shown = {"directory": plan["directory"], "keep": keep, "delete_bytes": plan["delete_bytes"],
+             "delete": [{key: entry[key] for key in ("name", "kind", "bytes", "modified")} for entry in plan["delete"]],
+             "kept": [entry["name"] for entry in plan["kept"]]}
+    if not plan["delete"]:
+        output({**shown, "deleted": []})
+        return
+    output(shown)
+    if not yes and not typer.confirm(f"Delete these {len(plan['delete'])} safety backup(s)?", default=False):
+        output({"deleted": [], "note": "Nothing was deleted."})
+        raise typer.Exit(1)
+    output(delete_backups(directory, plan))
+
+
 @jobs_app.command("list")
 def jobs_list(ctx: typer.Context, project: str,
               state: Annotated[str | None, typer.Option("--state", "--status")] = None,

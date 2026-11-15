@@ -178,6 +178,12 @@ class Settings:
     _origin: dict = field(default_factory=dict, repr=False, compare=False)
     # Keep every answer of `ask` in the project's answer log (answer_log.py); off unless set to true.
     answer_log: bool = False
+    # What is kept without end otherwise (#190). At each engine start an engine.log of at least
+    # engine_log_bytes is moved to engine.log.1 (older copies shift up, engine_log_copies are kept); a
+    # completed job loses its attempt history job_history_days after it last changed (0: never).
+    engine_log_bytes: int = 10 * 1024 * 1024
+    engine_log_copies: int = 3
+    job_history_days: int = 30
 
     @property
     def url(self) -> str:

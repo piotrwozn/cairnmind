@@ -23,6 +23,38 @@ def runtime_dir(settings: Settings) -> Path:
     return settings.data_dir / "runtime" / f"arcadedb-{settings.arcade_version}"
 
 
+LOG_BYTES, LOG_COPIES, MAX_LOG_COPIES = 10 * 1024 * 1024, 3, 20
+
+
+def rotate_log(path: Path, limit, copies) -> bool:
+    """Move a log of at least ``limit`` bytes aside before a new run appends to it (#190); True when moved.
+
+    ``path`` becomes ``path.1``, an earlier ``path.1`` becomes ``path.2`` and so on; ``copies`` old logs are
+    kept and the oldest is deleted. With 0 copies the log is only emptied. Called only while the engine is not
+    running (start_engine holds engine.lock and found no live engine), so nothing still writes to the file. A
+    limit or count that is not a sensible whole number is replaced by the default, so a mistyped setting can
+    neither stop the engine from starting nor let the log grow without end. A link is never followed."""
+    limit = limit if type(limit) is int and limit > 0 else LOG_BYTES
+    copies = copies if type(copies) is int and 0 <= copies <= MAX_LOG_COPIES else LOG_COPIES
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if info.st_size < limit and not path.is_symlink():
+        return False
+    numbered = [path.with_name(f"{path.name}.{number}") for number in range(1, max(copies, MAX_LOG_COPIES) + 1)]
+    for old in numbered[max(copies, 1) - 1:]:
+        old.unlink(missing_ok=True)  # the oldest kept copy's place, and any copy beyond the count
+    for number in range(copies - 1, 0, -1):
+        if os.path.lexists(numbered[number - 1]):
+            os.replace(numbered[number - 1], numbered[number])
+    if copies:
+        os.replace(path, numbered[0])
+    else:
+        path.unlink()
+    return True
+
+
 def resolve_java(settings: Settings) -> str | None:
     """Resolve one executable, never silently replace an explicit runtime."""
     configured = settings.java_executable
@@ -197,7 +229,17 @@ def start_engine(settings: Settings) -> dict:
                    f"-Darcadedb.server.httpIncomingPort={port}",
                    f"-Djava.util.logging.config.file={state / 'config' / 'arcadedb-log.properties'}",
                    "-cp", str(home / "lib" / "*"), "com.arcadedb.server.ArcadeDBServer"]
+        note = b""
+        try:
+            rotate_log(state / "engine.log", settings.engine_log_bytes, settings.engine_log_copies)
+        except OSError as exc:
+            # Rotation is housekeeping: when the filesystem refuses it, the engine still starts and appends.
+            note = (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
+                    "appending to it\n").encode()
         with (state / "engine.log").open("ab") as log:
+            if note:
+                log.write(note)
+                log.flush()
             process = subprocess.Popen(command, cwd=state, stdin=subprocess.DEVNULL,
                                        stdout=log, stderr=log, start_new_session=True)
         pid_file = state / "process.json"

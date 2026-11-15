@@ -256,6 +256,18 @@ class MemorySettingsBody(MemorySnapshotBody):
     interval_minutes: int = Field(default=15, ge=1, le=10080, strict=True)
 
 
+def compact_job_history(store, settings) -> dict | None:
+    """The daily compaction of old completed jobs (store_prune.compact_old_jobs); None when the setting turns it off."""
+    from cairnmind.store_prune import compact_old_jobs, valid_days
+    days = valid_days(settings.job_history_days)
+    if days is None:
+        return None
+    report = compact_old_jobs(store, days)
+    if report["compacted"]:
+        log.info("Removed the attempt history of %d completed jobs older than %d days", report["compacted"], days)
+    return report
+
+
 def daily_backups(backup_dir) -> list[Path]:
     """The scheduled backups of a data directory, oldest first, under the current and the earlier suffix.
 
@@ -450,6 +462,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     await asyncio.to_thread(store.backup, backup_dir / f"{time.time_ns()}{BACKUP_SUFFIXES[0]}")
                     for old in daily_backups(backup_dir)[:-7]:
                         old.unlink()
+                    # Once a day, right after the backup that still holds it: the attempt history of old
+                    # completed jobs goes; every job row stays (#190, store_prune).
+                    await asyncio.to_thread(compact_job_history, store, settings)
                 background_status["scanner_error"] = "; ".join(scan_errors[:5]) or None
                 background_status["scan_errors"] = scan_errors[:20]
                 background_status["last_scan_at"] = time.time()
