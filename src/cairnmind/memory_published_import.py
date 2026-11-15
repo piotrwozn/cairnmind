@@ -150,6 +150,8 @@ class PublishedImporter:
     def _apply(self, tx, tree, project_id, bind, take, result, directory=None):
         from .memory import MemoryConflict
         project = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id})
+        # Another project's directory first (#239): no binding or ID check could make it this project's.
+        _own_directory(tx, directory, project_id)
         identity = project.get("publication_id")
         if identity not in (None, tree["project_id"]) and not bind:
             raise MemoryConflict(f"This project publishes as {identity}, but the directory belongs to "
@@ -160,7 +162,6 @@ class PublishedImporter:
                 if any(row.get("project_id") != project_id for row in tx.query(
                         f"SELECT project_id FROM {table} WHERE id IN :ids", {"ids": identifiers[start:start + 500]})):
                     raise MemoryConflict("A memory entity ID belongs to another local project")
-        _own_directory(tx, directory, project_id)
         if identity != tree["project_id"]:
             update_document(tx, "projects", {"publication_id": tree["project_id"]}, "id=:id", {"id": project_id})
         self._stubs(tx, tree, project_id, result)

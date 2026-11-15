@@ -137,12 +137,17 @@ def test_each_project_imports_only_its_own_directory(teams):
     imported = PublishedImporter(other).import_published(a_folder, a2["id"])
     assert imported["inserted"] == [f"decision/{mine['id']}.md"]
     b2 = other.add_project("team-b", clone / "services" / "b")
-    with pytest.raises(MemoryConflict, match="publishes as"):
+    # The directory is the first thing judged (#239): --bind would not help, so it is not advised.
+    with pytest.raises(MemoryConflict, match="each project imports only its own"):
         PublishedImporter(other).import_published(b_folder, a2["id"])
     # Not even by replacing the binding on purpose.
     with pytest.raises(MemoryConflict, match="each project imports only its own"):
         PublishedImporter(other).import_published(b_folder, a2["id"], bind=True)
     assert PublishedImporter(other).import_published(b_folder, b2["id"])["inserted"] == [f"decision/{theirs['id']}.md"]
+    # With team B's records in this store too, the refusal still names the directory, dry run or not.
+    for dry_run in (True, False):
+        with pytest.raises(MemoryConflict, match="each project imports only its own"):
+            PublishedImporter(other).import_published(b_folder, a2["id"], bind=True, dry_run=dry_run)
     assert [r["id"] for r in other.list_records(a2["id"])] == [mine["id"]]
     assert [r["id"] for r in other.list_records(b2["id"])] == [theirs["id"]]
 
