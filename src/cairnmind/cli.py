@@ -403,8 +403,9 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 @app.command()
 @initialized
 def init(ctx: typer.Context):
-    """Create the store, or open the one a connect-only installation was given. Downloads no models and
-    changes no client configuration."""
+    """Create the store, or open the one a connect-only installation was given.
+
+    Downloads no models and changes no client configuration."""
     store = store_for(ctx.obj)
     result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
     if getattr(store, "not_writer", None):
@@ -797,8 +798,10 @@ TAKEOVER_NEXT = {
 def store_takeover(ctx: typer.Context,
                    yes: Annotated[bool, typer.Option("--yes", help="Take over writing; without it nothing changes.")] = False,
                    note: Annotated[str | None, typer.Option(help="Why, kept with the change (one line).")] = None):
-    """Make this installation the store's writer. The previous writer stops at its next write; its running jobs
-    go back to the queue. The change, with its time, host and note, is kept in the store."""
+    """Make this installation the store's writer.
+
+    The previous writer stops at its next write; its running jobs go back to the queue. The change, with its
+    time, host and note, is kept in the store."""
     from cairnmind.store_writer import inspect, take_over_at, valid_note
     # Moving the writer is a person's decision, as a verdict is: a coding session cannot make it.
     if session_value("SESSION_ID"):

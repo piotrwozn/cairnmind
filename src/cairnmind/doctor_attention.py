@@ -24,7 +24,7 @@ def attention(report: dict) -> list[str]:
     for note in report.get("environment_notes") or []:
         lines.append(_line(note))
     java = report.get("java") or {}
-    if java.get("needed") is not False and (java.get("compatible") is False or java.get("error")
+    if java and java.get("needed") is not False and (java.get("compatible") is False or java.get("error")
                                             or not (java.get("executable") or java.get("on_path"))):
         lines.append(_line(f"Java 21 or newer is needed for the engine: {java.get('error') or java.get('version') or 'not found'}"))
     tmux = report.get("tmux") or {}
@@ -63,10 +63,10 @@ def main() -> int:
         report = json.loads(sys.stdin.read())
         if not isinstance(report, dict):
             raise ValueError("not an object")
-    except ValueError:
+        lines = attention(report)
+    except (ValueError, AttributeError, TypeError):  # a report of another shape: a sentence, never a traceback
         print(f"The doctor report could not be read. {FULL_REPORT}")
         return 0
-    lines = attention(report)
     if lines:
         print("Needs attention:")
         for line in lines:

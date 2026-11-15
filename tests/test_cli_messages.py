@@ -275,7 +275,8 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
     assert any("codex is installed but its contract checks fail" in line for line in lines)
     assert any(line.startswith("Store writer: reader.") and "\x1b" not in line for line in lines)
     for report, first in ((healthy, "Nothing needs attention."), (broken, "Needs attention:"),
-                          ([1, 2], "The doctor report could not be read.")):
+                          ([1, 2], "The doctor report could not be read."),
+                          ({"java": "of another shape"}, "The doctor report could not be read.")):
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(report)))
         assert doctor_attention.main() == 0
         printed = capsys.readouterr().out.splitlines()
@@ -290,6 +291,12 @@ def test_every_top_level_command_has_a_description():
     group = typer.main.get_command(cli.app)
     missing = [name for name, command in group.commands.items() if not (command.help or "").strip()]
     assert missing == []
+    # The first paragraph is what the list shows: a hard line break in it would break the line there.
+    for name in ("init", "store"):
+        command = group.commands[name]
+        for sub in getattr(command, "commands", {"": command}).values():
+            first = (sub.help or "").strip().split("\n\n")[0]
+            assert "\n" not in first, (name, sub.name, first)
 
 
 def test_plan_save_names_and_explains_its_arguments(monkeypatch):
