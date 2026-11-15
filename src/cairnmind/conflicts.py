@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 from uuid import uuid4
 
+from .confirmation import confirmed_by
 from .sql import evidence_time, json_text, one_row, parse_utc, utc_now
 
 KINDS = ("fact", "decision")
@@ -83,7 +84,9 @@ def _view(record, uris, states, times):
             "evidence_basis": when.get("basis"),
             "scope": metadata.get("worktree") or metadata.get("root"),
             "sources": sources[:5], "sources_total": len(sources),
-            "evidence_state": state.get("evidence_state"), "quote_survives": state.get("quote_survives")}
+            "evidence_state": state.get("evidence_state"), "quote_survives": state.get("quote_survives"),
+            # How it came to be confirmed (#177): the store's own mark. Names in it are a package's claim.
+            "confirmed_by": confirmed_by({**record, "metadata": metadata}), "confirmation": metadata.get("confirmation")}
 
 
 def _newer(first, second):

@@ -533,6 +533,9 @@ class KnowledgeAgent:
                 continue
             value = {k: hit.get(k) for k in (
                 "id", "source_id", "text", "line_start", "line_end", "uri", "status", "kind", "metadata",
+                # Who stands behind a record's status (#177): without it a record a package brought, or one
+                # from before only a person could confirm, would reach the model as plainly "confirmed".
+                "confirmed_by", "confirmation",
             ) if hit.get(k) is not None}
             if source["id"] != hit["source_id"]:
                 value.update(source_id=source["id"], text=source_text(source)[:2200], line_start=1,

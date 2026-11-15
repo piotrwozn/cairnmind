@@ -424,8 +424,17 @@ CONFIRMATION_MESSAGES = {
         "potwierdzone gdzie indziej przez {name} na gałęzi {branch} w commicie {commit} (według paczki); "
         "zaimportowane z {where} dnia {day}; niezweryfikowane tutaj",
     "confirmed by evaluation seed data, not by a person": "potwierdzone przez dane testowe ewaluacji, nie przez człowieka",
-    "was confirmed at version {version}; a session or agent changed it since, so it is proposed again":
-        "było potwierdzone w wersji {version}; sesja lub agent zmienili je od tego czasu, więc znów jest propozycją",
+    "was confirmed at version {version}; a later write that was not a person's confirmation "
+    "changed it, so it is now {status}":
+        "było potwierdzone w wersji {version}; zmienił je późniejszy zapis, który nie był potwierdzeniem "
+        "człowieka, więc obecny stan to: {status}",
+    # Words that stand where the mark holds no value (confirmation.FALLBACK_WORDS).
+    "the local user": "lokalny użytkownik", "time unknown": "czas nieznany",
+    "an unnamed person": "osobę bez podanego imienia", "an unknown branch": "nieznanej",
+    "an unknown commit": "nieznanym", "a memory package": "paczki pamięci", "an unknown day": "nieznanego",
+    # Beside the state in a list (confirmation.LIST_WORDS).
+    "confirmed elsewhere": "potwierdzone gdzie indziej", "confirmed before the rule": "potwierdzone przed regułą",
+    "confirmed by seed data": "potwierdzone przez dane testowe", "confirmation lapsed": "potwierdzenie wygasło",
     "confirmed before only a person could confirm; who confirmed it was not recorded":
         "potwierdzone, zanim potwierdzać mógł tylko człowiek; nie zapisano, kto to zrobił",
     # The import preview and result (terminal_ui.summary_text).
@@ -433,6 +442,10 @@ CONFIRMATION_MESSAGES = {
         "Potwierdzone gdzie indziej: {count}. Pozostają potwierdzone, są pokazywane jako zaimportowane "
         "i nie są tutaj zweryfikowane.",
     "Confirmed by, as the package says: {names}": "Potwierdzone przez, według paczki: {names}",
+    "Replaces {count} records that were confirmed or disputed on this computer. "
+    "Applying the import puts the imported text or status in their place.":
+        "Zastępuje rekordy potwierdzone lub zakwestionowane na tym komputerze: {count}. "
+        "Zastosowanie importu wstawi w ich miejsce zaimportowaną treść lub status.",
 }
 
 MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL, "Complete": "Pełna",
