@@ -844,7 +844,8 @@ async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_
         assert kept["message"].startswith(f"A person confirmed record {confirmed['id']} (fact)")
         assert "Nothing was saved" in kept["message"] and "possible_conflicts" in kept["message"]
         assert exists["error_code"] == "key_exists"
-        assert "expected_version" in exists["message"] and "Changed" not in exists["message"]
+        assert "record.id and record.expected_version" in exists["message"]
+        assert "inside the record argument" in exists["message"] and "Changed" not in exists["message"]
         assert not store.query("SELECT FROM records WHERE `key`='new-one'")
         assert store.query("SELECT FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["content"] == "ArcadeDB"
     finally:

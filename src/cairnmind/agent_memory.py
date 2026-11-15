@@ -24,8 +24,8 @@ AGENT_CLIENTS = {"api", "copilot"}
 # The store's refusal of a second active record under one key (store._remember), and what the model does.
 _KEY_EXISTS = "Active record key already exists"
 KEY_EXISTS_HINT = ("An active record of this kind already has this key. Nothing was saved. To change it, read it "
-                   "with memory_records and call remember with its id and expected_version (a record a person "
-                   "confirmed stays as it is); to keep both, store yours under another key.")
+                   "with memory_records and call remember with record.id and record.expected_version set from "
+                   "that record, inside the record argument (a record a person confirmed stays as it is); to keep both, store yours under another key.")
 _SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
 _SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _PROVIDER_FIELDS = {"continuation", "reasoning", "thinking", "encrypted_content", "signature"}
