@@ -160,6 +160,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Two installations that take over writing a store, or claim a new one, at the same moment now always leave one writer: the second is refused as a whole and told to run `cairnmind store takeover --yes` again, instead of sometimes leaving the writer row and the journal head naming different installations. A takeover that overlaps a write of the current writer is refused the same way, with a message that says so (#70).
 - `cairnmind store writer`, `doctor` and the service status report a store whose writer row and journal head name different installations; until the next `cairnmind store takeover --yes` repairs it, the installation the row names is refused every write and runs no schema statement or upgrade (#70).
 - Two installations that create one store at the same moment no longer leave two schema_version or lookup_indexes rows in it (#68).
+- Restore writes the rows of a backup in groups of a few hundred per request instead of one row at a time. For the store of Cairnmind's own source it now takes 1,140 requests and 18 s on loopback instead of 281,451 requests and 239 s, and 28 s with 20 ms added to every request, so a large store can be restored over a network. Each group is limited to 250 rows or about 1 MiB of JSON. Nothing else changes: what is restored, every check made before anything changes and its message, and the rollback of a restore that fails or is cut (#219).
+- Each answer from the database is freed as soon as it is read instead of waiting for Python's garbage collector, which keeps the memory of restore bounded now that it sends larger requests (#219).
 
 ## 0.10.0
 
