@@ -708,15 +708,24 @@ def source(ctx: typer.Context, source_id: str):
 def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
              source_id: Annotated[list[str] | None, typer.Option("--source")] = None,
              confirmed: bool = False, key: str | None = None):
+    """Store a finding as proposed. --confirmed stores it as confirmed, for a person in their own terminal."""
+    from cairnmind import confirmation
+    if confirmed and not confirmation.person_at_terminal():
+        # Only a person confirms (#177). A coding session's shell and an agent's command are not one:
+        # refused before anything is written, with what to do instead.
+        refuse(confirmation.CLI_REFUSED)
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     with actor_write(store, ctx.obj, pid):
-        sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
-                                              {"role": "user", "origin": "cli"})["id"]]
         record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
         if key is not None:
             record["key"] = key
-        result = store.remember(pid, record, sources)
+        sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
+                                              {"role": "user", "origin": "cli"})["id"]]
+        if confirmed:
+            result = confirmation.remember_as_person(store, pid, record, sources)
+        else:
+            result = store.remember(pid, record, sources)
     output(result)
 
 
@@ -753,10 +762,21 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
                 "acceptance_criteria": criterion or [], "depends_on": depends_on or [],
                 "requires_test": requires_test, "requires_review": requires_review}
     text = json.dumps({"title": title, **metadata}, ensure_ascii=False)
+    from cairnmind import confirmation
+    # A task a person adds in their own terminal is confirmed, as before. Inside a coding session, from an
+    # agent's command or a script there is no person (#177): the task is stored as proposed, and says so.
+    person = confirmation.person_at_terminal()
     with actor_write(store, ctx.obj, pid):
         src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual", {"role": "user"})
-        result = store.remember(pid, {"kind": "task", "content": title, "status": "confirmed",
-                                     "metadata": metadata}, [src["id"]])
+        record = {"kind": "task", "content": title, "status": "confirmed" if person else "proposed",
+                  "metadata": metadata}
+        if person:
+            result = confirmation.remember_as_person(store, pid, record, [src["id"]])
+        else:
+            result = store.remember(pid, record, [src["id"]])
+    if not person:
+        typer.echo("Stored as proposed: only a person in their own terminal adds a confirmed task. "
+                   "The person confirms it in the inspector.", err=True)
     output(result)
 
 

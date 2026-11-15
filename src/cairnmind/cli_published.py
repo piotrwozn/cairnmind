@@ -217,6 +217,11 @@ def register(memory_app, initialized):
         if session_value("SESSION_ID"):
             # A coding session's agent runs commands too; only a person confirms (the inspector works for both).
             refuse("A coding session cannot confirm a plan; a person confirms it outside the session or in the inspector.")
+        from cairnmind import confirmation
+        if not confirmation.person_at_terminal():
+            # An agent's command and a script have no terminal (#177): the same refusal as for a session.
+            refuse("Only a person confirms a plan: run this command in your own terminal. "
+                   "Nothing was confirmed.")
         from cairnmind.memory_published_format import canonical_uuid
         if not canonical_uuid(plan):
             raise typer.BadParameter("PLAN must be a plan ID")
