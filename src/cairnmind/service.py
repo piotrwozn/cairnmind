@@ -232,10 +232,20 @@ def instance_id(settings: Settings) -> str:
     return hashlib.sha256(str(settings.data_dir).encode()).hexdigest()[:16]
 
 
-def schedule_embeddings(store, namespace: str, *, project_ids=None) -> int:
-    """Repair missing/digest-changed derived vectors without touching archived evidence."""
+def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=None, report=None) -> int:
+    """Repair missing/digest-changed derived vectors without touching archived evidence.
+
+    With ``settings``, chunks a remote embedding server may not receive are not queued (#181); their
+    number goes to ``report["embedding_held_back"]``. They are queued by the first repair that allows them.
+    """
     rows = (store.missing_embeddings(namespace) if project_ids is None else
             [row for pid in project_ids for row in store.missing_embeddings(namespace, pid)])
+    if settings is not None:
+        from cairnmind.memory_egress import held_chunk_ids
+        held = held_chunk_ids(store, settings, rows)
+        rows = [row for row in rows if row["id"] not in held]
+        if report is not None:
+            report["embedding_held_back"] = len(held)
     for row in rows:
         job_id = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]},
                                f"embedding-namespace:{namespace}:{row['id']}")
@@ -376,10 +386,16 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     async def jobs() -> None:
         last_namespace, last_repair, last_projects = None, 0.0, None
+        released = False
         while True:
             try:
                 # Opening a UI or acknowledging context does not authorize model work.
                 await background_ready.wait()
+                if not released:
+                    # Extractions held back for a remote chat server whose class is allowed now (#181).
+                    from cairnmind.memory_egress import release_held_extractions
+                    await asyncio.to_thread(release_held_extractions, store, settings)
+                    released = True
                 selected = None if background_inference else tuple(sorted(inference_projects))
                 # Keep pending work pending when Ollama is offline, instead of failing the whole queue.
                 # With split model servers, each job kind waits only for the server of its own role.
@@ -389,8 +405,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     namespace = await identity(settings.embedding_model)
                     if (namespace != last_namespace or selected != last_projects
                             or time.monotonic() - last_repair > 60):
-                        missing = await asyncio.to_thread(schedule_embeddings, store, namespace, project_ids=selected)
-                        background_status.update(embedding_namespace=namespace, embedding_missing=missing)
+                        held: dict = {}
+                        missing = await asyncio.to_thread(schedule_embeddings, store, namespace, project_ids=selected,
+                                                          settings=settings, report=held)
+                        background_status.update(embedding_namespace=namespace, embedding_missing=missing, **held)
                         last_namespace, last_repair, last_projects = namespace, time.monotonic(), selected
                 background_status["model_error"] = str(role_error) if role_error else None
                 job = await asyncio.to_thread(store.claim_job, "inference", inference_lease_seconds(), kinds,

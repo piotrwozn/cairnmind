@@ -14,6 +14,7 @@ from .arcade import ArcadeError
 from .config import Settings
 from .context_selection import select_entries
 from .memory_paths import bound_metadata, memory_bindings
+from .memory_egress import ASK, held_back_class
 from .memory_models import from_settings
 
 
@@ -284,9 +285,14 @@ class Retriever:
     def records(self, project_id, include_history=False, worktree=None):
         project_id, root, roots = self._scope(project_id, worktree)
         bindings = memory_bindings(self.store, project_id)
-        return [record for record in self.store.list_records(project_id, include_history)
+        gate = ASK.get()  # set only while an answer is built for a remote chat server (#181)
+        rows = self.store.list_records(project_id, include_history)
+        if gate:
+            gate.prime(rows)
+        return [record for record in rows
                 if self._matches_scope(bound_metadata(self.store, project_id, record.get("metadata"),
-                                                     bindings=bindings), root, roots)]
+                                                     bindings=bindings), root, roots)
+                and not (gate and gate.record_held(record))]
 
     def _graph_ids(self, project_id, root, roots, source_ids):
         bindings = memory_bindings(self.store, project_id)
@@ -306,6 +312,21 @@ class Retriever:
                  and (row["kind"] in {"supported_by", "depends_on", "supersedes", "has_step"}
                       or not row.get("source_id") or row["source_id"] in source_ids)}
         return sorted(nodes), sorted(edges)
+
+    def _graph_held(self, rows) -> set:
+        """Graph nodes an answer for a remote chat server leaves out: of a held source or a held record."""
+        gate = ASK.get()
+        if not gate:
+            return set()
+        records = {row["id"][len("record:"):]: row["id"] for row in rows
+                   if isinstance(row.get("id"), str) and row["id"].startswith("record:")}
+        held = {node for record_id, node in records.items() if any(
+            gate.record_held(record) for record in self.store.query(
+                "SELECT id,source_ids,metadata FROM records WHERE id=:id", {"id": record_id}))}
+        for row in rows:
+            if row.get("source_id") and row["id"] not in held and gate.source_id_held(row["source_id"]):
+                held.add(row["id"])
+        return held
 
     @staticmethod
     def _vector_type(project_id: str, namespace: str, dimension: int) -> str:
@@ -351,6 +372,9 @@ class Retriever:
     def _chunk_hit(self, chunk: dict) -> dict | None:
         source = self.store.get_source(chunk["source_id"])
         if source["project_id"] != chunk["project_id"] or not source["is_current"]:
+            return None
+        gate = ASK.get()
+        if gate and gate.chunk_held(chunk["id"], source):
             return None
         metadata = json_value(source.get("metadata"), {})
         relative = metadata.get("relative_path") if isinstance(metadata, dict) else None
@@ -466,12 +490,14 @@ class Retriever:
                 f"AND id IN :eligible_records AND key IN :keys LIMIT {limit}",
                 {"project": project_id, "keys": words, "eligible_records": eligible_records},
             )
-            record_hits, seen = [], set()
+            record_hits, seen, gate = [], set(), ASK.get()
             for record in [*records, *keyed]:
                 ids = json_value(record.get("source_ids"), [])
                 if record["id"] in seen or not ids:
                     continue
                 seen.add(record["id"])
+                if gate and gate.record_held(record):
+                    continue
                 source = self.store.get_source(ids[0])
                 if source["project_id"] != project_id:
                     continue
@@ -548,7 +574,10 @@ class Retriever:
         )
         truncated = len(seeds) > 6 or len(rows) > limit
         nodes, sources = [], {}
+        held = self._graph_held(rows[:limit])
         for row in rows[:limit]:
+            if row.get("id") in held:
+                continue
             source_id = row.get("source_id")
             if source_id and source_id in eligible_sources:
                 source = self.store.get_source(source_id)
@@ -607,6 +636,10 @@ class Retriever:
         root = str(Path(worktree if worktree is not None else project["root"]).expanduser().resolve())
         current = PlanManager(self.store).next_task(project["id"], plan_id, root)
         plan, task, blocked = current["plan"], current["task"], current["blocked"]
+        gate = ASK.get()
+        if gate:  # a held plan or task is left out of an answer's context whole
+            plan = None if plan and gate.record_held(plan) else plan
+            task = None if task and gate.record_held(task) else task
         projection = {
             "worktree": root, "plan": None, "next_task": None, "reason": current["reason"],
             "blocked": [{"task_id": item["task_id"], "reasons": item["reasons"],
@@ -698,6 +731,8 @@ class Retriever:
             "SELECT FROM embeddings WHERE chunk_id=:chunk AND project_id=:project AND namespace=:namespace",
             {"chunk": chunk["id"], "project": job["project_id"], "namespace": namespace},
         )
+        if not canonical and held_back_class(self.settings, "embedding", source):
+            return  # left unembedded for a remote server (#181); text search still finds it
         vector = validate_vector(canonical[0]["vector"] if canonical else (await self.ollama.embed([chunk["text"]]))[0])
         index = await asyncio.to_thread(self._ensure_vector_index, job["project_id"], namespace, len(vector))
         if index is None:

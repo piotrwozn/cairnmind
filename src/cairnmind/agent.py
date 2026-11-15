@@ -17,6 +17,7 @@ from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .extraction_input import TASK_STATE_INSTRUCTION, extraction_request, source_text
+from .memory_egress import ASK, HELD_BACK_SOURCE, HELD_BACK_UNKNOWN, REMOTE_NOT_ALLOWED, ask_gate, held_back_class
 from .memory_models import answer_label, context_tokens, from_settings
 from .ollama import OllamaUnavailable
 from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
@@ -481,6 +482,9 @@ class KnowledgeAgent:
         source = self.store.get_source(source_id)
         if source["project_id"] != project_id:
             raise ValueError("Source is outside this project")
+        gate = ASK.get()
+        if gate and gate.source_held(source):
+            raise ValueError(HELD_BACK_SOURCE)
         if current and not self.retriever.source_in_scope(source, project_id, worktree):
             raise ValueError("Current source is outside the requested worktree; use explicit historical evidence")
         if current and source["kind"] in {"code", "document", "file"}:
@@ -738,6 +742,8 @@ class KnowledgeAgent:
             if not scoped:
                 raise ValueError("Record does not exist in this project")
             revisions = await asyncio.to_thread(self.store.record_history, record_id)
+            gate = ASK.get()
+            revisions = [revision for revision in revisions if not (gate and gate.record_held(revision))]
             offset = max(0, int(arguments.get("offset", 0)))
             limit = max(1, min(40, int(arguments.get("limit", 20))))
             result = []
@@ -927,7 +933,18 @@ class KnowledgeAgent:
                        "budget": {"timeout_seconds": self.settings.ask_timeout, "max_steps": self.settings.max_steps,
                                   "context_limit_chars": max(12000, context_tokens(self.settings) * 2)}}
         started = time.monotonic()
-        result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
+        # For a chat server on another computer, memory of a class it may not receive is left out (#181).
+        gate = ask_gate(self.settings, self.store)
+        token = ASK.set(gate)
+        try:
+            result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
+        finally:
+            ASK.reset(token)
+        held = gate.summary() if gate else None
+        if held:
+            diagnostics["held_back"] = held
+            if result.get("status") != "complete":  # the answer may lack sources for that reason
+                result = {**result, "unknowns": [HELD_BACK_UNKNOWN, *result.get("unknowns", [])][:8]}
         diagnostics["code"] = result.get("diagnostics", {}).get("code", "unavailable")
         label = await answer_label(self.settings, self.ollama)  # None with the release's models
         if label:
@@ -1172,6 +1189,11 @@ class KnowledgeAgent:
                 project_id = job["project_id"]
                 if source["project_id"] != project_id:
                     raise ValueError("Extraction source belongs to another project")
+                if held_back_class(self.settings, "chat", source):
+                    # Not failed: memory_egress.release_held_extractions queues it once its class is allowed.
+                    diagnostics["code"] = REMOTE_NOT_ALLOWED
+                    save()
+                    return
                 accepted = await self.propose(source, diagnostics)
                 if accepted is None:
                     save()

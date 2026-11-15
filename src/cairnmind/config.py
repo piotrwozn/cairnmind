@@ -154,6 +154,9 @@ class Settings:
     # Checked by memory_models.normalize_memory_model. The model names stay in the two fields above.
     memory_chat: dict | None = None
     memory_embedding: dict | None = None
+    # The sensitivity classes (sensitivity.CLASSES) a role on another computer may receive (#181). Checked by
+    # memory_egress.allowed_classes: a value that is not a list of distinct known classes sends nothing.
+    memory_remote_classes: list = field(default_factory=lambda: ["project"])
     answer_tokens: int = 1200
     max_steps: int = 8
     ask_timeout: float = 60.0
