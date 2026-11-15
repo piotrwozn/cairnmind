@@ -1492,14 +1492,16 @@ class Store:
         result["has_error"] = bool(job.get("error"))
         result.update(self._job_error(job.get("error"), result["diagnostics"]))
         history = job.get("attempt_history") or []
-        result["attempt_history_count"] = len(history)
+        # Events an old completed job no longer keeps (store_prune.compact_old_jobs, #190) still count.
+        pruned = job.get("attempt_history_pruned") if type(job.get("attempt_history_pruned")) is int else 0
+        result["attempt_history_count"] = len(history) + pruned
         if detail:
             result["attempt_history"] = [{key: event.get(key) for key in ("event", "attempts", "state", "at")}
                                           | {"has_error": bool(event.get("error")),
                                              "diagnostics": job_diagnostics(event.get("diagnostics"))}
                                           | self._job_error(event.get("error"), job_diagnostics(event.get("diagnostics")))
                                           for event in history[-20:] if isinstance(event, dict)]
-            result["attempt_history_omitted"] = max(0, len(history) - 20)
+            result["attempt_history_omitted"] = max(0, len(history) - 20) + pruned
         payload = job.get("payload") or {}
         result["target"] = ({key: payload[key][:1024] for key in ("path", "client", "source_id", "chunk_id", "origin_event_id")
                              if isinstance(payload.get(key), str)} if isinstance(payload, dict) else {})
