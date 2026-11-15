@@ -258,3 +258,72 @@ def test_restoring_a_backup_of_an_old_store_runs_the_step_on_what_it_brings(old,
     old.store.restore(backup)
     assert old.store.confirmations_before_rule["marked"] == 1
     assert confirmation_of(old.record(record["id"]))["by"] == "person"
+
+
+def as_written_by_0_10_0(store, audit_id):
+    """Rewrite a review audit to the fields 0.10.0 wrote: the text's hash only, and no name."""
+    import json
+
+    from cairnmind.sql import update_document
+    with store.transaction() as tx:
+        audit = json.loads(tx.query("SELECT content FROM sources WHERE id=:id", {"id": audit_id})[0]["content"])
+        kept = ("actor", "action", "record_id", "previous_version", "previous_status", "status", "reason", "at",
+                "content_sha256")
+        update_document(tx, "sources", {"content": json.dumps({name: audit[name] for name in kept if name in audit})},
+                        "id=:id", {"id": audit_id})
+
+
+def test_a_0_10_0_review_marks_a_record_that_says_what_it_said_and_names_nobody(old):
+    record, audit_id = old.reviewed("Reviewed in 0.10.0", key="old-key", metadata={"evidence": "a passage"})
+    as_written_by_0_10_0(old.store, audit_id)
+
+    assert mark_confirmed_before_rule(old.store, force=True)["marked"] == 1
+
+    after = old.record(record["id"])
+    assert after["metadata"]["confirmation"]["actor_name"] is None
+    assert confirmation_text(after).startswith("confirmed here by a person: the local user, in the inspector, ")
+
+
+@pytest.mark.parametrize("change", [{"key": "another-key"}, {"metadata": {"evidence": "another passage"}},
+                                    {"metadata": {"rationale": "a reason nobody reviewed"}}],
+                         ids=["key", "quote", "metadata"])
+def test_a_0_10_0_review_does_not_cover_a_key_quote_or_field_changed_after_it(old, change):
+    record, audit_id = old.reviewed("Reviewed in 0.10.0", key="old-key",
+                                    metadata={"evidence": "a passage", "rationale": "the reviewed reason"})
+    as_written_by_0_10_0(old.store, audit_id)
+    # The text stays, so the text hash, all a 0.10.0 audit holds, still matches.
+    edited = person_edit(old.store, old.pid, {"id": record["id"], "expected_version": record["version"], **change},
+                         record["source_ids"])
+    edited = confirmed_before_rule(old.store, edited["id"])
+    assert edited["content"] == record["content"] and edited["version"] == record["version"] + 1
+
+    result = mark_confirmed_before_rule(old.store, force=True)
+
+    assert result["marked"] == 0 and result["before_rule"] == 1
+    assert confirmation_of(old.record(record["id"])) == {"by": "before_rule"}
+
+
+def test_a_metadata_field_changed_after_a_current_review_also_ends_the_cover(old):
+    record, _ = old.reviewed("Reviewed with a reason", metadata={"rationale": "the reviewed reason"})
+    edited = person_edit(old.store, old.pid, {"id": record["id"], "expected_version": record["version"],
+                                              "metadata": {"rationale": "a reason nobody reviewed"}},
+                         record["source_ids"])
+    confirmed_before_rule(old.store, edited["id"])
+
+    result = mark_confirmed_before_rule(old.store, force=True)
+
+    assert result["marked"] == 0 and result["before_rule"] == 1
+
+
+def test_a_record_the_step_cannot_read_stays_before_the_rule_and_the_store_opens(old):
+    record, _ = old.reviewed("Reviewed, then its metadata lost")
+    readable, _ = old.reviewed("Reviewed and readable")
+    with old.store.transaction() as tx:
+        tx.command("UPDATE records SET metadata = null WHERE id=:id", {"id": record["id"]})
+    old.store.command(f"DELETE FROM devbrain_meta WHERE name='{META_NAME}'")
+
+    reopened = Store(old.store.data_dir)
+
+    assert reopened.confirmations_before_rule["marked"] >= 1
+    assert confirmation_of(old.record(readable["id"]))["by"] == "person"
+    assert old.store.query(f"SELECT FROM devbrain_meta WHERE name='{META_NAME}'")

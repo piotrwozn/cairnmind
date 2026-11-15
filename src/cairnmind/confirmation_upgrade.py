@@ -6,9 +6,10 @@ is still in the store. This one-time step gives those records the mark of a pers
 its source, and leaves every other one as it is. It claims nothing the store cannot show:
 
 - a review audit (`review://`, origin `local_user_review`: the inspector's confirm, a conflict decision
-  that chose the record, a plan confirmation) counts when its hashes equal the record as it stands: the
-  text, the kind, key and replaced record when the audit hashes them, the quoted passage when it hashes
-  it, and a task's definition;
+  that chose the record, a plan confirmation) counts when the hashes it holds equal the record as it
+  stands (the text; kind, key, replaced record and quoted passage when it hashes them; a task's
+  definition) and the record still says, by `said`, what the version that act wrote said. An audit of
+  0.10.0 hashes only the text, so the revision is what covers its key, quote and other fields;
 - a workspace form note counts when the form saved the record as confirmed (its first revision) and the
   record still says what the form saved;
 - only a note written on this machine counts: not one that arrived in a memory package (the import's
@@ -41,8 +42,27 @@ def _audit(source):
     return audit if isinstance(audit, dict) else None
 
 
-def _review(record, source):
-    """(at, route) of a local review audit that covers the record as it stands, else None."""
+def _statement(row):
+    return said(row.get("kind"), row.get("content"), row.get("key"), row.get("supersedes"), row.get("metadata"))
+
+
+def _act_revision(tx, record, source_id):
+    """The snapshot of the version a person's act wrote: the first confirmed version that cites its note."""
+    for row in tx.query("SELECT version,snapshot FROM record_revisions WHERE record_id=:id AND project_id=:project "
+                        "ORDER BY version", {"id": record["id"], "project": record["project_id"]}):
+        snapshot = row.get("snapshot")
+        if (isinstance(snapshot, dict) and snapshot.get("status") == "confirmed"
+                and source_id in (snapshot.get("source_ids") or [])):
+            return snapshot
+    return None
+
+
+def _review(tx, record, source):
+    """(at, route) of a local review audit that covers the record as it stands, else None.
+
+    The audit's hashes must match, and the record must still say what the version the act wrote said: its
+    kind, text, key, replaced record, quote and every covered metadata field. An audit written by 0.10.0
+    hashes only the text, so the revision is what shows that nothing else changed since."""
     audit = _audit(source)
     route = _AUDIT_ROUTES.get(audit.get("action")) if audit else None
     if route is None:
@@ -58,6 +78,9 @@ def _review(record, source):
         hashed = hashed.get(record["id"]) if isinstance(hashed, dict) else hashed
         if hashed != record_evidence(record):
             return None
+    revision = _act_revision(tx, record, source["id"])
+    if revision is None or _statement(revision) != _statement(record):
+        return None
     at = audit.get("at")
     return (at if isinstance(at, str) else str(source.get("created_at") or "")), route
 
@@ -72,9 +95,7 @@ def _form(tx, record, source):
     saved = (first or {}).get("snapshot")
     if not isinstance(saved, dict) or saved.get("status") != "confirmed":
         return None
-    statement = lambda row: said(row["kind"], row["content"], row.get("key"), row.get("supersedes"),  # noqa: E731
-                                 row.get("metadata"))
-    if statement(saved) != statement(record):
+    if _statement(saved) != _statement(record):
         return None
     return str(source.get("created_at") or ""), "workspace_form"
 
@@ -96,7 +117,7 @@ def covering_act(tx, record, sources, imported):
         uri, origin = str(source.get("uri", "")), (source.get("metadata") or {}).get("origin")
         act = None
         if uri.startswith(review_prefix) and origin == review_origin:
-            act = _review(record, source)
+            act = _review(tx, record, source)
         elif uri.startswith(form_prefix) and origin == form_origin:
             act = _form(tx, record, source)
         if act:
@@ -145,19 +166,24 @@ def mark_confirmed_before_rule(store, *, force=False) -> dict | None:
                                     {"ids": wanted[start:start + 500], "project": pid}):
                     sources[row["id"]] = clean_row(row)
             for record in records:
-                act = covering_act(tx, record, sources, imported)
+                try:
+                    act = covering_act(tx, record, sources, imported)
+                except (TypeError, KeyError, ValueError, AttributeError):
+                    act = None  # a row the step cannot read stays before the rule, and the store still opens
                 if act is None:
                     left += 1
                     continue
                 route, source, at = act
                 mark = {**person_mark(route, source, record["version"], at), "marked_at_upgrade": now}
-                metadata = {**record["metadata"], MARK: mark}
+                metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+                metadata = {**metadata, MARK: mark}
                 update_document(tx, "records", {"metadata": metadata}, "id=:id", {"id": record["id"]})
                 revision = one_row(tx, "SELECT snapshot FROM record_revisions WHERE id=:id",
                                    {"id": f"{record['id']}:{record['version']}"}, False)
                 snapshot = (revision or {}).get("snapshot")
                 if isinstance(snapshot, dict):
-                    snapshot = {**snapshot, "metadata": {**(snapshot.get("metadata") or {}), MARK: mark}}
+                    kept = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+                    snapshot = {**snapshot, "metadata": {**kept, MARK: mark}}
                     update_document(tx, "record_revisions", {"snapshot": snapshot}, "id=:id",
                                     {"id": f"{record['id']}:{record['version']}"})
                 marked += 1

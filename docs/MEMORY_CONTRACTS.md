@@ -309,7 +309,9 @@ One step at upgrade (#215, `confirmation_upgrade.py`) marks such a record as a
 person's when the store can show the act: a review audit (`review://`, origin
 `local_user_review`) that covers the record as it stands (the hashes of its text,
 of kind, key and replaced record and of the quoted passage when the audit has
-them, and of a task's definition), or the workspace form note of a finding the
+them, and of a task's definition; and the record says what the first confirmed
+revision citing the audit said, by `said`, which also covers every field an
+audit of 0.10.0 does not hash), or the workspace form note of a finding the
 form saved as confirmed whose record still says what was typed. Only a note
 written on this machine counts: a source that a memory package brought (listed
 in the import's receipt) does not, and neither does a command line note, which
