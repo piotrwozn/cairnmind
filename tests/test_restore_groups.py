@@ -11,6 +11,7 @@ import pytest
 
 from cairnmind import arcade
 from cairnmind.journal import JournalTransaction
+from cairnmind.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
 from cairnmind.sql import insert_document, json_text, quote_name
 from cairnmind.store import DOCUMENT_TYPES, Store
 
@@ -220,3 +221,63 @@ def test_a_backup_with_a_vertex_twice_restores_as_row_by_row(store, tmp_path, mo
     reference.restore(path)
     assert comparable(grouped.export()) == comparable(reference.export())
     assert any(row["label"] == "the second copy" for row in grouped.export()["nodes"])
+
+
+class _Recording:
+    """A store and transaction that only record the graph groups ``GraphGroups`` writes."""
+
+    def __init__(self):
+        self.groups, self.known = [], None
+
+    def prefetch_graph(self, tx, nodes, edges):
+        pass
+
+    def write_graph(self, tx, project_id, nodes, edges):
+        self.groups.append((project_id, list(nodes or edges)))
+
+
+@pytest.mark.parametrize("kind", ["node", "edge"])
+def test_a_graph_group_ends_at_the_text_limit_as_a_document_group_does(kind):
+    recording = _Recording()
+    groups = GraphGroups(recording, recording, kind)
+    held = []
+    wide = "x" * 40_000
+    for n in range(600):
+        groups.add({"id": f"p{n % 3}:r{n}", "project_id": f"p{n % 3}", "metadata": {"text": wide}})
+        held.append(sum(len(json_text(row)) for rows in groups.groups.values() for row in rows.values()))
+    groups.add({"id": "p0:alone", "project_id": "p0", "metadata": {"text": "y" * (DOCUMENT_BYTES_PER_REQUEST + 1)}})
+    groups.flush()
+    assert sum(len(rows) for _, rows in recording.groups) == 601
+    for _, rows in recording.groups:
+        assert len(rows) == 1 or sum(len(json_text(row)) for row in rows) <= DOCUMENT_BYTES_PER_REQUEST
+    assert [rows for _, rows in recording.groups if len(rows) == 1 and rows[0]["id"] == "p0:alone"]
+    # What is held across projects stays near a few groups, never the 1,000 rows (40 MB) of the row limit.
+    assert max(held) < GRAPH_BYTES_HELD
+
+
+def test_wide_vertices_restore_in_requests_of_bounded_size(store, tmp_path, monkeypatch):
+    project = store.add_project("wide", tmp_path / "wide")["id"]
+    source = store.snapshot(project, "manual://wide", "wide graph")
+    nodes = [{"id": f"{project}:w{i}", "project_id": project, "kind": "function", "label": f"w{i}",
+              "source_id": source["id"], "metadata": {"text": f"{i} " + "z" * 40_000}} for i in range(80)]
+    with store.transaction() as tx:
+        tx.touch(project, "graph", op="reset")
+        store.prefetch_graph(tx, nodes, [])
+        store.write_graph(tx, project, nodes, [])
+    path = store.backup(tmp_path / "wide.cairnmind.json.gz")
+    target = Store(tmp_path / "target")
+    sizes = []
+    request = arcade.ArcadeClient._request
+
+    def measured(self, method, path, **kwargs):
+        body = kwargs.get("json") or {}
+        if str(body.get("command", "")).startswith("CREATE VERTEX"):
+            sizes.append(len(json.dumps(body)))
+        return request(self, method, path, **kwargs)
+
+    monkeypatch.setattr(arcade.ArcadeClient, "_request", measured)
+    target.restore(path)
+    monkeypatch.undo()
+    # 3.2 MB of vertices: several requests, none much larger than the text limit of one group.
+    assert len(sizes) >= 3 and max(sizes) < DOCUMENT_BYTES_PER_REQUEST + 64 * 1024, sizes
+    assert comparable(target.export()) == comparable(store.export())

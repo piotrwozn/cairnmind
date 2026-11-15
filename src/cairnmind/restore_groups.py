@@ -6,8 +6,8 @@ vertex and edge was looked up before it was written. Here the same rows go in th
 - Documents and vector rows: one ``INSERT ... CONTENT :rows`` per group of one type (``insert_documents``),
   in file order, a group ending at ``GRAPH_ROWS_PER_REQUEST`` rows or ``DOCUMENT_BYTES_PER_REQUEST`` of text.
 - Graph vertices, then edges: per project, the reads of ``Store.prefetch_graph`` and the grouped writes of
-  ``Store.write_graph`` (#167), with every check of ``upsert_node`` / ``upsert_edge``. The restore's
-  transaction is reset, so the journal needs none of these rows.
+  ``Store.write_graph`` (#167), with every check of ``upsert_node`` / ``upsert_edge``, a group ending at the
+  same row and text limits. The restore's transaction is reset, so the journal needs none of these rows.
 
 A group holds rows read in pieces from the file, never the file (#196). A group that fails, or that the
 database stores only in part, fails the transaction, which leaves the store as it was.
@@ -20,8 +20,9 @@ from .store import GRAPH_ROWS_PER_REQUEST
 # A request carries rows of at most about this much JSON text; a single larger row goes alone. It keeps
 # the request, and what the client holds to send it, small next to the restore's memory limit.
 DOCUMENT_BYTES_PER_REQUEST = 1 << 20
-# Graph rows held at once across projects, before every project's group is written.
+# Graph rows, and their JSON text, held at once across projects before every project's group is written.
 GRAPH_ROWS_HELD = 4 * GRAPH_ROWS_PER_REQUEST
+GRAPH_BYTES_HELD = 4 * DOCUMENT_BYTES_PER_REQUEST
 
 
 class DocumentGroups:
@@ -51,6 +52,7 @@ class GraphGroups:
     def __init__(self, store, tx, kind):
         self.store, self.tx, self.kind = store, tx, kind
         self.groups = {}  # project id -> {row id: row}
+        self.sizes = {}  # project id -> characters of JSON text in its group
 
     def add(self, row):
         project, identifier = row.get("project_id"), row.get("id")
@@ -59,19 +61,24 @@ class GraphGroups:
             self.flush()
             (self.store.upsert_node if self.kind == "node" else self.store.upsert_edge)(row, self.tx)
             return
+        size = len(json_text(row))
+        group = self.groups.get(project)
+        # The second copy of an id updates the first, as the upsert row by row did: it goes in the next
+        # group. A row that would take the group past the text limit starts the next one; alone, it goes.
+        if group and (identifier in group or self.sizes[project] + size > DOCUMENT_BYTES_PER_REQUEST):
+            self._write(project)
         group = self.groups.setdefault(project, {})
-        if identifier in group:
-            # The second copy updates the first, as the upsert row by row did: it goes in the next group.
-            self._write(project)
-            group = self.groups.setdefault(project, {})
         group[identifier] = row
-        if len(group) >= GRAPH_ROWS_PER_REQUEST:
+        self.sizes[project] = self.sizes.get(project, 0) + size
+        if len(group) >= GRAPH_ROWS_PER_REQUEST or self.sizes[project] >= DOCUMENT_BYTES_PER_REQUEST:
             self._write(project)
-        elif sum(len(rows) for rows in self.groups.values()) >= GRAPH_ROWS_HELD:
+        elif (sum(len(rows) for rows in self.groups.values()) >= GRAPH_ROWS_HELD
+              or sum(self.sizes.values()) >= GRAPH_BYTES_HELD):
             self.flush()
 
     def _write(self, project):
         rows = list(self.groups.pop(project).values())
+        self.sizes.pop(project, None)
         nodes, edges = (rows, []) if self.kind == "node" else ([], rows)
         self.store.prefetch_graph(self.tx, nodes, edges)
         self.store.write_graph(self.tx, project, nodes, edges)
