@@ -97,7 +97,8 @@ def _os_error_text(exc: OSError) -> str:
     import errno
     if exc.errno is None or exc.filename is None:
         return str(exc)
-    path = _shortened(str(exc.filename))
+    import os
+    path = _shortened(os.fsdecode(exc.filename) if isinstance(exc.filename, bytes) else str(exc.filename))
     if exc.errno == errno.ENOENT:
         return f"{path} does not exist."
     if exc.errno == errno.ENAMETOOLONG:
@@ -633,7 +634,7 @@ def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None =
         log: Annotated[bool, typer.Option("--log", help="Keep this answer and its citations in the project's "
                                           "answer log, for `cairnmind eval replay`.")] = False):
     """Answer a question from the project's memory, with the sources it cites. Starts the service when needed."""
-    payload ={"project": project, "question": question,
+    payload = {"project": project, "question": question,
                "worktree": str(worktree.resolve()) if worktree else None}
     if log:
         payload["log"] = True
@@ -910,7 +911,7 @@ def jobs_retry(ctx: typer.Context, project: str, job_id: str,
 @app.command()
 def records(ctx: typer.Context, project: str, history: bool = False):
     """List the project's records as JSON; --history adds the replaced ones. Read-only; starts nothing."""
-    store =store_for_read(ctx.obj)
+    store = store_for_read(ctx.obj)
 
     def read():
         pid = store.resolve_project(project)["id"]
@@ -1412,7 +1413,9 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
 
 @eval_app.command("repository")
 @initialized
-def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = None, report_dir: Path | None = None):
+def eval_repository(ctx: typer.Context, root: Path,
+                    questions: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+                    report_dir: Path | None = None):
     """Ask questions with known answers about a real repository, in a throwaway copy and database.
 
     QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the
@@ -1802,9 +1805,14 @@ def retry_jobs(ctx: typer.Context):
         raise typer.BadParameter(
             "A model session cannot retry the jobs of all projects. "
             "Use `cairnmind jobs retry PROJECT JOB_ID --expected-attempts N` with a current ACK.")
-    # On a reader the notice says why; a failed job to queue again is then refused by the store, said once (#244).
+    store = store_for(ctx.obj)
+    if getattr(store, "not_writer", None):
+        # A reader retries nothing, even when nothing failed: the notice already said why, so the refusal
+        # is that one line and exit 1, not a success beside it (#244).
+        from cairnmind.store_writer import StoreNotWriter
+        raise StoreNotWriter(store.not_writer)
     # What really happened is printed, not a constant.
-    job_ids = list((_retry_jobs(store_for(ctx.obj)) or {}).get("job_ids", []))
+    job_ids = list((_retry_jobs(store) or {}).get("job_ids", []))
     output({"retried": bool(job_ids), "count": len(job_ids), "job_ids": job_ids})
 
 
