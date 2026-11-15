@@ -25,6 +25,7 @@ import httpx
 
 from . import __version__
 from .config import BROKER_NAMES, SESSION_NAMES, drop_env
+from .path_spelling import lies_in
 from .cockpit_state import (CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, _snapshot,
                             normalize_path)
 
@@ -463,7 +464,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                 if roots_response.is_error:
                     raise HTTPException(503, "The location of the key store could not be checked.")
                 roots = roots_response.json().get("roots", [registered["root"]])
-                if any(settings.data_dir.resolve().is_relative_to(Path(root).resolve()) for root in roots):
+                if any(lies_in(settings.data_dir.resolve(), Path(root).resolve()) for root in roots):
                     raise HTTPException(409, "The key store must be outside project folders.")
         await asyncio.to_thread(credentials.set, profile_id, value["key"], persist=value.get("persist", False))
         config = state.load()

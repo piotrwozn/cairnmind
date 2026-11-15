@@ -17,6 +17,7 @@ import httpx
 from .client_runtime import LIVE, NativeRuntime, _ID, _atomic
 from .config import ENV_PREFIXES, Settings
 from .mcp_servers import MAX_SERVERS
+from .path_spelling import lies_in
 
 AGENT_CLIENTS = {"api", "copilot"}
 NATIVE_CLIENTS = {"codex", "claude"}
@@ -137,7 +138,7 @@ class RuntimeSupervisor(NativeRuntime):
                 or type(resume) is not bool):
             raise ValueError("profile_invalid: invalid agent profile")
         root = str(Path(project["root"]).resolve())
-        if self.settings.data_dir.resolve().is_relative_to(Path(root)):
+        if lies_in(self.settings.data_dir.resolve(), root):
             raise ValueError("agent_storage_in_project: move the Cairnmind data directory outside the worktree")
         with self._locked():
             rows = self._read()

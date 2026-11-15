@@ -189,11 +189,12 @@ def test_the_fast_path_of_the_reserved_memory_check_changes_no_answer(path, expe
 
 
 @pytest.mark.parametrize("path", [".MEMORY/devbrain", ".Memory/DevBrain/x.json", "a/../.MEMORY/devbrain", ".memory/DEVBRAIN"])
-def test_the_fast_path_leaves_case_to_the_platform_s_path_comparison(path):
-    # What the check answered before the shortcut existed: true on Windows, false on Linux.
-    normalised = Path(os.path.normpath(path))
-    reference = not normalised.is_absolute() and normalised.is_relative_to(Path(".memory/devbrain"))
-    assert is_reserved_memory(path) is reference
+def test_the_fast_path_ignores_case_on_every_platform(path):
+    # Until #230 this followed the platform's path comparison and was false on Linux, where a worktree on a
+    # Windows drive (/mnt/c) still ignores case: the reserved names are now compared case-folded everywhere.
+    assert is_reserved_memory(path) is True
+    assert is_reserved_memory(path.replace("devbrain", "devbrain-other").replace("DevBrain", "DevBrain-other")
+                              .replace("DEVBRAIN", "DEVBRAIN-other")) is False
 
 
 def test_the_objects_of_a_snapshot_are_not_listed_at_every_capture(workspace, monkeypatch):

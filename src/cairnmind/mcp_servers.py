@@ -13,6 +13,7 @@ import json
 import re
 
 from .config import ENV_PREFIXES
+from .path_spelling import ignores_case, path_identity, same_or_below
 
 MAX_SERVERS = 4
 MAX_LIST_CHARS = 64 * 1024
@@ -84,7 +85,9 @@ def validate_server(value) -> dict:
     return {"id": identifier, "command": command, "args": list(args), "env": dict(env)}
 
 
-_SEPARATORS = re.compile(r"[=:,;\s]+")
+# Shell operators and quotes split too: `cd /path/WORKTR~1&&srv` names the folder before '&&', and only the
+# resolved token sees that a short 8.3 alias is the worktree (#230).
+_SEPARATORS = re.compile(r"[=:,;\s&|<>`$()'\"]+")
 _PATH_CHARACTER = re.compile(r"[A-Za-z0-9._-]")
 
 
@@ -104,8 +107,8 @@ def _normal(text: str) -> str:
 
 
 def _tokens(text: str):
-    """Every piece of a value that can be a path: split on '=', ':', ',', ';' and whitespace, and in each
-    piece also the part from its first '/' on (an option such as '-f/path')."""
+    """Every piece of a value that can be a path: split on '=', ':', ',', ';', whitespace, quotes and the shell
+    operators, and in each piece also the part from its first '/' on (an option such as '-f/path')."""
     for token in _SEPARATORS.split(text):
         token = token.strip("'\"()[]{}")
         if token:
@@ -115,10 +118,11 @@ def _tokens(text: str):
                 yield token[slash:]
 
 
-def _names_root(text: str, roots) -> bool:
+def _names_root(text: str, roots, fold: bool = False) -> bool:
     """Whether a spelling of the worktree root appears in a value as a path prefix: followed by the end, a
-    '/' or a character that cannot continue a file name, so 'app-mcp' or 'app.venv' next to 'app' do not."""
-    value = _normal(text)
+    '/' or a character that cannot continue a file name, so 'app-mcp' or 'app.venv' next to 'app' do not.
+    With ``fold`` (a worktree on a file system that ignores case) case is ignored; ``roots`` are case-folded."""
+    value = _normal(text).casefold() if fold else _normal(text)
     for root in roots:
         start = value.find(root)
         while start >= 0:
@@ -150,16 +154,23 @@ def inside_worktree(definition: dict, worktree) -> bool:
     given = Path(os.path.abspath(worktree))
     root = given.resolve()
     roots = {_normal(str(given)), _normal(str(root))}
+    # On a file system that ignores case (a Windows drive under /mnt/c, macOS) `/mnt/c/Work/App` is the
+    # worktree `/mnt/c/work/app`: the text check then ignores case, and a resolved path is also compared by
+    # identity, which no spelling (nor a short 8.3 alias) changes (#230).
+    fold = ignores_case(root)
+    if fold:
+        roots = {spelling.casefold() for spelling in roots}
+    root_identity = path_identity(root)
     base = server_directory()
     values = (definition["command"], *definition.get("args", []), *(definition.get("env") or {}).values())
     for text in values:
-        if _names_root(text, roots):
+        if _names_root(text, roots, fold):
             return True
         for token in _tokens(text):
             try:
                 path = Path(os.path.expanduser(token))
                 path = (path if path.is_absolute() else base / path).resolve()
-                if path.is_relative_to(root):
+                if path.is_relative_to(root) or same_or_below(path, root_identity):
                     return True
             except (OSError, RuntimeError, ValueError):
                 return True
