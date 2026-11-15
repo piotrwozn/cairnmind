@@ -292,6 +292,15 @@ def test_an_ordinary_file_that_cannot_be_opened_says_why_and_not_the_link_rule(t
     assert "cannot be opened (Permission denied)" in message and "link" not in message
 
 
+def test_a_password_file_that_is_a_directory_is_refused_with_the_rule_and_the_setting(tmp_path):
+    """The trial of 0.11.0 (#242): a folder named as the file gave "[Errno 21] Is a directory: 3"."""
+    folder = tmp_path / "a-folder"
+    folder.mkdir(mode=0o700)
+    message = refused_secret(tmp_path, folder)
+    assert f"arcade_password_file names {folder}, which must be a regular file of this user" in message
+    assert "Errno" not in message
+
+
 def test_a_file_that_becomes_a_link_before_it_is_opened_is_refused_with_the_link_rule(tmp_path, monkeypatch):
     target = private_file(tmp_path / "db-password", SECRET)
     named = tmp_path / "link"

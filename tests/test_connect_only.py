@@ -192,8 +192,9 @@ def test_a_password_written_into_the_address_is_never_shown_and_the_setting_is_n
             "Some-password-1234", user="cairnmind")
     forbid_local_engine(monkeypatch)
     shown = []
+    # `engine status` is refused too (#242): a rule of #72 is broken, so the server was not asked.
     for command, code in ((["engine", "start"], 2), (["engine", "stop"], 2), (["engine", "install"], 2),
-                          (["engine", "status"], 0), (["init"], 1)):
+                          (["engine", "status"], 1), (["init"], 1)):
         result = cli(data, *command)
         assert result.exit_code == code, (command, result.output, result.exception)
         shown.append(result.output + str(result.exception))
@@ -213,6 +214,56 @@ def test_a_password_written_into_the_address_is_never_shown_and_the_setting_is_n
     # An address without any of them is shown as it was written.
     monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example.org:2490")
     assert address(Settings.load(data)) == "https://db.example.org:2490"
+
+
+def test_engine_status_with_only_the_address_is_refused_and_names_what_is_missing(tmp_path, test_engine, monkeypatch):
+    """A run on 15 November (#242): with only the connect address set, `engine status` exited 0, reported a
+    server that answers as not available and named only the password, while root and a derived database
+    name were used in silence. The server is up here; nothing may be sent to it without a password."""
+    port, _ = test_engine
+    data = data_directory(tmp_path)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", f"http://127.0.0.1:{port}")
+    forbid_local_engine(monkeypatch)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request",
+                        lambda self, request: pytest.fail(f"a request was sent: {request.url}"))
+    shown = cli(data, "engine", "status")
+    assert shown.exit_code == 1, shown.output
+    status = json.loads(shown.output[shown.output.index("{"):])
+    # Not asked is not "not available".
+    assert status["available"] is None and "needs the password set where that server runs" in status["error"]
+    settings = Settings.load(data)
+    message = words(status["error"])
+    assert "arcade_user (root, the default, would be used)" in message
+    assert f"arcade_database (the name {settings.arcade_database}, derived from this data directory's path" in message
+    # The first command saved config.json with the default root in it (#242 review): later commands still
+    # name the user, which was never set on purpose.
+    assert json.loads((data / "config.json").read_text())["arcade_user"] == "root"
+    later = words(json.loads(cli(data, "engine", "status").output)["error"])
+    assert "arcade_user (root, the default, would be used)" in later and "arcade_database (the name" in later
+    # With the user and the database set, only the password is named.
+    monkeypatch.setenv("CAIRNMIND_ARCADE_USER", "cairnmind")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_DATABASE", "cairnmind")
+    named = words(json.loads(cli(data, "engine", "status").output)["error"])
+    assert "needs the password" in named and "arcade_user" not in named and "arcade_database" not in named
+
+
+def test_another_host_with_only_the_address_names_root_the_password_and_the_database(tmp_path, test_engine,
+                                                                                     monkeypatch):
+    """On a host other than this machine the root refusal came alone (#242 review): it named neither the
+    missing password nor the derived database name. A user set in config.json is not called the default."""
+    from cairnmind.database_credentials import problem
+    data = data_directory(tmp_path)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example.org:2490")
+    settings = Settings.load(data)
+    said = words(problem(settings))
+    assert "ArcadeDB user root is refused for db.example.org" in said
+    assert "ArcadeDB on db.example.org needs a password" in said
+    assert f"arcade_database (the name {settings.arcade_database}, derived" in said
+    assert "arcade_user (root" not in said  # the root refusal already says to set it
+    config = json.loads((data / "config.json").read_text())
+    (data / "config.json").write_text(json.dumps({**config, "arcade_user": "cmuser"}))
+    named = words(problem(Settings.load(data)))
+    assert "needs a password" in named and "arcade_user" not in named and "arcade_database (the name" in named
 
 
 def test_two_different_addresses_are_refused_and_both_settings_are_named(tmp_path, test_engine, monkeypatch):
@@ -377,6 +428,9 @@ def test_a_refused_sign_in_names_the_step_that_creates_the_user(tmp_path, test_e
     status = engine.engine_status(Settings.load(data, create=True))
     assert status["available"] is False and "ArcadeDB HTTP 401: Authentication failed" in status["error"]
     assert "did not accept the user cairnmind" in status["error"] and "cairnmind db create-user" in status["error"]
+    # ArcadeDB answers the same 401 for about 30 seconds after several failed sign-ins, the right password
+    # included (measured on 26.11.1: accepted again after 31 s); the message names that cause too (#242).
+    assert "about 30 seconds after several failed sign-ins" in words(status["error"])
     refused = cli(data, "init")
     assert refused.exit_code != 0 and "cairnmind db create-user" in str(refused.exception)
     assert "Some-password-1234" not in status["error"] + str(refused.exception)

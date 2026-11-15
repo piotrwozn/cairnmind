@@ -275,8 +275,12 @@ class Settings:
             values["arcade_database"] = derived
         # The first save stores the derived name in config.json, so it is recognised by its value.
         named_database = "derived" if values["arcade_database"] == derived else "configured"
+        # The same holds for the user: the first save writes the default root, so root read back from
+        # config.json counts as the default; only the environment sets it on purpose.
+        named_user = "configured" if "arcade_user" in kept or values.get("arcade_user", "root") != "root" else "default"
         obj = cls(data_dir=root, **values, _origin={"password": source, "problem": problem, "kept": kept,
-                                                    "database": named_database, "connect_problem": conflict})
+                                                    "database": named_database, "connect_problem": conflict,
+                                                    "user": named_user})
         return obj
 
     def save(self) -> None:
