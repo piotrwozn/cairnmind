@@ -106,14 +106,28 @@ def test_cli_sends_a_written_path_as_an_absolute_one(project, monkeypatch, tmp_p
     assert cli.caller_path("example") == "example"
     assert cli.caller_path("nope-xyz") == "nope-xyz"
     assert cli.caller_path("./missing") == "./missing"
+    assert cli.caller_path("./src", lambda: frozenset({"./src"})) == "./src"
+    assert cli.caller_path("./src", lambda: None) == "./src"
+    sent = fake_service(monkeypatch, [{"id": project["id"], "name": "example"}])
+    cli.request(SETTINGS, "POST", "/memory/publish", session=False, json={"project": ".", "preview": True})
+    assert sent["json"] == {"project": str(root), "preview": True}
+    cli.request(SETTINGS, "GET", "/context", session=False, params={"project": "nope-xyz"})
+    assert sent["params"] == {"project": "nope-xyz"}
+
+
+SETTINGS = type("S", (), {"ask_timeout": 1, "url": "http://127.0.0.1:1", "token": "t"})()
+
+
+def fake_service(monkeypatch, projects):
+    """A service whose /projects answers ``projects`` (None: it fails); returns what the last request sent."""
     sent = {}
 
     class Response:
-        is_success = True
+        def __init__(self, body, ok=True):
+            self.body, self.is_success = body, ok
 
-        @staticmethod
-        def json():
-            return {}
+        def json(self):
+            return self.body
 
     class Client:
         def __init__(self, *args, **kwargs):
@@ -126,16 +140,40 @@ def test_cli_sends_a_written_path_as_an_absolute_one(project, monkeypatch, tmp_p
             return False
 
         def request(self, method, url, **kwargs):
+            if url.endswith("/projects"):
+                return Response(projects, ok=projects is not None)
+            sent.clear()
             sent.update(kwargs)
-            return Response()
+            return Response({})
 
     monkeypatch.setattr(cli, "ensure_service", lambda settings: None)
     monkeypatch.setattr(cli.httpx, "Client", Client)
-    settings = type("S", (), {"ask_timeout": 1, "url": "http://127.0.0.1:1", "token": "t"})()
-    cli.request(settings, "POST", "/memory/publish", session=False, json={"project": ".", "preview": True})
-    assert sent["json"] == {"project": str(root), "preview": True}
-    cli.request(settings, "GET", "/context", session=False, params={"project": "nope-xyz"})
-    assert sent["params"] == {"project": "nope-xyz"}
+    return sent
+
+
+@pytest.mark.parametrize("name", ["web/api", ".config"])
+def test_cli_sends_a_registered_name_that_looks_like_a_local_folder_unchanged(project, monkeypatch, name):
+    # A project named "web/api" or ".config" while the working directory holds a folder of that name:
+    # the name wins, as it does in Store.resolve_project, instead of the working directory's project.
+    root = Path(project["root"])
+    (root / name).mkdir(parents=True)
+    monkeypatch.chdir(root)
+    sent = fake_service(monkeypatch, [{"id": project["id"], "name": "example"}, {"id": "p2", "name": name}])
+    cli.request(SETTINGS, "POST", "/ask", session=False, json={"project": name, "question": "q"})
+    assert sent["json"]["project"] == name
+    cli.request(SETTINGS, "GET", "/context", session=False, params={"project": "p2"})
+    assert sent["params"]["project"] == "p2"
+    # A folder that is no registered name is still sent as an absolute path.
+    cli.request(SETTINGS, "GET", "/context", session=False, params={"project": "./src"})
+    assert sent["params"]["project"] == str(root / "src")
+
+
+def test_cli_sends_a_written_path_as_given_when_the_service_cannot_list_projects(project, monkeypatch):
+    # Without the list a local folder could shadow a name; the service decides and refuses a relative path.
+    monkeypatch.chdir(project["root"])
+    sent = fake_service(monkeypatch, None)
+    cli.request(SETTINGS, "GET", "/context", session=False, params={"project": "./src"})
+    assert sent["params"]["project"] == "./src"
 
 
 def test_service_routes_never_resolve_against_the_services_directory(store, project, monkeypatch):
