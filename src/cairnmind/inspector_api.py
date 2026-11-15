@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import conflicts, impact_verdicts
+from . import stale_proposed as proposed
 from .arcade import ArcadeError
 from .inspector import Inspector, InspectorNotFound
 
@@ -196,6 +197,13 @@ def create_inspector_router(store, settings):
     @router.get("/inspector/conflicts")
     async def conflict_inbox(project: str, worktree: str | None = None):
         return await call(conflicts.inbox, inspector, project, worktree)
+
+    @router.get("/inspector/proposed")
+    async def stale_proposed(project: str, worktree: str | None = Query(default=None, max_length=4096),
+                             days: int = Query(default=proposed.DEFAULT_DAYS, ge=0, le=proposed.MAX_DAYS),
+                             limit: int = Query(default=proposed.MAX_ITEMS, ge=1, le=proposed.MAX_ITEMS)):
+        # Read-only, what `cairnmind proposed --json` prints (#189); acting on an entry is the review route below.
+        return await call(proposed.listing, inspector, project, worktree, days, limit)
 
     @router.post("/inspector/conflicts/resolve")
     async def resolve_conflict(body: ConflictBody):

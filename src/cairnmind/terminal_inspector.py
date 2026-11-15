@@ -15,17 +15,19 @@ from .terminal_detail import (EVIDENCE_LABELS, conflict_parts, conflict_text, jo
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
+from .terminal_proposed import ProposedView
 from .terminal_safe import plain, safe_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
                           summary_text)
 
 _VIEWS = [("Records", "records"), ("Sources", "sources"), ("Plans", "plans"),
           ("Tasks", "tasks"), ("Checks", "checks"), ("Queue", "jobs"),
-          ("Conflicts", "conflicts"), ("Impact", "impact"), ("Unassigned", "inbox"), ("Snapshot", "memory")]
+          ("Conflicts", "conflicts"), ("Impact", "impact"), ("Unassigned", "inbox"), ("Snapshot", "memory"),
+          ("Proposed", "proposed")]
 _TYPES = {"record": "records", "source": "sources", "plan": "plans", "check": "checks", "job": "jobs"}
 
 
-class InspectorApp(ImpactView, BasePanel):
+class InspectorApp(ProposedView, ImpactView, BasePanel):
     panel_role = "inspector"
     TITLE = "Cairnmind · Memory"
     CSS = BasePanel.CSS + terminal_theme.css("""
@@ -154,6 +156,7 @@ class InspectorApp(ImpactView, BasePanel):
         self.refresh_impact_language()
         if self._count_notice is not None and str(self.query_one("#panel-notice", Static).render()) == self._count_notice[2]:
             self.count_notice(*self._count_notice[:2])  # the line shows the count: say it in the new language
+        self.refresh_proposed_language()
         table = self.query_one("#inspector-rows", DataTable)
         if self.entity is None and table.display:
             # Kinds and states in the new language (the impact list too), on the row the person had chosen.
@@ -241,6 +244,9 @@ class InspectorApp(ImpactView, BasePanel):
         if self.view == "impact":
             await self.load_impact()
             return
+        if self.view == "proposed":
+            await self.load_proposed()
+            return
         project = self.workspace_data.get("project_id")
         if not project and self.view != "inbox":
             self.notice(self.t("Choose a project. Unassigned items and import are available globally."))
@@ -274,6 +280,8 @@ class InspectorApp(ImpactView, BasePanel):
         table = self.query_one("#inspector-rows", DataTable)
         if self.view == "impact" and not self.history_owner:
             self.render_impact_rows(rows)
+        elif self.view == "proposed" and not self.history_owner:
+            self.render_proposed_rows(rows)
         else:
             self.use_columns("standard")
             table.clear()
@@ -378,7 +386,7 @@ class InspectorApp(ImpactView, BasePanel):
                 self.show_detail(pair, kind="conflicts", parts=conflict_parts(pair, self.t))
                 self.notice(self.t("Resolve records your decision with an audit note. No source is removed."))
             return
-        collection = "records" if kind == "tasks" else kind
+        collection = "records" if kind in {"tasks", "proposed"} else kind  # a record of either list, reviewed as one
         scope = self._scope_version
         self._entity_request += 1
         ticket = self._entity_request
@@ -691,6 +699,8 @@ class InspectorApp(ImpactView, BasePanel):
             self.more()
         elif button == "entity-back":
             self.action_back()
+        elif button == "entity-filters" and self.view == "proposed":
+            self.edit_proposed_days()  # the days of the Proposed list (#189)
         elif button == "entity-filters":
             self.edit_filters()
         elif button == "entity-technical":

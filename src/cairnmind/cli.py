@@ -114,6 +114,7 @@ READ_KINDS = {
     "memory extraction-stats": _RESOLVE | {"record"},
     "impact": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
     "usage": _RESOLVE,
+    "proposed": _RESOLVE | {"record", "source", "memory"},
 }
 
 
@@ -774,6 +775,34 @@ def records(ctx: typer.Context, project: str, history: bool = False):
         return pid, store.list_records(pid, include_history=history)
 
     output(store.read_consistently(read, READ_KINDS["records"]))
+
+
+@app.command()
+def proposed(ctx: typer.Context, project: str,
+             days: Annotated[int, typer.Option("--days", min=0, max=3650,
+                                               help="List the ones not updated for this many days or more.")] = 30,
+             worktree: Path | None = None,
+             as_json: Annotated[bool, typer.Option("--json", help="Print the list as JSON.")] = False):
+    """List proposed findings not updated for a number of days, oldest first. Read-only; asks no model.
+
+    Each one shows its id, kind, source count and newest evidence time. Confirm or dispute them in the
+    memory inspector, which records your review with its version check and audit note (#189)."""
+    from cairnmind.inspector import Inspector
+    from cairnmind.stale_proposed import stale_proposed, stale_text
+    store = store_for_read(ctx.obj)
+
+    def read():
+        selected = store.resolve_project(project)
+        inspector = Inspector(store)
+        scope = inspector._scope(selected["id"], actor_scope(store, selected["id"], worktree))
+        result = stale_proposed(store, selected["id"], days=days, matches=lambda row: inspector._matches(scope, row))
+        return selected["id"], {**result, "text": stale_text(result, selected["name"])}
+
+    result = store.read_consistently(read, READ_KINDS["proposed"])
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
 
 
 @app.command()

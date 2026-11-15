@@ -209,7 +209,8 @@ def test_the_read_commands_work_on_a_ready_store_without_preparing_it(tmp_path, 
                       ["task", "list", "demo"], ["plan", "list", "demo"], ["plan", "show", "demo", plan["plan"]["id"]],
                       ["plan", "next", "demo"], ["plan", "contract", "demo", "--json"], ["check", "profiles", "demo"],
                       ["memory", "orphans", "demo", "--json"], ["memory", "extraction-stats", "demo", "--json"], ["impact", "demo", "--since", "HEAD", "--json"],
-                      ["usage", "demo", "--json"], ["store", "size", "--json"], ["store", "size", "demo", "--json"]):
+                      ["usage", "demo", "--json"], ["store", "size", "--json"], ["store", "size", "demo", "--json"],
+                      ["proposed", "demo", "--days", "0", "--json"]):
         start = len(sent)
         result = runner.invoke(app, ["--data-dir", str(store.data_dir), *arguments])
         assert result.exit_code == 0, (arguments, result.output, repr(result.exception))
