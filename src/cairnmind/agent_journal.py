@@ -48,18 +48,12 @@ def _private_dir(path: Path):
 def redact_secrets(value, secrets):
     """``value`` with every non-empty secret, a truncated one at the end of a string, and sensitive fields
     replaced by [REDACTED]; also used by the answer log (#15). Raises JournalError for a non-JSON value."""
-    ordered = sorted({secret for secret in secrets if isinstance(secret, str) and secret}, key=len, reverse=True)
+    from .secret_mask import ordered_secrets, replace_known
+    ordered = ordered_secrets(secrets)
 
     def walk(item):
         if isinstance(item, str):
-            for secret in ordered:
-                item = item.replace(secret, "[REDACTED]")
-                # A bounded tool result may end in a truncated credential.
-                for length in range(min(len(secret) - 1, len(item)), 5, -1):
-                    if item.endswith(secret[:length]):
-                        item = item[:-length] + "[REDACTED]"
-                        break
-            return item
+            return replace_known(item, ordered)
         if isinstance(item, dict):
             return {str(key): ("[REDACTED]" if str(key).casefold().replace("-", "_") in _SENSITIVE_FIELDS
                                else walk(inner)) for key, inner in item.items()}

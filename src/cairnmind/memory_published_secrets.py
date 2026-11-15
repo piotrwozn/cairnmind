@@ -164,6 +164,17 @@ def _visible(text: str) -> str:
     return "".join(character for character in text if unicodedata.category(character) != "Cf")
 
 
+def well_known_spans(text: str):
+    """(kind, start, end) of every private key block and well-known key or token shape in ``text``, in the
+    order the scan claims them. Ingestion (#182) replaces exactly these, beside the registered secrets."""
+    for begin in _KEY_BEGIN.finditer(text):
+        end = _KEY_END.search(text, begin.end())
+        yield PRIVATE_KEY, begin.start(), end.end() if end else len(text)
+    for kind, pattern in _SHAPES:
+        for match in pattern.finditer(text):
+            yield kind, match.start(), match.end()
+
+
 def scan_text(text: str, rules: Rules):
     """[(kind, value)] found in one text. Each span is claimed by the first kind that finds it.
 
@@ -181,12 +192,8 @@ def scan_text(text: str, rules: Rules):
         while start >= 0:
             claim(REGISTERED, start, start + len(secret))
             start = text.find(secret, start + 1)
-    for begin in _KEY_BEGIN.finditer(text):
-        end = _KEY_END.search(text, begin.end())
-        claim(PRIVATE_KEY, begin.start(), end.end() if end else len(text))
-    for kind, pattern in _SHAPES:
-        for match in pattern.finditer(text):
-            claim(kind, match.start(), match.end())
+    for kind, start, end in well_known_spans(text):
+        claim(kind, start, end)
     for match in _URL_PASSWORD.finditer(text):
         if not _PLACEHOLDER.fullmatch(match.group(1)):
             claim("connection_password", match.start(), match.end())
