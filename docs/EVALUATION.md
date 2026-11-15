@@ -65,6 +65,8 @@ Before it copies anything, the command checks that the models and the engine are
 
 The results for Cairnmind's own repository are in [evaluation/RESULTS.md](evaluation/RESULTS.md), kept out of the indexed copy.
 
+A question whose first pass finds no answer, while a passage was shown to the model only in part, gets one more pass over the best passages read whole, inside the same time limit and without tools. Only a complete answer of that pass, validated and judged like any other, replaces the first result. The answer's diagnostics then say `second_look` (`answered` or `no_answer`), and the report counts the extra calls in that question's `model_calls`.
+
 To measure another chat model, choose it, run the evaluation and choose the earlier model again. The evaluation writes to its own throwaway copy and database, and a running service keeps the models it started with:
 
 ```bash
