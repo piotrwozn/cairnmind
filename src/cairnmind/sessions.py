@@ -767,6 +767,9 @@ class SessionManager:
             metadata = row.get("metadata") or {}
             by_offset.setdefault(metadata.get("byte_offset"), []).append(row)
         source_ids, unknowns, digest, offset = [], list(reparsed.get("errors", [])), hashlib.sha256(), 0
+        # A kind a person accepted as technical for this project does not block (#210); nothing else does.
+        from .record_kinds import accepted, blocking_message, unknown_kind
+        standing, named, first = accepted(self.store, session["project_id"]), set(), None
         try:
             stat = path.stat()
             if ((target.get("device") is not None and target["device"] != stat.st_dev)
@@ -790,8 +793,14 @@ class SessionManager:
                     if not candidates:
                         raise ValueError(f"Missing durable source at transcript byte {offset}")
                     source = sorted(candidates, key=lambda row: row["id"])[0]
+                    first = raw.decode("utf-8", "replace") if offset == 0 else first
                     if source["kind"] != "transcript" or (source.get("metadata") or {}).get("schema_warning"):
-                        unknowns.append(f"Unparsed or conflicting transcript record at byte {offset}")
+                        found = unknown_kind(source, raw.decode("utf-8", "replace"), first)
+                        if found is None:
+                            unknowns.append(f"Unparsed or conflicting transcript record at byte {offset}")
+                        elif (found["client"], found["kind"]) not in standing | named:
+                            named.add((found["client"], found["kind"]))
+                            unknowns.append(blocking_message(found, offset, session["project_id"]))
                     recovery = target.get("capture_recovery")
                     if recovery:
                         metadata = source.get("metadata") or {}

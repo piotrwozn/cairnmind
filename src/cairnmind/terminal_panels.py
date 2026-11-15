@@ -376,6 +376,8 @@ class SidebarApp(BasePanel):
             self.notice(self.launch_notice(value))
         else:
             self._update_launch_feedback(value)
+        from .terminal_record_kinds import check_partial
+        check_partial(self, value)  # an unknown transcript record kind that blocks the packet (#210)
 
     def notice(self, value, kind="info"):
         # A form result or another action owns its own message. Later lifecycle
@@ -1067,18 +1069,27 @@ class SidebarApp(BasePanel):
             ("Snapshots and export", "snapshot"), ("Import memory", "import"),
             # New entries go last: keyboard paths to the existing ones keep their positions.
             ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages"),
-            ("MCP servers", "mcp"),
+            ("MCP servers", "mcp"), ("Transcript record kinds", "record_kinds"),
             ("Notices", "notices")]))
         actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
                    "mcp": self.edit_mcp_servers,
                    "scan": self.scan_projects,
                    "queue": self.action_queue,
                    "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings,
-                   "notices": self.action_notices}
+                   "notices": self.action_notices, "record_kinds": self.record_kinds}
         if action == "details":
             await self.push_screen_wait(MessageModal("Status", self.workspace_data))
         elif action in actions:
             actions[action]()
+
+    @work(group="sidebar-record-kinds", exclusive=True, exit_on_error=False)
+    async def record_kinds(self):
+        """More, then Transcript record kinds (#210): look at an unknown kind, accept or withdraw it."""
+        from .terminal_record_kinds import open_view
+        try:
+            await open_view(self, ConfirmModal)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
 
     @work(group="sidebar-notices", exclusive=True, exit_on_error=False)
     async def action_notices(self):

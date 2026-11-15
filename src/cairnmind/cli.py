@@ -450,6 +450,12 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["store_writer"] = writer_role(ctx.obj)
     from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
+    from cairnmind.record_kinds import doctor_view
+    try:
+        # What a person accepted as technical, per project, and how to withdraw it (#210).
+        result["accepted_record_kinds"] = doctor_view(store_for_read(ctx.obj))
+    except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
+        result["accepted_record_kinds"] = {"unavailable": type(exc).__name__}
     output(result)
 
 
@@ -1497,6 +1503,11 @@ def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None
 from cairnmind.cli_published import register as _register_published  # noqa: E402
 
 _register_published(memory_app, initialized)
+
+# Unknown transcript record kinds a person accepted as technical for a project (#210).
+from cairnmind.cli_record_kinds import register as _register_record_kinds  # noqa: E402
+
+_register_record_kinds(app, initialized)
 
 
 @app.command()

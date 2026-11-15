@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
+from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
 
@@ -620,6 +621,7 @@ CATALOG.update({
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
+CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 
