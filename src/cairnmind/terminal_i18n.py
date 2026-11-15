@@ -614,8 +614,9 @@ CATALOG.update({
     "C-b Space: menu · C-b ?: help · C-b d: detach": "C-b Spacja: menu · C-b ?: pomoc · C-b d: odłącz",
     "C-b ?: help": "C-b ?: pomoc", "Read only · C-b d: detach": "Tylko odczyt · C-b d: odłącz",
     "C-b d: detach": "C-b d: odłącz",
+    "READ ONLY: C-b d, then cairnmind workspace takeover": "TYLKO ODCZYT: C-b d, potem cairnmind workspace takeover",
     # Why a kept ACK went stale, beside "stale" in the pane's border (workspace.STALE_WORDS, #161).
-    "memory changed after ACK": "pamięć zmieniona po ACK", "new packet without ACK": "nowy pakiet bez ACK",
+    "project changed after ACK": "projekt zmieniony po ACK", "new packet without ACK": "nowy pakiet bez ACK",
     "ACK does not match packet": "ACK nie pasuje do pakietu", "scope cannot be read": "nie można odczytać zakresu",
     "session continuity broken": "przerwana ciągłość sesji",
     # Pane and control words on the pane's border (workspace_border, #208); the others are shared.
