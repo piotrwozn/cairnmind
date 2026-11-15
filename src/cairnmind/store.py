@@ -608,7 +608,10 @@ class Store:
         with self.client.transaction() as tx:
             if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
                 insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
-            if version is None:
+            # Read again here, not from the start of this method: another installation that is creating the
+            # same store may have committed its row in between. Then it also committed the head above, so this
+            # transaction inserts neither; when both insert the head, the unique id refuses the second commit.
+            if not tx.query("SELECT name FROM devbrain_meta WHERE name='schema_version'"):
                 insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
             else:
                 update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
@@ -630,7 +633,8 @@ class Store:
         except ArcadeError:
             return
         with self.client.transaction() as tx:
-            if recorded is None:
+            # Read again, as for schema_version: another installation may have recorded it in between.
+            if not tx.query("SELECT name FROM devbrain_meta WHERE name='lookup_indexes'"):
                 insert_document(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})
             else:
                 update_document(tx, "devbrain_meta", {"value": LOOKUP_INDEX_SET}, "name='lookup_indexes'", {})

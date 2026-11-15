@@ -157,6 +157,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `memory status` now shows the size of the portable package, its rows, bytes (UTF-8, as a snapshot counts them), manifest bytes and largest object, against each publication limit and warns from 70% of any of them, before publishing stops (#191).
 - The Memory panel shows the same package size, the warning and the age of the figure, in English and Polish; a large project is measured in the background and the panel says so instead of timing out (#191).
 - `cairnmind memory extraction-stats PROJECT [--json]` and `GET /inspector/extraction-stats` show, for each extractor version, how many automatically extracted records are still proposed, confirmed by a person here, disputed or superseded, and the share confirmed of those reviewed, read from record revisions without a model (#193).
+- Two installations that take over writing a store, or claim a new one, at the same moment now always leave one writer: the second is refused as a whole and told to run `cairnmind store takeover --yes` again, instead of sometimes leaving the writer row and the journal head naming different installations. A takeover that overlaps a write of the current writer is refused the same way, with a message that says so (#70).
+- `cairnmind store writer`, `doctor` and the service status report a store whose writer row and journal head name different installations; until the next `cairnmind store takeover --yes` repairs it, the installation the row names is refused every write and runs no schema statement or upgrade (#70).
+- Two installations that create one store at the same moment no longer leave two schema_version or lookup_indexes rows in it (#68).
 
 ## 0.10.0
 

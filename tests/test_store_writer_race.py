@@ -272,3 +272,32 @@ def test_a_store_left_with_row_and_head_apart_is_reported_and_the_next_takeover_
     assert take_over(Store(two.data_dir, for_takeover=True))["taken_over"] is True
     assert agreed_writer(first) == two.installation.id
     assert "problem" not in json.loads(runner.invoke(app, ["--data-dir", str(first.data_dir), "store", "writer"]).output)
+
+
+def test_schema_rows_are_not_written_twice_when_another_installation_committed_them_meanwhile(tmp_path):
+    """Two installations create one store: the second read "no schema yet" before the first one's commit.
+
+    Seen as two schema_version rows in a run of the threaded test of #68. The stale read is forced here:
+    the first look at the schema rows answers as it did before the other installation committed.
+    """
+    store = Store(tmp_path / "first")
+    client, real = store.client, store.client.query
+    stale = []
+
+    def query(statement, *args, **kwargs):
+        if "'schema_version','lookup_indexes'" in statement and not stale:
+            stale.append(statement)
+            return []
+        return real(statement, *args, **kwargs)
+
+    client.query = query
+    try:
+        store._prepare_schema()
+    finally:
+        client.query = real
+    assert stale, "the schema rows were not read where this test expects"
+    counts = {row["name"]: row["n"] for row in ArcadeClient(store.settings).query(
+        "SELECT name, count(*) AS n FROM devbrain_meta GROUP BY name")}
+    assert counts["schema_version"] == 1 and counts["lookup_indexes"] == 1
+    assert ArcadeClient(store.settings).query("SELECT count(*) AS n FROM journal_state")[0]["n"] == 1
+    assert writer_row(store)["installation_id"] == head(store)["writer"] == store.installation.id
