@@ -66,6 +66,129 @@ Text chunks are rebuilt from archived source views during import; semantic
 embeddings and current-code analysis rebuild locally. Original paths remain
 provenance, with local scope bindings kept separately.
 
+A record the archive brings as confirmed stays confirmed and is marked as
+confirmed elsewhere (see "Only a person confirms a record" below): the dry run
+and the import both report `confirmed_records` with the number of such records,
+the names the package gives for who confirmed them, and how many name nobody.
+
+## Only a person confirms a record
+
+A record has the status `confirmed` only because a person confirmed it. The rule
+is one check in the store, in the function every local write of a record goes
+through, and it holds for every route:
+
+- A write stores `confirmed` when it is a person's act. The code of a person's
+  route opens the act and names the note it has just written; the store reads
+  that source itself and checks that it belongs to the project and is the kind
+  of note that route writes. Nothing in a request, a record or a file opens an
+  act, and an act opened while the write belongs to a session is refused.
+- A write keeps `confirmed` when it does not change what was confirmed: the
+  text, the kind, the key, the record it replaces, the quoted passage, and for a
+  task its plan, step key, dependencies, acceptance criteria and their check
+  links, required profiles and test and review requirements. Task progress
+  (`metadata.state`, reported evidence, check runs), a declared scope and a
+  proposed command are not part of it.
+- Any other write that asks for `confirmed` is refused and stores nothing. The
+  error is `Only a person can store a record as confirmed, ...` (HTTP 400), and
+  it says what to do: store the record as proposed and let the person confirm it.
+- A write that does not ask for a status and changes what was confirmed is
+  stored as `proposed`, with `confirmation.by = "lapsed"` on that version. This
+  is how a session's edit of a confirmed decision, a new checkpoint over a
+  confirmed one, or a plan save that rewrites a confirmed step is stored.
+
+The person's routes, and how each is told from a session or an agent:
+
+| Route | Told apart by |
+| --- | --- |
+| Inspector review (`POST /inspector/records/{id}/review`) | The route. Its body has no session field, no MCP tool and no tool of the built-in agent calls it, and it writes the `review://` audit itself. |
+| Conflict decision (`POST /inspector/conflicts/resolve`) | The route, as above. The finding chosen to stand becomes confirmed. |
+| Plan confirmation (`POST /inspector/plans/{id}/confirm`, `memory confirm-plan`) | The route; the command also requires a person's terminal (below). |
+| Workspace form (`POST /findings` without `session_id`) | The absence of a session. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
+| Command line: `remember --confirmed`, `tasks add`, `memory confirm-plan` | No session variable (`CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` or their earlier spellings), no marker of a coding client (`CLAUDECODE`, `CODEX_THREAD_ID`), and a terminal on both standard input and standard output. |
+
+A command line confirmation leaves a note of its own (`person://`, origin
+`cli_person`) with the person's Git name, branch and commit. Like a review's
+audit it is not evidence: it does not anchor the record and is not the time of
+its evidence. It hashes nothing, so it is not an act that travels with published
+memory; the inspector can still confirm such a record so that it can be
+published.
+
+A command that does not pass the last test is not a person: `remember
+--confirmed` and `memory confirm-plan` are refused with what to do instead, and
+`tasks add` stores the task as proposed and says so. This covers a coding
+client's shell (it carries the session or the client's marker), the built-in
+agent's command (its input is `/dev/null` and its output a pipe, and it has no
+session variable at all), a script and CI.
+
+Every other route is not a person's: MCP `remember`, `checkpoint` and
+`save_plan`, the built-in agent's memory tools, `POST /remember` with or without
+a session, a session's finding, automatic extraction. They store proposed
+records. A plan a session saves has proposed steps until the person confirms the
+plan; activating a plan does not confirm it.
+
+What the rule does not claim. The service has one local token for all its
+routes, and the command line trusts the terminal it is given. A program that
+already runs as the same user can read that token and call a person's route,
+fake a terminal, or write to the database. The rule separates a person from the
+tools Cairnmind hands to a model and from the commands a model runs; it is not a
+defence against code running as the user. The built-in agent's approval dialog,
+which shows the exact command, remains the gate for its commands.
+
+### How a confirmation is recorded and shown
+
+The store keeps `metadata.confirmation` on the record. It is derived: a client
+can neither send it nor remove it, and a package never carries it.
+
+| `by` | Meaning | Fields |
+| --- | --- | --- |
+| `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at` |
+| `import` | Confirmed elsewhere and brought by a package. Never verified here. | `package` (`archive` or `published`), `where`, `confirmed_by` (claims: name, action, branch, commit, time), `imported_at`, `version` |
+| `seed` | Written by `cairnmind eval` into its own store. Not a person. | `route`, `source_id`, `version` |
+| `lapsed` | Proposed again, on the version that lost its confirmation. | `confirmed_version`, `version` |
+
+A confirmed record without the field was confirmed before this rule existed
+(0.10.0 or earlier). Its status is kept, nothing is claimed about who confirmed
+it, and it is shown as "confirmed before only a person could confirm; who
+confirmed it was not recorded". No migration rewrites such records: the rule is
+applied when a record is read. The person can confirm such a record in the
+inspector, once, and it is then theirs.
+
+Where it is shown: the inspector's record view (line "Confirmation", in English
+and Polish), `memory show` (line `confirmed:`, read from the package's own
+notes), the record lists and search hits of `ask`, `context` and the inspector
+(`confirmed_by`, and for an import the sentence in `confirmation`), and each
+confirmed record of a resume packet (`confirmed_by`: `person`, `import`,
+`before_rule` or `seed`). Names, branches, commits and paths in that line come
+from memory or from a package and are escaped.
+
+### Confirmed elsewhere
+
+An imported record keeps the fact that it was confirmed, with who confirmed it
+and where, and it never becomes this machine's own confirmation:
+
+- The full archive: a record whose head is confirmed and is new here, or moves
+  this store's head on, gets `by: import`, `package: archive`, the package's
+  origin root as `where`, and as `confirmed_by` what the package's own notes
+  say: a review audit that covers the record as it stands, or the workspace form
+  note of a finding saved as confirmed. A record confirmed on the command line,
+  or before audits existed, names nobody. A head that does not move keeps the
+  mark this store gave it, so memory that returns to its own computer keeps the
+  person's confirmations made there.
+- Published memory: `by: import`, `package: published`, the file's path as
+  `where`, and the file's `reviewed_by` up to that revision.
+- An audit that arrived in a package does not cover a record here. The
+  inspector's question "did a person on this machine cover this version" is
+  answered by the mark, never by a source and never by a field a client can
+  send.
+- It is not verification: evidence states, check runs and freshness are what
+  they were. A local person's confirm replaces the mark with their own.
+- A later local write follows the rule above: progress keeps the imported
+  confirmation, a changed statement makes the record proposed again.
+- An import never rewrites a version. A local record that diverged from a
+  package, for example one a person disputed here, refuses the import;
+  `--take-published` is refused inside a coding session, because putting the
+  published side over a local record is a person's choice.
+
 ## Validation budgets and quality evaluation
 
 Version 1 limits an individual JSON object to 16 MiB, a manifest to 32 MiB, and a
@@ -186,10 +309,18 @@ A record state travels only when a person's act covers it:
   replaced the record is published too. A reader requires the replacement in the same tree: a record
   that names it in `supersedes`, or the task's plan whose last definition no longer lists it.
 
-`remember --confirmed`, `tasks add`, session and MCP writes are not acts: agents can make all of
-them. Such records, and a confirmed record an agent edited after its review, stay local until a
-person reviews them; the inspector allows confirming a confirmed record again when no act on this
-machine covers its current version. Audits record `actor_name` (`git config user.name` of the
+Only a person stores a record as confirmed at all (#177, "Only a person confirms a record" above):
+session, MCP and agent writes are proposed, and a confirmed record an agent edits becomes proposed
+again. `remember --confirmed` and `tasks add` in a person's terminal confirm a record locally, but
+they write no audit that hashes what was judged, so they are not acts that travel. Such records,
+and records confirmed before that rule existed, stay local until a person reviews them; the
+inspector allows confirming a confirmed record again when no review, conflict decision, plan
+confirmation or workspace form on this machine covers its current version.
+
+A record that was imported is published again only as what its file said: its sources are the stubs
+of the published sources, so the same audit, with the name of the person who confirmed it elsewhere,
+is written back, byte for byte. This machine's name appears only on revisions a person here
+reviewed. Audits record `actor_name` (`git config user.name` of the
 project), `branch` and `commit`, read when the act happens and never at publish time.
 
 Held back, each listed by `memory publish` with its reason, without blocking the others: records no
@@ -315,7 +446,12 @@ tree as above, then applies it in one transaction, all or nothing:
   removes nothing; the next publication then follows the published history, and the person can apply
   their change again as a new revision;
 - an imported version carries `publication` metadata (path, revision, reviewed_by), which only the
-  importer sets and which later local edits keep;
+  importer sets and which later local edits keep; a confirmed one also carries `confirmation` with
+  `by: import`: confirmed elsewhere, by whom the file says, never this machine's own (#177);
+- the result and the dry run report `confirmed_records`: how many records the tree brings as
+  confirmed, and the names its files give for who confirmed them;
+- `--take-published` is refused inside a coding session: it can put the published side over a
+  record a person confirmed or disputed here, and that choice is a person's;
 - plans are applied after their tasks. A diverged plan refuses the import; `--take-published` takes
   records only, so the team resolves it in Git by keeping the definition the importing store holds;
   IDs that belong to another local project are refused, as for
