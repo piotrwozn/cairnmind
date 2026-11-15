@@ -310,6 +310,7 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
     The user is ``arcade_user`` and the password the one resolved for it (environment or file); both
     must already be configured, so that the password never passes through this command's arguments.
     """
+    from contextlib import suppress
     from dataclasses import replace
     from .arcade import ArcadeClient, ArcadeError
     import json
@@ -325,14 +326,29 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
         raise ValueError("The new user's password must be one line of printable characters without spaces.")
     admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     payload = {"name": name, "password": secret, "databases": {settings.arcade_database: [group]}}
+    created = True
     try:
         # The version first (#68): root creates nothing on a server this release does not support.
         from .database_mode import version_problem
         refused = version_problem(settings, admin.server_info())
         if refused:
             raise ArcadeError(refused)
-        admin.ensure_database()
-        admin.server_command("create user " + json.dumps(payload))
+        # The user before the database (#242): ArcadeDB accepts a user for a database that does not exist
+        # yet, and answers 409 for a user that exists. That user is checked below; no database is created
+        # for it, so a refused run leaves nothing behind.
+        try:
+            admin.server_command("create user " + json.dumps(payload))
+        except ArcadeError as exc:
+            if exc.status_code != 409:
+                raise
+            created = False
+        if created:
+            try:
+                admin.ensure_database()
+            except ArcadeError:
+                with suppress(ArcadeError):  # the user made a moment ago, for a database that is not there
+                    admin.server_command(f"drop user {name}")
+                raise
     except ArcadeError as exc:
         message = str(exc).replace(secret, "[redacted]").replace(admin_secret, "[redacted]")
         raise ArcadeError(f"The user {name} was not created: {message}", status_code=exc.status_code) from None
@@ -341,7 +357,19 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
     check = ArcadeClient(settings)
     try:
         check.query("SELECT 1 AS ok")
+    except ArcadeError as exc:
+        if created:
+            raise
+        # An existing user is used as it is only when it already signs in to this database: a run again for
+        # the same pair. Rights on a second database are never added to a user of another one.
+        raise ArcadeError(
+            f"The user {name} already exists, and it cannot use the database {settings.arcade_database} with "
+            f"the password this installation reads. Each database gets its own user: set arcade_user to a new "
+            f"name and its password ({PASSWORD_HELP}), then run `cairnmind db create-user` again. If this user "
+            "was created for this database with another password, set that password instead. Nothing was "
+            "created.", status_code=exc.status_code) from None
     finally:
         check.close()
-    return {"user": name, "database": settings.arcade_database, "group": group, "signed_in": True}
+    return {"user": name, "database": settings.arcade_database, "group": group, "created": created,
+            "signed_in": True}
 

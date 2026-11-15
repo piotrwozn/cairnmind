@@ -139,9 +139,16 @@ def missing_database(settings) -> str:
     derived = "" if (getattr(settings, "_origin", None) or {}).get("database") != "derived" else (
         " That name was derived from this data directory's path: to use a database another installation "
         "created, set arcade_database (CAIRNMIND_ARCADE_DATABASE) to its name.")
-    return (f"The database {settings.arcade_database} does not exist on ArcadeDB at {address(settings)}, and a "
-            f"connect-only installation creates none.{derived} Create it once, with its user: `cairnmind db "
-            "create-user --admin-password-file FILE`.")
+    # ArcadeDB answers {"result": false} to a user without rights on a database that exists, as to one that
+    # does not exist (measured on 26.11.1, #242): both causes are named, or create-user is suggested in a loop.
+    user = settings.arcade_user
+    rights = "" if user == "root" else (
+        f" If it exists, the user {user} has no rights on it: each database gets its own user, so set arcade_user "
+        "to the user created with it, or to a new name and its password and run create-user for that one.")
+    whose = "" if user == "root" else f", or the user {user} has no rights on it"
+    return (f"The database {settings.arcade_database} does not exist on ArcadeDB at {address(settings)}{whose}, and "
+            f"a connect-only installation creates none.{derived} Create it once, with its user: `cairnmind db "
+            f"create-user --admin-password-file FILE`.{rights}")
 
 
 def sign_in_refused(settings) -> str:

@@ -96,13 +96,41 @@ def test_a_dedicated_user_is_created_once_and_then_indexes_and_reads(dedicated_u
     assert secret not in str(refused.value)
 
 
-def test_creating_the_same_user_again_fails_without_showing_a_password(dedicated_user):
+def test_creating_the_same_user_and_database_again_changes_nothing_and_shows_no_password(dedicated_user):
+    """A second run for the same pair signs in and reports that nothing was created (#242); it failed with
+    ArcadeDB's "409 User already exists" before."""
+    data, name, secret, root_secret, admin_file = dedicated_user
+    first = create(data, admin_file)
+    assert first.exit_code == 0 and json.loads(first.output)["created"] is True
+    again = create(data, admin_file)
+    assert again.exit_code == 0, (again.output, again.exception)
+    report = json.loads(again.output)
+    assert report["user"] == name and report["created"] is False and report["signed_in"] is True
+    text = first.output + again.output + repr(again.exception)
+    assert secret not in text and root_secret not in text
+
+
+def test_an_existing_user_gets_no_second_database_and_nothing_is_left_behind(dedicated_user, arcade_test_engine):
+    """The trial of 0.11.0 (#242): create-user for a new database with a user that exists left an empty
+    database behind, said only "User already exists", and init kept sending the person back to it."""
     data, name, secret, root_secret, admin_file = dedicated_user
     assert create(data, admin_file).exit_code == 0
-    again = create(data, admin_file)
-    assert again.exit_code != 0
-    text = again.output + repr(again.exception)
-    assert secret not in text and root_secret not in text
+    second = Settings.load(data).arcade_database + "_second"
+    config = json.loads((data / "config.json").read_text())
+    (data / "config.json").write_text(json.dumps({**config, "arcade_database": second}))
+    refused = create(data, admin_file)
+    assert refused.exit_code != 0
+    message = " ".join(str(refused.exception).split())
+    assert f"The user {name} already exists" in message and f"cannot use the database {second}" in message
+    assert "Each database gets its own user: set arcade_user to a new name" in message
+    assert "Nothing was created" in message
+    assert secret not in message + refused.output and root_secret not in message + refused.output
+    with closing(ArcadeClient(replace(arcade_test_engine[0], arcade_database=second))) as root:
+        assert root.database_exists() is False
+    # The installation's own check says the same thing instead of "does not exist, run create-user".
+    from cairnmind.database_mode import missing_database
+    said = " ".join(missing_database(Settings.load(data)).split())
+    assert f"or the user {name} has no rights on it" in said and "each database gets its own user" in said
 
 
 def test_the_user_is_not_created_while_its_password_is_in_the_settings_file(dedicated_user):
