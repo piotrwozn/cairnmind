@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
+from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
 
@@ -63,6 +64,18 @@ CATALOG = {
     "Question": "Pytanie", "Ask": "Zapytaj", "Memory answer": "Odpowiedź pamięci",
     "Answers come only from this project's memory, with cited sources. Nothing is saved.":
         "Odpowiedzi pochodzą wyłącznie z pamięci tego projektu i mają źródła. Nic nie jest zapisywane.",
+    # The inspector's Proposed view (terminal_proposed, #189).
+    "Proposed": "Proponowane", "Days untouched": "Dni bez zmian", "Kind": "Rodzaj", "Id": "Id",
+    "Newest evidence": "Najnowszy dowód", "stated time": "czas podany", "at the latest": "najpóźniej",
+    "mixed times": "czasy mieszane", "time unknown": "czas nieznany",
+    "Proposed findings not updated for {days} days or more: {count} · oldest first · read only.":
+        "Proponowane ustalenia bez zmian od co najmniej {days} dni: {count} · najstarsze najpierw · tylko odczyt.",
+    "Proposed findings not updated for 1 day or more: {count} · oldest first · read only.":
+        "Proponowane ustalenia bez zmian od co najmniej 1 dnia: {count} · najstarsze najpierw · tylko odczyt.",
+    "Only the {shown} oldest are shown.": "Pokazano tylko {shown} najstarszych.",
+    "Open one to confirm or dispute it.": "Otwórz jedno, aby je potwierdzić lub zakwestionować.",
+    "Not updated for at least this many days": "Bez zmian od co najmniej tylu dni",
+    "Enter a whole number from 0 to 3650.": "Wpisz liczbę całkowitą od 0 do 3650.",
     "Impact": "Wpływ zmian", "Compare with": "Porównaj z", "Pending only": "Tylko bez oceny",
     "Kind / status": "Rodzaj / stan", "Record": "Ustalenie", "Linked to": "Powiązane z", "Checked": "Sprawdzone",
     "Verdict": "Ocena", "Save verdict": "Zapisz ocenę", "not checked": "nie sprawdzone",
@@ -608,6 +621,7 @@ CATALOG.update({
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
+CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

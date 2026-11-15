@@ -294,7 +294,7 @@ can neither send it nor remove it, and a package never carries it.
 
 | `by` | Meaning | Fields |
 | --- | --- | --- |
-| `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at` |
+| `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at`; `marked_at_upgrade` when the upgrade step below gave it |
 | `import` | Confirmed elsewhere and brought by a package. Never verified here. | `package` (`archive` or `published`), `where`, `confirmed_by` (claims: name, action, branch, commit, time), `imported_at`, `version` |
 | `seed` | Written by `cairnmind eval` into its own store. Not a person. | `route`, `source_id`, `version` |
 | `lapsed` | No longer confirmed: a write that was not a person's act changed what was confirmed or set another status. Written only over a confirmation that was not a person's verdict given here (an imported one, seed data, the checkpoint record); a store may also hold it from before that was so. Kept until a person gives a verdict again. | `confirmed_version`, `version`, `status` |
@@ -302,9 +302,25 @@ can neither send it nor remove it, and a package never carries it.
 A confirmed record without the field was confirmed before this rule existed
 (0.10.0 or earlier). Its status is kept, nothing is claimed about who confirmed
 it, and it is shown as "confirmed before only a person could confirm; who
-confirmed it was not recorded". No migration rewrites such records: the rule is
-applied when a record is read. The person can confirm such a record in the
+confirmed it was not recorded". The person can confirm such a record in the
 inspector, once, and it is then theirs.
+
+One step at upgrade (#215, `confirmation_upgrade.py`) marks such a record as a
+person's when the store can show the act: a review audit (`review://`, origin
+`local_user_review`) that covers the record as it stands (the hashes of its text,
+of kind, key and replaced record and of the quoted passage when the audit has
+them, and of a task's definition; and the record says what the first confirmed
+revision citing the audit said, by `said`, which also covers every field an
+audit of 0.10.0 does not hash), or the workspace form note of a finding the
+form saved as confirmed whose record still says what was typed. Only a note
+written on this machine counts: a source that a memory package brought (listed
+in the import's receipt) does not, and neither does a command line note, which
+hashes nothing. The mark is the one the route would have written, with the note
+as `source_id`, the time of the act as `at` and `marked_at_upgrade`. The step
+runs once when this installation opens the store as its writer, and again after
+a restore; it records in `devbrain_meta` (`person_marks_before_rule`) that it
+ran and how many records it marked and left, and changes no status, version,
+source or evidence. Every other such record stays before the rule.
 
 Where it is shown: the inspector's record view and each side of its conflict
 view (line "Confirmation", in English and Polish), the inspector's list rows
@@ -401,6 +417,26 @@ Version 1 limits an individual JSON object to 16 MiB, a manifest to 32 MiB, and 
 complete package to 512 MiB and one million object descriptors. A package exceeding
 these limits fails explicitly before replacing the current manifest; data is
 never silently truncated. Source text is not sent to a model by export or import.
+
+`cairnmind memory status` shows the package a snapshot would write now against these limits
+(`package_size`: rows, bytes, manifest bytes and the largest object, each with its limit and fraction) and
+warns from 70% of any of them, so that publishing does not stop without notice (#191). The figures are an
+estimate: rows are counted and bytes summed inside the database as UTF-8 bytes, as a snapshot counts them
+(text in Japanese, Cyrillic or emoji is wider than its characters), nothing is exported and no row is read
+into the service. If the engine stops the exact byte count (it limits regular expressions to about a second
+per statement, and a stopped statement is repeated in parts first), `exact_bytes` is false, the figure is a
+lower bound and the terminal says the package can be larger. The measurement of a large project takes
+seconds to a minute (about 0.05 to 0.15 s per MB of text), so it runs in a thread: a status that cannot wait
+shows the last figure with its age, or says the size is still being measured. The result is kept for a
+minute, or 30 times as long as it took, so rows written meanwhile are not counted until it expires; the
+terminal shows the age from 10 seconds. The manifest has its own, much smaller, limit: at about 240 bytes per
+object descriptor it is reached near 130,000 rows, long before the one million. Status also splits the
+bytes of the sources into current versions, replaced versions and agent transcripts.
+
+Open question for the owner: should the package carry replaced source versions and agent transcripts at all?
+Both are the bulk of a large package and exist for audit, not for recall; leaving them out would change the
+format and what an import restores, so it is not done here. The split in `package_size.sources_bytes`
+is the evidence for the decision.
 
 `cairnmind eval memory` uses two disposable databases and local Ollama to exercise
 positive extraction, transfer, fresh-agent cited recall, and project isolation.
@@ -834,11 +870,14 @@ What is detected:
 - the secrets registered with Cairnmind on the publishing machine: the service token and the ArcadeDB
   password (the values the agent journal redacts), the API keys saved in the credential store (a
   key entered for one session only, without saving it, lives in the cockpit and is not registered
-  with the memory service that publishes), and the values of the credential variables the runtime keeps from child
+  with the memory service that publishes), the values behind the `env:` references of the saved
+  connection profiles and memory model profiles, and the values of the credential variables the runtime keeps from child
   processes (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN` and the others of
   `api_credentials.credential_environment_names`, and any variable ending in `_API_KEY`,
   `_AUTH_TOKEN` or `_GITHUB_TOKEN`), each at least 8 characters, found exactly as they are. If the
-  saved keys cannot be read, publication refuses rather than going on without them;
+  saved keys or profiles cannot be read, publication refuses rather than going on without them. Ingestion
+  replaces the same registered secrets, private key blocks and key shapes in conversation text before
+  it is indexed (`secret_mask`, [API.md](API.md#keys-and-environment-variables));
 - private key blocks (`-----BEGIN ... PRIVATE KEY-----`, OpenSSH, PGP);
 - key and token shapes: AWS access key IDs, GitHub, GitLab, Slack, npm and Hugging Face tokens,
   OpenAI and Anthropic keys, Google API keys, Stripe live keys, Azure storage account keys, JSON

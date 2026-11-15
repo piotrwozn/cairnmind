@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from .secret_mask import note_metadata
 from .sql import json_text
 
 RECORD_FIELDS = frozenset({"id", "expected_version", "expected_plan_version", "kind", "status", "content", "key",
@@ -55,4 +56,6 @@ def external_report_source(store, project_id: str, record: dict) -> str:
     content = record.get("content")
     text = content if isinstance(content, str) and content.strip() else json_text(record)
     # store.snapshot adds the session's origin mark (origin_evidence: degraded) from the write it runs in.
-    return store.snapshot(project_id, f"report://{uuid4()}", text, "manual", dict(REPORT_ORIGIN))["id"]
+    # Known secrets are replaced in the view that is indexed (#182); the report itself is kept as sent.
+    metadata = note_metadata(store.settings, text, dict(REPORT_ORIGIN))
+    return store.snapshot(project_id, f"report://{uuid4()}", text, "manual", metadata)["id"]

@@ -87,6 +87,37 @@ def replaces_here(preview) -> bool:
     return isinstance(found, dict) and type(found.get("total")) is int and found["total"] > 0
 
 
+def package_size_lines(size, language="en"):
+    """The package against its limits and, near one of them, the warning (#191). Figures only: nothing from memory."""
+    if size is None:
+        return [tr("Package size: not measured (the store could not be read for it).", language)]
+    if isinstance(size, dict) and size.get("measured") == "pending":
+        return [tr("Package size: still being measured, ask again in a minute.", language)]
+    try:
+        rows, data = size["rows"], size["bytes"]
+        lines = [tr("Package (estimate): {rows} of {row_limit} rows, {size} of {size_limit}", language,
+                    rows=int(rows["used"]), row_limit=int(rows["limit"]),
+                    size=f"{int(data['used']) / 1048576:.1f} MB", size_limit=f"{int(data['limit']) / 1048576:.0f} MB")]
+        largest = size.get("object_bytes")
+        if isinstance(largest, dict):
+            lines.append(tr("Largest object: {size} of {size_limit}", language,
+                            size=f"{int(largest['used']) / 1048576:.1f} MB",
+                            size_limit=f"{int(largest['limit']) / 1048576:.0f} MB"))
+        if size.get("exact_bytes") is False:
+            lines.append(tr("The bytes could not be counted exactly here: the package can be larger than this.", language))
+        age = size.get("age_seconds")
+        if type(age) is int and age >= 10:
+            lines.append(tr("Measured {seconds} s ago; rows written since are not counted.", language, seconds=age))
+        names = [tr(name.replace("_", " "), language) for name in size.get("warning") or []
+                 if name in {"rows", "bytes", "manifest_bytes", "object_bytes"}]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return []
+    if names:
+        lines.append(tr("Near the publication limit ({names}). Publishing stops at the limit.", language,
+                        names=", ".join(names)))
+    return lines
+
+
 def summary_text(value, language="en"):
     """Readable, bounded status; full structured payload is an explicit detail view."""
     if isinstance(value, str):
@@ -106,6 +137,8 @@ def summary_text(value, language="en"):
                    if type(counts.get(key)) is int]
         if entries:
             lines.append(" · ".join(entries))
+    if "package_size" in value:
+        lines.extend(package_size_lines(value["package_size"], language))
     brought = value.get("confirmed_records")
     if isinstance(brought, dict) and type(brought.get("total")) is int and brought["total"] > 0:
         # What an import brings as confirmed (#177), before the person agrees to it. The names are the

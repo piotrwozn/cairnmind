@@ -256,6 +256,18 @@ class MemorySettingsBody(MemorySnapshotBody):
     interval_minutes: int = Field(default=15, ge=1, le=10080, strict=True)
 
 
+def compact_job_history(store, settings) -> dict | None:
+    """The daily compaction of old completed jobs (store_prune.compact_old_jobs); None when the setting turns it off."""
+    from cairnmind.store_prune import compact_old_jobs, valid_days
+    days = valid_days(settings.job_history_days)
+    if days is None:
+        return None
+    report = compact_old_jobs(store, days)
+    if report["compacted"]:
+        log.info("Removed the attempt history of %d completed jobs older than %d days", report["compacted"], days)
+    return report
+
+
 def daily_backups(backup_dir) -> list[Path]:
     """The scheduled backups of a data directory, oldest first, under the current and the earlier suffix.
 
@@ -319,6 +331,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                background_inference: bool = True, ollama=None) -> FastAPI:
     from cairnmind.agent import KnowledgeAgent, extraction_outer_timeout, inference_lease_seconds
     from cairnmind.memory_models import from_settings, ready_kinds
+    from cairnmind.ollama import OllamaUnavailable
     from cairnmind.retrieval import Retriever
     from cairnmind.store import Store
     from cairnmind.plans import PlanManager
@@ -336,6 +349,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         # The service writes sessions, jobs and the queue: it runs only for the store's writer (#70).
         raise StoreNotWriter(store.not_writer)
     model = ollama or from_settings(settings)
+    from cairnmind import memory_fingerprint
+    fingerprint_client = memory_fingerprint.client_of(model)
+    if fingerprint_client is not None:
+        # An OpenAI-compatible embedding role: no vector is made or searched before the start check (#212).
+        fingerprint_client.fingerprint_checked = False
     retriever = Retriever(store, settings, ollama=model)
     agent = KnowledgeAgent(store, settings, ollama=model, retriever=retriever)
     plans = PlanManager(store)
@@ -444,6 +462,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     await asyncio.to_thread(store.backup, backup_dir / f"{time.time_ns()}{BACKUP_SUFFIXES[0]}")
                     for old in daily_backups(backup_dir)[:-7]:
                         old.unlink()
+                    # Once a day, right after the backup that still holds it: the attempt history of old
+                    # completed jobs goes; every job row stays (#190, store_prune).
+                    await asyncio.to_thread(compact_job_history, store, settings)
                 background_status["scanner_error"] = "; ".join(scan_errors[:5]) or None
                 background_status["scan_errors"] = scan_errors[:20]
                 background_status["last_scan_at"] = time.time()
@@ -457,6 +478,29 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["scanner_error"] = str(exc)
                 log.exception("Archive scan failed")
             await asyncio.sleep(settings.poll_seconds)
+
+    async def fingerprint_start() -> None:
+        """The fixed request to an OpenAI-compatible embedding role at start (#212), retried while it is down.
+
+        It holds no memory content, so it needs no consent beyond the role's own: search stays text-only
+        and embed jobs wait until it answers. Unlike other model calls it does not wait for background work
+        to be allowed: in the deferred mode (the cockpit) search would otherwise stay text-only until a
+        project allows it. Nor does it enter the inference queue: a server that hangs on it would hold every
+        extraction and question behind it, often on another server, at every retry.
+        """
+        while True:
+            try:
+                result = await memory_fingerprint.check(fingerprint_client)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a server that is down is checked again later
+                background_status["embedding_fingerprint"] = {"status": "unchecked", "error": type(exc).__name__}
+                await asyncio.sleep(30)
+                continue
+            background_status["embedding_fingerprint"] = result
+            if result["status"] == "changed":
+                log.warning("The embedding model answers the fixed check differently: run cairnmind rebuild-vectors")
+            return
 
     async def jobs() -> None:
         last_namespace, last_repair, last_projects = None, 0.0, None
@@ -475,8 +519,17 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 # With split model servers, each job kind waits only for the server of its own role.
                 kinds, role_error = await ready_kinds(model)
                 identity = getattr(model, "model_identity", None)
+                namespace = None
                 if identity and "embed" in kinds:
-                    namespace = await identity(settings.embedding_model)
+                    try:
+                        namespace = await identity(settings.embedding_model)
+                    except OllamaUnavailable as exc:
+                        if exc.error_code not in (memory_fingerprint.CHANGED, memory_fingerprint.UNCHECKED):
+                            raise
+                        # Other weights behind the same name, or not checked yet: embed jobs wait (#212).
+                        kinds = [kind for kind in kinds if kind != "embed"]
+                        role_error = role_error or exc
+                if namespace is not None:
                     if (namespace != last_namespace or selected != last_projects
                             or time.monotonic() - last_repair > 60):
                         held: dict = {}
@@ -515,6 +568,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         tasks = [asyncio.create_task(inference.run())]
+        if fingerprint_client is not None:
+            tasks.append(asyncio.create_task(fingerprint_start()))
         if start_worker:
             tasks += [asyncio.create_task(scanner()), asyncio.create_task(jobs()),
                       asyncio.create_task(memory_snapshots())]
@@ -634,7 +689,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         error_rows = await asyncio.to_thread(store.recent_job_errors, pid)
         pipeline = await asyncio.to_thread(store.job_summary, pid)
         writer = await asyncio.to_thread(store.writer_state)
-        return {**result, "writer": writer,
+        from cairnmind.database_mode import address, describe
+        return {**result, "writer": writer, "storage": {**describe(settings), "url": address(settings)},
                 "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                 "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                 "recent_job_errors": error_rows}

@@ -279,6 +279,9 @@ class Store:
     # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
     not_ready = None
     _for_takeover = False
+    # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
+    # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
+    confirmations_before_rule = None
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
@@ -477,6 +480,10 @@ class Store:
         return bool(act) and act["route"] in PERSON_ROUTES and not (
             self.current_origin() or getattr(self._local, "session_write", None))
 
+    def open_person_act(self):
+        """The person's act open on this thread ({route, source_id}), or None when this write is not one."""
+        return dict(self._local.person_act) if self._persons_act() else None
+
     def _kept(self, record) -> bool:
         """Whether this write is not a person's act and `record` is confirmed by a person here (#177)."""
         from .confirmation import kept_verdict
@@ -490,15 +497,31 @@ class Store:
 
     def init(self):
         from .arcade import ArcadeError
-        from .store_writer import read_writer, settle
+        from .store_writer import claimed_meanwhile, mixed_reason, read_fence, read_writer, settle
         with self._lock():
             types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
-            writer = read_writer(self.client) if "devbrain_meta" in types else None
+            writer, named = read_writer(self.client) if "devbrain_meta" in types else None, None
+            if writer and "journal_state" in types:
+                writer, named = read_fence(self.client)
             if writer and writer.get("installation_id") != self.installation.id:
                 # Another installation writes this database: no schema statement, no upgrade and no write here.
                 self._open_as_reader(writer)
                 return
-            self._prepare_schema()
+            if writer and named not in (None, self.installation.id):
+                # The row names this installation and the journal head another one: no schema statement and no
+                # write here either, until a person runs the takeover (store_writer.mixed_reason).
+                self._writer_lost = mixed_reason(writer, named)
+                return
+            try:
+                self._prepare_schema()
+            except ArcadeError as exc:
+                # Another installation, on any machine, is creating this store at the same moment and its
+                # commit came first (#68): this one opens it as a reader, as it would a moment later.
+                other = claimed_meanwhile(self.client, self.installation, exc)
+                if other is None:
+                    raise
+                self._open_as_reader(other)
+                return
             try:
                 other = settle(self.client, self.installation)
             except ArcadeError:
@@ -506,6 +529,10 @@ class Store:
                 other = settle(self.client, self.installation)
             if other:
                 self._open_as_reader(other)
+                return
+        # As the writer, once the schema is current: the writer lock is taken again by the transaction.
+        from .confirmation_upgrade import mark_confirmed_before_rule
+        self.confirmations_before_rule = mark_confirmed_before_rule(self)
 
     def _open_as_reader(self, writer):
         """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
@@ -581,7 +608,10 @@ class Store:
         with self.client.transaction() as tx:
             if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
                 insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
-            if version is None:
+            # Read again here, not from the start of this method: another installation that is creating the
+            # same store may have committed its row in between. Then it also committed the head above, so this
+            # transaction inserts neither; when both insert the head, the unique id refuses the second commit.
+            if not tx.query("SELECT name FROM devbrain_meta WHERE name='schema_version'"):
                 insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
             else:
                 update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
@@ -603,7 +633,8 @@ class Store:
         except ArcadeError:
             return
         with self.client.transaction() as tx:
-            if recorded is None:
+            # Read again, as for schema_version: another installation may have recorded it in between.
+            if not tx.query("SELECT name FROM devbrain_meta WHERE name='lookup_indexes'"):
                 insert_document(tx, "devbrain_meta", {"name": "lookup_indexes", "value": LOOKUP_INDEX_SET})
             else:
                 update_document(tx, "devbrain_meta", {"value": LOOKUP_INDEX_SET}, "name='lookup_indexes'", {})
@@ -1294,7 +1325,9 @@ class Store:
         if not isinstance(state, dict):
             raise ValueError("Checkpoint state must be an object")
         content = json_text(state)
-        source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint", {"origin": "client"})
+        from .secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+        source = self.snapshot(project_id, f"checkpoint://{uuid4()}", content, "checkpoint",
+                               note_metadata(self.settings, content, {"origin": "client"}))
         with self.transaction() as tx:
             old = one_row(tx, "SELECT FROM records WHERE project_id=:project AND kind='checkpoint' AND `key`='latest' AND status!='superseded'", {"project": project_id}, False)
             record = {"kind": "checkpoint", "key": "latest", "content": content, "metadata": state}
@@ -1492,14 +1525,16 @@ class Store:
         result["has_error"] = bool(job.get("error"))
         result.update(self._job_error(job.get("error"), result["diagnostics"]))
         history = job.get("attempt_history") or []
-        result["attempt_history_count"] = len(history)
+        # Events an old completed job no longer keeps (store_prune.compact_old_jobs, #190) still count.
+        pruned = job.get("attempt_history_pruned") if type(job.get("attempt_history_pruned")) is int else 0
+        result["attempt_history_count"] = len(history) + pruned
         if detail:
             result["attempt_history"] = [{key: event.get(key) for key in ("event", "attempts", "state", "at")}
                                           | {"has_error": bool(event.get("error")),
                                              "diagnostics": job_diagnostics(event.get("diagnostics"))}
                                           | self._job_error(event.get("error"), job_diagnostics(event.get("diagnostics")))
                                           for event in history[-20:] if isinstance(event, dict)]
-            result["attempt_history_omitted"] = max(0, len(history) - 20)
+            result["attempt_history_omitted"] = max(0, len(history) - 20) + pruned
         payload = job.get("payload") or {}
         result["target"] = ({key: payload[key][:1024] for key in ("path", "client", "source_id", "chunk_id", "origin_event_id")
                              if isinstance(payload.get(key), str)} if isinstance(payload, dict) else {})
@@ -1795,6 +1830,9 @@ class Store:
             require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
             self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
             self._restore_from(source)
+        # A backup of a store before 0.11.0 brings records confirmed before the rule back (#215).
+        from .confirmation_upgrade import mark_confirmed_before_rule
+        self.confirmations_before_rule = mark_confirmed_before_rule(self, force=True)
 
     def _restore_from(self, source):
         # DDL is deliberately outside the data transaction; no live data has been removed.

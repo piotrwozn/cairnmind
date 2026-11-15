@@ -240,6 +240,13 @@ class Inspector:
                 "next_cursor": _encode_cursor({"record": record_id, "project": pid, "after": str(rows[limit - 1]["version"])})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
 
+    def extraction_stats(self, project):
+        """Per extractor version, how automatic extractions fared in review (#193). Read-only."""
+        from .extraction_stats import extraction_stats
+        pid = self._project(project)["id"]
+        with self.store.transaction() as reader:
+            return {**extraction_stats(reader, pid), "cursor": _cursor(reader, self.store)}
+
     def source(self, project, source_id, *, view="raw", offset=0, limit=65536, worktree=None):
         if view not in {"raw", "normalized", "metadata"}:
             raise ValueError("Source view must be raw, normalized or metadata")

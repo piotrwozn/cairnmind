@@ -67,6 +67,9 @@ def initialized(command):
     @wraps(command)
     def invoke(ctx, *args, **kwargs):
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        if ctx.obj._origin.get("connect_saved"):
+            from cairnmind.database_mode import saved_note
+            typer.echo(f"Cairnmind: {saved_note(ctx.obj)}", err=True)
         return command(ctx, *args, **kwargs)
     return invoke
 
@@ -111,8 +114,10 @@ READ_KINDS = {
     "plan contract": _RESOLVE | {"plan", "record", "check"},
     "check profiles": _RESOLVE,
     "memory orphans": _RESOLVE | {"record", "source", "memory"},
+    "memory extraction-stats": _RESOLVE | {"record"},
     "impact": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
     "usage": _RESOLVE,
+    "proposed": _RESOLVE | {"record", "source", "memory"},
 }
 
 
@@ -353,12 +358,34 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 @app.command()
 @initialized
 def init(ctx: typer.Context):
-    """Create the local store. Downloads no models and changes no client configuration."""
+    """Create the store, or open the one a connect-only installation was given. Downloads no models and
+    changes no client configuration."""
     store = store_for(ctx.obj)
     result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
     if getattr(store, "not_writer", None):
         result["writer"] = store.writer_state()
+    from cairnmind.confirmation_upgrade import report
+    marks = report(getattr(store, "confirmations_before_rule", None))
+    if marks:
+        result["confirmations_before_rule"] = marks
     output(result)
+
+
+@contextmanager
+def _engine_command():
+    """An engine command on a connect-only installation ends with one plain sentence, not a failure (#68)."""
+    from cairnmind.engine import ConnectOnly
+    try:
+        yield
+    except ConnectOnly as exc:
+        refuse(str(exc))
+
+
+def _managed_only(settings: Settings, what: str) -> None:
+    from cairnmind.database_mode import connect_only, refusal
+    if connect_only(settings):
+        refuse(f"{what} creates and drops temporary databases. " + refusal(settings, "create or drop a database")
+               + " Run it on an installation with the engine on this machine.")
 
 
 @engine_app.command("install")
@@ -366,7 +393,8 @@ def init(ctx: typer.Context):
 def engine_install(ctx: typer.Context, distribution: Path | None = None):
     """Download the pinned ArcadeDB engine and verify its SHA-256 (about 87 MB)."""
     from cairnmind.engine import install_engine
-    path = install_engine(ctx.obj, distribution)
+    with _engine_command():
+        path = install_engine(ctx.obj, distribution)
     output({"installed": str(path), "version": ctx.obj.arcade_version})
 
 
@@ -374,23 +402,34 @@ def engine_install(ctx: typer.Context, distribution: Path | None = None):
 @initialized
 def engine_start(ctx: typer.Context):
     from cairnmind.engine import start_engine
-    output(start_engine(ctx.obj))
+    with _engine_command():
+        output(start_engine(ctx.obj))
 
 
 @engine_app.command("status")
 @initialized
 def engine_inspect(ctx: typer.Context):
+    """Whether the database server answers, where it is and which version it runs. Starts nothing."""
     from cairnmind.engine import engine_status
-    output(engine_status(ctx.obj))
+    result = engine_status(ctx.obj)
+    output(result)
+    if result.get("problem"):
+        # Connect-only (#68): a server of a version this release does not support is refused, not only shown.
+        raise typer.Exit(1)
 
 
 @engine_app.command("stop")
 @initialized
 def engine_stop(ctx: typer.Context):
-    from cairnmind.engine import stop_engine
-    if service_alive(ctx.obj):
+    from cairnmind.engine import local_process_recorded, stop_engine
+    from cairnmind.database_mode import connect_only
+    # A connect-only installation without an engine of its own has nothing to stop, whether or not its
+    # service runs: it says so, instead of asking to stop the service first (#68).
+    nothing_here = connect_only(ctx.obj) and not local_process_recorded(ctx.obj)
+    if not nothing_here and service_alive(ctx.obj):
         raise typer.BadParameter("Run cairnmind stop first; the knowledge service is using ArcadeDB")
-    output(stop_engine(ctx.obj))
+    with _engine_command():
+        output(stop_engine(ctx.obj))
 
 
 @db_app.command("create-user")
@@ -444,6 +483,12 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["store_writer"] = writer_role(ctx.obj)
     from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
+    from cairnmind.record_kinds import doctor_view
+    try:
+        # What a person accepted as technical, per project, and how to withdraw it (#210).
+        result["accepted_record_kinds"] = doctor_view(store_for_read(ctx.obj))
+    except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
+        result["accepted_record_kinds"] = {"unavailable": type(exc).__name__}
     output(result)
 
 
@@ -726,6 +771,35 @@ def store_drop_replaced_chunks(
     output(drop_replaced_chunks(store_for(ctx.obj), batch=batch, max_batches=max_batches))
 
 
+@store_app.command("prune-backups")
+def store_prune_backups(
+        ctx: typer.Context,
+        keep: Annotated[int, typer.Option(min=0, max=1000, help="Safety backups of each kind to keep, newest first.")],
+        yes: Annotated[bool, typer.Option("--yes", help="Delete without asking again.")] = False):
+    """Delete old safety backups (before-schema-*, before-restore-*), keeping the newest K of each kind.
+
+    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled
+    backups and backups you named are never touched. Starts no engine (#190)."""
+    from cairnmind.confirmation import person_at_terminal
+    from cairnmind.store_prune import delete_backups, prune_plan
+    directory = ctx.obj.data_dir / "backups"
+    plan = prune_plan(directory, keep)
+    if not person_at_terminal():
+        refuse("Only a person can delete safety backups: run this command in your own terminal, outside a "
+               "coding session. Nothing was deleted.")
+    shown = {"directory": plan["directory"], "keep": keep, "delete_bytes": plan["delete_bytes"],
+             "delete": [{key: entry[key] for key in ("name", "kind", "bytes", "modified")} for entry in plan["delete"]],
+             "kept": [entry["name"] for entry in plan["kept"]]}
+    if not plan["delete"]:
+        output({**shown, "deleted": []})
+        return
+    output(shown)
+    if not yes and not typer.confirm(f"Delete these {len(plan['delete'])} safety backup(s)?", default=False):
+        output({"deleted": [], "note": "Nothing was deleted."})
+        raise typer.Exit(1)
+    output(delete_backups(directory, plan))
+
+
 @jobs_app.command("list")
 def jobs_list(ctx: typer.Context, project: str,
               state: Annotated[str | None, typer.Option("--state", "--status")] = None,
@@ -772,6 +846,34 @@ def records(ctx: typer.Context, project: str, history: bool = False):
 
 
 @app.command()
+def proposed(ctx: typer.Context, project: str,
+             days: Annotated[int, typer.Option("--days", min=0, max=3650,
+                                               help="List the ones not updated for this many days or more.")] = 30,
+             worktree: Path | None = None,
+             as_json: Annotated[bool, typer.Option("--json", help="Print the list as JSON.")] = False):
+    """List proposed findings not updated for a number of days, oldest first. Read-only; asks no model.
+
+    Each one shows its id, kind, source count and newest evidence time. Confirm or dispute them in the
+    memory inspector, which records your review with its version check and audit note (#189)."""
+    from cairnmind.inspector import Inspector
+    from cairnmind.stale_proposed import stale_proposed, stale_text
+    store = store_for_read(ctx.obj)
+
+    def read():
+        selected = store.resolve_project(project)
+        inspector = Inspector(store)
+        scope = inspector._scope(selected["id"], actor_scope(store, selected["id"], worktree))
+        result = stale_proposed(store, selected["id"], days=days, matches=lambda row: inspector._matches(scope, row))
+        return selected["id"], {**result, "text": stale_text(result, selected["name"])}
+
+    result = store.read_consistently(read, READ_KINDS["proposed"])
+    if as_json:
+        output(result)
+    else:
+        typer.echo(result["text"])
+
+
+@app.command()
 def source(ctx: typer.Context, source_id: str):
     """Read the stored snapshot of a source, even when the original no longer exists."""
     output(store_for_read(ctx.obj).get_source(source_id))
@@ -794,8 +896,11 @@ def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
         record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
         if key is not None:
             record["key"] = key
+        # Known secrets are replaced in the note's indexed view (#182); the note itself is kept as typed.
+        from cairnmind.secret_mask import note_metadata
         sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
-                                              {"role": "user", "origin": "cli"})["id"]]
+                                              note_metadata(store.settings, content,
+                                                            {"role": "user", "origin": "cli"}))["id"]]
         if confirmed:
             result = confirmation.remember_as_person(store, pid, record, sources)
         else:
@@ -841,7 +946,9 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
     # agent's command or a script there is no person (#177): the task is stored as proposed, and says so.
     person = confirmation.person_at_terminal()
     with actor_write(store, ctx.obj, pid):
-        src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual", {"role": "user"})
+        from cairnmind.secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+        src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual",
+                             note_metadata(store.settings, text, {"role": "user"}))
         record = {"kind": "task", "content": title, "status": "confirmed" if person else "proposed",
                   "metadata": metadata}
         if person:
@@ -1162,6 +1269,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
     from cairnmind.evaluation import run_evaluation
     if skip_claude and not clients:
         raise typer.BadParameter("--skip-claude requires --clients")
+    _managed_only(ctx.obj, "`cairnmind eval run`")
     result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
     _record_evaluation(ctx.obj, "recall", result)
     output(result)
@@ -1176,6 +1284,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
 def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
     """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
     from cairnmind.memory_evaluation import run_memory_evaluation
+    _managed_only(ctx.obj, "`cairnmind eval memory`")
     result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
     _record_evaluation(ctx.obj, "memory", result)
     output(result)
@@ -1213,6 +1322,7 @@ def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = Non
     configured models and a running engine; exits 3 when the models are not available.
     """
     from cairnmind.repository_evaluation import run_repository_evaluation
+    _managed_only(ctx.obj, "`cairnmind eval repository`")
     path = questions or Path(root) / "docs" / "evaluation" / "repository-questions.json"
     try:
         result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)
@@ -1369,6 +1479,24 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
         typer.echo(report["text"])
 
 
+@memory_app.command("extraction-stats")
+def memory_extraction_stats(ctx: typer.Context, project: str,
+                            as_json: Annotated[bool, typer.Option("--json", help="Print the numbers as JSON.")] = False):
+    """Per extractor version: how many extracted records are proposed, confirmed, disputed or superseded. Read-only."""
+    from cairnmind.extraction_stats import extraction_stats, render
+    store = store_for_read(ctx.obj)
+
+    def read():
+        selected = store.resolve_project(project)
+        return selected["id"], extraction_stats(store, selected["id"])
+
+    stats = store.read_consistently(read, READ_KINDS["memory extraction-stats"])
+    if as_json:
+        output(stats)
+    else:
+        typer.echo(render(stats))
+
+
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
@@ -1416,6 +1544,11 @@ def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None
 from cairnmind.cli_published import register as _register_published  # noqa: E402
 
 _register_published(memory_app, initialized)
+
+# Unknown transcript record kinds a person accepted as technical for a project (#210).
+from cairnmind.cli_record_kinds import register as _register_record_kinds  # noqa: E402
+
+_register_record_kinds(app, initialized)
 
 
 @app.command()
@@ -1582,11 +1715,26 @@ def rebuild_vectors(ctx: typer.Context, project: str):
     settings = ctx.obj
     store = store_for(settings)
     pid = store.resolve_project(project)["id"]
-    namespace = asyncio.run(from_settings(settings).model_identity(settings.embedding_model))
+    from cairnmind import memory_fingerprint
+
+    async def identity():
+        models = from_settings(settings)
+        try:
+            # An OpenAI-compatible embedding role: the fixed request first; changed weights are accepted
+            # here and get a new namespace, apart from every earlier vector (#212).
+            client = memory_fingerprint.client_of(models)
+            checked = await memory_fingerprint.check(client, accept=True) if client is not None else None
+            return await models.model_identity(settings.embedding_model), checked
+        finally:
+            await models.aclose()
+
+    namespace, fingerprint = asyncio.run(identity())
     store.delete_embeddings(pid)
     held: dict = {}
     count = schedule_embeddings(store, namespace, settings=settings, report=held)
     result = {"project": pid, "missing_vectors_queued": count, "namespace": namespace, "sources_preserved": True}
+    if fingerprint is not None:
+        result["embedding_fingerprint"] = fingerprint
     if held.get("embedding_held_back"):
         # Chunks of a class the remote embedding server may not receive (memory_remote_classes, #181).
         result["vectors_held_back"] = held["embedding_held_back"]
@@ -1629,8 +1777,11 @@ def restore(ctx: typer.Context, source: Path):
             raise typer.BadParameter("Run cairnmind stop first; the service still holds the store lock")
         if service_alive(ctx.obj):
             raise typer.BadParameter("Run cairnmind stop first; restoring requires a stopped service")
-        store_for(ctx.obj).restore(source)
-    output({"restored": True})
+        store = store_for(ctx.obj)
+        store.restore(source)
+    from cairnmind.confirmation_upgrade import report
+    marks = report(getattr(store, "confirmations_before_rule", None))
+    output({"restored": True, **({"confirmations_before_rule": marks} if marks else {})})
 
 
 @app.command()

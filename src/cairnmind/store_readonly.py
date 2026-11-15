@@ -33,6 +33,7 @@ import threading
 
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
+from .database_mode import connect_only, missing_database, version_problem
 
 _READ = re.compile(r"^\s*\(*\s*(SELECT|MATCH|TRAVERSE)\b", re.I)
 
@@ -97,11 +98,17 @@ def check_ready(client: ArcadeClient, settings: Settings) -> None:
     except ArcadeError as exc:
         if exc.status_code is not None:
             raise  # the engine answered: its own error says more than "not running"
+        if connect_only(settings):
+            # Connect-only (#68): there is no engine to start here; the client's message says where it looked.
+            raise StoreNotReady(str(exc)) from None
         raise StoreNotReady("The database engine is not running; start it with `cairnmind engine start` "
                             "(this command does not start it).") from None
-    if str(info.get("version", "")).split(" ", 1)[0] != settings.arcade_version:
-        raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
+    refused = version_problem(settings, info)
+    if refused:
+        raise ArcadeError(refused)
     if not client.database_exists():
+        if connect_only(settings):
+            raise StoreNotReady(missing_database(settings))
         raise StoreNotReady("The Cairnmind database does not exist yet; create it with `cairnmind init`.")
     types = {row.get("name") for row in client.query("SELECT name FROM schema:types")}
     rows = client.query("SELECT value FROM devbrain_meta WHERE name='schema_version'") \

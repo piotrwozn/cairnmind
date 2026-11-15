@@ -39,7 +39,7 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "/usr/local/bin/cairnmind-connection-check"]
           env:
-            - name: CAIRNMIND_ARCADE_URL
+            - name: CAIRNMIND_ARCADE_CONNECT_URL
               value: https://arcadedb.cairnmind-db.svc:2490
             - name: CAIRNMIND_ARCADE_USER
               value: cairnmind

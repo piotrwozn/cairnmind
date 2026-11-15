@@ -80,6 +80,30 @@ already decoded, source_ids list. Remember task gates/version history and leases
 native transactions with a per-datadir process lock for coordinated local writers.
 Task source/dependency validation and optimistic conflicts preserved.
 
+Connect-only mode (#68, `database_mode.py`). An installation is connect-only when `arcade_connect_url`
+(CAIRNMIND_ARCADE_CONNECT_URL) is set, which then replaces `arcade_url` as the address at load and is
+never written over the stored `arcade_url`, or when `arcade_url` is not plain http on loopback.
+Otherwise it is managed, as before. Two different addresses in CAIRNMIND_ARCADE_URL and
+`arcade_connect_url` are a settings problem that `ArcadeClient` refuses.
+- `engine.install_engine`, `start_engine` and `stop_engine` raise `ConnectOnly` (an ArcadeError) and do
+  nothing; `stop_engine` still stops a process recorded in `arcade/process.json` of this data directory.
+  `ensure_engine` sends one request (`GET /api/v1/server`) and never starts anything. `engine_status`
+  has `mode` (`managed`|`connect`); in connect mode it has `host`, `user`, `database`, `transport`,
+  `supported_versions` and, for an unsupported server, `problem`, and no `installed`, `java` or
+  `managed_java`.
+- `database_mode.supported_versions(settings)` is the pinned `arcade_version` alone. A server of another
+  version is refused by `ensure_engine` and `store_readonly.check_ready` before any read or write.
+- `ArcadeClient.ensure_database` only checks that the database exists; a missing one is an ArcadeError
+  naming `cairnmind db create-user`, the one path that creates it (the administrator client).
+- `Settings.load(create=True)` generates no database password. On loopback a connect-only client without
+  a password is refused before a request; for another host the rules of #72 apply unchanged.
+- A transport failure is reported as `ArcadeDB at URL is unavailable ... starts no engine of its own`,
+  and HTTP 401 adds that the user may not exist yet. A write is never sent twice.
+- No file lock of the data directory guards the database between machines; the declared writer below
+  does. `tests/test_connect_only_network.py` cuts the connection during indexing, a restore, a schema
+  upgrade and the creation of a store: only whole transactions remain, and running the command again
+  completes it.
+
 One declared writer per store (#70, `store_writer.py`). The file locks (database-writer.lock,
 service.lock, the ingestion and configuration locks) serialise writers on one machine only, so a
 database names the one installation that writes it; no database leases are kept.
@@ -89,8 +113,8 @@ database names the one installation that writes it; no database leases are kept.
   onto a new filesystem) does not match: it gets a new id at once and keeps the old one as
   `copied_from`. The host name is a label only.
 - Writer: row `devbrain_meta` `name='writer'` {installation_id, host, since, history (last 20:
-  installation_id, previous, host, at, how first|takeover, note)}; the same id in the journal head
-  `journal_state` `id='current'` field `writer`. The first installation that opens a database without
+  installation_id, previous, host, at, how first|takeover|repair, note)}; the same id in the journal head
+  `journal_state` `id='current'` field `writer` (with `writer_change`, see below). The first installation that opens a database without
   the row claims it (also a store of an earlier release), so a local store changes nothing for anyone.
 - Every other installation's `Store(path)` opens read-only (`not_writer` says why, `read_only` is
   true): reads work, writes raise `StoreNotWriter` (a ValueError naming the writer and the command),
@@ -101,7 +125,11 @@ database names the one installation that writes it; no database leases are kept.
   takeover back on this installation lets the same store, and a running service, write again without
   a restart). A transaction that read the head before a takeover fails on commit
   with the engine's concurrent-change error. Writes outside the journal (Store.command DDL, restore)
-  read the writer row first. Restore and a journal reset keep the writer in the head.
+  read the writer row and the head first and are refused when either names another installation.
+  Row and head are read outside a transaction, the row once more after the head (a transaction is not
+  one view of two records: a record it reads for the first time shows the latest commit), so a
+  takeover between the reads is not taken for a broken store; `store writer`, `doctor` and `status`
+  read them the same way. Restore and a journal reset keep the writer in the head.
 - `cairnmind store takeover --yes [--note]` (a person, never a coding session) rewrites both, appends
   the change to the history and returns the jobs the previous writer was running to pending. It also
   works when this release cannot read the store as a reader (schema of another release, no journal
@@ -109,6 +137,26 @@ database names the one installation that writes it; no database leases are kept.
   on such a store name the writer and the takeover command.
   `cairnmind store writer`, `doctor` (`store_writer`) and `status` (`writer`) report the role:
   writer, reader, lost, none or unknown.
+- Two claims or takeovers at once: each is one transaction that reads the head, then the writer row,
+  writes the row and names itself in the head. ArcadeDB 26.11.1 finds a conflict per record, at
+  commit, and only for a record the transaction really changed: an UPDATE that sets the values the
+  record already has in the transaction's view is dropped (it reports count 1, writes nothing and
+  never conflicts), and a WHERE clause is evaluated on that view, so a compare-and-set does not
+  help. Every stamp of the head therefore also writes `writer_change`, a new random value, so the
+  head always changes: of two overlapping transactions the second commit fails whole (the command
+  says so and is run again), or it started after the first and commits on top with both records its
+  own. Row and head never name different installations. The head also changes with every journaled
+  write of the writer (`seq`), so a takeover that overlaps one is refused in the same way, with
+  nothing changed; the refusal names both causes, and against a writer that keeps writing it can
+  come more than once.
+- A store left with row and head apart by a build before that rule: `store writer`, `doctor` and
+  the role in `status` add `head_writer` and `problem`. Data is committed only by the installation
+  the head names, and only from a process that was already running (a new one opens as a reader,
+  because the row names the other). The installation the row names is not opened read-only, but
+  every write of it is refused with the same text, in a running process and in a new one, and a new
+  process runs no schema statement or upgrade. Schema statements are refused on both until the
+  repair. Opening a store never repairs it; `store takeover --yes` on either installation does (on
+  the one the row names: history entry `how: repair`, result `repaired`).
 - Not fenced: a job claimed before a takeover runs on in the previous writer until it tries to store
   its result (bounded by its lease and model timeout); files that process writes outside the
   database; installations of a release before #70, which do not check the writer.

@@ -8,8 +8,9 @@ receives only the sensitivity classes the setting memory_remote_classes allows (
 
 Vectors of two models are kept apart: their namespace is the embedding model's identity, and every vector
 index is keyed by namespace and dimension. An OpenAI-compatible server reports no digest, so there the
-identity is the server and the model name: other weights served under the same name, with the same
-dimension, are not detected. Evaluations that pass are recorded per pair of model identities and setup.
+identity is the server and the model name; for the embedding role a fixed request detects other weights
+served under the same name (memory_fingerprint.py). Evaluations that pass are recorded per pair of model
+identities and setup.
 """
 from __future__ import annotations
 
@@ -168,7 +169,10 @@ def _client(settings: Settings, role: str, credentials: Settings | None):
     credential = credential_for(settings, role, credentials)
     if row["provider"] == "ollama":
         return Ollama(settings, base_url=row["base_url"], credential=credential, num_ctx=row.get("context_window"))
-    return OpenAICompatible(settings, role, row, credential=credential)
+    client = OpenAICompatible(settings, role, row, credential=credential)
+    # An evaluation copy compares with the installation's stored fingerprint, not an empty one (#212).
+    client.fingerprint_dir = (credentials or settings).data_dir
+    return client
 
 
 class MemoryModels:
@@ -353,6 +357,12 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
     from .memory_egress import describe
     entry = {"provider": row["provider"], "base_url": row["base_url"], "model": model, **_destination(row, role),
              **describe(settings, role), "reachable": False}
+    fingerprinted = None
+    if role == "embedding" and row["provider"] != "ollama":
+        # Other weights behind the same name (#212): the stored mark holds embeddings in every process,
+        # so it is shown even while the server is down or does not list the model.
+        from .memory_fingerprint import doctor_block
+        fingerprinted, entry["fingerprint"] = doctor_block(settings.data_dir, f"{model}@{server_tag(row['base_url'])}")
     headers = {}
     if "credential_ref" in row:
         from .api_credentials import CredentialStore
@@ -385,6 +395,11 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
         listed = [m for m in rows if isinstance(m, dict) and m.get("id") == model]
         if listed:
             entry["identity"] = f"{model}@{server_tag(row['base_url'])}"
+            if "fingerprint" in entry:  # the generation in use; no identity while changed (#212)
+                if fingerprinted is None:
+                    del entry["identity"]
+                else:
+                    entry["identity"] = fingerprinted
     entry["model_available"] = bool(listed)
     return entry
 

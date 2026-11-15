@@ -20,6 +20,7 @@ import tempfile
 from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
+from .memory_size import package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
@@ -1029,6 +1030,10 @@ class MemoryManager:
                         "WHERE project_id=:project ORDER BY imported_at DESC,id DESC LIMIT 1", {"project": project_id}, False)
         result["last_import"] = imported
         result["verification"] = "Imported checks are historical; local execution and a new session ACK remain required."
+        # Against the limits of publication (#191); the behaviour at the limit is in snapshot() and is unchanged.
+        result["package_size"] = package_size(self.store, project_id, TABLES, max_rows=MAX_ROWS,
+                                              max_bytes=MAX_TOTAL_BYTES, max_manifest_bytes=MAX_MANIFEST_BYTES,
+                                              max_object_bytes=MAX_OBJECT_BYTES)
         if path.exists() or path.is_symlink():
             try:
                 result["latest"] = manifest_summary(path)
