@@ -25,8 +25,13 @@ read of the head is older than a takeover fails on commit with a conflict instea
 A takeover (``cairnmind store takeover --yes``) is a person's act. It rewrites both rows, records
 who took over from whom, when, from which host and with which note, and puts the jobs the previous
 writer was running back to pending, so that only the new writer's worker runs them. The previous
-writer notices at its next write: the transaction is refused, and the store refuses every later
-write at once (StoreWriterLost).
+writer notices at its next write: the transaction is refused (StoreWriterLost), and every later
+write of that store reads the writer row first and is refused while it names another installation.
+When a person takes writing back on that installation, its store (and a service that kept running)
+writes again at its next write, without a restart.
+
+A takeover also works on a store this release cannot read as a reader (a schema of another release,
+no journal head): the writer row is moved first, then the store is prepared as its writer would.
 
 Not covered: work that is not a committed database write. A job claimed before a takeover keeps
 running on the previous writer until that process tries to store its result (bounded by the job's
@@ -231,8 +236,17 @@ def check_head(store, head: dict | None, native) -> None:
     raise StoreWriterLost(store._writer_lost)
 
 
+def recheck(store) -> None:
+    """A store that lost the role reads the writer row again: a person may have taken writing back here."""
+    if not store._writer_lost:
+        return
+    row = read_writer(getattr(store, "_writable", None) or store.client)
+    store._writer_lost = None if row and row.get("installation_id") == store.installation.id else lost_reason(row)
+
+
 def require_writer(store) -> None:
     """For a write that does not pass through the journal (schema statements, restore): one read."""
+    recheck(store)
     if store._writer_lost:
         raise StoreWriterLost(store._writer_lost)
     if store.not_writer:
@@ -254,15 +268,20 @@ def valid_note(note) -> str | None:
 def take_over(store, note: str | None = None) -> dict:
     """Make this store's installation the writer, recording the change. A person's act, never automatic."""
     from .journal import JournalTransaction
-    from .store import Store
     note = valid_note(note)
     me = store.installation.id
     client = getattr(store, "_writable", None) or store.client
+    # A store this release could not read (Store(path, for_takeover=True)): only the writer row and, when there is
+    # one, the head are changed here; take_over_at then prepares the store as the writer and returns the jobs.
+    ready = not getattr(store, "not_ready", None)
     with store._lock(), client.transaction() as native:
-        native.query("SELECT writer FROM journal_state WHERE id='current'")  # first, as in settle
+        has_head = ready or "journal_state" in {row.get("name") for row in native.query("SELECT name FROM schema:types")}
+        # The head first, as in settle.
+        has_head = has_head and bool(native.query("SELECT writer FROM journal_state WHERE id='current'"))
         row = read_writer(native)
         previous = row.get("installation_id") if row else None
         if previous == me:
+            store._writer_lost = None
             return {"taken_over": False, "reason": "This installation is already the writer.", "writer": describe(row)}
         now, host = utc_now(), label(socket.gethostname())
         entry = {"installation_id": me, "previous": previous, "host": host, "at": now, "how": "takeover"}
@@ -274,26 +293,60 @@ def take_over(store, note: str | None = None) -> dict:
             update_document(native, "devbrain_meta", values, "name='writer'", {})
         else:
             insert_document(native, "devbrain_meta", {"name": "writer", **values})
-        stamp(native, me)
-        tx = JournalTransaction(native, writer=me, check=lambda head, reader: None)
+        if has_head:
+            stamp(native, me)
         released = 0
-        for job in tx.query("SELECT FROM jobs WHERE state='running'"):
-            job = clean_row(job)
-            job["state"] = "pending"
-            update_document(tx, "jobs", {"state": "pending", "worker": None, "lease_until": None, "updated_at": now,
-                                         "attempt_history": Store._job_event(job, "writer_takeover", state="pending")},
-                            "id=:id AND state='running'", {"id": job["id"]})
-            released += 1
-        tx.flush()
+        if ready:
+            tx = JournalTransaction(native, writer=me, check=lambda head, reader: None)
+            released = release_running_jobs(tx, now)
+            tx.flush()
+    store._writer_lost = None
     return {"taken_over": True, "previous": label(previous) if previous else None, "released_jobs": released,
             "writer": describe({**values, "history": history})}
+
+
+def release_running_jobs(tx, now: str) -> int:
+    """Put the jobs the previous writer was running back to pending, so that only this writer's worker runs them."""
+    from .store import Store
+    released = 0
+    for job in tx.query("SELECT FROM jobs WHERE state='running'"):
+        job = clean_row(job)
+        job["state"] = "pending"
+        update_document(tx, "jobs", {"state": "pending", "worker": None, "lease_until": None, "updated_at": now,
+                                     "attempt_history": Store._job_event(job, "writer_takeover", state="pending")},
+                        "id=:id AND state='running'", {"id": job["id"]})
+        released += 1
+    return released
+
+
+def take_over_at(data_dir: Path, note: str | None = None) -> dict:
+    """`cairnmind store takeover --yes`: also for a store this release cannot read as a reader."""
+    from .arcade import ArcadeError
+    from .store import Store
+    note = valid_note(note)
+    store = Store(data_dir, for_takeover=True)
+    result = take_over(store, note)
+    if not store.not_ready or not result["taken_over"]:
+        return result
+    # Now that this installation is the writer, open the store as the writer: that upgrades the schema it can
+    # upgrade and recreates a missing journal head at the first write.
+    try:
+        writer = Store(data_dir)
+        with writer.transaction() as tx:
+            result["released_jobs"] = release_running_jobs(tx, utc_now())
+    except (ValueError, ArcadeError) as exc:
+        result["next"] = f"This installation now writes the store, but this release cannot prepare it: {exc}"[:600]
+    return result
 
 
 def state(store) -> dict:
     """What `status` and `doctor` say about the writer role of this store's installation."""
     me = store.installation
     row = read_writer(store.client)
+    if store._writer_lost and row and row.get("installation_id") == me.id:
+        store._writer_lost = None  # taken back by a person since the role was lost
     if store._writer_lost:
+        store._writer_lost = lost_reason(row)
         role, reason = "lost", store._writer_lost
     elif row is None:
         role, reason = "none", "No installation is recorded as the writer; the next one that opens the store for writing becomes it."

@@ -92,12 +92,17 @@ database names the one installation that writes it; no database leases are kept.
   true): reads work, writes raise `StoreNotWriter` (a ValueError naming the writer and the command),
   no schema statement or upgrade runs, `claim_job` refuses, and the service does not start.
 - Fence: JournalTransaction.flush already reads and updates the head in every committing change;
-  it refuses the commit when the head names another writer (`StoreWriterLost`, after which the store
-  refuses every write at once). A transaction that read the head before a takeover fails on commit
+  it refuses the commit when the head names another writer (`StoreWriterLost`; after that every write
+  of the store reads the writer row first and is refused while it names another installation, so a
+  takeover back on this installation lets the same store, and a running service, write again without
+  a restart). A transaction that read the head before a takeover fails on commit
   with the engine's concurrent-change error. Writes outside the journal (Store.command DDL, restore)
   read the writer row first. Restore and a journal reset keep the writer in the head.
 - `cairnmind store takeover --yes [--note]` (a person, never a coding session) rewrites both, appends
-  the change to the history and returns the jobs the previous writer was running to pending.
+  the change to the history and returns the jobs the previous writer was running to pending. It also
+  works when this release cannot read the store as a reader (schema of another release, no journal
+  head): the writer row moves first, then the store is opened as its writer; a reader's other commands
+  on such a store name the writer and the takeover command.
   `cairnmind store writer`, `doctor` (`store_writer`) and `status` (`writer`) report the role:
   writer, reader, lost, none or unknown.
 - Not fenced: a job claimed before a takeover runs on in the previous writer until it tries to store

@@ -248,6 +248,9 @@ class Store:
     _writer_lost = None
     installation = None
     _writable = None
+    # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
+    not_ready = None
+    _for_takeover = False
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
@@ -267,9 +270,10 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
-    def __init__(self, data_dir: Path, *, settings: Settings | None = None):
+    def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False):
         from .arcade import ArcadeClient
         from .engine import ensure_engine
+        self._for_takeover = bool(for_takeover)
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if settings is not None and settings.data_dir.expanduser().resolve() != self.data_dir:
@@ -334,7 +338,8 @@ class Store:
                     del self._local.transaction
             return
         from .journal import JournalTransaction
-        from .store_writer import StoreWriterLost, check_head
+        from .store_writer import StoreWriterLost, check_head, recheck
+        recheck(self)  # one read, only while the role is lost: a person may have taken it back
         if self._writer_lost:
             raise StoreWriterLost(self._writer_lost)
         with self._lock(), self.client.transaction() as native:
@@ -390,10 +395,17 @@ class Store:
 
     def _open_as_reader(self, writer):
         """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
-        from .store_readonly import ReadOnlyClient, check_ready
+        from .store_readonly import ReadOnlyClient, StoreNotReady, check_ready
         from .store_writer import reader_reason
-        check_ready(self.client, self.settings)
-        self.not_writer = reader_reason(self.installation, writer)
+        reason = reader_reason(self.installation, writer)
+        try:
+            check_ready(self.client, self.settings)
+        except StoreNotReady as exc:
+            if not self._for_takeover:
+                # `cairnmind init` does not help a reader: the writer, or a takeover, makes the store ready.
+                raise StoreNotReady(f"{exc} {reason}") from None
+            self.not_ready = str(exc)
+        self.not_writer = reason
         self._writable = self.client
         self.client = ReadOnlyClient(self.client, self.not_writer)
         self.read_only = True

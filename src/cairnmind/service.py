@@ -20,6 +20,8 @@ from cairnmind import __version__
 from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
 
 log = logging.getLogger(__name__)
+# How often background work that lost the writer role looks again whether a person took it back (#70).
+WRITER_LOST_RETRY_SECONDS = 30
 
 
 class InferenceQueue:
@@ -288,10 +290,18 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     inference = InferenceQueue()
     background_status: dict = {"scanner_error": None, "model_error": None, "memory_error": None}
 
-    def writer_lost(exc) -> None:
-        # Another installation took over writing: the background work stops instead of failing on every turn.
+    async def writer_lost(exc) -> None:
+        # Another installation took over writing: the background work pauses instead of failing on every turn.
+        # Each retry costs one read of the writer row (store_writer.recheck); when a person takes writing back
+        # here, the next pass writes again, so the service needs no restart.
+        if background_status.get("writer_lost") != str(exc):
+            log.warning("Background work paused: %s", exc)
         background_status["writer_lost"] = str(exc)
-        log.warning("Background work stopped: %s", exc)
+        await asyncio.sleep(WRITER_LOST_RETRY_SECONDS)
+
+    def writer_back() -> None:
+        if background_status.pop("writer_lost", None):
+            log.warning("Background work resumed: this installation writes the store again")
     cache: dict = {}
     inference_projects: set[str] = set()
     background_ready = asyncio.Event()
@@ -316,12 +326,13 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         while True:
             try:
                 result = await asyncio.to_thread(memory.tick)
+                writer_back()
                 background_status["memory_error"] = result.get("errors") or None
             except asyncio.CancelledError:
                 raise
             except StoreNotWriter as exc:
-                writer_lost(exc)
-                return
+                await writer_lost(exc)
+                continue
             except Exception as exc:
                 background_status["memory_error"] = {"code": type(exc).__name__}
                 log.exception("Portable memory scheduler failed")
@@ -379,11 +390,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["scanner_error"] = "; ".join(scan_errors[:5]) or None
                 background_status["scan_errors"] = scan_errors[:20]
                 background_status["last_scan_at"] = time.time()
+                writer_back()
             except asyncio.CancelledError:
                 raise
             except StoreNotWriter as exc:
-                writer_lost(exc)
-                return
+                await writer_lost(exc)
+                continue
             except Exception as exc:
                 background_status["scanner_error"] = str(exc)
                 log.exception("Archive scan failed")
@@ -410,6 +422,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["model_error"] = str(role_error) if role_error else None
                 job = await asyncio.to_thread(store.claim_job, "inference", inference_lease_seconds(), kinds,
                                               project_ids=selected)
+                writer_back()
                 if job:
                     try:
                         async def process():
@@ -428,8 +441,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             except asyncio.CancelledError:
                 raise
             except StoreNotWriter as exc:
-                writer_lost(exc)
-                return
+                await writer_lost(exc)
+                continue
             except Exception as exc:
                 background_status["model_error"] = str(exc)
                 await asyncio.sleep(10)

@@ -150,6 +150,55 @@ def test_a_takeover_moves_writing_and_the_previous_writer_stops_at_its_next_writ
     assert take_over(writer)["taken_over"] is False
 
 
+def test_taking_writing_back_lets_the_store_that_lost_it_write_again_without_reopening(tmp_path):
+    """A running service keeps its Store: after a person takes writing back there, it writes at its next write."""
+    first = Store(tmp_path / "first")
+    pid = project(tmp_path, first)
+    second_dir = second_installation(tmp_path, first)
+    take_over(Store(second_dir))
+    with pytest.raises(StoreWriterLost):
+        first.add_project("other", tmp_path)
+    assert first.writer_state()["role"] == "lost"
+    assert take_over(Store(first.data_dir), "back to the first laptop")["taken_over"] is True
+    # The same object, never reopened: the role reads as the writer and every kind of write goes through again.
+    assert first.writer_state()["role"] == "writer" and "next" not in first.writer_state()
+    first.snapshot(pid, "note://taken-back", "Written after taking writing back.", "note")
+    first.command("CREATE DOCUMENT TYPE writer_probe_70 IF NOT EXISTS")  # a write outside the journal
+    assert writer_row(first)["installation_id"] == first.installation.id == head(first)["writer"]
+    assert Store(second_dir).read_only
+
+
+def test_a_reader_takes_over_a_store_that_this_release_cannot_read_as_a_reader(tmp_path, monkeypatch):
+    from cairnmind.store_readonly import StoreNotReady
+    for name in ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID"):
+        monkeypatch.delenv(name, raising=False)
+    first = Store(tmp_path / "first")
+    pid = project(tmp_path, first)
+    first.enqueue("extract", pid, {"source_id": "s"}, "job-70-ready")
+    assert first.claim_job("inference", 60, ["extract"])
+    second_dir = second_installation(tmp_path, first)
+    Store(second_dir)
+    # The writer's machine is gone and its store has no journal head: a reader cannot open it, and is told why.
+    ArcadeClient(first.settings).command("DELETE FROM journal_state WHERE id='current'")
+    with pytest.raises(StoreNotReady, match="cairnmind store takeover --yes"):
+        Store(second_dir)
+    done = runner.invoke(app, ["--data-dir", str(second_dir), "store", "takeover", "--yes"])
+    assert done.exit_code == 0, done.output
+    result = json.loads(done.output)
+    assert result["taken_over"] is True and result["released_jobs"] == 1 and "next" not in result
+    writer = Store(second_dir)
+    assert not writer.read_only and writer_row(first)["installation_id"] == writer.installation.id
+    assert head(first)["writer"] == writer.installation.id
+    assert writer.query("SELECT state FROM jobs WHERE dedupe_key='job-70-ready'")[0]["state"] == "pending"
+    # A store of a newer release: the role still moves, and the result says this release cannot prepare it.
+    ArcadeClient(first.settings).command("UPDATE devbrain_meta SET value=99 WHERE name='schema_version'")
+    moved = runner.invoke(app, ["--data-dir", str(first.data_dir), "store", "takeover", "--yes"])
+    assert moved.exit_code == 0, moved.output
+    result = json.loads(moved.output)
+    assert result["taken_over"] is True and "cannot prepare it" in result["next"]
+    assert writer_row(first)["installation_id"] == first.installation.id
+
+
 def test_two_takeovers_at_once_leave_one_writer_that_the_row_and_the_head_agree_on(tmp_path):
     first = Store(tmp_path / "first")
     readers = [Store(second_installation(tmp_path, first, name)) for name in ("one", "two")]
