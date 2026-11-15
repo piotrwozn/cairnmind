@@ -38,3 +38,23 @@ def test_a_registered_secret_is_not_sent_to_memory_release_and_a_key_shape_still
     monkeypatch.delenv("OPENAI_API_KEY")
     remaining = refusal(store, pid)
     assert token["id"] in remaining and leaked["id"] not in remaining, remaining
+
+
+def test_the_held_list_tells_a_terminal_confirmation_from_a_proposal_and_shows_which_record(ada):  # noqa: F811
+    from conftest import as_person
+    store, pid = ada["store"], ada["project"]
+    first = store.snapshot(pid, "note://cli", "Agents may write facts.", "note")
+    typed = as_person(store, pid, {"kind": "decision", "key": "agents", "content": "Agents may write facts."},
+                      [first["id"]])
+    second = store.snapshot(pid, "note://proposal", "x", "note")
+    proposed = store.remember(pid, {"kind": "fact", "key": "hidden", "content": "Line one\x1b[31m red‮ and "
+                                    + "a long tail " * 20}, [second["id"]])
+    held = {item["id"]: item for item in Publisher(store).publish(pid, preview=True)["held"]["items"]}
+    assert held[typed["id"]]["reason"].startswith("confirmed in a terminal, which writes no audit that travels")
+    assert "inspector" in held[typed["id"]]["reason"]
+    assert held[proposed["id"]]["reason"] == "proposed, not yet confirmed; review it in the inspector"
+    assert (held[typed["id"]]["key"], held[typed["id"]]["excerpt"]) == ("agents", "Agents may write facts.")
+    excerpt = held[proposed["id"]]["excerpt"]
+    # The record's own text, cut to one short line, with nothing in it that a terminal would act on.
+    assert held[proposed["id"]]["key"] == "hidden" and len(excerpt) <= 80 and excerpt.endswith("…")
+    assert "\x1b" not in excerpt and "‮" not in excerpt and excerpt.startswith("Line one")

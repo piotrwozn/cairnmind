@@ -131,8 +131,10 @@ def test_only_acts_of_a_person_are_published_and_publishing_twice_changes_no_fil
                           f"constraint/{typed['id']}.md", f"plan/{saved['plan']['id']}.md",
                           *(f"task/{step}.md" for step in steps)}
     assert first["status"] == "written" and first["files"] == len(files) == preview["files"]
-    assert first["held"]["items"] == [{"id": unreviewed["id"], "kind": "fact",
-                                       "reason": "no person's act covers it; review it in the inspector"}]
+    assert first["held"]["items"] == [{"id": unreviewed["id"], "kind": "fact", "key": unreviewed["key"],
+                                       "excerpt": "Agents may write facts.",
+                                       "reason": "confirmed in a terminal, which writes no audit that travels; "
+                                                 "confirm it again in the inspector to publish it"}]
     text = files[f"decision/{decision['id']}.md"].decode()
     assert '"name":"Ada Nowak"' in text and '"branch":"main"' in text
     assert '"lines":[3,3]' in text and "\n    The active backend is ArcadeDB.\n" in text
@@ -354,6 +356,12 @@ def test_a_directory_of_another_team_or_a_mismatched_binding_is_refused(ada, tmp
         "project_id": "5a1f0c3e-8b2d-4e6f-9a7c-1d3b5e7f9a20"}, separators=(",", ":"), sort_keys=True).encode() + b"\n")
     with pytest.raises(MemoryConflict, match="belongs to 5a1f0c3e"):
         Publisher(store).publish(other["id"])
-    # The same record IDs cannot be imported into a second local project.
-    with pytest.raises(MemoryConflict, match="another local project"):
+    # Another project's own directory is refused as such first (#239) ...
+    with pytest.raises(MemoryConflict, match="each project imports only its own directory"):
         PublishedImporter(store).import_published(folder_of(root), other["id"], bind=True)
+    # ... and the same record IDs cannot be imported into a second local project from a copy either.
+    import shutil
+    copy = tmp_path / "copy-of-team-memory"
+    shutil.copytree(folder_of(root), copy)
+    with pytest.raises(MemoryConflict, match="another local project"):
+        PublishedImporter(store).import_published(copy, other["id"], bind=True)

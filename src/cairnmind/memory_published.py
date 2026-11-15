@@ -25,6 +25,7 @@ from .memory_published_format import (
 )
 from .sql import clean_row, one_row, update_document
 from .store import degraded_origin
+from .terminal_safe import safe_text
 
 # Writing stayed behind this switch until the secrets gate of #171 refused registered secrets and private
 # keys. It is no longer read; the name is kept for scripts and tests that still set it.
@@ -277,7 +278,7 @@ class Publisher:
                 history = select_history(record["kind"], record["id"], versions.get(record["id"], []), sources,
                                          as_source)
                 if not history:
-                    raise Held("no person's act covers it; review it in the inspector")
+                    raise Held(_uncovered(record))
                 if any(degraded_origin(sources[s].get("metadata")) for r in history for s in r["sources"]):
                     raise Held("it cites a source of degraded origin")
                 _writable(model_of(record["kind"], record["id"], record["created_at"], "revisions", history))
@@ -302,7 +303,12 @@ class Publisher:
                    for plan in plans if plan["id"] in definitions]
         files = {path_of(model): render(model) for model in models}
         held.update({plan_id: ("plan", reason) for plan_id, reason in held_plans.items()})
-        return {"project": project, "root": root, "folder": folder, "files": files, "models": models, "held": held}
+        # What a person needs to tell the held entries apart (#239): a record's key and a plan's title, and the start
+        # of the text.
+        labels = {r["id"]: (r.get("key"), r.get("content")) for r in records if r["id"] in held}
+        labels.update({p["id"]: (None, p.get("title")) for p in plans if p["id"] in held})
+        return {"project": project, "root": root, "folder": folder, "files": files, "models": models, "held": held,
+                "labels": labels}
 
     @staticmethod
     def _close(histories, held, definitions, held_plans, heads):
@@ -399,7 +405,7 @@ class Publisher:
                       "files": len(merged), "bytes": sum(len(data) for data in merged.values()),
                       "records": sum(m["kind"] != "plan" for m in built["models"]),
                       "plans": sum(m["kind"] == "plan" for m in built["models"]),
-                      "held": _held(built["held"]), "git": "nothing was staged, committed or pushed"}
+                      "held": _held(built["held"], built["labels"]), "git": "nothing was staged, committed or pushed"}
             if others:
                 result["not_ours"] = {"hits": [described(hit) for hit in others[:50]], "total": len(others),
                                       "hint": "files this store does not write hold values the secrets gate refuses; "
@@ -469,8 +475,31 @@ def _listing(errors):
         f"; and {len(errors) - 50} more" if len(errors) > 50 else "")
 
 
-def _held(held):
-    items = [{"id": identifier, "kind": kind, "reason": reason} for identifier, (kind, reason) in sorted(held.items())]
+def _uncovered(record):
+    """Why no person's act covers a record (#239): a terminal confirmation is a person's, but writes no audit."""
+    from .confirmation import confirmation_of
+    mark = confirmation_of(record) or {}
+    if record["status"] == "confirmed" and mark.get("by") == "person" and mark.get("route") == "cli":
+        return ("confirmed in a terminal, which writes no audit that travels; confirm it again in the inspector "
+                "to publish it")
+    if record["status"] == "proposed":
+        return "proposed, not yet confirmed; review it in the inspector"
+    return "no person's act covers it; review it in the inspector"
+
+
+def _excerpt(text, limit=80):
+    """The start of a text a person can recognise, on one line and safe for a terminal; it is the record's own."""
+    if not isinstance(text, str):
+        return None
+    line = " ".join(safe_text(text).split())
+    return line if len(line) <= limit else line[:limit - 1] + "…"
+
+
+def _held(held, labels=None):
+    labels = labels or {}
+    items = [{"id": identifier, "kind": kind, "reason": reason, "key": (labels.get(identifier) or (None, None))[0],
+              "excerpt": _excerpt((labels.get(identifier) or (None, None))[1])}
+             for identifier, (kind, reason) in sorted(held.items())]
     reasons = {}
     for item in items:
         reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1
