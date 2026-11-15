@@ -204,9 +204,12 @@ def run_extraction_evaluation(settings: Settings, transcripts_path: Path, *, run
               "model": settings.chat_model, "transcripts": str(transcripts_path), "runs": [],
               "limits": ["Invented conversations; they show the kinds of noise seen in a trial, not every project.",
                          "Matching is by regular expressions over the proposed content; read the records too."]}
+    agent = KnowledgeAgent(None, settings, ollama=model)
+    # The stamp the extraction job writes on every record this build extracts with this model (#192), so a
+    # row of docs/EVALUATION.md can be matched with records in real projects. It never fails the run.
+    report["extractor"] = asyncio.run(agent.extractor_stamp())
     try:
         report["model_identity"] = asyncio.run(model.model_identity(settings.chat_model))
-        agent = KnowledgeAgent(None, settings, ollama=model)
         for number in range(runs):
             results, failures = asyncio.run(_run_once(agent, transcripts))
             report["runs"].append({"run": number + 1, "summary": summarize(results), "failures": failures,

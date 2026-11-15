@@ -197,10 +197,27 @@ ORIGIN_METADATA = ("origin_client", "origin_session_id", "origin_history", "orig
 # the archived source this version was extracted from (#168). A client can neither set nor keep it.
 EXTRACTION_MARK = "extraction_source_id"
 
+# How the extraction worker made a record (#192): the extractor version, the prompt hash and the model as
+# name@digest (extraction_input.extractor_stamp). Set only by the worker's own write; unlike EXTRACTION_MARK
+# it describes the record, not this machine, so later writes keep it and portable memory carries it.
+EXTRACTOR_STAMP = "extractor"
+_PROMPT_SHA = re.compile(r"[0-9a-f]{16}")
+
 # Record metadata derived by the store; values supplied by a client are never kept.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
                            "supersede_warning", "supersede_replaced_evidence_latest", EXTRACTION_MARK,
-                           *ORIGIN_METADATA)
+                           EXTRACTOR_STAMP, *ORIGIN_METADATA)
+
+
+def validate_extractor_stamp(value) -> dict:
+    """A copy of a well-formed extractor stamp; ValueError for anything else."""
+    if (not isinstance(value, dict) or set(value) != {"version", "prompt_sha256", "model"}
+            or type(value["version"]) is not int or not 1 <= value["version"] <= 10**6
+            or not isinstance(value["prompt_sha256"], str) or not _PROMPT_SHA.fullmatch(value["prompt_sha256"])
+            or not isinstance(value["model"], str) or not 3 <= len(value["model"]) <= 400
+            or "@" not in value["model"][1:-1]):
+        raise ValueError("Invalid extractor stamp")
+    return dict(value)
 
 
 # Not part of what a plan step says: plan-level or transient fields and everything the store derives.
@@ -780,7 +797,8 @@ class Store:
         self._record_graph(tx, record)
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
-                  replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None):
+                  replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None,
+                  extractor=None):
         """Write one record version.
 
         replace_origin: the origin mark follows this writer instead of the old version (checkpoints).
@@ -789,6 +807,7 @@ class Store:
         unmarked; state that earlier native checkpoints set and neither checkpoint repeats is dropped too.
         mark_only_changes: stamp the current origin only if the stored result differs (plan steps).
         extracted_from: the extraction worker's new record from this one source (EXTRACTION_MARK).
+        extractor: that record's extractor stamp (EXTRACTOR_STAMP), only together with extracted_from.
         """
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
@@ -888,6 +907,11 @@ class Store:
             if old or list(sources) != [extracted_from]:
                 raise ValueError("An extraction mark belongs only to a new record from its one source")
             metadata[EXTRACTION_MARK] = extracted_from
+        if extractor is not None:
+            # After the client's metadata, which can neither set nor clear it; a later write keeps it.
+            if extracted_from is None:
+                raise ValueError("An extractor stamp belongs only to the extraction worker's new record")
+            metadata[EXTRACTOR_STAMP] = validate_extractor_stamp(extractor)
         supersedes = record.get("supersedes", old.get("supersedes") if old else None)
         if supersedes and (not old or supersedes != old.get("supersedes")):
             previous = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": supersedes, "project": project_id}, False)
@@ -960,10 +984,10 @@ class Store:
         if pending is not None:
             pending.append(call)
 
-    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None):
+    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None, extractor=None):
         with self.transaction() as tx:
             return self._remember(tx, project_id, record, sources, conflict_review=conflict_review,
-                                  extracted_from=extracted_from)
+                                  extracted_from=extracted_from, extractor=extractor)
 
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):

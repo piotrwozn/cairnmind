@@ -47,11 +47,13 @@ RECORD_METADATA_KEYS = (
     "plan_id", "step_index", "requires_test", "requires_review", "test_passed",
     "review_passed", "acceptance_passed", "depends_on", "acceptance_criteria", "scope", "test_source_ids",
     "review_source_ids", "acceptance_source_ids", "possible_conflicts", "unresolved_dependencies",
-    "evidence", "goal", "next_step", "summary", "next_steps", "blockers", "origin", "extracted_by",
+    "evidence", "goal", "next_step", "summary", "next_steps", "blockers", "origin", "extracted_by", "extractor",
     "evidence_earliest", "evidence_latest", "evidence_basis", "supersede_warning",
     "supersede_replaced_evidence_latest", "conflicts_resolved", "conflict_decisions", "conflict_scope_note",
     "superseded_ids", "superseded_by",
 )
+# The only object values a bounded view shows, with the fields it shows of each (store.EXTRACTOR_STAMP).
+_FLAT_OBJECT_FIELDS = {"extractor": ("version", "prompt_sha256", "model")}
 # Positions a record moves down within the record ranking, by status. At similar
 # relevance a confirmed finding comes first and a disputed one later, while a strongly
 # relevant disputed or proposed record is not buried under many weak confirmed matches.
@@ -131,6 +133,11 @@ def public_metadata(value: Any, keys: tuple[str, ...], budget: int = 900) -> dic
             truncated |= candidate != original
         elif original is None or type(original) in (int, float, bool):
             candidate = original
+        elif key in _FLAT_OBJECT_FIELDS and isinstance(original, dict):
+            candidate = {field: value[:180] if isinstance(value, str) else value
+                         for field, value in original.items()
+                         if field in _FLAT_OBJECT_FIELDS[key] and type(value) in (str, int)}
+            truncated |= candidate != original
         else:
             omitted += 1
             truncated = True
