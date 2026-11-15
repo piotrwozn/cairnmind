@@ -70,9 +70,10 @@ REFUSED = ("Only a person can store a record as confirmed, and this write is not
            "Store the record as proposed (leave the status out); the person confirms it in the inspector, "
            "or types `cairnmind remember --confirmed` in their own terminal.")
 CLI_REFUSED = ("Only a person can store a record as confirmed. This command runs inside a coding session, or "
-               "without a terminal, so it does not count as a person. Nothing was saved. Run it without "
-               "--confirmed to store a proposed record; the person confirms it in the inspector, or runs "
-               "this command in their own terminal.")
+               "its input or output is not a terminal (piped or redirected), so it does not count as a person. "
+               "Nothing was saved. Run it without --confirmed to store a proposed record; the person confirms it "
+               "in the inspector, or runs this command in their own terminal, with input and output not piped or "
+               "redirected.")
 
 
 class ConfirmationRefused(ValueError):
@@ -134,6 +135,10 @@ def kept_refusal(record, change, status=None, differs=()) -> str:
     elif kind == "task":
         instead = ("report progress on it as before (state, evidence, check runs, scope), or store a new proposed "
                    "task; the person disputes this one in the inspector, or changes it in their own terminal.")
+    elif kind == "checkpoint":
+        # There is one checkpoint record per project: a second one under another key is not a way out (#239).
+        instead = ("save the new state with the checkpoint tool (`checkpoint`), which replaces the checkpoint record; "
+                   "the earlier confirmation then lapses.")
     else:
         instead = (f"store what you found as a new proposed {kind} under another key and tell the person; "
                    "they dispute this record or confirm the new one in the inspector.")
@@ -142,13 +147,17 @@ def kept_refusal(record, change, status=None, differs=()) -> str:
             + instead)
 
 
-def kept_step_refusal(step_key, refusal, adoption=False) -> str:
-    """The same refusal for a plan save, with the step named; an adoption has its own sentence."""
+def kept_step_refusal(step_key, refusal, adoption=False, title=None) -> str:
+    """The same refusal for a plan save, with the step named; an adoption has its own sentence.
+
+    An adopted legacy task's step key is its ID, so an adoption names the task by its text (#239).
+    """
     would = _would(refusal.change, refusal.status, refusal.differs)
     if refusal.change == "status" and refusal.status == "superseded":
         would = "remove it from the plan"
     if adoption:
-        return (f"Task {str(step_key)[:200]!r} (task {refusal.record_id}) was confirmed by a person, or before "
+        name = _clean(title, 200) if isinstance(title, str) and title.strip() else str(step_key)[:200]
+        return (f"Task {name!r} (task {refusal.record_id}) was confirmed by a person, or before "
                 "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
                 f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
                 "The person runs `cairnmind plan adopt` in their own terminal; the adopted steps are then proposed "

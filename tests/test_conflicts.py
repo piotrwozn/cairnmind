@@ -94,7 +94,9 @@ def test_a_real_contradiction_is_resolved_by_superseding_and_every_source_is_kep
     kept, replaced = record(store, candidate["id"]), record(store, existing["id"])
     assert result["record"]["id"] == kept["id"] and result["superseded"]["id"] == replaced["id"]
     assert (kept["status"], kept["supersedes"], kept["key"]) == ("confirmed", existing["id"], "session-ttl")
-    assert replaced["status"] == "superseded" and replaced["source_ids"] == existing["source_ids"]
+    # Every source is kept, and the replaced finding cites the decision too: the person judged it (#239).
+    assert replaced["status"] == "superseded"
+    assert replaced["source_ids"] == [*existing["source_ids"], result["audit_source_id"]]
     assert kept["source_ids"] == [*candidate["source_ids"], result["audit_source_id"]]
     assert kept["metadata"]["possible_conflicts"] == [] and kept["metadata"]["conflicts_resolved"] == [existing["id"]]
     assert kept["metadata"]["conflict_decisions"] == [f"{existing['id']}:supersede"]

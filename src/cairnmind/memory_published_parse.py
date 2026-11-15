@@ -22,6 +22,8 @@ from .store import STATUSES, TASK_STATES
 class _Lines:
     def __init__(self, text):
         self.lines, self.index = text[:-1].split("\n") if text.endswith("\n") else text.split("\n"), 0
+        if not text:
+            raise PublishedFormatError("the file is empty")
         if not text.endswith("\n"):
             raise PublishedFormatError("the file does not end with a line break")
 
@@ -292,9 +294,13 @@ def parse_file(raw: bytes) -> dict:
     header, kind = front.get("cairnmind"), front.get("kind")
     if header not in (RECORD_HEADER, PLAN_HEADER) or (header == PLAN_HEADER) != (kind == "plan"):
         raise PublishedFormatError("not a published memory file of version 1")
-    if (kind != "plan" and kind not in RECORD_KINDS) or not canonical_uuid(front.get("id")) \
-            or not timestamp(front.get("created_at")):
-        raise PublishedFormatError("invalid kind, id or created_at")
+    # One reason each (#239), so that a person sees which of the three is wrong.
+    if kind != "plan" and kind not in RECORD_KINDS:
+        raise PublishedFormatError("invalid kind")
+    if not canonical_uuid(front.get("id")):
+        raise PublishedFormatError("invalid id: it must be a canonical UUID")
+    if not timestamp(front.get("created_at")):
+        raise PublishedFormatError("invalid created_at: it must be an ISO 8601 time with a time zone")
     lines.expect("", "an empty line")
     lines.take()  # The title line; the rendering comparison checks it.
     lines.expect("", "an empty line")

@@ -53,7 +53,8 @@ def register(memory_app, initialized):
                                config: Annotated[Path | None, typer.Option(
                                    "--config", help="Personal-data patterns; default: .cairnmind/publication.toml "
                                                     "of the checkout holding PATH.")] = None):
-        """Check a published memory directory without a store, service or model. Exit 0 valid, 1 refused.
+        """Check a published memory directory without a store, service or model. Exit 0 valid, 1 refused, 2 when
+        PATH is not a directory.
 
         Includes the secrets scan (private keys, key and token shapes, passwords in connection strings,
         random strings, and personal data when the project turns it on); no secret is printed."""
@@ -62,6 +63,9 @@ def register(memory_app, initialized):
         from cairnmind.memory_published_secrets import SecretRulesError
         from cairnmind.terminal_safe import safe_text
         selected = path.expanduser().absolute()
+        if not selected.is_dir():
+            # A wrong argument, not a refused tree (#239): exit 2, as for any other bad parameter.
+            raise typer.BadParameter(safe_text(f"{selected} is not a directory"), param_hint="PATH")
         try:
             rules = checkout_rules(selected, config.expanduser().absolute() if config else None)
         except (SecretRulesError, OSError) as exc:
@@ -228,8 +232,8 @@ def register(memory_app, initialized):
         from cairnmind import confirmation
         if not confirmation.person_at_terminal():
             # An agent's command and a script have no terminal (#177): the same refusal as for a session.
-            refuse("Only a person confirms a plan: run this command in your own terminal. "
-                   "Nothing was confirmed.")
+            refuse("Only a person confirms a plan: run this command in your own terminal, with input and output "
+                   "not piped or redirected. Nothing was confirmed.")
         from cairnmind.memory_published_format import canonical_uuid
         if not canonical_uuid(plan):
             raise typer.BadParameter("PLAN must be a plan ID")

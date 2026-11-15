@@ -317,7 +317,8 @@ class PlanManager:
                                                       mark_only_changes=True)
                 except VerdictKept as refusal:
                     # A step a person confirmed is changed only by a person (#177): the step is named.
-                    raise ConfirmationRefused(kept_step_refusal(key, refusal, bool(adoption))) from None
+                    raise ConfirmationRefused(kept_step_refusal(key, refusal, bool(adoption),
+                                                                (existing or {}).get("content"))) from None
                 changed_steps |= outcome_changed(existing, saved[key]["content"], saved[key]["key"],
                                                  saved[key]["metadata"])
             for task_id, task in removed.items():
