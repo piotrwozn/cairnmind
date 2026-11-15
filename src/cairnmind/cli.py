@@ -111,6 +111,7 @@ READ_KINDS = {
     "plan contract": _RESOLVE | {"plan", "record", "check"},
     "check profiles": _RESOLVE,
     "memory orphans": _RESOLVE | {"record", "source", "memory"},
+    "memory extraction-stats": _RESOLVE | {"record"},
     "impact": _RESOLVE | {"record", "source", "memory", "node", "edge", "graph"},
     "usage": _RESOLVE,
 }
@@ -1367,6 +1368,24 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
         output(report)
     else:
         typer.echo(report["text"])
+
+
+@memory_app.command("extraction-stats")
+def memory_extraction_stats(ctx: typer.Context, project: str,
+                            as_json: Annotated[bool, typer.Option("--json", help="Print the numbers as JSON.")] = False):
+    """Per extractor version: how many extracted records are proposed, confirmed, disputed or superseded. Read-only."""
+    from cairnmind.extraction_stats import extraction_stats, render
+    store = store_for_read(ctx.obj)
+
+    def read():
+        selected = store.resolve_project(project)
+        return selected["id"], extraction_stats(store, selected["id"])
+
+    stats = store.read_consistently(read, READ_KINDS["memory extraction-stats"])
+    if as_json:
+        output(stats)
+    else:
+        typer.echo(render(stats))
 
 
 @memory_app.command("import")

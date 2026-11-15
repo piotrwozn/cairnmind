@@ -27,6 +27,7 @@ READ_COMMANDS = [
     ["plan", "contract", "demo"],
     ["check", "profiles", "demo"],
     ["memory", "orphans", "demo"],
+    ["memory", "extraction-stats", "demo"],
     ["impact", "demo", "--since", "HEAD"],
     ["usage", "demo"],
     ["store", "size"],
