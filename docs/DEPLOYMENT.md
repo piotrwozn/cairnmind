@@ -269,13 +269,13 @@ To restore it into a new, empty volume: with the server scaled to 0 and no claim
 kubectl apply -f deploy/kubernetes/backup/data-claim.yaml
 kubectl apply -f deploy/kubernetes/backup/volume-pod.yaml
 kubectl -n cairnmind-db wait --for=condition=Ready pod/arcadedb-volume --timeout=180s
-kubectl -n cairnmind-db exec -i arcadedb-volume -- tar --numeric-owner -C /var/lib/arcadedb -xzf - \
-    < "$HOME/backups/arcadedb-volume.tgz"
+kubectl -n cairnmind-db exec -i arcadedb-volume -- tar --numeric-owner --no-overwrite-dir \
+    -C /var/lib/arcadedb -xzf - < "$HOME/backups/arcadedb-volume.tgz"
 kubectl -n cairnmind-db delete pod arcadedb-volume
 kubectl -n cairnmind-db scale statefulset/arcadedb --replicas=1
 ```
 
-The StatefulSet uses the claim of that name. As with Compose, `root` and the dedicated user are the ones stored in the snapshot, and a snapshot opens only with the same ArcadeDB version. If your storage class offers volume snapshots (CSI `VolumeSnapshot`), you can use them instead of `tar`, with the server scaled to 0.
+Keep `--no-overwrite-dir`: the pod runs as the image's user, and on most storage classes the top folder of a new volume belongs to `root`, so without it `tar` fails to set that folder's time from the archive and stops with an error. The StatefulSet uses the claim of that name. As with Compose, `root` and the dedicated user are the ones stored in the snapshot, and a snapshot opens only with the same ArcadeDB version. If your storage class offers volume snapshots (CSI `VolumeSnapshot`), you can use them instead of `tar`, with the server scaled to 0.
 
 **Upgrades** follow [When the pinned ArcadeDB version changes](#when-the-pinned-arcadedb-version-changes): back up, build and push the image of the new version, change `image:`, and `kubectl apply -f deploy/kubernetes`.
 

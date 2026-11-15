@@ -186,6 +186,21 @@ def test_no_secret_value_is_in_the_manifests_and_the_template_is_not_applied_wit
     assert len(secret_values) == 4 and set(secret_values) == {'""'} and template.count("kind: Secret") == 3
     # `kubectl apply -f deploy/kubernetes` reads the top folder only: no Secret is there.
     assert all("kind: Secret" not in path.read_text() for path in KUBERNETES.glob("*.yaml"))
+    # The server's Secrets are in its namespace; the user's password goes where a client pod runs.
+    namespaces = dict(re.findall(r"^  name: ([\w-]+)\n  namespace: ([\w-]+)$", template, re.M))
+    assert namespaces == {"arcadedb-root-password": "cairnmind-db", "arcadedb-tls": "cairnmind-db",
+                          "cairnmind-db-user": "cairnmind-app"}
+
+
+def test_the_volume_is_unpacked_without_setting_the_root_owned_top_folder():
+    """The volume pod runs as 10001, the new volume's top folder belongs to root: GNU tar fails setting
+    the time of the archive's "." entry on it unless --no-overwrite-dir leaves the folder alone."""
+    assert "runAsUser: 10001" in manifest("backup/volume-pod.yaml")
+    script = (ROOT / "scripts" / "kubernetes_check.py").read_text()
+    unpack = [call for call in re.findall(r'volume_pod\("tar",[^)]*\)', script) if '"-xzf"' in call]
+    assert len(unpack) == 1 and '"--no-overwrite-dir"' in unpack[0]
+    documented = re.findall(r"tar [^\n]*(?:\\\n[^\n]*)*-xzf -", (ROOT / "docs" / "DEPLOYMENT.md").read_text())
+    assert len(documented) == 1 and "--no-overwrite-dir" in documented[0]
 
 
 def test_the_mounted_password_mode_of_the_manifests_is_one_the_password_file_rule_accepts(tmp_path):

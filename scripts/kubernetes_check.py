@@ -244,7 +244,10 @@ def volume_snapshot(files: dict[str, Path], work: Path, expected: list) -> None:
     kubectl("apply", "-f", str(MANIFESTS / "backup" / "data-claim.yaml"))
     hold_volume()
     with archive.open("rb") as handle:
-        volume_pod("tar", "--numeric-owner", "-C", "/var/lib/arcadedb", "-xzf", "-", stdin=handle)
+        # The pod runs as 10001 and the new volume's top folder belongs to root: --no-overwrite-dir leaves
+        # that folder's mode and time alone instead of failing to set them from the archive's "." entry.
+        volume_pod("tar", "--numeric-owner", "--no-overwrite-dir", "-C", "/var/lib/arcadedb", "-xzf", "-",
+                   stdin=handle)
     release_volume()
     kubectl("-n", DATABASE, "scale", "statefulset/arcadedb", "--replicas=1")
     kubectl("-n", DATABASE, "rollout", "status", "statefulset/arcadedb", "--timeout=300s")
