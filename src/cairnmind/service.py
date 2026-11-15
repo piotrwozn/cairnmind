@@ -206,6 +206,47 @@ class MemoryImportBody(MemoryInspectBody):
     root: str = Field(min_length=1)
     name: str | None = None
     dry_run: bool = Field(default=False, strict=True)
+    replace_confirmed: bool = Field(default=False, strict=True)
+    packet_id: str | None = None
+
+
+class MemoryPublishBody(MemorySnapshotBody):
+    model_config = {"extra": "forbid"}
+    preview: bool = Field(default=False, strict=True)
+    new_package: bool = Field(default=False, strict=True)
+
+
+class MemoryImportCommitBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    revision: str = Field(min_length=1, max_length=256)
+    project: str = Field(min_length=1)
+    worktree: str | None = Field(default=None, max_length=4096)
+    dry_run: bool = Field(default=False, strict=True)
+    bind: bool = Field(default=False, strict=True)
+    replace_confirmed: bool = Field(default=False, strict=True)
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
+class MemoryImportPublishedBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    path: str = Field(min_length=1, max_length=4096)
+    project: str = Field(min_length=1)
+    dry_run: bool = Field(default=False, strict=True)
+    bind: bool = Field(default=False, strict=True)
+    take_published: list[str] = Field(default_factory=list, max_length=1000)
+    replace_confirmed: bool = Field(default=False, strict=True)
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
+class MemoryCarrierBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    project: str = Field(min_length=1)
+    kind: str = Field(min_length=1, max_length=32)
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+    worktree: str | None = None
+    session_id: str | None = None
     packet_id: str | None = None
 
 
@@ -501,7 +542,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     # An own-agent session that received a third-party MCP result writes as unverified (#126).
                     from cairnmind.agent_memory import third_party_origin
                     mark = third_party_origin(store, pid, session_id)
-            with store.write_origin(mark):
+            # A write that names a session is never a person's act (#177), whatever the session's client.
+            with store.write_origin(mark), store.session_write(session_id):
                 return operation(scope)
 
     def read_scope(pid: str, requested: str | None, session_id: str | None = None) -> str | None:
@@ -589,6 +631,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, authorize_enable)
         return enable_background(pid)
 
+    def person_imports(body):
+        """A memory import writes records that count as confirmed and can move on what a person confirmed
+        here, so only a person runs it (#177): never a request that names a session. A dry run writes
+        nothing and stays open to a session."""
+        if body.session_id and not body.dry_run:
+            from cairnmind.confirmation import IMPORT_IN_SESSION
+            raise ValueError(IMPORT_IN_SESSION)
+
     def memory_write_authorization(pid: str, requested: str | None,
                                    session_id: str | None, packet_id: str | None):
         """Keep file-lock -> DB-lock ordering, rechecking the actor in core's transaction."""
@@ -636,9 +686,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pid = inspected["project"]["id"]
         def restore(scope, authorize=None):
             selected_memory_scope(pid, body.root, scope)
+            person_imports(body)  # After the scope checks: a session learns of another project's memory as before.
             return memory.import_snapshot(
                 body.path, body.root, body.name, body.dry_run,
-                expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize)
+                expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize,
+                replace_confirmed=body.replace_confirmed)
         if body.dry_run:
             scope = await asyncio.to_thread(read_scope, pid, body.root, body.session_id)
             return await asyncio.to_thread(restore, scope)
@@ -650,11 +702,81 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         forget_index_signature(store, pid)
         return result
 
+    @app.post("/memory/publish", dependencies=auth)
+    async def memory_publish(body: MemoryPublishBody):
+        # Team memory (#170): one file per confirmed record, written into the worktree; never committed.
+        from cairnmind.memory_published import Publisher
+        pid = project(body.project)["id"]
+        if body.preview:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+            return await asyncio.to_thread(Publisher(store).publish, pid, scope, preview=True,
+                                           new_package=body.new_package)
+        scope, authorize = await asyncio.to_thread(
+            memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
+        return await asyncio.to_thread(Publisher(store).publish, pid, scope, authorize=authorize,
+                                       new_package=body.new_package)
+
+    @app.post("/memory/carrier", dependencies=auth)
+    async def memory_carrier(body: MemoryCarrierBody):
+        # Where published memory goes (#173): a person's choice, never a coding session's; nothing is moved.
+        from cairnmind.memory_published_carrier import configure
+        pid = project(body.project)["id"]
+        if body.session_id:
+            raise ValueError("Where published memory goes is chosen only by a person, not inside a coding session")
+        worktree = str(Path(body.worktree).expanduser().resolve()) if body.worktree else None
+        return await asyncio.to_thread(configure, store, pid, body.kind, body.path, worktree)
+
+    @app.post("/memory/import-published", dependencies=auth)
+    async def memory_import_published(body: MemoryImportPublishedBody):
+        from cairnmind.memory_published_import import PublishedImporter
+        pid = project(body.project)["id"]
+        authorize = None
+        if (body.take_published or body.replace_confirmed) and body.session_id:
+            # Putting the published side over a record that diverged here, or over one confirmed or disputed
+            # here, replaces a person's own verdict (#177): that choice is a person's, never a coding
+            # session's, and a session cannot preview it as if it were one.
+            raise ValueError("Taking the published side of a record that diverged here, or that was confirmed or "
+                             "disputed here, is chosen only by a person, not inside a coding session")
+        person_imports(body)
+        if body.dry_run:
+            await asyncio.to_thread(read_scope, pid, None, body.session_id)
+        else:
+            _, authorize = await asyncio.to_thread(memory_write_authorization, pid, None, body.session_id,
+                                                   body.packet_id)
+        result = await asyncio.to_thread(PublishedImporter(store).import_published, body.path, pid,
+                                         dry_run=body.dry_run, bind=body.bind, take_published=body.take_published,
+                                         authorize=authorize, replace_confirmed=body.replace_confirmed)
+        if not body.dry_run:
+            cache.clear()
+        return result
+
+    @app.post("/memory/import-commit", dependencies=auth)
+    async def memory_import_commit(body: MemoryImportCommitBody):
+        # The main-branch import (#172): a commit's published memory, re-checked against that commit's code.
+        from cairnmind.memory_published_main import import_commit
+        pid = project(body.project)["id"]
+        authorize = None
+        person_imports(body)
+        if body.dry_run:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+        else:
+            scope, authorize = await asyncio.to_thread(memory_write_authorization, pid, body.worktree,
+                                                       body.session_id, body.packet_id)
+        result = await asyncio.to_thread(import_commit, store, pid, body.revision, worktree=scope,
+                                         dry_run=body.dry_run, bind=body.bind, authorize=authorize,
+                                         replace_confirmed=body.replace_confirmed)
+        if not body.dry_run:
+            cache.clear()
+        return result
+
     @app.get("/memory/status", dependencies=auth)
     async def memory_status(project: str, worktree: str | None = None, session_id: str | None = None):
         pid = store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, worktree, session_id)
-        return await asyncio.to_thread(memory.status, pid, scope)
+        result = await asyncio.to_thread(memory.status, pid, scope)
+        from cairnmind.memory_published import publication_status
+        result["published"] = await asyncio.to_thread(publication_status, store, pid, scope)
+        return result
 
     @app.patch("/memory/settings", dependencies=auth)
     async def memory_settings(body: MemorySettingsBody):

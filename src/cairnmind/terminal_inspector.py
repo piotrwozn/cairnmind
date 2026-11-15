@@ -15,7 +15,8 @@ from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
 from .terminal_safe import plain, safe_text
-from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, summary_text
+from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
+                          summary_text)
 
 _VIEWS = [("Records", "records"), ("Sources", "sources"), ("Plans", "plans"),
           ("Tasks", "tasks"), ("Checks", "checks"), ("Queue", "jobs"),
@@ -282,7 +283,7 @@ class InspectorApp(ImpactView, BasePanel):
                     continue
                 metadata = row.get("metadata") or {}
                 state = row.get("state", metadata.get("state", row.get("status", row.get("outcome", ""))))
-                table.add_row(self.state_cell(row.get("kind", self.view), state), plain(str(content).replace("\n", " "), limit=300),
+                table.add_row(self.state_cell(row.get("kind", self.view), state, row.get("confirmed_by")), plain(str(content).replace("\n", " "), limit=300),
                               plain(row.get("version", row.get("attempts", ""))), key=str(row["id"]))
             self.fit_columns()
         table.display = True
@@ -631,13 +632,14 @@ class InspectorApp(ImpactView, BasePanel):
                     submit=self.t("Check import"), on_submit=check_import))
                 if value and scope == self._scope_version:
                     payload, result = checked["payload"], checked["result"]
-                    self.pending_import = payload
+                    self.pending_import = {**payload, "replace_confirmed": replaces_here(result)}
                     self.query_one("#memory-apply", Button).disabled = False
                     self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + summary_text(result, self.language))
             elif action == "apply":
                 if not self.pending_import:
                     raise ValueError(self.t("Check the import with its source and destination folders first."))
                 payload = dict(self.pending_import)
+                # The check listed what the import replaces of this machine's own verdicts; Apply is the choice.
                 result = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": False})
                 self.pending_import = None
                 self.query_one("#memory-apply", Button).disabled = True

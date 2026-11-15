@@ -4,7 +4,7 @@ Cairnmind separates three things that are easy to conflate: how sure we are abou
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `status` | `proposed`, `confirmed`, `disputed`, `superseded` | Confidence in a finding |
+| `status` | `proposed`, `confirmed`, `disputed`, `superseded` | Confidence in a finding. Only a person stores `confirmed` (see below) |
 | `metadata.state` | `todo`, `in_progress`, `needs_test`, `needs_review`, `done`, `blocked` | Task progress |
 | Verification read-out | `fresh`, `stale`, `reported`, `unknown` | Whether test evidence matches the current code |
 
@@ -124,3 +124,5 @@ Sources must belong to the same project. A conflict requires a fresh read, never
 cairnmind checkpoint shop ./resume-point.json
 cairnmind remember shop "We use server-side sessions" --kind decision --confirmed
 ```
+
+Only a person can store a record as confirmed. `--confirmed` works when you type the command in your own terminal: outside a coding session, with a terminal on input and output. Inside a coding session, from an agent's command, in a script or in CI it is refused and says what to do instead: store the record without `--confirmed` and confirm it in the inspector. `cairnmind tasks add` adds a confirmed task in your own terminal and a proposed one anywhere else, and prints which. MCP `remember`, `checkpoint` and `save_plan` always store proposed records; a request with `status: "confirmed"` is refused with HTTP 400. When a session changes the text of a confirmed record or of a confirmed plan step, or adds a field beside it, that record is stored as proposed again and says that its confirmation lapsed. A memory import is run by a person, outside a coding session. The rule, the routes a person has and what the rule does not protect against are in [MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md#only-a-person-confirms-a-record).

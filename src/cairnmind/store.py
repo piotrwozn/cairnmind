@@ -205,9 +205,13 @@ EXTRACTOR_MODEL_CHARS = 400
 _PROMPT_SHA = re.compile(r"[0-9a-f]{16}")
 
 # Record metadata derived by the store; values supplied by a client are never kept.
+# "publication" is set only by the importer of published memory (#170): a client can neither forge it
+# nor clear it, and it stays on later local versions the way an origin mark does.
+# "confirmation" says how the record came to be confirmed (#177, confirmation.py): the store sets it from a
+# person's act it checked itself, an importer sets it for what a package brings, and no client can.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
                            "supersede_warning", "supersede_replaced_evidence_latest", EXTRACTION_MARK,
-                           EXTRACTOR_STAMP, *ORIGIN_METADATA)
+                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation")
 
 
 def validate_extractor_stamp(value) -> dict:
@@ -391,6 +395,71 @@ class Store:
 
     def current_origin(self):
         return getattr(self._local, "write_origin", None)
+
+    @contextmanager
+    def session_write(self, session_id):
+        """Mark what this thread writes inside the block as a session's: never a person's act (#177)."""
+        previous = getattr(self._local, "session_write", None)
+        self._local.session_write = session_id or previous
+        try:
+            yield
+        finally:
+            self._local.session_write = previous
+
+    @contextmanager
+    def person_act(self, route, source_id):
+        """Open a person's act for the record writes of this thread inside the block (#177).
+
+        Only the code of a person's route opens it, where it knows a person is acting, and it names the
+        audit or note source that route has just written. Nothing in a request can open it. The write
+        itself checks the source again (_confirmation), so a wrong caller is refused, not trusted.
+        """
+        from .confirmation import PERSON_ROUTES, SEED_ROUTE
+        if route not in PERSON_ROUTES and route != SEED_ROUTE:
+            raise ValueError("Unknown route of a person's act")
+        previous = getattr(self._local, "person_act", None)
+        self._local.person_act = {"route": route, "source_id": source_id}
+        try:
+            yield
+        finally:
+            self._local.person_act = previous
+
+    def _confirmation(self, tx, project_id, old, asked, status, statement, sources, version):
+        """The one rule for the status confirmed (#177): (status, mark) as this write stores them.
+
+        A write stores `confirmed` only (a) as a person's act the store checks here, or (b) by keeping a
+        confirmation whose statement it does not change (progress on a task, a note of a conflict decision).
+        Anything else that asks for `confirmed` is refused. A write that does not ask for a status and
+        changes what was confirmed is stored as proposed, with a mark that says the confirmation lapsed.
+        The same mark is left when such a write sets another status on a confirmed record: taking a
+        confirmation away is shown like changing what was confirmed, unless a person did it.
+        """
+        from .confirmation import (MARK, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused, lowered,
+                                   person_mark, said)
+        act = getattr(self._local, "person_act", None)
+        if status != "confirmed":
+            # A person's act (a dispute, a conflict decision) leaves no such mark and clears an earlier one.
+            was = ((old or {}).get("metadata") or {}).get(MARK)
+            return status, None if act else lowered(old, status, version) or (
+                was if isinstance(was, dict) and was.get("by") == "lapsed" else None)
+        if asked == "confirmed" and act:
+            if self.current_origin() or getattr(self._local, "session_write", None):
+                raise ConfirmationRefused()
+            prefix, origin = SEED_SOURCE if act["route"] == SEED_ROUTE else PERSON_ROUTES[act["route"]]
+            source = one_row(tx, "SELECT id,project_id,uri,metadata,content FROM sources WHERE id=:id",
+                             {"id": act["source_id"]}, False) if act["source_id"] in sources else None
+            if (not source or source.get("project_id") != project_id
+                    or not str(source.get("uri", "")).startswith(prefix)
+                    or (source.get("metadata") or {}).get("origin") != origin):
+                raise ConfirmationRefused()
+            return status, person_mark(act["route"], source, version, utc_now())
+        if old and old["status"] == "confirmed" and statement == said(
+                old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata")):
+            kept = (old.get("metadata") or {}).get(MARK)
+            return status, kept if isinstance(kept, dict) and kept.get("by") != "lapsed" else None
+        if asked == "confirmed" or not old or old["status"] != "confirmed":
+            raise ConfirmationRefused()
+        return "proposed", lowered(old, "proposed", version)
 
     def init(self):
         from .arcade import ArcadeError
@@ -999,6 +1068,11 @@ class Store:
                 raise ValueError("Managed task membership must be changed through PlanManager")
             if not old and "expected_version" in record and record["expected_version"] != previous["version"]:
                 raise ValueError("Record version conflict; replaced record has changed")
+            from .confirmation import MARK as mark_name, lowered
+            if not getattr(self._local, "person_act", None) and previous["status"] == "confirmed":
+                # A replacement that is not a person's act takes a confirmed record out of use: it says so.
+                previous["metadata"] = {**(previous.get("metadata") or {}),
+                                        mark_name: lowered(previous, "superseded", previous["version"] + 1)}
             previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=utc_now())
             update_document(tx, "records", previous, "id=:id", {"id": supersedes})
             self._revision(tx, previous)
@@ -1020,6 +1094,14 @@ class Store:
             if replaced_latest and latest and latest < replaced_latest:
                 metadata["supersede_warning"] = "anachronistic_supersede"
                 metadata["supersede_replaced_evidence_latest"] = replaced_time["latest"]
+        # The rule for `confirmed`, on the final statement of this write and for every route (#177).
+        from .confirmation import MARK, said
+        status, confirmation = self._confirmation(
+            tx, project_id, old, record.get("status"), status, said(kind, content, key, supersedes, metadata),
+            sources, old["version"] + 1 if old else 1)
+        metadata.pop(MARK, None)
+        if confirmation:
+            metadata[MARK] = confirmation
         active_key = json_text([project_id, kind, key]) if status != "superseded" else None
         collision = one_row(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
         if collision and collision["id"] != record_id:

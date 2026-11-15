@@ -220,7 +220,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         pass
     elif (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
-            "/memory/snapshot", "/memory/import"})
+            "/memory/snapshot", "/memory/import", "/memory/publish", "/memory/import-published",
+            "/memory/import-commit", "/memory/carrier"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
         if session_id:
@@ -781,15 +782,24 @@ def source(ctx: typer.Context, source_id: str):
 def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
              source_id: Annotated[list[str] | None, typer.Option("--source")] = None,
              confirmed: bool = False, key: str | None = None):
+    """Store a finding as proposed. --confirmed stores it as confirmed, for a person in their own terminal."""
+    from cairnmind import confirmation
+    if confirmed and not confirmation.person_at_terminal():
+        # Only a person confirms (#177). A coding session's shell and an agent's command are not one:
+        # refused before anything is written, with what to do instead.
+        refuse(confirmation.CLI_REFUSED)
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     with actor_write(store, ctx.obj, pid):
-        sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
-                                              {"role": "user", "origin": "cli"})["id"]]
         record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
         if key is not None:
             record["key"] = key
-        result = store.remember(pid, record, sources)
+        sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
+                                              {"role": "user", "origin": "cli"})["id"]]
+        if confirmed:
+            result = confirmation.remember_as_person(store, pid, record, sources)
+        else:
+            result = store.remember(pid, record, sources)
     output(result)
 
 
@@ -826,10 +836,21 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
                 "acceptance_criteria": criterion or [], "depends_on": depends_on or [],
                 "requires_test": requires_test, "requires_review": requires_review}
     text = json.dumps({"title": title, **metadata}, ensure_ascii=False)
+    from cairnmind import confirmation
+    # A task a person adds in their own terminal is confirmed, as before. Inside a coding session, from an
+    # agent's command or a script there is no person (#177): the task is stored as proposed, and says so.
+    person = confirmation.person_at_terminal()
     with actor_write(store, ctx.obj, pid):
         src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual", {"role": "user"})
-        result = store.remember(pid, {"kind": "task", "content": title, "status": "confirmed",
-                                     "metadata": metadata}, [src["id"]])
+        record = {"kind": "task", "content": title, "status": "confirmed" if person else "proposed",
+                  "metadata": metadata}
+        if person:
+            result = confirmation.remember_as_person(store, pid, record, [src["id"]])
+        else:
+            result = store.remember(pid, record, [src["id"]])
+    if not person:
+        typer.echo("Stored as proposed: only a person in their own terminal adds a confirmed task. "
+                   "The person confirms it in the inspector.", err=True)
     output(result)
 
 
@@ -1344,7 +1365,10 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
-                  dry_run: bool = False):
+                  dry_run: bool = False,
+                  replace_confirmed: Annotated[bool, typer.Option(
+                      "--replace-confirmed", help="Let the package replace records that were confirmed or disputed "
+                      "on this machine; the dry run lists them.")] = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())
@@ -1352,6 +1376,8 @@ def memory_import(ctx: typer.Context, path: Path,
     if not dry_run:
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     payload = {"path": selected, "root": str(root.expanduser().resolve()), "dry_run": dry_run}
+    if replace_confirmed:
+        payload["replace_confirmed"] = True
     if name is not None:
         payload["name"] = name
     output(request(ctx.obj, "POST", "/memory/import", start_service=not dry_run, json=payload))
@@ -1377,6 +1403,12 @@ def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None
     if worktree is not None:
         params["worktree"] = str(worktree.expanduser().resolve())
     output(request(ctx.obj, "GET", "/memory/status", start_service=False, params=params))
+
+
+# Published team memory (#170): publish, check-published, import-published, show-published, confirm-plan.
+from cairnmind.cli_published import register as _register_published  # noqa: E402
+
+_register_published(memory_app, initialized)
 
 
 @app.command()

@@ -32,7 +32,7 @@ from pathlib import Path, PurePosixPath
 from cairnmind.brief import _git_out, _line, _scoped_records, _title
 from cairnmind.evidence import THIRD_PARTY_WRITTEN, _FILE_KINDS, _QUOTE, _metadata, evidence_states
 from cairnmind.impact_docs import documentation_lines, documentation_mentions, written_as_code
-from cairnmind.memory_paths import GIT_PATHSPEC
+from cairnmind.memory_paths import git_pathspec
 from cairnmind.parsing import analyze_code
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -42,11 +42,13 @@ _SYMBOL = {"modified": "its definition changed", "removed": "it is no longer def
            None: "its definition could not be compared"}
 
 
-def _changes(root, commit):
+def _changes(root, commit, nested=()):
     """``{path relative to root: {"change", ...}}``: tracked differences with renames detected, and untracked files."""
-    # A published memory snapshot is Cairnmind's own state, not a change to the code (#158).
-    raw = _git_out(root, "diff", "--name-status", "-M", "-z", "--relative", commit, *GIT_PATHSPEC)
-    untracked = _git_out(root, "ls-files", "--others", "--exclude-standard", "-z", *GIT_PATHSPEC)
+    # A published memory snapshot is Cairnmind's own state, not a change to the code (#158), and so is
+    # the memory of a project registered below this root (``nested``, #174).
+    pathspec = git_pathspec(nested)
+    raw = _git_out(root, "diff", "--name-status", "-M", "-z", "--relative", commit, *pathspec)
+    untracked = _git_out(root, "ls-files", "--others", "--exclude-standard", "-z", *pathspec)
     if raw is None or untracked is None:
         raise ValueError("Cannot compare the worktree with that commit")
     parts = [part for part in raw.split("\0") if part]
@@ -224,7 +226,7 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
     (see ``cairnmind.impact_verdicts``). ``pending`` leaves out the rows that have a verdict.
     """
     from cairnmind.impact_verdicts import annotate, verdict_line
-    from cairnmind.memory_paths import bound_metadata, memory_bindings
+    from cairnmind.memory_paths import bound_metadata, memory_bindings, nested_reserved
     from cairnmind.verification import _root
     project = store.resolve_project(project_id)
     root = _root(store, project["id"], worktree)
@@ -236,7 +238,7 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
     # Anything but one object name (a negated revision, a range) would make the reads below mean something else.
     if not commit or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is None:
         raise ValueError(f"Git does not know the commit {_line(since, 80)!r} in {_line(root)}")
-    changed = _changes(root, commit)
+    changed = _changes(root, commit, nested_reserved(store, root))
     symbols = _symbol_changes(root, commit, changed)
     roots = {Path(row["path"]).resolve() for row in store.query(
         "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})} | {root}

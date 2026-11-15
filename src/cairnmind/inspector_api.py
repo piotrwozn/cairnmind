@@ -26,6 +26,20 @@ class ReviewBody(BaseModel):
     reason: str | None = Field(default=None, max_length=4000)
 
 
+class ConfirmPlanBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    expected_plan_version: int = Field(strict=True, ge=1)
+    reason: str | None = Field(default=None, max_length=4000)
+
+
+class ReleaseBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    reason: str = Field(min_length=1, max_length=2000)
+    worktree: str | None = Field(default=None, max_length=4096)
+
+
 class ConflictBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project: str
@@ -212,6 +226,19 @@ def create_inspector_router(store, settings):
     async def review(record_id: str, body: ReviewBody):
         return await call(inspector.review, body.project, record_id, body.action, body.expected_version,
                           expected_plan_version=body.expected_plan_version, reason=body.reason)
+
+    @router.post("/inspector/plans/{plan_id}/confirm")
+    async def confirm_plan(plan_id: str, body: ConfirmPlanBody):
+        # A person confirms a plan and its steps at once (#170); the audit lets them travel as published memory.
+        from .memory_acts import confirm
+        return await call(confirm, inspector, body.project, plan_id, body.expected_plan_version, reason=body.reason)
+
+    @router.post("/inspector/records/{record_id}/release")
+    async def release_record(record_id: str, body: ReleaseBody):
+        # A person lets one record's false alarms of the secrets gate through (#171), with a published reason.
+        from .memory_published_release import release
+        project_id = (await call(inspector._project, body.project))["id"]
+        return await call(release, store, project_id, record_id, body.reason, body.worktree)
 
     @router.get("/events")
     async def events(request: Request, after: str | None = None, project: str | None = None, once: bool = False,

@@ -12,6 +12,7 @@ from typing import Any
 
 from .arcade import ArcadeError
 from .config import Settings
+from .confirmation import confirmation_text, confirmed_by as _confirmed_by
 from .context_selection import context_place, select_entries
 from .memory_paths import bound_metadata, memory_bindings
 from .memory_models import from_settings
@@ -201,6 +202,13 @@ def public_record(record: dict, *, content_limit: int = 500, metadata_budget: in
         item["source_ids_truncated"] = True
     item["metadata"] = public_metadata(record.get("metadata"), RECORD_METADATA_KEYS, metadata_budget)
     metadata = json_value(record.get("metadata"), {})
+    if _confirmed_by({**record, "metadata": metadata}):
+        # Only on a confirmed record: person (here), import (confirmed elsewhere, never verified here),
+        # before_rule (nobody recorded), seed, or lapsed on a record that lost its confirmation (#177).
+        item["confirmed_by"] = _confirmed_by({**record, "metadata": metadata})
+        text = confirmation_text({**record, "metadata": metadata})
+        if item["confirmed_by"] == "import" and text:
+            item["confirmation"] = text
     if isinstance(metadata, dict) and (metadata.get("test_passed") or metadata.get("test_source_ids")):
         item["test_evidence_kind"] = "reported"
     return item
@@ -504,6 +512,11 @@ class Retriever:
         result = sorted(fused.values(), key=lambda hit: hit["score"], reverse=True)[:limit]
         for hit in result:
             hit.pop("_path", None)
+            if hit.get("record_id") and _confirmed_by(hit):
+                hit["confirmed_by"] = _confirmed_by(hit)  # Who confirmed it: a person here, or an import (#177).
+                if hit["confirmed_by"] != "person":
+                    # In words as well, for a model that answers from the hit: not this machine's confirmation.
+                    hit["confirmation"] = confirmation_text(hit)
             hit["metadata"] = (public_metadata(hit.get("metadata"), RECORD_METADATA_KEYS)
                                if hit.get("record_id") else public_source_metadata(hit.get("metadata")))
         return result

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .confirmation import confirmed_by
 from .store import EXTRACTION_MARK, ORIGIN_METADATA
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
@@ -854,6 +855,9 @@ class SessionManager:
                                "status": row["status"], "content": row["content"][:600],
                                "content_truncated": len(row["content"]) > 600,
                                "source_ids": row.get("source_ids", [])[:8],
+                               # On a confirmed record only (#177): person (here), import (confirmed elsewhere,
+                               # never verified here), before_rule (nobody recorded) or seed.
+                               **({"confirmed_by": confirmed_by(row)} if confirmed_by(row) else {}),
                                **({"evidence_state": evidence[row["id"]]} if row["id"] in evidence else {})}
                               for row in previews],
                   "omitted_records": max(0, len(state["records"]) - len(previews)),

@@ -10,6 +10,8 @@ from cairnmind.config import Settings
 from cairnmind.retrieval import Retriever
 from cairnmind.store import Store
 
+from conftest import as_person
+
 
 class NoModel:
     async def embed(self, texts):
@@ -34,8 +36,9 @@ def source(store, project):
 
 def confirmed_decisions(store, project, count, words=30):
     evidence = source(store, project)
-    return [store.remember(project["id"], {
-        "kind": "decision", "key": f"decision-{index}", "status": "confirmed",
+    # Confirmed the way a person does (#177): the store refuses that status from any other write.
+    return [as_person(store, project["id"], {
+        "kind": "decision", "key": f"decision-{index}",
         "content": f"Decision {index}: " + "settled detail " * words}, [evidence["id"]])
         for index in range(count)]
 

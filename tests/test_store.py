@@ -9,6 +9,8 @@ import time
 import pytest
 
 from cairnmind.store import Store
+
+from conftest import as_person
 from cairnmind.verification import run_check, verification_status
 
 
@@ -86,9 +88,11 @@ def test_native_fulltext_update_delete_and_transaction_rollback(store, project):
 
 def test_record_version_conflict_and_supersede_history(store, project):
     s = source(store, project)
-    first = store.remember(project["id"], {"kind": "decision", "key": "auth", "content": "Use tokens", "status": "confirmed"}, [s["id"]])
+    first = as_person(store, project["id"], {"kind": "decision", "key": "auth", "content": "Use tokens"}, [s["id"]])
+    assert first["status"] == "confirmed"
     changed = store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "Use signed tokens"}, [s["id"]])
-    assert changed["version"] == 2
+    # A write that is not a person's changed what the person confirmed: it is proposed again (#177).
+    assert changed["version"] == 2 and changed["status"] == "proposed"
     with pytest.raises(ValueError, match="version conflict"):
         store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "stale update"}, [s["id"]])
     replacement = store.remember(project["id"], {"kind": "decision", "key": "auth", "content": "Use sessions", "supersedes": first["id"], "expected_version": 2}, [s["id"]])

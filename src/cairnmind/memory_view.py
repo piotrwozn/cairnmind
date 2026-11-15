@@ -83,6 +83,35 @@ def _source_mark(row):
     return _THIRD_PARTY_SOURCE if str(metadata.get("origin_client", "")).startswith("mcp:") else _EXTERNAL_SOURCE
 
 
+def _published_line(metadata):
+    """The line of a record that came from published memory (#170): who its file says reviewed it, never verified."""
+    mark = metadata.get("publication") if isinstance(metadata, dict) else None
+    if not isinstance(mark, dict):
+        return None
+    entries = [entry for entry in mark.get("reviewed_by") or [] if isinstance(entry, dict)]
+    if not entries:
+        return "  published: imported from published memory; not verified here"
+    last = entries[-1]
+    return (f"  published: reviewed by {_line(last.get('name') or 'local user')} on "
+            f"{_line(last.get('branch') or 'an unknown branch')} at {_line(last.get('commit') or 'an unknown commit')} "
+            "(claimed by the file); not verified here")
+
+
+def _confirmed_line(row, sources):
+    """Who the package says confirmed a confirmed record (#177). A package carries no store's own mark:
+    the claim is read from the review or form note it carries, and it is a claim wherever it is imported."""
+    if row.get("status") != "confirmed" or _published_line(row.get("metadata")):
+        return None
+    from .confirmation import archive_claims
+    claims = archive_claims(row, sources)
+    if not claims:
+        return "  confirmed: who confirmed it is not recorded in the package; an import keeps it as confirmed elsewhere"
+    last = claims[-1]
+    return (f"  confirmed: by {_line(last.get('name') or 'an unnamed person')} on "
+            f"{_line(last.get('branch') or 'an unknown branch')} at {_line(last.get('commit') or 'an unknown commit')} "
+            "(claimed by the package); an import keeps it as confirmed elsewhere, not verified")
+
+
 def _origin_line(own, sources):
     """The line saying a record or plan is never verified, as the inspector and `ask` say it; None otherwise."""
     if _degraded(own):
@@ -286,6 +315,10 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
                 *_indented(row["content"], "  | ")]
         if origin(metadata, row["source_ids"]):
             out.append(origin(metadata, row["source_ids"]))
+        if _published_line(metadata):
+            out.append(_published_line(metadata))
+        if _confirmed_line(row, sources):
+            out.append(_confirmed_line(row, sources))
         if _replaced(row):
             out.append("  replaces: " + ", ".join(named(i) for i in _replaced(row)))
         later = replaced_by(row)

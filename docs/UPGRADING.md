@@ -4,6 +4,7 @@ New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing
 
 - [From DevBrain 0.8.0 to Cairnmind 0.9.0](#from-devbrain-080-to-cairnmind-090)
 - [From 0.9.0 to 0.10.0](#from-090-to-0100)
+- [From 0.10.0 to 0.11.0](#from-0100-to-0110)
 - [From 0.7.2 to 0.8.0](#from-072-to-080)
 
 A direct upgrade from 0.7.2 to 0.9.0 was not tested. Upgrade a 0.7.2 installation to 0.8.0 first.
@@ -103,6 +104,19 @@ Then run `cairnmind install <project>` for each project. The installer stops the
 4. In each project, put back the copies named `<file>.cairnmind-backup-<number>` that `cairnmind install` left next to the files it changed; 0.9.0 does not recognise the entries written under the new names.
 
 With a collaborator still on 0.9.0 in the same repository: they do not see snapshots in `.memory/cairnmind/` or profiles in `.cairnmind/`, their `install` adds a second server and a second instruction block under the earlier names, and their version counts `.memory/cairnmind/` as project files.
+
+## From 0.10.0 to 0.11.0
+
+From 0.11.0 only a person can store a record as confirmed. The rule and its limits are in [MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md#only-a-person-confirms-a-record). The store's schema does not change and nothing is rewritten when you upgrade.
+
+- **Records you already have.** Every record keeps its status. A record that was confirmed before the upgrade is shown as "confirmed before only a person could confirm; who confirmed it was not recorded", because up to 0.10.0 a coding session, an MCP client and the built-in agent could store that status too, and the store did not record who did. Such records stay in resume packets and in search as before. To make one yours, open it in the inspector and confirm it; this is allowed once for each such record.
+- **Coding sessions, MCP clients and the built-in agent.** A `remember`, a session's finding or any other write that asks for `status: "confirmed"` is refused with HTTP 400 and the message `Only a person can store a record as confirmed, ...`. Leave the status out: the record is stored as proposed and you confirm it in the inspector. A script that sent `confirmed` has to be changed the same way. When a session changes the text of a confirmed record, or saves a plan with a changed step, that record or step is stored as proposed again and you confirm the new wording.
+- **Command line.** `cairnmind remember --confirmed` and `cairnmind memory confirm-plan` work only in your own terminal: outside a coding session and with a terminal on input and output. In a script, in CI, inside a coding session or from an agent's command they are refused and say what to do instead. `cairnmind tasks add` still adds a confirmed task in your own terminal; anywhere else it adds a proposed task and prints that it did.
+- **Imports.** `memory import`, `memory import-published` and `memory import-commit` keep a record's confirmed status and mark it as confirmed elsewhere, with who the package says confirmed it and where it came from. The dry run of each says how many such records a package brings (`confirmed_records`). An imported confirmation is never shown as yours and is not verification. An import is refused inside a coding session (the dry run is not), so a script that imports memory from a session's shell has to run outside it. An import that would replace a record you confirmed or disputed on this computer with another text or status is refused and lists those records; run it again with `--replace-confirmed` to accept them. Records confirmed before the upgrade count as confirmed by you here, so the first import after the upgrade that changes such records needs the option once.
+- **A confirmation that was taken away.** When a session or an agent changes a confirmed record, adds a field beside it, sets another status on it or replaces it, the record says "was confirmed at version N; a later write that was not a person's confirmation changed it" until you confirm or dispute it. The inspector's list shows "confirmation lapsed" on such rows, and "confirmed elsewhere" or "confirmed before the rule" on records you did not confirm here.
+- **Resume packets and tool results.** A confirmed record in a resume packet, in `context` and in search hits has a new field `confirmed_by` (`person`, `import`, `before_rule` or `seed`). A client that reads packets strictly has to accept it.
+
+Going back to 0.10.0 needs no step for this change: 0.10.0 ignores the `confirmation` field of a record.
 
 ## From 0.7.2 to 0.8.0
 

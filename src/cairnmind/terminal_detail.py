@@ -98,6 +98,13 @@ def record_parts(value, translate):
 
     if isinstance(value.get("record"), dict):
         # Any record detail, including a task opened from the task list.
+        from .confirmation import confirmation_text
+        confirmation = confirmation_text(item, translate)
+        if confirmation:
+            # Who confirmed it (#177): a person here, a package that brought it (never verified here), or
+            # nobody on record. The sentence and the words that stand for a missing value are ours and
+            # translated; the names in it are escaped text from memory.
+            lines.append(labelled(translate("Confirmation"), confirmation))
         earliest = _evidence_date(metadata.get("evidence_earliest"))
         latest = _evidence_date(metadata.get("evidence_latest"))
         basis = metadata.get("evidence_basis")
@@ -141,6 +148,12 @@ def _finding_parts(letter, role, item, translate):
     latest, basis = str(item.get("evidence_latest") or "")[:10], item.get("evidence_basis")
     if latest and basis in _EVIDENCE_TIME:
         lines.append(labelled(translate(_EVIDENCE_TIME[basis]), latest))
+    from .confirmation import confirmation_text
+    confirmation = confirmation_text({"status": item.get("status"), "metadata": {"confirmation": item.get("confirmation")}},
+                                     translate)
+    if confirmation:
+        # Who stands behind each side (#177), before the person chooses one: a person here, a package, nobody.
+        lines.append(labelled(translate("Confirmation"), confirmation))
     lines.append(labelled(translate("Scope"), str(item.get("scope") or translate("whole project"))))
     if item.get("sources"):
         more = item.get("sources_total", 0) - len(item["sources"])

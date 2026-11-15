@@ -13,7 +13,9 @@ from cairnmind.config import Settings
 from cairnmind.store import Store
 
 
-def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch):
+def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch, person_terminal):
+    # person_terminal: the commands below are a person's, in their own terminal (#177). CliRunner has none,
+    # and without one `remember --confirmed` is refused and `task add` stores a proposed task.
     from cairnmind import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     runner = CliRunner()
