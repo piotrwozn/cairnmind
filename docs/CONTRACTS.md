@@ -21,6 +21,9 @@ and its writes carry a server-set `origin_*` mark and are never verified (V03_CO
 revisions, task validation, durable job leases, native graph identity, export and
 checksummed source-complete `.cairnmind.json.gz` backups (`.devbrain.json.gz` up to 0.9.0; both are restored). Callers use named-parameter
 ArcadeSQL through `query`, `command` and `transaction`, never another storage engine.
+A database has one declared writer, an installation identified by `installation.json` in its data
+directory (#70): another installation that points at the same database reads it only, and only a
+person moves the role, with `cairnmind store takeover --yes` (see ARCADE_CONTRACTS.md).
 
 The local service owns the priority inference queue. End hooks write durable
 filesystem events without connecting to the database; scanning imports them later.

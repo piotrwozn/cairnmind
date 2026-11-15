@@ -122,8 +122,12 @@ def _event_key(table, row):
 class JournalTransaction:
     """A Store transaction proxy; SQL and the final outbox share one commit."""
 
-    def __init__(self, native):
+    def __init__(self, native, *, writer=None, check=None):
         self.native = native
+        # The writing installation (#70): carried into a recreated journal head, and ``check(head, native)``
+        # refuses the commit when the head read in flush names another writer (store_writer.check_head).
+        self.writer = writer
+        self.check = check
         self.changes = {}
         self.explicit = {}
         self.graph_resets = set()
@@ -226,13 +230,19 @@ class JournalTransaction:
         if not events and self.reset_reason is None:
             return
         state = self.native.query("SELECT FROM journal_state WHERE id='current'")
+        if self.check is not None:
+            # The head is updated below in this same commit: a takeover committed after this read makes
+            # the commit fail with a conflict, one committed before it is seen here.
+            self.check(state[0] if state else None, self.native)
         if self.reset_reason is not None or not state:
             epoch = str(uuid4())
             sequence = 0
             self.native.command("DELETE FROM journal_events")
             self.native.command("DELETE FROM journal_state")
-            self.native.command("INSERT INTO journal_state CONTENT :row", {"row": {
-                "id": "current", "epoch": epoch, "seq": 0, "first_seq": 1}})
+            head = {"id": "current", "epoch": epoch, "seq": 0, "first_seq": 1}
+            if self.writer is not None:
+                head["writer"] = self.writer
+            self.native.command("INSERT INTO journal_state CONTENT :row", {"row": head})
             events = {(None, "reset", None): "reset"}
         else:
             epoch, sequence = state[0]["epoch"], state[0]["seq"]

@@ -76,6 +76,39 @@ already decoded, source_ids list. Remember task gates/version history and leases
 native transactions with a per-datadir process lock for coordinated local writers.
 Task source/dependency validation and optimistic conflicts preserved.
 
+One declared writer per store (#70, `store_writer.py`). The file locks (database-writer.lock,
+service.lock, the ingestion and configuration locks) serialise writers on one machine only, so a
+database names the one installation that writes it; no database leases are kept.
+- Installation: `data_dir/installation.json` (0600) holds a random `installation_id` and `bound_to`,
+  a SHA-256 of the machine identity (/etc/machine-id, else the host name), the data directory's
+  absolute path and its inode. A copy of the directory (another machine, another path, a restore
+  onto a new filesystem) does not match: it gets a new id at once and keeps the old one as
+  `copied_from`. The host name is a label only.
+- Writer: row `devbrain_meta` `name='writer'` {installation_id, host, since, history (last 20:
+  installation_id, previous, host, at, how first|takeover, note)}; the same id in the journal head
+  `journal_state` `id='current'` field `writer`. The first installation that opens a database without
+  the row claims it (also a store of an earlier release), so a local store changes nothing for anyone.
+- Every other installation's `Store(path)` opens read-only (`not_writer` says why, `read_only` is
+  true): reads work, writes raise `StoreNotWriter` (a ValueError naming the writer and the command),
+  no schema statement or upgrade runs, `claim_job` refuses, and the service does not start.
+- Fence: JournalTransaction.flush already reads and updates the head in every committing change;
+  it refuses the commit when the head names another writer (`StoreWriterLost`; after that every write
+  of the store reads the writer row first and is refused while it names another installation, so a
+  takeover back on this installation lets the same store, and a running service, write again without
+  a restart). A transaction that read the head before a takeover fails on commit
+  with the engine's concurrent-change error. Writes outside the journal (Store.command DDL, restore)
+  read the writer row first. Restore and a journal reset keep the writer in the head.
+- `cairnmind store takeover --yes [--note]` (a person, never a coding session) rewrites both, appends
+  the change to the history and returns the jobs the previous writer was running to pending. It also
+  works when this release cannot read the store as a reader (schema of another release, no journal
+  head): the writer row moves first, then the store is opened as its writer; a reader's other commands
+  on such a store name the writer and the takeover command.
+  `cairnmind store writer`, `doctor` (`store_writer`) and `status` (`writer`) report the role:
+  writer, reader, lost, none or unknown.
+- Not fenced: a job claimed before a takeover runs on in the previous writer until it tries to store
+  its result (bounded by its lease and model timeout); files that process writes outside the
+  database; installations of a release before #70, which do not check the writer.
+
 Additional root-facing methods needed:
 - `cache_stamp(project_id)->str` changes on current sources, records version/status and deletions
 - `recent_job_errors(project_id=None,limit=10)->list`

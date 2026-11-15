@@ -239,8 +239,18 @@ CACHE_STAMP_IGNORED = frozenset({"job", "session", "import", "inbox", "memory", 
 
 
 class Store:
-    # True only for a store from open_readonly, which starts, creates and writes nothing.
+    # True for a store from open_readonly, which starts, creates and writes nothing, and for a store whose
+    # installation is not the writer of its database (#70, store_writer).
     read_only = False
+    # Why this installation only reads the store (another installation is its writer), or None.
+    not_writer = None
+    # Set when another installation took over writing after this store was opened: every write is refused.
+    _writer_lost = None
+    installation = None
+    _writable = None
+    # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
+    not_ready = None
+    _for_takeover = False
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
@@ -260,14 +270,17 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
-    def __init__(self, data_dir: Path, *, settings: Settings | None = None):
+    def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False):
         from .arcade import ArcadeClient
         from .engine import ensure_engine
+        self._for_takeover = bool(for_takeover)
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if settings is not None and settings.data_dir.expanduser().resolve() != self.data_dir:
             raise ValueError("Provided settings must belong to this data directory")
         self.settings = settings if settings is not None else Settings.load(self.data_dir, create=True)
+        from .store_writer import installation
+        self.installation = installation(self.data_dir)
         ensure_engine(self.settings)
         self.client = ArcadeClient(self.settings)
         self.client.ensure_database()
@@ -291,6 +304,9 @@ class Store:
     def command(self, sql, params=None):
         from .journal import mutation
         if self.read_only:
+            if self.not_writer:
+                from .store_writer import StoreNotWriter
+                raise StoreNotWriter(self.not_writer)
             from .store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
         tx = getattr(self._local, "transaction", None)
@@ -299,7 +315,10 @@ class Store:
         if mutation(sql):
             with self.transaction() as tx:
                 return tx.command(sql, params)
+        from .store_writer import require_writer
         with self._lock():
+            # Not journaled, so not fenced by the journal head: the writer is read before the statement.
+            require_writer(self)
             return self.client.command(sql, params)
 
     @contextmanager
@@ -319,8 +338,13 @@ class Store:
                     del self._local.transaction
             return
         from .journal import JournalTransaction
+        from .store_writer import StoreWriterLost, check_head, recheck
+        recheck(self)  # one read, only while the role is lost: a person may have taken it back
+        if self._writer_lost:
+            raise StoreWriterLost(self._writer_lost)
         with self._lock(), self.client.transaction() as native:
-            tx = JournalTransaction(native)
+            tx = JournalTransaction(native, writer=self.installation.id,
+                                    check=lambda head, reader: check_head(self, head, reader))
             self._local.transaction = tx
             self._local.after_commit = pending = []
             try:
@@ -351,64 +375,105 @@ class Store:
         return getattr(self._local, "write_origin", None)
 
     def init(self):
+        from .arcade import ArcadeError
+        from .store_writer import read_writer, settle
         with self._lock():
-            self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
-            meta = {row.get("name"): row.get("value") for row in self.client.query(
-                "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
-            version, indexed = meta.get("schema_version"), meta.get("lookup_indexes")
-            if version is not None:
-                if version not in {1, 2, 3, SCHEMA_VERSION}:
-                    raise ValueError("Database schema version is incompatible")
-                if version == SCHEMA_VERSION:
-                    if indexed != LOOKUP_INDEX_SET:
-                        self._lookup_indexes(indexed)
-                    return
-                # Snapshot only existing types. Hold the writer lock through
-                # backup, additive DDL, and the version-last commit.
-                with self.client.transaction() as tx:
-                    payload = self._export_snapshot(tx, None,
-                        LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
-                        version + 1)
-                destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
-                self._write_backup(destination, payload)
-            collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
-                           else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
-                           else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
-            exports = collections if version is not None else EXPORT_TYPES
-            for collection in collections:
-                self.client.command(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
-            if version is None:
-                self.client.command("CREATE VERTEX TYPE nodes IF NOT EXISTS")
-                self.client.command("CREATE EDGE TYPE edges IF NOT EXISTS")
-            for collection in exports:
-                self.client.command(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
-                if collection != "projects":
-                    self.client.command(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
-                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
-            if version is None:
-                for collection, field in (("projects", "name"), ("projects", "root"), ("project_roots", "path"),
-                                          ("sources", "current_key"), ("records", "active_key"), ("jobs", "job_key"),
-                                          ("import_cursors", "path")):
-                    self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
-                for collection in ("sources", "chunks", "nodes", "edges"):
-                    self.client.command(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
-                for collection, field in (("chunks", "text"), ("records", "content")):
-                    self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
-            self.client.command("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
-            self.client.command("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
-            self.client.command("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+            types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
+            writer = read_writer(self.client) if "devbrain_meta" in types else None
+            if writer and writer.get("installation_id") != self.installation.id:
+                # Another installation writes this database: no schema statement, no upgrade and no write here.
+                self._open_as_reader(writer)
+                return
+            self._prepare_schema()
+            try:
+                other = settle(self.client, self.installation)
+            except ArcadeError:
+                # Two installations claimed a store without a writer at the same moment: one commit failed.
+                other = settle(self.client, self.installation)
+            if other:
+                self._open_as_reader(other)
+
+    def _open_as_reader(self, writer):
+        """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
+        from .store_readonly import ReadOnlyClient, StoreNotReady, check_ready
+        from .store_writer import reader_reason
+        reason = reader_reason(self.installation, writer)
+        try:
+            check_ready(self.client, self.settings)
+        except StoreNotReady as exc:
+            if not self._for_takeover:
+                # `cairnmind init` does not help a reader: the writer, or a takeover, makes the store ready.
+                raise StoreNotReady(f"{exc} {reason}") from None
+            self.not_ready = str(exc)
+        self.not_writer = reason
+        self._writable = self.client
+        self.client = ReadOnlyClient(self.client, self.not_writer)
+        self.read_only = True
+
+    def writer_state(self):
+        """Which installation writes this store, and whether this one is the writer, a reader or lost it (#70)."""
+        from .store_writer import state
+        return state(self)
+
+    def _prepare_schema(self):
+        """Create or upgrade the schema; called by init, with the writer lock held, when no other installation writes."""
+        self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
+        meta = {row.get("name"): row.get("value") for row in self.client.query(
+            "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
+        version, indexed = meta.get("schema_version"), meta.get("lookup_indexes")
+        if version is not None:
+            if version not in {1, 2, 3, SCHEMA_VERSION}:
+                raise ValueError("Database schema version is incompatible")
+            if version == SCHEMA_VERSION:
+                if indexed != LOOKUP_INDEX_SET:
+                    self._lookup_indexes(indexed)
+                return
+            # Snapshot only existing types. Hold the writer lock through
+            # backup, additive DDL, and the version-last commit.
             with self.client.transaction() as tx:
-                if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
-                    insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
-                if version is None:
-                    insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
-                else:
-                    update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
-            if indexed != LOOKUP_INDEX_SET:
-                self._lookup_indexes(indexed)
+                payload = self._export_snapshot(tx, None,
+                    LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
+                    version + 1)
+            destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
+            self._write_backup(destination, payload)
+        collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
+                       else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
+                       else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
+        exports = collections if version is not None else EXPORT_TYPES
+        for collection in collections:
+            self.client.command(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
+        if version is None:
+            self.client.command("CREATE VERTEX TYPE nodes IF NOT EXISTS")
+            self.client.command("CREATE EDGE TYPE edges IF NOT EXISTS")
+        for collection in exports:
+            self.client.command(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
+            self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
+            if collection != "projects":
+                self.client.command(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
+        if version is None:
+            for collection, field in (("projects", "name"), ("projects", "root"), ("project_roots", "path"),
+                                      ("sources", "current_key"), ("records", "active_key"), ("jobs", "job_key"),
+                                      ("import_cursors", "path")):
+                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
+            for collection in ("sources", "chunks", "nodes", "edges"):
+                self.client.command(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
+            for collection, field in (("chunks", "text"), ("records", "content")):
+                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
+        self.client.command("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
+        self.client.command("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
+        self.client.command("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+        with self.client.transaction() as tx:
+            if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
+                insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
+            if version is None:
+                insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
+            else:
+                update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
+        if indexed != LOOKUP_INDEX_SET:
+            self._lookup_indexes(indexed)
 
     def _lookup_indexes(self, recorded):
         """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat.
@@ -1015,6 +1080,10 @@ class Store:
                 raise ValueError("Job project filter must contain explicit project IDs")
             if not project_ids:
                 return None  # An empty authorization set must never claim global work.
+        if self.not_writer:
+            # Only the writer's worker claims jobs (#70): a lease is measured by the claiming machine's clock.
+            from .store_writer import StoreNotWriter
+            raise StoreNotWriter(self.not_writer)
         with self.transaction() as tx:
             job = one_row(tx, "SELECT FROM jobs WHERE (state='pending' OR (state='running' AND lease_until<:now))" +
                        (" AND kind IN :kinds" if kinds is not None else "") +
@@ -1477,6 +1546,8 @@ class Store:
     def restore(self, backup):
         """Restore validated data atomically. Stop Cairnmind workers before calling."""
         payload = self._validated_backup(Path(backup).expanduser().resolve())
+        from .store_writer import require_writer
+        require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
         self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
         # DDL is deliberately outside the data transaction; no live data has been removed.
         for registry in payload["vector_indexes"]:
@@ -1504,6 +1575,9 @@ class Store:
                     row = dict(original)
                     if collection == "jobs" and row.get("state") == "running":
                         row.update(state="pending", worker=None, lease_until=None)
+                    if collection == "journal_state":
+                        # The backup's head may name the writer of the time it was made, or none.
+                        row["writer"] = self.installation.id
                     insert_document(tx, collection, row)
             for node in payload["nodes"]:
                 self.upsert_node(node, tx)
