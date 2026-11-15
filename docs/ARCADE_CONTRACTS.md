@@ -89,8 +89,8 @@ database names the one installation that writes it; no database leases are kept.
   onto a new filesystem) does not match: it gets a new id at once and keeps the old one as
   `copied_from`. The host name is a label only.
 - Writer: row `devbrain_meta` `name='writer'` {installation_id, host, since, history (last 20:
-  installation_id, previous, host, at, how first|takeover, note)}; the same id in the journal head
-  `journal_state` `id='current'` field `writer`. The first installation that opens a database without
+  installation_id, previous, host, at, how first|takeover|repair, note)}; the same id in the journal head
+  `journal_state` `id='current'` field `writer` (with `writer_change`, see below). The first installation that opens a database without
   the row claims it (also a store of an earlier release), so a local store changes nothing for anyone.
 - Every other installation's `Store(path)` opens read-only (`not_writer` says why, `read_only` is
   true): reads work, writes raise `StoreNotWriter` (a ValueError naming the writer and the command),
@@ -109,6 +109,21 @@ database names the one installation that writes it; no database leases are kept.
   on such a store name the writer and the takeover command.
   `cairnmind store writer`, `doctor` (`store_writer`) and `status` (`writer`) report the role:
   writer, reader, lost, none or unknown.
+- Two claims or takeovers at once: each is one transaction that reads the head, then the writer row,
+  writes the row and names itself in the head. ArcadeDB 26.11.1 finds a conflict per record, at
+  commit, and only for a record the transaction really changed: an UPDATE that sets the values the
+  record already has in the transaction's view is dropped (it reports count 1, writes nothing and
+  never conflicts), and a WHERE clause is evaluated on that view, so a compare-and-set does not
+  help. Every stamp of the head therefore also writes `writer_change`, a new random value, so the
+  head always changes: of two overlapping transactions the second commit fails whole (the command
+  says so and is run again), or it started after the first and commits on top with both records its
+  own. Row and head never name different installations.
+- A store left with row and head apart by a build before that rule: `store writer`, `doctor` and
+  the role in `status` add `head_writer` and `problem`. The head is the fence, so at most one installation
+  commits: the one the head names, from a process already running; the one the row names opens the
+  store as its writer but its writes are refused with the same text. Opening a store never repairs
+  it; `store takeover --yes` on either installation does (on the one the row names: history entry
+  `how: repair`, result `repaired`).
 - Not fenced: a job claimed before a takeover runs on in the previous writer until it tries to store
   its result (bounded by its lease and model timeout); files that process writes outside the
   database; installations of a release before #70, which do not check the writer.
