@@ -37,7 +37,7 @@ jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's job
 memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
 cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
 workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
-store_app = typer.Typer(help="How large the store is. Reads only; starts nothing.")
+store_app = typer.Typer(help="How large the store is (reads only), and removing rows that nothing reads.")
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
 app.add_typer(projects_app, name="project")
@@ -649,6 +649,21 @@ def store_size(ctx: typer.Context, project: Annotated[str | None, typer.Argument
         output(report)
     else:
         typer.echo(report["text"])
+
+
+@store_app.command("drop-replaced-chunks")
+@initialized
+def store_drop_replaced_chunks(
+        ctx: typer.Context,
+        batch: Annotated[int, typer.Option(min=1, max=1000, help="Chunks deleted per transaction.")] = 200,
+        max_batches: Annotated[int | None, typer.Option(
+            min=1, help="Stop after this many transactions; run again to go on.")] = None):
+    """Delete the chunks that earlier releases kept for replaced sources; prints how many rows went.
+
+    Nothing searches them. Every source stays with its full text and hash, so evidence citing an old version
+    is still readable and checkable. Short transactions, safe to stop and run again (#186)."""
+    from cairnmind.replaced_chunks import drop_replaced_chunks
+    output(drop_replaced_chunks(store_for(ctx.obj), batch=batch, max_batches=max_batches))
 
 
 @jobs_app.command("list")
