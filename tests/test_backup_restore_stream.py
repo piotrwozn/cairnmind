@@ -247,11 +247,16 @@ def test_restore_that_fails_midway_changes_nothing(store, tmp_path, monkeypatch)
     before = comparable(store.export())
     edges = []
 
-    def failing(self, edge, tx=None):
-        edges.append(edge)
-        raise OSError("the engine went away")
+    write_graph = Store.write_graph
 
-    monkeypatch.setattr(Store, "upsert_edge", failing)
+    def failing(self, tx, project_id, nodes, edges_of_group):
+        # Edges are written after every document and vertex (in groups since #219).
+        if edges_of_group:
+            edges.extend(edges_of_group)
+            raise OSError("the engine went away")
+        return write_graph(self, tx, project_id, nodes, edges_of_group)
+
+    monkeypatch.setattr(Store, "write_graph", failing)
     with pytest.raises(OSError, match="went away"):
         store.restore(path)
     assert edges and comparable(store.export()) == before

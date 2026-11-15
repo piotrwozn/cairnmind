@@ -81,6 +81,16 @@ def insert_document(tx, collection, data):
     tx.command(f"INSERT INTO {quote_name(collection)} CONTENT {json_text(data)}")
 
 
+def insert_documents(tx, collection, rows):
+    """Insert ``rows`` into one type with one request, the statement the journal stores its events with.
+
+    The engine returns each row it stored; fewer than were sent fails the transaction instead of losing rows.
+    """
+    stored = tx.command(f"INSERT INTO {quote_name(collection)} CONTENT :rows", {"rows": rows})
+    if not isinstance(stored, list) or len(stored) != len(rows):
+        raise RuntimeError(f"The database did not store every row of a group in {collection}")
+
+
 def update_document(tx, collection, data, where, params):
     assignments = ",".join(f"{quote_name(key)}=:value_{key}" for key in data)
     return tx.command(f"UPDATE {quote_name(collection)} SET {assignments} WHERE {where}",

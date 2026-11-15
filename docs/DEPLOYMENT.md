@@ -250,7 +250,15 @@ Over a connection, the time of a command is its number of database requests time
 
 Client, TLS endpoint and server were on one machine, so the first two rows contain no network latency at all, and the TLS endpoint was a test relay written in Python, which costs about 3 ms a request by itself; a real TLS listener costs less. The third row shows how the request count turns into time: 8,101 requests at 20 ms are 162 s, which is the difference to the row above. For your network, multiply the request counts by the round-trip time you measure (`ping`, or the time of `cairnmind engine status`). Not measured: a real network with loss or varying delay, and a server under load from other clients.
 
-A logical backup of that store took 119 requests and 6 s. Its restore took 297,454 requests and 397 s on `127.0.0.1`: restore writes the graph and the chunks one row at a time, unlike indexing. With 20 ms a request that would be about 100 minutes more (computed from the request count, not measured). Until restore writes in groups, restore a large store from a machine close to the server, for example a pod in the cluster.
+A logical backup of that store took 119 requests and 6 s. Its restore took 297,454 requests and 397 s on `127.0.0.1` in 0.11.0, which wrote the graph and the chunks one row at a time. Since #219 restore writes them in groups of a few hundred rows per request, as indexing does. Measured again on 15 November 2026 with the test engine of the test suite on one machine, for a store of the same source (about 139 files, 27,400 graph nodes and 33,700 edges, a 6.3 MB backup; the runs after the change indexed one file more, the new module, which differs by under 0.2%):
+
+| Restore | Row by row (0.11.0) | In groups |
+| --- | --- | --- |
+| Over the store it replaces, `http://127.0.0.1` | 281,451 requests, 239 s | 1,140 requests, 18 s |
+| Into an empty database, through the test relay | 281,390 requests, 216 s | 1,079 requests, 6 s |
+| The same, with 20 ms added to every request | about 94 minutes more (computed from the request count, not measured) | 1,079 requests, 28 s |
+
+The first row includes the safety copy and the deletion of the rows it replaces inside the restore's one transaction. A large store can now be restored from the laptop over the network; for your network, add the round-trip time times about 1,100 requests for a store of this size.
 
 ## Backup and restore
 

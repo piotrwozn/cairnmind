@@ -137,6 +137,10 @@ class ArcadeClient:
                 # The pool drops the dead connection by itself; other threads keep theirs.
                 response = self._connections.client().request(method, path, headers=headers, timeout=timeout,
                                                               follow_redirects=False, **kwargs)
+            # httpx binds a response's stream to the response, a reference cycle that only the garbage
+            # collector frees: request and answer bodies would pile up between its runs (a restore sends
+            # groups of rows, #219). The body is read and the stream closed already, so the cycle is cut.
+            response.stream = httpx.ByteStream(response.content)
             if not response.is_success:
                 error = {}
                 try:
