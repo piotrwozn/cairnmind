@@ -300,7 +300,8 @@ async def test_the_pane_approves_one_mcp_call_of_its_run_and_keeps_the_command_r
         await pilot.pause()
         assert created["mcp_servers"] == [server()]
         status = str(app.query_one("#agent-status").render())
-        assert "local" in status and "definition_refused" in status
+        # The fixed code is shown as its reason in words, not as the code itself (#169, #209).
+        assert "local" in status and "its definition was refused" in status and "definition_refused" not in status
         shown = []
 
         async def confirm(screen):
@@ -386,7 +387,7 @@ async def test_a_server_that_did_not_start_stays_named_after_later_statuses(tmp_
         await app.workers.wait_for_complete()
         await pilot.pause()
         row = app.query_one("#agent-mcp")
-        assert row.has_class("-live") and "time (start_failed)" in str(row.render())
+        assert row.has_class("-live") and "time (its program did not start or stopped during its start)" in str(row.render())
         assert "Completed" in str(app.query_one("#agent-status").render())
 
 

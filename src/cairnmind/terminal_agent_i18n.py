@@ -1,5 +1,6 @@
 """English/Polish labels for the agent terminal, independent of provider data."""
 
+from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
 from .terminal_i18n_messages import AGENT_MESSAGES
 
 CATALOG = {
@@ -49,8 +50,8 @@ CATALOG = {
         "To wysyła dokładnie te argumenty do programu, który skonfigurowałeś. Jego odpowiedź jest niezaufanym "
         "tekstem z zewnątrz.",
     "Call once": "Wywołaj raz",
-    "Third-party MCP server {server} is off ({code}); the agent works without its tools.":
-        "Serwer MCP {server} jest wyłączony ({code}); agent pracuje bez jego narzędzi.",
+    "Third-party MCP server {server} is off ({reason}); the agent works without its tools.":
+        "Serwer MCP {server} jest wyłączony ({reason}); agent pracuje bez jego narzędzi.",
     "The provider refused the request with third-party MCP tools ({code}); they are withdrawn for this run "
     "and the agent works without them.":
         "Dostawca odrzucił żądanie z narzędziami zewnętrznych serwerów MCP ({code}); zostały wycofane do końca "
@@ -92,6 +93,7 @@ CATALOG = {
         "Ctrl+Q nie kończy agenta. Ctrl+B, potem d: wyjście ze środowiska; działa ono dalej. Ctrl+C przerywa turę.",
 }
 CATALOG.update(AGENT_MESSAGES)  # fixed provider and engine messages (#153)
+CATALOG.update(MCP_FAILURE_MESSAGES)  # why a third-party MCP server did not start, in words (#209)
 LEGACY = {polish: english for english, polish in CATALOG.items()}
 STATUS = {"complete": "Completed", "completed": "Completed", "running": "Working", "working": "Working",
           "interrupted": "Interrupted", "failed": "Failed", "error": "Failed", "blocked": "Blocked",

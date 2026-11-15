@@ -17,6 +17,7 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Sta
 
 from . import terminal_theme
 from .config import Settings
+from .mcp_failure_notice import announce as announce_mcp_failures
 from .terminal_safe import plain
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
@@ -566,6 +567,8 @@ class SidebarApp(BasePanel):
         self.projects = {p["id"]: p for p in value.get("projects", [])}
         self.render_projects()
         self.render_project()
+        # A third-party MCP server of an agent run that did not start: one notice per server per run (#209).
+        announce_mcp_failures(self, value.get("runs", []))
 
     def render_projects(self):
         table = self.query_one("#project-rows", DataTable)

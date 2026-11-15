@@ -1,6 +1,7 @@
 """Small explicit terminal catalog. User content and API identifiers are never translated."""
 from __future__ import annotations
 
+from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
 
@@ -605,6 +606,7 @@ CATALOG.update({
     "Client 1": "Klient 1", "Client 2": "Klient 2", "Inspector": "Inspektor", "In control": "Steruje",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
+CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 
