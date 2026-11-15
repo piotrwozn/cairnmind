@@ -261,9 +261,11 @@ def test_recall_fixture_context_holds_the_current_decision_rather_than_the_finis
     # Before #213 the finished task took the place of the decision in force in what ask() reads.
     assert canonical["current_decision"]["id"] in shown
     assert canonical["tasks"]["todo"]["id"] in shown
-    places = [item["id"] for item in context["records"]]
-    if canonical["tasks"]["done"]["id"] in shown:
-        assert places[-1] == canonical["tasks"]["done"]["id"]
+    # The fixture does not fit the budget: the finished task is the one record left out.
+    assert canonical["tasks"]["done"]["id"] not in shown
+    assert context["omitted_records"] == 1
+    assert [(item["kind"], item["status"], item["count"]) for item in context["omitted_by_kind_status"]] == [
+        ("task", "confirmed", 1)]
 
 
 def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
