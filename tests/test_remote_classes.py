@@ -171,6 +171,27 @@ async def test_ask_leaves_out_transcript_evidence_for_a_remote_chat_server_and_s
     assert memory_egress.HELD_BACK_UNKNOWN in result["unknowns"]
 
 
+async def test_the_second_look_of_ask_reads_no_held_chunk_whole(workspace):
+    """When the excerpts hold no answer the best chunks are read whole once more (#104): that pass
+    stays inside the same gate, so a long transcript is not sent whole to a remote chat server."""
+    store, project, data = workspace
+    pid = project["id"]
+    filler = "\n".join(f"line {number} of the ledger about Postgres and the database" for number in range(60))
+    chunked(store, project, TRANSCRIPT + "\n" + filler + "\nUser: the ledger password hint is walnut.",
+            "transcript", "conversation://1")
+    chunked(store, project, DOCUMENT + "\n" + filler + "\nThe ledger closes at midnight.", "document", "notes://ledger")
+    settings = Settings(data_dir=data, memory_chat=dict(REMOTE))
+    unknown = answer("unknown")
+    model = FakeModels([unknown, unknown, unknown, unknown])
+    result = await KnowledgeAgent(store, settings, ollama=model).ask(pid, "Which database holds the ledger Postgres?")
+    assert result["diagnostics"]["second_look"] == "no_answer" and len(model.chat_calls) == 4
+    assert "closes at midnight" not in model.chat_calls[0]  # past the excerpt in the first pass
+    assert "closes at midnight" in model.chat_calls[2]  # the document is read whole
+    sent = "\n".join(model.chat_calls)
+    assert "we chose Postgres" not in sent and "walnut" not in sent
+    assert result["diagnostics"]["held_back"]["chunks"] >= 1
+
+
 async def test_the_graph_and_history_tools_of_an_answer_leave_held_records_out(workspace):
     store, project, data = workspace
     pid = project["id"]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import itertools
 import json
@@ -14,6 +15,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from .answer_contract import answer_contract_errors, prepare_answer_schema
+from .citation_match import locate_quote, quote_weight
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .extraction_input import EXTRACTION_SCHEMA, EXTRACTION_TOKENS, REPAIR_TOKENS, extraction_request, extractor_stamp
@@ -231,6 +233,7 @@ def parse_object(text: str) -> dict:
 
 
 MIN_QUOTE_CHARS = 12
+CITATIONS_LEFT_OUT = "Citations that could not be verified were left out; the answer rests on the citations shown."
 # Search hits shown to the model at the start of a question, and the size of each hit's text.
 # With the default num_ctx the context guard in ask is 32768 characters of serialized messages.
 # Ten excerpts of this size with the system prompt and the catalog take about 21000-23000 of
@@ -270,6 +273,16 @@ def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[
     return "\n".join(lines[first:last + 1])[:size], first, last
 
 
+# The second look (``KnowledgeAgent.ask``): a chunk is shown whole, up to the size ingest cuts
+# chunks to; the room kept free in the context guard for the reply and one repair; the short
+# catalog beside whole passages; the results that ask for it; the time that must be left.
+WHOLE_PASSAGE_CHARS = 6000
+WHOLE_RESERVE_CHARS = 4000
+WHOLE_CATALOG_CHARS = 1500
+SECOND_LOOK_CODES = ("insufficient_evidence", "missing_evidence")
+SECOND_LOOK_MIN_SECONDS = 5.0
+
+
 # Order in which passages were shown: the initial evidence takes its positions (0..), anything
 # shown later (a search or a read during the question) takes a number after them.
 LATER_RANKS = 1000
@@ -277,14 +290,18 @@ _LATER = itertools.count(LATER_RANKS)
 REPAIR_CATALOG_CHARS = 12000
 
 
-def _show(source: dict, text: str, rank: int | None = None) -> None:
+def _show(source: dict, text: str, rank: int | None = None, item_id=None) -> None:
     """Register a passage of ``source`` that the model is shown, so a repair can cite it again.
 
     Every passage is kept with the earliest place it was shown; ``_catalog_excerpt`` stays the
-    latest one, for callers that need a single excerpt.
+    latest one, for callers that need a single excerpt. ``item_id`` is the ID the passage was
+    shown under beside its source ID (a search hit's chunk ID, ``definition:...``): a model
+    sometimes cites that one, and validation then knows which source it stands for.
     """
     rank = next(_LATER) if rank is None else rank
     source["_catalog_excerpt"] = text
+    if isinstance(item_id, str) and item_id and item_id not in source.setdefault("_catalog_items", []):
+        source["_catalog_items"].append(item_id)
     passages = source.setdefault("_catalog_passages", [])
     for item in passages:
         if item[1] == text:
@@ -478,7 +495,7 @@ class KnowledgeAgent:
             previous = evidence.get(alias, {})
             checks.update(previous.get("_checked_machine_scopes", {}))
             if previous.get("sha256") == source["sha256"]:
-                markers = ("_catalog_excerpt", "_catalog_passages") + (
+                markers = ("_catalog_excerpt", "_catalog_passages", "_catalog_items") + (
                     ("_historical_requested",) if not current else ())
                 for marker in markers:
                     if marker in previous:
@@ -490,7 +507,7 @@ class KnowledgeAgent:
         return source
 
     def _hits(self, hits: list[dict], project_id: str, evidence: dict, worktree=None, query: str = "",
-              register: bool = True) -> list[dict]:
+              register: bool = True, size: int = EXCERPT_CHARS) -> list[dict]:
         """Model-visible hits: each text is the excerpt of its chunk that matches ``query``.
 
         ``line_start`` and ``line_end`` describe the excerpt, not the whole chunk. With
@@ -515,12 +532,12 @@ class KnowledgeAgent:
                              line_end=len(source_text(source)[:2200].splitlines()), refreshed=True)
             else:
                 text = str(value.get("text", ""))
-                value["text"], first, last = question_excerpt(text, query)
+                value["text"], first, last = question_excerpt(text, query, size)
                 if value["text"] != text and isinstance(hit.get("line_start"), int):
                     value["line_start"], value["line_end"] = hit["line_start"] + first, hit["line_start"] + last
             value["source_sha256"] = source["sha256"]
             if register and isinstance(value.get("text"), str) and value["text"] in source_text(source):
-                _show(source, value["text"])
+                _show(source, value["text"], item_id=value.get("id"))
             # The source checked just above, not the chunk, says whether an external session wrote it.
             result.append(with_source_origin(value, source))
         return result
@@ -762,9 +779,47 @@ class KnowledgeAgent:
                answer_schema: dict | None = None) -> dict:
         return self._validate_final(text, project_id, evidence, started, worktree, answer_schema)[0]
 
+    def _quoted_source(self, quote: str, cited: dict, project_id: str, evidence: dict, worktree=None):
+        """The one other shown source that holds ``quote``, checked as current, with the span; or None.
+
+        A model that copies a passage faithfully sometimes writes the source ID of another passage
+        it was shown. The quote is then looked for in the other sources of this question whose text
+        the model saw (``_show``); it is taken only if exactly one of them holds it, so the citation
+        never points at a source chosen by guess. An ID the model was never given is not helped.
+        """
+        found = []
+        for source in {item["id"]: item for item in evidence.values()}.values():
+            if (source["id"] == cited["id"] or source.get("project_id") != project_id
+                    or not isinstance(source.get("_catalog_excerpt"), str)):
+                continue
+            if locate_quote(quote, source_text(source), MIN_QUOTE_CHARS) is not None:
+                found.append(source)
+        if len(found) != 1:
+            return None
+        try:
+            source = self._source(found[0]["id"], project_id, evidence,
+                                  current=not found[0].get("_historical_requested", False), worktree=worktree)
+        except (ValueError, OSError):
+            return None
+        span = locate_quote(quote, source_text(source), MIN_QUOTE_CHARS)
+        return (source, span) if span is not None else None
+
     def _validate_final(self, text: str, project_id: str, evidence: dict, started: float,
-                        worktree=None, answer_schema: dict | None = None) -> tuple[dict, bool]:
-        """Return the unchanged public view and whether output-only repair is safe."""
+                        worktree=None, answer_schema: dict | None = None, *,
+                        drop_invalid: bool = False) -> tuple[dict, bool]:
+        """Return the unchanged public view and whether output-only repair is safe.
+
+        A quote is accepted as the passage of the source it stands for (``locate_quote``): literal,
+        or literal but for backticks and the spacing beside punctuation, or the longest literal run
+        of a quote whose lines are all in the source and skipped some of the source's between them;
+        the recorded quote is always the source's own text. A quote that the cited source
+        does not hold but exactly one other shown source does is recorded for that source, and
+        the ID a passage was shown under (a hit's chunk ID) stands for the source it belongs to.
+        With ``drop_invalid`` (the validation after the one repair) citations that still fail are
+        left out when at least one citation verified, the answer meets its contract and no source
+        went stale: the answer then rests on the verified citations alone, the support check
+        judges it on those, and ``diagnostics.citations_dropped`` counts what was left out.
+        """
         answer_schema = prepare_answer_schema(answer_schema)
         # Code can change while the local model composes its answer. Apply the
         # same last-moment freshness check used for quoted files to machine runs.
@@ -826,11 +881,13 @@ class KnowledgeAgent:
         if not isinstance(unknowns, list):
             unknowns = ["The model returned an invalid list of unknowns."]
         contract_failed = bool(answer_errors)
+        droppable = drop_invalid and not contract_failed
         sources, invalid, freshness_failure = [], answer_errors, False
         citations = output.get("citations", [])
         if not isinstance(citations, list):
             citations = []
             invalid.append("Invalid citation format.")
+            droppable = False  # nothing to leave out: the list itself is wrong
         if len(citations) > 8:
             unknowns.append("Some citations are left out because of the answer budget; "
                             "narrow the question to read the details.")
@@ -843,6 +900,12 @@ class KnowledgeAgent:
                 # The catalog the model is shown names its passages "quote_excerpt", and the model
                 # often answers with that name. The passage is checked against the source all the same.
                 quote = citation.get("quote_excerpt")
+            if isinstance(source_id, str) and source_id not in evidence:
+                # The ID of a passage the model was shown (a hit's chunk ID) stands for its source.
+                shown_as = {source["id"] for source in evidence.values()
+                            if source_id in source.get("_catalog_items", ())}
+                if len(shown_as) == 1:
+                    source_id = shown_as.pop()
             if not isinstance(source_id, str) or source_id not in evidence:
                 invalid.append("The model cited a source it did not read.")
                 continue
@@ -857,25 +920,36 @@ class KnowledgeAgent:
                 freshness_failure = True
                 continue
             content = source_text(source)
-            if not isinstance(quote, str) or not quote.strip() or quote not in content:
+            floor = min(MIN_QUOTE_CHARS, quote_weight(content))
+            span = locate_quote(quote, content, floor) if isinstance(quote, str) else None
+            if span is None and isinstance(quote, str) and (source["id"], source["sha256"]) == inspected:
+                elsewhere = self._quoted_source(quote, source, project_id, evidence, worktree)
+                if elsewhere is not None:
+                    source, span = elsewhere
+                    content = source_text(source)
+            if span is None:
                 invalid.append("The quoted passage does not occur in the checked version of the source.")
                 if (source["id"], source["sha256"]) != inspected:
                     freshness_failure = True
                 continue
-            if len(quote.strip()) < min(MIN_QUOTE_CHARS, len(content.strip())):
-                # A one-character substring occurs in almost any source and proves nothing.
+            quote = content[span[0]:span[1]]
+            if quote_weight(quote) < floor:
+                # A one-character substring occurs in almost any source and proves nothing, and the
+                # indentation and line breaks of the source between two brackets add nothing to it.
                 invalid.append("The quoted passage is too short to be evidence.")
                 continue
             if len(sources) >= 8:
                 continue
             quote = quote[:750]
-            before = content.split(quote, 1)[0]
-            start = before.count("\n") + 1
+            start = content[:span[0]].count("\n") + 1
             sources.append({"id": source["id"], "uri": source["uri"], "sha256": source["sha256"],
                             "kind": source["kind"], "quote": quote, "line_start": start,
                             "line_end": start + quote.count("\n"), "is_current": bool(source["is_current"]),
                             "view": "normalized_text" if content != source["content"] else "content",
                             "created_at": source["created_at"], "metadata": public_source_metadata(source.get("metadata"))})
+        dropped = 0
+        if invalid and droppable and sources and not freshness_failure:
+            dropped, invalid = len(invalid), []
         if invalid:
             # Do not show potentially invented facts as a grounded synthesis.
             return self._result("partial", "The model's answer could not be verified in the sources.",
@@ -896,6 +970,10 @@ class KnowledgeAgent:
             except (ValueError, TypeError):
                 pass
         result["coverage"] = quote_coverage(covered, [source["quote"] for source in sources])
+        if dropped:
+            result["diagnostics"]["citations_dropped"] = dropped
+            # Said in the result itself, without making a verified answer partial.
+            result["freshness"]["warnings"] = [*result["freshness"]["warnings"], CITATIONS_LEFT_OUT][-8:]
         return result, invalid_unknowns
 
     async def ask(self, project_id: str, question: str, worktree=None,
@@ -906,10 +984,30 @@ class KnowledgeAgent:
                                   "context_limit_chars": max(12000, context_tokens(self.settings) * 2)}}
         started = time.monotonic()
         # For a chat server on another computer, memory of a class it may not receive is left out (#181).
+        # The gate holds for both passes: the second look reads through the same checks.
         gate = ask_gate(self.settings, self.store)
         token = ASK.set(gate)
         try:
             result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
+            in_part = diagnostics.pop("_hits_in_part", 0)
+            left = self.settings.ask_timeout - (time.monotonic() - started)
+            if (in_part and answer_schema is None and left > SECOND_LOOK_MIN_SECONDS
+                    and result.get("status") == "partial"
+                    and result.get("diagnostics", {}).get("code") in SECOND_LOOK_CODES):
+                # The model found no answer in the excerpts. A hit shows 900 characters of a chunk of up
+                # to 6000, chosen by the question's words, and the line that answers often has none of
+                # them: one more pass reads the best chunks whole. Only a complete answer replaces the
+                # first result; anything else leaves it as it was.
+                again = {**diagnostics, "model_calls": [], "validation_codes": [], "repair_attempted": False,
+                         "repair_outcome": "not_needed"}
+                second = await self._ask_impl(project_id, question, worktree, answer_schema, again,
+                                              whole=True, timeout=left)
+                again.pop("_hits_in_part", None)
+                if second.get("status") == "complete":
+                    diagnostics.update(again, second_look="answered")
+                    result = {**second, "elapsed_seconds": round(time.monotonic() - started, 3)}
+                else:
+                    diagnostics["second_look"] = "no_answer"
         finally:
             ASK.reset(token)
         held = gate.summary() if gate else None
@@ -988,7 +1086,9 @@ class KnowledgeAgent:
         return None
 
     async def _ask_impl(self, project_id: str, question: str, worktree, answer_schema: dict | None,
-                        diagnostics: dict) -> dict:
+                        diagnostics: dict, *, whole: bool = False, timeout: float | None = None) -> dict:
+        """One pass over the question. ``whole`` is the second look (see ``ask``): the evidence is
+        then the whole chunks of the first hits that the first pass showed in part, no definitions."""
         answer_schema = prepare_answer_schema(answer_schema)
         project_id = self.store.resolve_project(project_id)["id"]
         if not isinstance(question, str) or not question.strip() or len(question) > 16000:
@@ -999,46 +1099,78 @@ class KnowledgeAgent:
         started = time.monotonic()
         self.retriever.warnings.clear()
         try:
-            async with asyncio.timeout(self.settings.ask_timeout):
+            async with asyncio.timeout(self.settings.ask_timeout if timeout is None else timeout):
                 # Preserve lexical evidence even when a cold/missing embedding model times out.
-                lexical = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
-                                                  worktree=worktree)
-                initial = await asyncio.to_thread(self._hits, lexical, project_id, evidence, worktree, question,
+                chosen = await asyncio.to_thread(self.retriever.search, project_id, question, INITIAL_HITS,
+                                                 worktree=worktree)
+                initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
                                                   False)
                 hybrid = await self.retriever.asearch(project_id, question, INITIAL_HITS, worktree=worktree)
                 if hybrid:
-                    initial = await asyncio.to_thread(self._hits, hybrid, project_id, evidence, worktree, question,
+                    chosen = hybrid
+                    initial = await asyncio.to_thread(self._hits, chosen, project_id, evidence, worktree, question,
                                                       False)
-                # Definitions of names the question and the hits use take the places of the
-                # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
-                definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
-                                                      evidence, worktree)
-                if definitions:
-                    initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
+                # Chunks longer than their excerpt, each stretch of a file once (chunks overlap):
+                # what a second look can still show.
+                in_part, taken = [], []
+                for hit in chosen:
+                    first, last = hit.get("line_start"), hit.get("line_end")
+                    if (len(str(hit.get("text", ""))) <= EXCERPT_CHARS or not isinstance(first, int)
+                            or not isinstance(last, int)):
+                        continue
+                    if any(source == hit["source_id"] and first <= end and begin <= last
+                           for source, begin, end in taken):
+                        continue
+                    taken.append((hit["source_id"], first, last))
+                    in_part.append(hit)
+                diagnostics["_hits_in_part"] = len(in_part)
+                context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
+                system = {"role": "system", "content": SYSTEM + (TYPED_ANSWER_INSTRUCTION if answer_schema else "")}
+                # We retain complete tool exchanges, but stop before the local context is flooded.
+                context_chars = max(12000, context_tokens(self.settings) * 2)
+                if whole:
+                    room = (context_chars - len(json.dumps(system, ensure_ascii=False))
+                            - len(json.dumps(context, ensure_ascii=False)) - WHOLE_RESERVE_CHARS)
+                    initial = []
+                    for item in await asyncio.to_thread(self._hits, in_part, project_id, evidence, worktree,
+                                                        question, False, WHOLE_PASSAGE_CHARS):
+                        room -= len(json.dumps(json.dumps(item, ensure_ascii=False), ensure_ascii=False))
+                        if room < 0:
+                            break  # in the order of the hits: the best chunks that fit
+                        initial.append(item)
+                    if not initial:
+                        return self._result("partial", "There are not enough sources for a confirmed answer.",
+                                            evidence, ["No whole passage fits the context budget."], started)
+                else:
+                    # Definitions of names the question and the hits use take the places of the
+                    # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
+                    # They are shown first: the line that states a value, before the passages that
+                    # use or mention it, and so also first in the short catalog of this call.
+                    definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
+                                                          evidence, worktree)
+                    if definitions:
+                        initial = [*definitions, *initial[:INITIAL_HITS - len(definitions)]]
                 # Only now is it known which hits the model gets: register those, in their order.
                 for position, item in enumerate(initial):
                     source = evidence.get(item["source_id"])
                     if source is not None and isinstance(item.get("text"), str) and item["text"] in source_text(source):
-                        _show(source, item["text"], position)
-                context = await asyncio.to_thread(self.retriever.context, project_id, worktree)
+                        _show(source, item["text"], position, item.get("id"))
                 prompt = {"project": project_id, "question": question,
                           "project_state": context, "initial_evidence": initial,
-                          "citation_catalog": self._citation_catalog(project_id, evidence, worktree=worktree,
-                                                                     budget=4000, excerpt_chars=600)}
+                          "citation_catalog": self._citation_catalog(
+                              project_id, evidence, worktree=worktree,
+                              budget=WHOLE_CATALOG_CHARS if whole else 4000, excerpt_chars=600)}
                 if answer_schema is not None:
                     prompt["answer_schema"] = answer_schema
-                messages = [
-                    {"role": "system", "content": SYSTEM + (TYPED_ANSWER_INSTRUCTION if answer_schema else "")},
-                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-                ]
-                # We retain complete tool exchanges, but stop before the local context is flooded.
-                context_chars = max(12000, context_tokens(self.settings) * 2)
+                messages = [system, {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}]
                 for _step in range(self.settings.max_steps):
                     if sum(len(json.dumps(m, ensure_ascii=False)) for m in messages) > context_chars:
                         return self._result("partial", "The analysis reached the context budget; narrow the question.",
                                             evidence, ["The budget for read sources was exceeded."], started,
                                             code="context_budget")
-                    response = await self.ollama.chat(messages, tools=TOOLS)
+                    # The second look fills the context with whole chunks: a search on top of them
+                    # would end in the context guard, so that pass answers from what it is shown.
+                    response = await self.ollama.chat(messages, tools=None if whole else TOOLS)
                     diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
                                                   _model_diagnostics(response, "discovery")]
                     message = response["message"]
@@ -1081,8 +1213,10 @@ class KnowledgeAgent:
                         repaired_text = self._carry_verified_citations(
                             candidate, str(repaired_message.get("content", "")), evidence)
                         result, still_repairable = await asyncio.to_thread(
-                            self._validate_final, repaired_text,
+                            functools.partial(self._validate_final, drop_invalid=True), repaired_text,
                             project_id, evidence, started, worktree, answer_schema)
+                        if result["diagnostics"].get("citations_dropped"):
+                            diagnostics["citations_dropped"] = result["diagnostics"]["citations_dropped"]
                         diagnostics["repair_outcome"] = ("failed" if still_repairable or
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
                         judged = result

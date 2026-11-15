@@ -65,6 +65,19 @@ Before it copies anything, the command checks that the models and the engine are
 
 The results for Cairnmind's own repository are in [evaluation/RESULTS.md](evaluation/RESULTS.md), kept out of the indexed copy.
 
+A question whose first pass finds no answer, while a passage was shown to the model only in part, gets one more pass over the best passages read whole, inside the same time limit and without tools. Only a complete answer of that pass, validated and judged like any other, replaces the first result. The answer's diagnostics then say `second_look` (`answered` or `no_answer`), and the report counts the extra calls in that question's `model_calls`.
+
+To measure another chat model, choose it, run the evaluation and choose the earlier model again. The evaluation writes to its own throwaway copy and database, and a running service keeps the models it started with:
+
+```bash
+ollama pull MODEL_TAG
+cairnmind models set --role chat --provider ollama --model MODEL_TAG --context-window 32768
+cairnmind eval repository .
+cairnmind models set --role chat --provider ollama --model qwen3.5:9b
+```
+
+`--context-window` is optional; without it the model runs with the context size of the settings. One run is one sample: an unchanged tree gives figures up to two or three questions apart from run to run, so compare models by the worst of three runs, and count the complete and wrong answers as well as the right ones. The local models that were tried on this repository, with their time per question and graphics memory, are listed on the results page.
+
 ## Replaying logged answers
 
 The answers of your own projects can be kept and asked again. `cairnmind ask PROJECT QUESTION --log` keeps one answer; `"answer_log": true` in the `config.json` of your data directory (read when the service starts) keeps every answer the service gives. Each entry holds the question, the worktree, the answer contract, the commit, branch and code fingerprint, the status with its diagnostic code and support check, the answer, every cited source (id, address, sha256, quote and lines), the chat model with its digest, the embedding model and the timings. The service's token and database password are replaced wherever they occur. The entry is written after the answer is sent.

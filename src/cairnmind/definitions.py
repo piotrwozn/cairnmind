@@ -17,8 +17,12 @@ are resolved by exact name:
 - a constant, field or parameter default is also a candidate when its snake_case name (or
   hyphenated TOML key, ``requires-python``) is made only of question words and FILLER_WORDS,
   with at least one question word and two words in all (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
-  drift report list at most?"). Words compare by a light stem (a trailing "ing", "ed" or "s" is
-  dropped). The question words used are those that can be name words: NAME_STOPWORDS and words
+  drift report list at most?"). UNIT_WORDS stand in a name like filler words
+  (``ROWS_PER_BATCH`` for "How many rows ... in one batch?", ``refresh_seconds`` for
+  "How often does the page refresh?"). Words compare by a light stem (a trailing "ing", "ed" or
+  "s" is dropped), and a word of a name of PREFIX_CHARS letters or more also matches a question
+  word that begins with it (``postgres_version`` for "PostgreSQL version").
+  The question words used are those that can be name words: NAME_STOPWORDS and words
   under three letters are left out, the longest MAX_PATTERN_WORDS are kept. The database applies
   this as a regular expression in its own bounded read, so only such names come back;
 - a constant or field is also a candidate when one word of its name is a question word and its
@@ -30,8 +34,12 @@ are resolved by exact name:
 - candidates are ranked: a name the question writes as code first; then a full match, a name
   of at least two question words with nothing else but filler words (``answer_tokens``; not
   ``MAX_REPORTED``, which has one); then a primary file before a test, lock or minified file;
-  then by how many question words the name shares; then by how many its owner and file name
-  share. A candidate whose name shares no word is dropped, and a name defined in a primary
+  then by how many question words the name shares; then a value (constant, field, parameter
+  default) before a function or a class, since the question words of a class name
+  (``BatchWriter``) say what the question is about, not which setting it asks for; then by
+  how many question words its owner and file name share; then the name whose question word
+  the fewest other candidate names have.
+  A candidate whose name shares no word is dropped, and a name defined in a primary
   file is never shown from a secondary one;
 - each shown definition is the whole definition with neighbouring lines of its scope, within
   the excerpt size (see ``definition_lines``).
@@ -52,6 +60,13 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?")
 _KIND_ORDER = {"constant": 0, "field": 0, "parameter": 1, "function": 2, "method": 2, "class": 3}
 # Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
 FILLER_WORDS = ("max", "min", "default", "num")
+# Words a name carries to say how its value is counted, or to join two words: a question about
+# ROWS_PER_BATCH, refresh_seconds or MAX_BLOB_BYTES rarely uses them. In a name they stand
+# beside the question's words like filler words; they never count as a match by themselves.
+UNIT_WORDS = ("per", "of", "seconds", "ms", "bytes", "chars", "tokens", "count")
+# A word of a name also matches a question word that begins with it, from this length on
+# (``postgres_version`` for "PostgreSQL version"): product names are written joined in prose.
+PREFIX_CHARS = 5
 MAX_PATTERN_WORDS = 8  # question words used to look up names by their words
 # Question words that do not name what a setting is about.
 NAME_STOPWORDS = frozenset("""
@@ -112,17 +127,33 @@ def relevance(question: str, symbol: dict, path: str) -> tuple[int, int, int, in
     name and among those of its owner and file name. Words are compared by ``_stem``; the
     question's search terms are split into words (``schema_version`` is schema and version).
     """
+    named, full, words, context, _ = _match(question, symbol, path)
+    return named, full, words, context
+
+
+def _match(question: str, symbol: dict, path: str) -> tuple[int, int, int, int, frozenset]:
+    """``relevance`` and, last, the words of the bare name that are question words."""
     asked = terms(question)
     spelled = {str(symbol.get(key, "")).casefold() for key in ("name", "member") if symbol.get(key)}
     named = int(any(match.casefold() in spelled for match in _IDENTIFIER.findall(question) if _code_like(match)))
     asked_words = {_stem(word) for term in asked for word in _words(term)}
+
+    def is_asked(word: str) -> bool:
+        return word in asked_words or (len(word) >= PREFIX_CHARS and any(
+            other.startswith(word) for other in asked_words))
+
     own = {_stem(word) for word in _words(str(symbol.get("member") or symbol.get("name", "")))}
     content = own - {_stem(word) for word in FILLER_WORDS}
+    matched = {word for word in content if is_asked(word)}
+    unmatched = content - matched - {_stem(word) for word in UNIT_WORDS}
     # A full match needs two question words: port, question, MAX_TIMEOUT or DEFAULT_PORT is a
     # plain word match, not a name the question spells out.
-    full = int(len(content) >= 2 and content <= asked_words)
+    full = int(len(matched) >= 2 and not unmatched)
     context = {_stem(word) for word in _words(str(symbol.get("owner", ""))) | _words(PurePosixPath(path).stem)}
-    return named, full, len(own & asked_words), len(context & asked_words)
+    # A filler word counts beside a question word of the name (DEFAULT_PORT), never by itself: a
+    # constant called DEFAULT or MAX is not what a question about "the default ..." asks for.
+    shared = frozenset(word for word in own if is_asked(word)) if matched else frozenset()
+    return named, full, len(shared), sum(is_asked(word) for word in context), shared
 
 
 def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
@@ -132,25 +163,35 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     name), parameter defaults that are neither named nor a full match (a parameter's name is
     local to its function: ``size`` or ``timeout`` alone says little), and, per bare name (a
     field's member), secondary rows when a primary file defines that name. Order: a name the
-    question writes first, then a name made only of question words, then question words in the
-    name, then in its owner and file name, primary before secondary,
-    values before functions before classes (a parameter default after a constant or field), then
-    path and line for a stable result.
-    So a one-word overlap (SUPPORT_TOKENS for "tokens") never outranks a full match.
+    question writes first, then a name made only of question words, primary before secondary,
+    then question words in the name, a value before a function or a class, then question words
+    in its owner and file name, then the name whose question word the fewest other candidate
+    names have (``RETRY_WINDOW_NS`` for "window" before ``MAX_ROWS`` and ``MAX_ROW_BYTES`` for
+    "row": the rare word says more about what is asked), values before functions before
+    classes (a parameter default after a constant or field), then path and line for a stable
+    result. So a one-word overlap (SUPPORT_TOKENS for "tokens") never outranks a full match.
     """
     def bare(row: dict) -> str:
         return str(row["symbol"].get("member") or row["symbol"].get("name") or "")
 
     scored = []
     for row in rows:
-        named, full, words, context = relevance(question, row["symbol"], row["path"])
+        named, full, words, context, matched = _match(question, row["symbol"], row["path"])
         if named or (words and (full or row["symbol"].get("kind") != "parameter")):
             scored.append({**row, "named": named, "full": full, "relevance": words, "file_relevance": context,
-                           "secondary": secondary_source(row["path"])})
+                           "_matched": matched, "secondary": secondary_source(row["path"])})
     primary_names = {bare(row) for row in scored if not row["secondary"]}
     kept = [row for row in scored if not (row["secondary"] and bare(row) in primary_names)]
+    # How many candidate names have each question word; a name counts once however many files define it.
+    sharing: dict[str, set[str]] = {}
+    for row in kept:
+        for word in row["_matched"]:
+            sharing.setdefault(word, set()).add(bare(row).casefold())
+    for row in kept:
+        row["shared_by"] = min((len(sharing[word]) for word in row.pop("_matched")), default=0)
     return sorted(kept, key=lambda row: (-row["named"], -row["full"], row["secondary"], -row["relevance"],
-                                         -row["file_relevance"],
+                                         _KIND_ORDER.get(row["symbol"].get("kind"), 3) >= 2,
+                                         -row["file_relevance"], row["shared_by"],
                                          _KIND_ORDER.get(row["symbol"].get("kind"), 3),
                                          row["path"], int(row["symbol"].get("line_start") or 0)))
 
@@ -164,15 +205,24 @@ def pattern_words(question: str) -> list[str]:
     return sorted(chosen, key=len, reverse=True)[:MAX_PATTERN_WORDS]
 
 
+def _question_word(words: list[str]) -> str:
+    """A regular expression for one word of a name that is a question word: one of ``words`` with
+    an ending, or the beginning of one, at least PREFIX_CHARS long (``arcade`` for "arcadedb")."""
+    forms = dict.fromkeys(form for word in words
+                          for form in [word, *(word[:size] for size in range(PREFIX_CHARS, len(word)))])
+    return "(?:" + "|".join(re.escape(form) for form in forms) + ")(?:s|es|ed|ing)?"
+
+
 def name_word_pattern(question: str) -> str | None:
-    """A regular expression for a lower-case name made of question words and filler words, with
-    at least one question word and two words in all, joined by "_" (snake_case) or "-" (a TOML
-    key such as ``requires-python``); None without a usable word."""
+    """A regular expression for a lower-case name made of question words, filler words and unit
+    words, with at least one question word and two words in all, joined by "_" (snake_case) or
+    "-" (a TOML key such as ``requires-python``); None without a usable word."""
     words = pattern_words(question)
     if not words:
         return None
-    real = "(?:" + "|".join(re.escape(word) for word in words) + ")(?:s|es|ed|ing)?"
-    word = "(?:" + real + "|" + "|".join(FILLER_WORDS) + ")"
+    real = _question_word(words)
+    plain = dict.fromkeys([*FILLER_WORDS, *UNIT_WORDS, *(_stem(word) for word in UNIT_WORDS)])
+    word = "(?:" + real + "|" + "|".join(plain) + ")"
     return f"^(?=(?:.*[_-])?{real}(?:[_-]|$))(?:{word}[_-])+{word}$"
 
 
@@ -189,7 +239,7 @@ def context_patterns(question: str) -> tuple[str, str, str] | None:
     words = pattern_words(question)
     if not words:
         return None
-    real = "(?:" + "|".join(re.escape(word) for word in words) + ")(?:s|es|ed|ing)?"
+    real = _question_word(words)
     return (f"^(?:.*[_-])?{real}(?:[_-].*)?$",
             f"^(?:.*/)?(?:[^/]*[^a-z0-9/])?{real}(?:[^a-z0-9/][^/]*)?$",
             f".*{real}.*")

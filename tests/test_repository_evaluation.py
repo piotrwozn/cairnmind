@@ -77,6 +77,13 @@ def test_a_question_whose_answer_cannot_be_read_is_refused(tmp_path):
     ("At most seven retries are made.", "7", ["{word}"], True),
     ("At most seven retries are made.", "7", [], False),
     ("One of the seventy files.", "7", ["{word}"], False),
+    # A value in megabytes written in whole gigabytes, only where the question lists the form
+    # and only when the value is a whole number of them.
+    ("It gets 2 GB of heap.", "2048", ["{gb} GB"], True),
+    ("It gets 2 GB of heap.", "2048", [], False),
+    ("It gets 12 GB of heap.", "2048", ["{gb} GB"], False),
+    ("It gets 2 GB of heap.", "2500", ["{gb} GB"], False),
+    ("It gets 1 GB of heap.", "2048", ["{gb} GB"], False),
 ])
 def test_an_answer_is_right_only_with_an_accepted_form_as_a_whole_token(tmp_path, answer, value, forms, right):
     (tmp_path / "v.txt").write_text(f"VALUE = {value}\n")
