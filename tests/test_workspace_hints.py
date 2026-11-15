@@ -53,7 +53,8 @@ def test_real_tmux_draws_the_keys_on_the_active_border_only(manager, language, s
         workspace.focus("client1")
         workspace._update_status(workspace.state.read())
         shown = expanded(workspace, terminal, panes["client1"])
-        assert shown.startswith(tr(expected, language) + " ") and "client1" in shown
+        label = tr("Client 1", language)
+        assert shown.startswith(tr(expected, language) + " ") and label in shown and "client1" not in shown
         assert tr(HINT_SHORT, language) not in expanded(workspace, terminal, panes["sidebar"])
         width = int(workspace.tmux("display-message", "-p", "-t", panes["client1"], "#{pane_width}").stdout)
         assert len(shown) <= width  # the hint and the badge fit the border together
@@ -62,7 +63,7 @@ def test_real_tmux_draws_the_keys_on_the_active_border_only(manager, language, s
         while wanted not in bytes(terminal.output) and time.monotonic() < deadline:
             time.sleep(.02)
         assert wanted in bytes(terminal.output)  # drawn on the terminal, not only stored in an option
-        assert b"client1" in bytes(terminal.output)  # the view's own label is drawn beside it
+        assert label.encode() in bytes(terminal.output)  # the view's own label is drawn beside it
     finally:
         try:
             workspace.tmux("detach-client", "-t", os.ttyname(terminal.slave), check=False)
@@ -107,6 +108,76 @@ def test_the_border_follows_a_language_switch(manager):  # noqa: F811
     assert tr(HINT_KEYS, "pl") in current() and tr(HINT_KEYS, "en") not in current()
 
 
+def border_words(workspace, pane, role, control, memory, reason=""):
+    """What tmux draws on the border of `pane` for these internal values, the key hint left out."""
+    for option, value in (("role", role), ("control", control), ("memory", memory), ("stale_reason", reason)):
+        workspace.tmux("set-option", "-p", "-t", pane, "@cairnmind_" + option, value)
+    border = workspace.tmux("show-options", "-gv", "pane-border-format").stdout.rstrip("\n")
+    left = border[border.index("#[align=left]"):]
+    return STYLE.sub("", workspace.tmux("display-message", "-p", "-t", pane, left).stdout.rstrip("\n")).split()
+
+
+def test_every_word_on_a_border_follows_the_language_without_a_restart(manager):  # noqa: F811
+    # #208: the border showed the raw values ("client1 controller ack") in a Polish workspace.
+    from test_terminal_theme import BORDER_WORDS
+    workspace, _, project = manager
+    workspace.create(start_supervisor=False)
+    pane = workspace.panes()["client1"]
+    session = workspace.tmux("display-message", "-p", "#{session_id}").stdout
+    for language in ("en", "pl", "en"):
+        CockpitState(workspace.settings).update({"language": language})
+        workspace._update_status(workspace.state.read())  # what the supervisor does each second
+        words = BORDER_WORDS[language]
+        roles, memories = list(words["role"].items()), list(words["memory"].items())
+        controls = [*words["control"].items(), ("", "")]  # every control value, a finished run's end state too
+        for index in range(max(len(roles), len(controls))):
+            (role, role_label), (control, control_label) = roles[index % len(roles)], controls[index % len(controls)]
+            memory, memory_label = memories[index % len(memories)]
+            assert border_words(workspace, pane, role, control, memory) == (
+                role_label.split() + control_label.split() + memory_label.split())
+        # A stale memory: its reason is shown in this language too, from the fixed code, not the stored text.
+        stored = "stale: " + tr("memory changed after ACK", "en")  # written in the language of its time
+        shown = " ".join(border_words(workspace, pane, "client2", "controller", stored, "state_changed"))
+        assert shown.endswith(tr("Stale", language) + ": " + tr("memory changed after ACK", language)), shown
+        assert " ".join(border_words(workspace, pane, "client2", "", "stale")).endswith(tr("Stale", language))
+        # A value the border does not know is never shown as it is.
+        assert border_words(workspace, pane, "client9", "made up", "#[fg=red]x", "<script>") == []
+    assert workspace.tmux("display-message", "-p", "#{session_id}").stdout == session  # the same workspace
+
+
+def test_the_widest_polish_border_fits_beside_the_key_at_80_columns(manager):  # noqa: F811
+    from cairnmind.terminal_preview import PreviewTerminal
+    from cairnmind.workspace import STALE_WORDS
+    workspace, _, project = manager
+    CockpitState(workspace.settings).update({"view": "focus", "language": "pl"})
+    workspace.create(start_supervisor=False)
+    workspace.state.select_project(project)
+    workspace.refresh()
+    terminal = PreviewTerminal(workspace, (80, 24), readonly=False)
+    try:
+        deadline = time.monotonic() + 5
+        while len(workspace.clients()) != 1 and time.monotonic() < deadline:
+            time.sleep(.02)
+        pane = workspace.panes()["client1"]
+        workspace.focus("client1")
+        workspace._update_status(workspace.state.read())
+        width = int(workspace.tmux("display-message", "-p", "-t", pane, "#{pane_width}").stdout)
+        assert width == 80
+        for role in ("inspector", "activity", "client1"):
+            for control in ("readonly", "controller"):
+                for reason in STALE_WORDS:
+                    border_words(workspace, pane, role, control, "stale: x", reason)
+                    shown = expanded(workspace, terminal, pane)
+                    assert shown.startswith(tr(HINT_SHORT, "pl") + " ") and len(shown) <= width, shown
+                    assert shown.rstrip().endswith(tr(STALE_WORDS[reason], "pl")), shown
+    finally:
+        try:
+            workspace.tmux("detach-client", "-t", os.ttyname(terminal.slave), check=False)
+            terminal.process.wait(timeout=5)
+        finally:
+            terminal.close()
+
+
 @pytest.mark.parametrize(("message", "code"), [
     ("resume_required: plan, task, decision, scope or code changed since the acknowledged packet (a checkpoint "
      "or decision this session saved counts too); call resume_context and ack_resume its new packet", "state_changed"),
@@ -144,8 +215,11 @@ def test_the_pane_border_says_why_memory_is_stale(manager, language):  # noqa: F
     pane = workspace.panes()["client1"]
     badge = workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_memory").stdout.strip()
     assert badge == "stale: " + tr("memory changed after ACK", language)
+    reason = lambda: workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_stale_reason").stdout.strip()  # noqa: E731
+    assert reason() == "state_changed"  # the fixed code the border labels in either language (#208)
     # A reason the workspace does not know is never shown: only the plain word.
     broker.value["runs"][0]["memory"]["stale_reason"] = "<script>"
     workspace._last_fetch = 0
     workspace.refresh()
     assert workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_memory").stdout.strip() == "stale"
+    assert reason() == ""

@@ -601,6 +601,8 @@ CATALOG.update({
     "memory changed after ACK": "pamięć zmieniona po ACK", "new packet without ACK": "nowy pakiet bez ACK",
     "ACK does not match packet": "ACK nie pasuje do pakietu", "scope cannot be read": "nie można odczytać zakresu",
     "session continuity broken": "przerwana ciągłość sesji",
+    # Pane and control words on the pane's border (workspace_border, #208); the others are shared.
+    "Client 1": "Klient 1", "Client 2": "Klient 2", "Inspector": "Inspektor", "In control": "Steruje",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 for _en, _pl in CATALOG.items():
