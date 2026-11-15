@@ -44,7 +44,13 @@ def resolve(root, revision) -> str:
     if (not isinstance(revision, str) or not revision.strip() or revision.startswith("-") or len(revision) > 256
             or any(character in revision for character in "\0\r\n")):
         raise ValueError("A revision must be a commit name such as HEAD, a branch or a commit ID")
-    found = _git(root, "rev-parse", "--verify", "--quiet", "--end-of-options", revision + "^{commit}")
+    try:
+        found = _git(root, "rev-parse", "--verify", "--quiet", "--end-of-options", revision + "^{commit}")
+    except GitReadError as exc:
+        # --quiet: a revision that names no commit fails with nothing on stderr (#239); any other failure says why.
+        if not str(exc).endswith(": no message"):
+            raise
+        raise GitReadError(f"Unknown revision {safe_text(revision)}: no commit of that name in {safe_text(root)}") from None
     commit = found.decode("ascii", "replace").strip()
     if len(commit) not in (40, 64) or any(character not in "0123456789abcdef" for character in commit):
         raise GitReadError("Git did not name a commit")

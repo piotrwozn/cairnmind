@@ -87,6 +87,18 @@ def test_adopting_a_confirmed_legacy_task_names_it_by_its_text_and_its_id_once(w
     assert words.count(task["id"]) == 1, words
 
 
+def test_an_unknown_revision_is_named_as_unknown_and_other_git_failures_keep_their_reason(workspace, tmp_path):  # noqa: F811
+    from cairnmind.memory_published_git import GitReadError, resolve
+    _, _, root, commit = workspace
+    assert resolve(root, "HEAD") == commit
+    with pytest.raises(GitReadError, match=r"^Unknown revision nope-rev: no commit of that name in "):
+        resolve(root, "nope-rev")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(GitReadError, match="git rev-parse failed in .*: fatal: not a git repository"):
+        resolve(plain, "HEAD")
+
+
 def test_the_refusal_for_a_confirmed_checkpoint_record_points_to_the_checkpoint_tool(workspace):  # noqa: F811
     from cairnmind.confirmation import ConfirmationRefused
     store, pid, _, _ = workspace
