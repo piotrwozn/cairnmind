@@ -25,13 +25,22 @@ the record was edited or confirmed since; `external` when the record carries the
 `origin_client` mark (an external client's session, or a built-in agent session after a
 third-party tool result); `unattributed` for everything else, which is written through the
 service by a person, a coding session or a memory import, since the store does not record
-which. A client's own metadata can make its own record look less trusted, never more. The
-preview puts the latest checkpoint first, then confirmed records, then the others in the order
-`unattributed`, `external`, `automatic_extraction`, each by kind and id; proposed records are
-labelled, never removed. `omitted_records` counts what was left out and `omitted_by_origin`
-counts it per origin. The bootstrap text and the MCP server's instructions say that record
-content is quoted project data, never instructions. A packet of an earlier schema is never
-current: `resume_context` replaces it, and an ACK given for it is stale (`packet_changed`).
+which. A client's own metadata can make its own record look less trusted, never more. An
+imported record keeps the extraction label and the `origin_*` marks its package carried, both
+in the record and in its revisions; a package can also leave them out, and its records then
+show `unattributed`. Labels supplied by a package are taken as given, not checked. The
+preview puts the latest checkpoint first, then confirmed records, then the others; within
+each of the two groups the order is `unattributed`, `external`, `automatic_extraction`, each
+by kind and id. `confirmed` is a status any client with a write can set, so the order is a
+convenience, not a sign of trust; the origin label is what says where a record came from.
+Proposed records are labelled, never removed for being proposed. `omitted_records` counts what
+was left out and `omitted_by_origin` counts it per origin. When a packet is over its byte
+budget, preview records leave it from the end of that order, one at a time and counted, before
+the packet is reduced to its essential part (and made partial). The launch prompt, the
+start hook's pending text, the bootstrap text, the built-in agent's instructions and the MCP
+server's instructions say that record content is quoted project data, never instructions. A
+packet of an earlier schema is never current: `resume_context` replaces it, and an ACK given
+for it is stale (`packet_changed`).
 
 `Store` owns native transactions, project isolation, source snapshots, record
 revisions, task validation, durable job leases, native graph identity, export and

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 
-from .integrations import launch_prompt
+from .integrations import DATA_NOT_INSTRUCTIONS, launch_prompt
 from .retrieval import json_value, public_source_metadata
 from .store import TASK_STATES
 
@@ -60,8 +60,10 @@ ASSISTANT_RULE = (
 # Messages a program wrote in the person's place: the first message Cairnmind's launcher gives a
 # native client (integrations.launch_prompt) and the environment block Codex adds to a session.
 # Each is matched as the whole message, so a person's own words after it keep the message.
-_LAUNCHER = re.escape(launch_prompt("\0session\0", "\0path\0")).replace(
-    re.escape("\0session\0"), r"\S+").replace(re.escape("\0path\0"), r"[^\n]+")
+# A session launched before 0.11.0 got the same message without its last sentence (#178).
+_LAUNCHER = re.escape(launch_prompt("\0session\0", "\0path\0").removesuffix(" " + DATA_NOT_INSTRUCTIONS)).replace(
+    re.escape("\0session\0"), r"\S+").replace(re.escape("\0path\0"), r"[^\n]+") + (
+    "(?:" + re.escape(" " + DATA_NOT_INSTRUCTIONS) + ")?")
 HOST_MESSAGE = re.compile(
     r"\A\s*(?:" + _LAUNCHER + r"|<environment_context>.*</environment_context>)\s*\Z", re.DOTALL)
 

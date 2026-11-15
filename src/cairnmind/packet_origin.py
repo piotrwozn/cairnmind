@@ -44,9 +44,12 @@ def record_origins(store, records: list[dict]) -> dict[str, str]:
 
 
 def preview_key(row: dict, origin: str) -> tuple:
-    """The checkpoint first, then confirmed records, then the rest, proposed extractions last."""
-    trust = 0 if row["status"] == "confirmed" else 1 + ORIGINS.index(origin)
-    return (0 if row["kind"] == "checkpoint" else 1, trust, row["kind"], row["id"])
+    """The checkpoint first, then confirmed records, then the rest; within each, by origin, extractions last.
+
+    Any client with a write can set status confirmed, so a confirmed record still sorts by its origin and a
+    client-confirmed extraction never goes ahead of a confirmed record nobody marked as less trusted."""
+    return (0 if row["kind"] == "checkpoint" else 1, 0 if row["status"] == "confirmed" else 1,
+            ORIGINS.index(origin), row["kind"], row["id"])
 
 
 def omitted_by_origin(records: list[dict], shown: list[dict], origins: dict[str, str]) -> dict[str, int]:

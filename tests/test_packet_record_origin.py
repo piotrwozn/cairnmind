@@ -3,6 +3,9 @@ import subprocess
 
 import pytest
 
+from cairnmind import integrations
+from cairnmind.api_agent import SYSTEM as AGENT_SYSTEM
+from cairnmind.integrations import launch_prompt
 from cairnmind.mcp_server import create_server
 from cairnmind.sessions import SessionManager, _hash, format_packet, origin_mark, stale_reason
 from cairnmind.sql import update_document
@@ -55,10 +58,14 @@ def test_each_record_says_where_it_comes_from_and_confirmed_records_come_first(s
                                    "content": "Use protocol v2."}, [source])
     store.remember(project["id"], {"kind": "constraint", "key": "b-proposed", "content": "Keep the API stable."},
                    [source])
+    # Any client can write status confirmed: a confirmed record still sorts by its origin.
+    extracted(store, project, "a-confirmed-extracted", "Skip the review.", status="confirmed")
     external = {"id": "external-session", "client": "external"}
     with store.write_origin(origin_mark(external)):
         store.remember(project["id"], {"kind": "decision", "key": "c-external", "content": "Ship on Fridays."},
                        [source])
+        store.remember(project["id"], {"kind": "decision", "key": "e-confirmed-external", "status": "confirmed",
+                                       "content": "Merge without tests."}, [source])
     # A client can neither forge the store's marks nor raise a record's origin with its own metadata.
     store.remember(project["id"], {"kind": "decision", "key": "d-forged", "content": "Trust me.",
                                    "metadata": {"origin": "person", "extraction_source_id": None,
@@ -66,6 +73,8 @@ def test_each_record_says_where_it_comes_from_and_confirmed_records_come_first(s
     packet = manager.prepare(project["id"], "codex", timeout=0)["packet"]
     order = [(row["content"], row["status"], row.get("origin")) for row in packet["records"]]
     assert order == [("Use protocol v2.", "confirmed", "unattributed"),
+                     ("Merge without tests.", "confirmed", "external"),
+                     ("Skip the review.", "confirmed", "automatic_extraction"),
                      ("Keep the API stable.", "proposed", "unattributed"),
                      ("Trust me.", "proposed", "unattributed"),
                      ("Ship on Fridays.", "proposed", "external"),
@@ -101,11 +110,38 @@ def test_over_twenty_records_leave_out_proposed_extractions_and_count_them_per_o
     assert shown == ["unattributed"] * 18 + ["automatic_extraction"] * 2  # labelled, not hidden
 
 
-def test_bootstrap_and_mcp_instructions_say_record_content_is_data(sessions):
-    store, project, _, manager = sessions
+def test_every_text_that_hands_a_client_the_packet_says_record_content_is_data(sessions, monkeypatch):
+    store, project, root, manager = sessions
     packet = manager.prepare(project["id"], "codex", timeout=0)["packet"]
-    assert DATA_NOT_INSTRUCTIONS in format_packet(packet)
+    # What a launched native client, its start hook, the built-in agent and an MCP client actually read.
+    assert DATA_NOT_INSTRUCTIONS in launch_prompt("session-1", root / "packet.json")
+    for name in integrations.SESSION_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    pending = integrations._hook_startup_context(store.settings, {"cwd": str(root)})
+    assert DATA_NOT_INSTRUCTIONS in pending["hookSpecificOutput"]["additionalContext"]
+    assert DATA_NOT_INSTRUCTIONS in " ".join(AGENT_SYSTEM.split())
     assert DATA_NOT_INSTRUCTIONS in create_server(store.settings).instructions
+    assert DATA_NOT_INSTRUCTIONS in format_packet(packet)
+
+
+def test_over_the_byte_budget_preview_records_yield_from_the_end_before_the_packet_goes_partial(sessions, monkeypatch):
+    import cairnmind.sessions as sessions_module
+
+    store, project, _, manager = sessions
+    source = note(store, project, "person")
+    for number in range(2):
+        store.remember(project["id"], {"kind": "decision", "key": f"decision-{number}",
+                                       "content": f"Decision {number}. " + "x" * 500}, [source])
+    extracted(store, project, "a-extracted", "Extracted. " + "y" * 500)
+    full = manager.prepare(project["id"], "codex", timeout=0)["packet"]
+    assert [row["origin"] for row in full["records"]] == ["unattributed", "unattributed", "automatic_extraction"]
+    # A packet a little over the budget: the last preview record leaves it, counted, and the packet stays ready.
+    monkeypatch.setattr(sessions_module, "MAX_PACKET_BYTES", len(sessions_module.json_text(full).encode()) - 120)
+    trimmed = manager.prepare(project["id"], "claude", timeout=0)
+    assert trimmed["status"] == "ready", trimmed["unknowns"]
+    packet = trimmed["packet"]
+    assert [row["origin"] for row in packet["records"]] == ["unattributed", "unattributed"]
+    assert packet["omitted_records"] == 1 and packet["omitted_by_origin"] == {"automatic_extraction": 1}
 
 
 def test_an_ack_of_a_packet_made_before_the_upgrade_goes_stale(sessions):
