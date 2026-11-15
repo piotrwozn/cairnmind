@@ -337,3 +337,128 @@ def test_a_text_block_beside_a_tool_call_is_given_to_extraction_masked(workspace
     assert GITHUB_SHAPE not in json.dumps(request)
     # Without the masker the raw block is not part of the view: it is left out, never shown.
     assert extraction_request(source) is None
+
+
+# Review of the first version --------------------------------------------------------------------------
+
+async def test_a_metadata_line_is_read_masked_everywhere_its_readable_view_is_used(workspace, tmp_path):
+    from cairnmind.agent import KnowledgeAgent
+    from cairnmind.extraction_input import source_text
+    from cairnmind.ingest import _chunks
+    store, project, root = workspace
+    token = store.settings.token
+    history = tmp_path / "title.jsonl"
+    history.write_text(json.dumps({"type": "ai-title", "sessionId": "s", "cwd": str(root),
+                                   "aiTitle": f"Rotate {token}"}) + "\n")
+    import_history(store, history, project["id"], "claude")
+    (source,) = sources_of(store, project)
+    # normalized_text stays empty (the line is not extracted); the masked raw view is kept beside it.
+    assert source["metadata"]["normalized_text"] == "" and MASK in source["metadata"]["indexed_text"]
+    assert token in source["content"] and token not in source_text(source)
+    chunks = chunks_of(store, source["id"])
+    # Every chunk is a passage of the readable view, so a search hit of this line can be cited, and the
+    # chunks a memory snapshot import rebuilds from that view are the masked ones written here.
+    assert chunks and all(chunk["text"] in source_text(source) for chunk in chunks)
+    assert [text for text, _, _ in _chunks(source_text(source))] == [chunk["text"] for chunk in chunks]
+    agent = KnowledgeAgent(store, Settings(data_dir=store.data_dir), None)
+    shown = await agent._tool("read_source", {"source_id": source["id"], "current": False}, project["id"], {})
+    assert token not in json.dumps(shown) and MASK in shown["content"]
+
+
+def test_a_secret_split_between_two_transcript_lines_is_masked_in_both(workspace, tmp_path):
+    store, project, root = workspace
+    token = store.settings.token
+    half = len(token) // 2
+    history = tmp_path / "split.jsonl"
+    history.write_text(user_line(root, f"first half {token[:half]}") + user_line(root, f"{token[half:]} second half"))
+    import_history(store, history, project["id"], "claude")
+    texts = [c["text"] for s in sources_of(store, project) for c in chunks_of(store, s["id"])]
+    assert texts == [f"first half {MASK}", f"{MASK} second half"]
+
+
+def test_cut_off_pieces_shorter_than_twelve_characters_are_ordinary_words():
+    masker = Masker(["lm-studio", "sk-ant-api03-fixturefixturefixture"])
+    assert masker.mask("Anthropic keys start with sk-ant") == ("Anthropic keys start with sk-ant", [])
+    assert masker.mask("run it with lm-stu") == ("run it with lm-stu", [])
+    # A whole saved value is still replaced, even a placeholder: ingestion cannot tell it from a key.
+    assert masker.mask("We run lm-studio locally.")[0] == f"We run {MASK} locally."
+    assert masker.mask("output: sk-ant-api03-fix")[0] == f"output: {MASK}"
+
+
+def test_a_private_key_header_without_its_end_masks_only_the_key_lines():
+    masker = Masker()
+    prose = "A key file must start with -----BEGIN RSA PRIVATE KEY----- and end with its END line."
+    assert masker.mask(prose) == (f"A key file must start with {MASK} and end with its END line.", ["private_key"])
+    pasted = ("Here:\n-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nMIIEowIBAAKCAQEAfixturefixture0\n"
+              "AbCdEf==\nThat was all of it.")
+    assert masker.mask(pasted)[0] == f"Here:\n{MASK}\nThat was all of it."
+    # The raw JSON line of a metadata record carries escaped line breaks.
+    raw = json.dumps({"t": "-----BEGIN PRIVATE KEY-----\nMIIEowIBAAKCAQEAfixturefixture0\nabc=\nThen words"})
+    masked = masker.mask(raw)[0]
+    assert "MIIEow" not in masked and "abc=" not in masked and masked.endswith('\\nThen words"}')
+
+
+def assistant_with_tool(root, text):
+    return json.dumps({"type": "assistant", "cwd": str(root), "sessionId": "s", "message": {
+        "role": "assistant", "content": [{"type": "text", "text": text},
+                                         {"type": "tool_use", "name": "Read", "input": {"path": "app.py"}}]}}) + "\n"
+
+
+def test_a_text_block_that_ends_in_a_piece_of_a_value_still_matches_the_view(workspace, tmp_path):
+    from cairnmind.secret_mask import ingest_masker
+    store, project, root = workspace
+    piece = store.settings.token[:14]
+    history = tmp_path / "piece.jsonl"
+    history.write_text(assistant_with_tool(root, f"We decided to drop {GITHUB_SHAPE}, it began {piece}"))
+    import_history(store, history, project["id"], "claude")
+    (source,) = sources_of(store, project)
+    request = extraction_request(source, ingest_masker(store.settings).mask)
+    # Inside the view the block is followed by the tool call, so its last characters are not the text's end.
+    assert request["segments"] == [f"We decided to drop {MASK}, it began {piece}"]
+
+
+async def test_extraction_of_a_masked_source_fails_instead_of_skipping_when_secrets_are_unreadable_or_changed(
+        workspace, tmp_path):
+    from cairnmind.agent import KnowledgeAgent
+    store, project, root = workspace
+    token = store.settings.token
+    history = tmp_path / "assistant.jsonl"
+    history.write_text(assistant_with_tool(root, f"We decided to rotate {token} every month."))
+    import_history(store, history, project["id"], "claude")
+    (source,) = sources_of(store, project)
+    # A masker that no longer knows the token: the block is not part of the view, and that is an error.
+    with pytest.raises(ValueError, match="known secrets changed"):
+        extraction_request(source, Masker().mask)
+    (store.data_dir / "cockpit").mkdir(exist_ok=True)
+    (store.data_dir / "cockpit" / "preferences.json").write_text('{"version": 99}')
+    job = store.claim_job("mask-test", lease_seconds=120, kinds=["extract"])
+    model = QuotingModel()
+    with pytest.raises(ValueError, match="secrets_unreadable"):
+        await KnowledgeAgent(store, Settings(data_dir=store.data_dir), model).extract(job)
+    assert model.calls == []
+
+
+def test_session_findings_checkpoints_and_tasks_are_indexed_masked(workspace, tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from cairnmind.cli import app
+    from cairnmind.findings import save_finding
+    store, project, _ = workspace
+    token = store.settings.token
+    store.checkpoint(project["id"], {"summary": f"The hook uses {token}."})
+    with store.transaction():
+        finding = save_finding(store, project["id"], "8d2e4f60-1a3b-4c5d-9e7f-0a1b2c3d4e5f",
+                               f"Never paste {token} into a commit.", "constraint", "proposed", session_id="s-1")
+    monkeypatch.setattr("cairnmind.ingest.register_default_histories", lambda *a: {})
+    result = CliRunner().invoke(app, ["--data-dir", str(store.data_dir), "task", "add", "masking", f"Rotate {token}"])
+    assert result.exit_code == 0, result.output
+    sources = [store.get_source(finding["source"]["id"])]
+    sources += store.query("SELECT FROM sources WHERE project_id=:p AND (kind='checkpoint' OR uri LIKE 'manual://task/%')",
+                           {"p": project["id"]})
+    assert len(sources) == 3
+    for source in sources:
+        assert token in source["content"] and source["metadata"]["masked"] is True
+        assert token not in source["metadata"]["normalized_text"]
+    index_pending_sources(store)
+    for source in sources:
+        chunks = chunks_of(store, source["id"])
+        assert chunks and all(token not in chunk["text"] for chunk in chunks)
