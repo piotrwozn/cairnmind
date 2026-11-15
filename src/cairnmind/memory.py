@@ -1032,7 +1032,8 @@ class MemoryManager:
         result["verification"] = "Imported checks are historical; local execution and a new session ACK remain required."
         # Against the limits of publication (#191); the behaviour at the limit is in snapshot() and is unchanged.
         result["package_size"] = package_size(self.store, project_id, TABLES, max_rows=MAX_ROWS,
-                                              max_bytes=MAX_TOTAL_BYTES, max_manifest_bytes=MAX_MANIFEST_BYTES)
+                                              max_bytes=MAX_TOTAL_BYTES, max_manifest_bytes=MAX_MANIFEST_BYTES,
+                                              max_object_bytes=MAX_OBJECT_BYTES)
         if path.exists() or path.is_symlink():
             try:
                 result["latest"] = manifest_summary(path)

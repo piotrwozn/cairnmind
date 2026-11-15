@@ -453,6 +453,16 @@ CONFIRMATION_MESSAGES = {
     "Near the publication limit ({names}). Publishing stops at the limit.":
         "Blisko limitu publikacji ({names}). Publikacja zatrzymuje się na limicie.",
     "rows": "wiersze", "bytes": "bajty", "manifest bytes": "bajty manifestu",
+    "object bytes": "bajty największego obiektu",
+    "Package size: not measured (the store could not be read for it).":
+        "Rozmiar paczki: nie zmierzono (nie udało się odczytać magazynu).",
+    "Package size: still being measured, ask again in a minute.":
+        "Rozmiar paczki: wciąż jest mierzony, zapytaj ponownie za minutę.",
+    "The bytes could not be counted exactly here: the package can be larger than this.":
+        "Nie udało się tu dokładnie policzyć bajtów: paczka może być większa.",
+    "Largest object: {size} of {size_limit}": "Największy obiekt: {size} z {size_limit}",
+    "Measured {seconds} s ago; rows written since are not counted.":
+        "Zmierzono {seconds} s temu; wiersze zapisane później nie są policzone.",
     "Replaces {count} records that were confirmed or disputed on this computer. "
     "Applying the import puts the imported text or status in their place.":
         "Zastępuje rekordy potwierdzone lub zakwestionowane na tym komputerze: {count}. "
