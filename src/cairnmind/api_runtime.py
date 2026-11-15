@@ -16,6 +16,7 @@ import httpx
 
 from .client_runtime import LIVE, NativeRuntime, _ID, _atomic
 from .config import ENV_PREFIXES, Settings
+from .mcp_servers import MAX_SERVERS
 
 AGENT_CLIENTS = {"api", "copilot"}
 NATIVE_CLIENTS = {"codex", "claude"}
@@ -212,6 +213,38 @@ class RuntimeSupervisor(NativeRuntime):
             servers, problems = [], []
         return {"run": run, "profile": config["profile"], "mcp_servers": servers, "mcp_problems": problems}
 
+    def record_mcp_failure(self, run_id, generation, project_id, server_id, code):
+        """Keep with the run that one of its third-party MCP servers did not start (#209).
+
+        Only a code of the fixed set and the id of a server this run was given are kept, once per server;
+        a report for another generation, another project or an unknown run is refused. Nothing the server
+        said is ever part of a report.
+        """
+        from .mcp_failure_notice import SERVER_ID, START_FAILURE_CODES
+        from .client_runtime import UnknownRun
+        if not isinstance(code, str) or code not in START_FAILURE_CODES:
+            raise ValueError("mcp_failure_invalid: unknown code")
+        if not isinstance(server_id, str) or not SERVER_ID.fullmatch(server_id):
+            raise ValueError("mcp_failure_invalid: malformed server id")
+        config = self.agent_configuration(run_id, generation)  # unknown run, generation, lifecycle, identity
+        if not isinstance(project_id, str) or config["run"].get("project_id") != project_id:
+            raise ValueError("mcp_failure_invalid: the run belongs to another project")
+        if server_id not in {row.get("id") for row in config["mcp_servers"] if isinstance(row, dict)}:
+            raise ValueError("mcp_failure_invalid: not a server of this run")
+        with self._locked():
+            rows = self._read()
+            row = next((r for r in rows if r.get("id") == run_id), None)
+            if row is None:
+                raise UnknownRun("Unknown native run")
+            if row.get("generation") != generation:
+                raise ValueError("Native run generation changed")
+            kept = [r for r in row.get("mcp_failures") or [] if isinstance(r, dict)]
+            if any(r.get("server_id") == server_id for r in kept):
+                return {"recorded": False}
+            row["mcp_failures"] = [*kept, {"server_id": server_id, "code": code}][-MAX_SERVERS:]
+            self._save(rows)
+        return {"recorded": True}
+
     def _credential_profiles(self, profile=None):
         from .cockpit_state import CockpitState
         return [*CockpitState(self.settings).load()["profiles"], *([profile] if profile else [])]
@@ -256,6 +289,27 @@ def api_worker_config(settings: Settings, run_id: str, generation: int) -> dict:
             return {**value, "key": key}
     except (httpx.HTTPError, ValueError):
         raise ValueError("The agent's private configuration cannot be restored. Start it again from Cairnmind.") from None
+
+
+def report_mcp_failure(settings: Settings, run: dict, server_id, code) -> bool:
+    """From the agent worker: one server of this run did not start (#209). The run's identity, the server's
+    id and a fixed code are sent, nothing the server said; any failure to send is ignored and never logged,
+    since the agent pane already shows the server as off."""
+    from .cockpit import cockpit_status
+    from .mcp_failure_notice import valid_report
+    from .terminal_client import BrokerClient
+    if not valid_report(server_id, code):
+        return False
+    try:
+        url = BrokerClient._validated(cockpit_status(settings))
+        with httpx.Client(base_url=url, trust_env=False, timeout=5,
+                          headers={"Authorization": f"Bearer {settings.token}"}) as client:
+            response = client.post("/_control/agent/mcp_failure", json={
+                "run_id": run["id"], "generation": run["generation"], "project_id": run["project_id"],
+                "server_id": server_id, "code": code})
+        return response.is_success
+    except Exception:
+        return False
 
 
 def stage_readiness(settings: Settings, credentials):
