@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 
-from .integrations import DATA_NOT_INSTRUCTIONS, launch_prompt
+from .integrations import BEGIN, DATA_NOT_INSTRUCTIONS, EARLIER_BEGIN, EARLIER_END, END, launch_prompt
 from .ollama import MODEL_DIGEST
 from .retrieval import json_value, public_source_metadata
 from .store import EXTRACTOR_MODEL_CHARS, TASK_STATES
@@ -98,6 +98,16 @@ _LAUNCHER = re.escape(launch_prompt("\0session\0", "\0path\0").removesuffix(" " 
     "(?:" + re.escape(" " + DATA_NOT_INSTRUCTIONS) + ")?")
 HOST_MESSAGE = re.compile(
     r"\A\s*(?:" + _LAUNCHER + r"|<environment_context>.*</environment_context>)\s*\Z", re.DOTALL)
+# The block `cairnmind install` writes into AGENTS.md and CLAUDE.md (integrations._instructions), under the
+# current or the earlier markers, each on a line of its own: the client protocol, not the project's rules (#241).
+OWN_BLOCK = re.compile("|".join(
+    r"^[ \t]*" + re.escape(begin) + r"[ \t]*$.*?^[ \t]*" + re.escape(end) + r"[ \t]*$"
+    for begin, end in ((BEGIN, END), (EARLIER_BEGIN, EARLIER_END))), re.MULTILINE | re.DOTALL)
+
+
+def _without_own_block(segments: list[str]) -> list[str]:
+    """``segments`` with Cairnmind's own block cut out; the text around it stays, as passages of their own."""
+    return [part for segment in segments for part in OWN_BLOCK.split(segment) if part.strip()]
 
 
 def _raw_event(source: dict) -> dict | None:
@@ -203,6 +213,10 @@ def extraction_request(source: dict, mask=None) -> dict | None:
                     return None
                 segments = spoken
         system += CONVERSATION_RULE + (ASSISTANT_RULE if role == "assistant" else "")
+    if any(OWN_BLOCK.search(segment) for segment in segments):
+        segments = _without_own_block(segments)
+        if not segments:
+            return None
     segments = _visible(segments)
     text = "\n".join(segments)
     prompt = {"source_id": source["id"], "source_kind": source["kind"],
@@ -246,7 +260,7 @@ def repair_prompt(source_id: str, text: str, failure: str, draft) -> dict:
 # extraction gives the model changes; tests/test_extractor_stamp.py pins the fingerprint of every version,
 # so such a change fails the suite until it is bumped. A record with that origin and no ``extractor`` stamp
 # was extracted before the stamp existed: version 0.
-EXTRACTOR_VERSION = 1
+EXTRACTOR_VERSION = 2  # 2: Cairnmind's own AGENTS.md / CLAUDE.md block is no longer read (#241)
 UNKNOWN_DIGEST = "unknown"
 
 # Fixed sources the fingerprint renders through the code above, so that a change to how the prompt, the
@@ -265,6 +279,8 @@ _SAMPLES = (
     {"id": "sample-host", "kind": "transcript", "content": "<environment_context>cwd</environment_context>",
      "metadata": {"role": "user"}},
     {"id": "sample-own", "kind": "agent_answer", "content": "An answer.", "metadata": {"agent": "cairnmind"}},
+    {"id": "sample-agents", "kind": "document", "metadata": {"path": "/repo/AGENTS.md"},
+     "content": f"We never log tokens.\n\n{BEGIN}\nFIRST call resume_context.\n{END}\n\nUse four spaces.\n"},
 )
 
 

@@ -35,6 +35,7 @@ from conftest import as_person
 # EXTRACTOR_VERSION in extraction_input.py and add its fingerprint here; never edit an earlier line.
 PINNED_FINGERPRINTS = {
     1: "47babfb3205ae8de11ee144c3acab4797d532ff03bd60b2087a1242996fcbfea",
+    2: "07e52e9bcab68c5b351cc10cf6a25abcab893f48ac5e0f30b5186316403e63da",
 }
 
 QUOTE = "Use auth.py for explicit authentication."
@@ -73,6 +74,7 @@ def test_the_schema_and_the_passage_windows_are_part_of_the_fingerprint(monkeypa
     ("public_source_metadata", lambda metadata: {}),
     ("HOST_MESSAGE", re.compile(r"(?!)")),
     ("_without_tool_calls", lambda source: None),
+    ("_without_own_block", lambda segments: segments),
 ])
 def test_the_built_request_the_correction_and_the_budgets_are_part_of_the_fingerprint(monkeypatch, name, value):
     before = extractor_fingerprint()

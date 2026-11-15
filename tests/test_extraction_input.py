@@ -109,6 +109,34 @@ def test_every_quote_allowed_around_a_claude_tool_call_is_kept_at_commit():
     assert all(passage in request["text"] for passage in passages)
 
 
+def test_cairnminds_own_block_in_agents_md_is_not_read_as_project_knowledge(tmp_path):
+    # Issue #241: `cairnmind install` writes the client protocol into AGENTS.md and CLAUDE.md between its
+    # markers; extraction read it as project rules ("FIRST call resume_context ...", "Never invent an ACK.").
+    from cairnmind import agent as agent_module
+    from cairnmind.extraction_input import source_text
+    from cairnmind.integrations import EARLIER_BEGIN, EARLIER_END, _instructions
+
+    block = _instructions({"id": "p1"}, Settings(data_dir=tmp_path))
+    assert "resume_context" in block
+    document = {"id": "d", "project_id": "p", "kind": "document", "metadata": {"path": "/repo/AGENTS.md"},
+                "content": "# Rules\r\n\r\nWe never log tokens.\r\n\r\n" + block.replace("\n", "\r\n")
+                           + "\r\n\r\n## Style\r\nUse four spaces.\r\n"}
+    request = extraction_request(document)
+    assert "resume_context" not in request["text"] and "CAIRNMIND" not in request["text"]
+    assert "We never log tokens." in request["segments"][0] and "Use four spaces." in request["segments"][-1]
+    # The text before and after the block are separate passages: their join is not in the file.
+    assert len(request["segments"]) == 2
+    passages = agent_module._extraction_schema(request["text"], request["segments"])[
+        "properties"]["records"]["items"]["properties"]["evidence"]["enum"]
+    assert passages and all(passage in source_text(document) for passage in passages)
+    # A file that holds only the block, here under the earlier markers, gives nothing to extract.
+    earlier = block.replace(block.splitlines()[0], EARLIER_BEGIN).replace(block.splitlines()[-1], EARLIER_END)
+    assert extraction_request({**document, "content": "\n" + earlier + "\n"}) is None
+    # A line that only names the markers in prose is the project's own text and stays.
+    prose = "The installer keeps its block between <!-- BEGIN CAIRNMIND --> and <!-- END CAIRNMIND --> lines."
+    assert extraction_request({**document, "content": prose})["text"] == prose
+
+
 class CountingOllama:
     def __init__(self):
         self.texts = []
