@@ -971,7 +971,7 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
             if not isinstance(payload, dict) or payload.get("client") not in CLIENTS:
                 raise ValueError("Invalid hook spool payload")
             try:
-                project = store.resolve_project(str(payload.get("cwd") or ""))
+                project = store.resolve_project(str(payload.get("cwd") or ""), recorded=True)
             except ValueError:
                 counts["unassigned"] += 1
                 continue

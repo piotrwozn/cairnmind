@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import threading
@@ -275,6 +276,8 @@ class Store:
     # Set when another installation took over writing after this store was opened: every write is refused.
     _writer_lost = None
     installation = None
+    # False in the service: its working directory is not the caller's, so resolve_project refuses a relative path.
+    relative_paths = True
     _writable = None
     # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
     not_ready = None
@@ -732,12 +735,28 @@ class Store:
     def list_projects(self):
         return [clean_row(row) for row in self.query("SELECT FROM projects ORDER BY name")]
 
-    def resolve_project(self, identifier):
+    def resolve_project(self, identifier, *, recorded: bool = False):
+        """The project of an id, a name, or a path inside one of its registered folders (#238).
+
+        A value that matches no id or name is read as a path only when it is written as one (absolute,
+        holding a separator, or starting with "." or "~") and the path exists; anything else is an
+        unknown project, so a mistyped name never falls back to the working directory's project. A
+        store whose working directory is not the caller's (the service, relative_paths False) refuses
+        a relative path. recorded=True is for an absolute working directory a client recorded (a
+        transcript or a hook event): it names a place, typed by nobody, that may since have been removed.
+        """
         value = str(identifier)
         project = one_row(self, "SELECT FROM projects WHERE id=:value OR name=:value", {"value": value}, False)
         if project:
             return project
-        path = Path(value).expanduser().resolve()
+        if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
+            raise ValueError(f"Unknown project: {value}")
+        written = Path(value).expanduser()
+        if not written.is_absolute() and (recorded or not self.relative_paths):
+            raise ValueError(f"Unknown project: {value} (a relative path is not accepted here; give an absolute one)")
+        path = written.resolve()
+        if not recorded and not path.exists():
+            raise ValueError(f"Unknown project: {value} (no such file or folder)")
         candidates = [r for r in self.query("SELECT FROM project_roots")
                       if path == Path(r["path"]) or Path(r["path"]) in path.parents]
         if candidates:

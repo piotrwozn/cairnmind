@@ -212,10 +212,24 @@ class ServiceRefusal(Exception):
     """The service refused a request made with ``raise_refusal=True``; the message is its sanitized reason."""
 
 
+def caller_path(project: str) -> str:
+    """A project written as a path that exists here, made absolute: the service reads a relative path from
+    its own working directory and refuses it (#238). A name, or a path that does not exist, is sent as given."""
+    if project.startswith((".", "~")) or "/" in project:
+        local = Path(project).expanduser()
+        if local.exists():
+            return str(local.resolve())
+    return project
+
+
 def request(settings: Settings, method: str, path: str, *, start_service: bool = True, session: bool = True,
             raise_refusal: bool = False, **kwargs):
     # session=False sends no session of the launched agent (a replay asks for the logged scope, #15);
     # raise_refusal=True raises ServiceRefusal instead of ending the command.
+    for part in ("json", "params"):
+        values = kwargs.get(part)
+        if isinstance(values, dict) and isinstance(values.get("project"), str):
+            kwargs[part] = {**values, "project": caller_path(values["project"])}
     if start_service:
         ensure_service(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:

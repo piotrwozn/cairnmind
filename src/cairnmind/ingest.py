@@ -1213,7 +1213,7 @@ def _source_project(store, requested: str | None, cwd: str | None) -> tuple[str 
     inferred = None
     if cwd:
         try:
-            inferred = store.resolve_project(cwd)["id"]
+            inferred = store.resolve_project(cwd, recorded=True)["id"]
         except ValueError:
             pass
     if requested and cwd and requested != inferred:
@@ -1545,7 +1545,7 @@ def register_default_histories(store, project_id: str, root: Path) -> dict:
                 if not declared:
                     continue
                 try:
-                    belongs = store.resolve_project(declared)["id"] == project["id"]
+                    belongs = store.resolve_project(declared, recorded=True)["id"] == project["id"]
                 except ValueError:
                     belongs = False
                 if belongs:
