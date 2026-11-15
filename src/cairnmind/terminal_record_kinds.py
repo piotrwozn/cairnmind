@@ -5,8 +5,8 @@ kind it shows the record as it is stored (kind, client, version and its content,
 offers one action: treat this kind as technical in this project, with a note. An accepted kind can be
 withdrawn. Both go to the inspector route that names no session, the person's own route (#177).
 
-When a visible session's memory is partial, the sidebar asks once which kind blocks it and says so on
-the notice line, with where to accept it. The record's text never reaches the notice line.
+When a visible session's memory is partial, the sidebar asks once whether the project's transcripts hold
+an unknown kind and says so on the notice line, with where to accept it. The record's text never reaches the notice line.
 """
 from __future__ import annotations
 
@@ -49,10 +49,15 @@ MESSAGES = {
         "Po wycofaniu rekordy tego rodzaju znów blokują pakiety wznowienia tego projektu.",
     "Withdraw": "Wycofaj",
     "The acceptance of {kind} from {client} is withdrawn.": "Akceptacja rodzaju {kind} od {client} została wycofana.",
-    "Transcript record kind {kind} from {client} blocks the resume packet. Look at it and accept it under "
-    "More → Transcript record kinds.":
-        "Rodzaj rekordu transkrypcji {kind} od {client} blokuje pakiet wznowienia. Obejrzyj go i zaakceptuj "
-        "w Więcej → Rodzaje rekordów transkrypcji.",
+    "This project's transcripts hold record kind {kind} from {client}, unknown to this release; it blocks the "
+    "resume packets of this project. Look at it and accept it under More → Transcript record kinds.":
+        "Transkrypcje tego projektu zawierają rodzaj rekordu {kind} od {client}, nieznany tej wersji; blokuje on "
+        "pakiety wznowienia tego projektu. Obejrzyj go i zaakceptuj w Więcej → Rodzaje rekordów transkrypcji.",
+    "Only the first {count} unknown transcript records of this project were read, so a kind further on is not "
+    "listed here. A partial packet names its kind and the `cairnmind record-kind accept` command for it.":
+        "Odczytano tylko pierwsze {count} nieznanych rekordów transkrypcji tego projektu, więc rodzaj zapisany "
+        "dalej nie jest tu wymieniony. Częściowy pakiet podaje jego rodzaj i polecenie `cairnmind record-kind "
+        "accept` dla niego.",
 }
 
 
@@ -100,8 +105,16 @@ async def open_view(app, confirm_modal):
     standing = [item for item in view.get("accepted") or [] if isinstance(item, dict)][:64]
     choices = ([(_label(item, app.t), f"accept:{index}") for index, item in enumerate(blocking)]
                + [(_label(item, app.t, True), f"withdraw:{index}") for index, item in enumerate(standing)])
-    if not choices:
+    if view.get("complete", True) is False:
+        # The service read only part of the records: never say there is nothing when a kind may lie further on.
+        count = view.get("scanned") if type(view.get("scanned")) is int else "?"
+        app.notice_for(subject, app.t(
+            "Only the first {count} unknown transcript records of this project were read, so a kind further on is "
+            "not listed here. A partial packet names its kind and the `cairnmind record-kind accept` command for it.",
+            count=count), "warn")
+    elif not choices:
         app.notice_for(subject, app.t("No unknown transcript record kinds in this project."))
+    if not choices:
         return
     choice = await app.push_screen_wait(ChoiceModal(app.t("Transcript record kinds"), choices))
     if not choice:
@@ -161,11 +174,18 @@ async def _announce(app, project, value):
     blocking = [item for item in view.get("blocking") or [] if isinstance(item, dict)]
     checked = _checked(app)
     signature = tuple(sorted((str(item.get("client")), str(item.get("kind"))) for item in blocking))
-    if not blocking or checked.get(project, (0, None))[1] == signature:
+    last = checked.get(project, (time.monotonic(), None))
+    if not blocking:
+        # Nothing blocks now: forget what was named, so a kind that comes back (withdrawn) is named again.
+        checked[project] = (last[0], None)
         return
-    checked[project] = (checked.get(project, (time.monotonic(), None))[0], signature)
+    if last[1] == signature:
+        return
+    checked[project] = (last[0], signature)
     first = blocking[0]
+    # The kind is found in the project's transcripts, not proved to be what makes this slot partial: say so.
     app.notice_for(notice_about(project, value.get("project_name"), value.get("worktree")),
-                   app.t("Transcript record kind {kind} from {client} blocks the resume packet. Look at it and "
-                         "accept it under More → Transcript record kinds.",
+                   app.t("This project's transcripts hold record kind {kind} from {client}, unknown to this release; "
+                         "it blocks the resume packets of this project. Look at it and accept it under More → "
+                         "Transcript record kinds.",
                          kind=_word(first.get("kind")), client=_word(first.get("client"))), "warn")

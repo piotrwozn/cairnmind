@@ -134,6 +134,45 @@ async def test_a_partial_memory_names_the_blocking_kind_once_and_where_to_accept
     assert "SYSTEM" not in notice and broker.reads == 1 and broker.sent == []
 
 
+@pytest.mark.asyncio
+async def test_a_view_that_read_only_part_of_the_records_never_says_there_is_nothing(tmp_path, monkeypatch):
+    app, broker, _ = ui(tmp_path, monkeypatch, {"blocking": [], "accepted": [], "complete": False, "scanned": 20000})
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.record_kinds()
+        await wait_until(pilot, lambda: "Only the first 20000" in notice_of(app))
+        notice = notice_of(app)
+    assert "No unknown transcript record kinds" not in notice and "cairnmind record-kind accept" in notice
+    assert broker.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_kind_that_comes_back_after_nothing_blocked_is_named_again(tmp_path, monkeypatch):
+    from cairnmind import terminal_record_kinds
+    monkeypatch.setattr(terminal_record_kinds, "CHECK_SECONDS", 0)
+    app, broker, workspace = ui(tmp_path, monkeypatch, {"blocking": [BLOCKING], "accepted": []})
+    named = []
+    shown = app.notice_for
+
+    def record(about, value, kind="info"):
+        named.append(value)
+        shown(about, value, kind)
+    app.notice_for = record
+    partial = {**workspace.read(), "slots": [{"id": "slot-native", "memory": {"status": "partial"}}]}
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        for view in ({"blocking": [BLOCKING]}, {"blocking": []}, {"blocking": [BLOCKING]}):
+            broker.view = {**view, "accepted": []}
+            reads = broker.reads
+            await app.workspace_changed(partial)
+            await wait_until(pilot, lambda: broker.reads > reads)
+            await settle(app, pilot)
+    # Accepted (nothing blocks), then withdrawn: the same kind is named a second time.
+    assert len([text for text in named if "future-claude-record" in text]) == 2
+    # The notice speaks of the project's transcripts, not of this slot's packet.
+    assert "This project's transcripts" in named[0]
+
+
 def test_every_text_of_the_view_has_a_polish_entry():
     assert all(CATALOG.get(english) == polish and polish != english for english, polish in MESSAGES.items())
 
