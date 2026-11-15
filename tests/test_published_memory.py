@@ -20,7 +20,7 @@ from cairnmind.memory_published_import import PublishedImporter
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
 
-from conftest import as_person
+from conftest import as_person, person_edit
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 
@@ -73,8 +73,9 @@ def edited(store, project_id, record, text):
     """An edit and then a person's review of it, as on any machine."""
     current = next(r for r in store.list_records(project_id) if r["id"] == record["id"])
     source = store.snapshot(project_id, f"note://edit/{len(text)}", text, "note")
-    changed = store.remember(project_id, {"id": current["id"], "expected_version": current["version"], "content": text},
-                             [*current["source_ids"], source["id"]])
+    # Only a person changes a record a person confirmed (#177): the edit is the person's own act.
+    changed = person_edit(store, project_id, {"id": current["id"], "expected_version": current["version"],
+                                              "content": text}, [*current["source_ids"], source["id"]])
     return Inspector(store).review(project_id, changed["id"], "confirm", changed["version"])["record"]
 
 
@@ -152,16 +153,21 @@ def test_only_acts_of_a_person_are_published_and_publishing_twice_changes_no_fil
     assert '\ncovered: {"by":"progress"}\nstate: "in_progress"\n' in (folder_of(root) / f"task/{step['id']}.md").read_text()
 
 
-def test_an_agent_edit_after_a_review_stays_local_until_a_person_reviews_it(ada):
+def test_an_edit_after_a_review_stays_local_until_a_person_reviews_it(ada):
     store, pid, root = ada["store"], ada["project"], ada["root"]
     record = reviewed(store, pid, "decision", "Use cookies.", "auth")
     publisher = Publisher(store)
     publisher.publish(pid)
     before = published_bytes(root)
     source = store.snapshot(pid, "note://agent", "Use local storage.", "note")
-    changed = store.remember(pid, {"id": record["id"], "expected_version": record["version"],
-                                   "content": "Use local storage."}, [*record["source_ids"], source["id"]])
-    assert changed["status"] == "proposed"  # Not a person's write: what was confirmed changed (#177).
+    update = {"id": record["id"], "expected_version": record["version"], "content": "Use local storage."}
+    # An agent cannot change what a person confirmed (#177): nothing is stored, so nothing is published.
+    with pytest.raises(ValueError, match="Only a person takes a confirmation away"):
+        store.remember(pid, update, [*record["source_ids"], source["id"]])
+    assert publisher.publish(pid)["status"] == "unchanged" and published_bytes(root) == before
+    # The person's own edit is proposed until they review it.
+    changed = person_edit(store, pid, update, [*record["source_ids"], source["id"]])
+    assert changed["status"] == "proposed"
     assert publisher.publish(pid)["status"] == "unchanged" and published_bytes(root) == before
     Inspector(store).review(pid, record["id"], "confirm", changed["version"])
     assert publisher.publish(pid)["written"] == [f"decision/{record['id']}.md"]

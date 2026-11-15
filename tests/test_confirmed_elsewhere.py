@@ -21,7 +21,7 @@ from cairnmind.store import Store
 from cairnmind.terminal_detail import joined, record_parts
 from cairnmind.terminal_i18n import tr
 
-from conftest import as_person
+from conftest import as_person, person_edit
 from test_published_memory import commit, folder_of, published_bytes, repository, reviewed, teammate
 
 
@@ -197,8 +197,8 @@ def test_a_local_persons_verdict_is_not_overwritten_by_an_import(ada):
     assert rows(bo["store"], bo["project"])[record["id"]]["status"] == "disputed"
     current = rows(store, pid)[record["id"]]
     source = store.snapshot(pid, "note://edit", "Use signed cookies.", "note")
-    changed = store.remember(pid, {"id": current["id"], "expected_version": current["version"],
-                                   "content": "Use signed cookies."}, [*current["source_ids"], source["id"]])
+    changed = person_edit(store, pid, {"id": current["id"], "expected_version": current["version"],
+                                       "content": "Use signed cookies."}, [*current["source_ids"], source["id"]])
     Inspector(store).review(pid, changed["id"], "confirm", changed["version"])
     Publisher(store).publish(pid)
     from cairnmind.memory import MemoryConflict

@@ -13,15 +13,20 @@ to be confirmed. A client can neither send it nor clear it. It has these forms:
         data an evaluation wrote for itself; never a person;
     {"by": "lapsed", "confirmed_version", "version", "status"}
         on a record that is no longer confirmed because a write that was not a person's act changed what
-        had been confirmed, or set another status on it.
+        had been confirmed, or set another status on it. Only a confirmation that is not a person's verdict
+        given here can lapse: an imported one, evaluation seed data, and the checkpoint record.
 
 A confirmed record without the field was confirmed before this rule existed (`before_rule`): its status
 is kept and nothing is claimed about who confirmed it.
+
+A write that is not a person's act never takes a person's confirmation away (`kept_verdict`, `VerdictKept`):
+it may not replace such a record, set another status on it or change what the confirmation covers.
 """
 from __future__ import annotations
 
 import os
 import sys
+from contextlib import contextmanager
 
 from .config import session_value
 from .terminal_safe import safe_text
@@ -76,6 +81,83 @@ class ConfirmationRefused(ValueError):
         super().__init__(message)
 
 
+class VerdictKept(ConfirmationRefused):
+    """A write that is not a person's act would take a person's confirmation away: nothing is stored."""
+
+    def __init__(self, record, change, status=None, differs=()):
+        self.record_id, self.kind, self.key = record["id"], record["kind"], record.get("key")
+        self.change, self.status, self.differs = change, status, tuple(differs)
+        super().__init__(kept_refusal(record, change, status, self.differs))
+
+
+# What the refused write would have done to the confirmed record.
+_KEPT_CHANGES = {"replace": "replace it (supersedes)", "status": "set its status to {status}",
+                 "change": "change what was confirmed (its text, key or a field beside it)"}
+PLAN_CONTEXT_KEPT = (
+    "A person confirmed this plan with its title, goal and constraints, and this save is not a person's act: it "
+    "would change its {them}. Only a person takes a confirmation away. Nothing was saved. Save the plan with its "
+    "title, goal and constraints as they are (leave them out of the request; steps can be added and steps that "
+    "are not confirmed can change); the person changes them with `cairnmind plan save` in their own terminal, or "
+    "disputes the steps they confirmed with the plan in the inspector.")
+
+
+def _would(change, status=None, differs=()) -> str:
+    would = _KEPT_CHANGES[change].format(status=status)
+    if change == "change" and differs:
+        # The names are the caller's own field names: escaped, cut and counted.
+        named = ", ".join(_clean(name, 60) for name in differs[:8]) + (" and more" if len(differs) > 8 else "")
+        would = f"change what was confirmed ({named} would differ from the confirmed version)"
+    return would
+
+
+def said_difference(before, after) -> list:
+    """The names of what differs between two `said` statements: text, key, supersedes, metadata.<field>."""
+    import json
+    names = [name for name, index in (("text", 1), ("key", 2), ("supersedes", 3), ("metadata.evidence", 4))
+             if before[index] != after[index]]
+    old, new = json.loads(before[5]), json.loads(after[5])
+    return names + [f"metadata.{name}" for name in sorted(set(old) | set(new)) if old.get(name) != new.get(name)]
+# Kinds whose pairs the conflict inbox shows (conflicts.KINDS).
+_INBOX_KINDS = ("fact", "decision")
+
+
+def kept_refusal(record, change, status=None, differs=()) -> str:
+    """The refusal of a write that would take a person's confirmation away: the record, and what to do."""
+    record_id, kind = record["id"], record["kind"]
+    would = _would(change, status, differs)
+    if kind in _INBOX_KINDS:
+        instead = (f"store what you found as a new proposed {kind} under another key, with "
+                   f"metadata.possible_conflicts set to [\"{record_id}\"]: the pair then waits in the conflict "
+                   "inbox, where the person decides which one stands.")
+    elif kind == "task":
+        instead = ("report progress on it as before (state, evidence, check runs, scope), or store a new proposed "
+                   "task; the person disputes this one in the inspector, or changes it in their own terminal.")
+    else:
+        instead = (f"store what you found as a new proposed {kind} under another key and tell the person; "
+                   "they dispute this record or confirm the new one in the inspector.")
+    return (f"A person confirmed record {record_id} ({kind}), and this write is not a person's act: it would "
+            f"{would}. Only a person takes a confirmation away. Nothing was saved. Leave that record as it is and "
+            + instead)
+
+
+def kept_step_refusal(step_key, refusal, adoption=False) -> str:
+    """The same refusal for a plan save, with the step named; an adoption has its own sentence."""
+    would = _would(refusal.change, refusal.status, refusal.differs)
+    if refusal.change == "status" and refusal.status == "superseded":
+        would = "remove it from the plan"
+    if adoption:
+        return (f"Task {str(step_key)[:200]!r} (task {refusal.record_id}) was confirmed by a person, or before "
+                "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
+                f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
+                "The person runs `cairnmind plan adopt` in their own terminal; the adopted steps are then proposed "
+                "until they confirm the plan.")
+    return (f"Step {str(step_key)[:200]!r} of this plan (task {refusal.record_id}) was confirmed by a person, and "
+            f"this save is not a person's act: it would {would}. Only a person takes a confirmation away. Nothing "
+            "was saved. Save the plan with that step exactly as `plan show` returns it, every field included (other "
+            "steps can change and new steps can be added); the person disputes the step in the inspector, or saves the plan with `cairnmind plan save` "
+            "in their own terminal.")
+
+
 def said(kind, content, key, supersedes, metadata) -> tuple:
     """What a confirmation covers: when this differs between two versions, the confirmation does not carry over."""
     import json
@@ -116,6 +198,17 @@ def local_verdict(head) -> bool:
         return mark["by"] == "person"
     # A version that is a published revision an import wrote, confirmed or disputed elsewhere.
     return not (isinstance(publication, dict) and publication.get("version") == head.get("version"))
+
+
+def kept_verdict(head) -> bool:
+    """Whether a record's head is confirmed by a person here, so that only a person takes that away.
+
+    A person's act on this machine, or a record confirmed before the rule (nothing says it was not a
+    person's; `local_verdict` reads it the same way for an import). Not a confirmation an import brought,
+    and not evaluation seed data: neither is a verdict given here.
+    """
+    return (isinstance(head, dict) and head.get("status") == "confirmed" and local_verdict(head)
+            and confirmed_by(head) in ("person", "before_rule"))
 
 
 REPLACES_NOTE = ("these records were confirmed or disputed on this machine and the import puts another text or "
@@ -326,7 +419,7 @@ def person_at_terminal(environ=None, stdin=None, stdout=None) -> bool:
         return False
 
 
-def person_source(store, project_id, text, *, route="cli", origin=None):
+def person_source(store, project_id, text, *, route="cli", origin=None, action="command_line_confirm"):
     """The note a person's command line confirmation leaves: who confirmed, on which branch and commit.
 
     Like a review's audit it says that a person judged the record, never why the record is true: it is
@@ -344,7 +437,7 @@ def person_source(store, project_id, text, *, route="cli", origin=None):
     prefix, source_origin = PERSON_ROUTES[route]
     context = act_context(store, project_id)
     metadata = {"origin": origin or source_origin, "role": "user", **context}
-    audit = {"actor": "local_user", **context, "action": "command_line_confirm", "text_chars": len(text)}
+    audit = {"actor": "local_user", **context, "action": action, "text_chars": len(text)}
     return store.snapshot(project_id, f"{prefix}{uuid4()}", json.dumps(audit, ensure_ascii=False, sort_keys=True),
                           "manual", metadata)
 
@@ -359,3 +452,19 @@ def remember_as_person(store, project_id, record, sources=None, *, route="cli"):
         note = person_source(store, project_id, record.get("content") or "confirmed", route=route)
         with store.person_act(route, note["id"]):
             return store.remember(project_id, record, [*(sources or []), note["id"]])
+
+
+@contextmanager
+def person_command(store, project_id, action):
+    """A command a person types in their own terminal that may change records they confirmed (a plan save).
+
+    Elsewhere (a coding session's shell, an agent's command, a script) nothing is opened, and the store
+    refuses what would take a confirmation away. The note says who ran the command; it confirms nothing.
+    """
+    if not person_at_terminal():
+        yield False
+        return
+    with store.transaction():
+        note = person_source(store, project_id, action, action=action)
+        with store.person_act("cli", note["id"]):
+            yield True

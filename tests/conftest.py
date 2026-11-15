@@ -112,6 +112,20 @@ def as_person(store, project_id, record, sources=None):
     return remember_as_person(store, project_id, {"status": "confirmed", **record}, sources)
 
 
+def person_edit(store, project_id, record, sources):
+    """Write `record` as a person's own act that confirms nothing (#177).
+
+    Once a person confirmed a record, only a person changes or replaces it. This helper stands for that
+    person: it opens the act the command line opens for `cairnmind plan save` in a person's terminal. A
+    changed record is stored as proposed, without a lapsed mark, until the person confirms it again.
+    """
+    from cairnmind.confirmation import person_source
+    with store.transaction():
+        note = person_source(store, project_id, "edit", action="person_edit")
+        with store.person_act("cli", note["id"]):
+            return store.remember(project_id, record, sources)
+
+
 def confirmed_before_rule(store, record_id):
     """Turn a stored record into one that was confirmed before only a person could confirm (#177).
 

@@ -584,8 +584,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.exception_handler(ValueError)
     async def bad_input(request: Request, exc: ValueError):
         from fastapi.responses import JSONResponse
+        from cairnmind.confirmation import ConfirmationRefused
         status = 409 if (isinstance(exc, MemoryConflict) or any(
             word in str(exc).lower() for word in ("version", "conflict", "stale", "resume_required"))) else 400
+        if isinstance(exc, ConfirmationRefused):
+            # Not something to read again and retry (#177), whatever words the refusal uses ("conflict inbox").
+            status = 400
         return JSONResponse(status_code=status, content={"detail": str(exc)})
 
     from cairnmind.arcade import ArcadeError

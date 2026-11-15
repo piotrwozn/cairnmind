@@ -302,8 +302,10 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
         """Save source-backed knowledge as proposed. Use id+expected_version for updates; leave status out.
 
         A record has kind, content, key, status and metadata; a task's state goes in metadata.state.
-        Only the person confirms a record (in the inspector): status confirmed is refused here, and changing
-        the text of a confirmed record makes it proposed again.
+        Only the person confirms a record (in the inspector): status confirmed is refused here. A record the
+        person confirmed is not changed, replaced (supersedes) or given another status here either; progress
+        on a confirmed task is. Save what you found as a new proposed record under another key and name the
+        confirmed one in metadata.possible_conflicts: the person decides between the two.
         An external session may send sources: [] and its report becomes the record's own unverified source.
         """
         return await bridge.post("/remember", {"project": project, "record": record, "sources": sources})

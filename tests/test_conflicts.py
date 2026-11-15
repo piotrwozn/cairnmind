@@ -266,11 +266,12 @@ def test_a_pair_follows_its_counterpart_to_whatever_replaced_it(workspace):
     assert saved["possible_conflicts"] == [] and set(saved["conflicts_resolved"]) == {existing["id"], first["id"]}
     assert json.loads(store.get_source(result["audit_source_id"])["content"])["marked_as"] == [existing["id"]]
     assert pending(store, project)["items"] == []
-    # A replacement made by an ordinary write is followed as well.
+    # A replacement a person made outside the inbox is followed as well. (An ordinary write cannot replace
+    # a finding a person confirmed, #177.)
     third, other = pair(store, project, kind="fact", key="region", old="EU only.", new="EU and US.")
     note = store.snapshot(project["id"], "manual://replacement", "EU, US and Asia.", "manual")
-    replacement = store.remember(project["id"], {"kind": "fact", "key": "region-new", "content": "EU, US and Asia.",
-                                                 "supersedes": other["id"]}, [note["id"]])
+    replacement = as_person(store, project["id"], {"kind": "fact", "key": "region-new", "content": "EU, US and Asia.",
+                                                   "supersedes": other["id"]}, [note["id"]])
     assert [item["id"] for item in pending(store, project)["items"]] == [f"{third['id']}:{replacement['id']}"]
 
 

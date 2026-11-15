@@ -23,7 +23,7 @@ from cairnmind.service import create_app
 from cairnmind.sessions import SessionManager
 from cairnmind.store import Store
 
-from conftest import as_person, confirmed_before_rule, plain_words
+from conftest import as_person, confirmed_before_rule, person_edit, plain_words
 
 REFUSAL = "Only a person can store a record as confirmed"
 
@@ -131,7 +131,7 @@ def test_a_client_can_neither_send_the_mark_nor_open_an_act_with_another_source(
     assert fixture.record(saved["id"])["status"] == "proposed"
 
 
-def test_progress_keeps_a_confirmation_and_a_changed_text_loses_it(fixture):
+def test_progress_keeps_a_confirmation_and_a_changed_text_is_refused(fixture):
     task = as_person(fixture.store, fixture.pid, {"kind": "task", "content": "Ship the importer",
                                                   "metadata": {"state": "todo"}}, [fixture.note["id"]])
     mark = task["metadata"]["confirmation"]
@@ -140,23 +140,20 @@ def test_progress_keeps_a_confirmation_and_a_changed_text_loses_it(fixture):
                                                  "metadata": {"state": "in_progress", "scope": ["src/**"]}},
                                    task["source_ids"])
     assert moved["status"] == "confirmed" and moved["metadata"]["confirmation"] == mark
-    # A write that asks for confirmed and changes what was confirmed is refused; one that does not ask is
-    # stored as proposed, and the record says that its confirmation lapsed.
-    with pytest.raises(ConfirmationRefused):
-        fixture.store.remember(fixture.pid, {"id": task["id"], "expected_version": 2, "status": "confirmed",
-                                             "content": "Ship something else"}, task["source_ids"])
-    changed = fixture.store.remember(fixture.pid, {"id": task["id"], "expected_version": 2,
-                                                   "content": "Ship something else"}, task["source_ids"])
-    assert changed["status"] == "proposed"
-    lapsed = {"by": "lapsed", "confirmed_version": 2, "version": 3, "status": "proposed"}
-    assert changed["metadata"]["confirmation"] == lapsed
-    assert "was confirmed at version 2" in confirmation_text(changed)
-    # The record keeps saying so on later writes, until a person gives a verdict on it again.
-    later = fixture.store.remember(fixture.pid, {"id": task["id"], "expected_version": 3,
-                                                 "metadata": {"state": "todo"}}, task["source_ids"])
-    assert later["status"] == "proposed" and later["metadata"]["confirmation"] == lapsed
-    assert confirmation_of(later) == lapsed
-    again = Inspector(fixture.store).review(fixture.pid, task["id"], "confirm", later["version"])["record"]
+    # A write that changes what the person confirmed is refused, whether or not it asks for the status:
+    # only a person takes a confirmation away. (What a lapsed mark says: test_verdict_kept.)
+    for request in ({"status": "confirmed", "content": "Ship something else"}, {"content": "Ship something else"}):
+        with pytest.raises(ConfirmationRefused, match="Only a person takes a confirmation away"):
+            fixture.store.remember(fixture.pid, {"id": task["id"], "expected_version": 2, **request},
+                                   task["source_ids"])
+    kept = fixture.record(task["id"])
+    assert kept["content"] == "Ship the importer" and kept["version"] == 2
+    assert kept["status"] == "confirmed" and kept["metadata"]["confirmation"] == mark
+    # The person changes it themselves: it is proposed until they confirm it again, and nothing lapsed.
+    changed = person_edit(fixture.store, fixture.pid, {"id": task["id"], "expected_version": 2,
+                                                       "content": "Ship something else"}, task["source_ids"])
+    assert changed["status"] == "proposed" and confirmation_of(changed) is None
+    again = Inspector(fixture.store).review(fixture.pid, task["id"], "confirm", changed["version"])["record"]
     assert again["status"] == "confirmed" and again["metadata"]["confirmation"]["by"] == "person"
 
 
@@ -190,16 +187,18 @@ def test_remember_refuses_confirmed_for_every_session_and_for_no_session(fixture
     assert fixture.record(saved["id"])["status"] == "proposed"
 
 
-def test_a_session_rewriting_a_confirmed_record_makes_it_proposed_again(fixture):
+def test_a_session_rewriting_a_confirmed_record_is_refused_and_the_record_stays_confirmed(fixture):
     decision = fixture.proposed("Sessions expire after one hour")
     confirmed = Inspector(fixture.store).review(fixture.pid, decision["id"], "confirm", 1)["record"]
     bound = fixture.session("codex")
     response = fixture.client.post("/remember", json={
         "project": fixture.pid, "sources": confirmed["source_ids"], **bound,
         "record": {"id": decision["id"], "expected_version": 2, "content": "Sessions never expire"}})
-    assert response.status_code == 200, response.text
-    assert response.json()["status"] == "proposed"
-    assert response.json()["metadata"]["confirmation"]["by"] == "lapsed"
+    assert response.status_code == 400, response.text
+    assert "Only a person takes a confirmation away" in response.json()["detail"]
+    stored = fixture.record(decision["id"])
+    assert stored["content"] == "Sessions expire after one hour" and stored["version"] == 2
+    assert stored["status"] == "confirmed" and stored["metadata"]["confirmation"]["by"] == "person"
 
 
 def test_a_session_finding_is_refused_and_the_persons_form_confirms(fixture):
@@ -260,7 +259,7 @@ def test_a_plan_a_session_saves_is_proposed_until_the_person_confirms_it(fixture
                              PlanManager(fixture.store).get(fixture.pid, saved["plan"]["id"])["plan"]["version"])
     assert {task["status"] for task in confirmed["tasks"]} == {"confirmed"}
     assert {task["metadata"]["confirmation"]["route"] for task in confirmed["tasks"]} == {"confirm_plan"}
-    # The session rewrites one step: that step is proposed again, the untouched one stays confirmed.
+    # The session rewrites one step: the save is refused with the step named, and nothing changes.
     current = PlanManager(fixture.store).get(fixture.pid, saved["plan"]["id"])
     bound = fixture.refresh(bound)
     steps[1]["content"] = "Write the rows, and delete the old ones"
@@ -269,10 +268,10 @@ def test_a_plan_a_session_saves_is_proposed_until_the_person_confirms_it(fixture
         "idempotency_key": "plan-2",
         "expected_version": current["plan"]["version"],
         "task_versions": {task["id"]: task["version"] for task in current["tasks"]}, **bound})
-    assert changed.status_code == 200, changed.text
-    by_key = {task["metadata"]["step_key"]: task for task in changed.json()["tasks"]}
-    assert by_key["read"]["status"] == "confirmed" and by_key["read"]["metadata"]["confirmation"]["by"] == "person"
-    assert by_key["write"]["status"] == "proposed" and by_key["write"]["metadata"]["confirmation"]["by"] == "lapsed"
+    assert changed.status_code == 400, changed.text
+    assert "Step 'write' of this plan" in changed.json()["detail"]
+    assert PlanManager(fixture.store).get(fixture.pid, saved["plan"]["id"]) == current
+    assert {task["metadata"]["confirmation"]["by"] for task in current["tasks"]} == {"person"}
 
 
 def test_taking_the_published_side_is_refused_inside_a_session(fixture):
