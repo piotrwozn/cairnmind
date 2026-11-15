@@ -83,23 +83,47 @@ class ConfirmationRefused(ValueError):
 class VerdictKept(ConfirmationRefused):
     """A write that is not a person's act would take a person's confirmation away: nothing is stored."""
 
-    def __init__(self, record, change, status=None):
+    def __init__(self, record, change, status=None, differs=()):
         self.record_id, self.kind, self.key = record["id"], record["kind"], record.get("key")
-        self.change, self.status = change, status
-        super().__init__(kept_refusal(record, change, status))
+        self.change, self.status, self.differs = change, status, tuple(differs)
+        super().__init__(kept_refusal(record, change, status, self.differs))
 
 
 # What the refused write would have done to the confirmed record.
 _KEPT_CHANGES = {"replace": "replace it (supersedes)", "status": "set its status to {status}",
                  "change": "change what was confirmed (its text, key or a field beside it)"}
+PLAN_CONTEXT_KEPT = (
+    "A person confirmed this plan with its title, goal and constraints, and this save is not a person's act: it "
+    "would change its {them}. Only a person takes a confirmation away. Nothing was saved. Save the plan with its "
+    "title, goal and constraints as they are (leave them out of the request; steps can be added and steps that "
+    "are not confirmed can change); the person changes them with `cairnmind plan save` in their own terminal, or "
+    "disputes the steps they confirmed with the plan in the inspector.")
+
+
+def _would(change, status=None, differs=()) -> str:
+    would = _KEPT_CHANGES[change].format(status=status)
+    if change == "change" and differs:
+        # The names are the caller's own field names: escaped, cut and counted.
+        named = ", ".join(_clean(name, 60) for name in differs[:8]) + (" and more" if len(differs) > 8 else "")
+        would = f"change what was confirmed ({named} would differ from the confirmed version)"
+    return would
+
+
+def said_difference(before, after) -> list:
+    """The names of what differs between two `said` statements: text, key, supersedes, metadata.<field>."""
+    import json
+    names = [name for name, index in (("text", 1), ("key", 2), ("supersedes", 3), ("metadata.evidence", 4))
+             if before[index] != after[index]]
+    old, new = json.loads(before[5]), json.loads(after[5])
+    return names + [f"metadata.{name}" for name in sorted(set(old) | set(new)) if old.get(name) != new.get(name)]
 # Kinds whose pairs the conflict inbox shows (conflicts.KINDS).
 _INBOX_KINDS = ("fact", "decision")
 
 
-def kept_refusal(record, change, status=None) -> str:
+def kept_refusal(record, change, status=None, differs=()) -> str:
     """The refusal of a write that would take a person's confirmation away: the record, and what to do."""
     record_id, kind = record["id"], record["kind"]
-    would = _KEPT_CHANGES[change].format(status=status)
+    would = _would(change, status, differs)
     if kind in _INBOX_KINDS:
         instead = (f"store what you found as a new proposed {kind} under another key, with "
                    f"metadata.possible_conflicts set to [\"{record_id}\"]: the pair then waits in the conflict "
@@ -115,15 +139,21 @@ def kept_refusal(record, change, status=None) -> str:
             + instead)
 
 
-def kept_step_refusal(step_key, refusal) -> str:
-    """The same refusal for a plan save, with the step named."""
-    would = _KEPT_CHANGES[refusal.change].format(status=refusal.status)
+def kept_step_refusal(step_key, refusal, adoption=False) -> str:
+    """The same refusal for a plan save, with the step named; an adoption has its own sentence."""
+    would = _would(refusal.change, refusal.status, refusal.differs)
     if refusal.change == "status" and refusal.status == "superseded":
         would = "remove it from the plan"
+    if adoption:
+        return (f"Task {str(step_key)[:200]!r} (task {refusal.record_id}) was confirmed by a person, or before "
+                "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
+                f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
+                "The person runs `cairnmind plan adopt` in their own terminal; the adopted steps are then proposed "
+                "until they confirm the plan.")
     return (f"Step {str(step_key)[:200]!r} of this plan (task {refusal.record_id}) was confirmed by a person, and "
             f"this save is not a person's act: it would {would}. Only a person takes a confirmation away. Nothing "
-            "was saved. Save the plan with that step exactly as it is (other steps can change and new steps can be "
-            "added); the person disputes the step in the inspector, or saves the plan with `cairnmind plan save` "
+            "was saved. Save the plan with that step exactly as `plan show` returns it, every field included (other "
+            "steps can change and new steps can be added); the person disputes the step in the inspector, or saves the plan with `cairnmind plan save` "
             "in their own terminal.")
 
 

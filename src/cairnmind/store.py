@@ -471,11 +471,16 @@ class Store:
         return bool(act) and act["route"] in PERSON_ROUTES and not (
             self.current_origin() or getattr(self._local, "session_write", None))
 
-    def _keep_verdict(self, record, change, status=None):
+    def _kept(self, record) -> bool:
+        """Whether this write is not a person's act and `record` is confirmed by a person here (#177)."""
+        from .confirmation import kept_verdict
+        return not self._persons_act() and kept_verdict(record)
+
+    def _keep_verdict(self, record, change, status=None, differs=()):
         """A write that is not a person's act never takes a person's confirmation away (#177): refused."""
-        from .confirmation import VerdictKept, kept_verdict
-        if not self._persons_act() and kept_verdict(record):
-            raise VerdictKept(record, change, status)
+        from .confirmation import VerdictKept
+        if self._kept(record):
+            raise VerdictKept(record, change, status, differs)
 
     def init(self):
         from .arcade import ArcadeError
@@ -988,6 +993,13 @@ class Store:
                 raise ValueError("New managed records must not provide expected_version")
             if old and old["status"] == "superseded" and not managed_batch:
                 raise ValueError("A superseded record is immutable; create a new record")
+        # A write that is not a person's act and reaches a record a person confirmed (it can only leave the
+        # statement as it is: progress on a task, or nothing) does not make that confirmation worth less: the
+        # record keeps every source it had, the note of the person's act among them, and the write only adds.
+        kept = bool(old) and not slot and self._kept(old)
+        if kept:
+            held = old.get("source_ids") or []
+            sources = list(dict.fromkeys([*(json.loads(held) if isinstance(held, str) else held), *sources]))
         kind, status = record.get("kind", old["kind"] if old else None), record.get("status", old["status"] if old else "proposed")
         content = record.get("content", old["content"] if old else None)
         if not isinstance(kind, str) or not isinstance(status, str) or kind not in KINDS or status not in STATUSES:
@@ -1062,8 +1074,9 @@ class Store:
                                 assert_completion=explicit_completion, validate_dependencies=not managed_batch)
         # Decided on the final metadata, after every field this write drops (criteria links, reported proof).
         origin = self.current_origin()
-        if origin and mark_only_changes and not outcome_changed(old, content, key, metadata):
-            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none.
+        if origin and (mark_only_changes or kept) and not outcome_changed(old, content, key, metadata):
+            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none. The same
+            # for a record a person confirmed: a write that stores nothing new does not stamp its origin on it.
             origin = None
         metadata.update(origin or {})
         metadata.pop(EXTRACTION_MARK, None)
@@ -1115,13 +1128,14 @@ class Store:
                 metadata["supersede_warning"] = "anachronistic_supersede"
                 metadata["supersede_replaced_evidence_latest"] = replaced_time["latest"]
         # The rule for `confirmed`, on the final statement of this write and for every route (#177).
-        from .confirmation import MARK, said
+        from .confirmation import MARK, said, said_difference
         statement = said(kind, content, key, supersedes, metadata)
         if old and status != "confirmed":
             self._keep_verdict(old, "status", status)
-        elif old and not slot and statement != said(old["kind"], old["content"], old["key"], old.get("supersedes"),
-                                                    old.get("metadata")):
-            self._keep_verdict(old, "change")
+        elif old and not slot:
+            before = said(old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata"))
+            if statement != before:
+                self._keep_verdict(old, "change", differs=said_difference(before, statement))
         status, confirmation = self._confirmation(
             tx, project_id, old, record.get("status"), status, statement, sources, old["version"] + 1 if old else 1)
         metadata.pop(MARK, None)

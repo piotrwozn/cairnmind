@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from .confirmation import ConfirmationRefused, VerdictKept, kept_step_refusal
+from .confirmation import PLAN_CONTEXT_KEPT, ConfirmationRefused, VerdictKept, kept_step_refusal, kept_verdict
 from .store import ORIGIN_METADATA, outcome_changed
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
@@ -190,6 +190,14 @@ class PlanManager:
                 raise ValueError("Plan constraints must be nonempty strings")
             plan_id = old["id"] if old else str(uuid4())
             previous = _tasks(tx, project_id, old) if old else []
+            # A person who confirms a plan confirms its title, goal and constraints with the steps (the audit
+            # hashes them). While a step still carries that confirmation, only a person changes them (#177).
+            differs = [name for name, new in (("title", title), ("goal", goal), ("constraints", constraints))
+                       if old and new != old[name]]
+            if differs and not self.store._persons_act() and any(
+                    kept_verdict(task) and (task["metadata"].get("confirmation") or {}).get("route") == "confirm_plan"
+                    for task in previous):
+                raise ConfirmationRefused(PLAN_CONTEXT_KEPT.format(them=" and ".join(differs)))
             existing_by_id = {task["id"]: task for task in previous}
             if adoption:
                 existing_by_id.update(adoption["tasks"])
@@ -309,7 +317,7 @@ class PlanManager:
                                                       mark_only_changes=True)
                 except VerdictKept as refusal:
                     # A step a person confirmed is changed only by a person (#177): the step is named.
-                    raise ConfirmationRefused(kept_step_refusal(key, refusal)) from None
+                    raise ConfirmationRefused(kept_step_refusal(key, refusal, bool(adoption))) from None
                 changed_steps |= outcome_changed(existing, saved[key]["content"], saved[key]["key"],
                                                  saved[key]["metadata"])
             for task_id, task in removed.items():
