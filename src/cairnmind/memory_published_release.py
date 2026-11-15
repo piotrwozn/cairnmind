@@ -82,7 +82,7 @@ def checkout_rules(directory, config=None) -> Rules:
         if text is None:
             raise SecretRulesError(f"{config} is not a file")
         return load_rules(text)
-    if directory.name == "cairnmind-published" and directory.parent.name == ".memory":
+    if directory.name.casefold() == "cairnmind-published" and directory.parent.name.casefold() == ".memory":
         return load_rules(config_text(directory.parent.parent))
     return Rules()
 

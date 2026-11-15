@@ -169,6 +169,71 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Definitions are shown to the model before the search hits, so the line that states a value comes before the passages that use it (#104).
 - `cairnmind eval repository` accepts a value in megabytes written in whole gigabytes where a question lists the form `{gb}`, and docs/EVALUATION.md says how to measure another chat model or a larger context window (#104).
 - On Cairnmind's own repository the twenty questions now give 18 of 20 complete and right in the worst of three runs with the default models, against 13 before; the default chat model stays qwen3.5:9b (#104).
+- A project name that matches no project is now an error that names it, instead of acting on the project of the working directory (yours or the service's). A path is accepted only when it is written as a path and exists, and the service refuses a relative path. The command line sends a path as an absolute one, but a registered project name that looks like a local folder (such as web/api) is sent as the name (#238).
+- A model that returns depends_on: null no longer makes the whole extraction of a message fail; null is stored as no dependencies (#238).
+- Writing under the key of a record a person confirmed now gets the refusal for a kept confirmation, with what to do instead. Any other key clash names the record that holds the key, and `cairnmind remember` says to use another key or to dispute or decide that record in the inspector (#238).
+- A restore refused because the backup file changed while it was being read now says so, instead of calling the file corrupt or reporting a checksum mismatch (#238).
+- `cairnmind backup` into a folder that cannot be created or written says 'Cannot write a backup into <folder>: <reason>' instead of a raw error naming a temporary file (#238).
+- engine.log is created private (mode 0600) whatever the umask (#238).
+- An engine_log_bytes or engine_log_copies in config.json that is replaced by its default is now reported on standard error and in engine.log when the engine starts (#238).
+- `cairnmind engine status` of a stopped engine says to start it with `cairnmind engine start` instead of suggesting `engine status`. An engine that times out or answers badly is called not reachable, with the cause, instead of stopped (#238).
+- `cairnmind store size` shows a vector type left empty by a restore as 'unregistered, empty (left by a restore)' instead of the namespace '(none)' (#238).
+- Jobs that the model runtime refused or did not answer in time are labelled model_context_length, model_timeout or model_runtime_error instead of legacy_job_error, and the catch-all label is now job_error (#238).
+- A project name is limited to 256 characters on the command line too, as it already was in the service (#238).
+- The built-in agent can no longer write to Git's internals or managed memory through another letter case (.GIT/hooks) or a short Windows alias (GIT~1) on a file system that ignores case, such as a Windows drive in WSL; a short alias also no longer passes the approval for files that configure execution (#230).
+- A third-party MCP server whose program or arguments name the worktree with other letter case, or by a short Windows alias inside a shell command, is refused like one spelled exactly, and a project root that holds the data directory under another spelling is refused as before (#230).
+- Excluded directories such as .ssh, .aws, .codex and .git, and the reserved .memory directories (including those of a nested project registered with other letter case), are left out of indexing in any letter case (#230).
+- After a person keeps one finding of a pair in the conflict inbox, published memory carries the rejected finding, with its text and cited sources, as superseded by that decision instead of leaving it confirmed or holding both. This also applies when the person keeps the confirmed finding against a session's proposal, and when the kept finding is held back. A rejected finding of external origin is still never published (#239).
+- Confirming a record already confirmed here, or disputing one already disputed, now says so instead of reporting a version conflict, in English and Polish (#239).
+- Refusals of `remember --confirmed`, `record-kind accept/withdraw` and `memory confirm-plan` now say that input or output that is piped or redirected is the reason (#239).
+- Refusing to adopt a confirmed legacy task names the task by its text, and the refusal for a confirmed checkpoint record points to the checkpoint tool (#239).
+- The publish refusal for a registered secret no longer advises `memory release`, which never releases one, and says what to do instead (#239).
+- `memory import-published` of another project's directory now names the directory as the reason, with or without `--bind` (#239).
+- `memory diff` and `memory import-commit` name an unknown revision instead of printing 'no message' (#239).
+- `memory publish` tells a record confirmed in a terminal from a proposal in the held list, and shows each held record's key and the start of its text, cleaned for the terminal. Both are left out when they hold a value the secrets gate refuses (#239).
+- `memory check-published` exits 2 when the path is not a directory, and names an empty file, an invalid kind, an invalid id or a created_at without a time zone separately (#239).
+- `memory publish` writes again a published file that went missing instead of refusing, and a remaining refusal names `git checkout -- <path>` (#239).
+- `memory import` of the store's own latest snapshot is unchanged, and its refusal now tells a diverged history from local knowledge that changed (#239).
+- The built-in agent hands its model the reason when a write is refused because only a person confirms a record (confirmation_refused, with what to do instead), and a fixed hint when a record key already exists (key_exists, saying to set record.id and record.expected_version), instead of tool_failed or a misleading state_conflict (#240).
+- A refused tool call of the built-in agent now names the argument, the schema rule it broke and a fixed hint, for built-in and third-party MCP tools, without echoing the value; only the built-in file tools get the read_file hash advice (#240).
+- A third-party MCP server whose program does not exist or cannot be run is reported with its own reason (program_unavailable) in the agent pane, on the notice line and in Notices, in English and Polish (#240).
+- The built-in agent's instructions, and a ready resume packet that is not acknowledged yet, tell the model that file, command and third-party tools are offered only after its exact ack_resume (#240).
+- A cited quote may now be as long as the 900-character passage shown to the model, so an answer about a setting whose value sits at the end of the passage is no longer left unverified (#241).
+- `cairnmind memory show --sources` now names the sensitivity class of each source it prints, as it already did for records (#241).
+- Automatic extraction no longer reads the block that `cairnmind install` writes into AGENTS.md and CLAUDE.md, also in a file saved with a byte order mark, so the client protocol no longer becomes proposed tasks and constraints; records extracted from now on carry extractor version 2 (#241).
+- Project context now keeps 30% of its budget for confirmed decisions and constraints, as it does for new findings, so many open tasks no longer push the rules in force out; the checkpoint still comes before that share, rules that do not fit it still come after the open tasks, and the tasks that do not fit are counted as omitted (#241).
+- An arcade_password_file that names a folder is refused with the setting and the rule, instead of "[Errno 21] Is a directory" (#242).
+- `cairnmind store writer` and `doctor` show the note given with `store takeover --note`, as inert text (#242).
+- A refused sign-in to a database Cairnmind only connects to also says that ArcadeDB refuses a user for about 30 seconds after several failed sign-ins, even with the right password (#242).
+- `cairnmind db create-user` can be run again for the same user and database and reports that nothing was created. It creates the missing database of a user that exists without one. For a user that already exists and cannot use the new database, it stops with what to do and leaves no empty database behind (#242).
+- When a database Cairnmind only connects to cannot be found, the message also names the other cause, a user with no rights on it, instead of sending the person back to create-user (#242).
+- `cairnmind engine status` started without the database password is refused (exit 1, "available": null, nothing sent). The message also names arcade_user left at root and an unset arcade_database, on every command and not only the first, and what would be used in their place. On a host other than this machine, the refusal of root also names the missing password and database. docs/DEPLOYMENT.md says the same (#242).
+- After Confirm or Dispute in the inspector the notice reads in the interface language (it was always Polish), and the Dispute dialog's button and Ctrl+S hint say Save dispute instead of Confirm review (#243).
+- Switching the language redraws what the inspector already shows in the new language, without reading it again: an open entry and its hint, a saved version, a check or queue entry, and the Snapshot view. An import check or preview stays on screen with Apply still available (#243).
+- The inspector's record view shows its status word in the interface language, as the list does, and a fact or decision that extraction gave a task state shows its status instead of that state (#243).
+- The inspector's item count and its usage hints stay on the notice line but no longer fill Notices or the activity feed, and the count reads 1 item / 1 wpis, 2 wpisy, 5 wpisów (#243).
+- `cairnmind workspace stop --clients` also clears the finished tmux pane of a client run that had already ended; the run is still listed under clients_already_ended (#243).
+- The read-only line an observing terminal gets reads in the interface language (#243).
+- In the dialog shown when the workspace is open in another terminal, the arrow keys move between Observe, Take control and Return to shell, and a hint names the keys (#243).
+- Start work and Check connection for an API connection whose key is missing, invalid or cannot be read say which of these it is and that the key is set in Connections, Set API key, instead of a general line or the bare code. The Start work notice is no longer repeated on every refresh (#243).
+- An advanced connection limit out of range is refused with its field name and allowed range, on that field (#243).
+- A test stage mapped to a check profile that does not exist reports, in the interface language, that the check could not run. It names the profile and lists the declared ones, instead of saying the check did not pass (#243).
+- The notice of a started stage begins with the stage and its assistant on one line, so they stay visible when the notice line is cut (#243).
+- The stale reason on an assistant's border says project changed after ACK, since a code change also makes the ACK stale (#243).
+- Refusals that are not about the command line, such as running cairnmind without a terminal, a service that stops at start, or restore and engine stop while the service runs, are now one Error line without Click's usage block (#244).
+- On an installation that only reads the store, a refused write says its reason once instead of twice, and backup and export no longer print the refusal-like notice (#244).
+- `cairnmind retry-jobs` prints what it retried (retried, count and job_ids) instead of always saying retried: true, and on an installation that only reads the store it is refused even when nothing failed (#244).
+- `cairnmind status`, `jobs list`, `jobs show` and `memory status` on an installation that only reads the store say so and name `cairnmind store writer` and `cairnmind doctor`, instead of telling it to run `cairnmind serve` (#244).
+- `cairnmind restore` refuses a missing path or a folder before anything starts, instead of calling it a corrupt backup (#244).
+- `cairnmind backup DIR/` with a trailing slash creates the folder (readable by you only) and writes a dated file in it, instead of a file named DIR (#244).
+- `cairnmind stage next` prints `--data-dir` in its command for an installation that is not the default one, and adds the mapping remedy the workspace gives when the stage has no usable assistant (#244).
+- `cairnmind store takeover` without --yes suggests what fits the role: nothing on the writer, starting the engine when the role cannot be read (#244).
+- An operating-system error about a path is printed as a sentence with long paths shortened, and an unknown plan, session or source id names its kind instead of 'Record does not exist' (#244).
+- `cairnmind eval repository --questions` refuses a missing file, a folder, or a file holding a JSON list or string in a sentence instead of an Errno text or a traceback (#244).
+- Every top-level command now has a description in --help, and `plan save` and `remember` explain their arguments, including how to keep text that begins with a dash (#244).
+- The installer prints only what needs attention from `cairnmind doctor` (one line per cause, so a stopped Ollama is not repeated for each model, and a slow first Java start is not called missing), or that nothing does, instead of the whole JSON report; doctor's ollama block now names the address it asked (#244).
+- Docs: UPGRADING.md has one 0.10.0 to 0.11.0 section with upgrade steps and a way back; the README covers team memory and which commands start nothing; the secrets gate, the Proposed view in a narrow pane, where an unknown secret ends up and the supported versions are corrected; the command is `cairnmind task add` (#244).
+- FOR THE RELEASE STEP (CHANGELOG.md was not editable on this branch): on lines 113 and 115 replace `tasks add` with `task add`; on line 14 (#70) say that `status` shows the writer block only from the running service, so on a reader the role is shown by `store writer` and `doctor` (#244).
 
 ## 0.10.0
 

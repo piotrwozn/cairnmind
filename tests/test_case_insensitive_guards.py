@@ -279,3 +279,26 @@ def test_excluded_directories_are_compared_without_case(tmp_path):
     added = store.snapshot(project["id"], str(secret), "old", kind="document", metadata={"path": str(secret)})
     with pytest.raises(ValueError, match="excluded"):
         current_source(store, added["id"])
+
+
+def test_a_checkout_for_published_memory_inside_a_project_spelled_with_other_case_is_refused(caseless, tmp_path):
+    # The carrier of published memory (#173) refuses a checkout inside a project's files or sharing its
+    # repository; `<...>/REPO/pkgs` for a project at `<...>/Repo` got through a comparison of text.
+    from cairnmind.memory_published_carrier import checkout_path
+
+    root = caseless / "Repo"
+    (root / ".git").mkdir(parents=True)
+    (root / "pkgs").mkdir()
+    store = Store(tmp_path / "data")
+    project = store.add_project("team", root)
+    other_spelling = str(caseless / "REPO" / "pkgs")
+    assert Path(other_spelling).is_dir(), "the fixture directory does not ignore letter case"
+    with pytest.raises(ValueError, match="inside this project's own files"):
+        checkout_path(store, project["id"], other_spelling)
+    with pytest.raises(ValueError, match="inside this project's own files"):
+        checkout_path(store, project["id"], str(root / "pkgs"))
+    # A checkout of a separate repository beside it is still accepted, in any spelling.
+    separate = caseless / "Memory-Repo"
+    (separate / ".git").mkdir(parents=True)
+    assert checkout_path(store, project["id"], str(separate)) == separate
+    assert checkout_path(store, project["id"], str(caseless / "MEMORY-REPO")) == caseless / "MEMORY-REPO"
