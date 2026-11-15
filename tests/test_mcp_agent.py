@@ -403,6 +403,8 @@ async def test_every_status_event_shape_is_a_translated_label(tmp_path):
         await pilot.pause()
         shown = {}
         for language in ("en", "pl"):
+            # Saved, not only set: the app re-reads the saved language every half second and would switch back.
+            CockpitState(app.settings).update({"language": language})
             app.language = language
             for kind, data in events:
                 await app.agent_event({"type": kind, "data": data})

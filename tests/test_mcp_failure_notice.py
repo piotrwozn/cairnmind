@@ -126,6 +126,9 @@ async def test_the_pane_names_the_reason_in_words_and_reports_each_server_once(t
     # #169 retrial: the pane row showed "time (start_failed)", the raw code.
     app, _ = worker(tmp_path, servers=[fixture_server()],
                     problems=[{"server_id": "local", "code": "definition_refused"}])
+    # Saved, not only set: the app re-reads the saved language every half second and would switch back,
+    # which a slow run did in the middle of this test.
+    CockpitState(app.settings).update({"language": language})
     sent = []
     app._report = lambda server_id, code: sent.append((server_id, code))
     async with app.run_test(size=(95, 42)) as pilot:
