@@ -242,3 +242,10 @@ def test_an_invalid_setting_sends_no_class_and_doctor_says_why(tmp_path, value):
 
 def test_by_default_only_project_text_goes_to_a_remote_model_server(tmp_path):
     assert Settings(data_dir=tmp_path).memory_remote_classes == ["project"]
+
+
+def test_the_unknown_an_answer_gets_is_a_fixed_sentence_with_a_polish_translation():
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal_i18n_messages import fixed_message
+    polish = fixed_message(memory_egress.HELD_BACK_UNKNOWN, lambda text: tr(text, "pl"))
+    assert polish != memory_egress.HELD_BACK_UNKNOWN and "memory_remote_classes" in polish

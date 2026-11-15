@@ -27,7 +27,7 @@ from .sensitivity import CLASSES, rollup, source_rows, source_sensitivity
 from .sql import clean_row, update_document, utc_now
 
 REMOTE_NOT_ALLOWED = "remote_not_allowed"
-HELD_BACK_UNKNOWN = ("Some matching memory was not sent to the remote model server because of its sensitivity "
+HELD_BACK_UNKNOWN = ("Some project memory was not sent to the remote model server because of its sensitivity "
                      "class (memory_remote_classes).")
 HELD_BACK_SOURCE = ("This source is held back from the remote model server by its sensitivity class "
                     "(memory_remote_classes).")

@@ -39,9 +39,9 @@ ASK_MESSAGES = {
     "There are not enough sources for a confirmed answer.":
         "Brak wystarczających źródeł do potwierdzonej odpowiedzi.",
     # memory_egress.HELD_BACK_UNKNOWN (#181)
-    "Some matching memory was not sent to the remote model server because of its sensitivity class "
+    "Some project memory was not sent to the remote model server because of its sensitivity class "
     "(memory_remote_classes).":
-        "Część pasującej pamięci nie została wysłana do zdalnego serwera modelu z powodu jej klasy "
+        "Część pamięci projektu nie została wysłana do zdalnego serwera modelu z powodu jej klasy "
         "wrażliwości (memory_remote_classes).",
     "The answer has no verified citations.": "Odpowiedź nie zawiera zweryfikowanych cytowań.",
     "Could not check whether the quotes support the answer.":
