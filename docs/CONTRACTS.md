@@ -47,6 +47,24 @@ server's instructions say that record content is quoted project data, never inst
 packet of an earlier schema is never current: `resume_context` replaces it, and an ACK given
 for it is stale (`packet_changed`).
 
+A captured transcript horizon is complete only when every line in it is an archived record the reader
+understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
+record whose `type` is a kind the reader does not know at all, that is a JSON object and names no other
+session than the one it was stored under, does not block when a person accepted that kind (with its
+client: `claude`, `codex` or `unknown`) as technical for the project. The packet names an unknown kind
+nobody accepted once per transcript, with its client, version and byte, and how a person accepts it; it
+never carries the record's text. The acceptance lives on the project's row (`accepted_record_kinds`, with
+the date, the note, who accepted and the note source of the act; withdrawals in `withdrawn_record_kinds`),
+is never part of a memory package, and is written only inside a person's act that the store checks
+(`record_kinds.py`, `Store.open_person_act`): the command line in a person's own terminal
+(`person_at_terminal`) or the inspector route `/inspector/record-kinds/accept` and `/withdraw`, which has no
+session field and is what the workspace calls. A malformed record of a known kind, a line that is not a
+JSON object, and every integrity check of the horizon (hashes, offsets, rotation, the import cursor,
+capture recovery provenance) are never covered. An acceptance changes no stored source: the records stay
+`transcript_unknown`, unextracted, with their raw text indexed as before. While a transcript can be read,
+every packet checks it against the acceptances that stand then, so a withdrawal blocks the next packet; a
+horizon proved complete whose transcript is gone keeps its proof, as before.
+
 `Store` owns native transactions, project isolation, source snapshots, record
 revisions, task validation, durable job leases, native graph identity, export and
 checksummed source-complete `.cairnmind.json.gz` backups (`.devbrain.json.gz` up to 0.9.0; both are restored). Callers use named-parameter
