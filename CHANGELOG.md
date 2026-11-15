@@ -4,6 +4,10 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+- When a file is edited or deleted, the chunks and vectors of its earlier version are deleted in the same transaction. The earlier version keeps its full text and hash, so evidence that cites it can still be read and checked (#186).
+- New command `cairnmind store drop-replaced-chunks` removes the chunks that earlier releases kept for replaced sources. It covers every project in the store, works in short resumable transactions of at most `--batch` rows, and reports how many rows it removed (#186).
+- A portable memory import no longer creates chunks for source versions that are not current (#186).
+- Since replaced versions no longer keep chunks, `cairnmind status` counts fewer chunks and indexed sources. Run `store drop-replaced-chunks` to remove the ones kept by earlier releases (#186).
 - Tooling: the fast test tier in CI runs with four processes, now that a stopped agent command waits for its process group (#175). The time-sensitive tests found by running the whole suite repeatedly on a loaded four-core machine wait for a state instead of a moment (#175).
 - The built-in agent no longer has to read and acknowledge its resume packet again when memory proposed from its own conversation is extracted while it works. A record that is confirmed, edited, written by anyone else or brought in by a memory package, and a code change, still make the acknowledgement stale (#168).
 - The built-in agent's approval dialog for a command or a third-party tool call now lists the files the agent created, changed or deleted since your last approval, at most 20 with a count of the rest, in English and Polish. Line breaks and control characters in a file name are shown as escapes, so a name cannot pass itself off as the app's own text (#176).
