@@ -258,6 +258,8 @@ CATALOG = {
     "The project changed. Close this form and open it again.": "Projekt zmienił się. Zamknij formularz i otwórz go ponownie.",
     "Enter a whole number from 1 to 10080.": "Wpisz liczbę całkowitą od 1 do 10080.",
     "{count} items · read only": "{count} wpisów · tylko odczyt", "More pages available": "Dalsza strona dostępna",
+    "1 item · read only": "1 wpis · tylko odczyt",
+    "Review saved with an audit note.": "Ocena zapisana z audytem.", "Save dispute": "Zapisz zakwestionowanie",
     "Review changes confidence; it does not complete a task.": "Ocena zmienia pewność; nie kończy zadania.",
     "Review was not retried. The current version was reloaded.": "Ocena nie została ponowiona. Odczytano aktualną wersję.",
     "Memory updates": "Aktualizacje pamięci", "Account login": "Logowanie konta",
@@ -655,6 +657,20 @@ def tr(text, language="en", **values):
     english = LEGACY.get(text, text)
     translated = CATALOG.get(english, text if text in LEGACY else english) if language == "pl" else english
     return translated.format(**values) if values else translated
+
+
+# A Polish count of 2-4, 22-24, … (never 12-14) takes this form; 5 and more take the catalog's form.
+FEW = {"{count} items · read only": "{count} wpisy · tylko odczyt"}
+
+
+def tr_count(one, many, count, language="en"):
+    """`one` for exactly 1, `many` for any other count, in the forms the language has for that count."""
+    if count == 1:
+        return tr(one, language, count=count)
+    if (language == "pl" and many in FEW and type(count) is int
+            and count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14)):
+        return FEW[many].format(count=count)
+    return tr(many, language, count=count)
 
 
 def language_for(settings):
