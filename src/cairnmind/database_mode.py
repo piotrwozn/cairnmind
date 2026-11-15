@@ -148,7 +148,10 @@ def sign_in_refused(settings) -> str:
     """What to add when the server does not accept the user of a connect-only installation."""
     return (f". ArcadeDB at {address(settings)} did not accept the user {settings.arcade_user}. If the database "
             "and this user were not created yet, create them once: `cairnmind db create-user "
-            "--admin-password-file FILE`. Otherwise check arcade_user and the password this installation reads.")
+            "--admin-password-file FILE`. Otherwise check arcade_user and the password this installation reads. "
+            # The same answer, measured on 26.11.1 (#242): accepted again 31 s after seven wrong passwords.
+            "ArcadeDB also refuses a user for about 30 seconds after several failed sign-ins, even with the right "
+            "password: if this worked before, wait and try again.")
 
 
 def describe(settings) -> dict:

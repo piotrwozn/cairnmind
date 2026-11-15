@@ -377,6 +377,9 @@ def test_a_refused_sign_in_names_the_step_that_creates_the_user(tmp_path, test_e
     status = engine.engine_status(Settings.load(data, create=True))
     assert status["available"] is False and "ArcadeDB HTTP 401: Authentication failed" in status["error"]
     assert "did not accept the user cairnmind" in status["error"] and "cairnmind db create-user" in status["error"]
+    # ArcadeDB answers the same 401 for about 30 seconds after several failed sign-ins, the right password
+    # included (measured on 26.11.1: accepted again after 31 s); the message names that cause too (#242).
+    assert "about 30 seconds after several failed sign-ins" in words(status["error"])
     refused = cli(data, "init")
     assert refused.exit_code != 0 and "cairnmind db create-user" in str(refused.exception)
     assert "Some-password-1234" not in status["error"] + str(refused.exception)
