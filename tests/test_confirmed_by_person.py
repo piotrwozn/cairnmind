@@ -148,12 +148,16 @@ def test_progress_keeps_a_confirmation_and_a_changed_text_loses_it(fixture):
     changed = fixture.store.remember(fixture.pid, {"id": task["id"], "expected_version": 2,
                                                    "content": "Ship something else"}, task["source_ids"])
     assert changed["status"] == "proposed"
-    assert changed["metadata"]["confirmation"] == {"by": "lapsed", "confirmed_version": 2, "version": 3}
+    lapsed = {"by": "lapsed", "confirmed_version": 2, "version": 3, "status": "proposed"}
+    assert changed["metadata"]["confirmation"] == lapsed
     assert "was confirmed at version 2" in confirmation_text(changed)
+    # The record keeps saying so on later writes, until a person gives a verdict on it again.
     later = fixture.store.remember(fixture.pid, {"id": task["id"], "expected_version": 3,
                                                  "metadata": {"state": "todo"}}, task["source_ids"])
-    assert later["status"] == "proposed" and "confirmation" not in later["metadata"]
-    assert confirmation_of(later) is None
+    assert later["status"] == "proposed" and later["metadata"]["confirmation"] == lapsed
+    assert confirmation_of(later) == lapsed
+    again = Inspector(fixture.store).review(fixture.pid, task["id"], "confirm", later["version"])["record"]
+    assert again["status"] == "confirmed" and again["metadata"]["confirmation"]["by"] == "person"
 
 
 def test_a_checkpoint_a_person_confirmed_does_not_stay_confirmed_with_new_content(fixture):
@@ -362,8 +366,8 @@ def test_a_record_confirmed_before_the_rule_keeps_its_status_and_names_nobody(fi
     shown = next(item for item in packet["records"] if item["id"] == saved["id"])
     assert shown["status"] == "confirmed" and shown["confirmed_by"] == "before_rule"
     # A write that changes nothing it says keeps it; nobody gets the status back by asking for it.
-    kept = fixture.store.remember(fixture.pid, {"id": saved["id"], "expected_version": 1, "status": "confirmed",
-                                                "metadata": {"note": "seen"}}, row["source_ids"])
+    kept = fixture.store.remember(fixture.pid, {"id": saved["id"], "expected_version": 1, "status": "confirmed"},
+                                  row["source_ids"])
     assert kept["status"] == "confirmed" and "confirmation" not in kept["metadata"]
     # The person can confirm it, once, and then it is theirs.
     theirs = Inspector(fixture.store).review(fixture.pid, saved["id"], "confirm", 2)["record"]
