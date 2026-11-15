@@ -389,12 +389,17 @@ class Store:
         confirmation whose statement it does not change (progress on a task, a note of a conflict decision).
         Anything else that asks for `confirmed` is refused. A write that does not ask for a status and
         changes what was confirmed is stored as proposed, with a mark that says the confirmation lapsed.
+        The same mark is left when such a write sets another status on a confirmed record: taking a
+        confirmation away is shown like changing what was confirmed, unless a person did it.
         """
-        from .confirmation import (MARK, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused, person_mark,
-                                   said)
-        if status != "confirmed":
-            return status, None
+        from .confirmation import (MARK, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused, lowered,
+                                   person_mark, said)
         act = getattr(self._local, "person_act", None)
+        if status != "confirmed":
+            # A person's act (a dispute, a conflict decision) leaves no such mark and clears an earlier one.
+            was = ((old or {}).get("metadata") or {}).get(MARK)
+            return status, None if act else lowered(old, status, version) or (
+                was if isinstance(was, dict) and was.get("by") == "lapsed" else None)
         if asked == "confirmed" and act:
             if self.current_origin() or getattr(self._local, "session_write", None):
                 raise ConfirmationRefused()
@@ -412,7 +417,7 @@ class Store:
             return status, kept if isinstance(kept, dict) and kept.get("by") != "lapsed" else None
         if asked == "confirmed" or not old or old["status"] != "confirmed":
             raise ConfirmationRefused()
-        return "proposed", {"by": "lapsed", "confirmed_version": old["version"], "version": version}
+        return "proposed", lowered(old, "proposed", version)
 
     def init(self):
         with self._lock():
@@ -963,6 +968,11 @@ class Store:
                 raise ValueError("Managed task membership must be changed through PlanManager")
             if not old and "expected_version" in record and record["expected_version"] != previous["version"]:
                 raise ValueError("Record version conflict; replaced record has changed")
+            from .confirmation import MARK as mark_name, lowered
+            if not getattr(self._local, "person_act", None) and previous["status"] == "confirmed":
+                # A replacement that is not a person's act takes a confirmed record out of use: it says so.
+                previous["metadata"] = {**(previous.get("metadata") or {}),
+                                        mark_name: lowered(previous, "superseded", previous["version"] + 1)}
             previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=utc_now())
             update_document(tx, "records", previous, "id=:id", {"id": supersedes})
             self._revision(tx, previous)

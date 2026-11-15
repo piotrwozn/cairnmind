@@ -11,9 +11,9 @@ to be confirmed. A client can neither send it nor clear it. It has these forms:
         claims, and nothing about it is verified here;
     {"by": "seed", ...}
         data an evaluation wrote for itself; never a person;
-    {"by": "lapsed", "confirmed_version", "version"}
-        on a record that is proposed again because a writer that is not a person changed what had
-        been confirmed.
+    {"by": "lapsed", "confirmed_version", "version", "status"}
+        on a record that is no longer confirmed because a write that was not a person's act changed what
+        had been confirmed, or set another status on it.
 
 A confirmed record without the field was confirmed before this rule existed (`before_rule`): its status
 is kept and nothing is claimed about who confirmed it.
@@ -38,10 +38,24 @@ PERSON_ROUTES = {
 # Not a person: what `cairnmind eval` writes into its own throwaway stores.
 SEED_ROUTE = "evaluation_seed"
 SEED_SOURCE = ("seed://", "evaluation_seed")
-# What a confirmation of a task covers besides its text, key and replaced record. Progress (state, reported
-# evidence, check runs), a declared scope, a proposed command and the placement in a plan are not part of it.
-CONFIRMED_TASK_FIELDS = ("plan_ref", "step_key", "required_profiles", "depends_on", "acceptance_criteria",
-                         "requires_test", "requires_review", "criterion_checks")
+# A confirmation covers the record's kind, text, key, replaced record and every metadata field, except
+# these. A field is covered unless it is named here, so text a writer puts beside a confirmed record in any
+# other field (a summary, a next step, a field added later) ends the confirmation like a changed text does.
+# What the store derives and the bookkeeping of the conflict inbox: no client can write them.
+UNCOVERED_METADATA = frozenset({
+    "evidence_earliest", "evidence_latest", "evidence_basis", "supersede_warning",
+    "supersede_replaced_evidence_latest", "extraction_source_id", "origin_client", "origin_session_id",
+    "origin_history", "origin_evidence", "publication", "confirmation", "conflicts_resolved",
+    "conflict_decisions", "conflict_scope_note", "superseded_ids", "superseded_by", "possible_conflicts"})
+# On a task only: progress (state, reported evidence, check runs), a declared scope, a proposed command and
+# the placement in a plan. None of them is free text, except the path patterns of a scope.
+TASK_PROGRESS_METADATA = frozenset({
+    "state", "test_passed", "test_source_ids", "review_passed", "review_source_ids", "acceptance_passed",
+    "acceptance_source_ids", "check_run_ids", "scope", "check_proposals", "worktree", "plan_context_hash",
+    "step_index", "plan_archived", "unresolved_dependencies"})
+# What a task holds when a writer leaves the field out: the same as the field with this value.
+_TASK_DEFAULTS = {"depends_on": [], "acceptance_criteria": [], "requires_test": False, "requires_review": False,
+                  "required_profiles": [], "criterion_checks": {}}
 # A marker a coding client leaves in the environment of the commands it runs.
 CLIENT_MARKERS = ("CLAUDECODE", "CODEX_THREAD_ID")
 
@@ -63,11 +77,60 @@ class ConfirmationRefused(ValueError):
 
 def said(kind, content, key, supersedes, metadata) -> tuple:
     """What a confirmation covers: when this differs between two versions, the confirmation does not carry over."""
+    import json
     metadata = metadata if isinstance(metadata, dict) else {}
-    evidence = metadata.get("evidence")
+    skipped = UNCOVERED_METADATA | TASK_PROGRESS_METADATA if kind == "task" else UNCOVERED_METADATA
+    covered = {name: value for name, value in metadata.items() if name not in skipped}
+    evidence = covered.pop("evidence", None)
     evidence = evidence.replace("\r\n", "\n") if isinstance(evidence, str) and evidence.strip() else None
-    task = tuple(repr(metadata.get(name)) for name in CONFIRMED_TASK_FIELDS) if kind == "task" else ()
-    return (kind, content, key, supersedes or None, evidence, task)
+    if kind == "task":
+        covered = {**_TASK_DEFAULTS, **{name: value for name, value in covered.items() if value is not None}}
+    # An empty field says what a missing one says.
+    fields = json.dumps({name: value for name, value in covered.items()
+                         if value not in (None, "", [], {}) or (kind == "task" and name in _TASK_DEFAULTS)},
+                        sort_keys=True, ensure_ascii=False, default=repr)
+    return (kind, content, key, supersedes or None, evidence, fields)
+
+
+def lowered(old, status, version) -> dict | None:
+    """The mark of a write that is not a person's act and takes the status confirmed from a record."""
+    if not old or old.get("status") != "confirmed" or status == "confirmed":
+        return None
+    return {"by": "lapsed", "confirmed_version": old["version"], "version": version, "status": status}
+
+
+def local_verdict(head) -> bool:
+    """Whether a record's head carries a verdict given on this machine: it is confirmed or disputed here
+    and that version was not itself written by an import.
+
+    An import that moves such a head on to another statement or status replaces that verdict, so it needs
+    a person's explicit choice (`replace_confirmed`). A record confirmed before the rule counts: nothing
+    says it was not a person's. A disputed record counts whoever disputed it.
+    """
+    if not isinstance(head, dict) or head.get("status") not in ("confirmed", "disputed"):
+        return False
+    metadata = head.get("metadata") if isinstance(head.get("metadata"), dict) else {}
+    mark, publication = metadata.get(MARK), metadata.get("publication")
+    if isinstance(mark, dict) and head.get("status") == "confirmed" and mark.get("by") in ("person", "import"):
+        return mark["by"] == "person"
+    # A version that is a published revision an import wrote, confirmed or disputed elsewhere.
+    return not (isinstance(publication, dict) and publication.get("version") == head.get("version"))
+
+
+REPLACES_NOTE = ("these records were confirmed or disputed on this machine and the import puts another text or "
+                 "status in their place; it is applied only with --replace-confirmed, chosen by a person")
+
+
+IMPORT_IN_SESSION = ("A memory import is run only by a person, not inside a coding session: it can bring records "
+                     "that count as confirmed. Nothing was imported. A session may run the dry run; the person "
+                     "runs the import in their own terminal or in the workspace.")
+
+
+def replaces_refusal(names) -> str:
+    return (f"This import would replace {len(names)} record(s) that were confirmed or disputed on this machine: "
+            + ", ".join(str(name) for name in names[:50]) + (" and more" if len(names) > 50 else "")
+            + ". Nothing was imported. Read them in the dry run, then run the import again with "
+              "--replace-confirmed if the imported side is the one to keep.")
 
 
 def person_mark(route, source, version, at) -> dict:
@@ -136,7 +199,8 @@ def archive_claims(record, sources) -> list:
 def confirmation_of(record) -> dict | None:
     """How a record came to be confirmed, read from the record alone; None when it is not confirmed.
 
-    A lapsed confirmation is reported only on the version that lost it.
+    A lapsed confirmation is reported for as long as the record is not confirmed again and no person has
+    given another verdict on it.
     """
     if not isinstance(record, dict):
         return None
@@ -144,7 +208,7 @@ def confirmation_of(record) -> dict | None:
     mark = metadata.get(MARK) if isinstance(metadata, dict) else None
     mark = mark if isinstance(mark, dict) else {}
     if record.get("status") != "confirmed":
-        if mark.get("by") == "lapsed" and mark.get("version") == record.get("version"):
+        if mark.get("by") == "lapsed":
             return mark
         return None
     if mark.get("by") in ("person", "import", "seed"):
@@ -163,6 +227,10 @@ def is_local_person(record) -> bool:
     return confirmed_by(record) == "person"
 
 
+class Fixed(str):
+    """A word of ours inside the line, not text from memory: a caller that translates the line translates it."""
+
+
 def _clean(value, limit=120):
     text = " ".join(safe_text(str(value)).split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
@@ -171,32 +239,44 @@ def _clean(value, limit=120):
 _ROUTE_WORDS = {"inspector_review": "in the inspector", "conflict_decision": "by a conflict decision",
                 "confirm_plan": "with its plan", "workspace_form": "in the workspace form",
                 "cli": "on the command line"}
+# Said in place of a value the mark does not hold. Fixed words, translated with the line.
+FALLBACK_WORDS = ("the local user", "time unknown", "an unnamed person", "an unknown branch", "an unknown commit",
+                  "a memory package", "an unknown day", "by a person's act")
 
 
-def confirmation_text(record) -> str | None:
-    """One English line for wherever a record is shown. Names and paths come from memory or a package and
-    are escaped here; a caller that translates does it before calling, through `confirmation_parts`."""
+def _or(value, fallback, limit=120):
+    return _clean(value, limit) if value else Fixed(fallback)
+
+
+def confirmation_text(record, translate=None) -> str | None:
+    """One line for wherever a record is shown, in English or through `translate`. Names and paths come
+    from memory or a package and are escaped here and never translated; the sentence and the words that
+    stand for a missing value are ours and are."""
     parts = confirmation_parts(record)
     if parts is None:
         return None
     template, values = parts
+    if translate is not None:
+        template = translate(template)
+        values = {name: translate(str(value)) if isinstance(value, Fixed) else value for name, value in values.items()}
     return template.format(**values)
 
 
 def confirmation_parts(record):
-    """(template, values) of the line: the template is a fixed source string, the values are escaped text."""
+    """(template, values) of the line: the template is a fixed source string; a value is escaped text from
+    memory or a package, or a `Fixed` word of ours that stands where the mark holds nothing."""
     found = confirmation_of(record)
     if found is None:
         return None
     by = found["by"]
     if by == "person":
-        name = _clean(found.get("actor_name") or "the local user")
         return ("confirmed here by a person: {name}, {route}, {at}",
-                {"name": name, "route": _ROUTE_WORDS.get(found.get("route"), "by a person's act"),
-                 "at": _clean(str(found.get("at") or "")[:10] or "time unknown")})
+                {"name": _or(found.get("actor_name"), "the local user"),
+                 "route": Fixed(_ROUTE_WORDS.get(found.get("route"), "by a person's act")),
+                 "at": _or(str(found.get("at") or "")[:10], "time unknown")})
     if by == "import":
-        where = _clean(found.get("where") or "a memory package", 200)
-        day = _clean(str(found.get("imported_at") or "")[:10] or "an unknown day")
+        where = _or(found.get("where"), "a memory package", 200)
+        day = _or(str(found.get("imported_at") or "")[:10], "an unknown day")
         claims = [entry for entry in found.get("confirmed_by") or [] if isinstance(entry, dict)]
         if not claims:
             return ("confirmed elsewhere, who confirmed it is not recorded; imported from {where} on {day}; "
@@ -204,16 +284,23 @@ def confirmation_parts(record):
         last = claims[-1]
         return ("confirmed elsewhere by {name} on {branch} at {commit} (claimed by the package); "
                 "imported from {where} on {day}; not verified here",
-                {"name": _clean(last.get("name") or "an unnamed person"),
-                 "branch": _clean(last.get("branch") or "an unknown branch"),
-                 "commit": _clean(str(last.get("commit") or "an unknown commit")[:40]),
+                {"name": _or(last.get("name"), "an unnamed person"),
+                 "branch": _or(last.get("branch"), "an unknown branch"),
+                 "commit": _or(str(last.get("commit") or "")[:40], "an unknown commit"),
                  "where": where, "day": day})
     if by == "seed":
         return ("confirmed by evaluation seed data, not by a person", {})
     if by == "lapsed":
-        return ("was confirmed at version {version}; a session or agent changed it since, so it is proposed again",
-                {"version": _clean(found.get("confirmed_version") or "?")})
+        status = found.get("status") if found.get("status") in ("disputed", "superseded") else "proposed"
+        return ("was confirmed at version {version}; a later write that was not a person's confirmation "
+                "changed it, so it is now {status}",
+                {"version": _clean(found.get("confirmed_version") or "?"), "status": Fixed(status)})
     return ("confirmed before only a person could confirm; who confirmed it was not recorded", {})
+
+
+# Beside the state in a list, for a confirmation that is not a person's own here. Fixed words.
+LIST_WORDS = {"import": "confirmed elsewhere", "before_rule": "confirmed before the rule",
+              "seed": "confirmed by seed data", "lapsed": "confirmation lapsed"}
 
 
 def person_at_terminal(environ=None, stdin=None, stdout=None) -> bool:
