@@ -57,7 +57,8 @@ class PublishedImporter:
     def import_published(self, directory, project_id, *, dry_run=False, bind=False, take_published=(), authorize=None):
         from .memory import MemoryConflict
         from .memory_published import _listing
-        tree, errors = check_directory(directory)
+        from .memory_published_release import import_rules
+        tree, errors = check_directory(directory, import_rules(directory, self.store.settings))
         if errors:
             raise MemoryConflict("The published memory was refused: " + _listing(errors))
         take = set(take_published or ())

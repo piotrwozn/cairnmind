@@ -121,10 +121,6 @@ def test_only_acts_of_a_person_are_published_and_publishing_twice_changes_no_fil
     publisher = Publisher(store)
     preview = publisher.publish(pid, preview=True)
     assert preview["status"] == "preview" and not folder_of(root).exists()
-    monkeypatch.delenv(PUBLICATION_SWITCH)
-    with pytest.raises(ValueError, match="switched off"):
-        publisher.publish(pid)
-    monkeypatch.setenv(PUBLICATION_SWITCH, "1")
     first = publisher.publish(pid)
     files = published_bytes(root)
     steps = [task["id"] for task in saved["tasks"]]

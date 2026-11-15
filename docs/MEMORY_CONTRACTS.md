@@ -19,7 +19,8 @@ or embedding work is reported rather than represented as finished. The package
 does not contain environment configuration, credential files, embeddings,
 sessions, resume packets, ACKs, cursors, or active job leases. Raw archived text
 can itself contain private information; a full package is not automatically
-sanitized for publication.
+sanitized for publication. Published memory (below) passes a secrets gate before
+it is written.
 
 ## Publication and local scheduling
 
@@ -212,6 +213,8 @@ A source reference always carries `at` (when the source was stored) and `kind`:
   passage is the whole typed text;
 - a review: `{"at","kind":"review"}`; its passage is the whole audit as stored;
 - a plan: `{"at","kind":"plan"}`;
+- a release of the secrets gate: `{"at","kind":"release"}`; its passage is the release, and it is the
+  only source that no revision cites (see [Secrets gate](#secrets-gate));
 - anything else (conversations, session findings, notes from the command line, check output):
   `{"at","kind","origin"}`, with no passage.
 
@@ -312,8 +315,101 @@ the files whose bytes changed. Rendering uses no clock and no Git call, so publi
 nothing new changes no file. The output lists the files written and unchanged, what is held and why,
 and the files and bytes of the whole package. It never stages, commits or pushes. `memory status`
 shows the destination, whether `FORMAT.json` exists and whose it is, the project's publication ID and
-the file count. `memory show-published DIR` reads a directory as text. Writing stays behind the
-switch `CAIRNMIND_ENABLE_PUBLICATION=1` until the secrets gate (#171) refuses registered secrets and
-private keys; previews, checks and imports are not switched off.
+the file count. `memory show-published DIR` reads a directory as text. Every publication, its
+preview included, first passes the secrets gate below; the earlier switch
+`CAIRNMIND_ENABLE_PUBLICATION` is no longer needed and no longer read.
+
+## Secrets gate
+
+Git history is permanent, so publication refuses instead of masking: a masked record would still
+look fine to a reviewer, and whatever the masks do not know would pass. Before any file is written,
+every text a published file would carry is scanned: each revision's text, key, quote, step key,
+profiles, acceptance criteria, criterion links and scope; each plan definition's title, goal,
+constraints and step keys; every passage (workspace notes, review audits, releases); and every
+string of a source reference. One hit refuses the whole publication with a non-zero exit. The message
+names each file (and so the record), the field and the kind of hit, never any part of the value or
+its hash. Files already in the directory that this store does not write (a teammate's records, or
+records held here) are scanned too, but a hit there does not refuse: it is listed under `not_ours`,
+with the advice to fix or release it where it was written, and the file is left as it is. So a rule
+turned on after a publish, or a teammate's file, never blocks this store's own records or a release.
+Format characters (Unicode category Cf, such as zero-width spaces and soft hyphens) are removed
+before the scan, so a secret split by an invisible character is still found.
+
+What is detected:
+
+- the secrets registered with Cairnmind on the publishing machine: the service token and the ArcadeDB
+  password (the values the agent journal redacts), the API keys saved in the credential store (a
+  key entered for one session only, without saving it, lives in the cockpit and is not registered
+  with the memory service that publishes), and the values of the credential variables the runtime keeps from child
+  processes (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN` and the others of
+  `api_credentials.credential_environment_names`, and any variable ending in `_API_KEY`,
+  `_AUTH_TOKEN` or `_GITHUB_TOKEN`), each at least 8 characters, found exactly as they are. If the
+  saved keys cannot be read, publication refuses rather than going on without them;
+- private key blocks (`-----BEGIN ... PRIVATE KEY-----`, OpenSSH, PGP);
+- key and token shapes: AWS access key IDs, GitHub, GitLab, Slack, npm and Hugging Face tokens,
+  OpenAI and Anthropic keys, Google API keys, Stripe live keys, Azure storage account keys, JSON
+  Web Tokens, and bearer or basic credentials after `Bearer` or `Authorization:`;
+- connection strings with a password: `scheme://user:password@host`, and `Password=` or `Pwd=` in a
+  string that also names a server, host, data source, user or database. Placeholders such as
+  `${DB_PASSWORD}`, `<password>` or `***` are not hits;
+- long strings that look random: 32 characters or more of letters, digits and `+/_-=`, mixing at
+  least two of lower case, upper case and digits, with at least 4 bits of entropy per character, and
+  not made only of word-like pieces. Hex digests and commit hashes, UUIDs, `objects/<digest>` paths,
+  file paths and snake_case or CamelCase names are therefore not hits; on this repository's own
+  documentation, example memory and source files the rule finds nothing outside test fixtures that
+  hold deliberate fake secrets. A random string of 32 characters is missed about once in 500 draws,
+  and one of 40 or more almost never;
+- personal data, only when the project turns it on, in `.cairnmind/publication.toml`:
+
+  ```toml
+  [personal]
+  detect = ["email", "phone"]
+  patterns = [{name = "employee-id", regex = "EMP-[0-9]{6}"}]
+  ```
+
+  E-mail addresses and phone numbers are off by default, because records about who owns, reviews or
+  is contacted for something legitimately name people, and a record about a person's role is not a
+  leak. A project that must keep them out turns them on; its own patterns (at most 20, each a
+  regular expression of at most 200 characters, reported as `personal:<name>`) are for identifiers
+  such as employee or customer numbers. A file that cannot be read refuses publication.
+
+What is not detected, and is never promised: a secret of a shape not listed above, a short or
+low-entropy password outside a connection string, a registered secret that is split, encoded or
+changed, a key that is not registered on the machine that publishes, private facts written in
+plain words (names, health, salaries, customer details), and timestamps that reveal working hours.
+Git authorship of a review (`actor_name`) is published by design. The scan reduces what can pass; it
+does not promise that nothing private can.
+
+A person can release one record after reading it, when a hit is a false alarm (an example key from
+a provider's documentation, a test value): `cairnmind memory release PROJECT RECORD --reason TEXT`,
+refused inside a coding session, or `POST /inspector/records/{id}/release`. The release covers the
+record's current hits only: it is a source of its own, `release://` with origin
+`local_user_release`, holding `{"action":"release","actor","actor_name","at","branch","commit",
+"hits":[{"field","kind","value_sha256"}],"reason","record_id"}`. It is published in the record's
+file under Sources as `Source <id>: {"at":...,"kind":"release"}` with that JSON as its passage, so the
+reason is visible in the diff, and it is cited by no revision. A hit is let through only when a
+release in the same file names its field, its kind and the SHA-256 of its exact value; a new value
+needs a new release. A registered secret is never released, a release needs a reason that itself
+holds no hit, and a release in a plan file, or one that names another record, refuses the file. An
+importer keeps the release as a stub and publishes it again with the record.
+
+A release is a claim the file makes, like a review audit: nothing ties it to a person's act that a
+check can see. Someone writing a file by hand can add a release for their own value, of any kind
+but a registered secret, and `check-published` accepts it. That is why `check-published` prints
+every release in the tree (the file, the name it carries and what it lets through) when the tree is
+valid, so that the pull request's reviewer reads each one; accountability comes from git authorship
+and review, as for audits.
+
+The same scan runs without Cairnmind's store in CI: `cairnmind memory check-published DIR` refuses a
+tree with an unreleased hit, naming the file, the field and the kind, and exits 1. It applies the
+project's `.cairnmind/publication.toml` from the checkout that holds DIR at
+`.memory/cairnmind-published` (or the file named by `--config`). CI has no registered secrets: those
+exist only on the machine that publishes, so a pull request whose files were written by hand is
+checked for every other kind. An example workflow is
+[`docs/examples/published-memory-check.yml`](examples/published-memory-check.yml); it runs on the
+pull request's merge commit. `memory import-published` refuses a tree with an unreleased hit too,
+applying the same `.cairnmind/publication.toml` of the checkout and, on the laptop, this machine's
+registered secrets, so that nothing comes in that this store would refuse to publish. A refused
+entry whose file name itself holds a secret is not named by that name.
 
 Budgets of version 1: 1 MiB per file, 100,000 files and 256 MiB per package.

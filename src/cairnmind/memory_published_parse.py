@@ -133,7 +133,7 @@ def _check_source(source_id, source):
         if not isinstance(audit, dict) or not clean_value(audit):
             raise PublishedFormatError(f"source {source_id} is a review whose audit holds characters the format "
                                        "does not allow, or is not an audit")
-    if (passage is not None) != (kind in ("note", "review")):
+    if (passage is not None) != (kind in ("note", "review", "release")):
         raise PublishedFormatError(f"source {source_id} has a passage where none belongs, or lacks one")
     if passage is not None and (not clean_text(passage) or not passage or len(passage) > MAX_NOTE_CHARS * 4):
         raise PublishedFormatError(f"source {source_id} has a passage the format does not allow")
@@ -301,8 +301,16 @@ def parse_file(raw: bytes) -> dict:
     lines.block("Current goal" if kind == "plan" else "Current text")
     lines.expect("", "an empty line")
     model = {"kind": kind, "id": front["id"], "created_at": front["created_at"], "sources": _sources(lines)}
+    releases = set()
     for source_id, source in model["sources"].items():
         _check_source(source_id, source)
+        if ref_class(source["ref"]) == "release":
+            # A release (#171) is cited by no revision: it lets a reviewed false alarm of the secrets gate through.
+            from .memory_published_secrets import release_problem
+            problem = "releases belong to records" if kind == "plan" else release_problem(source["passage"], model["id"])
+            if problem:
+                raise PublishedFormatError(f"source {source_id} is a release that {problem}")
+            releases.add(source_id)
     if kind == "plan":
         model["definitions"] = _entries(lines, "Definition", PLAN_FIELDS, {"Goal"}, _plan_entry(model))
         cited = {s for definition in model["definitions"] for s in definition["sources"]}
@@ -311,8 +319,9 @@ def parse_file(raw: bytes) -> dict:
         model["revisions"] = _entries(lines, "Revision", RECORD_FIELDS + (TASK_FIELDS if task else ()),
                                       {"Quote", "Text"}, _record_entry(model, task))
         cited = {s for revision in model["revisions"] for s in revision["sources"]}
-    if cited != set(model["sources"]):
-        raise PublishedFormatError("the Sources section must list exactly the sources the revisions cite")
+    if cited != set(model["sources"]) - releases:
+        raise PublishedFormatError("the Sources section must list exactly the sources the revisions cite, "
+                                   "and its releases")
     if render(model) != text.encode():
         raise PublishedFormatError("the file is not in canonical form (edited or merged by hand); take one side whole")
     return model

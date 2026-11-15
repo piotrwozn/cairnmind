@@ -24,8 +24,19 @@ def format_bytes(project_id) -> bytes:
     return (J({"format": FORMAT, "format_version": VERSION, "project_id": project_id}) + "\n").encode()
 
 
+def _shown(relative):
+    """An entry's name as printed: the name itself, unless the name holds what the secrets gate refuses."""
+    from .memory_published_secrets import Rules, scan_text
+    if not scan_text(relative, Rules()):
+        return relative
+    folder = relative.rpartition("/")[0]
+    return f"(an entry{' in ' + folder if folder else ''} whose name holds a secret)"
+
+
 def read_tree(directory):
-    """The files of a published directory as {relative path: bytes}, and the entries it refuses."""
+    """The files of a published directory as {relative path: bytes}, and the entries it refuses.
+
+    A refused entry is named by its path, unless that name itself holds a secret (#171)."""
     from .memory import _read
     directory, files, errors, total = Path(directory), {}, [], 0
     if directory.is_symlink() or not directory.is_dir():
@@ -33,35 +44,37 @@ def read_tree(directory):
     for entry in sorted(directory.iterdir()):
         name = entry.name
         if entry.is_symlink():
-            errors.append((name, "symbolic links are not allowed"))
+            errors.append((_shown(name), "symbolic links are not allowed"))
         elif entry.is_file() and name in STATIC_FILES:
             files[name] = _read(entry, MAX_FILE_BYTES)
         elif entry.is_dir() and name in DIRECTORIES:
             for child in sorted(entry.iterdir()):
                 relative = f"{name}/{child.name}"
                 if child.is_symlink() or child.is_dir():
-                    errors.append((relative, "only files are allowed here, no links or directories"))
+                    errors.append((_shown(relative), "only files are allowed here, no links or directories"))
                 elif not (child.name.endswith(".md") and canonical_uuid(child.name[:-3])):
-                    errors.append((relative, "unknown entry"))
+                    errors.append((_shown(relative), "unknown entry"))
                 elif child.stat().st_size > MAX_FILE_BYTES:
                     errors.append((relative, "the file is larger than 1 MiB"))
                 else:
                     files[relative] = _read(child, MAX_FILE_BYTES)
         else:
-            errors.append((name, "unknown entry"))
+            errors.append((_shown(name), "unknown entry"))
         total = sum(len(data) for data in files.values())
         if len(files) > MAX_FILES or total > MAX_PACKAGE_BYTES:
             return files, [("", "the package exceeds 100,000 files or 256 MiB")]
     return files, errors
 
 
-def scan(models):
-    """The secrets gate (#171) hooks in here: [{path, field, kind}] for every value that must not travel.
+def scan(models, rules=None):
+    """The secrets gate (#171): [{path, field, kind, value_sha256}] for every value that must not travel.
 
-    Called on what is about to be written and on what a check reads, before anything else is done with
-    it. Version 1 registers nothing yet, which is why publishing stays switched off outside tests.
+    Called on what is about to be written and on what a check reads. Without rules it looks for what
+    needs no machine: private keys, key and token shapes, passwords in connection strings and random
+    strings; the publisher adds this machine's registered secrets and the project's personal patterns.
     """
-    return []
+    from .memory_published_secrets import scan_models
+    return scan_models(models, rules)
 
 
 def record_row(project_id, model, revision, version):
@@ -172,8 +185,10 @@ def payload_of(project_id, records, plans, sources):
     return payload
 
 
-def check_files(files):
-    """Phase 1 of an import: (tree, errors). The tree is None whenever there is an error."""
+def check_files(files, rules=None, *, secrets=True):
+    """Phase 1 of an import: (tree, errors). The tree is None whenever there is an error, a secret included.
+
+    `secrets=False` checks the structure only; the publisher scans on its own terms (Publisher.publish)."""
     from .memory import _parse, _validate
     errors = []
     for path, raw in sorted(files.items()):
@@ -227,15 +242,34 @@ def check_files(files):
         _validate(payload, project_id, graph=False)
     except ValueError as exc:
         return None, [("", f"the tree as a whole is invalid: {exc}")]
-    hits = scan({"records": records, "plans": plans, "paths": paths})
+    hits = scan({"records": records, "plans": plans, "paths": paths}, rules) if secrets else []
     if hits:
-        return None, [(hit["path"], f"{hit['kind']} found in {hit['field']}; nothing was imported") for hit in hits]
+        # The file, the field and the kind of hit; never the value or its hash.
+        return None, [(hit["path"], f"{hit['kind'].replace('_', ' ')} found in {hit['field']}") for hit in hits]
     return {"project_id": project_id, "records": records, "plans": plans, "paths": paths, "sources": sources,
             "payload": payload}, []
 
 
-def check_directory(directory):
+def releases_in(tree):
+    """One line per release in a checked tree: the file, who the release names and what it lets through.
+
+    A release, like a review audit, is a claim the file makes, tied to no act a check can see; CI lists
+    every one so that the pull request's reviewer reads it. No value or hash is printed."""
+    from .memory_published_format import parse_json
+    lines = []
+    for identifier, model in sorted(tree["records"].items()):
+        for source_id, source in sorted(model["sources"].items()):
+            if ref_class(source["ref"]) != "release":
+                continue
+            value = parse_json(source["passage"])
+            let = sorted({f"{hit['kind'].replace('_', ' ')} in {hit['field']}" for hit in value["hits"]})
+            lines.append(f"{tree['paths'][identifier]}: release {source_id} by {value['actor_name'] or 'local user'} "
+                         f"lets through {', '.join(let)}")
+    return lines
+
+
+def check_directory(directory, rules=None):
     files, errors = read_tree(directory)
     if errors:
         return None, errors
-    return check_files(files)
+    return check_files(files, rules)
