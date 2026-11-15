@@ -9,9 +9,10 @@ from dataclasses import replace
 import json
 from uuid import uuid4
 
+import httpx
 import pytest
 
-from cairnmind import memory_egress
+from cairnmind import memory_egress, memory_models
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.config import Settings
 from cairnmind.ollama import OllamaUnavailable
@@ -205,9 +206,35 @@ async def test_ask_with_the_local_ollama_sends_the_same_evidence_as_before(works
     assert memory_egress.HELD_BACK_UNKNOWN not in result["unknowns"]
 
 
+def mock_http():
+    def server(request):
+        if request.url.host == "models.example":
+            return httpx.Response(200, json={"data": [{"id": "qwen3.5:9b"}]})
+        return httpx.Response(200, json={"models": []})
+    return httpx.Client(transport=httpx.MockTransport(server))
+
+
+def test_doctor_shows_per_role_where_text_goes_and_which_classes_are_held_back(tmp_path):
+    settings = Settings(data_dir=tmp_path, memory_chat=dict(REMOTE))
+    with mock_http() as http:
+        result = memory_models.doctor_models(settings, http)
+    assert result["remote_classes"] == {"setting": ["project"]}
+    assert result["chat"]["destination"] == "remote"
+    assert result["chat"]["sends"] == ["project"]
+    assert result["chat"]["held_back"] == ["conversation", "third_party"]
+    assert "conversation" in result["chat"]["content_sent_to"] and "models.example" in result["chat"]["content_sent_to"]
+    assert result["embedding"]["destination"] == "this computer"
+    assert result["embedding"]["sends"] == ["project", "conversation", "third_party"]
+    assert result["embedding"]["held_back"] == []
+
+
 @pytest.mark.parametrize("value", ["project", ["project", "secret"], [1], ["project", "project"], None])
-def test_an_invalid_setting_sends_no_class(tmp_path, value):
+def test_an_invalid_setting_sends_no_class_and_doctor_says_why(tmp_path, value):
     settings = Settings(data_dir=tmp_path, memory_chat=dict(REMOTE), memory_remote_classes=value)
+    with mock_http() as http:
+        result = memory_models.doctor_models(settings, http)
+    assert result["remote_classes"]["error"]
+    assert result["chat"]["sends"] == [] and result["chat"]["held_back"] == ["project", "conversation", "third_party"]
     assert memory_egress.held_back_class(settings, "chat", {"kind": "code", "metadata": {}}) == "project"
     # A local role is not affected by the setting at all.
     assert memory_egress.held_back_class(settings, "embedding", {"kind": "transcript", "metadata": {}}) is None
