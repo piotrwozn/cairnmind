@@ -87,7 +87,7 @@ def test_explicit_reserved_check_inputs_are_rejected_broad_globs_remain_safe(wor
     folder.mkdir(parents=True)
     (folder / "snapshot.json").write_text("one")
     for pattern in (".memory/cairnmind", ".memory/cairnmind/*", ".memory/devbrain", ".memory/devbrain/*",
-                    ".memory/devbrain/snapshot.json"):
+                    ".memory/devbrain/snapshot.json", ".memory/cairnmind-published/*"):
         with pytest.raises(ValueError, match="reserved"):
             capture_code_state(store, project["id"], extra_inputs=[pattern])
     first = capture_code_state(store, project["id"], extra_inputs=[".memory/**/*"])

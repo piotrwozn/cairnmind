@@ -198,9 +198,11 @@ ORIGIN_METADATA = ("origin_client", "origin_session_id", "origin_history", "orig
 EXTRACTION_MARK = "extraction_source_id"
 
 # Record metadata derived by the store; values supplied by a client are never kept.
+# "publication" is set only by the importer of published memory (#170): a client can neither forge it
+# nor clear it, and it stays on later local versions the way an origin mark does.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
                            "supersede_warning", "supersede_replaced_evidence_latest", EXTRACTION_MARK,
-                           *ORIGIN_METADATA)
+                           *ORIGIN_METADATA, "publication")
 
 
 # Not part of what a plan step says: plan-level or transient fields and everything the store derives.

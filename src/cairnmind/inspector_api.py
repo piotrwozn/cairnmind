@@ -26,6 +26,13 @@ class ReviewBody(BaseModel):
     reason: str | None = Field(default=None, max_length=4000)
 
 
+class ConfirmPlanBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    expected_plan_version: int = Field(strict=True, ge=1)
+    reason: str | None = Field(default=None, max_length=4000)
+
+
 class ConflictBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     project: str
@@ -212,6 +219,12 @@ def create_inspector_router(store, settings):
     async def review(record_id: str, body: ReviewBody):
         return await call(inspector.review, body.project, record_id, body.action, body.expected_version,
                           expected_plan_version=body.expected_plan_version, reason=body.reason)
+
+    @router.post("/inspector/plans/{plan_id}/confirm")
+    async def confirm_plan(plan_id: str, body: ConfirmPlanBody):
+        # A person confirms a plan and its steps at once (#170); the audit lets them travel as published memory.
+        from .memory_acts import confirm
+        return await call(confirm, inspector, body.project, plan_id, body.expected_plan_version, reason=body.reason)
 
     @router.get("/events")
     async def events(request: Request, after: str | None = None, project: str | None = None, once: bool = False,

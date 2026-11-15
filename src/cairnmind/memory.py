@@ -145,7 +145,9 @@ def _version(value):
         raise ValueError("Invalid memory entity version")
 
 
-def _validate(payload, project_id, active_plan_id=None):
+def _validate(payload, project_id, active_plan_id=None, *, graph=True):
+    """Check a whole archive payload. graph=False skips only the canonical graph, which a published
+    memory directory (#170) does not carry: every other check is the same as for an archive."""
     maps = {}
     for table in TABLES:
         rows = payload.get(table)
@@ -306,6 +308,20 @@ def _validate(payload, project_id, active_plan_id=None):
         _text(edge.get("kind"), "edge kind")
         if edge.get("source_id"):
             source_refs([edge["source_id"]])
+    if graph:
+        _canonical_graph(maps)
+    for run in maps["check_runs"].values():
+        task = maps["records"].get(run.get("task_id"))
+        if not task or task["kind"] != "task" or not isinstance(run.get("source_ids"), dict):
+            raise ValueError("Invalid historical memory check")
+        source_refs([run.get("profile_source_id"), *run["source_ids"].values()])
+    if active_plan_id is not None and active_plan_id not in maps["plans"]:
+        raise ValueError("Missing active memory plan")
+    return maps
+
+
+def _canonical_graph(maps):
+    """The logical graph of records and plans must be exactly what their current heads say."""
     expected, owned_kinds = set(), {}
     for row in maps["records"].values():
         identifier = f"record:{row['id']}"
@@ -334,14 +350,6 @@ def _validate(payload, project_id, active_plan_id=None):
               for edge in maps["edges"].values() if edge["kind"] in owned_kinds.get(edge["from_id"], set())]
     if len(actual) != len(expected) or set(actual) != expected:
         raise ValueError("Canonical memory relationships do not match current records and plans")
-    for run in maps["check_runs"].values():
-        task = maps["records"].get(run.get("task_id"))
-        if not task or task["kind"] != "task" or not isinstance(run.get("source_ids"), dict):
-            raise ValueError("Invalid historical memory check")
-        source_refs([run.get("profile_source_id"), *run["source_ids"].values()])
-    if active_plan_id is not None and active_plan_id not in maps["plans"]:
-        raise ValueError("Missing active memory plan")
-    return maps
 
 
 def _strip_local_marks(table, row):

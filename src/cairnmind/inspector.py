@@ -315,20 +315,22 @@ class Inspector:
             raise ValueError("Disputing a record requires a reason")
         pid = self._project(project)["id"]
         status = "confirmed" if action == "confirm" else "disputed"
+        from .memory_acts import act_context, definition_fields, review_refused
+        context = act_context(self.store, pid)  # Who, on which branch and commit (#170): before the writer lock.
         with self.store.transaction() as reader:
             old = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record_id, "project": pid}, False)
             if not old:
                 raise InspectorNotFound("Unknown record in requested project")
-            if old["version"] != expected_version or old["status"] in {"superseded", status}:
+            if old["version"] != expected_version or review_refused(reader, old, status, action):
                 raise ValueError("Review version conflict; read the current record")
             plan_id = old.get("metadata", {}).get("plan_ref") if old["kind"] == "task" else None
             if plan_id:
                 current = one_row(reader, "SELECT version FROM plans WHERE id=:id AND project_id=:project", {"id": plan_id, "project": pid})
                 if type(expected_plan_version) is not int or current["version"] != expected_plan_version:
                     raise ValueError("Review plan version conflict; read the current plan")
-            audit = {"actor": "local_user", "action": action, "record_id": record_id, "previous_version": expected_version,
+            audit = {"actor": "local_user", **context, "action": action, "record_id": record_id, "previous_version": expected_version,
                 "previous_status": old["status"], "status": status, "reason": (reason or "").strip(), "at": utc_now(),
-                "content_sha256": hashlib.sha256(old["content"].encode()).hexdigest()}
+                "content_sha256": hashlib.sha256(old["content"].encode()).hexdigest(), **definition_fields(old)}
             source = self.store.snapshot(pid, "review://" + str(uuid4()), json_text(audit), "manual",
                                          {"origin": "local_user_review", "role": "user", "record_id": record_id})
             update = {"id": record_id, "expected_version": expected_version, "status": status}

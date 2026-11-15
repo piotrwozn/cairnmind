@@ -17,10 +17,15 @@ from pathlib import Path
 MEMORY_RELATIVE = Path(".memory/cairnmind")
 EARLIER_MEMORY_RELATIVE = Path(".memory/devbrain")
 MEMORY_DIRECTORIES = (MEMORY_RELATIVE, EARLIER_MEMORY_RELATIVE)
+# The published memory of a team (#170): one file per record, committed with a branch. It is not an
+# archive, so it is not in MEMORY_DIRECTORIES (where snapshots are looked for), but it is reserved like
+# one: a commit that only changes memory then changes no code fingerprint, index or scope check.
+PUBLISHED_RELATIVE = Path(".memory/cairnmind-published")
+RESERVED_DIRECTORIES = (*MEMORY_DIRECTORIES, PUBLISHED_RELATIVE)
 # Pathspecs that keep Git from listing the reserved directories at all: a snapshot of a large project
 # holds tens of thousands of objects, and the worktree is listed at every code-state capture (#158).
 # Case-sensitive like is_reserved_memory on Linux; that check still filters what Git lists.
-GIT_PATHSPEC = ("--", ".", *(f":(exclude){directory.as_posix()}" for directory in MEMORY_DIRECTORIES))
+GIT_PATHSPEC = ("--", ".", *(f":(exclude){directory.as_posix()}" for directory in RESERVED_DIRECTORIES))
 
 
 def is_reserved_memory(relative: str | Path) -> bool:
@@ -29,7 +34,7 @@ def is_reserved_memory(relative: str | Path) -> bool:
     if ".memory" not in os.fspath(relative).lower():
         return False
     path = Path(os.path.normpath(relative))
-    return not path.is_absolute() and any(path.is_relative_to(directory) for directory in MEMORY_DIRECTORIES)
+    return not path.is_absolute() and any(path.is_relative_to(directory) for directory in RESERVED_DIRECTORIES)
 
 
 def snapshot_directory(root: str | Path) -> Path | None:
