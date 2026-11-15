@@ -429,10 +429,12 @@ class Store:
 
         A write stores `confirmed` only (a) as a person's act the store checks here, or (b) by keeping a
         confirmation whose statement it does not change (progress on a task, a note of a conflict decision).
-        Anything else that asks for `confirmed` is refused. A write that does not ask for a status and
-        changes what was confirmed is stored as proposed, with a mark that says the confirmation lapsed.
-        The same mark is left when such a write sets another status on a confirmed record: taking a
-        confirmation away is shown like changing what was confirmed, unless a person did it.
+        Anything else that asks for `confirmed` is refused. A write that is not a person's act never
+        reaches this point on a record a person confirmed (_keep_verdict refuses it first). On a
+        confirmation that is not a person's verdict given here (imported, seed data, the checkpoint record)
+        a write that does not ask for a status and changes what was confirmed is stored as proposed, with a
+        mark that says the confirmation lapsed; the same mark is left when such a write sets another status.
+        A person's act leaves no such mark.
         """
         from .confirmation import (MARK, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused, lowered,
                                    person_mark, said)
@@ -459,7 +461,21 @@ class Store:
             return status, kept if isinstance(kept, dict) and kept.get("by") != "lapsed" else None
         if asked == "confirmed" or not old or old["status"] != "confirmed":
             raise ConfirmationRefused()
-        return "proposed", lowered(old, "proposed", version)
+        return "proposed", None if act else lowered(old, "proposed", version)
+
+    def _persons_act(self) -> bool:
+        """Whether this thread writes as a person: an act of a person's route is open (evaluation seed data
+        is not one), and no session or marked origin writes."""
+        from .confirmation import PERSON_ROUTES
+        act = getattr(self._local, "person_act", None)
+        return bool(act) and act["route"] in PERSON_ROUTES and not (
+            self.current_origin() or getattr(self._local, "session_write", None))
+
+    def _keep_verdict(self, record, change, status=None):
+        """A write that is not a person's act never takes a person's confirmation away (#177): refused."""
+        from .confirmation import VerdictKept, kept_verdict
+        if not self._persons_act() and kept_verdict(record):
+            raise VerdictKept(record, change, status)
 
     def init(self):
         from .arcade import ArcadeError
@@ -943,8 +959,11 @@ class Store:
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
                   replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None,
-                  extractor=None):
+                  extractor=None, slot=False):
         """Write one record version.
+
+        slot: the write replaces the content of the one checkpoint record, which is a slot for the latest
+        state and not a statement: a confirmation of an earlier state lapses instead of refusing the write.
 
         replace_origin: the origin mark follows this writer instead of the old version (checkpoints).
         replace_metadata: the metadata is built from this write alone, not merged onto the old version's.
@@ -1069,6 +1088,7 @@ class Store:
             if not old and "expected_version" in record and record["expected_version"] != previous["version"]:
                 raise ValueError("Record version conflict; replaced record has changed")
             from .confirmation import MARK as mark_name, lowered
+            self._keep_verdict(previous, "replace")
             if not getattr(self._local, "person_act", None) and previous["status"] == "confirmed":
                 # A replacement that is not a person's act takes a confirmed record out of use: it says so.
                 previous["metadata"] = {**(previous.get("metadata") or {}),
@@ -1096,9 +1116,14 @@ class Store:
                 metadata["supersede_replaced_evidence_latest"] = replaced_time["latest"]
         # The rule for `confirmed`, on the final statement of this write and for every route (#177).
         from .confirmation import MARK, said
+        statement = said(kind, content, key, supersedes, metadata)
+        if old and status != "confirmed":
+            self._keep_verdict(old, "status", status)
+        elif old and not slot and statement != said(old["kind"], old["content"], old["key"], old.get("supersedes"),
+                                                    old.get("metadata")):
+            self._keep_verdict(old, "change")
         status, confirmation = self._confirmation(
-            tx, project_id, old, record.get("status"), status, said(kind, content, key, supersedes, metadata),
-            sources, old["version"] + 1 if old else 1)
+            tx, project_id, old, record.get("status"), status, statement, sources, old["version"] + 1 if old else 1)
         metadata.pop(MARK, None)
         if confirmation:
             metadata[MARK] = confirmation
@@ -1161,7 +1186,8 @@ class Store:
             # an external session replaces an external checkpoint, none of the external fields may stay behind
             # unmarked: the metadata is then built from this state alone. Any other succession merges as before.
             fresh = bool(old) and degraded_origin(old.get("metadata")) and not self.current_origin()
-            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True, replace_metadata=fresh)
+            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True, replace_metadata=fresh,
+                                  slot=True)
 
     def list_records(self, project_id, include_history=False):
         self._require_project(self, project_id)
