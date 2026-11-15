@@ -1189,7 +1189,10 @@ def test_final_citations_have_fixed_count_and_excerpt_budget(workspace):
     text = json.dumps({"answer": "Bounded supported answer.", "citations": citations, "unknowns": []})
     result = KnowledgeAgent(store, settings, FakeOllama())._final(text, project["id"], evidence, time.monotonic())
     assert len(result["sources"]) == 8
-    assert sum(len(s["quote"]) for s in result["sources"]) <= 6000
+    # Each quote is capped at the size of a shown passage (#241: it was 750, below the 900 shown).
+    from cairnmind.agent import EXCERPT_CHARS
+    assert all(len(s["quote"]) <= EXCERPT_CHARS for s in result["sources"])
+    assert sum(len(s["quote"]) for s in result["sources"]) <= 8 * EXCERPT_CHARS
     assert all("analysis" not in s["metadata"] for s in result["sources"])
     assert len(result["freshness"]["source_hashes"]) <= 8
 

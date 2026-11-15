@@ -111,6 +111,23 @@ def test_filling_continues_past_an_entry_that_does_not_fit():
     assert omitted == [{"kind": "decision", "status": "confirmed", "count": 1}]
 
 
+def test_rules_reserve_does_not_push_the_checkpoint_out_of_the_smallest_budget():
+    # Review of #241: at the 2,500 floor (an active plan with a large workflow) a long newest finding and a
+    # long confirmed rule, each taken by its own reserve, left no room for the checkpoint, which 0.10 showed.
+    from cairnmind.context_selection import entry_size, select_entries
+
+    entries = [entry("checkpoint-0", status="proposed", kind="checkpoint", size=940),
+               entry("constraint-0", kind="constraint", size=1040),
+               entry("fact-0", status="proposed", kind="fact", size=1240)]
+    assert [round(entry_size(item), -2) for item in entries] == [1000, 1100, 1300]
+    selected, omitted = select_entries(entries, [False, False, True], 2500)
+    assert [item["id"] for item in selected] == ["checkpoint-0", "fact-0"]
+    assert omitted == [{"kind": "constraint", "status": "confirmed", "count": 1}]
+    # With room for all three, the rule is still shown, in presentation order.
+    selected, _ = select_entries(entries, [False, False, True], 3500)
+    assert [item["id"] for item in selected] == ["checkpoint-0", "constraint-0", "fact-0"]
+
+
 def test_selection_rejects_mismatched_reserve_flags():
     from cairnmind.context_selection import select_entries
 
@@ -310,3 +327,42 @@ def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
     assert {flag for kind, status, flag in seen.values() if kind == "task"} == {False}
     assert {status for kind, status, flag in seen.values() if kind == "task"} == {"proposed"}
     assert seen[finding["id"]][2] is True and finding["id"] in shown_ids(context)
+
+
+def open_tasks(store, project, count, evidence):
+    """Open tasks of the size the 0.11.0 trial measured, about 1,200 characters each in the context (#241)."""
+    return [store.remember(project["id"], {
+        "kind": "task", "key": f"open-{index}", "content": f"Open step {index}: " + "acceptance details " * 30,
+        "metadata": {"state": "todo", "acceptance_criteria": [f"Criterion {n} of step {index} holds." for n in range(8)],
+                     "requires_test": True, "required_profiles": ["unit"]}}, [evidence["id"]])
+        for index in range(count)]
+
+
+def test_rules_in_force_are_seen_beside_many_open_tasks_and_some_tasks_are_counted_as_omitted(workspace):
+    from cairnmind.context_selection import entry_size
+
+    store, project, settings = workspace
+    evidence = source(store, project)
+    rules = [remember(store, project, {"kind": "constraint", "key": "tokens", "status": "confirmed",
+                                       "content": "Never log tokens."}, evidence),
+             remember(store, project, {"kind": "decision", "key": "gateway", "status": "confirmed",
+                                       "content": "Payments go through the gateway module only."}, evidence),
+             remember(store, project, {"kind": "constraint", "key": "local", "status": "confirmed",
+                                       "content": "All inference stays on this machine."}, evidence)]
+    # Updated after the rules, as in the trial: the open tasks and a new finding are the newest records.
+    tasks = open_tasks(store, project, 8, evidence)
+    finding = proposed_finding(store, project, 0)
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    shown = shown_ids(context)
+    by_id = {item["id"]: item for item in context["records"]}
+    assert all(entry_size(by_id[task["id"]]) > 1000 for task in tasks if task["id"] in by_id)
+    assert {rule["id"] for rule in rules} <= shown
+    assert finding["id"] in shown
+    # Tasks get the rest: some are shown, first, and the others are counted, not lost.
+    assert context["records"][0]["kind"] == "task"
+    assert 0 < sum(task["id"] in shown for task in tasks) < len(tasks)
+    assert {"kind": "task", "status": "proposed", "count": context["omitted_records"]} in \
+        context["omitted_by_kind_status"]
+    # The presentation order of #213 is kept among what is shown.
+    kinds = [item["kind"] for item in context["records"]]
+    assert kinds == sorted(kinds, key=lambda kind: {"task": 1, "constraint": 2, "decision": 2}.get(kind, 4))

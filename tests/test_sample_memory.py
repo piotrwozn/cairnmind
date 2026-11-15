@@ -52,7 +52,8 @@ def _block(text, needle):
 def test_the_sample_shows_source_text_replacement_and_criteria():
     decisions = show_snapshot(PACKAGE, kind="decision", sources_text=True)
     storage = _block(decisions, "key: storage-format")
-    assert "  source note://trail-notes/2026-03-02-storage:\n    | Meeting notes, 2 March." in storage
+    assert ("  source note://trail-notes/2026-03-02-storage (sensitivity: conversation):\n"
+            "    | Meeting notes, 2 March.") in storage
     # Identifiers change with every build of the sample, so the new decision is found through the old one.
     replaced = _block(decisions, "[decision] superseded")
     new_id = re.search(r"  replaced by: (\S+) \(note-identifiers\)", replaced).group(1)
