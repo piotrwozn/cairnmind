@@ -1,7 +1,8 @@
 # The ArcadeDB server of docs/DEPLOYMENT.md on one machine: a server, or a laptop for development.
 #
-#   umask 077; openssl rand -base64 32 > ~/.config/cairnmind-arcadedb-root-password
-#   ARCADEDB_ROOT_PASSWORD_FILE=~/.config/cairnmind-arcadedb-root-password \
+#   mkdir -p ~/.config/cairnmind-db
+#   (umask 077; openssl rand -base64 32 > ~/.config/cairnmind-db/root-password)
+#   ARCADEDB_ROOT_PASSWORD_FILE=~/.config/cairnmind-db/root-password \
 #       docker compose -f deploy/compose.yaml up -d --build --wait
 #
 # Environment:
@@ -11,7 +12,8 @@
 #   ARCADEDB_JAVA_OPTS           extra JVM options, e.g. -Xmx4g (the default heap is 1 GB)
 #
 # Cairnmind connects over plain HTTP to a loopback address only, so the port stays on 127.0.0.1;
-# reach it from another machine through an SSH tunnel until TLS support arrives (#72).
+# reach it from another machine through an SSH tunnel. An installation that uses this server is
+# connect-only: CAIRNMIND_ARCADE_CONNECT_URL=http://127.0.0.1:2480 (docs/DEPLOYMENT.md).
 
 # The project name, and so the volume name cairnmind-db_arcadedb-data, that docs/DEPLOYMENT.md uses.
 name: cairnmind-db

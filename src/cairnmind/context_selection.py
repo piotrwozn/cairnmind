@@ -1,7 +1,8 @@
 """Choose which record entries fit the character budget of Retriever.context (#188).
 
-Entries arrive in presentation order: checkpoints, open tasks, confirmed records, then the
-rest, each group most recently updated first. Before that order is applied, a stated share of
+Entries arrive in presentation order (context_place, #213): the checkpoint and the open tasks,
+then decisions and constraints in force, other confirmed records, new findings, and finished
+tasks last, each group most recently updated first. Before that order is applied, a stated share of
 the budget is reserved for the most recently updated proposed records, so new findings are
 seen even when many confirmed records or open tasks exist. The reserve always grows to hold the
 newest of those records when it fits the whole budget, so a long finding with metadata beside an
@@ -19,6 +20,25 @@ from collections import Counter
 
 # A quarter of the budget, as proposed in #188 and the research answer in #19.
 PROPOSED_SHARE = 0.25
+
+
+def context_place(kind: str, status: str, finished: bool) -> tuple[int, bool]:
+    """Sort key of a record in the context; smaller comes first (#213).
+
+    0 the checkpoint, 1 open tasks (the active plan's steps), 2 confirmed decisions and
+    constraints, 3 other confirmed records, 4 the rest (proposed and disputed findings),
+    5 finished tasks. Confirmed comes first inside a place. ``finished`` is the task's own
+    state ``done``; status and state are stored fields, never read from the record text.
+    """
+    if kind == "checkpoint":
+        place = 0
+    elif kind == "task":
+        place = 5 if finished else 1
+    elif status == "confirmed":
+        place = 2 if kind in ("decision", "constraint") else 3
+    else:
+        place = 4
+    return place, status != "confirmed"
 
 
 def entry_size(entry: dict) -> int:

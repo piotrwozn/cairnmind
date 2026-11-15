@@ -56,6 +56,13 @@ async def wait_for(path):
 async def started_child(executor, command=CHILD_IGNORING_TERM):
     task = asyncio.create_task(executor.execute("run_command", {"command": command}))
     await wait_for(executor.worktree / "child.pid")
+    # The child can write its file before the spawn has returned to the executor. A cancellation in that
+    # window is another path (stopped without an entry in _stopping; it has its own test below), and a slow
+    # runner landed in it. These tests are about a command the executor has registered as running.
+    deadline = time.monotonic() + 5
+    while not executor._running:
+        assert time.monotonic() < deadline, "the executor never registered the command as running"
+        await asyncio.sleep(.005)
     return task, int((executor.worktree / "child.pid").read_text())
 
 
@@ -120,7 +127,11 @@ async def test_a_second_cancellation_does_not_cut_the_stop_short(executor):
     task, pid = await started_child(executor)
     try:
         task.cancel()
-        await asyncio.sleep(.1)
+        # Wait for the stop itself, not a fixed time, so the second cancellation lands while it waits.
+        deadline = time.monotonic() + 5
+        while not executor._stopping:
+            assert time.monotonic() < deadline, "the cancelled command never began to stop its process group"
+            await asyncio.sleep(.005)
         assert not task.done()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -172,7 +183,12 @@ async def test_a_stop_that_is_itself_cancelled_still_sends_sigkill(executor):
     task, pid = await started_child(executor)
     try:
         task.cancel()
-        await asyncio.sleep(.1)
+        # The stop begins when the cancelled task next runs; on a slow runner that took longer than a fixed
+        # tenth of a second. It then waits half a second for SIGTERM, which this child ignores.
+        deadline = time.monotonic() + 5
+        while not executor._stopping:
+            assert time.monotonic() < deadline, "the cancelled command never began to stop its process group"
+            await asyncio.sleep(.005)
         [(_, stop)] = executor._stopping.values()
         assert not stop.done()
         stop.cancel()

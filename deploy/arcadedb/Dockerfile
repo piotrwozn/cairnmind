@@ -1,7 +1,7 @@
 # ArcadeDB for Cairnmind: the release Cairnmind pins (Settings.arcade_version in
 # src/cairnmind/config.py; tests/test_deployment.py keeps the two equal), on Java 21, started with the
-# options of `cairnmind engine start`. No password is built in: the server reads it from a file
-# mounted at run time. See docs/DEPLOYMENT.md.
+# options of `cairnmind engine start`, in production mode and without the MCP plugin. No password is
+# built in: the server reads it from a file mounted at run time. See docs/DEPLOYMENT.md.
 #
 #   docker build -t cairnmind-arcadedb:local deploy/arcadedb
 
@@ -24,6 +24,11 @@ RUN set -eu; \
     tar -xzf "$name"; \
     test -d "arcadedb-${ARCADEDB_VERSION}/lib"; \
     mv "arcadedb-${ARCADEDB_VERSION}" /opt/arcadedb
+# The MCP plugin is started whenever its jar is on the class path (no server setting leaves it out) and
+# serves /api/v1/mcp, which root can switch on at run time. Cairnmind does not use it, so it is removed.
+RUN set -eu; \
+    test -f "/opt/arcadedb/lib/arcadedb-mcp-${ARCADEDB_VERSION}.jar"; \
+    rm "/opt/arcadedb/lib/arcadedb-mcp-${ARCADEDB_VERSION}.jar" /opt/arcadedb/bin/mcp-stdio.sh
 
 FROM eclipse-temurin:21-jre-noble
 ARG ARCADEDB_VERSION

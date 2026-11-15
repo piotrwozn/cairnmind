@@ -275,9 +275,11 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     @app.post("/_control/agent/{action}")
     async def worker_configuration(request: Request, action: str):
         control(request)
-        if action not in {"config", "credential"}:
+        if action not in {"config", "credential", "mcp_failure"}:
             raise HTTPException(404, "Unsupported agent operation.")
         value = await body(request)
+        if action == "mcp_failure":
+            return await mcp_failure(value)
         fields(value, {"run_id", "generation"}, {"run_id", "generation"})
         if not isinstance(value["run_id"], str) or type(value["generation"]) is not int:
             raise HTTPException(422, "Invalid agent identity.")
@@ -287,6 +289,20 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         result = await asyncio.to_thread(method, value["run_id"], value["generation"])
         return JSONResponse(result if action == "config" else {"key": result},
                             headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
+    async def mcp_failure(value):
+        """The agent worker's report of a third-party MCP server that did not start (#209): exactly these
+        fields, so nothing the server said can come along; the runtime checks the run, project, server
+        and code."""
+        names = {"run_id", "generation", "project_id", "server_id", "code"}
+        fields(value, names, names)
+        if (type(value["generation"]) is not int
+                or not all(isinstance(value[name], str) for name in names - {"generation"})):
+            raise HTTPException(422, "Invalid MCP server report.")
+        method = getattr(runtime, "record_mcp_failure", None)
+        if method is None:
+            raise HTTPException(409, "The agent engine is unavailable.")
+        return await asyncio.to_thread(method, **value)
 
     @app.post("/_control/stop")
     async def request_stop(request: Request):
@@ -775,9 +791,11 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         session_for(request)
         if not re.fullmatch(r"[A-Za-z0-9_:/-]+", path) or ".." in path:
             raise HTTPException(404)
-        # The person's decisions are the only writes: a review, a conflict decision, an impact verdict.
+        # The person's decisions are the only writes: a review, a conflict decision, an impact verdict, and
+        # accepting or withdrawing an unknown transcript record kind (#210).
         if request.method == "POST" and not (path.endswith("/review")
-                                             or path in ("conflicts/resolve", "impact/verdict")):
+                                             or path in ("conflicts/resolve", "impact/verdict",
+                                                         "record-kinds/accept", "record-kinds/withdraw")):
             raise HTTPException(405)
         return forward(await upstream(request.method, "/inspector/" + path, params=request.query_params,
                                       data=await body(request) if request.method == "POST" else None))

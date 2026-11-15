@@ -19,6 +19,7 @@ from cairnmind.plans import PlanManager
 from cairnmind.service import create_app
 from cairnmind.sessions import SessionManager
 from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.inspector import Inspector
 from cairnmind.store import Store
 
 
@@ -195,7 +196,8 @@ def test_cache_stamp_moves_only_for_writes_that_can_change_an_answer(workspace):
     store.remember(other["id"], {"kind": "fact", "content": "Elsewhere"}, [foreign["id"]])
     assert store.cache_stamp(pid) == current
     assert store.cache_stamp(other["id"]) != store.cache_stamp(pid)
-    store.remember(pid, {"id": record["id"], "expected_version": record["version"], "status": "confirmed"}, [source["id"]])
+    # A person's review (#177): the only write that can change the status to confirmed.
+    Inspector(store).review(pid, record["id"], "confirm", record["version"])
     moved()
     PlanManager(store).save(pid, {"title": "Plan", "goal": "Goal"}, [{"key": "a", "content": "Step"}], "one",
                             worktree=str(root), activate=True)

@@ -52,6 +52,11 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
     error = finding_error(content, kind, status) or key_error(key)
     if error:
         raise ValueError(error)
+    if session_id and status == "confirmed":
+        # A session's finding is never a person's (#177). Refused before the source is written, so nothing
+        # of the request is stored; the store's own rule would refuse the record as well.
+        from .confirmation import ConfirmationRefused
+        raise ConfirmationRefused()
     if session_id:
         uri, metadata = f"session://finding/{key}", {"origin": SESSION_ORIGIN, "session_id": session_id}
     else:
@@ -76,9 +81,20 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
         raise ValueError("Invalid finding key")
     # No scope-bearing key (root, worktree, worktree_root, path): a finding belongs to the whole project.
     metadata["source_timestamp"] = (now or datetime.now(timezone.utc)).isoformat()
-    source = store.snapshot(project_id, uri, content, "manual", metadata)
+    if not session_id:
+        # Who typed it, on which branch and commit, read when it is saved: a confirmed form travels with
+        # published memory (#170) under this name, never under one read at publish time.
+        from .memory_acts import act_context
+        metadata.update(act_context(store, project_id))
+    # Indexed with its known secrets replaced (#182); the text itself is kept as typed.
+    from .secret_mask import note_metadata
+    source = store.snapshot(project_id, uri, content, "manual", note_metadata(store.settings, content, metadata))
     record = {"kind": kind, "status": status, "content": content, "key": key,
               "metadata": {"origin": metadata["origin"]}}
-    record = store.remember(project_id, record, [source["id"]])
+    if session_id:
+        record = store.remember(project_id, record, [source["id"]])
+    else:
+        with store.person_act("workspace_form", source["id"]):  # The person's own form (#177).
+            record = store.remember(project_id, record, [source["id"]])
     return {"record": record, "source": {name: source[name] for name in ("id", "uri", "kind", "metadata")},
             "already_saved": False}

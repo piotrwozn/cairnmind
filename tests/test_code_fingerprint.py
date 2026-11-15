@@ -179,6 +179,9 @@ def test_editing_a_file_invalidates_an_acknowledged_packet(workspace):
     (".memory/devbrain", True), (".memory/devbrain/manifest.json", True), ("a/../.memory/devbrain/x", True),
     ("./.memory/devbrain/objects/a.json", True), (".memory/notes.md", False), (".memory/devbrain-other/x", False),
     ("src/.memory/devbrain/x", False), ("src/app.py", False), ("memory/devbrain/x", False), ("/abs/.memory/devbrain", False),
+    # The published memory of #170 is reserved like the archive, so committing it stales no check.
+    (".memory/cairnmind-published", True), (".memory/cairnmind-published/decision/a.md", True),
+    (".memory/cairnmind-published-other/x", False),
 ])
 def test_the_fast_path_of_the_reserved_memory_check_changes_no_answer(path, expected):
     assert is_reserved_memory(path) is expected
@@ -198,7 +201,7 @@ def test_the_objects_of_a_snapshot_are_not_listed_at_every_capture(workspace, mo
     # session status and resume captured the code state twice, listing and filtering each of them.
     store, project, root = workspace
     before = capture_code_state(store, project["id"])
-    for directory in (".memory/cairnmind", ".memory/devbrain"):
+    for directory in (".memory/cairnmind", ".memory/devbrain", ".memory/cairnmind-published"):
         objects = root / directory / "objects"
         objects.mkdir(parents=True)
         for number in range(1500):

@@ -9,6 +9,8 @@ from cairnmind.memory import MemoryManager
 from cairnmind.sessions import SessionManager
 from cairnmind.store import Store
 
+from conftest import as_person
+
 
 def git(root, *args):
     subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
@@ -26,8 +28,8 @@ def test_imported_scoped_decision_and_checkpoint_are_in_fresh_native_resume(tmp_
     source, destination = Store(tmp_path / "source-data"), Store(tmp_path / "destination-data")
     project = source.add_project("Scoped memory", source_root)
     evidence = source.snapshot(project["id"], "manual://scope", "Keep local context across computers", "manual")
-    decision = source.remember(project["id"], {
-        "kind": "decision", "content": "Use the saved portability decision", "status": "confirmed",
+    decision = as_person(source, project["id"], {
+        "kind": "decision", "content": "Use the saved portability decision",
         "metadata": {"worktree": str(source_root)},
     }, [evidence["id"]])
     checkpoint = source.checkpoint(project["id"], {
@@ -45,9 +47,10 @@ def test_imported_scoped_decision_and_checkpoint_are_in_fresh_native_resume(tmp_
     ack = manager.ack(prepared["session_id"], packet["id"], packet["hash"], {"plan": None, "task": None})
     assert ack["packet_id"] == packet["id"]
     manager.require_ack(prepared["session_id"])
-    destination.remember(project["id"], {
+    # The person on this computer rewrites and confirms it (#177): no other write keeps it confirmed.
+    as_person(destination, project["id"], {
         "id": decision["id"], "kind": "decision", "content": "The imported decision has changed",
-        "status": "confirmed", "expected_version": decision["version"],
+        "expected_version": decision["version"],
         "metadata": {"worktree": str(source_root)},
     }, [evidence["id"]])
     with pytest.raises(ValueError, match="resume_required"):

@@ -33,6 +33,7 @@ import threading
 
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
+from .database_mode import connect_only, missing_database, version_problem
 
 _READ = re.compile(r"^\s*\(*\s*(SELECT|MATCH|TRAVERSE)\b", re.I)
 
@@ -52,10 +53,19 @@ class ReadOnlyStoreError(RuntimeError):
 class ReadOnlyClient:
     """The database client of a store opened for reading: queries, and transactions that are rolled back."""
 
-    def __init__(self, client: ArcadeClient):
+    def __init__(self, client: ArcadeClient, refusal: str | None = None):
         self._client = client
         self.settings = client.settings
         self.database = client.database
+        # Set for a store whose installation is not the writer (#70): a write is then the person's request,
+        # refused with this reason (StoreNotWriter), not a programming error.
+        self.refusal = refusal
+
+    def _refuse(self, message):
+        if self.refusal:
+            from .store_writer import StoreNotWriter
+            raise StoreNotWriter(self.refusal)
+        raise ReadOnlyStoreError(message)
 
     def query(self, sql, params=None):
         if not isinstance(sql, str) or not _READ.match(sql):
@@ -63,18 +73,18 @@ class ReadOnlyClient:
         return self._client.query(sql, params)
 
     def command(self, sql, params=None):
-        raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        self._refuse("A store opened for reading cannot run a database command")
 
     def server_command(self, command):
-        raise ReadOnlyStoreError("A store opened for reading cannot run a server command")
+        self._refuse("A store opened for reading cannot run a server command")
 
     def ensure_database(self):
-        raise ReadOnlyStoreError("A store opened for reading cannot create the database")
+        self._refuse("A store opened for reading cannot create the database")
 
     @contextmanager
     def transaction(self):
         with self._client.transaction(commit=False) as native:
-            yield ReadOnlyClient(native)
+            yield ReadOnlyClient(native, self.refusal)
 
     def close(self) -> None:
         self._client.close()
@@ -88,11 +98,17 @@ def check_ready(client: ArcadeClient, settings: Settings) -> None:
     except ArcadeError as exc:
         if exc.status_code is not None:
             raise  # the engine answered: its own error says more than "not running"
+        if connect_only(settings):
+            # Connect-only (#68): there is no engine to start here; the client's message says where it looked.
+            raise StoreNotReady(str(exc)) from None
         raise StoreNotReady("The database engine is not running; start it with `cairnmind engine start` "
                             "(this command does not start it).") from None
-    if str(info.get("version", "")).split(" ", 1)[0] != settings.arcade_version:
-        raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
+    refused = version_problem(settings, info)
+    if refused:
+        raise ArcadeError(refused)
     if not client.database_exists():
+        if connect_only(settings):
+            raise StoreNotReady(missing_database(settings))
         raise StoreNotReady("The Cairnmind database does not exist yet; create it with `cairnmind init`.")
     types = {row.get("name") for row in client.query("SELECT name FROM schema:types")}
     rows = client.query("SELECT value FROM devbrain_meta WHERE name='schema_version'") \

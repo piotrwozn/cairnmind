@@ -124,7 +124,7 @@ def test_the_mark_stays_when_anyone_later_edits_the_record(fixture):
     native = fixture.session("codex")
     edited = post(fixture, "/remember", {"project": fixture.project["id"], "sources": [fixture.note["id"]], **native,
                                          "record": {"id": saved["id"], "expected_version": saved["version"],
-                                                    "status": "confirmed",
+                                                    "content": "Reported by an external editor, reworded",
                                                     "metadata": {"origin_client": None, "origin_evidence": None}}})
     metadata = fixture.record(edited["id"])["metadata"]
     assert edited["version"] == 2 and metadata["origin_client"] == "external"

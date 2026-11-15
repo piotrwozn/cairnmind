@@ -13,6 +13,7 @@ import pytest
 from cairnmind import ingest
 from cairnmind.config import Settings
 from cairnmind.ingest import forget_index_signature, index_project, index_project_if_changed
+from cairnmind.journal import JournalTransaction
 from cairnmind.store import Store
 from cairnmind.sql import clean_row
 
@@ -109,9 +110,10 @@ def test_after_one_edit_only_rows_of_that_file_are_written_to_the_graph(workspac
     first = index_project(store, pid)
     (root / "pkg" / "module_03.py").write_text("VALUE_3 = 33\n")
     nodes, edges = [], []
-    upsert_node, upsert_edge = store.upsert_node, store.upsert_edge
-    monkeypatch.setattr(store, "upsert_node", lambda item, tx=None: nodes.append(item["kind"]) or upsert_node(item, tx=tx))
-    monkeypatch.setattr(store, "upsert_edge", lambda item, tx=None: edges.append(item["kind"]) or upsert_edge(item, tx=tx))
+    # Every graph row written, grouped or one by one, passes the checks of its upsert once (#167).
+    checked_node, checked_edge = store._checked_node, store._checked_edge
+    monkeypatch.setattr(store, "_checked_node", lambda tx, item: nodes.append(item["kind"]) or checked_node(tx, item))
+    monkeypatch.setattr(store, "_checked_edge", lambda tx, item: edges.append(item["kind"]) or checked_edge(tx, item))
     edited = index_project_if_changed(store, pid)
     monkeypatch.undo()
     # The file's own node, its new snapshot node and the one constant it defines, which now names
@@ -235,11 +237,13 @@ def test_a_failed_run_remembers_nothing(workspace, monkeypatch):
     store, pid, root = workspace
     index_project(store, pid)
     (root / "app.py").write_text("def main():\n    return 2\n")
-    original = store.upsert_edge
-    monkeypatch.setattr(store, "upsert_edge", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("engine went away")))
-    with pytest.raises(RuntimeError, match="engine went away"):
-        index_project(store, pid)
-    monkeypatch.setattr(store, "upsert_edge", original)
+    with monkeypatch.context() as patch:
+        # The request that writes the graph's edges (in groups since #167) fails.
+        real = JournalTransaction.script
+        patch.setattr(JournalTransaction, "script", lambda self, statements, *rest: (_ for _ in ()).throw(
+            RuntimeError("engine went away")) if statements[0].startswith("CREATE EDGE") else real(self, statements, *rest))
+        with pytest.raises(RuntimeError, match="engine went away"):
+            index_project(store, pid)
     repaired = index_project(store, pid)
     assert repaired["read"] == 20 and repaired["graph_unchanged"] is False
     assert_same_as_a_full_run(store, pid)

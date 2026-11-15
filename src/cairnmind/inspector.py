@@ -15,6 +15,7 @@ from uuid import uuid4
 from .agent import source_text
 from .memory_paths import bound_metadata, memory_bindings
 from .retrieval import Retriever, public_record, public_source_metadata
+from .sensitivity import record_classes, source_sensitivity
 from .sql import clean_row, json_text, one_row, utc_now
 
 
@@ -129,7 +130,7 @@ class Inspector:
             selected = available[:limit]
             fields = "*"
             if collection == "sources":
-                fields = "id,project_id,uri,kind,sha256,created_at,is_current,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset"
+                fields = "id,project_id,uri,kind,sha256,created_at,is_current,metadata.role AS role,metadata.client AS client,metadata.session_id AS session_id,metadata.origin_client AS origin_client,metadata.origin_evidence AS origin_evidence,metadata.origin_history AS origin_history,metadata.source_timestamp AS source_timestamp,metadata.byte_offset AS byte_offset"
             rows = reader.query(f"SELECT {fields} FROM {collection} WHERE project_id=:project AND id IN :ids ORDER BY id",
                                 {"project": pid, "ids": selected}) if selected else []
             items = []
@@ -139,7 +140,9 @@ class Inspector:
                     item = public_record(row, content_limit=1000, metadata_budget=2000)
                     item["project_id"] = pid
                 elif collection == "sources":
-                    item = row
+                    # Derived on read, never stored (#180); the history mark it reads is not listed.
+                    item = {**row, "sensitivity": source_sensitivity(row)}
+                    item.pop("origin_history", None)
                 elif collection == "jobs":
                     item = self.store._public_job(row)
                 elif collection == "check_runs":
@@ -156,8 +159,10 @@ class Inspector:
             # Derived outside the writer lock, like the detail view; the list needs no file bodies.
             from .evidence import evidence_states
             states = evidence_states(self.store, pid, rows, quotes=False)
+            classes = record_classes(self.store, rows)
             for item in items:
                 item["evidence_state"] = states[item["id"]]["evidence_state"]
+                item["sensitivity"] = classes[item["id"]]
         return result
 
     def entity(self, collection, project, identifier, *, worktree=None):
@@ -205,6 +210,7 @@ class Inspector:
         # Derived on every read: a source can change without any write to the record.
         from .evidence import evidence_states
         result["evidence"] = evidence_states(self.store, scope[0]["id"], [row])[row["id"]]
+        result["sensitivity"] = record_classes(self.store, [row])[row["id"]]
         if row["kind"] == "task":
             # A read projection, not the /checks recovery operation. Filesystem
             # capture never holds the shared database writer lock.
@@ -234,6 +240,13 @@ class Inspector:
                 "next_cursor": _encode_cursor({"record": record_id, "project": pid, "after": str(rows[limit - 1]["version"])})
                 if len(rows) > limit else None, "cursor": _cursor(reader, self.store)}
 
+    def extraction_stats(self, project):
+        """Per extractor version, how automatic extractions fared in review (#193). Read-only."""
+        from .extraction_stats import extraction_stats
+        pid = self._project(project)["id"]
+        with self.store.transaction() as reader:
+            return {**extraction_stats(reader, pid), "cursor": _cursor(reader, self.store)}
+
     def source(self, project, source_id, *, view="raw", offset=0, limit=65536, worktree=None):
         if view not in {"raw", "normalized", "metadata"}:
             raise ValueError("Source view must be raw, normalized or metadata")
@@ -250,7 +263,8 @@ class Inspector:
             end = min(len(text), offset + limit)
             return {"source": {**self._header(row), "metadata": public_source_metadata(row.get("metadata"))},
                 "view": view, "text": text[offset:end], "offset": offset, "next_offset": end if end < len(text) else None,
-                "total_chars": len(text), "truncated": end < len(text), "cursor": _cursor(reader, self.store)}
+                "total_chars": len(text), "truncated": end < len(text), "sensitivity": source_sensitivity(row),
+                "cursor": _cursor(reader, self.store)}
 
     def inbox(self, *, cursor=None, limit=100):
         _limit(limit)
@@ -315,26 +329,28 @@ class Inspector:
             raise ValueError("Disputing a record requires a reason")
         pid = self._project(project)["id"]
         status = "confirmed" if action == "confirm" else "disputed"
+        from .memory_acts import act_context, definition_fields, review_refused
+        context = act_context(self.store, pid)  # Who, on which branch and commit (#170): before the writer lock.
         with self.store.transaction() as reader:
             old = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record_id, "project": pid}, False)
             if not old:
                 raise InspectorNotFound("Unknown record in requested project")
-            if old["version"] != expected_version or old["status"] in {"superseded", status}:
+            if old["version"] != expected_version or review_refused(reader, old, status, action):
                 raise ValueError("Review version conflict; read the current record")
             plan_id = old.get("metadata", {}).get("plan_ref") if old["kind"] == "task" else None
             if plan_id:
                 current = one_row(reader, "SELECT version FROM plans WHERE id=:id AND project_id=:project", {"id": plan_id, "project": pid})
                 if type(expected_plan_version) is not int or current["version"] != expected_plan_version:
                     raise ValueError("Review plan version conflict; read the current plan")
-            audit = {"actor": "local_user", "action": action, "record_id": record_id, "previous_version": expected_version,
+            audit = {"actor": "local_user", **context, "action": action, "record_id": record_id, "previous_version": expected_version,
                 "previous_status": old["status"], "status": status, "reason": (reason or "").strip(), "at": utc_now(),
-                "content_sha256": hashlib.sha256(old["content"].encode()).hexdigest()}
+                "content_sha256": hashlib.sha256(old["content"].encode()).hexdigest(), **definition_fields(old)}
             source = self.store.snapshot(pid, "review://" + str(uuid4()), json_text(audit), "manual",
                                          {"origin": "local_user_review", "role": "user", "record_id": record_id})
-            update = {"id": record_id, "expected_version": expected_version, "status": status}
-            if plan_id:
-                update["expected_plan_version"] = expected_plan_version
-            saved = self.store.remember(pid, update, [*old["source_ids"], source["id"]])
+            update = {"id": record_id, "expected_version": expected_version, "status": status,
+                      **({"expected_plan_version": expected_plan_version} if plan_id else {})}
+            with self.store.person_act("inspector_review", source["id"]):  # The person's act (#177).
+                saved = self.store.remember(pid, update, [*old["source_ids"], source["id"]])
             return {"record": saved, "audit_source_id": source["id"], "cursor": _cursor(reader, self.store)}
 
     def _graph_rows(self, project, worktree=None):

@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import conflicts, impact_verdicts
+from . import stale_proposed as proposed
 from .arcade import ArcadeError
 from .inspector import Inspector, InspectorNotFound
 
@@ -24,6 +25,20 @@ class ReviewBody(BaseModel):
     expected_version: int = Field(strict=True, ge=1)
     expected_plan_version: int | None = Field(default=None, strict=True, ge=1)
     reason: str | None = Field(default=None, max_length=4000)
+
+
+class ConfirmPlanBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    expected_plan_version: int = Field(strict=True, ge=1)
+    reason: str | None = Field(default=None, max_length=4000)
+
+
+class ReleaseBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    reason: str = Field(min_length=1, max_length=2000)
+    worktree: str | None = Field(default=None, max_length=4096)
 
 
 class ConflictBody(BaseModel):
@@ -48,6 +63,15 @@ class ImpactVerdictBody(BaseModel):
     fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     verdict: Literal["still_valid", "needs_update", "not_related"]
     note: str | None = Field(default=None, max_length=4000)
+
+
+class RecordKindBody(BaseModel):
+    # No session field: only a person accepts or withdraws a transcript record kind (#210).
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    client: Literal["claude", "codex", "unknown"]
+    kind: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=1000)
 
 
 def _event_id(cursor):
@@ -157,6 +181,10 @@ def create_inspector_router(store, settings):
                         cursor: str | None = None, limit: int = 100):
         return await call(inspector.revisions, project, record_id, worktree=worktree, cursor=cursor, limit=limit)
 
+    @router.get("/inspector/extraction-stats")
+    async def extraction_stats(project: str):
+        return await call(inspector.extraction_stats, project)
+
     @router.get("/inspector/sources/{source_id}")
     async def source(source_id: str, project: str, worktree: str | None = None,
                      view: str = "raw", offset: int = 0, limit: int = 65536):
@@ -178,6 +206,13 @@ def create_inspector_router(store, settings):
     @router.get("/inspector/conflicts")
     async def conflict_inbox(project: str, worktree: str | None = None):
         return await call(conflicts.inbox, inspector, project, worktree)
+
+    @router.get("/inspector/proposed")
+    async def stale_proposed(project: str, worktree: str | None = Query(default=None, max_length=4096),
+                             days: int = Query(default=proposed.DEFAULT_DAYS, ge=0, le=proposed.MAX_DAYS),
+                             limit: int = Query(default=proposed.MAX_ITEMS, ge=1, le=proposed.MAX_ITEMS)):
+        # Read-only, what `cairnmind proposed --json` prints (#189); acting on an entry is the review route below.
+        return await call(proposed.listing, inspector, project, worktree, days, limit)
 
     @router.post("/inspector/conflicts/resolve")
     async def resolve_conflict(body: ConflictBody):
@@ -212,6 +247,40 @@ def create_inspector_router(store, settings):
     async def review(record_id: str, body: ReviewBody):
         return await call(inspector.review, body.project, record_id, body.action, body.expected_version,
                           expected_plan_version=body.expected_plan_version, reason=body.reason)
+
+    @router.post("/inspector/plans/{plan_id}/confirm")
+    async def confirm_plan(plan_id: str, body: ConfirmPlanBody):
+        # A person confirms a plan and its steps at once (#170); the audit lets them travel as published memory.
+        from .memory_acts import confirm
+        return await call(confirm, inspector, body.project, plan_id, body.expected_plan_version, reason=body.reason)
+
+    @router.post("/inspector/records/{record_id}/release")
+    async def release_record(record_id: str, body: ReleaseBody):
+        # A person lets one record's false alarms of the secrets gate through (#171), with a published reason.
+        from .memory_published_release import release
+        project_id = (await call(inspector._project, body.project))["id"]
+        return await call(release, store, project_id, record_id, body.reason, body.worktree)
+
+    @router.get("/inspector/record-kinds")
+    async def record_kinds_overview(project: str):
+        from . import record_kinds
+        project_id = (await call(inspector._project, project))["id"]
+        return await call(record_kinds.overview, store, project_id)
+
+    async def record_kind_act(body, withdraw):
+        # The person's act of the inspector route, as a review is (#177): the note is a review audit.
+        from . import record_kinds
+        project_id = (await call(inspector._project, body.project))["id"]
+        return await call(record_kinds.act_as_person, store, project_id, body.client, body.kind, body.note,
+                          route="inspector_review", withdraw=withdraw)
+
+    @router.post("/inspector/record-kinds/accept")
+    async def accept_record_kind(body: RecordKindBody):
+        return await record_kind_act(body, False)
+
+    @router.post("/inspector/record-kinds/withdraw")
+    async def withdraw_record_kind(body: RecordKindBody):
+        return await record_kind_act(body, True)
 
     @router.get("/events")
     async def events(request: Request, after: str | None = None, project: str | None = None, once: bool = False,

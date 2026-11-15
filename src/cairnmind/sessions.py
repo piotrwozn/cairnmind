@@ -17,11 +17,17 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .confirmation import confirmed_by
+from .integrations import DATA_NOT_INSTRUCTIONS
+from .packet_origin import omitted_by_origin, preview_key, record_origins
 from .store import EXTRACTION_MARK, ORIGIN_METADATA
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
 MAX_PACKET_BYTES = 24576
 MAX_RECORDS = 20
+# 2: each record carries its origin, confirmed records come first, omitted_by_origin (#178). A packet of an
+# earlier schema is never current, so an ACK given for it goes stale instead of counting for what it never showed.
+PACKET_SCHEMA_VERSION = 2
 RESUME_REASONS = {"startup", "resume", "compact", "clear", "fork", "refresh"}
 AGENT_CLIENTS = {"api", "copilot"}
 # Any MCP client whose conversation Cairnmind cannot read (Cursor, Cline, Zed and others).
@@ -54,6 +60,10 @@ def stale_reason(message: str) -> str:
     if "scope cannot be restored" in message:
         return "scope_unavailable"
     return "continuity"
+
+
+def _current_schema(packet: dict) -> bool:
+    return packet.get("schema_version") == PACKET_SCHEMA_VERSION
 
 
 def _hash(value: Any) -> str:
@@ -219,6 +229,7 @@ def format_packet(packet: dict) -> str:
         json_text(_readback(packet)),
         "Do not invent missing state or mark tasks done from a summary. "
         "Native CLI permissions still apply to all native actions.",
+        DATA_NOT_INSTRUCTIONS,
     ]
     if plan:
         result.extend([f"Active plan v{plan['version']}{note(plan) if unverified_plan else ''}: "
@@ -756,6 +767,9 @@ class SessionManager:
             metadata = row.get("metadata") or {}
             by_offset.setdefault(metadata.get("byte_offset"), []).append(row)
         source_ids, unknowns, digest, offset = [], list(reparsed.get("errors", [])), hashlib.sha256(), 0
+        # A kind a person accepted as technical for this project does not block (#210); nothing else does.
+        from .record_kinds import accepted, blocking_message, unknown_kind
+        standing, named, first = accepted(self.store, session["project_id"]), set(), None
         try:
             stat = path.stat()
             if ((target.get("device") is not None and target["device"] != stat.st_dev)
@@ -779,8 +793,14 @@ class SessionManager:
                     if not candidates:
                         raise ValueError(f"Missing durable source at transcript byte {offset}")
                     source = sorted(candidates, key=lambda row: row["id"])[0]
+                    first = raw.decode("utf-8", "replace") if offset == 0 else first
                     if source["kind"] != "transcript" or (source.get("metadata") or {}).get("schema_warning"):
-                        unknowns.append(f"Unparsed or conflicting transcript record at byte {offset}")
+                        found = unknown_kind(source, raw.decode("utf-8", "replace"), first)
+                        if found is None:
+                            unknowns.append(f"Unparsed or conflicting transcript record at byte {offset}")
+                        elif (found["client"], found["kind"]) not in standing | named:
+                            named.add((found["client"], found["kind"]))
+                            unknowns.append(blocking_message(found, offset, session["project_id"]))
                     recovery = target.get("capture_recovery")
                     if recovery:
                         metadata = source.get("metadata") or {}
@@ -837,26 +857,31 @@ class SessionManager:
         if task and isinstance(task.get("metadata", {}).get("scope"), list) and task["metadata"]["scope"]:
             # Only for a task that declares one, so every other packet stays byte for byte what it was.
             task_view["scope"] = [str(pattern)[:500] for pattern in task["metadata"]["scope"][:64]]
-        previews = sorted(state["records"], key=lambda row:
-                          (0 if row["kind"] == "checkpoint" else 1, row["kind"], row["id"]))[:MAX_RECORDS]
+        origins = record_origins(self.store, state["records"])
+        previews = sorted(state["records"], key=lambda row: preview_key(row, origins[row["id"]]))[:MAX_RECORDS]
         archived_agent_history = self.store.query(
             "SELECT id FROM sources WHERE project_id=:project AND kind='agent_transcript' "
             "AND metadata.agent_session_id!=:session LIMIT 1",
             {"project": session["project_id"], "session": session["id"]})
         packet_archives = [{key: value for key, value in row.items() if key != "source_ids"}
                            if row.get("kind") == "agent_journal" else row for row in archives]
-        packet = {"id": str(uuid4()), "schema_version": 1, "project_id": session["project_id"],
+        packet = {"id": str(uuid4()), "schema_version": PACKET_SCHEMA_VERSION, "project_id": session["project_id"],
                   "session_id": session["id"], "epoch": session["epoch"], "client": session["client"],
                   "worktree": session["worktree"], "created_at": utc_now(),
                   "active_plan": plan_view, "active_task": task_view,
                   "next_action": state["reason"], "blockers": state["blocked"],
                   "records": [{"id": row["id"], "version": row["version"], "kind": row["kind"],
-                               "status": row["status"], "content": row["content"][:600],
+                               "status": row["status"], "origin": origins[row["id"]],
+                               "content": row["content"][:600],
                                "content_truncated": len(row["content"]) > 600,
                                "source_ids": row.get("source_ids", [])[:8],
+                               # On a confirmed record only (#177): person (here), import (confirmed elsewhere,
+                               # never verified here), before_rule (nobody recorded) or seed.
+                               **({"confirmed_by": confirmed_by(row)} if confirmed_by(row) else {}),
                                **({"evidence_state": evidence[row["id"]]} if row["id"] in evidence else {})}
                               for row in previews],
                   "omitted_records": max(0, len(state["records"]) - len(previews)),
+                  "omitted_by_origin": omitted_by_origin(state["records"], previews, origins),
                   "code": state["code"], "state_hash": state["state_hash"],
                   "archive_watermarks": packet_archives, "no_history": not archives and not archived_agent_history,
                   "archive": {"status": "complete" if all(row["status"] == "complete" for row in archives)
@@ -893,6 +918,7 @@ class SessionManager:
             shown = [row for row in packet["records"] if row.get("evidence_state") != "degraded"]
             packet["omitted_records"] += len(packet["records"]) - len(shown)
             packet["records"] = shown
+            packet["omitted_by_origin"] = omitted_by_origin(state["records"], shown, origins)
             for row in shown:
                 row.pop("evidence_state", None)
             if len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES and evidence_warning in packet.get("warnings", []):
@@ -902,11 +928,17 @@ class SessionManager:
         if task_view and "scope" in task_view and len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Advice, like the evidence data: it must never be what makes a packet unready.
             task_view["scope_omitted"] = len(task_view.pop("scope"))
+        while packet["records"] and len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES:
+            # The preview is not essential: the last, least trusted records yield one by one, counted (#178).
+            packet["records"].pop()
+            packet["omitted_records"] += 1
+            packet["omitted_by_origin"] = omitted_by_origin(state["records"], packet["records"], origins)
         if len(json_text(packet).encode("utf-8")) > MAX_PACKET_BYTES:
             # Essential goal/constraints are never silently truncated to a ready packet.
             packet["unknowns"].append("Essential resume packet exceeds the bounded context budget")
             packet["records"] = []
             packet["omitted_records"] = len(state["records"])
+            packet["omitted_by_origin"] = omitted_by_origin(state["records"], [], origins)
             for key in ("active_plan", "active_task"):
                 if packet[key]:
                     packet[key] = {field: packet[key][field] for field in ("id", "version", *ORIGIN_METADATA)
@@ -1094,7 +1126,7 @@ class SessionManager:
             session = self._session(session_id)
             packet = self._packet(session)
             if (not packet or packet.get("status") != "ready" or packet.get("id") != packet_id
-                    or packet.get("epoch") != session["epoch"]):
+                    or packet.get("epoch") != session["epoch"] or not _current_schema(packet)):
                 raise ValueError("resume_required: requested startup packet is no longer the ready current packet")
             continuity = self._own_continuity(session)
             if continuity:
@@ -1112,6 +1144,8 @@ class SessionManager:
         packet = self._packet(session)
         if packet and packet.get("status") == "ready":
             try:
+                if not _current_schema(packet):
+                    raise ValueError("A packet made by an earlier version is never current")
                 current = self._state(session)
                 if current["state_hash"] == packet["state_hash"] and not self._own_continuity(session):
                     return self._result(session, packet)
@@ -1142,7 +1176,8 @@ class SessionManager:
                           else "its archive is incomplete")
                 raise ValueError(f"resume_required: the current packet is {status}, not ready, and cannot be acknowledged: {reason}")
             if (not packet or packet["status"] != "ready" or packet["id"] != packet_id
-                    or packet["hash"] != packet_hash or packet["epoch"] != session["epoch"]):
+                    or packet["hash"] != packet_hash or packet["epoch"] != session["epoch"]
+                    or not _current_schema(packet)):
                 raise ValueError("resume_required: ACK does not match a ready current packet")
             valid_types = (isinstance(readback, dict) and set(readback) == {"plan", "task"}
                            and all(value is None or (isinstance(value, dict)
@@ -1180,6 +1215,9 @@ class SessionManager:
                 or acknowledgment.get("packet_hash") != packet["hash"]
                 or acknowledgment.get("epoch") != session["epoch"]):
             raise ValueError("resume_required: current packet has no actual model ACK")
+        if not _current_schema(packet):
+            raise ValueError("resume_required: the acknowledged packet was made by an earlier version of Cairnmind; "
+                             "fetch and acknowledge the current ready resume packet")
         continuity = self._own_continuity(session)
         if continuity:
             raise ValueError("resume_required: " + continuity[0])

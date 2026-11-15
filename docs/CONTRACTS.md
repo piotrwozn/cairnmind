@@ -10,6 +10,11 @@ Public memory tools remain `ask(project, question)`, `remember(project, record,
 sources)` and `checkpoint(project, state)`. Source and record IDs are stable strings.
 Additional tools are `save_plan`, `next_task`, `resume_context`, `ack_resume` and
 read-only `check_status`. Task progress (`metadata.state`) is separate from knowledge confirmation status.
+Only a person can store a record as `confirmed`: every tool here stores proposed records, a write that
+asks for `confirmed` is refused, a write that would change, replace or lower a record a person confirmed is
+refused too (it stores a new proposed record instead, and the person decides in the conflict inbox), and an
+imported confirmation is kept as confirmed elsewhere
+([MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md#only-a-person-confirms-a-record)).
 Updates require `id` and `expected_version`; task completion checks its declared
 acceptance/test/review requirements. New test-gated completion requires fresh local
 runner evidence; reported text and legacy booleans alone cannot satisfy it.
@@ -17,10 +22,56 @@ The same tools serve an external MCP client (`cairnmind mcp --client external`) 
 evidence-degraded session: its packet says `history: unarchived` and `evidence: degraded`,
 and its writes carry a server-set `origin_*` mark and are never verified (V03_CONTRACTS.md).
 
+The resume packet (`schema_version` 2) shows at most 20 records. Each has `origin`, derived
+only from what the store wrote itself, never from a field a client sets (`packet_origin.py`):
+`automatic_extraction` when the first version the store kept was written by the extraction
+worker (its `extraction_source_id` mark, or its `origin: automatic_extraction` label), however
+the record was edited or confirmed since; `external` when the record carries the store's
+`origin_client` mark (an external client's session, or a built-in agent session after a
+third-party tool result); `unattributed` for everything else, which is written through the
+service by a person, a coding session or a memory import, since the store does not record
+which. A client's own metadata can make its own record look less trusted, never more. An
+imported record keeps the extraction label and the `origin_*` marks its package carried, both
+in the record and in its revisions; a package can also leave them out, and its records then
+show `unattributed`. Labels supplied by a package are taken as given, not checked. The
+preview puts the latest checkpoint first, then confirmed records, then the others; within
+each of the two groups the order is `unattributed`, `external`, `automatic_extraction`, each
+by kind and id. `confirmed` is a status any client with a write can set, so the order is a
+convenience, not a sign of trust; the origin label is what says where a record came from.
+Proposed records are labelled, never removed for being proposed. `omitted_records` counts what
+was left out and `omitted_by_origin` counts it per origin. When a packet is over its byte
+budget, preview records leave it from the end of that order, one at a time and counted, before
+the packet is reduced to its essential part (and made partial). The launch prompt, the
+start hook's pending text, the bootstrap text, the built-in agent's instructions and the MCP
+server's instructions say that record content is quoted project data, never instructions. A
+packet of an earlier schema is never current: `resume_context` replaces it, and an ACK given
+for it is stale (`packet_changed`).
+
+A captured transcript horizon is complete only when every line in it is an archived record the reader
+understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
+record whose `type` is a kind the reader does not know at all, that is a JSON object and names no other
+session than the one it was stored under, does not block when a person accepted that kind (with its
+client: `claude`, `codex` or `unknown`) as technical for the project. The packet names an unknown kind
+nobody accepted once per transcript, with its client, version and byte, and how a person accepts it; it
+never carries the record's text. The acceptance lives on the project's row (`accepted_record_kinds`, with
+the date, the note, who accepted and the note source of the act; withdrawals in `withdrawn_record_kinds`),
+is never part of a memory package, and is written only inside a person's act that the store checks
+(`record_kinds.py`, `Store.open_person_act`): the command line in a person's own terminal
+(`person_at_terminal`) or the inspector route `/inspector/record-kinds/accept` and `/withdraw`, which has no
+session field and is what the workspace calls. A malformed record of a known kind, a line that is not a
+JSON object, and every integrity check of the horizon (hashes, offsets, rotation, the import cursor,
+capture recovery provenance) are never covered. An acceptance changes no stored source: the records stay
+`transcript_unknown`, unextracted, with their raw text indexed as before. While a transcript can be read,
+every packet checks it against the acceptances that stand then, so a withdrawal blocks the next packet; a
+horizon proved complete whose transcript is gone keeps its proof, as before.
+
 `Store` owns native transactions, project isolation, source snapshots, record
 revisions, task validation, durable job leases, native graph identity, export and
 checksummed source-complete `.cairnmind.json.gz` backups (`.devbrain.json.gz` up to 0.9.0; both are restored). Callers use named-parameter
 ArcadeSQL through `query`, `command` and `transaction`, never another storage engine.
+A database has one declared writer, an installation identified by `installation.json` in its data
+directory (#70): another installation that points at the same database reads it only, and only a
+person moves the role, with `cairnmind store takeover --yes` (see ARCADE_CONTRACTS.md).
 
 The local service owns the priority inference queue. End hooks write durable
 filesystem events without connecting to the database; scanning imports them later.

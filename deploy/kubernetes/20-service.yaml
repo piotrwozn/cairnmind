@@ -1,0 +1,20 @@
+# The address Cairnmind connects to: https://arcadedb.cairnmind-db.svc:2490 (the server's own TLS
+# listener). Headless, so it also gives the StatefulSet's pod its name arcadedb-0.arcadedb.
+# Only the TLS port is offered; the plain HTTP port 2480 is for the probes inside the pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: arcadedb
+  namespace: cairnmind-db
+  labels:
+    app.kubernetes.io/name: arcadedb
+    app.kubernetes.io/part-of: cairnmind
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: arcadedb
+  ports:
+    - name: https
+      port: 2490
+      targetPort: https
+      protocol: TCP

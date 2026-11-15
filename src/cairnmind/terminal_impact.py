@@ -16,6 +16,7 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, DataTable, Input, Label
 
 from . import terminal_theme
+from .confirmation import LIST_WORDS
 from .terminal_i18n_messages import display_word
 from .terminal_detail import BAR, evidence_parts, join_lines, joined, labelled, state_role
 from .terminal_notices import about
@@ -26,7 +27,8 @@ IMPACT_TIMEOUT = 120  # Git and the parser run for each list; a large worktree n
 DEFAULT_SINCE = "HEAD"
 # The headings of the inspector's table, before translation, for the list and for the impact view.
 COLUMNS = {"standard": ("Type / state", "Content / source", "Version / attempt"),
-           "impact": ("Kind / status", "Record", "Linked to", "Checked")}
+           "impact": ("Kind / status", "Record", "Linked to", "Checked"),
+           "proposed": ("Days untouched", "Kind", "Id", "Sources", "Newest evidence", "Text")}
 VERDICTS = {"still_valid": "still valid", "needs_update": "needs update", "not_related": "not related"}
 SYMBOL_CHANGES = {"modified": "its definition changed", "removed": "it is no longer defined there",
                   "added": "it is newly defined there", "moved": "it is now defined in the renamed file",
@@ -152,10 +154,16 @@ class ImpactView:
         terminal_theme.column_labels(table, [self.t(label) for label in COLUMNS[self._columns_kind]])
         self.fit_columns()
 
-    def state_cell(self, kind, state):
-        """`kind / state` as one cell in the panel language; the state takes the colour of its stored word."""
-        return terminal_theme.assemble([("muted", display_word(kind, self.t) + " / "),
-                                        (state_role(state), display_word(state, self.t))])
+    def state_cell(self, kind, state, confirmed_by=None):
+        """`kind / state` as one cell in the panel language; the state takes the colour of its stored word.
+
+        A record whose confirmation is not a person's own here says so in the list already (#177):
+        confirmed elsewhere, confirmed before the rule, or no longer confirmed. Plain text, no colour."""
+        parts = [("muted", display_word(kind, self.t) + " / "), (state_role(state), display_word(state, self.t))]
+        word = LIST_WORDS.get(confirmed_by) if isinstance(confirmed_by, str) else None
+        if word:
+            parts.append(("muted", " · " + self.t(word)))
+        return terminal_theme.assemble(parts)
 
     def fit_columns(self, width=None):
         """Give the text column the width the others leave, so every column is on screen without scrolling.
@@ -179,6 +187,8 @@ class ImpactView:
                 # then the record text, so the verdict column, the point of this view, stays on screen
                 record = max(6, free - first - linked - checked)
             widths = [first, record, linked, checked]
+        elif self._columns_kind == "proposed":
+            widths = self.fit_proposed_columns(table, free)  # terminal_proposed (#189)
         else:
             first, last = max(24, longest), cell_len(self.t("Version / attempt"))
             if width < 100 and table.row_count:  # the numbers are short: the heading may crop

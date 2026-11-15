@@ -20,7 +20,9 @@ import tempfile
 from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
-from .store import EXTRACTION_MARK, KINDS, STATUSES, TASK_STATES, validate_criterion_links
+from .memory_size import package_size
+from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
+                    validate_extractor_stamp)
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
@@ -60,12 +62,28 @@ def _without_local_mark(record):
     """A record without the local extraction worker's mark (#168).
 
     The mark lets this machine's own api session keep its ACK. A package never carries it
-    in or out, so an imported record always counts as somebody else's write.
+    in or out, so an imported record always counts as somebody else's write. An extractor stamp (#192)
+    travels, but only one the store would accept on an extracted record (_carried_stamp).
     """
     metadata = record.get("metadata")
-    if isinstance(metadata, dict) and EXTRACTION_MARK in metadata:
-        record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTION_MARK}
+    # The confirmation mark (#177) is local in the same way: it says what happened on this machine. A package
+    # carries the audits and notes instead, and the importer writes its own mark: confirmed elsewhere.
+    if isinstance(metadata, dict) and (EXTRACTION_MARK in metadata or "confirmation" in metadata):
+        metadata = record["metadata"] = {key: value for key, value in metadata.items()
+                                         if key not in (EXTRACTION_MARK, "confirmation")}
+    if isinstance(metadata, dict) and EXTRACTOR_STAMP in metadata and not _carried_stamp(metadata):
+        record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTOR_STAMP}
     return record
+
+
+def _carried_stamp(metadata):
+    """Whether a record's extractor stamp (#192) is one the extraction worker could have written: well formed,
+    on a record with origin automatic_extraction. A package carrying anything else loses it on the way in."""
+    try:
+        validate_extractor_stamp(metadata[EXTRACTOR_STAMP])
+    except ValueError:
+        return False
+    return metadata.get("origin") == "automatic_extraction"
 
 
 def _logical(table, original):
@@ -145,7 +163,9 @@ def _version(value):
         raise ValueError("Invalid memory entity version")
 
 
-def _validate(payload, project_id, active_plan_id=None):
+def _validate(payload, project_id, active_plan_id=None, *, graph=True):
+    """Check a whole archive payload. graph=False skips only the canonical graph, which a published
+    memory directory (#170) does not carry: every other check is the same as for an archive."""
     maps = {}
     for table in TABLES:
         rows = payload.get(table)
@@ -306,6 +326,20 @@ def _validate(payload, project_id, active_plan_id=None):
         _text(edge.get("kind"), "edge kind")
         if edge.get("source_id"):
             source_refs([edge["source_id"]])
+    if graph:
+        _canonical_graph(maps)
+    for run in maps["check_runs"].values():
+        task = maps["records"].get(run.get("task_id"))
+        if not task or task["kind"] != "task" or not isinstance(run.get("source_ids"), dict):
+            raise ValueError("Invalid historical memory check")
+        source_refs([run.get("profile_source_id"), *run["source_ids"].values()])
+    if active_plan_id is not None and active_plan_id not in maps["plans"]:
+        raise ValueError("Missing active memory plan")
+    return maps
+
+
+def _canonical_graph(maps):
+    """The logical graph of records and plans must be exactly what their current heads say."""
     expected, owned_kinds = set(), {}
     for row in maps["records"].values():
         identifier = f"record:{row['id']}"
@@ -334,14 +368,6 @@ def _validate(payload, project_id, active_plan_id=None):
               for edge in maps["edges"].values() if edge["kind"] in owned_kinds.get(edge["from_id"], set())]
     if len(actual) != len(expected) or set(actual) != expected:
         raise ValueError("Canonical memory relationships do not match current records and plans")
-    for run in maps["check_runs"].values():
-        task = maps["records"].get(run.get("task_id"))
-        if not task or task["kind"] != "task" or not isinstance(run.get("source_ids"), dict):
-            raise ValueError("Invalid historical memory check")
-        source_refs([run.get("profile_source_id"), *run["source_ids"].values()])
-    if active_plan_id is not None and active_plan_id not in maps["plans"]:
-        raise ValueError("Missing active memory plan")
-    return maps
 
 
 def _strip_local_marks(table, row):
@@ -725,7 +751,7 @@ class MemoryManager:
                     entry.unlink()
 
     def import_snapshot(self, path, root, name=None, dry_run=False, *, expected_snapshot_id=None, expected_project_id=None,
-                        authorize=None):
+                        authorize=None, replace_confirmed=False):
         path, raw, manifest, payload = _load_snapshot(path)
         project_id, snapshot_id = manifest["project"]["id"], manifest["snapshot_id"]
         if ((expected_snapshot_id is not None and expected_snapshot_id != snapshot_id)
@@ -807,8 +833,52 @@ class MemoryManager:
                         "SELECT local_root FROM memory_bindings WHERE project_id=:project AND origin_root=:origin",
                         {"project": project_id, "origin": origin})):
                     raise MemoryConflict("Memory origin already has a different local root binding")
+            # What the package brings as confirmed (#177): every record whose head is confirmed and is new
+            # here or moves this store's head on. It is kept as confirmed elsewhere, with who the package
+            # says confirmed it, and is never this machine's own confirmation. A head that does not move
+            # keeps the mark this store gave it.
+            from .confirmation import REPLACES_NOTE, archive_claims, import_mark, local_verdict, replaces_refusal, said
+            package_sources = {row["id"]: row for row in payload["sources"]}
+            # Read from the rows: the captured state above leaves local marks out, as a package does.
+            local_marks = {row["id"]: row.get("mark") for row in tx.query(
+                "SELECT id,metadata.confirmation AS mark FROM records WHERE project_id=:project",
+                {"project": project_id})} if current else {}
+            marks, imported_at, names, unnamed, brought, replaced = {}, utc_now(), set(), 0, 0, []
+            for row in payload["records"]:
+                old = existing["records"].get(row["id"])
+                mine = local_marks.get(row["id"]) if isinstance(local_marks.get(row["id"]), dict) else None
+                head = {**old, "metadata": {**(old.get("metadata") or {}), "confirmation": mine}} if old else None
+                if old and old["version"] == row["version"]:
+                    if mine:
+                        marks[row["id"]] = mine
+                    continue
+                if (local_verdict(head) and old["status"] == "confirmed" == row["status"] and said(
+                        old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata")) == said(
+                        row["kind"], row["content"], row["key"], row.get("supersedes"), row.get("metadata"))):
+                    # The package moves on a record confirmed here and leaves it confirmed and saying the
+                    # same (progress on a task): the confirmation given here is kept.
+                    if mine:
+                        marks[row["id"]] = mine
+                    continue
+                if local_verdict(head):
+                    replaced.append(row["id"])
+                if row["status"] == "confirmed":
+                    claims = archive_claims(row, package_sources)
+                    marks[row["id"]] = {**import_mark("archive", manifest["origin_root"], claims, imported_at,
+                                                      row["version"]), "snapshot_id": snapshot_id}
+                    names.update(str(claim["name"]) for claim in claims[-1:] if claim.get("name"))
+                    unnamed += not claims
+                    brought += 1
+            result["confirmed_records"] = {
+                "total": brought, "confirmed_by": sorted(names)[:50], "without_a_name": unnamed,
+                "note": "confirmed elsewhere; kept as confirmed, shown as imported, never verified here"}
+            # A verdict a person gave here is never replaced by a package without that person's choice (#177).
+            result["replaces_confirmed_here"] = {"total": len(replaced), "records": sorted(replaced)[:200],
+                                                 "note": REPLACES_NOTE}
             if dry_run:
                 return result
+            if replaced and not replace_confirmed:
+                raise MemoryConflict(replaces_refusal(sorted(replaced)))
             from .journal import Journal
             Journal.reset(tx, reason="memory_import")
             if not current:
@@ -839,7 +909,11 @@ class MemoryManager:
                                 update_document(tx, "sources", {"is_current": row["is_current"],
                                     "current_key": json_text([project_id, row["uri"]]) if row["is_current"] else None},
                                      "id=:id", {"id": row["id"]})
-                                update_document(tx, "chunks", {"is_current": row["is_current"]}, "source_id=:id", {"id": row["id"]})
+                                if row["is_current"]:
+                                    update_document(tx, "chunks", {"is_current": True}, "source_id=:id", {"id": row["id"]})
+                                else:  # no longer current: its chunks and vectors go, as on a replacement (#186)
+                                    self.store.drop_chunks(tx, [row["id"]])
+                                    self.store._delete_old_vectors(tx, [row["id"]])
                             continue
                         foreign_file = row["kind"] in {"code", "document", "file"} and isinstance(row["metadata"].get("path"), str)
                         current_source = row["is_current"] and not foreign_file
@@ -847,6 +921,8 @@ class MemoryManager:
                                    current_key=json_text([project_id, row["uri"]]) if current_source else None)
                     elif table == "records":
                         row["active_key"] = json_text([project_id, row["kind"], row["key"]]) if row["status"] != "superseded" else None
+                        if row["id"] in marks:
+                            row["metadata"] = {**row["metadata"], "confirmation": marks[row["id"]]}
                     elif table == "check_runs":
                         if old:
                             continue  # A genuine local matching run retains its local authority.
@@ -890,6 +966,8 @@ class MemoryManager:
                 if tx.query("SELECT id FROM chunks WHERE source_id=:source LIMIT 1", {"source": source["id"]}):
                     continue
                 saved = one_row(tx, "SELECT is_current FROM sources WHERE id=:id", {"id": source["id"]})
+                if saved.get("is_current") is False:
+                    continue  # nothing searches a chunk of a source that is not current (#186)
                 for number, (text, first, last) in enumerate(_chunks(source_text(source))):
                     insert_document(tx, "chunks", {"id": _identifier(project_id, source["id"], number, first, last, text),
                         "project_id": project_id, "source_id": source["id"], "text": text,
@@ -952,6 +1030,10 @@ class MemoryManager:
                         "WHERE project_id=:project ORDER BY imported_at DESC,id DESC LIMIT 1", {"project": project_id}, False)
         result["last_import"] = imported
         result["verification"] = "Imported checks are historical; local execution and a new session ACK remain required."
+        # Against the limits of publication (#191); the behaviour at the limit is in snapshot() and is unchanged.
+        result["package_size"] = package_size(self.store, project_id, TABLES, max_rows=MAX_ROWS,
+                                              max_bytes=MAX_TOTAL_BYTES, max_manifest_bytes=MAX_MANIFEST_BYTES,
+                                              max_object_bytes=MAX_OBJECT_BYTES)
         if path.exists() or path.is_symlink():
             try:
                 result["latest"] = manifest_summary(path)

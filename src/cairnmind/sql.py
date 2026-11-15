@@ -24,6 +24,11 @@ def parse_utc(value):
     return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
 
 
+# Origins of the notes that record an act on a record (a review, a review published elsewhere, a command
+# line confirmation, an evaluation's seed mark): they say that someone judged it, never why it is true.
+ACT_NOTE_ORIGINS = ("local_user_review", "publication_review", "cli_person", "evaluation_seed")
+
+
 def evidence_time(tx, source_ids):
     """When the record's evidence existed, from its immutable sources.
 
@@ -36,8 +41,8 @@ def evidence_time(tx, source_ids):
     for source_id in dict.fromkeys(source_ids):
         row = one_row(tx, "SELECT created_at, metadata.source_timestamp AS stated, metadata.origin AS origin "
                          "FROM sources WHERE id=:id", {"id": source_id}, False) or {}
-        if row.get("origin") == "local_user_review":
-            continue
+        if row.get("origin") in ACT_NOTE_ORIGINS:
+            continue  # Also a review published elsewhere (#170): when someone judged, not when evidence existed.
         stated = parse_utc(row.get("stated"))
         when, basis = (stated, "stated") if stated else (parse_utc(row.get("created_at")), "observed")
         if when is not None:

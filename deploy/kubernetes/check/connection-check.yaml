@@ -1,0 +1,88 @@
+# The connection check of docs/DEPLOYMENT.md as a Job, in a namespace of its own (cairnmind-check):
+# a pod labelled as a database client, with the passwords mounted from Secrets, runs
+# connection-check.sh from the image check/Dockerfile builds. scripts/kubernetes_check.py creates the
+# namespace, the Secrets and the ConfigMap it needs; the CI job kubernetes-manifests runs it on kind.
+#
+# Kubernetes makes the files of a Secret volume owned by root (fsGroup changes only their group), and
+# Cairnmind reads a password file only when it belongs to the user that runs it. So this pod runs as
+# root, with no capabilities, and the files have mode 0400 (defaultMode 0400 and no fsGroup). A pod
+# that runs Cairnmind as another user copies the password first (docs/DEPLOYMENT.md, "Kubernetes").
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cairnmind-connection-check
+  namespace: cairnmind-check
+  labels:
+    app.kubernetes.io/name: cairnmind-connection-check
+    app.kubernetes.io/part-of: cairnmind
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cairnmind-connection-check
+        # The label the NetworkPolicy of the server lets in.
+        cairnmind.io/database-client: "true"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: check
+          image: cairnmind-check:local
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/usr/local/bin/cairnmind-connection-check"]
+          env:
+            - name: CAIRNMIND_ARCADE_CONNECT_URL
+              value: https://arcadedb.cairnmind-db.svc:2490
+            - name: CAIRNMIND_ARCADE_USER
+              value: cairnmind
+            - name: CAIRNMIND_ARCADE_DATABASE
+              value: cairnmind
+            - name: CAIRNMIND_ARCADE_PASSWORD_FILE
+              value: /run/secrets/cairnmind-db-user/password
+            - name: CAIRNMIND_ARCADE_CA_FILE
+              value: /etc/cairnmind/arcadedb-ca/ca.pem
+            - name: ARCADEDB_ADMIN_PASSWORD_FILE
+              value: /run/secrets/arcadedb-root/password
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: user-password
+              mountPath: /run/secrets/cairnmind-db-user
+              readOnly: true
+            - name: root-password
+              mountPath: /run/secrets/arcadedb-root
+              readOnly: true
+            - name: authority
+              mountPath: /etc/cairnmind/arcadedb-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: user-password
+          secret:
+            secretName: cairnmind-db-user
+            defaultMode: 0400
+        - name: root-password
+          secret:
+            secretName: arcadedb-root-password
+            defaultMode: 0400
+        - name: authority
+          configMap:
+            name: arcadedb-ca
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

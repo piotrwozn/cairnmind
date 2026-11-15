@@ -1,0 +1,60 @@
+name: Team memory
+
+# A summary of the published team memory a pull request changes (#172), as one comment that is updated
+# on every push, and a check that fails when .memory/cairnmind-published would not import (conflict
+# markers, a hand-edited or broken file). It needs no secret and no ArcadeDB, service or model: only
+# the default token, allowed to write pull request comments. Not a required check.
+#
+# Pull requests from forks get a read-only token from GitHub, so for them the comment is skipped and
+# only the check runs; the summary is in the job summary. The job runs the pull request's own code,
+# as the other CI jobs do; on a pull request from this repository its author can already write here.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: team-memory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memory-summary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The base commit is compared with the merge commit, so both must be present.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - name: Compare the published memory of the base and the merge commit
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set +e
+          uv run --locked cairnmind memory diff "$BASE" HEAD --markdown > "$RUNNER_TEMP/memory-comment.md"
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/memory-comment.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          # 0: the head would import; 1: it would not (reported in the comment, failed below); 2: an error.
+          test "$status" -le 1
+      - name: Post or update the comment
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: bash scripts/memory_pr_comment.sh "$RUNNER_TEMP/memory-comment.md"
+      - name: Fail when the published memory would not import
+        if: ${{ steps.diff.outputs.status != '0' }}
+        run: |
+          echo "The published memory directory would not import; the comment and the job summary name each file."
+          exit 1

@@ -3,12 +3,14 @@
 Each role is the local Ollama of the settings unless a profile names another server. A profile holds
 no secret: a key is named by a reference (env:NAME or profile:ID, as for coding connections) and read
 only when a request is made. A server that is not on this computer receives memory content, so it
-needs HTTPS and the person's explicit consent (allow_remote), given with `cairnmind models set`.
+needs HTTPS and the person's explicit consent (allow_remote), given with `cairnmind models set`; it
+receives only the sensitivity classes the setting memory_remote_classes allows (memory_egress.py).
 
 Vectors of two models are kept apart: their namespace is the embedding model's identity, and every vector
 index is keyed by namespace and dimension. An OpenAI-compatible server reports no digest, so there the
-identity is the server and the model name: other weights served under the same name, with the same
-dimension, are not detected. Evaluations that pass are recorded per pair of model identities and setup.
+identity is the server and the model name; for the embedding role a fixed request detects other weights
+served under the same name (memory_fingerprint.py). Evaluations that pass are recorded per pair of model
+identities and setup.
 """
 from __future__ import annotations
 
@@ -72,8 +74,9 @@ def normalize_memory_model(row: Any, role: str) -> dict:
         raise ValueError("allow_remote is true or false.")
     if not is_loopback(result["base_url"]):
         if not allow_remote:
-            raise ValueError("A model server on another computer receives memory content (sources, conversation "
-                             "text, questions). Confirm that with --allow-remote.")
+            raise ValueError("A model server on another computer receives memory content: your questions and "
+                             "the text of the classes in memory_remote_classes (by default project files "
+                             "only). Confirm that with --allow-remote.")
         result["allow_remote"] = True
     reference = _credential_ref(row.get("credential_ref"))
     if reference is not None:
@@ -166,7 +169,10 @@ def _client(settings: Settings, role: str, credentials: Settings | None):
     credential = credential_for(settings, role, credentials)
     if row["provider"] == "ollama":
         return Ollama(settings, base_url=row["base_url"], credential=credential, num_ctx=row.get("context_window"))
-    return OpenAICompatible(settings, role, row, credential=credential)
+    client = OpenAICompatible(settings, role, row, credential=credential)
+    # An evaluation copy compares with the installation's stored fingerprint, not an empty one (#212).
+    client.fingerprint_dir = (credentials or settings).data_dir
+    return client
 
 
 class MemoryModels:
@@ -194,6 +200,11 @@ class MemoryModels:
         if name == self.settings.embedding_model:
             return await self.embedding_client.model_identity(name)
         return await self.chat_client.model_identity(name)
+
+    async def model_digest(self, name: str) -> str | None:
+        if name == self.settings.embedding_model:
+            return await self.embedding_client.model_digest(name)
+        return await self.chat_client.model_digest(name)
 
     async def identities(self) -> dict:
         return {"chat": await self.chat_client.model_identity(self.settings.chat_model),
@@ -343,8 +354,15 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
         row = profile(settings, role) or {"provider": "ollama", "base_url": settings.ollama_url}
     except ValueError as exc:
         return {"model": model, "reachable": False, "error": f"Invalid profile: {exc}"}
+    from .memory_egress import describe
     entry = {"provider": row["provider"], "base_url": row["base_url"], "model": model, **_destination(row, role),
-             "reachable": False}
+             **describe(settings, role), "reachable": False}
+    fingerprinted = None
+    if role == "embedding" and row["provider"] != "ollama":
+        # Other weights behind the same name (#212): the stored mark holds embeddings in every process,
+        # so it is shown even while the server is down or does not list the model.
+        from .memory_fingerprint import doctor_block
+        fingerprinted, entry["fingerprint"] = doctor_block(settings.data_dir, f"{model}@{server_tag(row['base_url'])}")
     headers = {}
     if "credential_ref" in row:
         from .api_credentials import CredentialStore
@@ -377,6 +395,11 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
         listed = [m for m in rows if isinstance(m, dict) and m.get("id") == model]
         if listed:
             entry["identity"] = f"{model}@{server_tag(row['base_url'])}"
+            if "fingerprint" in entry:  # the generation in use; no identity while changed (#212)
+                if fingerprinted is None:
+                    del entry["identity"]
+                else:
+                    entry["identity"] = fingerprinted
     entry["model_available"] = bool(listed)
     return entry
 
@@ -387,8 +410,9 @@ def doctor_models(settings: Settings, http: httpx.Client) -> dict:
     pair = {role: result[role].get("identity") for role in ROLES}
     status = (evaluation_status(settings, pair) if all(pair.values())
               else {"evaluated": False, "passed": []})
+    from .memory_egress import doctor_block
     result.update(release_models=is_default(settings), evaluated=status["evaluated"],
-                  evaluations_passed=status["passed"])
+                  evaluations_passed=status["passed"], remote_classes=doctor_block(settings))
     return result
 
 
@@ -466,8 +490,10 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
         except (OllamaUnavailable, ValueError):
             previous = None  # unknown: treated as changed
     save_role(settings.data_dir, role, saved_row, model)
+    from .memory_egress import describe
     report = {"role": role, "provider": row["provider"], "base_url": row["base_url"], "model": model,
-              **_destination(row, role), "checked": checked, "identity": identity, "saved": True}
+              **_destination(row, role), **describe(candidate, role), "checked": checked, "identity": identity,
+              "saved": True}
     steps = ["Restart the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses this model."]
     if role == "embedding":
         report["embedding_changed"] = previous != identity

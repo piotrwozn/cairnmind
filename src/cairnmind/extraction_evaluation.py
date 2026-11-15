@@ -32,7 +32,7 @@ from . import __version__
 from .agent_memory import extracted_message
 from .config import Settings
 from .ingest import _event_text
-from .ollama import Ollama, OllamaUnavailable
+from .ollama import OllamaUnavailable
 from .sql import json_text
 
 CLIENTS = {"api", "claude", "codex"}
@@ -93,9 +93,12 @@ def load_transcripts(path: Path) -> list[dict]:
     return data["transcripts"]
 
 
-def transcript_sources(transcript: dict) -> list[dict]:
+def transcript_sources(transcript: dict, masker=None) -> list[dict]:
     """The sources the product would archive for this transcript's events, each with ``extracted``
-    (whether the product would give it to extraction) and the event's ``expect``."""
+    (whether the product would give it to extraction) and the event's ``expect``. With ``masker``
+    (secret_mask.Masker) the readable view has its known secrets replaced, as ingestion does (#182)."""
+    from .secret_mask import Masker, masked_metadata
+    masker = masker or Masker()
     sources = []
     for index, item in enumerate(transcript["events"]):
         event = item["event"]
@@ -116,6 +119,8 @@ def transcript_sources(transcript: dict) -> list[dict]:
                       "metadata": {"client": detected, "role": role, "session_id": transcript["id"],
                                    "normalized_text": normalized}}
             extracted = bool(normalized) and role in {"user", "assistant"}
+        view, kinds = masker.mask(source["metadata"]["normalized_text"])
+        source["metadata"] = masked_metadata({**source["metadata"], "normalized_text": view}, kinds)
         source["id"] = f"eval:{transcript['id']}:{index}"
         source["project_id"] = "eval"
         sources.append({"source": source, "extracted": extracted, "index": index, "expect": item["expect"]})
@@ -172,10 +177,12 @@ def _diagnostics() -> dict:
 
 
 async def _run_once(agent, transcripts: list[dict]) -> tuple[list[dict], list[dict]]:
+    from .secret_mask import ingest_masker
     results, failures = [], []
+    masker = ingest_masker(agent.settings)
     for transcript in transcripts:
         proposals = {}
-        for item in transcript_sources(transcript):
+        for item in transcript_sources(transcript, masker):
             if not item["extracted"]:
                 continue
             diagnostics = _diagnostics()
@@ -193,20 +200,26 @@ def run_extraction_evaluation(settings: Settings, transcripts_path: Path, *, run
                               report_dir: Path | None = None, ollama=None) -> dict:
     """Run the production extraction on every transcript ``runs`` times and write a report."""
     from .agent import KnowledgeAgent
+    from .memory_models import from_settings, inference_report
 
     if type(runs) is not int or not 1 <= runs <= 20:
         raise ValueError("runs must be an integer from 1 to 20")
     transcripts = load_transcripts(transcripts_path)
     started = time.monotonic()
-    model = ollama or Ollama(settings)
+    # The client the extract job uses (memory_models.from_settings), so that the report measures the same
+    # server and its stamp equals the records' also with a configured model profile.
+    model = ollama or from_settings(settings)
     report = {"format_version": 1, "cairnmind_version": __version__, "evaluation_mode": "transcript_extraction",
-              "inference": "injected_adapter" if ollama is not None else "local_ollama", "status": "not_run",
-              "model": settings.chat_model, "transcripts": str(transcripts_path), "runs": [],
+              **({"inference": "injected_adapter"} if ollama is not None else inference_report(settings)),
+              "status": "not_run", "model": settings.chat_model, "transcripts": str(transcripts_path), "runs": [],
               "limits": ["Invented conversations; they show the kinds of noise seen in a trial, not every project.",
                          "Matching is by regular expressions over the proposed content; read the records too."]}
+    agent = KnowledgeAgent(None, settings, ollama=model)
+    # The stamp the extraction job writes on every record this build extracts with this model (#192), so a
+    # row of docs/EVALUATION.md can be matched with records in real projects. It never fails the run.
+    report["extractor"] = asyncio.run(agent.extractor_stamp())
     try:
         report["model_identity"] = asyncio.run(model.model_identity(settings.chat_model))
-        agent = KnowledgeAgent(None, settings, ollama=model)
         for number in range(runs):
             results, failures = asyncio.run(_run_once(agent, transcripts))
             report["runs"].append({"run": number + 1, "summary": summarize(results), "failures": failures,

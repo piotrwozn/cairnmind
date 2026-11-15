@@ -96,8 +96,12 @@ def _parts(value, *, allow_root=False):
     parts = tuple(part for part in path.parts if part not in {"", "."})
     if not parts and not allow_root:
         raise ToolError("invalid_path", "A regular file path is required")
+    # The memory directories are compared without case, as memory_paths does: on a case-insensitive file
+    # system `.Memory/Cairnmind-Published` is the published directory (#170).
+    folded = tuple(part.casefold() for part in parts)
     if any(part == ".git" for part in parts) or any(
-        parts[index:index + 2] in ((".memory", "cairnmind"), (".memory", "devbrain")) for index in range(len(parts))
+        folded[index:index + 2] in ((".memory", "cairnmind"), (".memory", "devbrain"), (".memory", "cairnmind-published"))
+        for index in range(len(parts))
     ):
         raise ToolError("protected_path", "Git internals and managed memory must use their dedicated interfaces")
     return parts

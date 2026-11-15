@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 
 from cairnmind.memory import _load_snapshot
+from cairnmind.sensitivity import record_sensitivity
 from cairnmind.store import STATUSES
 from cairnmind.terminal_safe import safe_text
 
@@ -81,6 +82,35 @@ def _source_mark(row):
     if not _degraded(metadata):
         return ""
     return _THIRD_PARTY_SOURCE if str(metadata.get("origin_client", "")).startswith("mcp:") else _EXTERNAL_SOURCE
+
+
+def _published_line(metadata):
+    """The line of a record that came from published memory (#170): who its file says reviewed it, never verified."""
+    mark = metadata.get("publication") if isinstance(metadata, dict) else None
+    if not isinstance(mark, dict):
+        return None
+    entries = [entry for entry in mark.get("reviewed_by") or [] if isinstance(entry, dict)]
+    if not entries:
+        return "  published: imported from published memory; not verified here"
+    last = entries[-1]
+    return (f"  published: reviewed by {_line(last.get('name') or 'local user')} on "
+            f"{_line(last.get('branch') or 'an unknown branch')} at {_line(last.get('commit') or 'an unknown commit')} "
+            "(claimed by the file); not verified here")
+
+
+def _confirmed_line(row, sources):
+    """Who the package says confirmed a confirmed record (#177). A package carries no store's own mark:
+    the claim is read from the review or form note it carries, and it is a claim wherever it is imported."""
+    if row.get("status") != "confirmed" or _published_line(row.get("metadata")):
+        return None
+    from .confirmation import archive_claims
+    claims = archive_claims(row, sources)
+    if not claims:
+        return "  confirmed: who confirmed it is not recorded in the package; an import keeps it as confirmed elsewhere"
+    last = claims[-1]
+    return (f"  confirmed: by {_line(last.get('name') or 'an unnamed person')} on "
+            f"{_line(last.get('branch') or 'an unknown branch')} at {_line(last.get('commit') or 'an unknown commit')} "
+            "(claimed by the package); an import keeps it as confirmed elsewhere, not verified")
 
 
 def _origin_line(own, sources):
@@ -286,6 +316,11 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
                 *_indented(row["content"], "  | ")]
         if origin(metadata, row["source_ids"]):
             out.append(origin(metadata, row["source_ids"]))
+        if _published_line(metadata):
+            out.append(_published_line(metadata))
+        if _confirmed_line(row, sources):
+            out.append(_confirmed_line(row, sources))
+        out.append(f"  sensitivity: {record_sensitivity(row, sources)}")
         if _replaced(row):
             out.append("  replaces: " + ", ".join(named(i) for i in _replaced(row)))
         later = replaced_by(row)
@@ -319,6 +354,7 @@ def render_snapshot(manifest, payload, *, kind=None, status=None, grep=None, sou
         out += ["", f"[plan] {_line(row['title'])}, version {row['version']}{active}", f"  id: {_line(row['id'])}"]
         if origin(row, row["source_ids"]):
             out.append(origin(row, row["source_ids"]))
+        out.append(f"  sensitivity: {record_sensitivity(row, sources)}")
         if row["goal"].strip():
             out += ["  goal:", *_indented(row["goal"], "  | ")]
         out += [f"  constraint: {_line(item)}" for item in row["constraints"]]

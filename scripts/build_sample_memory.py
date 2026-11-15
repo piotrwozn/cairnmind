@@ -65,6 +65,7 @@ def free_port() -> int:
 
 
 def build(store, settings) -> Path:
+    from cairnmind.confirmation import SEED_ROUTE, remember_as_person
     from cairnmind.memory import MemoryManager
     from cairnmind.plans import PlanManager
     from cairnmind.verification import run_check
@@ -77,18 +78,23 @@ def build(store, settings) -> Path:
     def note(name):
         return notes[f"note://trail-notes/{name}"]["id"]
 
-    store.remember(project, {"kind": "decision", "key": "storage-format", "status": "confirmed",
+    def sample(record, sources):
+        # Sample data, not a person's verdict: the store accepts the status confirmed only from a person's
+        # act, or from the seed route, which marks the record as written by a fixture.
+        return remember_as_person(store, project, {"status": "confirmed", **record}, sources, route=SEED_ROUTE)
+
+    sample({"kind": "decision", "key": "storage-format",
                              "content": "Each note is stored as one JSON file. A single database file would conflict "
                                         "whenever two devices sync the folder; separate files merge by themselves."},
                    [note("2026-03-02-storage"), code["id"]])
-    numbered = store.remember(project, {"kind": "decision", "key": "note-identifiers", "status": "confirmed",
+    numbered = sample({"kind": "decision", "key": "note-identifiers",
                                         "content": "Notes are numbered in the order they are written."},
                               [note("2026-03-05-identifiers")])
-    store.remember(project, {"kind": "decision", "key": "note-identifiers", "status": "confirmed", "supersedes": numbered["id"],
+    sample({"kind": "decision", "key": "note-identifiers", "supersedes": numbered["id"],
                              "content": "Every note gets a random UUID as its identifier. Sequential numbers need a "
                                         "shared counter, and two phones wrote the same number on one day."},
                    [note("2026-03-19-identifiers-revisited"), code["id"]])
-    store.remember(project, {"kind": "constraint", "key": "offline", "status": "confirmed",
+    sample({"kind": "constraint", "key": "offline",
                              "content": "The tool never opens a network connection. Syncing is left to other tools."},
                    [note("2026-03-20-offline")])
 

@@ -1,0 +1,46 @@
+# Example GitHub Actions workflow: check published team memory on every pull request (#171).
+#
+# Copy it to .github/workflows/published-memory.yml in the project's repository. It runs
+# `cairnmind memory check-published` on the pull request's merge commit (what actions/checkout
+# checks out for a pull_request event), so that two branches that merge cleanly in Git but
+# contradict each other are refused too. It needs no Cairnmind store, service, network access
+# beyond installing the package, model or secret, and it fails the pull request, naming each file,
+# field and kind of hit, when a file holds a private key, a key or token shape, a password in a
+# connection string, a long random string or, if .cairnmind/publication.toml turns it on, personal
+# data, unless a release in that file lets that exact value through. It cannot know the secrets
+# registered on a developer's machine; `cairnmind memory publish` refuses those before writing.
+#
+# For a project whose root is a subdirectory of the repository, change MEMORY_DIR.
+name: Published memory
+
+on:
+  pull_request:
+    paths:
+      - ".memory/cairnmind-published/**"
+      - ".cairnmind/publication.toml"
+
+permissions:
+  contents: read
+
+env:
+  MEMORY_DIR: .memory/cairnmind-published
+  # Pin the Cairnmind release whose format the published files use.
+  CAIRNMIND_REF: v0.11.0
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Cairnmind
+        run: uv tool install --python 3.12 "cairnmind @ git+https://github.com/piotrwozn/cairnmind@${CAIRNMIND_REF}"
+      - name: Check the published memory, secrets included
+        run: |
+          if [ ! -d "$MEMORY_DIR" ]; then
+            echo "No published memory in this pull request."
+            exit 0
+          fi
+          cairnmind --data-dir "$RUNNER_TEMP/cairnmind-unused" memory check-published "$MEMORY_DIR"

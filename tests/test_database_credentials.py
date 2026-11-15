@@ -164,6 +164,148 @@ def test_a_password_file_that_breaks_a_rule_is_refused_and_named(tmp_path, probl
     assert SECRET not in (root / "config.json").read_text()
 
 
+# --- A password file mounted from a Kubernetes secret (#211) ------------------------------------------
+
+TIMESTAMP = "..2026_11_15_10_20_30.123456789"
+
+
+def mounted_secret(folder: Path, text: str = SECRET + "\n", mode: int = 0o400, key: str = "password") -> Path:
+    """A folder laid out as the kubelet mounts a secret: the key is a link to ``..data/key``, ``..data``
+    is a link to a folder named after the time of the update, and that folder holds the real file."""
+    (folder / TIMESTAMP).mkdir(parents=True)
+    private_file(folder / TIMESTAMP / key, text, mode)
+    (folder / "..data").symlink_to(TIMESTAMP)
+    (folder / key).symlink_to(f"..data/{key}")
+    return folder / key
+
+
+def password_from(tmp_path, named: Path) -> Settings:
+    root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind",
+                  arcade_password_file=str(named))
+    return Settings.load(root, create=True)
+
+
+@pytest.mark.parametrize("mode", [0o400, 0o600])
+def test_a_password_file_mounted_from_a_kubernetes_secret_is_read(tmp_path, mode):
+    settings = password_from(tmp_path, mounted_secret(tmp_path / "secret", mode=mode))
+    assert settings.arcade_password == SECRET and settings._origin["password"] == "file"
+    assert ArcadeClient(settings)
+    assert SECRET not in (tmp_path / "data" / "config.json").read_text()
+
+
+def test_a_secret_updated_by_the_kubelet_is_read_from_its_new_folder(tmp_path):
+    named = mounted_secret(tmp_path / "secret", text="Old-secret-1234567")
+    newer = tmp_path / "secret" / "..2026_11_16_08_00_00.000000001"
+    newer.mkdir()
+    private_file(newer / "password", SECRET, 0o400)
+    (tmp_path / "secret" / "..data_tmp").symlink_to(newer.name)
+    os.replace(tmp_path / "secret" / "..data_tmp", tmp_path / "secret" / "..data")
+    assert password_from(tmp_path, named).arcade_password == SECRET
+
+
+def refused_secret(tmp_path, named: Path) -> str:
+    settings = password_from(tmp_path, named)
+    assert settings.arcade_password == ""
+    with pytest.raises(ValueError, match="arcade_password_file") as refused:
+        ArcadeClient(settings)
+    message = str(refused.value)
+    assert SECRET not in message and SECRET not in repr(settings)
+    return message
+
+
+@pytest.mark.parametrize("mode", [0o440, 0o444, 0o404, 0o640])
+def test_a_mounted_secret_that_group_or_others_can_read_is_refused(tmp_path, mode):
+    message = refused_secret(tmp_path, mounted_secret(tmp_path / "secret", mode=mode))
+    assert "group and others" in message and "defaultMode 0400" in message
+
+
+def build_link(tmp_path, shape: str) -> Path:
+    folder = tmp_path / "secret"
+    named = mounted_secret(folder)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    private_file(outside / "password", SECRET, 0o400)
+    data = folder / "..data"
+    if shape == "key leaves the folder":
+        named.unlink()
+        named.symlink_to("../outside/password")
+    elif shape == "key is absolute":
+        named.unlink()
+        named.symlink_to(outside / "password")
+    elif shape == "key to a file beside it":
+        named.unlink()
+        private_file(folder / "real", SECRET)
+        named.symlink_to("real")
+    elif shape == "data leaves the folder":
+        data.unlink()
+        data.symlink_to("../outside")
+    elif shape == "data is absolute":
+        data.unlink()
+        data.symlink_to(outside)
+    elif shape == "data is a link to a link":
+        (folder / "..hop").symlink_to(TIMESTAMP)
+        data.unlink()
+        data.symlink_to("..hop")
+    elif shape == "loop":
+        data.unlink()
+        data.symlink_to("..data")
+    elif shape == "target is a directory":
+        (folder / TIMESTAMP / "password").unlink()
+        (folder / TIMESTAMP / "password").mkdir()
+    elif shape == "target is a link":
+        (folder / TIMESTAMP / "password").unlink()
+        (folder / TIMESTAMP / "password").symlink_to(outside / "password")
+    elif shape == "key under another name":
+        named.unlink()
+        named.symlink_to("..data/other")
+        private_file(folder / TIMESTAMP / "other", SECRET, 0o400)
+    return named
+
+
+@pytest.mark.parametrize("shape", [
+    "key leaves the folder", "key is absolute", "key to a file beside it", "data leaves the folder",
+    "data is absolute", "data is a link to a link", "loop", "target is a directory", "target is a link",
+    "key under another name"])
+def test_every_other_link_is_refused_with_a_message_naming_the_rule(tmp_path, shape):
+    message = refused_secret(tmp_path, build_link(tmp_path, shape))
+    assert "a link is followed only as Kubernetes mounts a secret" in message
+
+
+def test_a_mounted_secret_of_another_user_is_refused(tmp_path, monkeypatch):
+    named = mounted_secret(tmp_path / "secret")
+    monkeypatch.setattr(os, "getuid", lambda: os.stat(named).st_uid + 1)
+    assert "of this user" in refused_secret(tmp_path, named)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens any file")
+@pytest.mark.parametrize("blocked", ["the file", "its folder"])
+def test_an_ordinary_file_that_cannot_be_opened_says_why_and_not_the_link_rule(tmp_path, blocked):
+    folder = tmp_path / "private"
+    folder.mkdir()
+    named = private_file(folder / "db-password", SECRET)
+    locked = named if blocked == "the file" else folder
+    os.chmod(locked, 0o000 if blocked == "the file" else 0o600)
+    try:
+        message = refused_secret(tmp_path, named)
+    finally:
+        os.chmod(locked, 0o600 if blocked == "the file" else 0o700)
+    assert "cannot be opened (Permission denied)" in message and "link" not in message
+
+
+def test_a_file_that_becomes_a_link_before_it_is_opened_is_refused_with_the_link_rule(tmp_path, monkeypatch):
+    target = private_file(tmp_path / "db-password", SECRET)
+    named = tmp_path / "link"
+    named.symlink_to(target)
+    regular = os.lstat(target)
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):  # the check sees the regular file it was before the swap
+        return regular if str(path) == str(named) else real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    assert "a link is followed only as Kubernetes mounts a secret" in refused_secret(tmp_path, named)
+
+
 def test_a_stored_password_is_not_used_for_a_remote_host(tmp_path):
     root = config(tmp_path / "data", arcade_url="https://db.example.org", arcade_user="cairnmind",
                   arcade_password=STORED)

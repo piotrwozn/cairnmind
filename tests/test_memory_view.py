@@ -63,6 +63,16 @@ def test_records_show_kind_status_version_time_and_source_uris(snapshot):
     assert text.index("[decision]") < text.index("[task]") < text.index("[fact]")
 
 
+def test_a_record_from_published_memory_names_its_claimed_reviewer_and_is_never_verified(snapshot):
+    manifest, payload = snapshot
+    payload["records"][0]["metadata"]["publication"] = {"path": "decision/d1.md", "revision": 1, "reviewed_by": [
+        {"action": "confirm", "name": "Ada\x1b[31m Nowak", "branch": "feat/login", "commit": "3" * 40, "revision": 1}]}
+    text = render_snapshot(manifest, payload)
+    assert ("  published: reviewed by Ada\\x1b[31m Nowak on feat/login at " + "3" * 40
+            + " (claimed by the file); not verified here") in text
+    assert text.count("  published:") == 1
+
+
 def test_kind_status_and_grep_filters_combine(snapshot):
     manifest, payload = snapshot
     text = render_snapshot(manifest, payload, kind="decision", grep="LOGIN")

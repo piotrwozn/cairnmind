@@ -34,6 +34,12 @@ def dump(store, pid):
         names[row["id"]] = f"source:{row['uri']}:{row['sha256'][:8]}"
     for row in chunks.values():
         names[row["id"]] = f"chunk:{names[row['source_id']]}:{row['line_start']}-{row['line_end']}"
+    # The chunks of a replaced source are deleted with it (#186), but the embedding jobs written with them still
+    # name them: their identifiers are worked out again from the source text, as indexing made them.
+    for row in sources.values():
+        for number, (text, first, last) in enumerate(ingest._chunks(row["content"])):
+            names.setdefault(ingest._identifier(pid, row["id"], number, first, last, text),
+                             f"chunk:{names[row['id']]}:{first}-{last}")
 
     def named(value):
         text = json.dumps(value, sort_keys=True, default=str)
@@ -67,11 +73,20 @@ def dump(store, pid):
 
 def row_by_row(monkeypatch):
     """Indexing as it was before: every new or replaced file in its own three transactions, every deleted file in
-    one of its own, every graph row looked up singly."""
+    one of its own, every graph row looked up and written singly."""
     monkeypatch.setattr(ingest, "_write_files", lambda store, project_id, batch: [None] * len(batch))
     monkeypatch.setattr(ingest, "_deactivate_sources",
                         lambda store, source_ids: [ingest._deactivate_source(store, item) for item in source_ids])
     monkeypatch.setattr(Store, "prefetch_graph", lambda self, tx, nodes, edges: None)
+    monkeypatch.setattr(Store, "write_graph", graph_row_by_row)
+
+
+def graph_row_by_row(self, tx, project_id, nodes, edges):
+    """The graph rows written as before issue #167: one upsert, and one request at least, per row."""
+    for item in nodes:
+        self.upsert_node(item, tx)
+    for item in edges:
+        self.upsert_edge(item, tx)
 
 
 def counted(monkeypatch):
@@ -527,8 +542,9 @@ def test_a_failure_in_a_group_of_replacements_leaves_every_file_of_it_as_it_was(
     stale = store.query("SELECT id FROM sources WHERE project_id=:p AND is_current=false", {"p": pid})
     assert {row["id"] for row in stale} == {old[uri] for uri in replaced}
     chunks = store.query("SELECT source_id,is_current FROM chunks WHERE project_id=:p", {"p": pid})
-    assert all(row["is_current"] == (row["source_id"] not in {r["id"] for r in stale}) for row in chunks)
-    assert {row["source_id"] for row in chunks} == {row["id"] for row in current.values()} | {row["id"] for row in stale}
+    # The chunks of a replaced source went in the transaction that replaced it (#186); the rest are all current.
+    assert all(row["is_current"] for row in chunks)
+    assert {row["source_id"] for row in chunks} == {row["id"] for row in current.values()}
 
     ingest.index_project(store, pid)  # the next run completes what failed
     with monkeypatch.context() as patch:

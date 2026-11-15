@@ -24,6 +24,7 @@ from .config import SESSION_NAMES, Settings, drop_env
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
 from . import workspace_activity as column
+from . import workspace_border as border
 from .terminal_theme import TMUX
 from .workspace_activity import ACTIVITY_WIDTH, COCKPIT_MIN_WIDTH  # noqa: F401 (re-exported)
 from .workspace_state import UI_COMMANDS, WorkspaceState
@@ -74,7 +75,6 @@ HINT_KEYS = "C-b Space: menu · C-b ?: help · C-b d: detach"
 HINT_SHORT = "C-b ?: help"
 HINT_READ_ONLY = "Read only · C-b d: detach"
 HINT_READ_ONLY_SHORT = "C-b d: detach"
-LEFT_FIXED = 25  # the left part of a border without its badge, at its widest: " inspector controller " and gaps
 
 
 def _hint(text):
@@ -88,7 +88,7 @@ def border_hint(language="en"):
     full, short = (_hint(tr(text, language)) for text in (HINT_KEYS, HINT_SHORT))
     read_only, read_only_short = (_hint(tr(text, language)) for text in (HINT_READ_ONLY, HINT_READ_ONLY_SHORT))
     # The hint is drawn only where it fits beside the widest left part, so it never covers the badge.
-    reserve = LEFT_FIXED + max(cell_len("ACK required"), *(cell_len(stale_badge(r, language)) for r in STALE_WORDS))
+    reserve = border.left_width(language)
     wide = max(cell_len(full), cell_len(read_only)) + reserve
     narrow = max(cell_len(short), cell_len(read_only_short)) + reserve
     pick = lambda writer, reader: "#{?client_readonly," + reader + "," + writer + "}"  # noqa: E731
@@ -100,15 +100,16 @@ def tmux_chrome(language="en"):
     """tmux options that only colour the chrome, from the palette the panels use (terminal_theme.TMUX).
 
     Every option is set quietly, so a tmux that does not know one (popup styles need 3.2 or 3.3)
-    starts as before. The pane badge shows the raw memory word; only exactly `ack` is the good colour.
+    starts as before. The border shows labels of the pane's internal values in the panels' language
+    (workspace_border); the badge colour reads the internal memory value, and only exactly `ack` is good.
     The active view's border also names the keys, on its right, in the panels' language.
     """
     c = {name: f"colour{cell}" for name, cell in TMUX.items()}
     badge = ("#{?#{==:#{@cairnmind_memory},ack},#[fg=" + c["ok"] + "],#{?#{==:#{@cairnmind_memory},unavailable},#[fg="
-             + c["danger"] + "],#[fg=" + c["warn"] + "]}}#{@cairnmind_memory}#[default]")
-    border = ("#[align=right]#[fg=" + c["label"] + "]" + border_hint(language) + "#[default]#[align=left]"
-              " #{?pane_active,#[fg=" + c["accent"] + "]#[bold],#[fg=" + c["label"] + "]}#{@cairnmind_role}#[default] "
-              "#[fg=" + c["label"] + "]#{@cairnmind_control}#[default] " + badge + " ")
+             + c["danger"] + "],#[fg=" + c["warn"] + "]}}" + border.memory_label(language) + "#[default]")
+    format_ = ("#[align=right]#[fg=" + c["label"] + "]" + border_hint(language) + "#[default]#[align=left]"
+               " #{?pane_active,#[fg=" + c["accent"] + "]#[bold],#[fg=" + c["label"] + "]}" + border.role_label(language)
+               + "#[default] #[fg=" + c["label"] + "]" + border.control_label(language) + "#[default] " + badge + " ")
     return [
         ("status-style", f"bg={c['bg']},fg={c['fg']}"),
         ("window-status-style", f"fg={c['label']}"),
@@ -116,7 +117,7 @@ def tmux_chrome(language="en"):
         ("pane-border-lines", "single"),
         ("pane-border-style", f"fg={c['line']}"),
         ("pane-active-border-style", f"fg={c['accent']}"),
-        ("pane-border-format", border),
+        ("pane-border-format", format_),
         ("popup-border-lines", "rounded"),
         ("popup-border-style", "fg=colour242"),
         ("popup-style", "bg=colour233"),
@@ -652,7 +653,10 @@ class WorkspaceManager:
                      else "ack" if memory.get("acknowledged") is True else "ACK required" if run_id else "")
             if run_id and selected["broker_available"] is False:
                 badge = "unavailable"
-            self.tmux("set-option", "-p", "-t", panes[role], "@cairnmind_memory", badge)
+            # The fixed reason code beside the badge: the border labels it in the current language (#208).
+            reason = memory.get("stale_reason") if badge.startswith("stale") and memory.get("stale_reason") in STALE_WORDS else ""
+            self.tmux("set-option", "-p", "-t", panes[role], "@cairnmind_memory", badge, ";",
+                      "set-option", "-p", "-t", panes[role], "@cairnmind_stale_reason", reason)
             current = self.tmux("show-options", "-pv", "-t", panes[role], "@cairnmind_binding", check=False).stdout.strip()
             if current == binding:
                 continue

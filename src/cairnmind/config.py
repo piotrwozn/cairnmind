@@ -154,6 +154,9 @@ class Settings:
     # Checked by memory_models.normalize_memory_model. The model names stay in the two fields above.
     memory_chat: dict | None = None
     memory_embedding: dict | None = None
+    # The sensitivity classes (sensitivity.CLASSES) a role on another computer may receive (#181). Checked by
+    # memory_egress.allowed_classes: a value that is not a list of distinct known classes sends nothing.
+    memory_remote_classes: list = field(default_factory=lambda: ["project"])
     answer_tokens: int = 1200
     max_steps: int = 8
     ask_timeout: float = 60.0
@@ -170,11 +173,20 @@ class Settings:
     # a private certificate authority. Both are absolute paths; see database_credentials.
     arcade_password_file: str = ""
     arcade_ca_file: str = ""
+    # Connect-only mode (#68): the address of a database this installation only connects to and never
+    # installs, starts or stops. When set it is the address used, in place of arcade_url; see database_mode.
+    arcade_connect_url: str = ""
     # Set by load and never saved: where the password came from ("password"), why it cannot be used
     # ("problem"), and the values load put in place of the stored ones ("kept": field -> (stored, loaded)).
     _origin: dict = field(default_factory=dict, repr=False, compare=False)
     # Keep every answer of `ask` in the project's answer log (answer_log.py); off unless set to true.
     answer_log: bool = False
+    # What is kept without end otherwise (#190). At each engine start an engine.log of at least
+    # engine_log_bytes is moved to engine.log.1 (older copies shift up, engine_log_copies are kept); a
+    # completed job loses its attempt history job_history_days after it last changed (0: never).
+    engine_log_bytes: int = 10 * 1024 * 1024
+    engine_log_copies: int = 3
+    job_history_days: int = 30
 
     @property
     def url(self) -> str:
@@ -195,9 +207,21 @@ class Settings:
                     obj.token = secrets.token_urlsafe(32)
                     changed = True
                 # Only the managed engine on this machine gets a generated password, kept in config.json
-                # as before (#72): a remote database's password comes from the environment or a file.
-                from .database_credentials import is_loopback
-                if obj._origin.get("password") == "none" and is_loopback(obj.arcade_url):
+                # as before (#72). The password of a database this installation only connects to (#68) is
+                # set where that server runs, and comes from the environment or a file.
+                from .database_mode import connect_only, savable
+                # The connect address is saved the first time it is seen in the environment (#68): a command
+                # started later without the variable (another shell, a terminal server started before the
+                # export) must not find a managed installation here and start an engine with an empty store.
+                # Only when config.json names none: a different address in the variable is used by that
+                # process, as for every other variable, and config.json keeps what it has.
+                seen = obj._origin["kept"].get("arcade_connect_url")
+                if (seen and not seen[0] and obj.arcade_connect_url == seen[1] and savable(seen[1])
+                        and not obj._origin.get("connect_problem")):
+                    del obj._origin["kept"]["arcade_connect_url"]
+                    obj._origin["connect_saved"] = True
+                    changed = True
+                if obj._origin.get("password") == "none" and not connect_only(obj):
                     obj.arcade_password = secrets.token_urlsafe(32)
                     obj._origin["password"] = "config"
                     obj._origin["kept"].pop("arcade_password", None)
@@ -215,25 +239,44 @@ class Settings:
                                ("arcade_database", "ARCADE_DATABASE"),
                                ("arcade_password_file", "ARCADE_PASSWORD_FILE"),
                                ("arcade_ca_file", "ARCADE_CA_FILE"),
+                               ("arcade_connect_url", "ARCADE_CONNECT_URL"),
                                ("java_executable", "JAVA_EXECUTABLE"),
                                ("tmux_executable", "TMUX_EXECUTABLE")):
             override = env_value(variable)
             if override is not None:
                 values[name] = override
                 kept[name] = (stored.get(name), override)
+        # Connect-only (#68): arcade_connect_url is the address. The stored arcade_url stays as it is in
+        # config.json, so that removing the setting brings the managed engine back.
+        connect, conflict = values.get("arcade_connect_url") or "", None
+        if connect and not isinstance(connect, str):
+            conflict = "arcade_connect_url must be an address, such as https://db.example:2490."
+            values["arcade_connect_url"] = ""
+        elif connect:
+            named = env_value("ARCADE_URL")
+            if named and named.rstrip("/") != connect.rstrip("/"):
+                conflict = (f"{ENV_PREFIXES[0]}ARCADE_URL and arcade_connect_url ({ENV_PREFIXES[0]}ARCADE_CONNECT_URL) "
+                            "name different database addresses; set only one of them.")
+            kept["arcade_url"] = (stored.get("arcade_url"), connect)
+            values["arcade_url"] = connect
         # The password: the environment, then arcade_password_file, then config.json for this machine only.
         from .database_credentials import resolve_password
         password, source, problem = resolve_password(values)
+        problem = conflict or problem
         if password != stored.get("arcade_password", ""):
             kept["arcade_password"] = (stored.get("arcade_password"), password)
         values["arcade_password"] = password
+        # The default prefix is part of the name of every existing database: it does not change.
+        prefix = env_value("ARCADE_DB_PREFIX", "devbrain")
+        derived = prefix + "_" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
         if not values.get("arcade_database"):
-            # The default prefix is part of the name of every existing database: it does not change.
-            prefix = env_value("ARCADE_DB_PREFIX", "devbrain")
             if not prefix.replace("_", "").isalnum():
                 raise ValueError("Invalid ArcadeDB database prefix")
-            values["arcade_database"] = prefix + "_" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
-        obj = cls(data_dir=root, **values, _origin={"password": source, "problem": problem, "kept": kept})
+            values["arcade_database"] = derived
+        # The first save stores the derived name in config.json, so it is recognised by its value.
+        named_database = "derived" if values["arcade_database"] == derived else "configured"
+        obj = cls(data_dir=root, **values, _origin={"password": source, "problem": problem, "kept": kept,
+                                                    "database": named_database, "connect_problem": conflict})
         return obj
 
     def save(self) -> None:

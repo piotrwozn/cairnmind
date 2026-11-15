@@ -24,6 +24,11 @@ from .config import Settings
 from .terminal_client import BrokerClient, BrokerError
 from .terminal_i18n import language_for, native_failure_notice
 
+# The lifecycles that end a run; the bridge then leaves the run's end state on the pane.
+ENDED_LIFECYCLES = frozenset({"exited", "failed", "interrupted"})
+# Every value the bridge writes to @cairnmind_control; the pane border has a label for each (#208).
+CONTROL_STATES = frozenset({"controller", "readonly", "offline", "stale", *ENDED_LIFECYCLES})
+
 
 @contextmanager
 def raw_terminal(input_fd, output_fd):
@@ -246,7 +251,7 @@ class RawTerminalBridge:
                     if run.get("generation", self.generation) != self.generation:
                         self._finish(run, stale=True)
                         return
-                    if run.get("lifecycle") in {"exited", "failed", "interrupted"}:
+                    if run.get("lifecycle") in ENDED_LIFECYCLES:
                         self._finish(run)
                         return
                 elif kind == "error":
@@ -276,7 +281,7 @@ class RawTerminalBridge:
                         self._finish(run, stale=True)
                         return
                     self.auth = run.get("purpose") == "auth"
-                    if run.get("lifecycle", run.get("state")) in {"exited", "failed", "interrupted"}:
+                    if run.get("lifecycle", run.get("state")) in ENDED_LIFECYCLES:
                         self._finish(run)
                         return
                     next_status = now + 1
@@ -329,7 +334,7 @@ class RawTerminalBridge:
                             self._finish(run, stale=True)
                             break
                         self.auth = run.get("purpose") == "auth"
-                        if run.get("lifecycle", run.get("state")) in {"exited", "failed", "interrupted"}:
+                        if run.get("lifecycle", run.get("state")) in ENDED_LIFECYCLES:
                             self._finish(run)
                             break
                         async with self.client.terminal(self.run_id, self.generation) as websocket:
