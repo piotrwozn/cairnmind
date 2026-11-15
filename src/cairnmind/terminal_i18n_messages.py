@@ -408,7 +408,35 @@ def display_word(word, translate) -> str:
 # The status word of an /ask result, as the panel shows it.
 ASK_STATUS = {"complete": "Complete", "partial": "Partial", "unavailable": "Unavailable"}
 
+# How a record came to be confirmed (#177, confirmation.confirmation_parts): the fixed sentence is
+# translated, and the names, branch, commit and path it holds are escaped text from memory or a package.
+CONFIRMATION_MESSAGES = {
+    "Confirmation": "Potwierdzenie",
+    "confirmed here by a person: {name}, {route}, {at}": "potwierdzone tutaj przez człowieka: {name}, {route}, {at}",
+    "in the inspector": "w inspektorze", "by a conflict decision": "decyzją w sprawie konfliktu",
+    "with its plan": "razem z planem", "in the workspace form": "w formularzu środowiska",
+    "on the command line": "w wierszu poleceń", "by a person's act": "działaniem człowieka",
+    "confirmed elsewhere, who confirmed it is not recorded; imported from {where} on {day}; not verified here":
+        "potwierdzone gdzie indziej, nie zapisano przez kogo; zaimportowane z {where} dnia {day}; "
+        "niezweryfikowane tutaj",
+    "confirmed elsewhere by {name} on {branch} at {commit} (claimed by the package); "
+    "imported from {where} on {day}; not verified here":
+        "potwierdzone gdzie indziej przez {name} na gałęzi {branch} w commicie {commit} (według paczki); "
+        "zaimportowane z {where} dnia {day}; niezweryfikowane tutaj",
+    "confirmed by evaluation seed data, not by a person": "potwierdzone przez dane testowe ewaluacji, nie przez człowieka",
+    "was confirmed at version {version}; a session or agent changed it since, so it is proposed again":
+        "było potwierdzone w wersji {version}; sesja lub agent zmienili je od tego czasu, więc znów jest propozycją",
+    "confirmed before only a person could confirm; who confirmed it was not recorded":
+        "potwierdzone, zanim potwierdzać mógł tylko człowiek; nie zapisano, kto to zrobił",
+    # The import preview and result (terminal_ui.summary_text).
+    "Confirmed elsewhere: {count}. They stay confirmed, are shown as imported and are not verified here.":
+        "Potwierdzone gdzie indziej: {count}. Pozostają potwierdzone, są pokazywane jako zaimportowane "
+        "i nie są tutaj zweryfikowane.",
+    "Confirmed by, as the package says: {names}": "Potwierdzone przez, według paczki: {names}",
+}
+
 MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL, "Complete": "Pełna",
+            **CONFIRMATION_MESSAGES,
             **PROVIDER_MESSAGES, **LOGIN_MESSAGES, **WORDS, **BROKER_MESSAGES, **STATE_MESSAGES,
             "Cairnmind · Memory": "Cairnmind · Pamięć"}
 

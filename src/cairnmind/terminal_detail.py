@@ -98,6 +98,15 @@ def record_parts(value, translate):
 
     if isinstance(value.get("record"), dict):
         # Any record detail, including a task opened from the task list.
+        from .confirmation import confirmation_parts
+        confirmation = confirmation_parts(item)
+        if confirmation:
+            # Who confirmed it (#177): a person here, a package that brought it (never verified here), or
+            # nobody on record. The sentence is ours; the names in it are escaped text from memory.
+            template, values = confirmation
+            if "route" in values:
+                values = {**values, "route": translate(values["route"])}
+            lines.append(labelled(translate("Confirmation"), translate(template).format(**values)))
         earliest = _evidence_date(metadata.get("evidence_earliest"))
         latest = _evidence_date(metadata.get("evidence_latest"))
         basis = metadata.get("evidence_basis")

@@ -100,6 +100,15 @@ def summary_text(value, language="en"):
                    if type(counts.get(key)) is int]
         if entries:
             lines.append(" · ".join(entries))
+    brought = value.get("confirmed_records")
+    if isinstance(brought, dict) and type(brought.get("total")) is int and brought["total"] > 0:
+        # What an import brings as confirmed (#177), before the person agrees to it. The names are the
+        # package's claim, so they are escaped and cut.
+        lines.append(tr("Confirmed elsewhere: {count}. They stay confirmed, are shown as imported "
+                        "and are not verified here.", language, count=brought["total"]))
+        names = [safe_text(name)[:80] for name in (brought.get("confirmed_by") or [])[:8] if isinstance(name, str)]
+        if names:
+            lines.append(tr("Confirmed by, as the package says: {names}", language, names=", ".join(names)))
     for key in ("message", "summary", "status", "state", "code", "reason"):
         item = value.get(key)
         if isinstance(item, (str, int, float, bool)):
