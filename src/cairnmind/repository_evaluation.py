@@ -18,8 +18,10 @@ match, multi-line), so that a changed default does not make the question wrong. 
 written forms of the value that also count for that question: ``"{}m"`` (the value with a unit),
 ``"{word}"`` (a number as its English word), ``"{gb} GB"`` (a whole number of megabytes in
 gigabytes: 2048 as 2). ``{"absent": true}`` marks a question about a thing the repository does
-not have: it needs no ``file``, has no accepted form, and is right only when its answer is not
-complete.
+not have: it needs no ``file``, has no accepted form, and is right only when it was refused: its
+answer is not complete, and the ask did not simply break (FAILED_CODES: a timeout, an unavailable
+model, a reply that is not JSON, a broken tool protocol, a spent budget), which says nothing about
+the question.
 
 Scoring is mechanical. A question is *complete* when the answer's status is complete (its
 citations verified and the support check agreed). It is *right* when an accepted form occurs in
@@ -27,7 +29,7 @@ the answer as a whole token, ignoring case: not inside a longer word or number (
 ``17``, ``7.5``, ``7,168`` or ``7m``); ``45.0`` also counts as ``45``. A complete answer without
 an accepted form counts as *complete and wrong*, and so does every complete answer to a question
 marked absent. The acceptance figure is complete and right; a file with absent questions passes
-only when each of them was also refused.
+only when each of them was also refused, and an ask that failed is counted apart from a refusal.
 """
 from __future__ import annotations
 
@@ -51,6 +53,10 @@ from .memory_models import from_settings
 from .ollama import OllamaUnavailable
 
 PASS_SHARE = 0.8  # complete and right, of all questions
+# An ask that ended with one of these codes, or with a status other than complete or partial, broke
+# before it could judge its evidence: for a question about an absent thing that is no refusal.
+FAILED_CODES = frozenset({"timeout", "model_unavailable", "invalid_json", "tool_protocol_invalid", "cancelled",
+                          "context_budget", "step_budget"})
 # Never indexed: the questions and the document that reports the runs (the question file given
 # on the command line is left out too, wherever it lies), and the tests of this evaluation and of
 # the definition lookup, whose fixtures imitate the evaluated questions (a settings class with a
@@ -152,11 +158,13 @@ def case_result(case: dict, result: dict, root: Path, calls: int, seconds: float
     answer = str(result.get("answer", ""))
     diagnostics = result.get("diagnostics") or {}
     absent = bool(case.get("absent"))
+    failed = absent and (status not in ("complete", "partial") or diagnostics.get("code") in FAILED_CODES)
     return {"id": case["id"], "question": case["question"], "file": case["file"], "accepted": case["accepted"],
-            **({"absent": True} if absent else {}),
+            **({"absent": True} if absent else {}), **({"failed": True} if failed else {}),
             "status": status, "code": diagnostics.get("code"), "support_check": diagnostics.get("support_check"),
-            # An absent question is right when it was refused; it is never complete and right.
-            "right": (status != "complete" if absent else
+            # An absent question is right when it was refused; it is never complete and right, and
+            # an ask that broke refused nothing.
+            "right": (status != "complete" and not failed if absent else
                       status == "complete" and answer_is_right(answer, case["accepted"])),
             "answer": answer[:600], "citations": citations, "model_calls": calls, "seconds": round(seconds, 1)}
 
@@ -167,12 +175,13 @@ def summarize(rows: list[dict]) -> dict:
     complete = sum(row["status"] == "complete" for row in rows)
     right = sum(row["status"] == "complete" and row["right"] for row in rows)
     absent = [row for row in rows if row.get("absent")]
-    refused = sum(row["status"] != "complete" for row in absent)
+    failed = sum(bool(row.get("failed")) for row in absent)
+    refused = sum(row["status"] != "complete" for row in absent) - failed
     required = math.ceil(PASS_SHARE * (len(rows) - len(absent)))
     return {"asked": len(rows), "complete": complete, "complete_and_right": right,
             "complete_and_wrong": complete - right, "not_complete": len(rows) - complete,
             "required_complete_and_right": required,
-            **({"absent": len(absent), "absent_refused": refused} if absent else {}),
+            **({"absent": len(absent), "absent_refused": refused, "absent_failed": failed} if absent else {}),
             "status": "passed" if rows and right >= required and refused == len(absent) else "failed"}
 
 

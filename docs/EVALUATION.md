@@ -65,7 +65,7 @@ Before it copies anything, the command checks that the models and the engine are
 
 The results for Cairnmind's own repository are in [evaluation/RESULTS.md](evaluation/RESULTS.md), kept out of the indexed copy.
 
-A question file can also hold questions about things the repository does not have: `"answer": {"absent": true}` in place of a file and an accepted answer. Such a question is right only when its answer is not complete, any complete answer to it counts as complete and wrong, and a file with such questions passes only when every one of them was refused (the report counts them as `absent` and `absent_refused`). Cairnmind's own set is `docs/evaluation/absent-questions.json`, sixteen questions with the shapes of the twenty and the name of a product or a setting the project never uses:
+A question file can also hold questions about things the repository does not have: `"answer": {"absent": true}` in place of a file and an accepted answer. Such a question is right only when it was refused: its answer is not complete and the ask did not simply break (a timeout, an unavailable model, a reply that is not JSON, a broken tool protocol or a spent budget says nothing about the question). Any complete answer to it counts as complete and wrong, and a file with such questions passes only when every one of them was refused (the report counts them as `absent`, `absent_refused` and `absent_failed`). Cairnmind's own set is `docs/evaluation/absent-questions.json`, twenty-one questions with the shapes of the twenty and the name of a product or a setting the project never uses, three of them written in a way the subject check does not read:
 
 ```bash
 cairnmind eval repository . --questions docs/evaluation/absent-questions.json
