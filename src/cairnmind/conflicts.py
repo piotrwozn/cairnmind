@@ -112,7 +112,8 @@ def list_conflicts(store, project_id, scoped_records, in_scope=None):
     # A review or decision note is not a source of the finding itself.
     uris = {row["id"]: row["uri"] for row in store.query(
         "SELECT id,uri,metadata.origin AS origin FROM sources WHERE id IN :ids AND project_id=:project",
-        {"ids": source_ids, "project": project_id}) if row.get("origin") != "local_user_review"} if source_ids else {}
+        {"ids": source_ids, "project": project_id})
+        if row.get("origin") not in ("local_user_review", "cli_person", "evaluation_seed")} if source_ids else {}
     states = evidence_states(store, project_id, involved.values()) if involved else {}
     with store.transaction() as tx:
         # Read from the sources now: a time stored on a record before audit notes were
@@ -198,7 +199,10 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
                                  "conflict_with": other_id})
 
         def write(update, record):
-            return store.remember(project_id, update, [*record["source_ids"], source["id"]], conflict_review=True)
+            # A person's decision (#177): the finding chosen to stand is confirmed by this act.
+            with store.person_act("conflict_decision", source["id"]):
+                return store.remember(project_id, update, [*record["source_ids"], source["id"]],
+                                      conflict_review=True)
 
         if action != "supersede":
             saved = write({"id": record_id, "expected_version": expected_version, "metadata": notes}, candidate)

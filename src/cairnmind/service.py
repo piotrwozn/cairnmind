@@ -508,7 +508,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     # An own-agent session that received a third-party MCP result writes as unverified (#126).
                     from cairnmind.agent_memory import third_party_origin
                     mark = third_party_origin(store, pid, session_id)
-            with store.write_origin(mark):
+            # A write that names a session is never a person's act (#177), whatever the session's client.
+            with store.write_origin(mark), store.session_write(session_id):
                 return operation(scope)
 
     def read_scope(pid: str, requested: str | None, session_id: str | None = None) -> str | None:
@@ -684,6 +685,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         from cairnmind.memory_published_import import PublishedImporter
         pid = project(body.project)["id"]
         authorize = None
+        if body.take_published and body.session_id:
+            # Putting the published side over a record that diverged here can replace a person's own
+            # confirmation or dispute (#177): that choice is a person's, never a coding session's.
+            raise ValueError("Taking the published side of a diverged record is chosen only by a person, "
+                             "not inside a coding session")
         if body.dry_run:
             await asyncio.to_thread(read_scope, pid, None, body.session_id)
         else:

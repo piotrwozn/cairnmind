@@ -333,10 +333,10 @@ class Inspector:
                 "content_sha256": hashlib.sha256(old["content"].encode()).hexdigest(), **definition_fields(old)}
             source = self.store.snapshot(pid, "review://" + str(uuid4()), json_text(audit), "manual",
                                          {"origin": "local_user_review", "role": "user", "record_id": record_id})
-            update = {"id": record_id, "expected_version": expected_version, "status": status}
-            if plan_id:
-                update["expected_plan_version"] = expected_plan_version
-            saved = self.store.remember(pid, update, [*old["source_ids"], source["id"]])
+            update = {"id": record_id, "expected_version": expected_version, "status": status,
+                      **({"expected_plan_version": expected_plan_version} if plan_id else {})}
+            with self.store.person_act("inspector_review", source["id"]):  # The person's act (#177).
+                saved = self.store.remember(pid, update, [*old["source_ids"], source["id"]])
             return {"record": saved, "audit_source_id": source["id"], "cursor": _cursor(reader, self.store)}
 
     def _graph_rows(self, project, worktree=None):

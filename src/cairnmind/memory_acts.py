@@ -61,10 +61,19 @@ def review_refused(tx, record, status, action) -> bool:
 
 
 def covered_by_local_act(tx, record) -> bool:
-    """Whether a person on this machine covered the record's current version (a review, or a confirmed form)."""
+    """Whether a person on this machine covered the record's current version (a review, or a confirmed form).
+
+    For a confirmed record the answer is the store's own mark (#177): a review, a conflict decision, a plan
+    confirmation or the workspace form, made here. A field a client can send says nothing, and neither does
+    an audit that arrived in a memory package. A command line confirmation is a person's, but it is not an
+    act that travels with published memory, so the inspector may still confirm such a record.
+    """
+    if record["status"] == "confirmed":
+        from .confirmation import confirmation_of
+        mark = confirmation_of(record) or {}
+        return mark.get("by") == "person" and mark.get("route") in (
+            "inspector_review", "conflict_decision", "confirm_plan", "workspace_form")
     metadata = record.get("metadata") or {}
-    if record["version"] == 1 and record["status"] == "confirmed" and metadata.get("origin") == "workspace_form":
-        return True
     definition = row_definition_hash(record["content"], metadata) if record["kind"] == "task" else None
     for source_id in record.get("source_ids") or []:
         source = one_row(tx, "SELECT uri,content,metadata FROM sources WHERE id=:id", {"id": source_id}, False)
@@ -122,8 +131,9 @@ def confirm_plan(store, project_id, plan_id, expected_plan_version, reason=None)
         version, saved = plan["version"], []
         for task in tasks:
             # Each step write moves the plan version on (note_task_mutation), so the next one names it.
-            saved.append(store._remember(tx, project_id, {"id": task["id"], "expected_version": task["version"],
-                                                          "status": "confirmed", "expected_plan_version": version},
-                                         [*task["source_ids"], source["id"]]))
+            with store.person_act("confirm_plan", source["id"]):  # The person's act (#177).
+                saved.append(store._remember(
+                    tx, project_id, {"id": task["id"], "expected_version": task["version"], "status": "confirmed",
+                                     "expected_plan_version": version}, [*task["source_ids"], source["id"]]))
             version += 1
         return {"plan_id": plan_id, "plan_version": version, "tasks": saved, "audit_source_id": source["id"]}

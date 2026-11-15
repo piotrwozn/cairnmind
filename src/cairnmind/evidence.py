@@ -54,6 +54,8 @@ def _is_audit(source):
     # published elsewhere (#170) neither anchors a record nor counts against it either.
     return ((str(source.get("uri", "")).startswith("review://")
              and _metadata(source).get("origin") == "local_user_review")
+            # The note of a command line confirmation, or of an evaluation's seed (#177): the same kind of note.
+            or _metadata(source).get("origin") in ("cli_person", "evaluation_seed")
             or (source.get("kind") == "published" and _metadata(source).get("origin") == "publication_review"))
 
 
