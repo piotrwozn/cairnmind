@@ -17,6 +17,7 @@ from uuid import uuid4
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
+from .backup_reader import opened_backup
 from .store_backup import payload_digest, streamed_backup, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
@@ -41,6 +42,8 @@ LEGACY_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, "nodes", "edges")
 V03_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, "nodes", "edges")
 V04_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, "nodes", "edges")
 EXPORT_TYPES = (*DOCUMENT_TYPES, "nodes", "edges")
+# What restore checks a backup against; an earlier format's payload has the later types empty.
+RESTORE_TYPES = {"export": EXPORT_TYPES, "v03": V03_DOCUMENT_TYPES, "v04": V04_DOCUMENT_TYPES, "v05": V05_DOCUMENT_TYPES}
 MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
     "plan_ref", "step_key", "required_profiles", "plan_context_hash", "depends_on", "acceptance_criteria",
     "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals", "scope",
@@ -1456,10 +1459,15 @@ class Store:
 
     def restore(self, backup):
         """Restore validated data atomically. Stop Cairnmind workers before calling."""
-        payload = self._validated_backup(Path(backup).expanduser().resolve())
-        self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
+        # The file is validated in two passes over it before anything changes, and read a third time for
+        # the inserts; it is never held in memory whole (#196, backup_reader).
+        with opened_backup(Path(backup).expanduser().resolve(), self._validated_backup, RESTORE_TYPES) as source:
+            self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
+            self._restore_from(source)
+
+    def _restore_from(self, source):
         # DDL is deliberately outside the data transaction; no live data has been removed.
-        for registry in payload["vector_indexes"]:
+        for registry in source.vector_indexes:
             name, dimension = registry.get("type_name"), registry.get("dimension")
             if not isinstance(name, str) or not name.startswith("vector_") or type(dimension) is not int or dimension <= 0:
                 raise ValueError("Invalid vector namespace in backup")
@@ -1479,20 +1487,22 @@ class Store:
             tx.command("DELETE FROM nodes")
             for collection in reversed(DOCUMENT_TYPES):
                 tx.command(f"DELETE FROM {quote_name(collection)}")
-            for collection in DOCUMENT_TYPES:
-                for original in payload[collection]:
-                    row = dict(original)
-                    if collection == "jobs" and row.get("state") == "running":
-                        row.update(state="pending", worker=None, lease_until=None)
-                    insert_document(tx, collection, row)
-            for node in payload["nodes"]:
+            # Documents first (projects and sources before the graph that checks them), then vertices,
+            # then edges and vectors; a streamed file is read once for each of the three.
+            for _, collection, original in source.rows(DOCUMENT_TYPES):
+                row = dict(original)
+                if collection == "jobs" and row.get("state") == "running":
+                    row.update(state="pending", worker=None, lease_until=None)
+                insert_document(tx, collection, row)
+            for _, _, node in source.rows(("nodes",)):
                 self.upsert_node(node, tx)
-            for edge in payload["edges"]:
-                self.upsert_edge(edge, tx)
-            for name, rows in payload.get("vector_data", {}).items():
+            for kind, name, row in source.rows(("edges",), vectors=True):
+                if kind == "row":
+                    self.upsert_edge(row, tx)
+                    continue
                 if not isinstance(name, str) or not name.startswith("vector_"):
                     raise ValueError("Invalid vector type in backup")
-                for row in rows:
+                if row is not None:
                     insert_document(tx, name, row)
 
     def forget_project(self, project_id):
