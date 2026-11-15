@@ -253,7 +253,9 @@ def _disk(settings) -> dict:
         if journals["exists"] else 0
     journals = {"path": journals["path"], "exists": journals["exists"], "sessions": sessions,
                 "files": journals["files"], "bytes": journals["bytes"]}
-    return {"data_dir": _tree(data), "databases": _tree(data / "arcade" / "databases"),
+    from .database_mode import describe
+    return {"storage": {**describe(settings), "url": settings.arcade_url},
+            "data_dir": _tree(data), "databases": _tree(data / "arcade" / "databases"),
             "database": _tree(data / "arcade" / "databases" / settings.arcade_database),
             "engine_log": _tree(data / "arcade" / "engine.log"), "engine_logs": _tree(data / "arcade" / "log"),
             "backups": _backups(data / "backups"), "agent_journals": journals}
@@ -351,6 +353,10 @@ def render(report) -> str:
                        ("engine logs", "engine_logs")):
         part = disk[key]
         lines.append(f"  {label:<15}  {_size(part['bytes']) if part['exists'] else 'absent':>12}")
+    if (disk.get("storage") or {}).get("mode") == "connect":
+        # Connect-only (#68): the database files and the server log are on the server, not in this directory.
+        lines.append(f"  The database files and the server log are on the server at "
+                     f"{safe_text(disk['storage']['url'])}; this machine cannot measure them.")
     backups = disk["backups"]
     for label, key in (("scheduled", "scheduled"), ("before-schema", "before_schema"),
                        ("before-restore", "before_restore"), ("other", "other")):

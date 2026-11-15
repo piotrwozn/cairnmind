@@ -634,7 +634,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         error_rows = await asyncio.to_thread(store.recent_job_errors, pid)
         pipeline = await asyncio.to_thread(store.job_summary, pid)
         writer = await asyncio.to_thread(store.writer_state)
-        return {**result, "writer": writer,
+        from cairnmind.database_mode import describe
+        return {**result, "writer": writer, "storage": {**describe(settings), "url": settings.arcade_url},
                 "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                 "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                 "recent_job_errors": error_rows}
