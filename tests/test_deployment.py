@@ -86,6 +86,19 @@ def test_image_starts_the_server_with_the_options_of_the_local_engine(tmp_path, 
     assert options_missing_from(script, command[1:-3], (str(tmp_path), "127.0.0.1")) == []
 
 
+def test_the_image_runs_in_production_mode_without_the_mcp_plugin_and_the_local_engine_is_unchanged(
+        tmp_path, monkeypatch):
+    script = ENTRYPOINT.read_text()
+    java = script[script.index("exec java"):]
+    # Before ARCADEDB_JAVA_OPTS, so that an operator's own -Darcadedb.server.mode wins.
+    assert java.index("-Darcadedb.server.mode=production") < java.index("${ARCADEDB_JAVA_OPTS:-}")
+    dockerfile = DOCKERFILE.read_text()
+    assert 'rm "/opt/arcadedb/lib/arcadedb-mcp-${ARCADEDB_VERSION}.jar"' in dockerfile
+    assert 'test -f "/opt/arcadedb/lib/arcadedb-mcp-${ARCADEDB_VERSION}.jar"' in dockerfile
+    # The local engine on loopback keeps ArcadeDB's default mode.
+    assert not any("arcadedb.server.mode" in option for option in local_engine_command(tmp_path, monkeypatch))
+
+
 def test_entrypoint_is_a_valid_shell_script_that_refuses_to_start_without_a_password(tmp_path):
     subprocess.run(["sh", "-n", str(ENTRYPOINT)], check=True)
     result = subprocess.run(["sh", str(ENTRYPOINT)], capture_output=True, text=True, env={
@@ -134,6 +147,118 @@ def test_ci_builds_the_image_in_a_job_of_its_own_beside_the_required_ones():
     assert {"lint", "fast-tests", "full-tests", "coverage", "deployment-image"} <= set(jobs)
     job = text.split("\n  deployment-image:\n", 1)[1].split("\n  coverage-badge:\n", 1)[0]
     assert "scripts/deployment_check.py" in job and "deploy/" in (ROOT / "scripts" / "deployment_check.py").read_text()
+
+
+# --- Kubernetes (#211). No cluster here: the `kubernetes-manifests` CI job applies them on kind. --------
+
+KUBERNETES = ROOT / "deploy" / "kubernetes"
+
+
+def manifest(name: str) -> str:
+    return (KUBERNETES / name).read_text()
+
+
+def test_the_statefulset_runs_the_image_compose_builds_and_probes_it_with_the_image_health_check():
+    statefulset = manifest("30-statefulset.yaml")
+    assert re.findall(r"^\s+image: (\S+)$", statefulset, re.M) == re.findall(r"^\s+image: (\S+)$", COMPOSE.read_text(),
+                                                                             re.M) == ["cairnmind-arcadedb:local"]
+    probes = re.findall(r"^\s+(startupProbe|readinessProbe|livenessProbe):\n\s+exec:\n\s+command: (.+)$",
+                        statefulset, re.M)
+    assert [name for name, _ in probes] == ["startupProbe", "readinessProbe", "livenessProbe"]
+    assert {command for _, command in probes} == {'["/opt/arcadedb/healthcheck.sh"]'}
+    assert "healthcheck.sh" in DOCKERFILE.read_text()
+    # The server runs as the image's user, with the volume the image declares.
+    assert "runAsUser: 10001" in statefulset and "mountPath: /var/lib/arcadedb" in statefulset
+    assert "VOLUME [\"/var/lib/arcadedb\"]" in DOCKERFILE.read_text() and "volumeClaimTemplates:" in statefulset
+
+
+def test_tls_ends_at_the_server_and_only_its_port_is_offered():
+    statefulset = manifest("30-statefulset.yaml")
+    for option in ("-Darcadedb.ssl.enabled=true", "-Darcadedb.server.httpsIncomingPort=2490",
+                   "-Darcadedb.ssl.keyStore=/run/secrets/arcadedb-tls/keystore.p12",
+                   "-Darcadedb.ssl.keyStorePassword=$(ARCADEDB_TLS_STORE_PASSWORD)"):
+        assert option in statefulset
+    # The entrypoint passes ARCADEDB_JAVA_OPTS after its own options, so these reach the server.
+    assert "${ARCADEDB_JAVA_OPTS:-}" in ENTRYPOINT.read_text()
+    assert re.findall(r"^\s+port: (\d+)$", manifest("20-service.yaml"), re.M) == ["2490"]
+    policy = manifest("10-networkpolicy.yaml")
+    assert re.findall(r"^\s+port: (\d+)$", policy, re.M) == ["2490"] and "egress: []" in policy
+    assert 'cairnmind.io/database-client: "true"' in policy
+    assert 'cairnmind.io/database-client: "true"' in manifest("check/connection-check.yaml")
+
+
+def test_no_secret_value_is_in_the_manifests_and_the_template_is_not_applied_with_them():
+    files = sorted(KUBERNETES.rglob("*.yaml"))
+    assert len(files) == 8
+    for path in files:
+        text = path.read_text()
+        assert "BEGIN" not in text and not re.search(r"(?i)password\s*[:=]\s*['\"]?\w{8,}", text), path
+    template = manifest("templates/secrets.yaml")
+    values = re.findall(r"^  ([\w.-]+): (.*)$", template, re.M)
+    secret_values = [value for key, value in values if key in ("password", "store-password", "keystore.p12")]
+    assert len(secret_values) == 4 and set(secret_values) == {'""'} and template.count("kind: Secret") == 3
+    # `kubectl apply -f deploy/kubernetes` reads the top folder only: no Secret is there.
+    assert all("kind: Secret" not in path.read_text() for path in KUBERNETES.glob("*.yaml"))
+    # The server's Secrets are in its namespace; the user's password goes where a client pod runs.
+    namespaces = dict(re.findall(r"^  name: ([\w-]+)\n  namespace: ([\w-]+)$", template, re.M))
+    assert namespaces == {"arcadedb-root-password": "cairnmind-db", "arcadedb-tls": "cairnmind-db",
+                          "cairnmind-db-user": "cairnmind-app"}
+
+
+def test_the_manifest_check_creates_every_namespace_the_manifests_name_before_the_server_side_dry_run():
+    """A server-side dry run refuses an object whose namespace does not exist (seen on kind: the template's
+    placeholder namespace cairnmind-app), so the check creates each one first and deletes it at the end."""
+    named = set()
+    for path in KUBERNETES.rglob("*.yaml"):
+        named |= set(re.findall(r"^\s+namespace: ([\w-]+)$", path.read_text(), re.M))
+    declared = set(re.findall(r"^  name: ([\w-]+)$", manifest("00-namespace.yaml"), re.M))
+    script = (ROOT / "scripts" / "kubernetes_check.py").read_text()
+    values = dict(re.findall(r'^(TEMPLATE_CLIENTS) = "([\w-]+)"$', script, re.M))
+    values.update(zip(("DATABASE", "CLIENTS"), re.findall(r'^DATABASE, CLIENTS = "([\w-]+)", "([\w-]+)"$', script,
+                                                         re.M)[0]))
+    created = {values[name] for name in re.findall(r'kubectl\("create", "namespace", (\w+)\)', script)}
+    assert named <= declared | created
+    dry_run = script.index('"--dry-run=server"')
+    assert all(script.index(f'kubectl("create", "namespace", {name})') < dry_run
+               for name, value in values.items() if value in created)
+    cleanup = script[script.index('kubectl("delete", "namespace"'):].split(")", 1)[0]
+    assert all(name in cleanup for name in ("DATABASE", "CLIENTS", "TEMPLATE_CLIENTS"))
+
+
+def test_the_volume_is_unpacked_without_setting_the_root_owned_top_folder():
+    """The volume pod runs as 10001, the new volume's top folder belongs to root: GNU tar fails setting
+    the time of the archive's "." entry on it unless --no-overwrite-dir leaves the folder alone."""
+    assert "runAsUser: 10001" in manifest("backup/volume-pod.yaml")
+    script = (ROOT / "scripts" / "kubernetes_check.py").read_text()
+    unpack = [call for call in re.findall(r'volume_pod\("tar",[^)]*\)', script) if '"-xzf"' in call]
+    assert len(unpack) == 1 and '"--no-overwrite-dir"' in unpack[0]
+    documented = re.findall(r"tar [^\n]*(?:\\\n[^\n]*)*-xzf -", (ROOT / "docs" / "DEPLOYMENT.md").read_text())
+    assert len(documented) == 1 and "--no-overwrite-dir" in documented[0]
+
+
+def test_the_mounted_password_mode_of_the_manifests_is_one_the_password_file_rule_accepts(tmp_path):
+    from cairnmind.database_credentials import read_private_file
+    from test_database_credentials import SECRET, mounted_secret
+    job = manifest("check/connection-check.yaml")
+    modes = set(re.findall(r"^\s+defaultMode: (0\d+)$", job, re.M))
+    assert modes == {"0400"} and not re.search(r"^\s+fsGroup:", job, re.M)
+    named = mounted_secret(tmp_path / "secret", mode=int(modes.pop(), 8))
+    assert read_private_file(str(named), "arcade_password_file") == SECRET
+    # The server's own mount is read by the entrypoint through its group (fsGroup), not by Cairnmind.
+    assert set(re.findall(r"^\s+defaultMode: (0\d+)$", manifest("30-statefulset.yaml"), re.M)) == {"0440"}
+
+
+def test_ci_applies_the_manifests_in_a_job_of_its_own_that_no_required_check_waits_for():
+    text = WORKFLOW.read_text()
+    jobs = re.findall(r"^  ([a-z][a-z-]*):$", text, re.M)
+    assert {"lint", "fast-tests", "full-tests", "kubernetes-manifests"} <= set(jobs)
+    job = text.split("\n  kubernetes-manifests:\n", 1)[1]
+    assert "scripts/kubernetes_check.py" in job and "kind create cluster" in job and "needs:" not in job
+    full_tests = text.split("\n  full-tests:\n", 1)[1].split("\n  coverage-tests:\n", 1)[0]
+    assert re.search(r"^    needs: tests$", full_tests, re.M)
+    script = (ROOT / "scripts" / "kubernetes_check.py").read_text()
+    assert "--dry-run=server" in script and "--validate=strict" in script and "connection-check.yaml" in script
+    subprocess.run(["sh", "-n", str(KUBERNETES / "check" / "connection-check.sh")], check=True)
 
 
 def cli_commands() -> set[tuple[str, ...]]:

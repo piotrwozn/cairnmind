@@ -1,0 +1,42 @@
+# A pod that holds the server's volume while the StatefulSet is scaled to 0, for a volume snapshot
+# with tar and for unpacking one into a new volume (docs/DEPLOYMENT.md, "Kubernetes", "Backup and
+# restore"). It runs the server's image as the server's user and does nothing but wait; delete it
+# before the StatefulSet is scaled up again.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: arcadedb-volume
+  namespace: cairnmind-db
+  labels:
+    app.kubernetes.io/name: arcadedb-volume
+    app.kubernetes.io/part-of: cairnmind
+spec:
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: volume
+      image: cairnmind-arcadedb:local
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: data
+          mountPath: /var/lib/arcadedb
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-arcadedb-0

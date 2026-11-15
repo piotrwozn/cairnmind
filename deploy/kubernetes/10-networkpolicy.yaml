@@ -1,0 +1,29 @@
+# Who may reach the server: only pods labelled cairnmind.io/database-client: "true", in any
+# namespace, and only on the TLS port 2490. The server itself opens no connection (no egress).
+# kubectl port-forward does not pass through a network policy. A policy is enforced only by a
+# network plugin that supports it; without one, this file changes nothing (see docs/DEPLOYMENT.md).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: arcadedb
+  namespace: cairnmind-db
+  labels:
+    app.kubernetes.io/name: arcadedb
+    app.kubernetes.io/part-of: cairnmind
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: arcadedb
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              cairnmind.io/database-client: "true"
+      ports:
+        - protocol: TCP
+          port: 2490
+  egress: []

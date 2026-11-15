@@ -3,6 +3,11 @@
 # and server settings, with the paths of the image and an HTTP listener for the container network.
 # tests/test_deployment.py keeps the two in step. See docs/DEPLOYMENT.md.
 #
+# Unlike the local engine on loopback, this server may be reached from other hosts, so it runs in
+# ArcadeDB's production mode: no Studio web tool, error details only in the server log and not in
+# responses, the write-ahead log flushed on commit, and no LOAD CSV of local files. Cairnmind needs
+# none of what development mode adds. ARCADEDB_JAVA_OPTS can set -Darcadedb.server.mode=development.
+#
 # Environment (all optional):
 #   ARCADEDB_ROOT_PASSWORD_FILE  file holding the root password  (/run/secrets/arcadedb_root_password)
 #   ARCADEDB_DATA                databases, configuration, backups and logs  (/var/lib/arcadedb)
@@ -68,7 +73,7 @@ cd "$data"
 # shellcheck disable=SC2086
 exec java -Xms64m -Xmx1024m --add-modules=jdk.incubator.vector \
     --enable-native-access=ALL-UNNAMED -Djava.awt.headless=true -Dfile.encoding=UTF8 \
-    -Darcadedb.profile=low-ram ${ARCADEDB_JAVA_OPTS:-} \
+    -Darcadedb.profile=low-ram -Darcadedb.server.mode=production ${ARCADEDB_JAVA_OPTS:-} \
     -Darcadedb.server.rootPath="$data" \
     -Darcadedb.server.configDirectory="$data/config" \
     -Darcadedb.server.databaseDirectory="$data/databases" \

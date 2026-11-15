@@ -19,7 +19,9 @@ started by Cairnmind (engine.is_managed_url): for any other address ensure_engin
 server cannot be reached and never writes a password under data_dir/arcade. The release pin applies
 to a server on another host too: Store refuses a server that is not 26.11.1. The password comes from
 CAIRNMIND_ARCADE_PASSWORD (the first spelling that is not empty), then the file `arcade_password_file` (absolute path, regular file of the
-user, mode 0600, not a link), then config.json for loopback only. Settings.save never writes a value
+user, mode 0600, not a link; or a mounted Kubernetes secret, followed only in the kubelet's layout
+NAME -> ..data/NAME, ..data -> ..<time>, to a regular file of the user that group and others cannot
+read, #211), then config.json for loopback only. Settings.save never writes a value
 load took from the environment or a file. `cairnmind db create-user --admin-password-file F` signs in
 once as root, creates the database and the user `arcade_user` in the group admin of that database only.
 The managed local engine keeps root and its config.json password.
