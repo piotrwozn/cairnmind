@@ -18,6 +18,7 @@ import httpx
 
 from .config import Settings
 from .database_credentials import problem, tls_context
+from .database_mode import connect_only, missing_database, unavailable
 
 
 class ArcadeError(RuntimeError):
@@ -96,7 +97,7 @@ class ArcadeClient:
         # Mutating the caller's settings must not redirect an existing session.
         self.settings = replace(settings)
         self._base_url = str(parsed).rstrip("/")
-        self._loopback = parsed.host in {"127.0.0.1", "localhost", "::1"}
+        self._administrator = bool(administrator)
         self.database = settings.arcade_database
         self.session_id = session_id
         self.transport = transport
@@ -156,8 +157,9 @@ class ArcadeClient:
             if _certificate_refused(exc):
                 raise ArcadeError(f"The certificate of ArcadeDB at {self._base_url} could not be verified; "
                                   "name a private certificate authority with arcade_ca_file") from None
-            if not self._loopback:
-                raise ArcadeError(f"ArcadeDB at {self._base_url} is unavailable ({type(exc).__name__})") from None
+            if connect_only(self.settings):
+                # Never "start the engine": this installation starts none (#68).
+                raise ArcadeError(unavailable(self.settings, type(exc).__name__)) from None
             raise ArcadeError(f"Local ArcadeDB is unavailable ({type(exc).__name__}); "
                               "run cairnmind engine status or cairnmind engine start") from None
 
@@ -204,6 +206,9 @@ class ArcadeClient:
         response = self._request("GET", f"/api/v1/exists/{quote(self.database)}")
         if response.json().get("result") is True:
             return
+        if connect_only(self.settings) and not self._administrator:
+            # A connect-only installation creates no database (#68): `cairnmind db create-user` does, once.
+            raise ArcadeError(missing_database(self.settings))
         try:
             self.server_command(f"create database {self.database}")
         except ArcadeError:

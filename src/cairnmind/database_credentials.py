@@ -174,6 +174,10 @@ def problem(settings) -> str | None:
     if origin.get("problem"):
         return origin["problem"]
     if parsed.host in LOOPBACK:
+        if getattr(settings, "arcade_connect_url", "") and not settings.arcade_password:
+            # Connect-only (#68): no engine is started here, so no password is generated for one either.
+            return (f"ArcadeDB at {settings.arcade_url}, which this installation only connects to, needs the "
+                    f"password set where that server runs: {PASSWORD_HELP}.")
         return None
     if parsed.scheme != "https":
         return (f"ArcadeDB on {parsed.host}, a host other than this machine, must be reached with https://; "
@@ -226,9 +230,14 @@ SOURCE_LABELS = {"environment": "environment", "file": "file", "config": "config
 def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
     """The database part of ``cairnmind doctor``: read-only, and through ArcadeClient, so its rules apply."""
     from .arcade import ArcadeClient, ArcadeError
+    from .database_mode import describe, missing_database, supported_versions, version_problem
     origin = getattr(settings, "_origin", None) or {}
     source = origin.get("password", "config" if settings.arcade_password else "none")
-    result: dict[str, Any] = {"available": False, "database": settings.arcade_database,
+    # Where storage runs (#68): mode "managed" or "connect", and the host.
+    place = describe(settings)
+    connect = place["mode"] == "connect"
+    result: dict[str, Any] = {**place, "available": False, "url": settings.arcade_url,
+                              "database": settings.arcade_database,
                               "configured_version": settings.arcade_version, "user": settings.arcade_user,
                               "transport": transport_label(settings), "password_source": SOURCE_LABELS.get(source, source),
                               "notes": []}
@@ -236,6 +245,12 @@ def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
         result["password_file"] = settings.arcade_password_file
     if getattr(settings, "arcade_ca_file", ""):
         result["ca_file"] = settings.arcade_ca_file
+    if connect:
+        result["supported_versions"] = list(supported_versions(settings))
+        if origin.get("database") == "derived":
+            result["notes"].append("The database name is derived from this data directory's path. Another "
+                                   "installation that should use this database must set arcade_database "
+                                   f"(CAIRNMIND_ARCADE_DATABASE) to {settings.arcade_database}.")
     if source == "config":
         result["notes"].append("The database password is stored in config.json. That is allowed for the engine on "
                                "this machine only; for a database on another host, " + PASSWORD_HELP + ".")
@@ -248,12 +263,25 @@ def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
         info = client._request("GET", "/api/v1/server?mode=basic", timeout=timeout).json()
         result.update({"available": True, "version": info.get("version"), "server_name": info.get("serverName"),
                        "version_matches": str(info.get("version", "")).startswith(settings.arcade_version)})
+        if connect:
+            refused = version_problem(settings, info)
+            result["version_matches"] = refused is None
+            if refused:
+                # Refused, not only reported: no command of this installation uses this server.
+                result["error"] = refused
+                return result
         try:
             client.query("SELECT 1 AS ok")
             result["database_available"] = True
         except ArcadeError as exc:
             result["database_available"] = False
             result["database_status"] = exc.status_code
+            if connect:
+                try:
+                    if not client.database_exists():
+                        result["error"] = missing_database(settings)
+                except ArcadeError:
+                    pass
     except (ArcadeError, ValueError, AttributeError) as exc:
         result["error"] = str(exc) if isinstance(exc, ArcadeError) else type(exc).__name__
     finally:
