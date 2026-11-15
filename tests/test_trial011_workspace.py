@@ -146,6 +146,84 @@ async def test_a_language_switch_redraws_the_snapshot_view(tmp_path, monkeypatch
         assert body_of(app).startswith("Snapshoty zawierają pełne rozmowy i źródła."), body_of(app)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("technical", [False, True])
+async def test_a_language_switch_keeps_an_import_check_on_screen_with_apply(tmp_path, monkeypatch, size, technical):
+    # Review: the switch used to read the snapshot status again over the check meant to be read before Apply.
+    from textual.widgets import Input
+    settings, broker, workspace = setup(tmp_path, monkeypatch, project=False)
+    languages = ["en"]
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: languages[0])
+    app = InspectorApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        app.action_snapshot()
+        await settle(app, pilot)
+        app.memory_operation("import")
+        await wait_until(pilot, lambda: isinstance(app.screen, FormModal) and app.screen.is_mounted)
+        app.screen.query_one("#field-path", Input).value = "/projects/a/.memory/devbrain"
+        app.screen.query_one("#field-root", Input).value = "/projects/a"
+        await pilot.press("ctrl+s")
+        await settle(app, pilot)
+        assert body_of(app).startswith("Import checked. Review the details, then choose Apply.")
+        if technical:
+            app.toggle_technical()
+        reads = len(broker.calls)
+        languages[0] = "pl"
+        await wait_until(pilot, lambda: app.language == "pl")
+        await settle(app, pilot)
+        if technical:
+            assert '"status": "dry_run"' in body_of(app)  # still the stored structure the person chose to see
+            app.toggle_technical()
+        assert body_of(app).startswith(tr("Import checked. Review the details, then choose Apply.", "pl")), body_of(app)
+        assert app.pending_import and not app.query_one("#memory-apply", Button).disabled
+        assert broker.calls[reads:] == []  # nothing read again, nothing imported
+        languages[0] = "en"
+        await wait_until(pilot, lambda: app.language == "en")
+        await settle(app, pilot)
+        assert body_of(app).startswith("Import checked. Review the details, then choose Apply.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", SIZES)
+async def test_a_language_switch_says_the_open_entrys_hint_again(tmp_path, monkeypatch, size):
+    hint = "History and Sources show saved evidence. Review changes confidence only."
+    app, _, languages = inspector(tmp_path, monkeypatch, "en")
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        app.open_selected("record-a")
+        await settle(app, pilot)
+        assert notice_of(app) == hint
+        languages[0] = "pl"
+        await wait_until(pilot, lambda: app.language == "pl")
+        await settle(app, pilot)
+        assert notice_of(app) == tr(hint, "pl") != hint
+        # A real notice that took the line is left alone by the next switch.
+        app.notice("Something happened.")
+        languages[0] = "en"
+        await wait_until(pilot, lambda: app.language == "en")
+        await settle(app, pilot)
+        assert notice_of(app) != hint
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["checks", "jobs"])
+async def test_a_language_switch_redraws_an_open_check_or_queue_entry(tmp_path, monkeypatch, kind):
+    app, _, languages = inspector(tmp_path, monkeypatch, "en")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.set_view(kind)
+        entry = {"id": "entry-1", "status": "failed", "version": 1}
+        app.entity_kind, app.entity = kind, entry
+        app.show_detail(entry, kind=kind)
+        assert "Status: failed" in body_of(app) and "Version: 1" in body_of(app)
+        languages[0] = "pl"
+        await wait_until(pilot, lambda: app.language == "pl")
+        await settle(app, pilot)
+        assert "Status:" not in body_of(app) and "Wersja: 1" in body_of(app), body_of(app)
+
+
 # Record view shows the raw status ('Stan: confirmed') in Polish
 
 @pytest.mark.parametrize(("language", "line"), [("pl", "Stan: potwierdzone"), ("en", "Status: confirmed")])
@@ -361,7 +439,33 @@ def test_an_unknown_check_profile_is_named_with_the_declared_ones():
     assert unknown_profile_message("nope", {"unit": {}, "lint": {}}) == (
         "Unknown check profile: nope. This worktree declares: lint, unit. See cairnmind check profiles PROJECT.")
     assert unknown_profile_message("x\x1b[2J", {}) == (
-        "Unknown check profile: ?. This worktree declares: none. See cairnmind check profiles PROJECT.")
+        "Unknown check profile: ?. This worktree declares no check profiles. See cairnmind check profiles PROJECT.")
+
+
+@pytest.mark.parametrize(("declared", "polish"), [
+    ({"unit": {}, "lint": {}}, "Nieznany profil testu: nope. Ten katalog roboczy deklaruje: lint, unit. "
+                               "Zobacz cairnmind check profiles PROJECT."),
+    ({}, "Nieznany profil testu: nope. Ten katalog roboczy nie deklaruje profili testów. "
+         "Zobacz cairnmind check profiles PROJECT.")])
+def test_the_unknown_check_profile_sentence_reads_in_the_panel_language(declared, polish):
+    # Review: the sentence the check gives existed in English only.
+    from types import SimpleNamespace
+
+    from cairnmind.check_profile_messages import check_error_text
+    from cairnmind.verification import unknown_profile_message
+    from cairnmind.workspace_stage import _outcome, check_summary
+    english = unknown_profile_message("nope", declared)
+    error = "Error: Cairnmind: " + english  # as `cairnmind check run` writes it on stderr
+    translate = lambda text: tr(text, "pl")  # noqa: E731
+    assert check_error_text(error, translate) == polish
+    assert check_error_text(error, lambda text: tr(text, "en")) == english
+    never = {"passed": False, "outcome": None, "error": error}
+    assert polish in check_summary(never, translate) and english not in check_summary(never, translate)
+    assert _outcome(SimpleNamespace(t=translate), "nope", never).endswith(polish)
+    # Any other error, or a forged name, is shown as it came and never turned into the fixed sentence.
+    forged = english.replace("nope", "x{0}y")
+    assert check_error_text(forged, translate) == forged
+    assert check_error_text("Runner did not start.", translate) == "Runner did not start."
 
 
 @pytest.mark.parametrize("language", ["en", "pl"])
