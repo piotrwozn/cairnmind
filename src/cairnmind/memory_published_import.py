@@ -201,6 +201,15 @@ class PublishedImporter:
         if diverged:
             raise MemoryConflict("These records diverged from the published memory; re-apply your change after "
                                  "--take-published, or resolve the conflict by taking one side: " + ", ".join(diverged))
+        # What the files bring as confirmed (#177): kept as confirmed elsewhere, with who each file says
+        # reviewed it; the preview and the result both say how many, and that none is this machine's own.
+        brought = [model for model, _, _, numbers in written.values()
+                   if numbers and model["revisions"][numbers[-1]]["status"] == "confirmed"]
+        claimed = [(reviewed_by(model, model["revisions"]) or [{}])[-1].get("name") for model in brought]
+        result["confirmed_records"] = {
+            "total": len(brought), "confirmed_by": sorted({str(name) for name in claimed if name})[:50],
+            "note": "confirmed elsewhere (claimed by the files); kept as confirmed, shown as imported, "
+                    "never verified here"}
         for record_id, (_, _, old, _) in written.items():
             if old is not None:
                 update_document(tx, "records", {"active_key": None}, "id=:id", {"id": record_id})
@@ -308,9 +317,14 @@ class PublishedImporter:
                         evidence_basis=evidence["basis"])
         # "version" names the local version this is: a later local edit keeps the mark (it is derived metadata)
         # but not as its own, so only this version stands for published revision `revision`.
+        reviews = [e for e in reviewed_by(model, model["revisions"]) if e["revision"] <= index + 1]
         metadata["publication"] = {"path": path, "revision": index + 1, "imported_at": now, "version": version,
-                                   "reviewed_by": [e for e in reviewed_by(model, model["revisions"])
-                                                   if e["revision"] <= index + 1]}
+                                   "reviewed_by": reviews}
+        metadata.pop("confirmation", None)
+        if row["status"] == "confirmed":
+            # Confirmed elsewhere (#177): the file's own claim of who reviewed it, never a local act.
+            from .confirmation import import_mark
+            metadata["confirmation"] = import_mark("published", path, reviews, now, version)
         return self._store(tx, row, path)
 
     def _store(self, tx, row, path):

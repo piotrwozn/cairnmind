@@ -63,8 +63,11 @@ def _without_local_mark(record):
     in or out, so an imported record always counts as somebody else's write.
     """
     metadata = record.get("metadata")
-    if isinstance(metadata, dict) and EXTRACTION_MARK in metadata:
-        record["metadata"] = {key: value for key, value in metadata.items() if key != EXTRACTION_MARK}
+    # The confirmation mark (#177) is local in the same way: it says what happened on this machine. A package
+    # carries the audits and notes instead, and the importer writes its own mark: confirmed elsewhere.
+    if isinstance(metadata, dict) and (EXTRACTION_MARK in metadata or "confirmation" in metadata):
+        record["metadata"] = {key: value for key, value in metadata.items()
+                              if key not in (EXTRACTION_MARK, "confirmation")}
     return record
 
 
@@ -815,6 +818,32 @@ class MemoryManager:
                         "SELECT local_root FROM memory_bindings WHERE project_id=:project AND origin_root=:origin",
                         {"project": project_id, "origin": origin})):
                     raise MemoryConflict("Memory origin already has a different local root binding")
+            # What the package brings as confirmed (#177): every record whose head is confirmed and is new
+            # here or moves this store's head on. It is kept as confirmed elsewhere, with who the package
+            # says confirmed it, and is never this machine's own confirmation. A head that does not move
+            # keeps the mark this store gave it.
+            from .confirmation import archive_claims, import_mark
+            package_sources = {row["id"]: row for row in payload["sources"]}
+            # Read from the rows: the captured state above leaves local marks out, as a package does.
+            local_marks = {row["id"]: row.get("mark") for row in tx.query(
+                "SELECT id,metadata.confirmation AS mark FROM records WHERE project_id=:project",
+                {"project": project_id})} if current else {}
+            marks, imported_at, names, unnamed, brought = {}, utc_now(), set(), 0, 0
+            for row in payload["records"]:
+                old = existing["records"].get(row["id"])
+                if old and old["version"] == row["version"]:
+                    if isinstance(local_marks.get(row["id"]), dict):
+                        marks[row["id"]] = local_marks[row["id"]]
+                elif row["status"] == "confirmed":
+                    claims = archive_claims(row, package_sources)
+                    marks[row["id"]] = {**import_mark("archive", manifest["origin_root"], claims, imported_at,
+                                                      row["version"]), "snapshot_id": snapshot_id}
+                    names.update(str(claim["name"]) for claim in claims[-1:] if claim.get("name"))
+                    unnamed += not claims
+                    brought += 1
+            result["confirmed_records"] = {
+                "total": brought, "confirmed_by": sorted(names)[:50], "without_a_name": unnamed,
+                "note": "confirmed elsewhere; kept as confirmed, shown as imported, never verified here"}
             if dry_run:
                 return result
             from .journal import Journal
@@ -855,6 +884,8 @@ class MemoryManager:
                                    current_key=json_text([project_id, row["uri"]]) if current_source else None)
                     elif table == "records":
                         row["active_key"] = json_text([project_id, row["kind"], row["key"]]) if row["status"] != "superseded" else None
+                        if row["id"] in marks:
+                            row["metadata"] = {**row["metadata"], "confirmation": marks[row["id"]]}
                     elif table == "check_runs":
                         if old:
                             continue  # A genuine local matching run retains its local authority.
