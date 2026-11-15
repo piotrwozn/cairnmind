@@ -5,6 +5,8 @@ The password is taken from the first of these that is set:
 1. the variable CAIRNMIND_ARCADE_PASSWORD (or its earlier spelling DEVBRAIN_ARCADE_PASSWORD);
 2. the file named by ``arcade_password_file``: an absolute path to a regular file of this user with
    mode 0600, not a link, as for the keys of the credential store (api_credentials.CredentialStore);
+   or a Kubernetes secret mounted as a volume, whose file is a link in exactly the kubelet's layout to a
+   regular file of this user that group and others cannot read (read_private_file, #211);
 3. ``config.json``, and only for an engine on this machine (a loopback address). That is where the
    managed local engine's password has always been, so an installation from an earlier version keeps
    working unchanged. For any other host it is not used.
@@ -44,19 +46,75 @@ def valid_password(value: str) -> bool:
     return bool(value) and len(value) <= FILE_LIMIT and all(33 <= ord(char) <= 126 for char in value)
 
 
+_READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+_FOLDER = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+LINK_RULE = ("a link is followed only as Kubernetes mounts a secret: NAME -> ..data/NAME, and ..data -> a "
+             "folder beside it whose name starts with ..; no other link is followed")
+
+
+def _open_mounted_secret(path: str, setting: str) -> int:
+    """The file behind a link laid out exactly as the kubelet mounts a secret, opened without following
+    any further link: ``folder/NAME -> ..data/NAME``, ``folder/..data -> ..<time>``, and the regular file
+    ``folder/..<time>/NAME``. The kubelet replaces ``..data`` when the secret changes and then removes
+    the old folder, so a folder that vanished between the two steps is looked up once more."""
+    refused = ValueError(f"{setting} names {path}, a symbolic link: {LINK_RULE}.")
+    folder, name = os.path.split(path)
+    for attempt in (1, 2):
+        try:
+            if os.readlink(path) != f"..data/{name}":
+                raise refused
+            version = os.readlink(os.path.join(folder, "..data"))
+        except OSError:
+            raise refused from None
+        if "/" in version or not version.startswith("..") or version in ("..", "..data"):
+            raise refused
+        try:
+            parent = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        except OSError:
+            raise refused from None
+        try:
+            inner = os.open(version, _FOLDER, dir_fd=parent)
+            try:
+                fd = os.open(name, _READ, dir_fd=inner)
+            finally:
+                os.close(inner)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                raise refused
+            return fd
+        except FileNotFoundError:
+            if attempt == 2:
+                raise refused from None
+        except OSError:  # a link where a folder or the file must be, or a folder that cannot be read
+            raise refused from None
+        finally:
+            os.close(parent)
+    raise refused
+
+
 def read_private_file(path: str, setting: str) -> str:
-    """The one line of a private file of this user. ``setting`` names the setting in messages."""
+    """The one line of a private file of this user. ``setting`` names the setting in messages.
+
+    The file itself is never a link, except in the layout of a mounted Kubernetes secret (#211); its
+    file must then be a regular file of this user that group and others cannot read.
+    """
     if not path or not os.path.isabs(path):
         raise ValueError(f"{setting} must be an absolute path.")
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        mounted = stat.S_ISLNK(os.lstat(path).st_mode)
+        fd = _open_mounted_secret(path, setting) if mounted else os.open(path, _READ)
     except FileNotFoundError:
         raise ValueError(f"{setting} names {path}, which does not exist.") from None
     except OSError:
-        raise ValueError(f"{setting} names {path}, which cannot be read safely (a link is not followed).") from None
+        raise ValueError(f"{setting} names {path}, which cannot be read safely ({LINK_RULE}).") from None
     with os.fdopen(fd, "rb") as handle:
         info = os.fstat(handle.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+        if mounted:
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > FILE_LIMIT:
+                raise ValueError(f"{setting} names {path}, a mounted secret whose file must be a regular file of "
+                                 f"this user that group and others cannot read (defaultMode 0400 in Kubernetes) "
+                                 f"and at most {FILE_LIMIT} bytes.")
+        elif (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > FILE_LIMIT):
             raise ValueError(f"{setting} names {path}, which must be a regular file of this user with mode 0600 "
                              f"(chmod 600) and at most {FILE_LIMIT} bytes.")
