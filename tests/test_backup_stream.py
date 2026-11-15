@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -15,10 +16,12 @@ import pytest
 from cairnmind import store_backup
 from cairnmind.arcade import ArcadeClient
 from cairnmind.config import BACKUP_FORMATS
+from cairnmind.journal import JournalTransaction
 from cairnmind.retrieval import Retriever
 from cairnmind.service import daily_backups
 from cairnmind.sql import json_text
 from cairnmind.store import EXPORT_TYPES, Store
+from cairnmind.store_size import _backups
 
 FIXTURE_0_10_0 = Path(__file__).parent / "fixtures" / "backup-0.10.0.cairnmind.json.gz"
 # A fixed limit for the Python memory a backup may use at its peak, and a store several times larger.
@@ -136,6 +139,18 @@ def _stream_checksum(path):
     return size + payload_end
 
 
+def _bulk_ids(path):
+    """Every ``bulk-<n>`` row id in a backup, read in pieces; a list, so that a repeated row shows."""
+    pattern, found, carry = re.compile(rb'"id":"bulk-(\d+)"'), [], b""
+    with gzip.open(path, "rb") as handle:
+        while piece := handle.read(1 << 20):
+            data = carry + piece
+            # A match that ends inside the carried bytes was already complete, and counted, in the last piece.
+            found.extend(int(match[1]) for match in pattern.finditer(data) if match.end() > len(carry))
+            carry = data[-64:]
+    return found
+
+
 def test_backup_peak_memory_stays_under_a_fixed_limit(store, tmp_path):
     project = store.add_project("large", tmp_path / "large")
     rows = 4 * MEMORY_LIMIT // ROW_TEXT + 1000
@@ -149,6 +164,55 @@ def test_backup_peak_memory_stays_under_a_fixed_limit(store, tmp_path):
     payload_bytes = _stream_checksum(path)
     assert payload_bytes > 4 * MEMORY_LIMIT, payload_bytes
     assert peak < MEMORY_LIMIT, f"peak {peak / 2**20:.1f} MiB for a payload of {payload_bytes / 2**20:.1f} MiB"
+    # Every row is in the file exactly once: paging neither skipped nor repeated one.
+    ids = _bulk_ids(path)
+    assert len(ids) == rows and set(ids) == set(range(rows))
+
+
+def test_pages_cover_every_row_once_across_buckets(store, monkeypatch):
+    store.client.command("CREATE DOCUMENT TYPE paged_probe BUCKETS 4")
+    store.client.command("INSERT INTO paged_probe CONTENT :rows", {"rows": [{"n": n} for n in range(600)]})
+    # Holes and rows written after them, spread over the buckets again.
+    store.client.command("DELETE FROM paged_probe WHERE n % 7 = 0")
+    store.client.command("INSERT INTO paged_probe CONTENT :rows", {"rows": [{"n": n} for n in range(600, 700)]})
+    monkeypatch.setattr(store_backup, "PAGE_ROWS", 7)
+    with store.transaction() as tx:
+        seen = [json.loads(text)["n"] for text in store_backup._pages(tx, "paged_probe")]
+    assert sorted(seen) == [n for n in range(700) if n >= 600 or n % 7]
+
+
+def test_backup_whose_transaction_fails_to_commit_leaves_no_file(store, tmp_path, monkeypatch):
+    varied(store, tmp_path)
+
+    def failing_flush(self):
+        raise OSError("the transaction expired")
+
+    monkeypatch.setattr(JournalTransaction, "flush", failing_flush)
+    folder = tmp_path / "backups"
+    with pytest.raises(OSError, match="expired"):
+        store.backup(folder / f"{time.time_ns()}.cairnmind.json.gz")
+    assert list(folder.iterdir()) == []
+
+
+def test_payload_keys_that_are_not_text_are_refused():
+    with pytest.raises(TypeError, match="keys must be strings"):
+        "".join(store_backup.payload_chunks({1: []}))
+    with pytest.raises(TypeError, match="keys must be strings"):
+        "".join(store_backup.payload_chunks({"vector_data": {2: []}}))
+
+
+def test_temporary_files_of_killed_backups_are_counted_and_old_ones_found(tmp_path):
+    folder = tmp_path / "backups"
+    folder.mkdir()
+    old, new = folder / ".cairnmind-backup-old", folder / ".cairnmind-backup-new"
+    old.write_bytes(b"x" * 10)
+    new.write_bytes(b"y" * 5)
+    (folder / ".hidden").write_bytes(b"z" * 7)
+    day_ago = time.time() - 2 * 86400
+    os.utime(old, (day_ago, day_ago))
+    assert store_backup.stale_temporaries(folder, 86400) == [old]
+    assert store_backup.stale_temporaries(tmp_path / "missing", 86400) == []
+    assert _backups(folder)["other"] == {"count": 2, "bytes": 15}
 
 
 def test_backup_that_fails_midway_leaves_no_file(store, tmp_path, monkeypatch):
