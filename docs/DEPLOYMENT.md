@@ -14,7 +14,7 @@ What is not here yet, and why:
 | File | What it is |
 | --- | --- |
 | `deploy/arcadedb/Dockerfile` | The ArcadeDB release Cairnmind pins (26.11.1) on Java 21 (Eclipse Temurin). The release archive is checked against its published SHA-256, as `cairnmind engine install` does. |
-| `deploy/arcadedb/entrypoint.sh` | Starts the server with the same JVM options and server settings as `cairnmind engine start`: 1 GB heap, the `low-ram` profile, and the vector module. The server runs as user `arcadedb` (uid 10001). |
+| `deploy/arcadedb/entrypoint.sh` | Starts the server with the same JVM options and server settings as `cairnmind engine start`: 1 GB heap, the `low-ram` profile, and the vector module, plus ArcadeDB's production mode (see [What the server exposes](#what-the-server-exposes)). The server runs as user `arcadedb` (uid 10001). |
 | `deploy/arcadedb/healthcheck.sh` | The container health check: `GET /api/v1/ready`. |
 | `deploy/compose.yaml` | One server with a named volume, publishing the HTTP port on `127.0.0.1` only. |
 | `deploy/kubernetes/` | Plain Kubernetes manifests (no Helm chart) for one server with TLS: see [Kubernetes](#kubernetes). |
@@ -22,6 +22,15 @@ What is not here yet, and why:
 No password is built into the image or written in any of these files. The server reads the root password from a file at run time, and the Compose file takes that file's path from the environment.
 
 The image is not published to a registry. You build it from this repository.
+
+### What the server exposes
+
+The container may be reached from other hosts, so it differs from the local engine (which listens on loopback only and is not changed) in two ways:
+
+- **Production mode** (`-Darcadedb.server.mode=production`). Compared with ArcadeDB's default development mode, the server does not serve the Studio web tool (`GET /` answers 404), leaves the error details out of HTTP responses and writes them to its own log instead (Cairnmind then reports, for example, `ArcadeDB HTTP 400: Cannot execute command` with no detail: look in the server log), flushes the write-ahead log on each commit (`arcadedb.txWalFlush=1`), and refuses `LOAD CSV` of local files. Cairnmind uses none of what development mode adds; every check on this page passes in production mode. To go back, add `-Darcadedb.server.mode=development` to `ARCADEDB_JAVA_OPTS`.
+- **No MCP plugin.** ArcadeDB 26.11.1 starts its MCP plugin whenever the jar is present (no setting leaves it out) and serves `/api/v1/mcp`. That endpoint asks for the same credentials as the rest of the HTTP API and is switched off by default, but `root` can switch it on at run time (`POST /api/v1/mcp/config`) for itself and other users. Cairnmind does not use it, so the image leaves the jar out and the endpoint does not exist.
+
+What remains is ArcadeDB's HTTP API, with its own users and passwords: `/api/v1/ready` and `/api/v1/health` answer without a password (no data), everything else needs one. Who can reach it is set by where you publish the port: `127.0.0.1` only in the Compose file, and in Kubernetes only pods labelled `cairnmind.io/database-client: "true"`, on the TLS port 2490 (see [TLS: where it ends](#tls-where-it-ends) for what holds when the network plugin does not enforce the policy).
 
 ## Start it on one machine
 

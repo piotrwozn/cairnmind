@@ -86,6 +86,19 @@ def test_image_starts_the_server_with_the_options_of_the_local_engine(tmp_path, 
     assert options_missing_from(script, command[1:-3], (str(tmp_path), "127.0.0.1")) == []
 
 
+def test_the_image_runs_in_production_mode_without_the_mcp_plugin_and_the_local_engine_is_unchanged(
+        tmp_path, monkeypatch):
+    script = ENTRYPOINT.read_text()
+    java = script[script.index("exec java"):]
+    # Before ARCADEDB_JAVA_OPTS, so that an operator's own -Darcadedb.server.mode wins.
+    assert java.index("-Darcadedb.server.mode=production") < java.index("${ARCADEDB_JAVA_OPTS:-}")
+    dockerfile = DOCKERFILE.read_text()
+    assert 'rm "/opt/arcadedb/lib/arcadedb-mcp-${ARCADEDB_VERSION}.jar"' in dockerfile
+    assert 'test -f "/opt/arcadedb/lib/arcadedb-mcp-${ARCADEDB_VERSION}.jar"' in dockerfile
+    # The local engine on loopback keeps ArcadeDB's default mode.
+    assert not any("arcadedb.server.mode" in option for option in local_engine_command(tmp_path, monkeypatch))
+
+
 def test_entrypoint_is_a_valid_shell_script_that_refuses_to_start_without_a_password(tmp_path):
     subprocess.run(["sh", "-n", str(ENTRYPOINT)], check=True)
     result = subprocess.run(["sh", str(ENTRYPOINT)], capture_output=True, text=True, env={
