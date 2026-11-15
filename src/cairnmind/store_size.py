@@ -253,8 +253,8 @@ def _disk(settings) -> dict:
         if journals["exists"] else 0
     journals = {"path": journals["path"], "exists": journals["exists"], "sessions": sessions,
                 "files": journals["files"], "bytes": journals["bytes"]}
-    from .database_mode import describe
-    return {"storage": {**describe(settings), "url": settings.arcade_url},
+    from .database_mode import address, describe
+    return {"storage": {**describe(settings), "url": address(settings)},
             "data_dir": _tree(data), "databases": _tree(data / "arcade" / "databases"),
             "database": _tree(data / "arcade" / "databases" / settings.arcade_database),
             "engine_log": _tree(data / "arcade" / "engine.log"), "engine_logs": _tree(data / "arcade" / "log"),

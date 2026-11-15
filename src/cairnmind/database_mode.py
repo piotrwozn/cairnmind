@@ -54,6 +54,41 @@ def on_this_machine(settings) -> bool:
     return host(settings) in LOOPBACK
 
 
+def address(settings) -> str:
+    """The database address as a message or a report may show it: never with a user, a password, a query
+    or a fragment. ArcadeClient refuses such an address and sends nothing, but what a person typed there
+    by mistake must not come back in `doctor`, `engine status` or a refusal that gets pasted elsewhere."""
+    url = settings.arcade_url
+    if isinstance(url, str) and not any(mark in url for mark in "@?#"):
+        return url
+    try:
+        parsed = urlparse(url)
+        name, port, scheme = parsed.hostname, parsed.port, parsed.scheme
+    except (ValueError, TypeError, AttributeError):
+        name = port = scheme = None
+    if not name or scheme not in ("http", "https"):
+        return "an address that is not valid"
+    name = f"[{name}]" if ":" in name else name
+    return f"{scheme}://{name}" + (f":{port}" if port else "") + parsed.path.rstrip("/")
+
+
+def savable(url) -> bool:
+    """Whether ``url`` may be written to config.json as the connect address: an address and nothing else."""
+    try:
+        parsed = urlparse(url)
+        return (parsed.scheme in ("http", "https") and bool(parsed.hostname)
+                and not any(mark in url for mark in "@?#"))
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def saved_note(settings) -> str:
+    """Said once, when the address from the variable is written to config.json (Settings.load)."""
+    return (f"Saved {CONNECT_SETTING} = {address(settings)} in {settings.data_dir / 'config.json'}: this data "
+            "directory is connect-only from now on, also for a command started without the variable. To go back "
+            f"to the engine Cairnmind manages, remove {CONNECT_SETTING} from that file and unset the variable.")
+
+
 def why(settings) -> str:
     """One sentence: what puts this installation in connect-only mode."""
     if getattr(settings, CONNECT_SETTING, ""):
@@ -64,7 +99,7 @@ def why(settings) -> str:
 
 def refusal(settings, action: str) -> str:
     """Why an engine command does nothing here, for ``action`` such as "start an engine"."""
-    return (f"This installation only connects to ArcadeDB at {settings.arcade_url} ({why(settings)}); it does not "
+    return (f"This installation only connects to ArcadeDB at {address(settings)} ({why(settings)}); it does not "
             f"{action}. The server is installed, started and stopped where it runs (see {DEPLOYMENT_GUIDE}). "
             "`cairnmind engine status` shows whether it answers and which version it runs.")
 
@@ -85,7 +120,7 @@ def version_problem(settings, info) -> str | None:
         return None
     if not connect_only(settings):
         return f"ArcadeDB release does not match the pinned {settings.arcade_version}"
-    return (f"ArcadeDB at {settings.arcade_url} runs version {actual or 'unknown'}, which this release of Cairnmind "
+    return (f"ArcadeDB at {address(settings)} runs version {actual or 'unknown'}, which this release of Cairnmind "
             f"does not support. Supported: {', '.join(supported)}. Run the server from the image of this release "
             f"({DEPLOYMENT_GUIDE}, \"When the pinned ArcadeDB version changes\"), or use the Cairnmind release "
             "that matches the server. Nothing was read or written.")
@@ -94,7 +129,7 @@ def version_problem(settings, info) -> str | None:
 def unavailable(settings, detail: str | None = None) -> str:
     """The server did not answer, in connect-only mode: say where it was looked for and that nothing starts here."""
     reason = f" ({detail})" if detail else ""
-    return (f"ArcadeDB at {settings.arcade_url} is unavailable{reason}. This installation only connects to it "
+    return (f"ArcadeDB at {address(settings)} is unavailable{reason}. This installation only connects to it "
             f"({why(settings)}) and starts no engine of its own: start the server where it runs, or check the "
             "address, the network and a port-forward or tunnel in between.")
 
@@ -104,14 +139,14 @@ def missing_database(settings) -> str:
     derived = "" if (getattr(settings, "_origin", None) or {}).get("database") != "derived" else (
         " That name was derived from this data directory's path: to use a database another installation "
         "created, set arcade_database (CAIRNMIND_ARCADE_DATABASE) to its name.")
-    return (f"The database {settings.arcade_database} does not exist on ArcadeDB at {settings.arcade_url}, and a "
+    return (f"The database {settings.arcade_database} does not exist on ArcadeDB at {address(settings)}, and a "
             f"connect-only installation creates none.{derived} Create it once, with its user: `cairnmind db "
             "create-user --admin-password-file FILE`.")
 
 
 def sign_in_refused(settings) -> str:
     """What to add when the server does not accept the user of a connect-only installation."""
-    return (f". ArcadeDB at {settings.arcade_url} did not accept the user {settings.arcade_user}. If the database "
+    return (f". ArcadeDB at {address(settings)} did not accept the user {settings.arcade_user}. If the database "
             "and this user were not created yet, create them once: `cairnmind db create-user "
             "--admin-password-file FILE`. Otherwise check arcade_user and the password this installation reads.")
 

@@ -162,21 +162,25 @@ def resolve_password(values: dict, environ=None) -> tuple[str, str, str | None]:
 
 def problem(settings) -> str | None:
     """Why ``settings`` must not be used to reach the database, or None. Checked by ArcadeClient."""
+    # The setting a person wrote the address in: arcade_connect_url when that one supplied it (#68).
+    named = "arcade_connect_url" if getattr(settings, "arcade_connect_url", "") else "arcade_url"
     try:
         parsed = httpx.URL(settings.arcade_url)
     except (httpx.InvalidURL, TypeError):
-        return "arcade_url is not a valid address."
+        return f"{named} is not a valid address."
     if parsed.scheme not in ("http", "https") or not parsed.host:
-        return "arcade_url must start with https:// (or http:// for this machine)."
+        return f"{named} must start with https:// (or http:// for this machine)."
     if parsed.userinfo or parsed.query or parsed.fragment:
-        return "arcade_url must not carry a user, a password, a query or a fragment."
+        return (f"{named} must not carry a user, a password, a query or a fragment: the user is arcade_user "
+                f"and the password comes from outside the address ({PASSWORD_HELP}).")
     origin = getattr(settings, "_origin", None) or {}
     if origin.get("problem"):
         return origin["problem"]
     if parsed.host in LOOPBACK:
         if getattr(settings, "arcade_connect_url", "") and not settings.arcade_password:
             # Connect-only (#68): no engine is started here, so no password is generated for one either.
-            return (f"ArcadeDB at {settings.arcade_url}, which this installation only connects to, needs the "
+            from .database_mode import address
+            return (f"ArcadeDB at {address(settings)}, which this installation only connects to, needs the "
                     f"password set where that server runs: {PASSWORD_HELP}.")
         return None
     if parsed.scheme != "https":
@@ -230,13 +234,13 @@ SOURCE_LABELS = {"environment": "environment", "file": "file", "config": "config
 def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
     """The database part of ``cairnmind doctor``: read-only, and through ArcadeClient, so its rules apply."""
     from .arcade import ArcadeClient, ArcadeError
-    from .database_mode import describe, missing_database, supported_versions, version_problem
+    from .database_mode import address, describe, missing_database, supported_versions, version_problem
     origin = getattr(settings, "_origin", None) or {}
     source = origin.get("password", "config" if settings.arcade_password else "none")
     # Where storage runs (#68): mode "managed" or "connect", and the host.
     place = describe(settings)
     connect = place["mode"] == "connect"
-    result: dict[str, Any] = {**place, "available": False, "url": settings.arcade_url,
+    result: dict[str, Any] = {**place, "available": False, "url": address(settings),
                               "database": settings.arcade_database,
                               "configured_version": settings.arcade_version, "user": settings.arcade_user,
                               "transport": transport_label(settings), "password_source": SOURCE_LABELS.get(source, source),
@@ -315,6 +319,11 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
     admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     payload = {"name": name, "password": secret, "databases": {settings.arcade_database: [group]}}
     try:
+        # The version first (#68): root creates nothing on a server this release does not support.
+        from .database_mode import version_problem
+        refused = version_problem(settings, admin.server_info())
+        if refused:
+            raise ArcadeError(refused)
         admin.ensure_database()
         admin.server_command("create user " + json.dumps(payload))
     except ArcadeError as exc:

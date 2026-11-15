@@ -67,6 +67,9 @@ def initialized(command):
     @wraps(command)
     def invoke(ctx, *args, **kwargs):
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        if ctx.obj._origin.get("connect_saved"):
+            from cairnmind.database_mode import saved_note
+            typer.echo(f"Cairnmind: {saved_note(ctx.obj)}", err=True)
         return command(ctx, *args, **kwargs)
     return invoke
 
@@ -412,8 +415,12 @@ def engine_inspect(ctx: typer.Context):
 @engine_app.command("stop")
 @initialized
 def engine_stop(ctx: typer.Context):
-    from cairnmind.engine import stop_engine
-    if service_alive(ctx.obj):
+    from cairnmind.engine import local_process_recorded, stop_engine
+    from cairnmind.database_mode import connect_only
+    # A connect-only installation without an engine of its own has nothing to stop, whether or not its
+    # service runs: it says so, instead of asking to stop the service first (#68).
+    nothing_here = connect_only(ctx.obj) and not local_process_recorded(ctx.obj)
+    if not nothing_here and service_alive(ctx.obj):
         raise typer.BadParameter("Run cairnmind stop first; the knowledge service is using ArcadeDB")
     with _engine_command():
         output(stop_engine(ctx.obj))

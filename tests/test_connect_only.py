@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import threading
 import uuid
 
 import httpx
@@ -121,15 +122,97 @@ def test_the_connect_address_is_the_one_used_and_the_stored_address_is_kept(tmp_
         ArcadeClient(settings)
 
 
-def test_the_variable_names_the_address_in_both_spellings_and_is_not_saved(tmp_path, test_engine, monkeypatch):
+def test_the_variable_names_the_address_in_both_spellings_and_its_first_use_saves_it(tmp_path, test_engine,
+                                                                                    monkeypatch):
     data = data_directory(tmp_path)
     monkeypatch.setenv("DEVBRAIN_ARCADE_CONNECT_URL", "http://127.0.0.1:2998")
+    # Reading settings writes nothing; the first initialising use saves the address and nothing else.
+    assert Settings.load(data).arcade_url == "http://127.0.0.1:2998"
+    assert "arcade_connect_url" not in json.loads((data / "config.json").read_text())
     settings = Settings.load(data, create=True)
     assert settings.arcade_url == "http://127.0.0.1:2998" and mode(settings) == "connect"
+    assert settings._origin.get("connect_saved") is True
     saved = json.loads((data / "config.json").read_text())
-    assert "arcade_connect_url" not in saved and saved.get("arcade_url", "http://127.0.0.1:2480").endswith(":2480")
+    assert saved["arcade_connect_url"] == "http://127.0.0.1:2998"
+    assert saved.get("arcade_url", "http://127.0.0.1:2480").endswith(":2480") and not saved.get("arcade_password")
     monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "http://127.0.0.1:2997")
-    assert Settings.load(data).arcade_url == "http://127.0.0.1:2997"  # the current spelling comes first
+    again = Settings.load(data, create=True)
+    assert again.arcade_url == "http://127.0.0.1:2997"  # the current spelling comes first, for this process
+    # config.json already names an address: another one in the variable does not replace it.
+    assert not again._origin.get("connect_saved")
+    assert json.loads((data / "config.json").read_text())["arcade_connect_url"] == "http://127.0.0.1:2998"
+
+
+def test_a_command_started_without_the_variable_stays_connect_only_and_starts_no_engine(tmp_path, test_engine,
+                                                                                      monkeypatch):
+    """The installer ran with the variable; a later shell, or a terminal server started earlier, has none.
+
+    With an engine installed in the data directory (an installation switched from managed), that command
+    would otherwise start it and write to the old local store.
+    """
+    data = data_directory(tmp_path, arcade_url=f"http://127.0.0.1:{free_port()}")
+    (data / "runtime" / f"arcadedb-{Settings(data_dir=data).arcade_version}" / "lib").mkdir(parents=True)
+    url = f"http://127.0.0.1:{free_port()}"  # nothing listens there
+    connect(monkeypatch, url, "Some-password-1234", user="cairnmind")
+    forbid_local_engine(monkeypatch)
+    first = cli(data, "engine", "status")
+    assert first.exit_code == 0 and f"Saved arcade_connect_url = {url}" in words(first.output)
+    assert "remove arcade_connect_url from that file" in words(first.output)
+    for name in ("CONNECT_URL", "USER", "PASSWORD"):
+        monkeypatch.delenv("CAIRNMIND_ARCADE_" + name)
+    settings = Settings.load(data, create=True)
+    assert mode(settings) == "connect" and settings.arcade_url == url
+    for command in (["init"], ["engine", "start"], ["engine", "install"]):
+        result = cli(data, *command)
+        text = words(result.output) + str(result.exception)
+        assert result.exit_code != 0 and "ArcadeDB is not installed" not in text, (command, text)
+        assert "Saved arcade_connect_url" not in text  # said once, when it was saved
+    # `init` names what this process lacks; nothing was generated or locked for an engine.
+    refused = cli(data, "init")
+    assert "needs the password set where that server runs" in str(refused.exception)
+    assert not json.loads((data / "config.json").read_text()).get("arcade_password")
+    assert not (data / "arcade").exists() and not (data / "engine.lock").exists()
+
+
+def test_an_address_that_is_refused_is_not_saved(tmp_path, test_engine, monkeypatch):
+    data = data_directory(tmp_path)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://cairnmind:Hunter2-secret@db.example.org:2490")
+    assert not Settings.load(data, create=True)._origin.get("connect_saved")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "http://127.0.0.1:2999")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_URL", "http://127.0.0.1:2480")  # two addresses: refused, so not saved
+    assert not Settings.load(data, create=True)._origin.get("connect_saved")
+    assert "arcade_connect_url" not in (data / "config.json").read_text()
+    assert "Hunter2-secret" not in (data / "config.json").read_text()
+
+
+def test_a_password_written_into_the_address_is_never_shown_and_the_setting_is_named(tmp_path, test_engine,
+                                                                                  monkeypatch):
+    data = data_directory(tmp_path)
+    connect(monkeypatch, "https://cairnmind:Hunter2-secret@db.example.org:2490?x=Query-secret#Fragment-secret",
+            "Some-password-1234", user="cairnmind")
+    forbid_local_engine(monkeypatch)
+    shown = []
+    for command, code in ((["engine", "start"], 2), (["engine", "stop"], 2), (["engine", "install"], 2),
+                          (["engine", "status"], 0), (["init"], 1)):
+        result = cli(data, *command)
+        assert result.exit_code == code, (command, result.output, result.exception)
+        shown.append(result.output + str(result.exception))
+    settings = Settings.load(data)
+    from cairnmind.database_credentials import doctor_block
+    from cairnmind.database_mode import address, missing_database, unavailable, version_problem
+    block = doctor_block(settings)
+    shown += [json.dumps(block), missing_database(settings), unavailable(settings),
+              version_problem(settings, {"version": "1.0"})]
+    assert address(settings) == "https://db.example.org:2490" == block["url"]
+    assert "This installation only connects to ArcadeDB at https://db.example.org:2490 " in words(shown[0])
+    for text in shown:
+        assert not any(secret in text for secret in ("Hunter2", "Query-secret", "Fragment-secret")), text
+    # The refusal names the setting the person wrote, and where the user and the password belong.
+    assert "arcade_connect_url must not carry a user, a password" in block["error"]
+    assert "arcade_user" in block["error"] and "arcade_url must not" not in block["error"]
+    # An address without any of them is shown as it was written.
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example.org:2490")
+    assert address(Settings.load(data)) == "https://db.example.org:2490"
 
 
 def test_two_different_addresses_are_refused_and_both_settings_are_named(tmp_path, test_engine, monkeypatch):
@@ -168,7 +251,19 @@ def test_engine_commands_say_plainly_that_nothing_is_managed_here(tmp_path, test
         assert f"This installation only connects to ArcadeDB at {url}" in text, text
         assert f"it does not {verb} an engine" in text and "arcade_connect_url names that address" in text
         assert "Traceback" not in text
+    # With the knowledge service running, which is the usual state, `engine stop` says the same: it does
+    # not ask to stop the service for an engine that does not exist.
+    from cairnmind import cli as cli_module
+    monkeypatch.setattr(cli_module, "service_alive", lambda settings: True)
+    stopped = cli(data, "engine", "stop")
+    assert stopped.exit_code == 2 and "it does not stop an engine" in words(stopped.output), stopped.output
+    assert "Run cairnmind stop first" not in stopped.output and "Usage" not in stopped.output
     assert no_engine_files(data)
+    # An engine this data directory started before the switch is still guarded by the service check.
+    (data / "arcade").mkdir()
+    (data / "arcade" / "process.json").write_text(json.dumps({"pid": os.getpid()}))
+    guarded = cli(data, "engine", "stop")
+    assert guarded.exit_code == 2 and "Run cairnmind stop first" in words(guarded.output)
 
 
 def test_a_server_that_does_not_answer_is_reported_and_no_engine_is_started(tmp_path, test_engine, monkeypatch):
@@ -246,6 +341,16 @@ def test_an_unsupported_server_version_is_reported_and_refused_with_what_is_supp
         Store.open_readonly(settings)
     refused = cli(data, "init")
     assert refused.exit_code != 0 and "Supported" in str(refused.exception)
+    # The one command that signs in as root asks for the version first too: it creates no database and
+    # no user on a server this release does not support.
+    admin = tmp_path / "admin-password"
+    admin.write_text("Root-password-1234\n")
+    os.chmod(admin, 0o600)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_USER", "cairnmind")
+    made = cli(data, "db", "create-user", "--admin-password-file", str(admin))
+    assert made.exit_code != 0 and f"Supported: {pinned}" in str(made.exception), (made.output, made.exception)
+    assert "The user cairnmind was not created" in str(made.exception)
+    assert "Root-password-1234" not in made.output + str(made.exception)
     assert set(seen) == {("GET", "/api/v1/server")}
 
 
@@ -498,3 +603,42 @@ def test_two_installations_on_two_hosts_one_writes_the_other_reads_and_can_take_
                 except ArcadeError:
                     pass
             root_client.close()
+
+
+def test_two_installations_that_create_one_store_at_the_same_moment_end_as_a_writer_and_a_reader(
+        tmp_path, test_engine, monkeypatch):
+    """The one whose commit comes second opens the store as a reader, not with the engine's conflict message."""
+    port, secret = test_engine
+    connect(monkeypatch, f"http://127.0.0.1:{port}", secret)
+    for round_number in range(3):
+        database = os.environ["CAIRNMIND_ARCADE_DB_PREFIX"] + "_together_" + uuid.uuid4().hex[:8]
+        with closing(ArcadeClient(Settings(data_dir=tmp_path, arcade_url=f"http://127.0.0.1:{port}",
+                                           arcade_password=secret, arcade_database=database))) as root:
+            root.ensure_database()
+            try:
+                folders = [data_directory(tmp_path, f"{name}{round_number}", arcade_database=database)
+                           for name in ("laptop", "desktop")]
+                barrier, opened = threading.Barrier(2), {}
+
+                def open_store(data):
+                    barrier.wait()
+                    try:
+                        opened[data.name] = "reader" if Store(data).read_only else "writer"
+                    except Exception as exc:  # noqa: BLE001 - the assertion below shows what it was
+                        opened[data.name] = f"{type(exc).__name__}: {exc}"
+
+                threads = [threading.Thread(target=open_store, args=(data,)) for data in folders]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(120)
+                assert sorted(opened.values()) == ["reader", "writer"], opened
+                counts = {row["name"]: row["n"] for row in root.query(
+                    "SELECT name, count(*) AS n FROM devbrain_meta GROUP BY name")}
+                assert counts["writer"] == 1 and counts["schema_version"] == 1
+                assert root.query("SELECT count(*) AS n FROM journal_state")[0]["n"] == 1
+                # Each keeps its role when opened again.
+                again = {data.name: "reader" if Store(data).read_only else "writer" for data in folders}
+                assert again == opened
+            finally:
+                root.server_command(f"drop database {database}")

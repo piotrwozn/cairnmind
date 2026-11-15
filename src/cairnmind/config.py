@@ -203,7 +203,18 @@ class Settings:
                 # Only the managed engine on this machine gets a generated password, kept in config.json
                 # as before (#72). The password of a database this installation only connects to (#68) is
                 # set where that server runs, and comes from the environment or a file.
-                from .database_mode import connect_only
+                from .database_mode import connect_only, savable
+                # The connect address is saved the first time it is seen in the environment (#68): a command
+                # started later without the variable (another shell, a terminal server started before the
+                # export) must not find a managed installation here and start an engine with an empty store.
+                # Only when config.json names none: a different address in the variable is used by that
+                # process, as for every other variable, and config.json keeps what it has.
+                seen = obj._origin["kept"].get("arcade_connect_url")
+                if (seen and not seen[0] and obj.arcade_connect_url == seen[1] and savable(seen[1])
+                        and not obj._origin.get("connect_problem")):
+                    del obj._origin["kept"]["arcade_connect_url"]
+                    obj._origin["connect_saved"] = True
+                    changed = True
                 if obj._origin.get("password") == "none" and not connect_only(obj):
                     obj.arcade_password = secrets.token_urlsafe(32)
                     obj._origin["password"] = "config"
@@ -259,7 +270,7 @@ class Settings:
         # The first save stores the derived name in config.json, so it is recognised by its value.
         named_database = "derived" if values["arcade_database"] == derived else "configured"
         obj = cls(data_dir=root, **values, _origin={"password": source, "problem": problem, "kept": kept,
-                                                    "database": named_database})
+                                                    "database": named_database, "connect_problem": conflict})
         return obj
 
     def save(self) -> None:

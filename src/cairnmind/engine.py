@@ -17,7 +17,7 @@ import urllib.request
 
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
-from .database_mode import (connect_only, describe, is_managed_url, refusal, server_version,  # noqa: F401
+from .database_mode import (address, connect_only, describe, is_managed_url, refusal, server_version,  # noqa: F401
                             supported_versions, version_problem)
 
 
@@ -114,7 +114,7 @@ def engine_status(settings: Settings) -> dict:
     """
     if connect_only(settings):
         from .database_credentials import transport_label
-        result = {**describe(settings), "available": False, "url": settings.arcade_url,
+        result = {**describe(settings), "available": False, "url": address(settings),
                   "user": settings.arcade_user, "database": settings.arcade_database,
                   "transport": transport_label(settings), "expected_version": settings.arcade_version,
                   "supported_versions": list(supported_versions(settings))}
@@ -270,6 +270,11 @@ def ensure_engine(settings: Settings) -> None:
         start_engine(settings)
 
 
+def local_process_recorded(settings: Settings) -> bool:
+    """Whether this data directory holds the record of an engine process it started (arcade/process.json)."""
+    return (settings.data_dir / "arcade" / "process.json").exists()
+
+
 def stop_engine(settings: Settings) -> dict:
     """Stop only the process launched for this data directory, after its service stops.
 
@@ -278,7 +283,7 @@ def stop_engine(settings: Settings) -> dict:
     """
     state = settings.data_dir / "arcade"
     file = state / "process.json"
-    if not file.exists():
+    if not local_process_recorded(settings):
         if connect_only(settings):
             raise ConnectOnly(refusal(settings, "stop an engine"))
         return {"stopping": False, "reason": "No managed process for this data directory"}
