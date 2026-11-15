@@ -18,10 +18,10 @@ are resolved by exact name:
   hyphenated TOML key, ``requires-python``) is made only of question words and FILLER_WORDS,
   with at least one question word and two words in all (``answer_tokens`` for "How many tokens may an answer have?", ``MAX_REPORTED`` for "... a
   drift report list at most?"). UNIT_WORDS stand in a name like filler words
-  (``FILES_PER_TRANSACTION`` for "How many files ... in one transaction?", ``poll_seconds`` for
-  "How often does the worker poll?"). Words compare by a light stem (a trailing "ing", "ed" or
+  (``ROWS_PER_BATCH`` for "How many rows ... in one batch?", ``refresh_seconds`` for
+  "How often does the page refresh?"). Words compare by a light stem (a trailing "ing", "ed" or
   "s" is dropped), and a word of a name of PREFIX_CHARS letters or more also matches a question
-  word that begins with it (``arcade_version`` for "ArcadeDB version").
+  word that begins with it (``postgres_version`` for "PostgreSQL version").
   The question words used are those that can be name words: NAME_STOPWORDS and words
   under three letters are left out, the longest MAX_PATTERN_WORDS are kept. The database applies
   this as a regular expression in its own bounded read, so only such names come back;
@@ -36,7 +36,7 @@ are resolved by exact name:
   ``MAX_REPORTED``, which has one); then a primary file before a test, lock or minified file;
   then by how many question words the name shares; then a value (constant, field, parameter
   default) before a function or a class, since the question words of a class name
-  (``KnowledgeAgent``) say what the question is about, not which setting it asks for; then by
+  (``BatchWriter``) say what the question is about, not which setting it asks for; then by
   how many question words its owner and file name share; then the name whose question word
   the fewest other candidate names have.
   A candidate whose name shares no word is dropped, and a name defined in a primary
@@ -61,11 +61,11 @@ _KIND_ORDER = {"constant": 0, "field": 0, "parameter": 1, "function": 2, "method
 # Words a setting's name carries without naming what it is about (MAX_REPORTED, num_ctx).
 FILLER_WORDS = ("max", "min", "default", "num")
 # Words a name carries to say how its value is counted, or to join two words: a question about
-# FILES_PER_TRANSACTION, poll_seconds or MAX_FILE_BYTES rarely uses them. In a name they stand
+# ROWS_PER_BATCH, refresh_seconds or MAX_BLOB_BYTES rarely uses them. In a name they stand
 # beside the question's words like filler words; they never count as a match by themselves.
 UNIT_WORDS = ("per", "of", "seconds", "ms", "bytes", "chars", "tokens", "count")
 # A word of a name also matches a question word that begins with it, from this length on
-# (``arcade_version`` for "ArcadeDB version"): product names are written joined in prose.
+# (``postgres_version`` for "PostgreSQL version"): product names are written joined in prose.
 PREFIX_CHARS = 5
 MAX_PATTERN_WORDS = 8  # question words used to look up names by their words
 # Question words that do not name what a setting is about.
@@ -164,8 +164,8 @@ def rank_definitions(question: str, rows: list[dict]) -> list[dict]:
     question writes first, then a name made only of question words, primary before secondary,
     then question words in the name, a value before a function or a class, then question words
     in its owner and file name, then the name whose question word the fewest other candidate
-    names have (``RACY_WINDOW_NS`` for "window" before ``MAX_FILES`` and ``MAX_FILE_BYTES`` for
-    "file": the rare word says more about what is asked), values before functions before
+    names have (``RETRY_WINDOW_NS`` for "window" before ``MAX_ROWS`` and ``MAX_ROW_BYTES`` for
+    "row": the rare word says more about what is asked), values before functions before
     classes (a parameter default after a constant or field), then path and line for a stable
     result. So a one-word overlap (SUPPORT_TOKENS for "tokens") never outranks a full match.
     """
