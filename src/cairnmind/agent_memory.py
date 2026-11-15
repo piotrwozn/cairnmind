@@ -18,8 +18,14 @@ from urllib.parse import quote
 import httpx
 
 from .sql import clean_row, json_text, one_row
+from .terminal_safe import safe_text
 
 AGENT_CLIENTS = {"api", "copilot"}
+# The store's refusal of a second active record under one key (store._remember), and what the model does.
+_KEY_EXISTS = "Active record key already exists"
+KEY_EXISTS_HINT = ("An active record of this kind already has this key. Nothing was saved. To change it, read it "
+                   "with memory_records and call remember with record.id and record.expected_version set from "
+                   "that record, inside the record argument (a record a person confirmed stays as it is); to keep both, store yours under another key.")
 _SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
 _SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _PROVIDER_FIELDS = {"continuation", "reasoning", "thinking", "encrypted_content", "signature"}
@@ -388,6 +394,18 @@ MEMORY_TOOLS = [
 READ_MEMORY_TOOLS = {"resume_context", "session_status", "ask", "next_task", "check_status", "read_source", "memory_records"}
 
 
+class MemoryRefusal(RuntimeError):
+    """The service refused a memory write for a reason the model can act on (#240).
+
+    A fixed code, and as the message either the service's own refusal of a confirmation (confirmation.py
+    writes it, about the record and what to do instead) or a fixed hint; never other service text.
+    """
+
+    def __init__(self, code, message):
+        super().__init__(code)
+        self.code, self.message = code, message
+
+
 class AgentMemoryClient:
     """Run-bound service transport; the model alone supplies ACK and readback."""
     def __init__(self, settings, project_id, worktree, session_id, *, client="api", transport=None):
@@ -411,10 +429,16 @@ class AgentMemoryClient:
                     headers={"Authorization": f"Bearer {self.settings.token}"})
             if response.is_error:
                 try:
-                    detail = str(response.json().get("detail", "Request rejected"))[:500]
+                    payload = response.json()
+                    payload = payload if isinstance(payload, dict) else {}
+                    detail = str(payload.get("detail", "Request rejected"))
                 except ValueError:
-                    detail = "Request rejected"
-                raise RuntimeError(f"Cairnmind service rejected the request ({response.status_code}): {detail}")
+                    payload, detail = {}, "Request rejected"
+                if response.status_code == 400 and payload.get("refusal") == "confirmation":
+                    raise MemoryRefusal("confirmation_refused", safe_text(detail, limit=4000))
+                if response.status_code == 409 and detail.startswith(_KEY_EXISTS):
+                    raise MemoryRefusal("key_exists", KEY_EXISTS_HINT)
+                raise RuntimeError(f"Cairnmind service rejected the request ({response.status_code}): {detail[:500]}")
             result = response.json()
             if not isinstance(result, dict):
                 raise ValueError("Expected object service response")

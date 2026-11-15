@@ -792,3 +792,103 @@ async def test_a_kept_ack_ends_when_the_same_packet_is_refused_for_credential_ma
     assert len(provider.requests) == asked + 1  # the model is asked again instead of a stop before it
     assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
     assert second["status"] == "resume_required"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_arcade(tmp_path):
+    # #240: the store's "only a person confirms" refusals reached the model as a bare tool_failed, or as a
+    # state_conflict that sends it to read and retry; a key that exists came back as tool_failed.
+    from conftest import as_person
+    from cairnmind.confirmation import REFUSED
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    root.joinpath("app.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    store = Store(tmp_path / "data")
+    project = store.add_project("refusals", root)
+    source = store.snapshot(project["id"], "doc://notes", "The engine is ArcadeDB.")["id"]
+    confirmed = as_person(store, project["id"], {"kind": "fact", "key": "engine", "content": "ArcadeDB"}, [source])
+    store.remember(project["id"], {"kind": "fact", "key": "proposed-one", "content": "One"}, [source])
+    sid = uuid4().hex
+    run = {"id": uuid4().hex, "generation": 1, "project_id": project["id"],
+           "worktree": str(root), "session_id": sid, "client": "api"}
+    memory = AgentMemoryClient(store.settings, project["id"], root, sid,
+                               transport=httpx.ASGITransport(app=create_app(store.settings, start_worker=False)))
+
+    def ack(messages, tools):
+        packet = json.loads(messages[-1]["content"])["packet"]
+        return reply(call("ack_resume", {"packet_id": packet["id"], "packet_hash": packet["hash"],
+                                           "readback": {"plan": None, "task": None}}))
+
+    remember = [
+        {"record": {"kind": "fact", "key": "new-one", "content": "Two", "status": "confirmed"}, "sources": [source]},
+        {"record": {"id": confirmed["id"], "expected_version": confirmed["version"], "kind": "fact",
+                    "key": "engine", "content": "PostgreSQL"}, "sources": [source]},
+        {"record": {"kind": "fact", "key": "proposed-one", "content": "Changed"}, "sources": [source]},
+    ]
+    provider = ScriptedProvider(reply(call("resume_context")), ack,
+                                reply(*(call("remember", arguments) for arguments in remember)),
+                                reply(text="Stored nothing."))
+    profile = {"id": "local", "client": "api", "provider": "ollama", "model": "fixture", "limits": {}}
+    agent = AgentEngine(store.settings, run, profile, provider=provider, memory=memory)
+    try:
+        result = await agent.turn("Remember these")
+        assert len(tools_results(agent)) == 5, result
+        refused, kept, exists = tools_results(agent)[-3:]
+        assert refused["error_code"] == "confirmation_refused" and refused["message"] == REFUSED
+        assert kept["error_code"] == "confirmation_refused"
+        assert kept["message"].startswith(f"A person confirmed record {confirmed['id']} (fact)")
+        assert "Nothing was saved" in kept["message"] and "possible_conflicts" in kept["message"]
+        assert exists["error_code"] == "key_exists"
+        assert "record.id and record.expected_version" in exists["message"]
+        assert "inside the record argument" in exists["message"] and "Changed" not in exists["message"]
+        assert not store.query("SELECT FROM records WHERE `key`='new-one'")
+        assert store.query("SELECT FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["content"] == "ArcadeDB"
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_arguments_say_which_argument_and_why_without_its_value(setup):
+    # #240: write_file with expected_sha256 "" came back as a bare invalid_tool_arguments.
+    memory = Memory()
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("write_file", {"path": "app.py", "content": "VALUE=1\n", "expected_sha256": "not-a-hash"}),
+              call("write_file", {"path": "app.py", "content": "VALUE=1\n"})),
+        reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        await agent.turn("Create app.py")
+        bad_hash, missing = tools_results(agent)[-2:]
+        assert bad_hash["error_code"] == missing["error_code"] == "invalid_tool_arguments"
+        assert bad_hash["argument"] == "expected_sha256" and "not-a-hash" not in json.dumps(bad_hash)
+        assert "null" in bad_hash["hint"] and "read_file" in bad_hash["hint"]
+        assert missing["keyword"] == "required" and "expected_sha256" in missing["hint"]
+        assert not setup[3].joinpath("app.py").exists()
+    finally:
+        await agent.close()
+
+
+def test_the_instructions_say_effect_tools_appear_only_after_the_ack():
+    # #240: a small model asked to write a file said it had no write tool and never acknowledged.
+    from cairnmind.api_agent import SYSTEM
+    assert "offered only after" in SYSTEM and "ack_resume" in SYSTEM
+
+
+@pytest.mark.asyncio
+async def test_a_ready_packet_before_its_ack_names_the_next_step(setup):
+    memory = Memory()
+    provider = ScriptedProvider(reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+                                reply(call("resume_context")), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        await agent.turn("Check")
+        first, _, again = tools_results(agent)
+        assert "ack_resume" in first["next_step"] and "next_step" not in again
+    finally:
+        await agent.close()

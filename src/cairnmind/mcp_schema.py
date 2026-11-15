@@ -261,3 +261,15 @@ async def valid_arguments(schema, arguments):
         return None
     except Exception:
         return False
+
+
+async def argument_problem(schema, arguments) -> dict:
+    """Why arguments a check refused do not fit (agent_arguments, #240), under the same time limit; {} when
+    that cannot be told in time or at all."""
+    from .agent_arguments import argument_problem as problem
+    loop = asyncio.get_running_loop()
+    try:
+        return await asyncio.wait_for(loop.run_in_executor(_executor(), problem, schema, arguments),
+                                      VALIDATION_SECONDS) or {}
+    except Exception:
+        return {}
