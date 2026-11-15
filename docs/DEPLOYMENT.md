@@ -79,7 +79,9 @@ A connect-only installation uses a database that runs somewhere else: the contai
 
 An installation is connect-only when `arcade_connect_url` is set, on any host, this machine included; or when `arcade_url` names an address the managed engine could never serve (another host, or `https://`). So an installation that already pointed `CAIRNMIND_ARCADE_URL` at an `https://` server keeps working and is now connect-only. For a container on `127.0.0.1` use `arcade_connect_url`: with `arcade_url` alone, a command that writes would start a local engine on that port whenever the container is down.
 
-Setting both to different addresses is refused, naming both. `config.json` keeps the `arcade_url` it had, so removing `arcade_connect_url` brings the managed engine back with its data untouched. The two databases are not copied into each other: move data with `cairnmind backup` and `cairnmind restore`.
+Setting both to different addresses is refused, naming both. `config.json` keeps the `arcade_url` it had, so removing `arcade_connect_url` brings the managed engine back with its data untouched.
+
+**The address is saved.** The first command that runs with `CAIRNMIND_ARCADE_CONNECT_URL` set writes the address to `config.json` of the data directory as `arcade_connect_url`, and says so once. From then on the data directory is connect-only for every command, also one started without the variable: another shell, a terminal workspace or a service started before the `export`. Without this, such a command would find an ordinary installation and start a local engine with an empty store. When `config.json` already names an address, a different one in the variable is used by that command only and the file is not changed. The other settings (user, database, password file, authority file) are not saved from variables: a command started without them is refused with a message that names what is missing, and starts nothing. To go back to the engine Cairnmind manages, remove `arcade_connect_url` from `config.json` and unset the variable. The two databases are not copied into each other: move data with `cairnmind backup` and `cairnmind restore`.
 
 The rules for reaching a database on another host are unchanged ([SECURITY.md](../SECURITY.md)): `https://` with certificate and host name verification (a private authority through `arcade_ca_file`), a dedicated user and never `root`, and the password from `CAIRNMIND_ARCADE_PASSWORD` or a private file named by `arcade_password_file`, never from `config.json`. On `127.0.0.1` plain `http://` is allowed. No password is generated for a connect-only installation: it is the one set where the server runs.
 
@@ -90,15 +92,15 @@ Set the database name explicitly (`arcade_database`, `CAIRNMIND_ARCADE_DATABASE`
 | Command | On a connect-only installation |
 | --- | --- |
 | `cairnmind engine status` | Says `"mode": "connect"`, the host, the user, whether the connection is encrypted, whether the server answers and which version it runs. It looks for no Java and no installed engine. Exit status 1 when the server's version is not supported. |
-| `cairnmind engine install`, `start`, `stop` | Do nothing and say so in one sentence (exit status 2): "This installation only connects to ArcadeDB at ...; it does not start an engine." `stop` still stops an engine that this data directory started before it was switched. |
-| `cairnmind db create-user` | The one step that signs in as `root`: it creates the database and the dedicated user. Run once per database. |
+| `cairnmind engine install`, `start`, `stop` | Do nothing and say so in one sentence (exit status 2), whether or not the knowledge service runs: "This installation only connects to ArcadeDB at ...; it does not start an engine." `stop` still stops an engine that this data directory started before it was switched. |
+| `cairnmind db create-user` | The one step that signs in as `root`: it creates the database and the dedicated user, after checking the server's version. Run once per database. |
 | `cairnmind init` and every command that writes | Open the database they were given. When it does not exist they stop and name `cairnmind db create-user`; they never create it. When the server does not answer they say where they looked and that no engine is started here. |
 | `cairnmind doctor` | The `arcadedb` block says `mode`, `host`, `url`, `user`, `transport`, `password_source`, the server's `version` and `supported_versions`; `java` says it is not needed; `store_writer` says whether this installation writes the store or only reads it. |
 | `cairnmind status` | Adds `storage` (mode, host, address) beside `writer`. |
 | `cairnmind store size` | Counts rows as always; says that the database files and the server log are on the server and cannot be measured from here. |
 | `cairnmind eval run`, `eval memory`, `eval repository` | Refused: they create and drop temporary databases. Run them on an installation with the engine on this machine. |
 
-**The server's version.** Each Cairnmind release works with one ArcadeDB version, the one it pins (`supported_versions` in `engine status` and `doctor`; 26.11.1 in this release). A server of any other version is refused before anything is read or written, by every command, with the message "ArcadeDB at ... runs version X, which this release of Cairnmind does not support. Supported: 26.11.1." Upgrade the server and Cairnmind together: [When the pinned ArcadeDB version changes](#when-the-pinned-arcadedb-version-changes).
+**The server's version.** Each Cairnmind release works with one ArcadeDB version, the one it pins (`supported_versions` in `engine status` and `doctor`; 26.11.1 in this release). A server of any other version is refused before anything is read or written, by every command, `cairnmind db create-user` included (it asks for the version before it signs in as `root` to create anything), with the message "ArcadeDB at ... runs version X, which this release of Cairnmind does not support. Supported: 26.11.1." Upgrade the server and Cairnmind together: [When the pinned ArcadeDB version changes](#when-the-pinned-arcadedb-version-changes).
 
 ### From nothing: the Compose server on this machine
 
@@ -111,13 +113,24 @@ You have followed [Start it on one machine](#start-it-on-one-machine); the serve
    bash scripts/install-wsl.sh
    ```
 
-   The installer ends with a note that the database is not ready yet: that is the next step. (Without the installer: `uv tool install --python 3.12 .`)
+   The installer says once that it saved the address in `config.json` (see [The setting](#the-setting)), and ends with a note that the database is not ready yet: that is the next step. (Without the installer: `uv tool install --python 3.12 .`, then any command with the variable set saves the address, for example `cairnmind engine status`.)
 
-2. Choose the user's password, in a private file, and describe the connection. Put the `export` lines in your shell profile, or the same names without the prefix, in lower case, in `config.json` of the data directory (`arcade_connect_url`, `arcade_user`, `arcade_database`, `arcade_password_file`):
+2. Choose the user's password, in a private file, and describe the connection in `config.json` of the data directory (`~/.local/share/cairnmind/config.json` unless you chose another one). The installer has written `arcade_connect_url` there; add the other three, with the absolute path of the password file:
 
    ```bash
    (umask 077; openssl rand -hex 24 > "$HOME/.config/cairnmind-db/user-password")
-   export CAIRNMIND_ARCADE_CONNECT_URL=http://127.0.0.1:2480
+   ```
+
+   ```json
+   "arcade_connect_url": "http://127.0.0.1:2480",
+   "arcade_user": "cairnmind",
+   "arcade_database": "cairnmind",
+   "arcade_password_file": "/home/you/.config/cairnmind-db/user-password"
+   ```
+
+   Settings in `config.json` hold for every command of this data directory, wherever it is started. The alternative is the same names as variables in your shell profile (`CAIRNMIND_ARCADE_USER`, `CAIRNMIND_ARCADE_DATABASE`, `CAIRNMIND_ARCADE_PASSWORD_FILE`); they hold only for what is started from a shell that has them, and anything else is refused with a message naming the missing setting:
+
+   ```bash
    export CAIRNMIND_ARCADE_USER=cairnmind
    export CAIRNMIND_ARCADE_DATABASE=cairnmind
    export CAIRNMIND_ARCADE_PASSWORD_FILE="$HOME/.config/cairnmind-db/user-password"
@@ -152,7 +165,7 @@ You have followed [Kubernetes](#kubernetes) up to [Start it](#start-it): the Sta
    kubectl -n cairnmind-db port-forward svc/arcadedb 2490:2490 &
    ```
 
-3. The settings, the user and the store:
+3. The settings, the user and the store. The installer saved the address in `config.json`; keep the other four there too (`arcade_user`, `arcade_database`, `arcade_password_file`, `arcade_ca_file`, as in the [Compose walk-through](#from-nothing-the-compose-server-on-this-machine), step 2), or as variables in your shell profile, which hold only for what is started from a shell that has them:
 
    ```bash
    (umask 077; openssl rand -hex 24 > "$HOME/cairnmind-k8s/user-password")

@@ -12,7 +12,8 @@ Requires Java 21+ and tmux 3.4+. Does not change Codex or Claude Code configurat
 
 With CAIRNMIND_ARCADE_CONNECT_URL set, the installation only connects to a database
 that runs elsewhere (docs/DEPLOYMENT.md): no ArcadeDB is downloaded, no engine is
-started and Java is not needed.
+started and Java is not needed. The address is saved in config.json of the data
+directory, so later commands need no variable to stay connect-only.
 Does not download models or the Copilot runtime by default; prepare Copilot in the terminal UI.
 
   --pull-models  Download both models after installation (several GB; Ollama must be running).
@@ -183,7 +184,11 @@ if [[ ! -x "$cairnmind_bin" ]]; then
 fi
 
 if [[ -n "$connect_url" ]]; then
-    printf '\nThis installation only connects to the database at %s; no engine is installed.\n' "$connect_url"
+    # Shown without a user, a password, a query or a fragment, should the address carry one by mistake.
+    shown_url="$(printf '%s' "$connect_url" | sed -E 's#^([a-zA-Z]+://)[^/@]*@#\1#; s#[?\#].*$##')"
+    printf '\nThis installation only connects to the database at %s; no engine is installed.\n' "$shown_url"
+    # The first command below saves the address in config.json (it says so): a later command started
+    # without the variable stays connect-only instead of starting a local engine.
     # The database and its user are created once, by a person (cairnmind db create-user): until then
     # these two commands say what is missing, and the installation itself is complete.
     if ! "$cairnmind_bin" engine status || ! "$cairnmind_bin" init; then
