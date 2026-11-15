@@ -23,7 +23,7 @@ import json
 from urllib.parse import urlsplit
 
 from .memory_models import is_loopback, profile
-from .sensitivity import CLASSES, rollup, source_rows, source_sensitivity
+from .sensitivity import CLASSES, earlier_source_ids, rollup, source_rows, source_sensitivity
 from .sql import clean_row, update_document, utc_now
 
 REMOTE_NOT_ALLOWED = "remote_not_allowed"
@@ -110,6 +110,7 @@ class Gate:
     def __init__(self, store, held: frozenset):
         self.store, self.held = store, held
         self._classes: dict[str, str] = {}
+        self._earlier: dict[str, set[str]] = {}  # source ids earlier versions of a record cited
         self.chunks: set[str] = set()
         self.records: set[str] = set()
         self.sources: set[str] = set()
@@ -120,10 +121,19 @@ class Gate:
             self._classes[source_id] = source_sensitivity(rows[source_id]) if source_id in rows else "conversation"
         return self._classes[source_id]
 
+    def _read_earlier(self, records) -> None:
+        missing = [str(record.get("id")) for record in records if str(record.get("id")) not in self._earlier]
+        if missing:
+            found = earlier_source_ids(self.store, missing)
+            self._earlier.update({i: found.get(i, set()) for i in missing})
+
     def prime(self, records) -> None:
-        """Read the classes of every source behind ``records`` in bounded queries, before checking each."""
+        """Read the classes of every source behind ``records``, now or before, in bounded queries."""
+        records = list(records)
+        self._read_earlier(records)
         wanted = {i for record in records if isinstance(record.get("source_ids"), list)
                   for i in record["source_ids"] if isinstance(i, str) and i not in self._classes}
+        wanted |= {i for record in records for i in self._earlier[str(record.get("id"))] if i not in self._classes}
         rows = source_rows(self.store, wanted)
         self._classes.update({i: source_sensitivity(rows[i]) if i in rows else "conversation" for i in wanted})
 
@@ -149,7 +159,8 @@ class Gate:
 
     def record_held(self, record) -> bool:
         """For a record (or a revision, or a plan) about to go into the prompt."""
-        if rollup(record, self._class_of) in self.held:
+        self._read_earlier([record])
+        if rollup(record, self._class_of, self._earlier[str(record.get("id"))]) in self.held:
             self.records.add(str(record.get("id")))
             return True
         return False
@@ -170,12 +181,22 @@ def ask_gate(settings, store) -> Gate | None:
     return Gate(store, held) if held else None
 
 
-def held_chunk_ids(store, settings, rows) -> set[str]:
-    """Of chunk rows (id), those the embedding role must not receive."""
+def held_chunk_ids(store, settings, rows, known: dict | None = None) -> set[str]:
+    """Of chunk rows (id), those the embedding role must not receive.
+
+    ``known``: a dict the caller keeps between calls (the service's repair loop). A held chunk stays
+    missing and comes back on every repair; its class cannot change (a chunk keeps its source, a
+    source its kind and mark), so it is looked up once per set of held classes, not on every repair.
+    """
     held = held_classes(settings, "embedding")
     ids = [row["id"] for row in rows]
     if not held or not ids:
         return set()
+    if known is not None:
+        seen = known.setdefault(held, set())
+        new = held_chunk_ids(store, settings, [row for row in rows if row["id"] not in seen])
+        seen |= new
+        return {i for i in ids if i in seen}
     owners: dict[str, str] = {}
     for start in range(0, len(ids), 500):
         for row in store.query("SELECT id,source_id FROM chunks WHERE id IN :ids", {"ids": ids[start:start + 500]}):

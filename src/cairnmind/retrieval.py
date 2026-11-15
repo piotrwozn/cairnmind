@@ -314,15 +314,23 @@ class Retriever:
         return sorted(nodes), sorted(edges)
 
     def _graph_held(self, rows) -> set:
-        """Graph nodes an answer for a remote chat server leaves out: of a held source or a held record."""
+        """Graph nodes an answer for a remote chat server leaves out: of a held source, record or plan.
+
+        A record or plan node is judged as a whole (all its sources, now or before, and its own origin
+        mark), not by the one source the node names: a plan node names only its latest snapshot.
+        """
         gate = ASK.get()
         if not gate:
             return set()
-        records = {row["id"][len("record:"):]: row["id"] for row in rows
-                   if isinstance(row.get("id"), str) and row["id"].startswith("record:")}
-        held = {node for record_id, node in records.items() if any(
-            gate.record_held(record) for record in self.store.query(
-                "SELECT id,source_ids,metadata FROM records WHERE id=:id", {"id": record_id}))}
+        held = set()
+        for prefix, table in (("record:", "records"), ("plan:", "plans")):
+            nodes = {row["id"][len(prefix):]: row["id"] for row in rows
+                     if isinstance(row.get("id"), str) and row["id"].startswith(prefix)}
+            if not nodes:
+                continue
+            found = self.store.query(f"SELECT FROM {table} WHERE id IN :ids", {"ids": list(nodes)})
+            gate.prime(found)
+            held |= {nodes[row["id"]] for row in found if gate.record_held(row)}
         for row in rows:
             if row.get("source_id") and row["id"] not in held and gate.source_id_held(row["source_id"]):
                 held.add(row["id"])
@@ -491,6 +499,8 @@ class Retriever:
                 {"project": project_id, "keys": words, "eligible_records": eligible_records},
             )
             record_hits, seen, gate = [], set(), ASK.get()
+            if gate:
+                gate.prime([*records, *keyed])
             for record in [*records, *keyed]:
                 ids = json_value(record.get("source_ids"), [])
                 if record["id"] in seen or not ids:

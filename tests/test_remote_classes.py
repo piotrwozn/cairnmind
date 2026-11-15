@@ -195,6 +195,72 @@ async def test_the_graph_and_history_tools_of_an_answer_leave_held_records_out(w
     assert gate.summary()["records"] >= 1
 
 
+def gated(settings, store, read):
+    gate = memory_egress.ask_gate(settings, store)
+    token = memory_egress.ASK.set(gate)
+    try:
+        return gate, read()
+    finally:
+        memory_egress.ASK.reset(token)
+
+
+def test_a_chat_record_recited_to_a_project_file_stays_out_of_an_answer(workspace):
+    store, project, data = workspace
+    pid = project["id"]
+    chat = store.snapshot(pid, "conversation://1", TRANSCRIPT, "transcript")
+    doc = store.snapshot(pid, "notes://ledger", DOCUMENT, "document")
+    record = store.remember(pid, {"kind": "decision", "content": "Postgres holds the ledger, said in chat."},
+                            [chat["id"]])
+    store.remember(pid, {"id": record["id"], "expected_version": record["version"]}, [doc["id"]])
+    settings = Settings(data_dir=data, memory_chat=dict(REMOTE))
+    agent = KnowledgeAgent(store, settings, ollama=FakeModels())
+    _, context = gated(settings, store, lambda: json.dumps(agent.retriever.context(pid, project["root"])))
+    assert "said in chat" not in context
+    _, graph = gated(settings, store, lambda: json.dumps(agent.retriever.graph(pid, "Postgres ledger")))
+    assert "said in chat" not in graph
+
+
+def test_the_plan_node_of_an_external_plan_edited_natively_stays_out_of_the_graph(workspace):
+    from cairnmind.plans import PlanManager
+    store, project, data = workspace
+    pid, root = project["id"], project["root"]
+    external = {"origin_client": "external", "origin_session_id": "x1", "origin_history": "unarchived",
+                "origin_evidence": "degraded"}
+    manager = PlanManager(store)
+    with store.write_origin(external):
+        first = manager.save(pid, {"title": "Zephyrplan migration", "goal": "externalgoaltext quasar"},
+                             [{"key": "a", "content": "Step A"}], "one", worktree=root, activate=True)
+    # A native save keeps the plan's own mark, but its newest snapshot carries none.
+    manager.save(pid, {"id": first["plan"]["id"]},
+                 [{"key": "a", "content": "Step A"}, {"key": "b", "content": "Step B"}], "two",
+                 expected_version=first["plan"]["version"],
+                 task_versions={task["id"]: task["version"] for task in first["tasks"]})
+    settings = Settings(data_dir=data, memory_chat=dict(REMOTE))
+    agent = KnowledgeAgent(store, settings, ollama=FakeModels())
+    assert "externalgoaltext" in json.dumps(agent.retriever.graph(pid, "Zephyrplan", 24, root))  # ungated read
+    gate, graph = gated(settings, store, lambda: json.dumps(agent.retriever.graph(pid, "Zephyrplan", 24, root)))
+    assert "externalgoaltext" not in graph and "Zephyrplan migration" not in graph
+    assert gate.summary()["records"] >= 1
+
+
+def test_the_repair_looks_up_a_held_chunk_once_and_not_on_every_pass(workspace, monkeypatch):
+    store, project, data = workspace
+    settings = Settings(data_dir=data, memory_embedding=dict(REMOTE))
+    chunked(store, project, TRANSCRIPT, "transcript", "conversation://1")
+    known, report, looked_up = {}, {}, []
+    original = memory_egress.source_rows
+    monkeypatch.setattr(memory_egress, "source_rows", lambda reader, ids: looked_up.append(list(ids))
+                        or original(reader, ids))
+    for _ in range(3):
+        assert schedule_embeddings(store, "e@fake", settings=settings, report=report, known_held=known) == 0
+        assert report == {"embedding_held_back": 1}
+    assert len(looked_up) == 1
+    # Allowed now: the same chunk is queued, whatever an earlier repair remembered.
+    allowed = replace(settings, memory_remote_classes=["project", "conversation"])
+    assert schedule_embeddings(store, "e@fake", settings=allowed, report=report, known_held=known) == 1
+    assert report == {"embedding_held_back": 0}
+
+
 async def test_ask_with_the_local_ollama_sends_the_same_evidence_as_before(workspace):
     store, project, data = workspace
     pid = project["id"]

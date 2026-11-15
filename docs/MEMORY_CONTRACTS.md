@@ -97,7 +97,8 @@ evidence state still say that.
 The inspector returns the class as `sensitivity` for a source (`/inspector/sources`
 and a source's detail, which `read_source` uses) and a record (`/inspector/records`,
 which `memory_records` uses, and a record's detail). The terminal detail view and
-`cairnmind memory show` print it.
+`cairnmind memory show` print it. Which classes may go to a memory model server on
+another computer is the setting `memory_remote_classes` (see [API.md](API.md#the-knowledge-agents-models)).
 
 ## Validation budgets and quality evaluation
 

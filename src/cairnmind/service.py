@@ -232,17 +232,19 @@ def instance_id(settings: Settings) -> str:
     return hashlib.sha256(str(settings.data_dir).encode()).hexdigest()[:16]
 
 
-def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=None, report=None) -> int:
+def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=None, report=None,
+                        known_held=None) -> int:
     """Repair missing/digest-changed derived vectors without touching archived evidence.
 
     With ``settings``, chunks a remote embedding server may not receive are not queued (#181); their
     number goes to ``report["embedding_held_back"]``. They are queued by the first repair that allows them.
+    ``known_held`` keeps the held chunks between repairs (memory_egress.held_chunk_ids).
     """
     rows = (store.missing_embeddings(namespace) if project_ids is None else
             [row for pid in project_ids for row in store.missing_embeddings(namespace, pid)])
     if settings is not None:
         from cairnmind.memory_egress import held_chunk_ids
-        held = held_chunk_ids(store, settings, rows)
+        held = held_chunk_ids(store, settings, rows, known_held)
         rows = [row for row in rows if row["id"] not in held]
         if report is not None:
             report["embedding_held_back"] = len(held)
@@ -386,7 +388,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     async def jobs() -> None:
         last_namespace, last_repair, last_projects = None, 0.0, None
-        released = False
+        released, known_held = False, {}
         while True:
             try:
                 # Opening a UI or acknowledging context does not authorize model work.
@@ -407,7 +409,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                             or time.monotonic() - last_repair > 60):
                         held: dict = {}
                         missing = await asyncio.to_thread(schedule_embeddings, store, namespace, project_ids=selected,
-                                                          settings=settings, report=held)
+                                                          settings=settings, report=held, known_held=known_held)
                         background_status.update(embedding_namespace=namespace, embedding_missing=missing, **held)
                         last_namespace, last_repair, last_projects = namespace, time.monotonic(), selected
                 background_status["model_error"] = str(role_error) if role_error else None
