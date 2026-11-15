@@ -93,6 +93,22 @@ def test_engine_status_of_a_stopped_engine_says_to_start_it(tmp_path):
     assert "cairnmind engine start" in status["error"] and "not running" in status["error"]
 
 
+@pytest.mark.parametrize("cause", ["ReadTimeout", "RemoteProtocolError", "WriteTimeout"])
+def test_engine_status_of_a_slow_engine_keeps_the_cause_and_does_not_call_it_stopped(tmp_path, monkeypatch, cause):
+    # A timeout or a broken answer may come from an engine that is starting or busy, not a stopped one.
+    import httpx
+    from cairnmind import engine
+    from cairnmind.config import Settings
+
+    def failing(self, *args, **kwargs):
+        raise getattr(httpx, cause)("slow")
+    monkeypatch.setattr(httpx.Client, "request", failing)
+    status = engine.engine_status(Settings(tmp_path / "data", arcade_database="status_test"))
+    assert status["available"] is False
+    assert "not running" not in status["error"] and "engine status" not in status["error"]
+    assert f"not reachable ({cause})" in status["error"] and "cairnmind engine start" in status["error"]
+
+
 def test_store_size_names_an_empty_leftover_vector_type_for_what_it_is(store):
     from cairnmind.store_size import measure
     # What a restore leaves: an emptied vector type whose registry entry the backup did not bring.
@@ -110,7 +126,10 @@ def test_store_size_names_an_empty_leftover_vector_type_for_what_it_is(store):
     ("Local Ollama /api/embed returned HTTP 400: runtime reported a context-length limit", "model_context_length"),
     ("Ollama /api/chat returned HTTP 500: runtime reported a model runner or loading failure", "model_runtime_error"),
     ("Local Ollama /api/embed returned HTTP 400: runtime rejected the request", "model_runtime_error"),
-    ("Local Ollama /api/chat request failed (ReadTimeout): response read timed out", "model_runtime_error"),
+    ("Local Ollama /api/chat request failed (ReadTimeout): response read timed out", "model_timeout"),
+    ("Local Ollama /api/embed request failed (ConnectTimeout): local request timed out", "model_timeout"),
+    ("Local Ollama /api/chat request failed (ConnectError): local HTTP request failed", "model_runtime_error"),
+    ("TimeoutError", "job_timeout"),
     ("Embedding model returned a zero vector", "model_runtime_error"),
     ("something nobody classified", "job_error"),
 ])
@@ -120,6 +139,8 @@ def test_a_model_runtime_failure_of_a_job_has_its_own_category(error, code):
     assert "legacy" not in shown["error_code"]
     if code == "model_context_length":
         assert "context length" in shown["error"]
+    if code == "model_timeout":
+        assert "in time" in shown["error"]
 
 
 def test_a_project_name_is_at_most_256_characters_on_every_route(store, tmp_path):

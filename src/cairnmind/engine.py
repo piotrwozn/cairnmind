@@ -29,6 +29,16 @@ def runtime_dir(settings: Settings) -> Path:
 LOG_BYTES, LOG_COPIES, MAX_LOG_COPIES = 10 * 1024 * 1024, 3, 20
 
 
+def stopped_engine_advice(error: str) -> str:
+    """What `engine status` says for a transport failure: only a refused connection means "not running";
+    a timeout or a broken answer may come from an engine that is starting or busy, so it keeps its cause."""
+    cause = error.partition("(")[2].partition(")")[0]
+    if cause == "ConnectError":
+        return "Local ArcadeDB is not running; start it with `cairnmind engine start`."
+    return (f"Local ArcadeDB is not reachable ({cause or 'unknown error'}); it may be starting or busy. "
+            "If it is stopped, start it with `cairnmind engine start`.")
+
+
 def rotate_log(path: Path, limit, copies) -> bool:
     """Move a log of at least ``limit`` bytes aside before a new run appends to it (#190); True when moved.
 
@@ -186,7 +196,7 @@ def engine_status(settings: Settings) -> dict:
         result["error"] = str(exc)
         if not connect_only(settings) and result["error"].startswith("Local ArcadeDB is unavailable"):
             # The client's generic advice names this very command (#238).
-            result["error"] = "Local ArcadeDB is not running; start it with `cairnmind engine start`."
+            result["error"] = stopped_engine_advice(result["error"])
     except ValueError as exc:
         if not connect_only(settings):
             raise

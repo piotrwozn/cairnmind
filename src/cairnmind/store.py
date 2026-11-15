@@ -1600,9 +1600,12 @@ class Store:
             (("transcript eof is unknown",),
              "capture_not_initialized", "The original event did not capture a finite transcript horizon."),
             (("arcadedb",), "storage_error", "The storage request failed."),
-            # The texts of ollama.OllamaUnavailable (#238); a model call that timed out is the model's, not the job's.
+            # The texts of ollama.OllamaUnavailable (#238); a model call that timed out is the model's, not the job's,
+            # and is still called a timeout.
             (("runtime reported a context-length limit",), "model_context_length",
              "The model refused an input longer than its context length."),
+            (("response read timed out", "local request timed out"), "model_timeout",
+             "The model runtime did not answer in time."),
             (("ollama /api/", "runtime reported", "runtime rejected", "runtime returned", "embedding model returned",
               "local model returned"), "model_runtime_error", "The model runtime refused or failed the request."),
             (("timeout", "timed out"), "job_timeout", "The job exceeded its execution budget."),
