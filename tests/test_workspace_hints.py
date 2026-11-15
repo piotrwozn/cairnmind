@@ -136,9 +136,9 @@ def test_every_word_on_a_border_follows_the_language_without_a_restart(manager):
             assert border_words(workspace, pane, role, control, memory) == (
                 role_label.split() + control_label.split() + memory_label.split())
         # A stale memory: its reason is shown in this language too, from the fixed code, not the stored text.
-        stored = "stale: " + tr("memory changed after ACK", "en")  # written in the language of its time
+        stored = "stale: " + tr("project changed after ACK", "en")  # written in the language of its time
         shown = " ".join(border_words(workspace, pane, "client2", "controller", stored, "state_changed"))
-        assert shown.endswith(tr("Stale", language) + ": " + tr("memory changed after ACK", language)), shown
+        assert shown.endswith(tr("Stale", language) + ": " + tr("project changed after ACK", language)), shown
         assert " ".join(border_words(workspace, pane, "client2", "", "stale")).endswith(tr("Stale", language))
         # A value the border does not know is never shown as it is.
         assert border_words(workspace, pane, "client9", "made up", "#[fg=red]x", "<script>") == []
@@ -214,7 +214,7 @@ def test_the_pane_border_says_why_memory_is_stale(manager, language):  # noqa: F
     workspace.refresh()
     pane = workspace.panes()["client1"]
     badge = workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_memory").stdout.strip()
-    assert badge == "stale: " + tr("memory changed after ACK", language)
+    assert badge == "stale: " + tr("project changed after ACK", language)
     reason = lambda: workspace.tmux("show-options", "-pv", "-t", pane, "@cairnmind_stale_reason").stdout.strip()  # noqa: E731
     assert reason() == "state_changed"  # the fixed code the border labels in either language (#208)
     # A reason the workspace does not know is never shown: only the plain word.

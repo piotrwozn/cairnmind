@@ -632,6 +632,11 @@ class BasePanel(App):
         else:  # a view without a notice line (the activity column)
             self.notify(self.t(text), timeout=8, markup=False)
 
+    def view_hint(self, text) -> None:
+        """What the view shows or how to use it (a count, the keys of an open entry), not an event:
+        on the notice line like a key hint, never kept in Notices or copied to the activity feed."""
+        self.leave_hint(text)
+
 
 class ChoiceModal(LocalizedModal, ModalScreen[str | None]):
     BINDINGS = [("escape", "cancel", "Cancel")]

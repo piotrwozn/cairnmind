@@ -75,11 +75,11 @@ class ProposedView:
         self.rows = {row["id"]: row for row in items}
         self.render_rows(items)
         self._proposed_result = (result, days)
-        self.notice(list_summary(result, days, self.t))
+        self.view_hint(list_summary(result, days, self.t))  # read again on every journal event, like a count
 
     def refresh_proposed_language(self):
         if self.view == "proposed" and self._proposed_result and self.entity is None:
-            self.notice(list_summary(*self._proposed_result, self.t))
+            self.view_hint(list_summary(*self._proposed_result, self.t))
 
     def render_proposed_rows(self, rows):
         self.use_columns("proposed")

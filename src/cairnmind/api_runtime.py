@@ -123,6 +123,7 @@ class RuntimeSupervisor(NativeRuntime):
                 code = str(exc).partition(":")[0]
                 allowed = {"login_required", "client_missing", "client_unsupported", "native_resume_unavailable",
                            "native_resume_unsupported", "tmux_missing_or_unsupported", "credential_missing",
+                           "credential_invalid", "credential_unavailable",
                            "copilot_runtime_missing", "copilot_sdk_missing", "profile_invalid",
                            "copilot_sdk_unsupported", "copilot_runtime_invalid", "agent_storage_in_project",
                            "memory_unavailable", "agent_resume_unavailable"}
@@ -149,9 +150,14 @@ class RuntimeSupervisor(NativeRuntime):
                 if old["lifecycle"] in LIVE:
                     self._save(rows)
                     return dict(old)
-            if (client == "api" and (profile.get("credential_ref") or profile.get("provider") in {"openai", "anthropic"})
-                    and not self.credentials.resolve(profile)):
-                raise ValueError("credential_missing: configure the profile key")
+            if client == "api" and (profile.get("credential_ref") or profile.get("provider") in {"openai", "anthropic"}):
+                try:
+                    usable = self.credentials.resolve(profile)
+                except ValueError as exc:  # its message is never shown: only the fixed code below
+                    code = "credential_invalid" if str(exc) == "Invalid API key." else "credential_unavailable"
+                    raise ValueError(code + ": the profile key cannot be used") from None
+                if not usable:
+                    raise ValueError("credential_missing: configure the profile key")
             if client == "copilot":
                 from .copilot_adapter import runtime_status
                 status = runtime_status(self.settings)

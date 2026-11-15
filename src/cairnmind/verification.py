@@ -21,6 +21,7 @@ import tomllib
 import threading
 from uuid import UUID, uuid4
 
+from .check_profile_messages import unknown_profile_message
 from .sql import clean_row, insert_document, json_text, utc_now
 from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 from .path_spelling import lies_in
@@ -583,7 +584,7 @@ def run_check(store, settings, project_id, profile_id, task_id, worktree=None) -
         raise ValueError("Check task must be an active task in the project")
     profiles = load_profiles(store, project_id, root)
     if profile_id not in profiles:
-        raise ValueError("Unknown check profile")
+        raise ValueError(unknown_profile_message(profile_id, profiles))
     profile = profiles[profile_id]
     output_root = (Path(settings.data_dir) / "checks").resolve()
     if lies_in(output_root, root):  # also spelled with other letter case (#230)
