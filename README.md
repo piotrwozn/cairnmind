@@ -289,6 +289,8 @@ Each record also has an evidence state, derived whenever it is read and never st
 cairnmind memory orphans my-app
 ```
 
+To see how automatic extraction fares in review, run `cairnmind memory extraction-stats my-app` (`--json` for the numbers, the same data as `GET /inspector/extraction-stats?project=...`). For every extractor version stamped on a record (`metadata.extractor`), it counts the extracted records that are still proposed, confirmed, disputed or superseded, and the share confirmed of those reviewed (confirmed or disputed). A record counts as confirmed only when a person confirmed it on this machine; one a memory package brought confirmed is listed apart as confirmed elsewhere and stays out of the share. It reads only record revisions in bounded pages, runs no model, changes nothing and prints numbers, never record text; a project with more than 50,000 extracted records is reported as truncated.
+
 A plan can say which check proves each acceptance criterion. Write a criterion as text, or as `{"text": ..., "check": "unit"}` to link it to a check profile; add `"argv": [...]` to propose the command of a profile that is not declared yet. Then:
 
 ```bash
@@ -328,7 +330,7 @@ This is an explicit test against a real Ollama: extraction of a fact, a decision
 
 The default data directory is `~/.local/share/cairnmind` for a new installation. An installation that already has data in `~/.local/share/devbrain` keeps using that directory where it is; nothing is moved or copied. Choose another one with `CAIRNMIND_HOME` or the global `--data-dir` option. Variables are spelled `CAIRNMIND_*`; the earlier `DEVBRAIN_*` spelling is still read. For a configuration variable the new spelling wins when both are set; `cairnmind doctor` reports a pair that disagrees. ArcadeDB data lives in `arcade/databases`. The knowledge service and the engine run in the background for as long as WSL is running. `cairnmind stop` stops the knowledge service; once clients are closed, `cairnmind engine stop` stops the database without deleting data.
 
-Commands that only read the store never start the engine, create the data directory, configuration or database, or upgrade the schema: `project list`, `records`, `source`, `task list`, `plan list`, `plan show`, `plan next`, `plan contract` without `--write`, `check profiles`, `memory orphans`, `impact`, `usage` and `store size`. When the engine is not running, the store was never created or its schema needs an upgrade, they stop at once with one line that says what to run, `cairnmind engine start` or `cairnmind init`. `brief` still starts a stopped engine, as do the commands that write and `check list`, `export` and `backup`.
+Commands that only read the store never start the engine, create the data directory, configuration or database, or upgrade the schema: `project list`, `records`, `source`, `task list`, `plan list`, `plan show`, `plan next`, `plan contract` without `--write`, `check profiles`, `memory orphans`, `memory extraction-stats`, `impact`, `usage` and `store size`. When the engine is not running, the store was never created or its schema needs an upgrade, they stop at once with one line that says what to run, `cairnmind engine start` or `cairnmind init`. `brief` still starts a stopped engine, as do the commands that write and `check list`, `export` and `backup`.
 
 ```bash
 cairnmind export ~/memory.json --project my-app

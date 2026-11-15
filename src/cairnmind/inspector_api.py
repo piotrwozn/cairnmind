@@ -171,6 +171,10 @@ def create_inspector_router(store, settings):
                         cursor: str | None = None, limit: int = 100):
         return await call(inspector.revisions, project, record_id, worktree=worktree, cursor=cursor, limit=limit)
 
+    @router.get("/inspector/extraction-stats")
+    async def extraction_stats(project: str):
+        return await call(inspector.extraction_stats, project)
+
     @router.get("/inspector/sources/{source_id}")
     async def source(source_id: str, project: str, worktree: str | None = None,
                      view: str = "raw", offset: int = 0, limit: int = 65536):
