@@ -64,6 +64,15 @@ class ImpactVerdictBody(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
 
 
+class RecordKindBody(BaseModel):
+    # No session field: only a person accepts or withdraws a transcript record kind (#210).
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    client: Literal["claude", "codex", "unknown"]
+    kind: str = Field(min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=1000)
+
+
 def _event_id(cursor):
     return f"{cursor['epoch']}:{cursor['seq']}"
 
@@ -239,6 +248,27 @@ def create_inspector_router(store, settings):
         from .memory_published_release import release
         project_id = (await call(inspector._project, body.project))["id"]
         return await call(release, store, project_id, record_id, body.reason, body.worktree)
+
+    @router.get("/inspector/record-kinds")
+    async def record_kinds_overview(project: str):
+        from . import record_kinds
+        project_id = (await call(inspector._project, project))["id"]
+        return await call(record_kinds.overview, store, project_id)
+
+    async def record_kind_act(body, withdraw):
+        # The person's act of the inspector route, as a review is (#177): the note is a review audit.
+        from . import record_kinds
+        project_id = (await call(inspector._project, body.project))["id"]
+        return await call(record_kinds.act_as_person, store, project_id, body.client, body.kind, body.note,
+                          route="inspector_review", withdraw=withdraw)
+
+    @router.post("/inspector/record-kinds/accept")
+    async def accept_record_kind(body: RecordKindBody):
+        return await record_kind_act(body, False)
+
+    @router.post("/inspector/record-kinds/withdraw")
+    async def withdraw_record_kind(body: RecordKindBody):
+        return await record_kind_act(body, True)
 
     @router.get("/events")
     async def events(request: Request, after: str | None = None, project: str | None = None, once: bool = False,
