@@ -357,6 +357,12 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
     from .memory_egress import describe
     entry = {"provider": row["provider"], "base_url": row["base_url"], "model": model, **_destination(row, role),
              **describe(settings, role), "reachable": False}
+    fingerprinted = None
+    if role == "embedding" and row["provider"] != "ollama":
+        # Other weights behind the same name (#212): the stored mark holds embeddings in every process,
+        # so it is shown even while the server is down or does not list the model.
+        from .memory_fingerprint import doctor_block
+        fingerprinted, entry["fingerprint"] = doctor_block(settings.data_dir, f"{model}@{server_tag(row['base_url'])}")
     headers = {}
     if "credential_ref" in row:
         from .api_credentials import CredentialStore
@@ -389,13 +395,11 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
         listed = [m for m in rows if isinstance(m, dict) and m.get("id") == model]
         if listed:
             entry["identity"] = f"{model}@{server_tag(row['base_url'])}"
-            if role == "embedding":  # other weights behind the same name (#212)
-                from .memory_fingerprint import doctor_block
-                identity, entry["fingerprint"] = doctor_block(settings.data_dir, entry["identity"])
-                if identity is None:
+            if "fingerprint" in entry:  # the generation in use; no identity while changed (#212)
+                if fingerprinted is None:
                     del entry["identity"]
                 else:
-                    entry["identity"] = identity
+                    entry["identity"] = fingerprinted
     entry["model_available"] = bool(listed)
     return entry
 

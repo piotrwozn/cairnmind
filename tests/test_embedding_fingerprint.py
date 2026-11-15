@@ -4,8 +4,10 @@ No model and no network: the embedding server is an httpx.MockTransport whose an
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 import json
+import threading
 import time
 
 import httpx
@@ -235,6 +237,60 @@ def test_the_worker_makes_no_vector_while_the_weights_are_changed(tmp_path, monk
                            {"chunk": chunk})
 
 
+class HeldServer(Server):
+    """Holds back its answer to the fixed request until ``release`` is set; chunks are embedded at once."""
+
+    def __init__(self, vector):
+        super().__init__(vector)
+        self.release = threading.Event()
+
+    async def __call__(self, request):
+        if request.url.path != "/v1/models" and json.loads(request.content)["input"] == [
+                memory_fingerprint.FINGERPRINT_TEXT]:
+            while not self.release.is_set():
+                await asyncio.sleep(0.02)
+        return super().__call__(request)
+
+
+def test_no_vector_is_made_before_the_start_check_answers(tmp_path, monkeypatch):
+    # A restart after a swap: the earlier gen-0 namespace must not get vectors of the new weights while
+    # the check is still on its way.
+    from fastapi.testclient import TestClient
+    from cairnmind.service import create_app
+    server = HeldServer(OLD)
+    settings = replace(Settings.load(tmp_path / "data", create=True), embedding_model="text-embed",
+                       memory_embedding=dict(LMSTUDIO), poll_seconds=0.05)
+    root = tmp_path / "project"
+    root.mkdir()
+    store = Store(settings.data_dir)
+    project = store.add_project("example", root)
+    source, chunk = document(store, project, "Refresh token expiration policy")
+    store.enqueue("extract", project["id"], {"source_id": source["id"]}, "extract:" + source["id"])
+    embedding = client_for(settings, server)
+    settings.data_dir.joinpath(memory_fingerprint.FILE).write_text(json.dumps({"version": 1, "records": {
+        f"text-embed@{embedding.tag}": {"vector": OLD, "generation": 0}}}))
+    chat = Chat()
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    total = "SELECT count(*) AS total FROM embeddings"
+    with TestClient(create_app(settings, ollama=memory_models.MemoryModels(settings, chat, embedding))) as client:
+        deadline = time.monotonic() + 20
+        while source["id"] not in chat.extracted and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert source["id"] in chat.extracted  # the jobs loop has run while the check was held
+        time.sleep(0.5)
+        held = client.get("/status", headers=headers).json()["background"]
+        assert held.get("embedding_fingerprint") is None and held.get("embedding_namespace") is None
+        assert store.query(total)[0]["total"] == 0
+        assert [body["input"] for body in server.bodies] == []  # the held request has not been answered
+        server.release.set()
+        assert wait_for_check(client, headers)["status"] == "same"
+        deadline = time.monotonic() + 20
+        while store.query(total)[0]["total"] == 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
+    assert store.query(total)[0]["total"] == 1  # the same weights: the chunk is embedded once checked
+    assert server.bodies[0]["input"] == [memory_fingerprint.FINGERPRINT_TEXT]
+
+
 async def test_search_never_mixes_vectors_of_the_earlier_weights(tmp_path):
     root = tmp_path / "project"
     root.mkdir()
@@ -310,6 +366,14 @@ def test_doctor_reports_a_change_and_the_identity_in_use(tmp_path):
     with httpx.Client(transport=httpx.MockTransport(server)) as http:
         later = memory_models.doctor_models(settings, http)["embedding"]
     assert later["identity"] == base + "~w2" and later["fingerprint"]["changed"] is False
+    # The mark holds embeddings whether or not the server answers doctor: it is shown either way.
+    (settings.data_dir / memory_fingerprint.FILE).write_text(json.dumps({"version": 1, "records": {
+        base: {"vector": OLD, "generation": 2, "changed": True}}}))
+    for down in (lambda request: httpx.Response(503), lambda request: httpx.Response(200, json={"data": []})):
+        with httpx.Client(transport=httpx.MockTransport(down)) as http:
+            unreachable = memory_models.doctor_models(settings, http)["embedding"]
+        assert unreachable["fingerprint"]["changed"] is True and "identity" not in unreachable
+        assert "rebuild-vectors" in unreachable["fingerprint"]["next"]
 
 
 async def test_an_evaluation_copy_names_the_models_by_the_installations_record(tmp_path):
