@@ -5,7 +5,9 @@ then decisions and constraints in force, other confirmed records, new findings, 
 tasks last, each group most recently updated first. Before that order is applied, a stated share of
 the budget is reserved for the most recently updated proposed records, so new findings are
 seen even when many confirmed records or open tasks exist, and another for the confirmed decisions
-and constraints in force, so open tasks do not push the rules out (#241); tasks get the rest. Each
+and constraints in force, so open tasks do not push the rules out (#241); the checkpoint is taken
+between the two, as before #241, so the rules reserve cannot push it out of a small budget, and tasks
+get the rest. Each
 reserve always grows to hold the newest of its records when that fits what is left of the budget,
 so a long finding with metadata beside an active plan is not passed over for an older, shorter one.
 A reserve is not lost when there are few such records: the main pass fills the whole budget. An
@@ -26,7 +28,9 @@ PROPOSED_SHARE = 0.25
 # plan; a short confirmed decision or constraint takes about 560-600 of them with its confirmation mark and
 # sources, a long one about 1,100, an open task 650-1,400 and the checkpoint about 1,000. 0.3 (about
 # 2,000) holds three short rules or a long and a short one, and leaves at least 45% (about 3,000) to the
-# checkpoint and the open tasks after both reserves: the checkpoint and one or two tasks.
+# checkpoint and the open tasks after both reserves when neither grows. The checkpoint is taken before the
+# rules reserve, so a reserve grown to a long rule never pushes it out of a small budget (2,500 beside an
+# active plan), as it was not before #241.
 RULES_SHARE = 0.3
 
 
@@ -65,15 +69,16 @@ def select_entries(entries: list[dict], reserve: list[bool], budget: int,
     ``reserve[i]`` marks an entry that may use the reserved share; such entries are tried for the
     reserve in the order given, which is most recently updated first. The first of them is taken
     whenever it fits the whole budget: the reserve grows to its size when the share is smaller.
-    Then ``rules_share`` is reserved the same way for the rules in force (rule_in_force), the first
-    of them taken whenever it fits what is left of the budget.
+    Then the checkpoint is taken when it fits what is left, and ``rules_share`` is reserved the same
+    way for the rules in force (rule_in_force), the first of them taken whenever it fits what is left.
     """
     if len(entries) != len(reserve):
         raise ValueError("Every entry needs a reserve flag")
     sizes = [entry_size(entry) for entry in entries]
     chosen: set[int] = set()
     used = 0
-    for flags, part in ((reserve, share), ([rule_in_force(entry) for entry in entries], rules_share)):
+    checkpoint = [entry.get("kind") == "checkpoint" for entry in entries]
+    for flags, part in ((reserve, share), (checkpoint, 1.0), ([rule_in_force(entry) for entry in entries], rules_share)):
         reserved = int(max(0, budget) * min(max(part, 0.0), 1.0))
         newest = next((index for index, flag in enumerate(flags) if flag and index not in chosen), None)
         if newest is not None and sizes[newest] <= budget - used:

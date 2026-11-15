@@ -111,6 +111,23 @@ def test_filling_continues_past_an_entry_that_does_not_fit():
     assert omitted == [{"kind": "decision", "status": "confirmed", "count": 1}]
 
 
+def test_rules_reserve_does_not_push_the_checkpoint_out_of_the_smallest_budget():
+    # Review of #241: at the 2,500 floor (an active plan with a large workflow) a long newest finding and a
+    # long confirmed rule, each taken by its own reserve, left no room for the checkpoint, which 0.10 showed.
+    from cairnmind.context_selection import entry_size, select_entries
+
+    entries = [entry("checkpoint-0", status="proposed", kind="checkpoint", size=940),
+               entry("constraint-0", kind="constraint", size=1040),
+               entry("fact-0", status="proposed", kind="fact", size=1240)]
+    assert [round(entry_size(item), -2) for item in entries] == [1000, 1100, 1300]
+    selected, omitted = select_entries(entries, [False, False, True], 2500)
+    assert [item["id"] for item in selected] == ["checkpoint-0", "fact-0"]
+    assert omitted == [{"kind": "constraint", "status": "confirmed", "count": 1}]
+    # With room for all three, the rule is still shown, in presentation order.
+    selected, _ = select_entries(entries, [False, False, True], 3500)
+    assert [item["id"] for item in selected] == ["checkpoint-0", "constraint-0", "fact-0"]
+
+
 def test_selection_rejects_mismatched_reserve_flags():
     from cairnmind.context_selection import select_entries
 
