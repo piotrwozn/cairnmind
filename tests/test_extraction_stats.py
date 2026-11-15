@@ -114,6 +114,24 @@ def test_a_record_a_person_edited_after_extraction_still_counts_for_its_extracto
     assert item["extractor_version"] == 1 and item["confirmed"] == 1
 
 
+def test_a_session_edit_keeps_the_extractor_group_and_a_dispute_then_confirm_counts_as_confirmed(workspace):
+    store, project = workspace
+    pid = project["id"]
+    record = extracted(store, project, "to rewrite")
+    sources = [item["id"] for item in store.query("SELECT id FROM sources WHERE project_id=:p", {"p": pid})]
+    edited = store.remember(pid, {"id": record["id"], "expected_version": record["version"],
+                                  "kind": "fact", "content": "rewritten by a session"}, sources)
+    assert edited["version"] > record["version"]
+    [item] = extraction_stats(store, pid)["extractors"]
+    assert item["extractor_version"] == 1 and item["proposed"] == 1 and item["total"] == 1
+    disputed = review(store, project, edited, "dispute", "wrong")
+    [item] = extraction_stats(store, pid)["extractors"]
+    assert (item["disputed"], item["confirmed"], item["total"]) == (1, 0, 1)
+    review(store, project, disputed, "confirm")
+    [item] = extraction_stats(store, pid)["extractors"]
+    assert (item["disputed"], item["confirmed"], item["total"]) == (0, 1, 1)
+
+
 def test_records_written_by_hand_or_another_project_are_not_counted(workspace, tmp_path):
     store, project = workspace
     other_root = tmp_path / "other"
@@ -136,6 +154,10 @@ def test_a_project_with_more_extractions_than_a_page_is_read_in_pages_and_a_cap_
     monkeypatch.setattr(stats_module, "MAX_RECORDS", 4)
     capped = extraction_stats(store, project["id"])
     assert capped["truncated"] is True and capped["records"] == 4
+    # Exactly as many records as the cap: nothing was dropped, so it is not reported as truncated.
+    monkeypatch.setattr(stats_module, "MAX_RECORDS", 5)
+    exact = extraction_stats(store, project["id"])
+    assert exact["truncated"] is False and exact["records"] == 5
 
 
 def test_the_command_prints_numbers_and_json_and_never_record_text(workspace, monkeypatch):

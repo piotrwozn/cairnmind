@@ -42,7 +42,14 @@ def _first_versions(reader, project_id) -> tuple[dict, bool]:
             version = row.get("extractor_version")
             found[row["record_id"]] = version if type(version) is int else UNKNOWN
         if len(found) >= MAX_RECORDS:
-            return found, len(rows) == PAGE
+            # Truncated only when one more extracted record exists beyond the cap.
+            if len(rows) < PAGE:
+                return found, False
+            more = reader.query(
+                "SELECT record_id FROM record_revisions WHERE project_id=:project AND version=1 "
+                "AND snapshot.metadata.extractor IS NOT NULL AND record_id>:last ORDER BY record_id LIMIT 1",
+                {"project": project_id, "last": rows[-1]["record_id"]})
+            return found, bool(more)
         if len(rows) < PAGE:
             return found, False
         after = rows[-1]["record_id"]
