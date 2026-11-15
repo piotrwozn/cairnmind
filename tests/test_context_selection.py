@@ -195,6 +195,77 @@ def test_newest_reservable_entry_is_taken_before_shorter_older_ones():
     assert [item["id"] for item in selected] == ["c0"]
 
 
+def finished_tasks(store, project, count, status="confirmed", words=25):
+    evidence = source(store, project)
+    return [store.remember(project["id"], {
+        "kind": "task", "key": f"finished-{status}-{index}", "status": status,
+        "content": f"Finished step {index}: " + "completed work " * words, "metadata": {"state": "done"}},
+        [evidence["id"]]) for index in range(count)]
+
+
+def test_constraint_in_force_is_seen_beside_many_finished_tasks(workspace):
+    store, project, settings = workspace
+    evidence = source(store, project)
+    constraint = store.remember(project["id"], {
+        "kind": "constraint", "key": "local-only", "status": "confirmed",
+        "content": "All inference stays on this machine."}, [evidence["id"]])
+    # Finished later, so each one is more recently updated than the constraint (#213).
+    finished_tasks(store, project, 30)
+    finished_tasks(store, project, 10, status="proposed")
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    assert context["omitted_records"] > 0
+    assert constraint["id"] in shown_ids(context)
+    assert context["records"][0]["id"] == constraint["id"]
+    assert any(item["kind"] == "task" for item in context["omitted_by_kind_status"])
+
+
+def test_context_order_is_active_work_then_rules_in_force_then_findings_then_finished_tasks(workspace):
+    store, project, settings = workspace
+    evidence = source(store, project)
+
+    group = {}
+
+    def add(place, kind, key, status="proposed", state=None):
+        record = {"kind": kind, "key": key, "status": status, "content": f"{kind} {key}."}
+        if state:
+            record["metadata"] = {"state": state}
+        group[store.remember(project["id"], record, [evidence["id"]])["id"]] = place
+
+    # Stored in the reverse of the expected order, so update time alone would give the wrong one.
+    add(5, "task", "done-confirmed", "confirmed", "done")
+    add(5, "task", "done-proposed", state="done")
+    add(4, "decision", "proposed-decision")
+    add(4, "fact", "proposed-fact")
+    add(3, "fact", "confirmed-fact", "confirmed")
+    add(3, "preference", "confirmed-preference", "confirmed")
+    add(2, "constraint", "confirmed-constraint", "confirmed")
+    add(2, "decision", "confirmed-decision", "confirmed")
+    add(1, "task", "open", state="in_progress")
+    group[store.checkpoint(project["id"], {"summary": "Where the work stands."})["id"]] = 0
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    places = [group[item["id"]] for item in context["records"]]
+    assert context["omitted_records"] == 0
+    assert places == [0, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+
+
+def test_recall_fixture_context_holds_the_current_decision_rather_than_the_finished_task(tmp_path):
+    from cairnmind.evaluation import _seed
+
+    root, other = tmp_path / "root", tmp_path / "other"
+    root.mkdir()
+    other.mkdir()
+    store = Store(tmp_path / "data")
+    project, _cases, canonical = _seed(store, root, other)
+    context = Retriever(store, Settings(data_dir=tmp_path / "data"), NoModel()).context(project["id"])
+    shown = shown_ids(context)
+    # Before #213 the finished task took the place of the decision in force in what ask() reads.
+    assert canonical["current_decision"]["id"] in shown
+    assert canonical["tasks"]["todo"]["id"] in shown
+    places = [item["id"] for item in context["records"]]
+    if canonical["tasks"]["done"]["id"] in shown:
+        assert places[-1] == canonical["tasks"]["done"]["id"]
+
+
 def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
     import cairnmind.retrieval as retrieval
 
