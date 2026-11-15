@@ -27,6 +27,7 @@ from .ollama import OllamaUnavailable
 from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
                         with_source_origin)
 from .store import validate_task_state
+from .subject import SUBJECT_GAP, unnamed_subject
 from .support import SUPPORT_SCHEMA, SUPPORT_TOKENS, support_messages, support_verdict
 
 
@@ -1022,18 +1023,29 @@ class KnowledgeAgent:
         diagnostics["budget"]["elapsed_seconds"] = round(time.monotonic() - started, 3)
         return {**result, "diagnostics": diagnostics}
 
-    async def _support_gate(self, question: str, result: dict, evidence: dict, started: float,
+    async def _support_gate(self, project_id: str, question: str, result: dict, evidence: dict, started: float,
                             diagnostics: dict) -> dict:
-        """Keep a complete answer complete only if one judge call finds that its quotes state it.
+        """Keep a complete answer complete only if its sources name the question's subject and one
+        judge call finds that its quotes state the answer.
 
-        Anything else (not complete, so no call) passes unchanged. A "no", an unparsed reply or a
-        failed call yields the result of a failed citation validation: partial, the answer withheld,
+        Anything else (not complete, so no call) passes unchanged. The subject check (subject.py)
+        comes first and asks no model: a name of the question's subject that no quoted source has
+        ends the answer as below, with the code answer_unsupported and no judge call. A "no", an
+        unparsed reply or a failed call of the judge
+        yields the result of a failed citation validation: partial, the answer withheld,
         the verified quotes kept as sources, the judge's reason in unknowns. The code is
         answer_unsupported when the judge said no and support_unverified when it gave no verdict.
         A timeout is left to the caller's ask_timeout handling, which never returns complete.
         """
         if result.get("status") != "complete":
             return result
+        unnamed = await asyncio.to_thread(unnamed_subject, self.store, project_id, question,
+                                          result["sources"], evidence)
+        if unnamed:
+            diagnostics["support_check"] = "subject_missing"
+            return self._result("partial", "The model's answer could not be verified in the sources.",
+                                evidence, [*result.get("unknowns", []), SUBJECT_GAP + ", ".join(unnamed)],
+                                started, result["sources"], code="answer_unsupported")
         try:
             response = await self.ollama.chat(
                 support_messages(question, result["answer"], result["sources"]), tools=None,
@@ -1182,7 +1194,7 @@ class KnowledgeAgent:
                         )
                         if not repairable:
                             judged = validated
-                            return await self._support_gate(question, validated, evidence, started, diagnostics)
+                            return await self._support_gate(project_id, question, validated, evidence, started, diagnostics)
                         repair_fallback = validated
                         diagnostics["validation_codes"] = [validated["diagnostics"]["code"]]
                         if _step + 1 >= self.settings.max_steps:
@@ -1220,7 +1232,7 @@ class KnowledgeAgent:
                         diagnostics["repair_outcome"] = ("failed" if still_repairable or
                             result["diagnostics"]["code"] == "source_stale" else "succeeded")
                         judged = result
-                        return await self._support_gate(question, result, evidence, started, diagnostics)
+                        return await self._support_gate(project_id, question, result, evidence, started, diagnostics)
                     if not isinstance(calls, list) or len(calls) > 6:
                         return self._result("partial", "The model returned an invalid list of tool calls.", evidence,
                                             ["The model broke the tool protocol."], started,
