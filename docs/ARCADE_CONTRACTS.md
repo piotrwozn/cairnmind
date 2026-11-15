@@ -97,10 +97,19 @@ Additional root-facing methods needed:
   into place only after the transaction commits, so a failed commit leaves no file (the before-schema copy
   is the exception: its read-only transaction ends after the move, and a failure there stops the migration
   before any change). A partial file left by a killed process has no gzip trailer and is refused; the store
-  size view counts it under other backups and the service removes it once it is a day old. Restore still loads the whole
-  file before validating it (its checksum no longer builds a second copy of the payload text): validating
-  cross references before the first deletion needs the whole payload, and the engine holds the restore
-  transaction in memory in any case.
+  size view counts it under other backups and the service removes it once it is a day old.
+- restore (`Store.restore`, `backup_reader.py`, #196): reads the same envelope 1 in pieces, never whole. A
+  first pass walks the document one row at a time with the standard library decoder, recomputes the checksum
+  over the rows serialized with `json_text`, and keeps only a bounded index (project ids; for sources, nodes
+  and records the id and the fields the cross references use, and whether the source hash was right). A
+  second pass checks every cross reference against it. Only then is the before-restore copy made and the
+  store changed; the inserts read the file three more times (documents, then vertices, then edges and
+  vectors) inside the one restore transaction. Every check, its order and its message are those of
+  `Store._validated_backup`, which still loads the rare file that is valid JSON in a layout no writer
+  produced (keys out of sorted order or repeated, a document that is not an object). Each later pass compares
+  a digest of the bytes it read with the first pass, so a file changed during a restore is refused and the
+  transaction rolled back. A failure at any point before the commit leaves the store as it was. Python memory
+  is bounded by the largest row plus the index; the engine still holds the restore transaction itself.
 
 ## Ingestion (ingestion agent owns)
 
