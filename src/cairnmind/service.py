@@ -468,7 +468,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         """The fixed request to an OpenAI-compatible embedding role at start (#212), retried while it is down.
 
         It holds no memory content, so it needs no consent beyond the role's own: search stays text-only
-        and embed jobs wait until it answers.
+        and embed jobs wait until it answers. Unlike other model calls it does not wait for background work
+        to be allowed: in the deferred mode (the cockpit) search would otherwise stay text-only until a
+        project allows it. Nor does it enter the inference queue: a server that hangs on it would hold every
+        extraction and question behind it, often on another server, at every retry.
         """
         while True:
             try:
