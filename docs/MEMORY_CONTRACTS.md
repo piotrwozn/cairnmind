@@ -118,7 +118,7 @@ through, and it holds for every route:
   text, the kind, the key, the record it replaces, the quoted passage and every
   metadata field. A field is covered unless it is named as not covered, so a
   summary, a next step or any other text a writer puts beside a confirmed record
-  ends the confirmation like a changed text does. Not covered are the fields the
+  counts like a changed text does. Not covered are the fields the
   store derives, the bookkeeping of conflict decisions, and on a task its
   progress: `metadata.state`, reported evidence, check runs, a declared scope, a
   proposed command and its placement in a plan. Of these only the path patterns
@@ -126,16 +126,72 @@ through, and it holds for every route:
 - Any other write that asks for `confirmed` is refused and stores nothing. The
   error is `Only a person can store a record as confirmed, ...` (HTTP 400), and
   it says what to do: store the record as proposed and let the person confirm it.
-- A write that does not ask for a status and changes what was confirmed is
-  stored as `proposed`, with `confirmation.by = "lapsed"`. This is how a
-  session's edit of a confirmed decision, a new checkpoint over a confirmed one,
-  or a plan save that rewrites a confirmed step is stored.
-- A write that is not a person's act and sets another status on a confirmed
-  record (`proposed`, `disputed`, `superseded`), or replaces it with a new record
-  through `supersedes`, is stored and leaves the same mark with the new status.
-  Taking a confirmation away is never silent. The mark stays on later versions
-  until a person confirms or disputes the record. A person's dispute or conflict
-  decision leaves no such mark.
+- A write that is not a person's act never takes a person's confirmation away.
+  On a record a person confirmed here, and on one confirmed before this rule
+  (nothing says it was not a person's), such a write is refused and stores
+  nothing when it names the record in `supersedes`, sets the status `disputed`,
+  `proposed` or `superseded` on it, or changes anything the confirmation covers
+  (the list above), with or without asking for a status. The error is
+  `A person confirmed record <id> (<kind>), and this write is not a person's
+  act: ... Only a person takes a confirmation away. Nothing was saved. ...`
+  (HTTP 400, never 409: there is nothing to read again and retry), and it says
+  what to do instead; see "Changing what a person confirmed" below.
+- A confirmation that is not a person's verdict given here can still end
+  without a person: one a package brought (`by: import`) and evaluation seed
+  data. A write that changes what such a confirmation covers and asks for no
+  status is stored as `proposed`; one that sets another status or replaces the
+  record is stored too. Either leaves `confirmation.by = "lapsed"` with the new
+  status, which stays on later versions until a person confirms or disputes the
+  record.
+- A person's act leaves no such mark: a dispute, a conflict decision, a plan the
+  person saves in their own terminal.
+
+### Changing what a person confirmed
+
+A session, an MCP client, the built-in agent, `POST /remember` without a
+session and automatic extraction cannot correct a record a person confirmed.
+What they can do, and what the refusal tells them:
+
+- **A fact or a decision.** Store what was found as a new proposed record under
+  another key, with `metadata.possible_conflicts` naming the confirmed record.
+  The pair then waits in the conflict inbox, where the person decides which one
+  stands, keeps both or dismisses the alarm. Automatic extraction does exactly
+  this when a transcript contradicts a confirmed finding under the same key: it
+  never updates or replaces an existing record.
+- **Any other kind** (constraint, preference, question). The conflict inbox
+  shows facts and decisions only. Store a new proposed record and tell the
+  person; they dispute the old record or confirm the new one in the inspector.
+- **A task.** Progress is not part of what was confirmed and is stored as
+  before: `metadata.state`, reported evidence, check runs, a declared scope, a
+  proposed command. The task's text, criteria, dependencies and requirements
+  are changed only by a person.
+- **A plan step.** A plan save that changes or removes a step a person
+  confirmed is refused as a whole, and the error names the step (`Step 'key' of
+  this plan (task <id>) was confirmed by a person ...`). A save that leaves such
+  steps exactly as they are is stored: it may add steps, change steps that are
+  not confirmed, and change the plan's title, goal and constraints. The person
+  disputes the step in the inspector, after which a session's save may rewrite
+  it, or saves the plan with `cairnmind plan save` in their own terminal; a
+  step the person changes this way is proposed until they confirm it, and one
+  they remove is archived, without a lapsed mark. `cairnmind plan adopt` gives
+  each adopted task a plan key, so it follows the same rule.
+- **The checkpoint record** is the one exception. It is a slot that holds the
+  latest reported state, not a statement, and every session writes it. If a
+  person confirmed it in the inspector, the next `checkpoint` is still stored:
+  the record is proposed again and carries the lapsed mark, and the version the
+  person confirmed stays in the record's history with their mark. A
+  `/remember` on the checkpoint record is a write like any other and is
+  refused.
+
+A person takes their own confirmation away by disputing the record in the
+inspector, by a conflict decision, by saving a plan in their own terminal, or
+by an import run with `--replace-confirmed`. A disputed record is no longer a
+person's confirmation, and any writer may change it.
+
+Nothing writes in the background over a person's confirmation: extraction
+only adds records, verification writes check runs and never a task record, and
+imports are a person's own command. A refused write is therefore always the
+direct answer to the session, tool call or command that asked for it.
 
 The person's routes, and how each is told from a session or an agent:
 
@@ -145,7 +201,7 @@ The person's routes, and how each is told from a session or an agent:
 | Conflict decision (`POST /inspector/conflicts/resolve`) | The route, as above. The finding chosen to stand becomes confirmed. |
 | Plan confirmation (`POST /inspector/plans/{id}/confirm`, `memory confirm-plan`) | The route; the command also requires a person's terminal (below). |
 | Workspace form (`POST /findings` without `session_id`) | The absence of a session. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
-| Command line: `remember --confirmed`, `tasks add`, `memory confirm-plan` | No session variable (`CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` or their earlier spellings), no marker of a coding client (`CLAUDECODE`, `CODEX_THREAD_ID`), and a terminal on both standard input and standard output. |
+| Command line: `remember --confirmed`, `tasks add`, `memory confirm-plan`, and `plan save` or `plan adopt` when they change a confirmed step | No session variable (`CAIRNMIND_SESSION_ID`, `CAIRNMIND_PACKET_ID` or their earlier spellings), no marker of a coding client (`CLAUDECODE`, `CODEX_THREAD_ID`), and a terminal on both standard input and standard output. |
 
 A command line confirmation leaves a note of its own (`person://`, origin
 `cli_person`) with the person's Git name, branch and commit. Like a review's
@@ -156,7 +212,9 @@ published.
 
 A command that does not pass the last test is not a person: `remember
 --confirmed` and `memory confirm-plan` are refused with what to do instead, and
-`tasks add` stores the task as proposed and says so. This covers a coding
+`tasks add` stores the task as proposed and says so, and `plan save` or `plan
+adopt` is refused when it would change or remove a step a person confirmed
+(any other save is stored). This covers a coding
 client's shell (it carries the session or the client's marker), the built-in
 agent's command (its input is `/dev/null` and its output a pipe, and it has no
 session variable at all), a script and CI.
@@ -164,8 +222,9 @@ session variable at all), a script and CI.
 Every other route is not a person's: MCP `remember`, `checkpoint` and
 `save_plan`, the built-in agent's memory tools, `POST /remember` with or without
 a session, a session's finding, automatic extraction. They store proposed
-records. A plan a session saves has proposed steps until the person confirms the
-plan; activating a plan does not confirm it.
+records, and none of them changes, replaces or lowers a record a person
+confirmed. A plan a session saves has proposed steps until the person confirms
+the plan; activating a plan does not confirm it.
 
 What the rule does not claim. The service has one local token for all its
 routes, and the command line trusts the terminal it is given. A program that
@@ -201,7 +260,7 @@ can neither send it nor remove it, and a package never carries it.
 | `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at` |
 | `import` | Confirmed elsewhere and brought by a package. Never verified here. | `package` (`archive` or `published`), `where`, `confirmed_by` (claims: name, action, branch, commit, time), `imported_at`, `version` |
 | `seed` | Written by `cairnmind eval` into its own store. Not a person. | `route`, `source_id`, `version` |
-| `lapsed` | No longer confirmed: a write that was not a person's act changed what was confirmed or set another status. Kept until a person gives a verdict again. | `confirmed_version`, `version`, `status` |
+| `lapsed` | No longer confirmed: a write that was not a person's act changed what was confirmed or set another status. Written only over a confirmation that was not a person's verdict given here (an imported one, seed data, the checkpoint record); a store may also hold it from before that was so. Kept until a person gives a verdict again. | `confirmed_version`, `version`, `status` |
 
 A confirmed record without the field was confirmed before this rule existed
 (0.10.0 or earlier). Its status is kept, nothing is claimed about who confirmed
@@ -245,7 +304,10 @@ and where, and it never becomes this machine's own confirmation:
 - It is not verification: evidence states, check runs and freshness are what
   they were. A local person's confirm replaces the mark with their own.
 - A later local write follows the rule above: progress keeps the imported
-  confirmation, a changed statement makes the record proposed again.
+  confirmation, and a changed statement makes the record proposed again with
+  the lapsed mark. An imported confirmation is not a verdict given here, so a
+  session may change or replace such a record; once a person confirms it in the
+  inspector it is theirs and is kept like any other.
 - An import never rewrites a version, and it never replaces a verdict given
   here without the person's choice. A record counts as having one when it is
   confirmed or disputed and that version was not itself written by an import: a

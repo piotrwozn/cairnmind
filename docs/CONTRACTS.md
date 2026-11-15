@@ -11,7 +11,9 @@ sources)` and `checkpoint(project, state)`. Source and record IDs are stable str
 Additional tools are `save_plan`, `next_task`, `resume_context`, `ack_resume` and
 read-only `check_status`. Task progress (`metadata.state`) is separate from knowledge confirmation status.
 Only a person can store a record as `confirmed`: every tool here stores proposed records, a write that
-asks for `confirmed` is refused, and an imported confirmation is kept as confirmed elsewhere
+asks for `confirmed` is refused, a write that would change, replace or lower a record a person confirmed is
+refused too (it stores a new proposed record instead, and the person decides in the conflict inbox), and an
+imported confirmation is kept as confirmed elsewhere
 ([MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md#only-a-person-confirms-a-record)).
 Updates require `id` and `expected_version`; task completion checks its declared
 acceptance/test/review requirements. New test-gated completion requires fresh local
