@@ -200,12 +200,12 @@ def test_a_reader_takes_over_a_store_that_this_release_cannot_read_as_a_reader(t
 
 
 def test_two_takeovers_at_once_leave_one_writer_that_the_row_and_the_head_agree_on(tmp_path):
-    first = Store(tmp_path / "first")
     """The orders are chosen one by one in test_store_writer_race; here the threads race as they will.
 
     From the second round on one of the two is the writer already, which is the case that once left the
     row naming one installation and the head the other.
     """
+    first = Store(tmp_path / "first")
     readers = [Store(second_installation(tmp_path, first, name)) for name in ("one", "two")]
     for round_ in range(6):
         results, errors, start = [], [], threading.Barrier(2)
@@ -227,10 +227,7 @@ def test_two_takeovers_at_once_leave_one_writer_that_the_row_and_the_head_agree_
         assert len(results) + len(errors) == 2 and results, (round_, errors)
         assert all(isinstance(exc, ArcadeError) and "ConcurrentModification" in exc.exception_name
                    for exc in errors), (round_, errors)
-        client = ArcadeClient(first.settings)
-        with client.transaction(commit=False) as reader:  # one view of both records
-            row = store_writer.read_writer(reader)
-            named = reader.query("SELECT writer FROM journal_state WHERE id='current'")[0]["writer"]
+        row, named = store_writer.read_fence(ArcadeClient(first.settings))  # both threads have ended
         assert row["installation_id"] == named == row["history"][-1]["installation_id"], round_
         # The writer is an installation whose takeover returned: one that took over in this round, or the one
         # that was the writer already and whose takeover therefore changed nothing.
