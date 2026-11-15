@@ -67,6 +67,9 @@ def initialized(command):
     @wraps(command)
     def invoke(ctx, *args, **kwargs):
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
+        if ctx.obj._origin.get("connect_saved"):
+            from cairnmind.database_mode import saved_note
+            typer.echo(f"Cairnmind: {saved_note(ctx.obj)}", err=True)
         return command(ctx, *args, **kwargs)
     return invoke
 
@@ -355,7 +358,8 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 @app.command()
 @initialized
 def init(ctx: typer.Context):
-    """Create the local store. Downloads no models and changes no client configuration."""
+    """Create the store, or open the one a connect-only installation was given. Downloads no models and
+    changes no client configuration."""
     store = store_for(ctx.obj)
     result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
     if getattr(store, "not_writer", None):
@@ -367,12 +371,30 @@ def init(ctx: typer.Context):
     output(result)
 
 
+@contextmanager
+def _engine_command():
+    """An engine command on a connect-only installation ends with one plain sentence, not a failure (#68)."""
+    from cairnmind.engine import ConnectOnly
+    try:
+        yield
+    except ConnectOnly as exc:
+        refuse(str(exc))
+
+
+def _managed_only(settings: Settings, what: str) -> None:
+    from cairnmind.database_mode import connect_only, refusal
+    if connect_only(settings):
+        refuse(f"{what} creates and drops temporary databases. " + refusal(settings, "create or drop a database")
+               + " Run it on an installation with the engine on this machine.")
+
+
 @engine_app.command("install")
 @initialized
 def engine_install(ctx: typer.Context, distribution: Path | None = None):
     """Download the pinned ArcadeDB engine and verify its SHA-256 (about 87 MB)."""
     from cairnmind.engine import install_engine
-    path = install_engine(ctx.obj, distribution)
+    with _engine_command():
+        path = install_engine(ctx.obj, distribution)
     output({"installed": str(path), "version": ctx.obj.arcade_version})
 
 
@@ -380,23 +402,34 @@ def engine_install(ctx: typer.Context, distribution: Path | None = None):
 @initialized
 def engine_start(ctx: typer.Context):
     from cairnmind.engine import start_engine
-    output(start_engine(ctx.obj))
+    with _engine_command():
+        output(start_engine(ctx.obj))
 
 
 @engine_app.command("status")
 @initialized
 def engine_inspect(ctx: typer.Context):
+    """Whether the database server answers, where it is and which version it runs. Starts nothing."""
     from cairnmind.engine import engine_status
-    output(engine_status(ctx.obj))
+    result = engine_status(ctx.obj)
+    output(result)
+    if result.get("problem"):
+        # Connect-only (#68): a server of a version this release does not support is refused, not only shown.
+        raise typer.Exit(1)
 
 
 @engine_app.command("stop")
 @initialized
 def engine_stop(ctx: typer.Context):
-    from cairnmind.engine import stop_engine
-    if service_alive(ctx.obj):
+    from cairnmind.engine import local_process_recorded, stop_engine
+    from cairnmind.database_mode import connect_only
+    # A connect-only installation without an engine of its own has nothing to stop, whether or not its
+    # service runs: it says so, instead of asking to stop the service first (#68).
+    nothing_here = connect_only(ctx.obj) and not local_process_recorded(ctx.obj)
+    if not nothing_here and service_alive(ctx.obj):
         raise typer.BadParameter("Run cairnmind stop first; the knowledge service is using ArcadeDB")
-    output(stop_engine(ctx.obj))
+    with _engine_command():
+        output(stop_engine(ctx.obj))
 
 
 @db_app.command("create-user")
@@ -1236,6 +1269,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
     from cairnmind.evaluation import run_evaluation
     if skip_claude and not clients:
         raise typer.BadParameter("--skip-claude requires --clients")
+    _managed_only(ctx.obj, "`cairnmind eval run`")
     result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
     _record_evaluation(ctx.obj, "recall", result)
     output(result)
@@ -1250,6 +1284,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
 def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
     """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
     from cairnmind.memory_evaluation import run_memory_evaluation
+    _managed_only(ctx.obj, "`cairnmind eval memory`")
     result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
     _record_evaluation(ctx.obj, "memory", result)
     output(result)
@@ -1287,6 +1322,7 @@ def eval_repository(ctx: typer.Context, root: Path, questions: Path | None = Non
     configured models and a running engine; exits 3 when the models are not available.
     """
     from cairnmind.repository_evaluation import run_repository_evaluation
+    _managed_only(ctx.obj, "`cairnmind eval repository`")
     path = questions or Path(root) / "docs" / "evaluation" / "repository-questions.json"
     try:
         result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)

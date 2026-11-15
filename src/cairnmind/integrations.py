@@ -214,12 +214,17 @@ def doctor(settings: Settings) -> dict[str, Any]:
     }
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
     result["tmux"] = NativeRuntime(settings).diagnostics()
+    from .database_mode import connect_only
     try:
-        java = resolve_java(settings)
+        # Connect-only (#68): no engine runs here, so Java is neither needed nor run to ask its version.
+        java = None if connect_only(settings) else resolve_java(settings)
     except ArcadeError as exc:
         java = None
         result["java"].update(compatible=False, error=str(exc))
-    if settings.java_executable:
+    if connect_only(settings):
+        result["java"] = {"needed": False, "reason": "This installation only connects to its database; no engine "
+                                                     "runs on this machine."}
+    elif settings.java_executable:
         result["java"]["configured_executable"] = settings.java_executable
     managed_java = managed_java_executable(settings)
     if managed_java:

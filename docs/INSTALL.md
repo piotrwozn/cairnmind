@@ -117,6 +117,8 @@ This simpler form lets `uv` resolve dependency versions itself; the installer ad
 
 To run ArcadeDB yourself in a container, on a server or on a laptop for development, see [DEPLOYMENT.md](DEPLOYMENT.md). It also covers backups, restores and upgrading the database.
 
+An installation that uses such a database is connect-only: it never installs, starts or stops an engine and needs no Java. Set `CAIRNMIND_ARCADE_CONNECT_URL` to the database address before you run the installer, and it skips the Java check and the ArcadeDB download; then follow [Connect-only installations](DEPLOYMENT.md#connect-only-installations) to create the database user and the store. The rest of this page (models, coding assistants, the first project) is the same.
+
 ## 5. Download the models
 
 Ollama usually runs as a service after installation. If it does not, start it in a separate terminal with `ollama serve`. Then:

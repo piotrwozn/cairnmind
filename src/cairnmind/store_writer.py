@@ -220,6 +220,35 @@ def settle(client, me: Installation) -> dict | None:
     return None
 
 
+CLAIM_WAIT = 10.0
+
+
+def claimed_meanwhile(client, me: Installation, error, *, wait: float = CLAIM_WAIT) -> dict | None:
+    """The writer row of another installation, when ``error`` is the engine's refusal of a commit that met
+    that installation's: two of them opened one store without a writer at the same moment. None otherwise.
+
+    The one whose commit came first goes on to name itself as the writer, which takes it a few more
+    requests; this one waits for that row, for ``wait`` seconds at most. Without it (the other one stopped
+    in between) the caller raises ``error`` as it was, and the same command run again finishes the store.
+    """
+    import time
+    text = str(error)
+    if getattr(error, "status_code", None) != 503 or not (
+            "Concurrent modification" in text or "retry the operation" in text or "Duplicated key" in text):
+        return None
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            row = read_writer(client)
+        except Exception:  # noqa: BLE001 - the type may not exist yet; the caller raises the first error
+            row = None
+        if row and row.get("installation_id") != me.id:
+            return row
+        if row or time.monotonic() >= deadline:
+            return None
+        time.sleep(0.1)
+
+
 def check_head(store, head: dict | None, native) -> None:
     """Refuse the commit of a store whose installation is no longer the writer (journal flush hook)."""
     me = store.installation.id

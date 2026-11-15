@@ -14,10 +14,12 @@ openssl and uv; with --kind-cluster, also kind, to load the two images into that
      Secrets from files, as docs/DEPLOYMENT.md does;
   4. applies deploy/kubernetes and waits until the StatefulSet is ready (its probes are the image's
      health check);
-  5. runs the connection check as the Job of deploy/kubernetes/check: create-user as root once, then
-     engine status and doctor as the dedicated user over TLS, both passwords read from mounted Secrets;
-  6. runs `cairnmind engine status` and `doctor` from this machine through kubectl port-forward, then
-     writes a project and a record, takes a logical backup and restores it, as docs/DEPLOYMENT.md does;
+  5. runs the connection check as the Job of deploy/kubernetes/check, a connect-only installation
+     inside the cluster: create-user as root once, then engine status, doctor and indexing a small project
+     as the dedicated user over TLS, both passwords read from mounted Secrets;
+  6. runs `cairnmind engine status` and `doctor` from this machine through kubectl port-forward, as a
+     second connect-only installation: it reads only, takes over writing as a person would, then writes a
+     project and a record, takes a logical backup and restores it, as docs/DEPLOYMENT.md does;
   7. scales the server to 0, archives its volume with tar from a pod that holds it, unpacks the archive
      into a new, empty volume and reads the same records from the server started on it;
   8. reports whether the network plugin enforces the NetworkPolicy: a pod without the client label is
@@ -176,7 +178,7 @@ def forwarded(files: dict[str, Path], data: Path):
                     raise SystemExit("kubectl port-forward did not open its port") from None
                 time.sleep(0.5)
         env = {key: value for key, value in os.environ.items() if not key.startswith(("CAIRNMIND_", "DEVBRAIN_"))}
-        env.update(CAIRNMIND_ARCADE_URL=f"https://localhost:{port}", CAIRNMIND_ARCADE_USER="cairnmind",
+        env.update(CAIRNMIND_ARCADE_CONNECT_URL=f"https://localhost:{port}", CAIRNMIND_ARCADE_USER="cairnmind",
                    CAIRNMIND_ARCADE_DATABASE="cairnmind", CAIRNMIND_ARCADE_PASSWORD_FILE=str(files["user-password"]),
                    CAIRNMIND_ARCADE_CA_FILE=str(files["ca"]))
 
@@ -187,6 +189,7 @@ def forwarded(files: dict[str, Path], data: Path):
                 raise SystemExit(f"cairnmind {' '.join(arguments)} failed:\n{result.stdout}{result.stderr}")
             return json.loads(result.stdout)
 
+        cairnmind.env = env
         yield cairnmind
     finally:
         forward.terminate()
@@ -201,16 +204,28 @@ def port_forward_check(files: dict[str, Path], work: Path) -> list:
         if not (status.get("available") and status.get("version_matches") and database.get("database_available")
                 and database.get("transport", "").startswith("https")):
             raise SystemExit(f"through port-forward: engine status {status}, doctor {database}")
-        print(f"through port-forward: {database.get('user')} on {database.get('database')}, {database.get('transport')}")
+        if status.get("mode") != "connect" or "java" in status:
+            raise SystemExit(f"through port-forward: the installation is not connect-only: {status}")
+        print(f"through port-forward: {database.get('user')} on {database.get('database')}, {database.get('transport')}, "
+              "connect-only")
+        step("a second installation reads only, and a person's takeover moves writing to it")
+        cairnmind("init")
+        # The Job's installation, in the cluster, opened the database first and is its writer (#70).
+        role = cairnmind("store", "writer")
+        if role.get("role") != "reader":
+            raise SystemExit(f"the workstation's installation is not a reader of the Job's store: {role}")
+        refused = run(sys.executable, "-m", "cairnmind", "--data-dir", str(work / "port-forward-data"), "remember",
+                      "in-cluster", "A reader must not write this.", env=cairnmind.env, capture=True, check=False)
+        if refused.returncode == 0 or "only reads this store" not in refused.stdout + refused.stderr:
+            raise SystemExit(f"a reader's write was not refused:\n{refused.stdout}{refused.stderr}")
+        taken = cairnmind("store", "takeover", "--yes", "--note", "the Kubernetes check moves writing to the workstation")
+        if not taken.get("taken_over") or cairnmind("store", "writer").get("role") != "writer":
+            raise SystemExit(f"the takeover did not make the workstation the writer: {taken}")
+        print(f"the workstation took over from installation {str(taken.get('previous'))[:8]}")
         step("a logical backup and its restore as the dedicated user, through the same port-forward")
         tree = work / "demo"
         tree.mkdir()
         (tree / "README.md").write_text("# Demo\n\nA project for the Kubernetes check.\n")
-        cairnmind("init")
-        # The connection check Job opened the store first, so it is the writer and this installation reads
-        # only (one writer per store). Writing from here is a takeover, as the guide says.
-        taken = cairnmind("store", "takeover", "--yes", "--note", "kubernetes check: backup and restore")
-        print(f"this installation took over writing: {taken}")
         cairnmind("project", "add", "demo", str(tree))
         # Not --confirmed: only a person in their own terminal confirms, and this check has none.
         cairnmind("remember", "demo", "The Kubernetes check wrote this record.", "--key", "k8s-check")

@@ -1,13 +1,8 @@
 # Running the database in a container
 
-By default Cairnmind installs ArcadeDB itself and starts it on `127.0.0.1:2480` when it needs it (see [INSTALL.md](INSTALL.md)). This page is for running that database yourself instead, in a container: on a server, on a laptop for development, or in Kubernetes. It covers the image, a Compose file for one machine, Kubernetes manifests, backups and restores, and what to do when the pinned ArcadeDB version changes.
+By default Cairnmind installs ArcadeDB itself and starts it on `127.0.0.1:2480` when it needs it (see [INSTALL.md](INSTALL.md)). This page is for running that database yourself instead, in a container: on a server, on a laptop for development, or in Kubernetes. It covers the image, a Compose file for one machine, Kubernetes manifests, [installations that only connect to such a database](#connect-only-installations), backups and restores, and what to do when the pinned ArcadeDB version changes.
 
-What is not here yet, and why:
-
-| Not yet | Waits for |
-| --- | --- |
-| An installation that only connects and never starts a local engine | [#68](https://github.com/piotrwozn/cairnmind/issues/68) |
-| A restore that is safe while another machine writes to the same database | [#70](https://github.com/piotrwozn/cairnmind/issues/70) |
+One database serves one person: one installation writes it and any number read it. A team shares memory through publication in the repository, not through one live database.
 
 ## What is in `deploy/`
 
@@ -71,28 +66,191 @@ The password is read only on the first start, when ArcadeDB creates the `root` u
 
 The databases, the server configuration and the server log are in the volume `cairnmind-db_arcadedb-data`. `docker compose -f deploy/compose.yaml down` stops and removes the container and keeps the volume. `down --volumes` deletes the data, and that cannot be undone.
 
-## Connect Cairnmind to it
+## Connect-only installations
 
-Cairnmind reads the database address and credentials from the environment:
+A connect-only installation uses a database that runs somewhere else: the container of this page, a server, or a cluster. It never installs, starts or stops an ArcadeDB engine, never creates a database, and needs no Java. Everything else stays on your machine: the knowledge service, the terminal workspace, the coding clients, parsing of your files and, unless you moved them too to a model server as well, the models.
 
-```bash
-export CAIRNMIND_ARCADE_URL=http://127.0.0.1:2480
-export CAIRNMIND_ARCADE_USER=root
-export CAIRNMIND_ARCADE_PASSWORD="$(cat "$HOME/.config/cairnmind-db/root-password")"
-cairnmind engine status    # "available": true, "version_matches": true
-cairnmind init
-cairnmind doctor           # the "arcadedb" block: available, version_matches, database_available
-```
+### The setting
 
-When a server of the pinned version answers at that address, Cairnmind uses it and starts no engine of its own. A server of a different version is refused, with "ArcadeDB release does not match the pinned" version.
+| Setting | Variable | Meaning |
+| --- | --- | --- |
+| `arcade_connect_url` | `CAIRNMIND_ARCADE_CONNECT_URL` | The address of a database this installation only connects to. When it is set, it is the address used. |
+| `arcade_url` | `CAIRNMIND_ARCADE_URL` | The address of the database, as before. Plain `http://` on `127.0.0.1`, `localhost` or `::1` means the engine Cairnmind manages itself: it is started there when nothing answers. |
 
-Things to know today:
+An installation is connect-only when `arcade_connect_url` is set, on any host, this machine included; or when `arcade_url` names an address the managed engine could never serve (another host, or `https://`). So an installation that already pointed `CAIRNMIND_ARCADE_URL` at an `https://` server keeps working and is now connect-only. For a container on `127.0.0.1` use `arcade_connect_url`: with `arcade_url` alone, a command that writes would start a local engine on that port whenever the container is down.
 
-- **Loopback only for plain HTTP.** This Compose file serves plain HTTP, which Cairnmind accepts only on `127.0.0.1`, `localhost` or `::1`. To use a container on another machine, forward the port over SSH and point Cairnmind at the local end: `ssh -N -L 2480:127.0.0.1:2480 you@server`. For a server reached over the network, use TLS, a dedicated user and a password from outside `config.json`, as in [Kubernetes](#kubernetes) (the same settings work for any server with TLS). Do not publish the port on a public address: the HTTP API with the root password would be readable on the network.
-- **The password is saved in the data directory.** The first command in a new data directory writes its `config.json`, including the password it was given, readable only by you.
-- **One database per data directory.** The database name comes from the data directory's path unless you set `CAIRNMIND_ARCADE_DATABASE`; `cairnmind doctor` shows it as `arcadedb.database`. Two data directories that should use the same database must set the same name.
-- **No local engine to stop.** `cairnmind engine stop` stops only an engine Cairnmind started itself. Stop the container with `docker compose`.
-- **A local engine can take the container's place.** If you followed [INSTALL.md](INSTALL.md) first, the data directory has a local engine installed. Until [#68](https://github.com/piotrwozn/cairnmind/issues/68), a command that writes (`cairnmind init`, `cairnmind remember`, `cairnmind project add`, `cairnmind restore`) starts that engine when nothing answers at `CAIRNMIND_ARCADE_URL`: on the same port, with the container's password, and it writes there instead of into the container. Afterwards the container cannot publish its port. The other way round, a local engine still running keeps `docker compose up` from publishing port 2480, and Cairnmind reaches that engine with the container's password, which it refuses. So before you start the container, stop the local one (`cairnmind stop`, then `cairnmind engine stop`), and check `cairnmind engine status` before each write while the container is down, or use a separate `--data-dir` that has no engine installed.
+Setting both to different addresses is refused, naming both. `config.json` keeps the `arcade_url` it had, so removing `arcade_connect_url` brings the managed engine back with its data untouched.
+
+**The address is saved.** The first command that runs with `CAIRNMIND_ARCADE_CONNECT_URL` set writes the address to `config.json` of the data directory as `arcade_connect_url`, and says so once. From then on the data directory is connect-only for every command, also one started without the variable: another shell, a terminal workspace or a service started before the `export`. Without this, such a command would find an ordinary installation and start a local engine with an empty store. When `config.json` already names an address, a different one in the variable is used by that command only and the file is not changed. The other settings (user, database, password file, authority file) are not saved from variables: a command started without them is refused with a message that names what is missing, and starts nothing. To go back to the engine Cairnmind manages, remove `arcade_connect_url` from `config.json` and unset the variable. The two databases are not copied into each other: move data with `cairnmind backup` and `cairnmind restore`.
+
+The rules for reaching a database on another host are unchanged ([SECURITY.md](../SECURITY.md)): `https://` with certificate and host name verification (a private authority through `arcade_ca_file`), a dedicated user and never `root`, and the password from `CAIRNMIND_ARCADE_PASSWORD` or a private file named by `arcade_password_file`, never from `config.json`. On `127.0.0.1` plain `http://` is allowed. No password is generated for a connect-only installation: it is the one set where the server runs.
+
+Set the database name explicitly (`arcade_database`, `CAIRNMIND_ARCADE_DATABASE`). Without it the name is derived from the path of the data directory, so two machines would look for two different databases; `cairnmind doctor` says when the name is a derived one.
+
+### What the commands do
+
+| Command | On a connect-only installation |
+| --- | --- |
+| `cairnmind engine status` | Says `"mode": "connect"`, the host, the user, whether the connection is encrypted, whether the server answers and which version it runs. It looks for no Java and no installed engine. Exit status 1 when the server's version is not supported. |
+| `cairnmind engine install`, `start`, `stop` | Do nothing and say so in one sentence (exit status 2), whether or not the knowledge service runs: "This installation only connects to ArcadeDB at ...; it does not start an engine." `stop` still stops an engine that this data directory started before it was switched. |
+| `cairnmind db create-user` | The one step that signs in as `root`: it creates the database and the dedicated user, after checking the server's version. Run once per database. |
+| `cairnmind init` and every command that writes | Open the database they were given. When it does not exist they stop and name `cairnmind db create-user`; they never create it. When the server does not answer they say where they looked and that no engine is started here. |
+| `cairnmind doctor` | The `arcadedb` block says `mode`, `host`, `url`, `user`, `transport`, `password_source`, the server's `version` and `supported_versions`; `java` says it is not needed; `store_writer` says whether this installation writes the store or only reads it. |
+| `cairnmind status` | Adds `storage` (mode, host, address) beside `writer`. |
+| `cairnmind store size` | Counts rows as always; says that the database files and the server log are on the server and cannot be measured from here. |
+| `cairnmind eval run`, `eval memory`, `eval repository` | Refused: they create and drop temporary databases. Run them on an installation with the engine on this machine. |
+
+**The server's version.** Each Cairnmind release works with one ArcadeDB version, the one it pins (`supported_versions` in `engine status` and `doctor`; 26.11.1 in this release). A server of any other version is refused before anything is read or written, by every command, `cairnmind db create-user` included (it asks for the version before it signs in as `root` to create anything), with the message "ArcadeDB at ... runs version X, which this release of Cairnmind does not support. Supported: 26.11.1." Upgrade the server and Cairnmind together: [When the pinned ArcadeDB version changes](#when-the-pinned-arcadedb-version-changes).
+
+### From nothing: the Compose server on this machine
+
+You have followed [Start it on one machine](#start-it-on-one-machine); the server answers on `127.0.0.1:2480` and its root password is in `$HOME/.config/cairnmind-db/root-password`.
+
+1. Install Cairnmind without an engine. With the variable set, the installer downloads no ArcadeDB and does not ask for Java:
+
+   ```bash
+   export CAIRNMIND_ARCADE_CONNECT_URL=http://127.0.0.1:2480
+   bash scripts/install-wsl.sh
+   ```
+
+   The installer says once that it saved the address in `config.json` (see [The setting](#the-setting)), and ends with a note that the database is not ready yet: that is the next step. (Without the installer: `uv tool install --python 3.12 .`, then any command with the variable set saves the address, for example `cairnmind engine status`.)
+
+2. Choose the user's password, in a private file, and describe the connection in `config.json` of the data directory (`~/.local/share/cairnmind/config.json` unless you chose another one). The installer has written `arcade_connect_url` there; add the other three, with the absolute path of the password file:
+
+   ```bash
+   (umask 077; openssl rand -hex 24 > "$HOME/.config/cairnmind-db/user-password")
+   ```
+
+   ```json
+   "arcade_connect_url": "http://127.0.0.1:2480",
+   "arcade_user": "cairnmind",
+   "arcade_database": "cairnmind",
+   "arcade_password_file": "/home/you/.config/cairnmind-db/user-password"
+   ```
+
+   Settings in `config.json` hold for every command of this data directory, wherever it is started. The alternative is the same names as variables in your shell profile (`CAIRNMIND_ARCADE_USER`, `CAIRNMIND_ARCADE_DATABASE`, `CAIRNMIND_ARCADE_PASSWORD_FILE`); they hold only for what is started from a shell that has them, and anything else is refused with a message naming the missing setting:
+
+   ```bash
+   export CAIRNMIND_ARCADE_USER=cairnmind
+   export CAIRNMIND_ARCADE_DATABASE=cairnmind
+   export CAIRNMIND_ARCADE_PASSWORD_FILE="$HOME/.config/cairnmind-db/user-password"
+   ```
+
+3. Create the database and the user, once, signing in as `root` for this step alone:
+
+   ```bash
+   cairnmind db create-user --admin-password-file "$HOME/.config/cairnmind-db/root-password"
+   ```
+
+4. Create the store and check:
+
+   ```bash
+   cairnmind init
+   cairnmind engine status   # "mode": "connect", "available": true, "version_matches": true
+   cairnmind doctor          # arcadedb: "mode": "connect", "database_available": true, "user": "cairnmind"
+   cairnmind project add myproject ~/code/myproject
+   ```
+
+**The server on another machine.** This Compose file serves plain HTTP, which Cairnmind accepts on loopback only, and publishes the port on `127.0.0.1` of the server. Forward the port over SSH and use the same settings: `ssh -N -L 2480:127.0.0.1:2480 you@server`. When the tunnel is down, commands say that the server at `http://127.0.0.1:2480` is unavailable; nothing is started in its place. To reach a server over the network without a tunnel it must serve TLS: use the [Kubernetes](#kubernetes) manifests, or put a TLS endpoint in front of the container and use an `https://` address with `CAIRNMIND_ARCADE_CA_FILE`. Do not publish port 2480 on a public address.
+
+### From nothing: the server in Kubernetes, from your machine
+
+You have followed [Kubernetes](#kubernetes) up to [Start it](#start-it): the StatefulSet is ready and `$HOME/cairnmind-k8s` holds `ca.pem` and `root-password`.
+
+1. Install Cairnmind without an engine, as above (`CAIRNMIND_ARCADE_CONNECT_URL=https://localhost:2490 bash scripts/install-wsl.sh`).
+
+2. Open a port-forward and keep it open while you work. The certificate of this page names `localhost`, so the address is `https://localhost:2490`:
+
+   ```bash
+   kubectl -n cairnmind-db port-forward svc/arcadedb 2490:2490 &
+   ```
+
+3. The settings, the user and the store. The installer saved the address in `config.json`; keep the other four there too (`arcade_user`, `arcade_database`, `arcade_password_file`, `arcade_ca_file`, as in the [Compose walk-through](#from-nothing-the-compose-server-on-this-machine), step 2), or as variables in your shell profile, which hold only for what is started from a shell that has them:
+
+   ```bash
+   (umask 077; openssl rand -hex 24 > "$HOME/cairnmind-k8s/user-password")
+   export CAIRNMIND_ARCADE_CONNECT_URL=https://localhost:2490
+   export CAIRNMIND_ARCADE_USER=cairnmind
+   export CAIRNMIND_ARCADE_DATABASE=cairnmind
+   export CAIRNMIND_ARCADE_PASSWORD_FILE="$HOME/cairnmind-k8s/user-password"
+   export CAIRNMIND_ARCADE_CA_FILE="$HOME/cairnmind-k8s/ca.pem"
+   cairnmind db create-user --admin-password-file "$HOME/cairnmind-k8s/root-password"
+   cairnmind init
+   cairnmind doctor          # arcadedb: "mode": "connect", "transport": "https (certificate verification on)",
+                             # "password_source": "file", "database_available": true
+   ```
+
+A port-forward ends when the pod restarts or the connection to the cluster drops. Commands then report the server as unavailable; start the port-forward again and repeat the command. For a cluster that gives the Service an address reachable from your network (an Ingress with TLS passthrough or a LoadBalancer), use that host name in the certificate and in `CAIRNMIND_ARCADE_CONNECT_URL` instead.
+
+### From nothing: a client inside the cluster
+
+A pod that runs Cairnmind reaches the server at `https://arcadedb.cairnmind-db.svc:2490`. It needs:
+
+- the label `cairnmind.io/database-client: "true"`, or the NetworkPolicy keeps it out;
+- the settings as environment variables, with `CAIRNMIND_ARCADE_CONNECT_URL=https://arcadedb.cairnmind-db.svc:2490`;
+- the user's password as a mounted Secret and `ca.pem` as a ConfigMap, named by `CAIRNMIND_ARCADE_PASSWORD_FILE` and `CAIRNMIND_ARCADE_CA_FILE` (see [Cairnmind in a pod](#cairnmind-in-a-pod-the-password-from-a-mounted-secret));
+- a writable data directory (`--data-dir` or `CAIRNMIND_HOME`), which holds the installation's identity, its settings and its backups. Keep it on a volume if the pod is to stay the writer across restarts: a new, empty data directory is a new installation, and it only reads until a person runs `cairnmind store takeover --yes`.
+
+`deploy/kubernetes/check/connection-check.yaml` is such a pod as a Job, and `connection-check.sh` is what it runs: `create-user`, `engine status`, `init`, `doctor`, indexing a small project, and the engine commands that must refuse. The image `deploy/kubernetes/check/Dockerfile` installs Cairnmind only: no Java and no ArcadeDB.
+
+### One writer, any number of readers
+
+A database has one writing installation, named in the database itself; every other installation that connects to it reads only ([CONTRACTS.md](CONTRACTS.md)). This holds between machines because it does not depend on anything local:
+
+- The first installation that opens a database becomes its writer. A second one, on any machine, opens it as a reader: `project list`, `records`, `impact` and the other reading commands work; a command that writes stops with one line naming the writer; the knowledge service does not start there.
+- `cairnmind store takeover --yes [--note TEXT]` on the reader makes it the writer. It is a person's decision; a coding session cannot run it. The previous writer is refused at its next write, and its running jobs go back to the queue.
+- Teams share memory through publication in the repository (`cairnmind memory publish`), not through one live database.
+
+The lock files in the data directory still exist and still mean what they did, on one machine. What guards the database between machines:
+
+| Local file | What it serialises on one machine | Between machines |
+| --- | --- | --- |
+| `database-writer.lock` | The transactions of the processes of one installation. | The writer row: only one installation writes, and a commit by an installation that lost the role fails in the database (the journal head is read and updated in every writing commit). |
+| `locks/project-*.lock`, `locks/transcript-*.lock` | A whole indexing or import run, from reading the files to writing them. | The writer row: a reader's indexing is refused at its first write. |
+| `service.lock` | One knowledge service per data directory; `restore` takes it too. | The writer row: the service starts only on the writer, and only the writer restores. |
+| `config.lock`, `installation.json` | The settings file and the installation's identity. | Not database state. A copied data directory gets a new identity and so cannot write as the original. |
+| `engine.lock`, `runtime/install.lock`, `arcade/` | Installing and starting the managed engine. | Never created by a connect-only installation. |
+
+Not covered by the writer row, as on one machine: a schema statement (`CREATE ... IF NOT EXISTS`) checks the writer just before it runs, not in the same step, so one such statement of an installation that loses the role at that moment can still run; it adds an empty type or index and changes no data.
+
+### Backups
+
+- **Logical backup, from your machine.** `cairnmind backup DESTINATION` reads the whole store through the connection and writes the file where you say, on the machine that runs the command. The dedicated user can take it, and a reader can too. `cairnmind restore FILE` runs on the writer only, with its service stopped (`cairnmind stop`); readers on other machines may stay connected, and see the old data until the restore commits and the restored data after.
+- **Automatic copies.** The copy made before a restore (`before-restore-*`), the one made before a schema upgrade (`before-schema-*`) and the service's daily backup are written to `backups/` in the data directory of the installation that does the work: on the laptop, not on the server. Include that folder in the laptop's own backup, or copy the files you want to keep.
+- **Volume snapshot, on the server.** The snapshots of this page ([Compose](#volume-snapshot), [Kubernetes](#backup-and-restore-1)) copy what the server holds: every database, the server's configuration and its users, the dedicated one included. They do not contain anything from a data directory: not `config.json`, the service token, `installation.json`, client credentials, the hook spool or the backups above. After restoring a snapshot onto a new server, the writer recorded in it is still the installation that wrote it; that installation goes on writing, and any other one takes over explicitly.
+
+### What stays on the laptop
+
+The data directory keeps everything that is not in the database: `config.json` (the service token, the settings), `installation.json`, client credentials and API keys, the terminal workspace state, session contexts, the hook spool, the answer log, logs and local backups. Two machines that use one database each have their own; none of it is shared or copied by the database. A coding session started on one machine is not resumed on the other.
+
+### When the connection drops
+
+Every change is one server transaction that commits whole or not at all, so a dropped connection leaves whole steps, never half of one:
+
+| During | What the database holds afterwards | What to do |
+| --- | --- | --- |
+| Indexing | The files whose transaction committed (up to eight small files each), each with all its chunks; nothing of the transaction that was cut. | Run the command again: it indexes what is left. |
+| `restore` | The data from before the restore, or the whole backup if the server had already committed. Never a mixture. The `before-restore-*` copy is a whole file on your machine. | Run `cairnmind restore FILE` again. |
+| A schema upgrade (`cairnmind init` after upgrading Cairnmind) | The old schema version, with some new empty types or indexes; the `before-schema-*` copy is a whole file on your machine. The version is written last. | Run the command again: it repeats the statements, which skip what exists. |
+| Creating the store (`cairnmind init`) | A database without a schema version: commands that read say it has no schema yet. | Run `cairnmind init` again. |
+
+When the connection is cut after the server received a commit and before the answer arrived, the command reports the server as unavailable although the change is stored. Running the same command again is safe in each case above: indexing skips the files that are already current, and a restore replaces everything again. A write is never sent twice by itself. `tests/test_connect_only_network.py` cuts the connection at each of these points.
+
+A transaction that was cut stays open on the server until its session times out; it holds no lock that stops other work.
+
+### How long indexing takes over a connection
+
+Over a connection, the time of a command is its number of database requests times the time of one request. The numbers below are for Cairnmind's own source (128 files, about 26,000 graph nodes and 32,000 edges), indexed by a connect-only installation against the Compose server of this page, on 15 November 2026:
+
+| Way to the server | First indexing | Indexing again after every file changed |
+| --- | --- | --- |
+| `http://127.0.0.1`, the container's published port | 2,313 requests, 16 s | 8,101 requests, 39 s (4.8 ms each) |
+| `https://`, through a TLS endpoint on the machine's own address | 2,313 requests, 17 s | 8,101 requests, 64 s (7.9 ms each) |
+| The same, with 20 ms added to every request | 2,313 requests, 65 s | 8,101 requests, 229 s (28.2 ms each) |
+
+Client, TLS endpoint and server were on one machine, so the first two rows contain no network latency at all, and the TLS endpoint was a test relay written in Python, which costs about 3 ms a request by itself; a real TLS listener costs less. The third row shows how the request count turns into time: 8,101 requests at 20 ms are 162 s, which is the difference to the row above. For your network, multiply the request counts by the round-trip time you measure (`ping`, or the time of `cairnmind engine status`). Not measured: a real network with loss or varying delay, and a server under load from other clients.
+
+A logical backup of that store took 119 requests and 6 s. Its restore took 297,454 requests and 397 s on `127.0.0.1`: restore writes the graph and the chunks one row at a time, unlike indexing. With 20 ms a request that would be about 100 minutes more (computed from the request count, not measured). Until restore writes in groups, restore a large store from a machine close to the server, for example a pod in the cluster.
 
 ## Backup and restore
 
@@ -109,8 +267,8 @@ cairnmind backup "$HOME/backups/before-upgrade.cairnmind.json.gz"
 
 To restore it into a server, for example a new empty one:
 
-1. Stop every Cairnmind service that uses this database: `cairnmind stop` on each machine. `restore` checks only the service of its own data directory; a writer on another machine is not detected (that is [#70](https://github.com/piotrwozn/cairnmind/issues/70)).
-2. Point the environment at the server, as in [Connect Cairnmind to it](#connect-cairnmind-to-it), and restore:
+1. Stop the Cairnmind service of the installation that writes this database: `cairnmind stop`. Only that installation can restore; on any other one `restore` stops and names the writer ([One writer, any number of readers](#one-writer-any-number-of-readers)).
+2. Point the environment at the server, as in [Connect-only installations](#connect-only-installations), and restore:
 
    ```bash
    cairnmind init
@@ -142,9 +300,9 @@ docker run --rm --entrypoint tar -v cairnmind-db_arcadedb-data:/var/lib/arcadedb
 docker compose -f deploy/compose.yaml up -d --wait
 ```
 
-The `root` password is the one stored in the snapshot, not the one in the file. Cairnmind finds its database by name, and the default name follows the path of its data directory: from another data directory, set `CAIRNMIND_ARCADE_DATABASE` to the name `cairnmind doctor` showed as `arcadedb.database` where the snapshot was taken, then run `cairnmind init`. What a snapshot does not cover: everything in Cairnmind's data directory (as for the logical backup), and other ArcadeDB versions: open it with the same image, or move between versions with a logical backup.
+The `root` password and the dedicated user are the ones stored in the snapshot, not the ones in your files. Cairnmind finds its database by name (`CAIRNMIND_ARCADE_DATABASE`; `cairnmind doctor` shows it as `arcadedb.database`): use the same name, then run `cairnmind init`. A new data directory opens the restored database as a reader, because the snapshot still names the installation that wrote it; `cairnmind store takeover --yes` makes it the writer. What a snapshot does not cover: everything in Cairnmind's data directory (as for the logical backup), and other ArcadeDB versions: open it with the same image, or move between versions with a logical backup.
 
-Both procedures are run by the `deployment-image` CI job: a project and a record are written to one server, backed up and restored into a second, empty one, and the first server's volume is archived and unpacked into a third. Each server then holds the same project and records.
+Both procedures are run by the `deployment-image` CI job ([`scripts/deployment_check.py`](../scripts/deployment_check.py)), with connect-only installations that sign in as the dedicated user: a project and a record are written to one server, backed up and restored into a second, empty one, and the first server's volume is archived and unpacked into a third. Each server then holds the same project and records.
 
 ## Kubernetes
 
@@ -162,7 +320,7 @@ Both procedures are run by the `deployment-image` CI job: a project and a record
 
 `kubectl apply -f deploy/kubernetes` reads only the top folder, so it never applies the template, the backup pod or the check.
 
-The `kubernetes-manifests` CI job, beside the other jobs and not a required check, runs [`scripts/kubernetes_check.py`](../scripts/kubernetes_check.py) on a kind cluster: it checks every manifest against the cluster's schemas (`kubectl apply --dry-run=server --validate=strict`), creates the Secrets as below, applies the manifests, runs the connection check as the Job (with both passwords mounted from Secrets) and again from the runner through `kubectl port-forward`, takes a logical backup and restores it, and restores a volume snapshot into a new volume. You can run the script against any disposable cluster.
+The `kubernetes-manifests` CI job, beside the other jobs and not a required check, runs [`scripts/kubernetes_check.py`](../scripts/kubernetes_check.py) on a kind cluster: it checks every manifest against the cluster's schemas (`kubectl apply --dry-run=server --validate=strict`), creates the Secrets as below, applies the manifests, runs the connection check as the Job (a connect-only installation inside the cluster, with both passwords mounted from Secrets) and again from the runner through `kubectl port-forward` (a second connect-only installation, which reads only until it takes over writing), takes a logical backup and restores it, and restores a volume snapshot into a new volume. You can run the script against any disposable cluster.
 
 ### What to change
 
@@ -220,12 +378,12 @@ The store password must be letters and digits (as here): it reaches the JVM on i
 
 ### The dedicated user and the connection check
 
-Cairnmind refuses `root`, plain HTTP and a password from `config.json` for a database on another host (see [SECURITY.md](../SECURITY.md)). Create a user with rights on the Cairnmind database only, once, from your machine through a port-forward. Its password comes from a file of your user with mode `0600`:
+Cairnmind refuses `root`, plain HTTP and a password from `config.json` for a database on another host (see [SECURITY.md](../SECURITY.md)). Create a user with rights on the Cairnmind database only, once, from your machine through a port-forward. Its password comes from a file of your user with mode `0600`. (The same steps, with installing Cairnmind first, are in [From nothing: the server in Kubernetes, from your machine](#from-nothing-the-server-in-kubernetes-from-your-machine).)
 
 ```bash
 kubectl -n cairnmind-db port-forward svc/arcadedb 2490:2490 &
 (umask 077; openssl rand -hex 24 > "$HOME/cairnmind-k8s/user-password")
-export CAIRNMIND_ARCADE_URL=https://localhost:2490
+export CAIRNMIND_ARCADE_CONNECT_URL=https://localhost:2490
 export CAIRNMIND_ARCADE_USER=cairnmind
 export CAIRNMIND_ARCADE_DATABASE=cairnmind
 export CAIRNMIND_ARCADE_PASSWORD_FILE="$HOME/cairnmind-k8s/user-password"
@@ -236,9 +394,9 @@ cairnmind db create-user --admin-password-file "$HOME/cairnmind-k8s/root-passwor
 `create-user` signs in as `root` for that step alone, over the same verified TLS, creates the database and the user in its `admin` group, and then signs in as the new user. Then the connection check:
 
 ```bash
-cairnmind engine status   # "available": true, "version_matches": true
+cairnmind engine status   # "mode": "connect", "available": true, "version_matches": true
 cairnmind init
-cairnmind doctor          # arcadedb: "database_available": true, "user": "cairnmind",
+cairnmind doctor          # arcadedb: "mode": "connect", "database_available": true, "user": "cairnmind",
                           # "transport": "https (certificate verification on)", "password_source": "file"
 ```
 
@@ -259,7 +417,7 @@ Keep the root password out of the namespaces of Cairnmind's pods: create the use
 
 ### Backup and restore
 
-**Logical backup.** Through the port-forward and the settings above, as for any server: `cairnmind backup "$HOME/backups/"`, and `cairnmind restore` as described in [Backup and restore](#backup-and-restore), after stopping every Cairnmind service that uses the database. The dedicated user can do both.
+**Logical backup.** Through the port-forward and the settings above, as for any server: `cairnmind backup "$HOME/backups/"`, and `cairnmind restore` as described in [Backup and restore](#backup-and-restore), on the installation that writes the database, after stopping its service. The dedicated user can do both.
 
 **Volume snapshot.** Stop the server, hold its volume with the pod of `backup/volume-pod.yaml`, archive it, and start the server again:
 

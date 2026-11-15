@@ -80,6 +80,30 @@ already decoded, source_ids list. Remember task gates/version history and leases
 native transactions with a per-datadir process lock for coordinated local writers.
 Task source/dependency validation and optimistic conflicts preserved.
 
+Connect-only mode (#68, `database_mode.py`). An installation is connect-only when `arcade_connect_url`
+(CAIRNMIND_ARCADE_CONNECT_URL) is set, which then replaces `arcade_url` as the address at load and is
+never written over the stored `arcade_url`, or when `arcade_url` is not plain http on loopback.
+Otherwise it is managed, as before. Two different addresses in CAIRNMIND_ARCADE_URL and
+`arcade_connect_url` are a settings problem that `ArcadeClient` refuses.
+- `engine.install_engine`, `start_engine` and `stop_engine` raise `ConnectOnly` (an ArcadeError) and do
+  nothing; `stop_engine` still stops a process recorded in `arcade/process.json` of this data directory.
+  `ensure_engine` sends one request (`GET /api/v1/server`) and never starts anything. `engine_status`
+  has `mode` (`managed`|`connect`); in connect mode it has `host`, `user`, `database`, `transport`,
+  `supported_versions` and, for an unsupported server, `problem`, and no `installed`, `java` or
+  `managed_java`.
+- `database_mode.supported_versions(settings)` is the pinned `arcade_version` alone. A server of another
+  version is refused by `ensure_engine` and `store_readonly.check_ready` before any read or write.
+- `ArcadeClient.ensure_database` only checks that the database exists; a missing one is an ArcadeError
+  naming `cairnmind db create-user`, the one path that creates it (the administrator client).
+- `Settings.load(create=True)` generates no database password. On loopback a connect-only client without
+  a password is refused before a request; for another host the rules of #72 apply unchanged.
+- A transport failure is reported as `ArcadeDB at URL is unavailable ... starts no engine of its own`,
+  and HTTP 401 adds that the user may not exist yet. A write is never sent twice.
+- No file lock of the data directory guards the database between machines; the declared writer below
+  does. `tests/test_connect_only_network.py` cuts the connection during indexing, a restore, a schema
+  upgrade and the creation of a store: only whole transactions remain, and running the command again
+  completes it.
+
 One declared writer per store (#70, `store_writer.py`). The file locks (database-writer.lock,
 service.lock, the ingestion and configuration locks) serialise writers on one machine only, so a
 database names the one installation that writes it; no database leases are kept.

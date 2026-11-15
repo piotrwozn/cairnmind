@@ -17,6 +17,8 @@ import urllib.request
 
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
+from .database_mode import (address, connect_only, describe, is_managed_url, refusal, server_version,  # noqa: F401
+                            supported_versions, version_problem)
 
 
 def runtime_dir(settings: Settings) -> Path:
@@ -88,7 +90,13 @@ def managed_java_executable(settings: Settings) -> str | None:
         return None
 
 
+class ConnectOnly(ArcadeError):
+    """An engine command on an installation that only connects to its database (#68): nothing was done."""
+
+
 def install_engine(settings: Settings, distribution: Path | None = None) -> Path:
+    if connect_only(settings):
+        raise ConnectOnly(refusal(settings, "install an engine"))
     destination = runtime_dir(settings)
     if (destination / "lib").is_dir():
         return destination
@@ -131,19 +139,44 @@ def install_engine(settings: Settings, distribution: Path | None = None) -> Path
 
 
 def engine_status(settings: Settings) -> dict:
-    result = {"installed": (runtime_dir(settings) / "lib").is_dir(), "available": False,
-              "url": settings.arcade_url, "expected_version": settings.arcade_version,
-              "java": None, "managed_java": managed_java_executable(settings)}
+    """Whether the database server answers and which version it runs; starts and changes nothing.
+
+    In connect-only mode (#68) nothing local is probed: no Java, no installed engine. The result says
+    where the server is, who signs in and how, and ``problem`` when its version is not supported.
+    """
+    if connect_only(settings):
+        from .database_credentials import transport_label
+        result = {**describe(settings), "available": False, "url": address(settings),
+                  "user": settings.arcade_user, "database": settings.arcade_database,
+                  "transport": transport_label(settings), "expected_version": settings.arcade_version,
+                  "supported_versions": list(supported_versions(settings))}
+        if managed_java_executable(settings):
+            result["local_engine"] = ("An engine this data directory started earlier is still running on this "
+                                      "machine and is not used; `cairnmind engine stop` stops it.")
+    else:
+        result = {"mode": "managed", "installed": (runtime_dir(settings) / "lib").is_dir(), "available": False,
+                  "url": settings.arcade_url, "expected_version": settings.arcade_version,
+                  "java": None, "managed_java": managed_java_executable(settings)}
+        try:
+            result["java"] = resolve_java(settings)
+        except ArcadeError as exc:
+            result["java_error"] = str(exc)
     try:
-        result["java"] = resolve_java(settings)
-    except ArcadeError as exc:
-        result["java_error"] = str(exc)
-    try:
-        info = ArcadeClient(settings).server_info()
-        actual_version = str(info.get("version", "")).split(" ", 1)[0]
-        result.update(available=True, server=info, version_matches=actual_version == settings.arcade_version)
+        client = ArcadeClient(settings)
+        try:
+            info = client.server_info()
+        finally:
+            client.close()
+        refused = version_problem(settings, info)
+        result.update(available=True, server=info, version=server_version(info), version_matches=refused is None)
+        if refused and connect_only(settings):
+            result["problem"] = refused
     except ArcadeError as exc:
         result["error"] = str(exc)
+    except ValueError as exc:
+        if not connect_only(settings):
+            raise
+        result["error"] = str(exc)  # a broken rule of #72: which one, without sending anything
     return result
 
 
@@ -167,20 +200,11 @@ def probe_java(java: str) -> subprocess.CompletedProcess:
     raise AssertionError("unreachable")
 
 
-def is_managed_url(url: str) -> bool:
-    """Whether ``url`` is one the managed engine can serve: plain http on this machine (#72).
-
-    Any other address is a server someone else runs: it is never started here, and its user's password
-    is never written to this data directory.
-    """
-    parsed = urlparse(url)
-    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
-
-
 def start_engine(settings: Settings) -> dict:
-    if not is_managed_url(settings.arcade_url):
-        raise ArcadeError(f"ArcadeDB at {settings.arcade_url} is not on this machine; Cairnmind starts only "
-                          "the engine on 127.0.0.1, localhost or ::1 over http.")
+    # Any address but plain http on this machine is a server someone else runs, and so is the address
+    # arcade_connect_url names: never started here, its password never written to this data directory.
+    if connect_only(settings):
+        raise ConnectOnly(refusal(settings, "start an engine"))
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "engine.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -268,21 +292,42 @@ def start_engine(settings: Settings) -> dict:
 
 
 def ensure_engine(settings: Settings) -> None:
+    """The server answers with a supported version, or an error. Only a managed engine is ever started."""
+    if connect_only(settings):
+        # Never the local probes of engine_status, and never a start: one request, then the verdict.
+        # ArcadeClient refuses a broken rule of #72 (plain http to another host, root, no password) first.
+        client = ArcadeClient(settings)
+        try:
+            info = client.server_info()
+        finally:
+            client.close()
+        refused = version_problem(settings, info)
+        if refused:
+            raise ArcadeError(refused)
+        return
     status = engine_status(settings)
     if status["available"] and not status.get("version_matches"):
         raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
     if not status["available"]:
-        if not is_managed_url(settings.arcade_url):
-            # A server on another host: report why it cannot be reached instead of starting one here.
-            raise ArcadeError(status.get("error") or f"ArcadeDB at {settings.arcade_url} is unavailable")
         start_engine(settings)
 
 
+def local_process_recorded(settings: Settings) -> bool:
+    """Whether this data directory holds the record of an engine process it started (arcade/process.json)."""
+    return (settings.data_dir / "arcade" / "process.json").exists()
+
+
 def stop_engine(settings: Settings) -> dict:
-    """Stop only the process launched for this data directory, after its service stops."""
+    """Stop only the process launched for this data directory, after its service stops.
+
+    Also in connect-only mode, where an engine started before the installation was switched may still
+    run: it is this data directory's own process. With none, the command says that nothing is managed here.
+    """
     state = settings.data_dir / "arcade"
     file = state / "process.json"
-    if not file.exists():
+    if not local_process_recorded(settings):
+        if connect_only(settings):
+            raise ConnectOnly(refusal(settings, "stop an engine"))
         return {"stopping": False, "reason": "No managed process for this data directory"}
     info = json.loads(file.read_text())
     pid = int(info["pid"])
