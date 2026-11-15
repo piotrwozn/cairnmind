@@ -93,6 +93,19 @@ def test_engine_status_of_a_stopped_engine_says_to_start_it(tmp_path):
     assert "cairnmind engine start" in status["error"] and "not running" in status["error"]
 
 
+def test_store_size_names_an_empty_leftover_vector_type_for_what_it_is(store):
+    from cairnmind.store_size import measure
+    # What a restore leaves: an emptied vector type whose registry entry the backup did not bring.
+    store.client.command("CREATE DOCUMENT TYPE vector_leftover0 IF NOT EXISTS")
+    report = measure(store)
+    text = report["text"]
+    section = text[text.index("Vectors by namespace"):text.index("Jobs by state")]
+    assert "(none)" not in section
+    assert "unregistered, empty (left by a restore): 1 type(s), 0 rows" in section
+    # The JSON keeps its shape: the namespace of an unregistered type is null.
+    assert [row["namespace"] for row in report["vectors"]["namespaces"]] == [None]
+
+
 def source(store, project, text="We decided to keep the queue in the database."):
     return store.snapshot(project["id"], "conversation://one", text, "transcript")
 

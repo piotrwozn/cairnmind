@@ -347,6 +347,13 @@ def _name(value, limit=40) -> str:
     return "(none)" if value is None else _line(value, limit) or "(blank)"
 
 
+def _namespace(row) -> str:
+    """A namespace for a person; types without a registry entry have none, and a restore leaves old ones empty (#238)."""
+    if row["namespace"] is not None:
+        return _name(row["namespace"], 60)
+    return "unregistered, empty (left by a restore)" if row["rows"] == 0 else "unregistered"
+
+
 def _kind(row) -> str:
     return "(source not found)" if row.get("source_found") is False else _name(row["kind"])
 
@@ -379,7 +386,7 @@ def render(report) -> str:
                   f"{_size(row['current']['bytes'], part['sampled']):>11}  /  {row['replaced']['rows']:>8} "
                   f"{_size(row['replaced']['bytes'], part['sampled']):>11}" for row in part["kinds"]] or ["  none"]
     lines += ["", "Vectors by namespace"]
-    lines += [f"  {_name(row['namespace'], 60)}: {row['types']} type(s), {row['rows']} rows, "
+    lines += [f"  {_namespace(row)}: {row['types']} type(s), {row['rows']} rows, "
               f"{_size(row['bytes'], row['sampled'])}" for row in report["vectors"]["namespaces"]] or ["  none"]
     lines += ["", "Jobs by state"]
     lines += [f"  {_name(state)}: {count}" for state, count in sorted(report["jobs"].items())] or ["  none"]
