@@ -101,12 +101,14 @@ def test_dialog_hints_exist_in_both_languages():
 BORDER_WORDS = {
     "en": {"role": {"sidebar": "Projects", "client1": "Client 1", "client2": "Client 2", "inspector": "Inspector",
                     "graph": "Graph", "activity": "Activity"},
-           "control": {"controller": "In control", "readonly": "Read only", "offline": "Offline"},
+           "control": {"controller": "In control", "readonly": "Read only", "offline": "Offline",
+                       "exited": "Ended", "failed": "Failed", "interrupted": "Interrupted", "stale": "Stale"},
            "memory": {"ack": "ACK ready", "ACK required": "ACK needed", "partial": "Partial",
                       "unavailable": "Unavailable"}},
     "pl": {"role": {"sidebar": "Projekty", "client1": "Klient 1", "client2": "Klient 2", "inspector": "Inspektor",
                     "graph": "Graf", "activity": "Aktywność"},
-           "control": {"controller": "Steruje", "readonly": "Tylko odczyt", "offline": "Offline"},
+           "control": {"controller": "Steruje", "readonly": "Tylko odczyt", "offline": "Offline",
+                       "exited": "Koniec", "failed": "Błąd", "interrupted": "Przerwana", "stale": "Nieaktualna"},
            "memory": {"ack": "ACK gotowa", "ACK required": "Brak ACK", "partial": "Częściowa",
                       "unavailable": "Niedostępny"}},
 }
@@ -115,6 +117,7 @@ BORDER_WORDS = {
 @pytest.mark.parametrize("language", ["en", "pl"])
 def test_tmux_pane_badge_is_green_only_for_ack(language):
     from cairnmind.workspace import tmux_chrome
+    from cairnmind.terminal_bridge import CONTROL_STATES
     from cairnmind.workspace_border import CONTROL_LABELS, MEMORY_LABELS, ROLE_LABELS
     options = dict(tmux_chrome(language))
     border = options["pane-border-format"]
@@ -126,6 +129,8 @@ def test_tmux_pane_badge_is_green_only_for_ack(language):
     # The internal values are the ones the code writes (workspace, terminal_bridge); only their labels change.
     words = BORDER_WORDS[language]
     assert set(ROLE_LABELS) == set(words["role"]) and set(CONTROL_LABELS) == set(words["control"])
+    # Every value the bridge writes to @cairnmind_control has a label, a finished run's end state included.
+    assert set(CONTROL_LABELS) == CONTROL_STATES
     assert set(MEMORY_LABELS) == {*words["memory"], "stale"}
     shown = re.sub(r"#\[[^]]*\]", "", border)
     for option, labels in words.items():

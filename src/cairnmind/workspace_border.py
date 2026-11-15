@@ -11,7 +11,9 @@ from rich.cells import cell_len
 
 ROLE_LABELS = {"sidebar": "Projects", "client1": "Client 1", "client2": "Client 2", "inspector": "Inspector",
                "graph": "Graph", "activity": "Activity"}
-CONTROL_LABELS = {"controller": "In control", "readonly": "Read only", "offline": "Offline"}
+# A finished run leaves its end state here (terminal_bridge.CONTROL_STATES); the words match the status row.
+CONTROL_LABELS = {"controller": "In control", "readonly": "Read only", "offline": "Offline",
+                  "exited": "Ended", "failed": "Failed", "interrupted": "Interrupted", "stale": "Stale"}
 MEMORY_LABELS = {"ack": "ACK ready", "ACK required": "ACK needed", "partial": "Partial",
                  "unavailable": "Unavailable", "stale": "Stale"}
 

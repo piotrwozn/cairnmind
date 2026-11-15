@@ -128,8 +128,11 @@ def test_every_word_on_a_border_follows_the_language_without_a_restart(manager):
         CockpitState(workspace.settings).update({"language": language})
         workspace._update_status(workspace.state.read())  # what the supervisor does each second
         words = BORDER_WORDS[language]
-        for (role, role_label), (control, control_label), (memory, memory_label) in zip(
-                words["role"].items(), [*words["control"].items(), ("", "")] * 2, [*words["memory"].items()] * 2):
+        roles, memories = list(words["role"].items()), list(words["memory"].items())
+        controls = [*words["control"].items(), ("", "")]  # every control value, a finished run's end state too
+        for index in range(max(len(roles), len(controls))):
+            (role, role_label), (control, control_label) = roles[index % len(roles)], controls[index % len(controls)]
+            memory, memory_label = memories[index % len(memories)]
             assert border_words(workspace, pane, role, control, memory) == (
                 role_label.split() + control_label.split() + memory_label.split())
         # A stale memory: its reason is shown in this language too, from the fixed code, not the stored text.
