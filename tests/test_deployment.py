@@ -176,7 +176,7 @@ def test_tls_ends_at_the_server_and_only_its_port_is_offered():
 
 def test_no_secret_value_is_in_the_manifests_and_the_template_is_not_applied_with_them():
     files = sorted(KUBERNETES.rglob("*.yaml"))
-    assert len(files) == 6
+    assert len(files) == 8
     for path in files:
         text = path.read_text()
         assert "BEGIN" not in text and not re.search(r"(?i)password\s*[:=]\s*['\"]?\w{8,}", text), path

@@ -16,13 +16,17 @@ openssl and uv; with --kind-cluster, also kind, to load the two images into that
      health check);
   5. runs the connection check as the Job of deploy/kubernetes/check: create-user as root once, then
      engine status and doctor as the dedicated user over TLS, both passwords read from mounted Secrets;
-  6. runs `cairnmind engine status` and `doctor` from this machine through kubectl port-forward;
-  7. reports whether the network plugin enforces the NetworkPolicy (informational: kind's may not).
-No model, Ollama or coding client is used. Exit status 0 only when steps 1 to 6 passed.
+  6. runs `cairnmind engine status` and `doctor` from this machine through kubectl port-forward, then
+     writes a project and a record, takes a logical backup and restores it, as docs/DEPLOYMENT.md does;
+  7. scales the server to 0, archives its volume with tar from a pod that holds it, unpacks the archive
+     into a new, empty volume and reads the same records from the server started on it;
+  8. reports whether the network plugin enforces the NetworkPolicy (informational: kind's may not).
+No model, Ollama or coding client is used. Exit status 0 only when steps 1 to 7 passed.
 """
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -150,8 +154,10 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def port_forward_check(files: dict[str, Path], work: Path) -> None:
-    step("engine status and doctor from this machine through kubectl port-forward")
+@contextmanager
+def forwarded(files: dict[str, Path], data: Path):
+    """`cairnmind` with a data directory of its own, reaching the server through kubectl port-forward as
+    the dedicated user, as docs/DEPLOYMENT.md does from a workstation."""
     port = free_port()
     forward = subprocess.Popen(["kubectl", "-n", DATABASE, "port-forward", "svc/arcadedb", f"{port}:2490"],
                                stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
@@ -169,7 +175,6 @@ def port_forward_check(files: dict[str, Path], work: Path) -> None:
         env.update(CAIRNMIND_ARCADE_URL=f"https://localhost:{port}", CAIRNMIND_ARCADE_USER="cairnmind",
                    CAIRNMIND_ARCADE_DATABASE="cairnmind", CAIRNMIND_ARCADE_PASSWORD_FILE=str(files["user-password"]),
                    CAIRNMIND_ARCADE_CA_FILE=str(files["ca"]))
-        data = work / "port-forward-data"
 
         def cairnmind(*arguments: str) -> dict:
             result = run(sys.executable, "-m", "cairnmind", "--data-dir", str(data), *arguments, env=env,
@@ -178,15 +183,76 @@ def port_forward_check(files: dict[str, Path], work: Path) -> None:
                 raise SystemExit(f"cairnmind {' '.join(arguments)} failed:\n{result.stdout}{result.stderr}")
             return json.loads(result.stdout)
 
+        yield cairnmind
+    finally:
+        forward.terminate()
+        forward.wait(10)
+
+
+def port_forward_check(files: dict[str, Path], work: Path) -> list:
+    step("engine status and doctor from this machine through kubectl port-forward")
+    with forwarded(files, work / "port-forward-data") as cairnmind:
         status = cairnmind("engine", "status")
         database = cairnmind("doctor")["arcadedb"]
         if not (status.get("available") and status.get("version_matches") and database.get("database_available")
                 and database.get("transport", "").startswith("https")):
             raise SystemExit(f"through port-forward: engine status {status}, doctor {database}")
         print(f"through port-forward: {database.get('user')} on {database.get('database')}, {database.get('transport')}")
-    finally:
-        forward.terminate()
-        forward.wait(10)
+        step("a logical backup and its restore as the dedicated user, through the same port-forward")
+        tree = work / "demo"
+        tree.mkdir()
+        (tree / "README.md").write_text("# Demo\n\nA project for the Kubernetes check.\n")
+        cairnmind("init")
+        cairnmind("project", "add", "demo", str(tree))
+        cairnmind("remember", "demo", "The Kubernetes check wrote this record.", "--confirmed", "--key", "k8s-check")
+        before = cairnmind("records", "demo")
+        backup = cairnmind("backup", str(work / "backup.json.gz"))["backup"]
+        cairnmind("restore", backup)
+        after = cairnmind("records", "demo")
+        if after != before or not any(record.get("key") == "k8s-check" for record in after):
+            raise SystemExit(f"the restored records differ:\n{json.dumps([before, after], indent=1)}")
+        print(f"backed up and restored {len(after)} record(s)")
+        return after
+
+
+def volume_pod(*arguments: str, **kwargs) -> subprocess.CompletedProcess:
+    return kubectl("-n", DATABASE, "exec", "-i", "arcadedb-volume", "--", *arguments, **kwargs)
+
+
+def hold_volume() -> None:
+    kubectl("apply", "-f", str(MANIFESTS / "backup" / "volume-pod.yaml"))
+    kubectl("-n", DATABASE, "wait", "--for=condition=Ready", "pod/arcadedb-volume", "--timeout=180s")
+
+
+def release_volume() -> None:
+    kubectl("-n", DATABASE, "delete", "pod", "arcadedb-volume", "--wait=true", "--timeout=120s")
+
+
+def volume_snapshot(files: dict[str, Path], work: Path, expected: list) -> None:
+    """The volume snapshot of docs/DEPLOYMENT.md: archive the volume of the stopped server, unpack it into
+    a new, empty volume, start the server on it and read the same records."""
+    step("volume snapshot of the stopped server, unpacked into a new volume")
+    kubectl("-n", DATABASE, "scale", "statefulset/arcadedb", "--replicas=0")
+    kubectl("-n", DATABASE, "wait", "--for=delete", "pod/arcadedb-0", "--timeout=180s")
+    hold_volume()
+    archive = work / "arcadedb-volume.tgz"
+    with archive.open("wb") as handle:
+        volume_pod("tar", "--numeric-owner", "-C", "/var/lib/arcadedb", "-czf", "-", ".", stdout=handle)
+    release_volume()
+    kubectl("-n", DATABASE, "delete", "pvc", "data-arcadedb-0", "--wait=true", "--timeout=120s")
+    kubectl("apply", "-f", str(MANIFESTS / "backup" / "data-claim.yaml"))
+    hold_volume()
+    with archive.open("rb") as handle:
+        volume_pod("tar", "--numeric-owner", "-C", "/var/lib/arcadedb", "-xzf", "-", stdin=handle)
+    release_volume()
+    kubectl("-n", DATABASE, "scale", "statefulset/arcadedb", "--replicas=1")
+    kubectl("-n", DATABASE, "rollout", "status", "statefulset/arcadedb", "--timeout=300s")
+    with forwarded(files, work / "snapshot-data") as cairnmind:
+        cairnmind("init")
+        found = cairnmind("records", "demo")
+    if found != expected:
+        raise SystemExit(f"the server on the unpacked volume has other records:\n{json.dumps(found, indent=1)}")
+    print(f"the new volume holds the same {len(found)} record(s); {archive.stat().st_size} bytes archived")
 
 
 def network_policy_report() -> None:
@@ -216,7 +282,8 @@ def main() -> None:
             files = make_secrets(work)
             start_server()
             connection_job()
-            port_forward_check(files, work)
+            records = port_forward_check(files, work)
+            volume_snapshot(files, work, records)
             network_policy_report()
         except (subprocess.CalledProcessError, SystemExit):
             kubectl("-n", DATABASE, "get", "all,pvc,events", check=False)

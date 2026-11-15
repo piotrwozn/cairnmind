@@ -1,0 +1,17 @@
+# A new, empty volume for the server, under the name the StatefulSet gives its claim (data-arcadedb-0),
+# so that the StatefulSet uses it when it starts. Created before a volume snapshot is unpacked into it
+# (docs/DEPLOYMENT.md, "Kubernetes", "Backup and restore"). Keep its size and storage class equal to
+# volumeClaimTemplates in 30-statefulset.yaml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-arcadedb-0
+  namespace: cairnmind-db
+  labels:
+    app.kubernetes.io/name: arcadedb
+    app.kubernetes.io/part-of: cairnmind
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
