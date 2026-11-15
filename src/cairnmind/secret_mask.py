@@ -20,9 +20,13 @@ REGISTERED = "registered_secret"
 # A registered value shorter than this is not looked for in conversation text: an ArcadeDB password like
 # "admin" would replace an ordinary word everywhere. The gate of published memory uses the same floor.
 MIN_REGISTERED = 8
-# A bounded tool result may end in a truncated credential: a prefix of at least this many characters at
-# the very end of a text is replaced too.
+# A bounded tool result may end in a truncated credential: the journal replaces a prefix of at least this
+# many characters at the very end of a text too.
 MIN_TRUNCATED = 6
+# Ingestion replaces a piece of a registered value cut off at the end of a text, or left at the start of the
+# next one when a value is split between two events, only from this length on: a shorter piece is mostly an
+# ordinary word or a key's public prefix ("sk-ant", "lm-stu"), and leaves most of a long value unknown.
+MIN_FRAGMENT = 12
 
 
 def replace_known(text: str, ordered) -> str:
@@ -83,8 +87,9 @@ class Masker:
     def __init__(self, secrets=()):
         self.secrets = ordered_secrets(secrets, MIN_REGISTERED)
 
-    def spans(self, text: str):
-        """(start, end, kind) of everything to replace, possibly overlapping."""
+    def spans(self, text: str, fragments: bool = True):
+        """(start, end, kind) of everything to replace, possibly overlapping. ``fragments`` also finds a piece
+        of a registered value cut off at the end of the text or left at its start."""
         from .memory_published_secrets import well_known_spans
         found = []
         for secret in self.secrets:
@@ -92,18 +97,24 @@ class Masker:
             while start >= 0:
                 found.append((start, start + len(secret), REGISTERED))
                 start = text.find(secret, start + len(secret))
-            for length in range(min(len(secret) - 1, len(text)), MIN_TRUNCATED - 1, -1):
+            if not fragments:
+                continue
+            for length in range(min(len(secret) - 1, len(text)), MIN_FRAGMENT - 1, -1):
                 if text.endswith(secret[:length]):
                     found.append((len(text) - length, len(text), REGISTERED))
                     break
-        found += [(start, end, kind) for kind, start, end in well_known_spans(text) if end > start]
+            for length in range(min(len(secret) - 1, len(text)), MIN_FRAGMENT - 1, -1):
+                if text.startswith(secret[-length:]):
+                    found.append((0, length, REGISTERED))
+                    break
+        found += [(start, end, kind) for kind, start, end in well_known_spans(text, bounded=True) if end > start]
         return found
 
-    def mask(self, text: str) -> tuple[str, list[str]]:
+    def mask(self, text: str, fragments: bool = True) -> tuple[str, list[str]]:
         """(the text with every span replaced by [REDACTED], the sorted kinds replaced)."""
         if not isinstance(text, str) or not text:
             return text, []
-        spans = sorted(self.spans(text))
+        spans = sorted(self.spans(text, fragments))
         if not spans:
             return text, []
         pieces, position = [], 0

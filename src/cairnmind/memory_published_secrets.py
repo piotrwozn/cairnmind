@@ -55,6 +55,10 @@ _SHAPES = (
 )
 _KEY_BEGIN = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
 _KEY_END = re.compile(r"-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
+# The lines after a BEGIN line that belong to the key: PEM headers ("Proc-Type: 4,ENCRYPTED") and base64
+# lines, separated by real line breaks or by the escaped "\n" of a JSON line.
+_KEY_BODY = re.compile(r"(?:(?:\r?\n|\\n)[ \t]*(?:(?:Proc-Type|DEK-Info|Comment): [^\r\n\\]*"
+                       r"|[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9+/]{1,15}={1,2})[ \t]*(?=\r?\n|\\n|$))*")
 _URL_PASSWORD = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]{1,30}://[^\s/:@'\"<>]{1,256}:([^\s/@'\"<>]{1,256})@[^\s/'\"<>]+")
 _PAIR_PASSWORD = re.compile(r"(?i)(?:^|[;\s\"'])(?:password|pwd)\s*=\s*([^;\s\"']{4,})")
 _PAIR_CONTEXT = re.compile(r"(?i)(?:^|[;\s\"'])(?:server|host|data source|user id|uid|database)\s*=")
@@ -164,12 +168,19 @@ def _visible(text: str) -> str:
     return "".join(character for character in text if unicodedata.category(character) != "Cf")
 
 
-def well_known_spans(text: str):
+def well_known_spans(text: str, bounded: bool = False):
     """(kind, start, end) of every private key block and well-known key or token shape in ``text``, in the
-    order the scan claims them. Ingestion (#182) replaces exactly these, beside the registered secrets."""
+    order the scan claims them. Ingestion (#182) replaces exactly these, beside the registered secrets.
+
+    A BEGIN line without its END line claims the rest of the text, which is right for refusing a publication.
+    ``bounded`` (ingestion, which rewrites conversation text) ends such a block after the key lines that
+    follow its BEGIN line instead, so a message that only names the header keeps the rest of its words."""
     for begin in _KEY_BEGIN.finditer(text):
         end = _KEY_END.search(text, begin.end())
-        yield PRIVATE_KEY, begin.start(), end.end() if end else len(text)
+        if end:
+            yield PRIVATE_KEY, begin.start(), end.end()
+        else:
+            yield PRIVATE_KEY, begin.start(), _KEY_BODY.match(text, begin.end()).end() if bounded else len(text)
     for kind, pattern in _SHAPES:
         for match in pattern.finditer(text):
             yield kind, match.start(), match.end()
