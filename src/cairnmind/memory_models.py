@@ -8,8 +8,9 @@ receives only the sensitivity classes the setting memory_remote_classes allows (
 
 Vectors of two models are kept apart: their namespace is the embedding model's identity, and every vector
 index is keyed by namespace and dimension. An OpenAI-compatible server reports no digest, so there the
-identity is the server and the model name: other weights served under the same name, with the same
-dimension, are not detected. Evaluations that pass are recorded per pair of model identities and setup.
+identity is the server and the model name; for the embedding role a fixed request detects other weights
+served under the same name (memory_fingerprint.py). Evaluations that pass are recorded per pair of model
+identities and setup.
 """
 from __future__ import annotations
 
@@ -385,6 +386,13 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
         listed = [m for m in rows if isinstance(m, dict) and m.get("id") == model]
         if listed:
             entry["identity"] = f"{model}@{server_tag(row['base_url'])}"
+            if role == "embedding":  # other weights behind the same name (#212)
+                from .memory_fingerprint import doctor_block
+                identity, entry["fingerprint"] = doctor_block(settings, entry["identity"])
+                if identity is None:
+                    del entry["identity"]
+                else:
+                    entry["identity"] = identity
     entry["model_available"] = bool(listed)
     return entry
 
