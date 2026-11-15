@@ -100,8 +100,9 @@ HOST_MESSAGE = re.compile(
     r"\A\s*(?:" + _LAUNCHER + r"|<environment_context>.*</environment_context>)\s*\Z", re.DOTALL)
 # The block `cairnmind install` writes into AGENTS.md and CLAUDE.md (integrations._instructions), under the
 # current or the earlier markers, each on a line of its own: the client protocol, not the project's rules (#241).
+# A file saved with a byte order mark has it before a BEGIN marker on the first line; it goes with the block.
 OWN_BLOCK = re.compile("|".join(
-    r"^[ \t]*" + re.escape(begin) + r"[ \t]*$.*?^[ \t]*" + re.escape(end) + r"[ \t]*$"
+    r"^[﻿ \t]*" + re.escape(begin) + r"[ \t]*$.*?^[ \t]*" + re.escape(end) + r"[ \t]*$"
     for begin, end in ((BEGIN, END), (EARLIER_BEGIN, EARLIER_END))), re.MULTILINE | re.DOTALL)
 
 

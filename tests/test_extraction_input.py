@@ -132,6 +132,10 @@ def test_cairnminds_own_block_in_agents_md_is_not_read_as_project_knowledge(tmp_
     # A file that holds only the block, here under the earlier markers, gives nothing to extract.
     earlier = block.replace(block.splitlines()[0], EARLIER_BEGIN).replace(block.splitlines()[-1], EARLIER_END)
     assert extraction_request({**document, "content": "\n" + earlier + "\n"}) is None
+    # A file saved with a byte order mark, the block written at its top: the block and the mark are cut.
+    bom = extraction_request({**document, "content": "﻿" + block + "\n\nUse four spaces.\n"})
+    assert "resume_context" not in bom["text"] and "﻿" not in bom["text"]
+    assert len(bom["segments"]) == 1 and "Use four spaces." in bom["segments"][0]
     # A line that only names the markers in prose is the project's own text and stays.
     prose = "The installer keeps its block between <!-- BEGIN CAIRNMIND --> and <!-- END CAIRNMIND --> lines."
     assert extraction_request({**document, "content": prose})["text"] == prose
