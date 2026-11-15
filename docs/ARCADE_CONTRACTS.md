@@ -93,8 +93,11 @@ Additional root-facing methods needed:
   with `json_text`, hashed and compressed as it comes; Python memory stays bounded by a page, not by the store.
   The file is unchanged: envelope 1, keys in `json_text` order (`format`, `payload`, `sha256`, `version`),
   the bytes the in-memory writer produced, so every earlier restore reads it. It is written under a temporary
-  `.cairnmind-backup-*` name in the destination folder and moved into place only when complete and synced;
-  a partial file left by a killed process has no gzip trailer and is refused. Restore still loads the whole
+  `.cairnmind-backup-*` name in the destination folder while the transaction is open, then synced and moved
+  into place only after the transaction commits, so a failed commit leaves no file (the before-schema copy
+  is the exception: its read-only transaction ends after the move, and a failure there stops the migration
+  before any change). A partial file left by a killed process has no gzip trailer and is refused; the store
+  size view counts it under other backups and the service removes it once it is a day old. Restore still loads the whole
   file before validating it (its checksum no longer builds a second copy of the payload text): validating
   cross references before the first deletion needs the whole payload, and the engine holds the restore
   transaction in memory in any case.
