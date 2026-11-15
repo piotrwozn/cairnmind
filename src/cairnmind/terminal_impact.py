@@ -27,7 +27,8 @@ IMPACT_TIMEOUT = 120  # Git and the parser run for each list; a large worktree n
 DEFAULT_SINCE = "HEAD"
 # The headings of the inspector's table, before translation, for the list and for the impact view.
 COLUMNS = {"standard": ("Type / state", "Content / source", "Version / attempt"),
-           "impact": ("Kind / status", "Record", "Linked to", "Checked")}
+           "impact": ("Kind / status", "Record", "Linked to", "Checked"),
+           "proposed": ("Days untouched", "Kind", "Id", "Sources", "Newest evidence", "Text")}
 VERDICTS = {"still_valid": "still valid", "needs_update": "needs update", "not_related": "not related"}
 SYMBOL_CHANGES = {"modified": "its definition changed", "removed": "it is no longer defined there",
                   "added": "it is newly defined there", "moved": "it is now defined in the renamed file",
@@ -186,6 +187,8 @@ class ImpactView:
                 # then the record text, so the verdict column, the point of this view, stays on screen
                 record = max(6, free - first - linked - checked)
             widths = [first, record, linked, checked]
+        elif self._columns_kind == "proposed":
+            widths = self.fit_proposed_columns(table, free)  # terminal_proposed (#189)
         else:
             first, last = max(24, longest), cell_len(self.t("Version / attempt"))
             if width < 100 and table.row_count:  # the numbers are short: the heading may crop
