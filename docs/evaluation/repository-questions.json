@@ -39,7 +39,7 @@
     {"id": "scope-drift-list", "question": "How many out-of-scope files does a scope drift report list at most?",
      "file": "src/cairnmind/scope.py", "answer": {"pattern": "^MAX_REPORTED = ([0-9]+)"}},
     {"id": "engine-heap", "question": "How much Java heap does the database engine get?",
-     "file": "src/cairnmind/engine.py", "answer": {"pattern": "\"-Xmx([0-9]+)m\"", "forms": ["-Xmx{}m", "{}m", "{} MB", "{}MB"]}},
+     "file": "src/cairnmind/engine.py", "answer": {"pattern": "\"-Xmx([0-9]+)m\"", "forms": ["-Xmx{}m", "{}m", "{} MB", "{}MB", "{gb} GB", "{gb}GB", "{gb} GiB"]}},
     {"id": "context-size", "question": "What is the default context size num_ctx of the chat model?",
      "file": "src/cairnmind/config.py", "answer": {"pattern": "^    num_ctx: int = ([0-9]+)"}}
   ]

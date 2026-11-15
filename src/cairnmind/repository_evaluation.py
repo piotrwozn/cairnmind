@@ -16,7 +16,8 @@ A question file is JSON: ``{"format_version": 1, "questions": [{"id", "question"
 ``{"pattern": REGEX}`` for a value read from ``file`` at run time (the first group of the first
 match, multi-line), so that a changed default does not make the question wrong. ``"forms"`` adds
 written forms of the value that also count for that question: ``"{}m"`` (the value with a unit),
-``"{word}"`` (a number as its English word).
+``"{word}"`` (a number as its English word), ``"{gb} GB"`` (a whole number of megabytes in
+gigabytes: 2048 as 2).
 
 Scoring is mechanical. A question is *complete* when the answer's status is complete (its
 citations verified and the support check agreed). It is *right* when an accepted form occurs in
@@ -62,9 +63,10 @@ def _forms(value: str, forms: list[str]) -> list[str]:
     for form in forms:
         for item in values:
             word = _NUMBER_WORDS[int(item)] if item.isdigit() and int(item) < len(_NUMBER_WORDS) else None
-            if "{word}" in form and word is None:
+            gigabytes = str(int(item) // 1024) if item.isdigit() and int(item) and int(item) % 1024 == 0 else None
+            if ("{word}" in form and word is None) or ("{gb}" in form and gigabytes is None):
                 continue
-            found.append(form.replace("{}", item).replace("{word}", word or ""))
+            found.append(form.replace("{}", item).replace("{word}", word or "").replace("{gb}", gigabytes or ""))
     return list(dict.fromkeys(found))
 
 
