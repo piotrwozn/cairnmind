@@ -111,8 +111,10 @@ def read_private_file(path: str, setting: str) -> str:
             raise ValueError(f"{setting} names {path}, a symbolic link: {LINK_RULE}.") from None
         reason = os.strerror(error.errno) if error.errno else "unknown error"
         raise ValueError(f"{setting} names {path}, which cannot be opened ({reason}).") from None
-    with os.fdopen(fd, "rb") as handle:
-        info = os.fstat(handle.fileno())
+    # The checks run on the descriptor before it becomes a file object: os.fdopen refuses a folder with
+    # "[Errno 21] Is a directory", which would name neither the setting nor the rule (#242).
+    try:
+        info = os.fstat(fd)
         if mounted:
             if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > FILE_LIMIT:
                 raise ValueError(f"{setting} names {path}, a mounted secret whose file must be a regular file of "
@@ -122,6 +124,11 @@ def read_private_file(path: str, setting: str) -> str:
                 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > FILE_LIMIT):
             raise ValueError(f"{setting} names {path}, which must be a regular file of this user with mode 0600 "
                              f"(chmod 600) and at most {FILE_LIMIT} bytes.")
+        handle = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with handle:
         raw = handle.read(FILE_LIMIT + 1)
     try:
         text = raw.decode("utf-8")
