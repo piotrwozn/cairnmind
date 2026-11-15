@@ -51,3 +51,21 @@ def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conf
     assert polish == "Broker 400: Już potwierdzone przez osobę na tym komputerze w tej wersji; nie ma nic do zrobienia."
     for sentence in ("A historical version cannot be reviewed.", "Already disputed at this version; nothing to do."):
         assert tr(sentence, "pl") != sentence
+
+
+def test_a_refusal_for_a_command_without_a_terminal_names_piped_or_redirected_input_or_output(workspace,  # noqa: F811
+                                                                                             monkeypatch):
+    from typer.testing import CliRunner
+
+    from cairnmind import cli, confirmation, record_kinds
+    store, pid, _, _ = workspace
+    for name in ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", *confirmation.CLIENT_MARKERS):
+        monkeypatch.delenv(name, raising=False)
+    # CliRunner gives the command no terminal: as `... | head` or `... > file` in a person's own terminal.
+    run = CliRunner()
+    plan = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "memory", "confirm-plan", pid,
+                                "00000000-0000-4000-8000-000000000000", "--expected-version", "1"])
+    remember = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "remember", pid, "x", "--confirmed"])
+    for result in (plan, remember):
+        assert result.exit_code == 2 and "piped or redirected" in " ".join(result.output.split()), result.output
+    assert "piped or redirected" in record_kinds.CLI_REFUSED and "piped or redirected" in confirmation.CLI_REFUSED

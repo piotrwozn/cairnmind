@@ -70,9 +70,10 @@ REFUSED = ("Only a person can store a record as confirmed, and this write is not
            "Store the record as proposed (leave the status out); the person confirms it in the inspector, "
            "or types `cairnmind remember --confirmed` in their own terminal.")
 CLI_REFUSED = ("Only a person can store a record as confirmed. This command runs inside a coding session, or "
-               "without a terminal, so it does not count as a person. Nothing was saved. Run it without "
-               "--confirmed to store a proposed record; the person confirms it in the inspector, or runs "
-               "this command in their own terminal.")
+               "its input or output is not a terminal (piped or redirected), so it does not count as a person. "
+               "Nothing was saved. Run it without --confirmed to store a proposed record; the person confirms it "
+               "in the inspector, or runs this command in their own terminal, with input and output not piped or "
+               "redirected.")
 
 
 class ConfirmationRefused(ValueError):

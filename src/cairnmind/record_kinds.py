@@ -48,8 +48,9 @@ REFUSED = ("Only a person accepts an unknown transcript record kind, and this is
            "stored. The person runs `cairnmind record-kind accept` in their own terminal, or accepts it in the "
            "workspace under More, then Transcript record kinds.")
 CLI_REFUSED = ("Only a person accepts or withdraws an unknown transcript record kind. This command runs inside a "
-               "coding session, or without a terminal, so it does not count as a person. Nothing was stored. The "
-               "person runs it in their own terminal, or uses More, then Transcript record kinds in the workspace.")
+               "coding session, or its input or output is not a terminal (piped or redirected), so it does not count "
+               "as a person. Nothing was stored. The person runs it in their own terminal, with input and output not "
+               "piped or redirected, or uses More, then Transcript record kinds in the workspace.")
 
 
 class AcceptanceRefused(ValueError):

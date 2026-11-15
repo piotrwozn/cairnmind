@@ -228,8 +228,8 @@ def register(memory_app, initialized):
         from cairnmind import confirmation
         if not confirmation.person_at_terminal():
             # An agent's command and a script have no terminal (#177): the same refusal as for a session.
-            refuse("Only a person confirms a plan: run this command in your own terminal. "
-                   "Nothing was confirmed.")
+            refuse("Only a person confirms a plan: run this command in your own terminal, with input and output "
+                   "not piped or redirected. Nothing was confirmed.")
         from cairnmind.memory_published_format import canonical_uuid
         if not canonical_uuid(plan):
             raise typer.BadParameter("PLAN must be a plan ID")
