@@ -844,7 +844,9 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
     # agent's command or a script there is no person (#177): the task is stored as proposed, and says so.
     person = confirmation.person_at_terminal()
     with actor_write(store, ctx.obj, pid):
-        src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual", {"role": "user"})
+        from cairnmind.secret_mask import note_metadata  # indexed with its known secrets replaced (#182)
+        src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual",
+                             note_metadata(store.settings, text, {"role": "user"}))
         record = {"kind": "task", "content": title, "status": "confirmed" if person else "proposed",
                   "metadata": metadata}
         if person:

@@ -86,7 +86,9 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
         # published memory (#170) under this name, never under one read at publish time.
         from .memory_acts import act_context
         metadata.update(act_context(store, project_id))
-    source = store.snapshot(project_id, uri, content, "manual", metadata)
+    # Indexed with its known secrets replaced (#182); the text itself is kept as typed.
+    from .secret_mask import note_metadata
+    source = store.snapshot(project_id, uri, content, "manual", note_metadata(store.settings, content, metadata))
     record = {"kind": kind, "status": status, "content": content, "key": key,
               "metadata": {"origin": metadata["origin"]}}
     if session_id:
