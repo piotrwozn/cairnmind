@@ -201,6 +201,7 @@ EXTRACTION_MARK = "extraction_source_id"
 # name@digest (extraction_input.extractor_stamp). Set only by the worker's own write; unlike EXTRACTION_MARK
 # it describes the record, not this machine, so later writes keep it and portable memory carries it.
 EXTRACTOR_STAMP = "extractor"
+EXTRACTOR_MODEL_CHARS = 400
 _PROMPT_SHA = re.compile(r"[0-9a-f]{16}")
 
 # Record metadata derived by the store; values supplied by a client are never kept.
@@ -214,7 +215,7 @@ def validate_extractor_stamp(value) -> dict:
     if (not isinstance(value, dict) or set(value) != {"version", "prompt_sha256", "model"}
             or type(value["version"]) is not int or not 1 <= value["version"] <= 10**6
             or not isinstance(value["prompt_sha256"], str) or not _PROMPT_SHA.fullmatch(value["prompt_sha256"])
-            or not isinstance(value["model"], str) or not 3 <= len(value["model"]) <= 400
+            or not isinstance(value["model"], str) or not 3 <= len(value["model"]) <= EXTRACTOR_MODEL_CHARS
             or "@" not in value["model"][1:-1]):
         raise ValueError("Invalid extractor stamp")
     return dict(value)
