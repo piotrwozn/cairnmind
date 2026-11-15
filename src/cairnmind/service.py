@@ -268,6 +268,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     from cairnmind.plans import PlanManager
     from cairnmind.sessions import SessionManager, origin_mark
     from cairnmind.memory import MemoryConflict, MemoryManager, inspect_snapshot
+    from cairnmind.store_writer import StoreNotWriter
 
     settings = settings or Settings.load(create=True)
     if settings.host not in {"127.0.0.1", "localhost", "::1"}:
@@ -275,6 +276,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     if not settings.token:
         raise ValueError("Run cairnmind init to create a local authentication token")
     store = Store(settings.data_dir)
+    if store.not_writer:
+        # The service writes sessions, jobs and the queue: it runs only for the store's writer (#70).
+        raise StoreNotWriter(store.not_writer)
     model = ollama or from_settings(settings)
     retriever = Retriever(store, settings, ollama=model)
     agent = KnowledgeAgent(store, settings, ollama=model, retriever=retriever)
@@ -283,6 +287,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     memory = MemoryManager(store)
     inference = InferenceQueue()
     background_status: dict = {"scanner_error": None, "model_error": None, "memory_error": None}
+
+    def writer_lost(exc) -> None:
+        # Another installation took over writing: the background work stops instead of failing on every turn.
+        background_status["writer_lost"] = str(exc)
+        log.warning("Background work stopped: %s", exc)
     cache: dict = {}
     inference_projects: set[str] = set()
     background_ready = asyncio.Event()
@@ -310,6 +319,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["memory_error"] = result.get("errors") or None
             except asyncio.CancelledError:
                 raise
+            except StoreNotWriter as exc:
+                writer_lost(exc)
+                return
             except Exception as exc:
                 background_status["memory_error"] = {"code": type(exc).__name__}
                 log.exception("Portable memory scheduler failed")
@@ -369,6 +381,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["last_scan_at"] = time.time()
             except asyncio.CancelledError:
                 raise
+            except StoreNotWriter as exc:
+                writer_lost(exc)
+                return
             except Exception as exc:
                 background_status["scanner_error"] = str(exc)
                 log.exception("Archive scan failed")
@@ -412,6 +427,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     await asyncio.sleep(2)
             except asyncio.CancelledError:
                 raise
+            except StoreNotWriter as exc:
+                writer_lost(exc)
+                return
             except Exception as exc:
                 background_status["model_error"] = str(exc)
                 await asyncio.sleep(10)
@@ -532,7 +550,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         result = await asyncio.to_thread(store.status, pid)
         error_rows = await asyncio.to_thread(store.recent_job_errors, pid)
         pipeline = await asyncio.to_thread(store.job_summary, pid)
-        return {**result, "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
+        writer = await asyncio.to_thread(store.writer_state)
+        return {**result, "writer": writer,
+                "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                 "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                 "recent_job_errors": error_rows}
 

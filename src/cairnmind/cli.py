@@ -37,7 +37,7 @@ jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's job
 memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
 cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
 workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
-store_app = typer.Typer(help="How large the store is. Reads only; starts nothing.")
+store_app = typer.Typer(help="How large the store is, and which installation writes it.")
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
 app.add_typer(projects_app, name="project")
@@ -81,7 +81,11 @@ def entrypoint() -> None:
 
 def store_for(settings: Settings):
     from cairnmind.store import Store
-    return Store(settings.data_dir)
+    store = Store(settings.data_dir)
+    if store.not_writer:
+        # Another installation writes this database (#70): reads work, every write is refused with this reason.
+        typer.echo(f"Cairnmind: {store.not_writer}", err=True)
+    return store
 
 
 def store_for_read(settings: Settings):
@@ -153,6 +157,18 @@ def service_alive(settings: Settings) -> bool:
         return False
 
 
+def last_log_line(path: Path) -> str:
+    """The last line of a log, bounded and with control characters replaced: what a stopped process said."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(max(0, path.stat().st_size - 4096))
+            lines = [line for line in handle.read().decode("utf-8", "replace").splitlines() if line.strip()]
+    except OSError:
+        return f"see {path}"
+    text = lines[-1] if lines else f"see {path}"
+    return "".join(char if char.isprintable() else "?" for char in text)[:500]
+
+
 def ensure_service(settings: Settings, *, background_inference: bool = True) -> None:
     if service_alive(settings):
         return
@@ -165,11 +181,18 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         command = [sys.executable, "-m", "cairnmind", "--data-dir", str(settings.data_dir), "serve"]
         if not background_inference:
             command.append("--defer-background-inference")
-        subprocess.Popen(command,
-                         stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+        process = subprocess.Popen(command,
+                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
     for _ in range(300):
         if service_alive(settings):
             return
+        if getattr(process, "poll", lambda: None)() is not None:
+            # It stopped instead of starting, for example on an installation that only reads the store (#70).
+            # One that met a service starting at the same moment is waited for, as before.
+            said = last_log_line(log)
+            if "already running" not in said:
+                raise typer.BadParameter(f"The service stopped at start: {said}")
+            process = None
         time.sleep(0.2)
     raise typer.BadParameter(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
@@ -330,8 +353,11 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 @initialized
 def init(ctx: typer.Context):
     """Create the local store. Downloads no models and changes no client configuration."""
-    store_for(ctx.obj)
-    output({"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"})
+    store = store_for(ctx.obj)
+    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
+    if getattr(store, "not_writer", None):
+        result["writer"] = store.writer_state()
+    output(result)
 
 
 @engine_app.command("install")
@@ -413,6 +439,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
         for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
     result["models_lock_present"] = (ctx.obj.data_dir / "models.lock.json").exists()
+    from cairnmind.store_writer import inspect as writer_role
+    result["store_writer"] = writer_role(ctx.obj)
     from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     output(result)
@@ -649,6 +677,38 @@ def store_size(ctx: typer.Context, project: Annotated[str | None, typer.Argument
         output(report)
     else:
         typer.echo(report["text"])
+
+
+@store_app.command("writer")
+@initialized
+def store_writer_show(ctx: typer.Context):
+    """Which installation writes this store, and whether this one is it. Starts no engine; writes no row."""
+    from cairnmind.store_writer import inspect
+    output(inspect(ctx.obj))
+
+
+@store_app.command("takeover")
+@initialized
+def store_takeover(ctx: typer.Context,
+                   yes: Annotated[bool, typer.Option("--yes", help="Take over writing; without it nothing changes.")] = False,
+                   note: Annotated[str | None, typer.Option(help="Why, kept with the change (one line).")] = None):
+    """Make this installation the store's writer. The previous writer stops at its next write; its running jobs
+    go back to the queue. The change, with its time, host and note, is kept in the store."""
+    from cairnmind.store_writer import inspect, take_over, valid_note
+    # Moving the writer is a person's decision, as a verdict is: a coding session cannot make it.
+    if session_value("SESSION_ID"):
+        refuse("A coding session cannot take over writing the store; only a person can, outside the session.")
+    try:
+        valid_note(note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--note") from None
+    if not yes:
+        current = inspect(ctx.obj)
+        output({"taken_over": False, **current,
+                "next": "Run `cairnmind store takeover --yes` to make this installation the writer."})
+        raise typer.Exit(1)
+    from cairnmind.store import Store
+    output(take_over(Store(ctx.obj.data_dir), note))
 
 
 @jobs_app.command("list")

@@ -52,10 +52,19 @@ class ReadOnlyStoreError(RuntimeError):
 class ReadOnlyClient:
     """The database client of a store opened for reading: queries, and transactions that are rolled back."""
 
-    def __init__(self, client: ArcadeClient):
+    def __init__(self, client: ArcadeClient, refusal: str | None = None):
         self._client = client
         self.settings = client.settings
         self.database = client.database
+        # Set for a store whose installation is not the writer (#70): a write is then the person's request,
+        # refused with this reason (StoreNotWriter), not a programming error.
+        self.refusal = refusal
+
+    def _refuse(self, message):
+        if self.refusal:
+            from .store_writer import StoreNotWriter
+            raise StoreNotWriter(self.refusal)
+        raise ReadOnlyStoreError(message)
 
     def query(self, sql, params=None):
         if not isinstance(sql, str) or not _READ.match(sql):
@@ -63,18 +72,18 @@ class ReadOnlyClient:
         return self._client.query(sql, params)
 
     def command(self, sql, params=None):
-        raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
+        self._refuse("A store opened for reading cannot run a database command")
 
     def server_command(self, command):
-        raise ReadOnlyStoreError("A store opened for reading cannot run a server command")
+        self._refuse("A store opened for reading cannot run a server command")
 
     def ensure_database(self):
-        raise ReadOnlyStoreError("A store opened for reading cannot create the database")
+        self._refuse("A store opened for reading cannot create the database")
 
     @contextmanager
     def transaction(self):
         with self._client.transaction(commit=False) as native:
-            yield ReadOnlyClient(native)
+            yield ReadOnlyClient(native, self.refusal)
 
     def close(self) -> None:
         self._client.close()
