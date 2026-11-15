@@ -18,7 +18,7 @@ import httpx
 
 from .config import Settings
 from .database_credentials import problem, tls_context
-from .database_mode import connect_only, missing_database, unavailable
+from .database_mode import connect_only, missing_database, sign_in_refused, unavailable
 
 
 class ArcadeError(RuntimeError):
@@ -149,7 +149,11 @@ class ArcadeClient:
                 safe_message = str(message)
                 if self.settings.arcade_password:
                     safe_message = safe_message.replace(self.settings.arcade_password, "[redacted]")
-                raise ArcadeError(f"ArcadeDB HTTP {response.status_code}: {safe_message[:500]}",
+                safe_message = safe_message[:500]
+                if response.status_code == 401 and not self._administrator and connect_only(self.settings):
+                    # The usual first run of a connect-only installation (#68): the user does not exist yet.
+                    safe_message += sign_in_refused(self.settings)
+                raise ArcadeError(f"ArcadeDB HTTP {response.status_code}: {safe_message}",
                                   status_code=response.status_code,
                                   exception_name=str(error.get("exception", "")) if isinstance(error, dict) else "")
             return response

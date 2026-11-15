@@ -109,6 +109,13 @@ def missing_database(settings) -> str:
             "create-user --admin-password-file FILE`.")
 
 
+def sign_in_refused(settings) -> str:
+    """What to add when the server does not accept the user of a connect-only installation."""
+    return (f". ArcadeDB at {settings.arcade_url} did not accept the user {settings.arcade_user}. If the database "
+            "and this user were not created yet, create them once: `cairnmind db create-user "
+            "--admin-password-file FILE`. Otherwise check arcade_user and the password this installation reads.")
+
+
 def describe(settings) -> dict:
     """What `engine status`, `status` and `doctor` say about where storage runs."""
     result = {"mode": mode(settings), "host": host(settings)}
