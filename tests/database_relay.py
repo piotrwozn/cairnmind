@@ -12,7 +12,7 @@ listens on loopback over plain http can be reached as an https host that is not 
 
     python tests/database_relay.py --upstream-port 2480 --address 192.0.2.7 --tls FOLDER --delay-ms 20
 
-runs it alone and prints its address and, when stopped, the number of requests.
+runs it alone and prints its address and, when stopped (Ctrl+C or SIGTERM), the number of requests.
 """
 from __future__ import annotations
 
@@ -214,6 +214,7 @@ class Relay:
 
 def main() -> None:
     import argparse
+    import signal
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--upstream-port", type=int, required=True)
     parser.add_argument("--address", default="127.0.0.1")
@@ -222,6 +223,12 @@ def main() -> None:
     args = parser.parse_args()
     relay = Relay(args.upstream_port, address=args.address, tls=args.tls, delay=args.delay_ms / 1000)
     print(relay.url, flush=True)
+
+    def stop(*_):
+        raise KeyboardInterrupt
+
+    # A shell starts a background command with SIGINT ignored, so SIGTERM stops it as well.
+    signal.signal(signal.SIGTERM, stop)
     try:
         while True:
             time.sleep(1)

@@ -6,7 +6,10 @@ from dataclasses import replace
 import json
 import os
 import secrets
+from pathlib import Path
+import shutil
 import socket
+import subprocess
 import uuid
 
 import httpx
@@ -27,6 +30,7 @@ from test_database_credentials import certificate_authority
 from test_database_user import this_machine_address
 
 runner = CliRunner()
+ROOT = Path(__file__).resolve().parents[1]
 VARIABLES = ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE", "ARCADE_PASSWORD_FILE",
              "ARCADE_CA_FILE", "ARCADE_CONNECT_URL")
 
@@ -259,6 +263,44 @@ def test_a_supported_server_version_is_reported_with_where_it_runs(tmp_path, tes
     assert "Some-password-1234" not in shown.output
 
 
+def test_a_refused_sign_in_names_the_step_that_creates_the_user(tmp_path, test_engine, monkeypatch):
+    """The usual first run: the address is right, and the database and its user do not exist yet."""
+    data = data_directory(tmp_path)
+    connect(monkeypatch, "http://127.0.0.1:2999", "Some-password-1234", user="cairnmind")
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda self, request: httpx.Response(
+        401, json={"error": "Authentication failed"}))
+    status = engine.engine_status(Settings.load(data, create=True))
+    assert status["available"] is False and "ArcadeDB HTTP 401: Authentication failed" in status["error"]
+    assert "did not accept the user cairnmind" in status["error"] and "cairnmind db create-user" in status["error"]
+    refused = cli(data, "init")
+    assert refused.exit_code != 0 and "cairnmind db create-user" in str(refused.exception)
+    assert "Some-password-1234" not in status["error"] + str(refused.exception)
+
+
+def test_the_installer_asks_for_java_and_installs_an_engine_only_when_it_will_run_one(tmp_path):
+    script = (ROOT / "scripts" / "install-wsl.sh").read_text()
+    start = script.index("# Connect-only: the database runs elsewhere")
+    check = script[start:script.index("if ! command -v tmux", start)]
+    empty = tmp_path / "no-tools"
+    empty.mkdir()
+
+    def java_check(**variables):
+        return subprocess.run([shutil.which("bash"), "-c", "set -euo pipefail\n" + check + "\necho passed"],
+                              env={"PATH": str(empty), **variables}, capture_output=True, text=True, timeout=30)
+
+    without = java_check()
+    assert without.returncode == 1 and "Java not found" in without.stderr
+    for name in ("CAIRNMIND_ARCADE_CONNECT_URL", "DEVBRAIN_ARCADE_CONNECT_URL"):
+        skipped = java_check(**{name: "https://db.example.org:2490"})
+        assert skipped.returncode == 0 and skipped.stdout.strip() == "passed", skipped.stderr
+    # The engine is installed only in the branch without a connect address; doctor runs in both.
+    branch = script.index('if [[ -n "$connect_url" ]]; then')
+    otherwise = script.index("\nelse\n", branch)
+    assert otherwise < script.index('"$cairnmind_bin" engine install') < script.index('\n"$cairnmind_bin" doctor')
+    assert "engine install" not in script[branch:otherwise]
+    subprocess.run(["bash", "-n", str(ROOT / "scripts" / "install-wsl.sh")], check=True)
+
+
 def test_evaluations_that_create_databases_are_refused_in_one_sentence(tmp_path, test_engine, monkeypatch):
     data = data_directory(tmp_path)
     connect(monkeypatch, "http://127.0.0.1:2999", "Some-password-1234")
@@ -430,6 +472,9 @@ def test_two_installations_on_two_hosts_one_writes_the_other_reads_and_can_take_
                 index_project(second, pid)
             with pytest.raises(StoreNotWriter):
                 second.command("CREATE DOCUMENT TYPE vector_never IF NOT EXISTS")
+            # A reader can take the logical backup: it only reads, and the file is written on its own machine.
+            copy = second.backup(tmp_path / "reader-backup.cairnmind.json.gz")
+            assert len(Store._validated_backup(copy)["sources"]) == 3
             doctor = store_writer.inspect(Settings.load(desktop))
             assert doctor["role"] == "reader" and doctor["next"] == "cairnmind store takeover --yes"
 
