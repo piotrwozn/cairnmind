@@ -205,6 +205,26 @@ def test_no_secret_value_is_in_the_manifests_and_the_template_is_not_applied_wit
                           "cairnmind-db-user": "cairnmind-app"}
 
 
+def test_the_manifest_check_creates_every_namespace_the_manifests_name_before_the_server_side_dry_run():
+    """A server-side dry run refuses an object whose namespace does not exist (seen on kind: the template's
+    placeholder namespace cairnmind-app), so the check creates each one first and deletes it at the end."""
+    named = set()
+    for path in KUBERNETES.rglob("*.yaml"):
+        named |= set(re.findall(r"^\s+namespace: ([\w-]+)$", path.read_text(), re.M))
+    declared = set(re.findall(r"^  name: ([\w-]+)$", manifest("00-namespace.yaml"), re.M))
+    script = (ROOT / "scripts" / "kubernetes_check.py").read_text()
+    values = dict(re.findall(r'^(TEMPLATE_CLIENTS) = "([\w-]+)"$', script, re.M))
+    values.update(zip(("DATABASE", "CLIENTS"), re.findall(r'^DATABASE, CLIENTS = "([\w-]+)", "([\w-]+)"$', script,
+                                                         re.M)[0]))
+    created = {values[name] for name in re.findall(r'kubectl\("create", "namespace", (\w+)\)', script)}
+    assert named <= declared | created
+    dry_run = script.index('"--dry-run=server"')
+    assert all(script.index(f'kubectl("create", "namespace", {name})') < dry_run
+               for name, value in values.items() if value in created)
+    cleanup = script[script.index('kubectl("delete", "namespace"'):].split(")", 1)[0]
+    assert all(name in cleanup for name in ("DATABASE", "CLIENTS", "TEMPLATE_CLIENTS"))
+
+
 def test_the_volume_is_unpacked_without_setting_the_root_owned_top_folder():
     """The volume pod runs as 10001, the new volume's top folder belongs to root: GNU tar fails setting
     the time of the archive's "." entry on it unless --no-overwrite-dir leaves the folder alone."""

@@ -3,8 +3,8 @@
     kind create cluster --name cairnmind-check --wait 180s
     uv run python scripts/kubernetes_check.py --kind-cluster cairnmind-check
 
-Uses the current kubectl context, which must be a disposable cluster: the namespaces cairnmind-db and
-cairnmind-check are created and deleted at the end (keep them with --keep). Needs docker, kubectl,
+Uses the current kubectl context, which must be a disposable cluster: the namespaces cairnmind-db,
+cairnmind-check and cairnmind-app are created and deleted at the end (keep them with --keep). Needs docker, kubectl,
 openssl and uv; with --kind-cluster, also kind, to load the two images into that cluster.
 
   1. builds deploy/arcadedb and the check image of deploy/kubernetes/check;
@@ -20,7 +20,8 @@ openssl and uv; with --kind-cluster, also kind, to load the two images into that
      writes a project and a record, takes a logical backup and restores it, as docs/DEPLOYMENT.md does;
   7. scales the server to 0, archives its volume with tar from a pod that holds it, unpacks the archive
      into a new, empty volume and reads the same records from the server started on it;
-  8. reports whether the network plugin enforces the NetworkPolicy (informational: kind's may not).
+  8. reports whether the network plugin enforces the NetworkPolicy: a pod without the client label is
+     kept off 2490, a labelled one reaches 2490 but not the plain HTTP port 2480 (informational).
 No model, Ollama or coding client is used. Exit status 0 only when steps 1 to 7 passed.
 """
 from __future__ import annotations
@@ -43,6 +44,8 @@ MANIFESTS = ROOT / "deploy" / "kubernetes"
 CHECK = MANIFESTS / "check"
 SERVER_IMAGE, CHECK_IMAGE = "cairnmind-arcadedb:local", "cairnmind-check:local"
 DATABASE, CLIENTS = "cairnmind-db", "cairnmind-check"
+# The placeholder client namespace of templates/secrets.yaml: a server-side dry run needs it to exist.
+TEMPLATE_CLIENTS = "cairnmind-app"
 JOB = "cairnmind-connection-check"
 
 
@@ -76,6 +79,7 @@ def schema_check() -> None:
     step("namespaces, then every manifest against the cluster's schemas")
     kubectl("apply", "-f", str(MANIFESTS / "00-namespace.yaml"))
     kubectl("create", "namespace", CLIENTS)
+    kubectl("create", "namespace", TEMPLATE_CLIENTS)
     manifests = sorted(MANIFESTS.rglob("*.yaml"))
     for path in manifests:
         kubectl("apply", "--dry-run=server", "--validate=strict", "-f", str(path))
@@ -259,16 +263,29 @@ def volume_snapshot(files: dict[str, Path], work: Path, expected: list) -> None:
     print(f"the new volume holds the same {len(found)} record(s); {archive.stat().st_size} bytes archived")
 
 
-def network_policy_report() -> None:
-    step("does the network plugin enforce the NetworkPolicy? (informational)")
-    probe = ("import socket,sys\ntry:\n socket.create_connection(('arcadedb.cairnmind-db.svc',2490),timeout=5).close()"
-             "\n print('open')\nexcept OSError as e:\n print('blocked', type(e).__name__)")
-    result = kubectl("-n", CLIENTS, "run", "network-policy-probe", "--rm", "-i", "--restart=Never", "--quiet",
+def reach(name: str, port: int, *, client: bool) -> str:
+    """'open' or 'blocked ...': a TCP connection from a new pod in the client namespace to the server's
+    pod (its own address, so that the port the Service does not offer is tried as well)."""
+    probe = (f"import socket\ntry:\n socket.create_connection(('arcadedb-0.arcadedb.{DATABASE}.svc',{port}),timeout=5)"
+             ".close()\n print('open')\nexcept OSError as e:\n print('blocked', type(e).__name__)")
+    labels = ["--labels=cairnmind.io/database-client=true"] if client else []
+    result = kubectl("-n", CLIENTS, "run", name, "--rm", "-i", "--restart=Never", "--quiet", *labels,
                      f"--image={CHECK_IMAGE}", "--image-pull-policy=IfNotPresent", "--command", "--",
                      "python3", "-c", probe, capture=True, check=False, timeout=180)
-    answer = (result.stdout or result.stderr).strip()
-    verdict = "enforced" if answer.startswith("blocked") else "NOT enforced by this cluster's network plugin"
-    print(f"a pod without the client label reaching the server: {answer or 'no answer'} -> policy {verdict}")
+    return (result.stdout or result.stderr).strip() or "no answer"
+
+
+def network_policy_report() -> None:
+    step("does the network plugin enforce the NetworkPolicy? (informational)")
+    answers = {(client, port): reach(f"policy-probe-{'client' if client else 'other'}-{port}", port, client=client)
+               for client, port in ((False, 2490), (True, 2490), (True, 2480))}
+    for (client, port), answer in answers.items():
+        who = "a pod labelled as a client" if client else "a pod without the client label"
+        print(f"{who}, port {port}: {answer}", flush=True)
+    enforced = (answers[(False, 2490)].startswith("blocked") and answers[(True, 2490)] == "open"
+                and answers[(True, 2480)].startswith("blocked"))
+    print("policy enforced: only labelled pods, only on 2490" if enforced
+          else "policy NOT enforced as written by this cluster's network plugin", flush=True)
 
 
 def main() -> None:
@@ -295,7 +312,8 @@ def main() -> None:
             raise
         finally:
             if not args.keep:
-                kubectl("delete", "namespace", DATABASE, CLIENTS, "--ignore-not-found", "--wait=false", check=False)
+                kubectl("delete", "namespace", DATABASE, CLIENTS, TEMPLATE_CLIENTS, "--ignore-not-found", "--wait=false",
+                        check=False)
     step("passed")
 
 

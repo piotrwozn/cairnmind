@@ -178,7 +178,7 @@ The `kubernetes-manifests` CI job, beside the other jobs and not a required chec
 
 TLS ends at the ArcadeDB server itself. The pinned release, 26.11.1, has its own HTTPS listener (the `arcadedb.ssl.*` settings), so no proxy or other software is needed: the StatefulSet turns it on through `ARCADEDB_JAVA_OPTS`, on port 2490, with the key and certificate of the Secret `arcadedb-tls` as one PKCS#12 store.
 
-ArcadeDB's plain HTTP listener (port 2480) cannot be turned off and listens on the same addresses. Only the probes use it, from inside the pod; the Service does not offer it and the NetworkPolicy does not let anything reach it. A NetworkPolicy is enforced only by a network plugin that supports it: without one, another pod that knows the server's address can reach port 2480, unencrypted (it still needs a password). The CI job reports whether its cluster enforces the policy.
+ArcadeDB's plain HTTP listener (port 2480) cannot be turned off and listens on the same addresses. Only the probes use it, from inside the pod; the Service does not offer it and the NetworkPolicy does not let anything reach it. A NetworkPolicy is enforced only by a network plugin that supports it: without one, another pod that knows the server's address can reach port 2480, unencrypted (it still needs a password). The CI job reports whether its cluster enforces the policy: that a pod without the label cannot open port 2490, and that a labelled pod can open 2490 but not 2480. The network plugin of kind v0.27.0 enforces it.
 
 Make a private certificate authority and the server's store with `openssl`, on a machine you trust, in a folder only you can read. The certificate must name the address clients use; these names cover the Service and `kubectl port-forward`:
 
