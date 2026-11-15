@@ -1147,10 +1147,12 @@ class KnowledgeAgent:
                 else:
                     # Definitions of names the question and the hits use take the places of the
                     # lowest-ranked hits, so the evidence stays INITIAL_HITS excerpts within the guard.
+                    # They are shown first: the line that states a value, before the passages that
+                    # use or mention it, and so also first in the short catalog of this call.
                     definitions = await asyncio.to_thread(self._definitions, project_id, question, initial,
                                                           evidence, worktree)
                     if definitions:
-                        initial = [*initial[:INITIAL_HITS - len(definitions)], *definitions]
+                        initial = [*definitions, *initial[:INITIAL_HITS - len(definitions)]]
                 # Only now is it known which hits the model gets: register those, in their order.
                 for position, item in enumerate(initial):
                     source = evidence.get(item["source_id"])

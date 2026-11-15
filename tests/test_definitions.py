@@ -132,6 +132,29 @@ async def test_the_definition_of_a_used_setting_is_shown_and_citable(workspace):
     assert entry["source_id"] in {item["source_id"] for item in catalog}
 
 
+async def test_definitions_are_shown_before_the_hits_and_lead_the_first_catalog(workspace):  # noqa: F811
+    store, project, settings, root = _project(workspace)
+    for index in range(INITIAL_HITS):
+        document(store, project, f"Cockpit port note {index}: the cockpit listens on the default cockpit port.",
+                 uri=f"notes://cockpit-{index}")
+    model = FakeOllama([{"content": "not JSON"}, {"content": "still not JSON"}])
+    await KnowledgeAgent(store, settings, model).ask(project["id"], "On which port does the cockpit listen by default?")
+    prompt = json.loads(model.calls[0]["messages"][1]["content"])
+    shown = prompt["initial_evidence"]
+    kinds = [item.get("kind") == "definition" for item in shown]
+    count = sum(kinds)
+    # The line that states the value comes before the passages that mention it; the hits follow
+    # in their order, the lowest-ranked ones having given their places.
+    assert 1 <= count <= MAX_DEFINITIONS and len(shown) == INITIAL_HITS
+    assert kinds == [True] * count + [False] * (INITIAL_HITS - count)
+    assert shown[0]["definition"] == "Settings.cockpit_port"
+    # The short catalog of the first call (a few entries) starts with them too.
+    catalog = prompt["citation_catalog"]
+    assert len(catalog) < INITIAL_HITS
+    assert [item["source_id"] for item in catalog[:count]] == [item["source_id"] for item in shown[:count]]
+    assert catalog[0]["quote_excerpt"] == shown[0]["text"][:600]
+
+
 async def test_a_question_whose_names_resolve_to_nothing_is_asked_as_before(workspace):  # noqa: F811
     store, project, settings, root = _project(workspace)
     (root / "notes.md").write_text("Lunch is at noon in the small kitchen.\n")
