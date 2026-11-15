@@ -871,3 +871,23 @@ async def test_invalid_tool_arguments_say_which_argument_and_why_without_its_val
         assert not setup[3].joinpath("app.py").exists()
     finally:
         await agent.close()
+
+
+def test_the_instructions_say_effect_tools_appear_only_after_the_ack():
+    # #240: a small model asked to write a file said it had no write tool and never acknowledged.
+    from cairnmind.api_agent import SYSTEM
+    assert "offered only after" in SYSTEM and "ack_resume" in SYSTEM
+
+
+@pytest.mark.asyncio
+async def test_a_ready_packet_before_its_ack_names_the_next_step(setup):
+    memory = Memory()
+    provider = ScriptedProvider(reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+                                reply(call("resume_context")), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        await agent.turn("Check")
+        first, _, again = tools_results(agent)
+        assert "ack_resume" in first["next_step"] and "next_step" not in again
+    finally:
+        await agent.close()

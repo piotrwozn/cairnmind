@@ -33,6 +33,8 @@ copy {"id": ..., "version": ...} from packet.active_plan or packet.active_task;
 use null when that entry is absent. With neither present, send
 {"plan": null, "task": null}. Delivery of a packet is not an ACK. Never invent a readback or guess an
 identifier. A partial packet means report its unknowns and wait; do not bypass it.
+File, command and third-party tools are offered only after your exact ack_resume; when a
+request needs them, call resume_context and ack_resume first.
 Refresh resume_context and ACK whenever relevant project state/code changes.
 Use memory tools to restore the goal, decisions, plan, task and checkpoint. Cite
 actual inspected source IDs for memory claims. Say when information is missing.
@@ -50,6 +52,8 @@ the host. Full dialogue and tool results remain archived; never claim unlimited
 model context, complete knowledge, a command result or a test you did not observe.
 Do not output internal reasoning, secrets or opaque provider continuation data.
 """
+NEXT_STEP = ("Call ack_resume with this packet's exact packet_id, packet_hash and readback; file, command and "
+             "third-party tools are offered only after it.")
 
 MAX_INPUT_CHARS = 64_000
 MAX_REPLY_CHARS = 262_144
@@ -494,6 +498,9 @@ class AgentEngine:
                 return self._error("credential_in_packet", **self._memory_partial)
             self._last_packet = packet if packet and result.get("status") == "ready" else None
             self._memory_partial = result if isinstance(result, dict) and result.get("status") != "ready" else None
+            if self._last_packet and not self._acknowledged:
+                # A small model skipped the ACK and then found no file tool (#240).
+                result = {**result, "next_step": NEXT_STEP}
         elif name == "ack_resume":
             self._acknowledged = (isinstance(result, dict) and result.get("status") == "acknowledged"
                                   and result.get("packet_id") == arguments.get("packet_id")
