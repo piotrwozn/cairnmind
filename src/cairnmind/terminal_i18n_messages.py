@@ -79,7 +79,7 @@ ASK_UNSUPPORTED_PREFIX_PL = "Cytaty nie potwierdzają odpowiedzi: "
 # The subject check's gap (subject.SUBJECT_GAP, #245): this fixed prefix, then the names as the
 # question wrote them (a person's text, kept as is).
 ASK_SUBJECT_PREFIX = "The quoted sources do not name what the question asks about: "
-ASK_SUBJECT_PREFIX_PL = "Cytowane źródła nie wymieniają tego, o co pyta pytanie: "
+ASK_SUBJECT_PREFIX_PL = "Cytowane źródła nie wymieniają tego, czego dotyczy pytanie: "
 
 # Errors of the model providers (api_providers.py) and of Copilot (copilot_adapter.py).
 PROVIDER_MESSAGES = {
