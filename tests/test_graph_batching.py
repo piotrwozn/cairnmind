@@ -6,6 +6,7 @@ import threading
 import pytest
 from test_index_batching import code_tree, counted, dump, graph_row_by_row, rewrite
 
+import cairnmind.store as store_module
 from cairnmind import ingest
 from cairnmind.arcade import ArcadeError
 from cairnmind.journal import Journal, JournalTransaction
@@ -196,6 +197,168 @@ def test_grouped_statements_are_only_for_the_graph_of_a_project_reported_as_rese
         store.write_graph(tx, pid, [node], [])
     events = Journal(store).read(cursor)["events"]
     assert [(event["entity_type"], event["entity_id"]) for event in events] == [("node", "n")]
+
+
+ROW_BY_ROW_REMOVAL = ("SELECT id FROM edges WHERE from_id=:id", "DELETE FROM nodes WHERE id=:id", "SELECT FROM `nodes` WHERE id=:id")
+GROUPED_REMOVAL = ("SELECT from_id,to_id FROM edges WHERE", "DELETE FROM nodes WHERE project_id=:project AND id IN :ids")
+
+
+def test_removed_graph_nodes_are_deleted_a_group_per_request(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    code_tree(root)
+    store = Store(tmp_path / "memory")
+    pid = store.add_project("p", root)["id"]
+    ingest.index_project(store, pid)
+    before = len(store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid}))
+    (root / "module_big.py").unlink()
+    (root / "module_04.py").unlink()
+    with monkeypatch.context() as patch:
+        patch.setattr(store_module, "GRAPH_ROWS_PER_REQUEST", 40)  # several groups from a small tree
+        seen = counted(patch)
+        ingest.index_project(store, pid)
+    removed = before - len(store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid}))
+    assert removed > 2 * 40
+    assert not [text for text in seen if text.startswith(ROW_BY_ROW_REMOVAL)]
+    groups = -(-removed // 40)
+    assert 0 < len([text for text in seen if text.startswith(GROUPED_REMOVAL)]) <= 2 * groups
+
+
+def removal_row_by_row(self, tx, project_id, identifiers):
+    """Removed vertices as before: one look for an edge, then one DELETE (which the journal reads first), per vertex."""
+    for identifier in identifiers:
+        if not tx.query("SELECT id FROM edges WHERE from_id=:id OR to_id=:id LIMIT 1", {"id": identifier}):
+            tx.command("DELETE FROM nodes WHERE id=:id", {"id": identifier})
+
+
+def all_row_by_row(patch):
+    patch.setattr(Store, "write_graph", graph_row_by_row)
+    patch.setattr(Store, "remove_graph_nodes", removal_row_by_row)
+
+
+def mention(store, pid, root):
+    """A note that links to code which goes away below: a symbol, a file that is deleted and a file that is renamed."""
+    note = store.snapshot(pid, "note://about-code", "about the code", "note")
+    store.upsert_node({"id": f"note:{pid}", "project_id": pid, "kind": "note", "label": "note", "source_id": note["id"]})
+    linked = []
+    for kind, label in (("symbol", "function_5_3"), ("file", str(root / "module_06.py")), ("file", str(root / "module_07.py"))):
+        target = store.query("SELECT id FROM nodes WHERE project_id=:p AND kind=:k AND label=:l", {"p": pid, "k": kind, "l": label})
+        assert len(target) == 1, label
+        store.upsert_edge({"id": f"mentions:{pid}:{label}", "project_id": pid, "from_id": f"note:{pid}",
+                           "to_id": target[0]["id"], "kind": "mentions", "source_id": note["id"]})
+        linked.append(target[0]["id"])
+    return linked
+
+
+def remove_code(root):
+    module = root / "module_05.py"
+    module.write_text("".join(f"\n\ndef function_5_{number}(value):\n    return value\n" for number in (0, 1, 2)))
+    (root / "module_06.py").unlink()
+    (root / "module_07.py").rename(root / "renamed_07.py")
+    big = root / "module_big.py"
+    big.write_text("".join(f"\n\ndef big_{number}(value):\n    return value\n" for number in range(0, 90, 3)))
+
+
+def test_grouped_removal_stores_the_row_by_row_graph_and_keeps_linked_vertices(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    code_tree(root)
+    grouped, single = Store(tmp_path / "grouped"), Store(tmp_path / "single")
+    first, second = grouped.add_project("p", root)["id"], single.add_project("p", root)["id"]
+    ingest.index_project(grouped, first)
+    with monkeypatch.context() as patch:
+        all_row_by_row(patch)
+        ingest.index_project(single, second)
+    kept = {first: mention(grouped, first, root), second: mention(single, second, root)}
+    rows = {pid: store.query("SELECT FROM nodes WHERE id IN :ids", {"ids": kept[pid]}) for pid, store in
+            ((first, grouped), (second, single))}
+    remove_code(root)
+    for step, forget in (("removed symbols, a removed and a renamed file", False), ("written again in full", True)):
+        if forget:
+            rewrite(root, step)
+        for store in (grouped, single):
+            if forget:
+                ingest.forget_index_signature(store)
+        count = lambda pid, store: len(store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid}))  # noqa: E731
+        before = count(first, grouped)
+        with monkeypatch.context() as patch:
+            patch.setattr(store_module, "GRAPH_ROWS_PER_REQUEST", 7)  # many groups, the kept vertices among them
+            seen = counted(patch)
+            ingest.index_project(grouped, first)
+        with monkeypatch.context() as patch:
+            all_row_by_row(patch)
+            ingest.index_project(single, second)
+        assert_same(grouped, first, single, second, step)
+        assert not [text for text in seen if text.startswith(ROW_BY_ROW_REMOVAL)], step
+        if not forget:
+            assert before - count(first, grouped) > 3 * 7, step
+            assert [text for text in seen if text.startswith(GROUPED_REMOVAL[1])], step
+        # The vertices the note links to stay, row for row as they were (apart from is_current, which the files'
+        # own writes clear when their source is replaced, in both stores alike), and its edges still reach them.
+        for pid, store in ((first, grouped), (second, single)):
+            again = store.query("SELECT FROM nodes WHERE id IN :ids", {"ids": kept[pid]})
+            assert sorted(map(clean, again), key=str) == sorted(map(clean, rows[pid]), key=str), step
+            reach = store.query("SELECT in.id AS i FROM edges WHERE kind='mentions' AND project_id=:p", {"p": pid})
+            assert sorted(row["i"] for row in reach) == sorted(kept[pid]), step
+
+
+def clean(row):
+    return {key: value for key, value in row.items() if not key.startswith("@") and key != "is_current"}
+
+
+def test_a_failure_in_the_middle_of_the_removal_leaves_the_previous_graph_intact(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    code_tree(root)
+    grouped, first, single, second, *_ = both(tmp_path, root, monkeypatch)
+    remove_code(root)
+    real, deletes, build, before = JournalTransaction.command, [], ingest._build_graph, {}
+
+    def building(store, *args, **kwargs):
+        before["graph"] = graph(store, first)
+        before["traversed"] = store.query("SELECT out.id AS o, in.id AS i FROM edges WHERE project_id=:p", {"p": first})
+        return build(store, *args, **kwargs)
+
+    def failing(self, sql, params=None):
+        result = real(self, sql, params)
+        if sql.startswith(GROUPED_REMOVAL[1]):
+            deletes.append(len(params["ids"]))
+            if len(deletes) == 2:  # the second group is deleted, then the connection drops
+                raise RuntimeError("the connection dropped")
+        return result
+    with monkeypatch.context() as patch:
+        patch.setattr(store_module, "GRAPH_ROWS_PER_REQUEST", 20)
+        patch.setattr(JournalTransaction, "command", failing)
+        patch.setattr(ingest, "_build_graph", building)
+        with pytest.raises(RuntimeError, match="connection dropped"):
+            ingest.index_project(grouped, first)
+    assert len(deletes) == 2 and all(deletes)
+    assert before["graph"]["nodes"] and graph(grouped, first) == before["graph"]
+    again = grouped.query("SELECT out.id AS o, in.id AS i FROM edges WHERE project_id=:p", {"p": first})
+    assert sorted((row["o"], row["i"]) for row in again) == sorted((row["o"], row["i"]) for row in before["traversed"])
+
+    ingest.index_project(grouped, first)  # the next run completes it
+    with monkeypatch.context() as patch:
+        all_row_by_row(patch)
+        ingest.index_project(single, second)
+    assert_same(grouped, first, single, second, "after the failed run")
+
+
+def test_a_removal_group_the_database_did_not_delete_in_full_fails_its_transaction(tmp_path, monkeypatch):
+    store = Store(tmp_path / "memory")
+    pid = store.add_project("p", tmp_path)["id"]
+    nodes = [{"id": f"n{index}", "project_id": pid, "kind": "symbol", "label": f"n{index}"} for index in range(3)]
+    with store.transaction() as tx:
+        Journal.touch(tx, pid, "graph", op="reset")
+        store.write_graph(tx, pid, nodes, [])
+    real = JournalTransaction.command
+    monkeypatch.setattr(JournalTransaction, "command", lambda self, sql, params=None: real(
+        self, sql, {**params, "ids": params["ids"][:-1]}) if sql.startswith(GROUPED_REMOVAL[1]) else real(self, sql, params))
+    with pytest.raises(RuntimeError, match="every graph vertex"):
+        with store.transaction() as tx:
+            Journal.touch(tx, pid, "graph", op="reset")
+            store.remove_graph_nodes(tx, pid, ["n0", "n1", "n2"])
+    assert len(store.query("SELECT id FROM nodes WHERE project_id=:p", {"p": pid})) == 3
 
 
 def test_two_projects_indexed_at_once_each_get_their_own_graph(tmp_path, monkeypatch):
