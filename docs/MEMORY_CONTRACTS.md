@@ -834,11 +834,14 @@ What is detected:
 - the secrets registered with Cairnmind on the publishing machine: the service token and the ArcadeDB
   password (the values the agent journal redacts), the API keys saved in the credential store (a
   key entered for one session only, without saving it, lives in the cockpit and is not registered
-  with the memory service that publishes), and the values of the credential variables the runtime keeps from child
+  with the memory service that publishes), the values behind the `env:` references of the saved
+  connection profiles and memory model profiles, and the values of the credential variables the runtime keeps from child
   processes (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN` and the others of
   `api_credentials.credential_environment_names`, and any variable ending in `_API_KEY`,
   `_AUTH_TOKEN` or `_GITHUB_TOKEN`), each at least 8 characters, found exactly as they are. If the
-  saved keys cannot be read, publication refuses rather than going on without them;
+  saved keys or profiles cannot be read, publication refuses rather than going on without them. Ingestion
+  replaces the same registered secrets, private key blocks and key shapes in conversation text before
+  it is indexed (`secret_mask`, [API.md](API.md#keys-and-environment-variables));
 - private key blocks (`-----BEGIN ... PRIVATE KEY-----`, OpenSSH, PGP);
 - key and token shapes: AWS access key IDs, GitHub, GitLab, Slack, npm and Hugging Face tokens,
   OpenAI and Anthropic keys, Google API keys, Stripe live keys, Azure storage account keys, JSON
