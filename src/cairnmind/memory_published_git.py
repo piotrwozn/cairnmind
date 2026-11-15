@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from .memory_paths import PUBLISHED_RELATIVE, is_reserved_memory
+from .memory_paths import PUBLISHED_RELATIVE, is_reserved_below, is_reserved_memory
 from .memory_published_check import DIRECTORIES, STATIC_FILES
 from .memory_published_format import MAX_FILE_BYTES, MAX_FILES, MAX_PACKAGE_BYTES, canonical_uuid
 from .terminal_safe import safe_text
@@ -105,17 +105,22 @@ def _entry_error(relative, mode, kind, size):
     return None if size is not None and size <= MAX_FILE_BYTES else "the file is larger than 1 MiB"
 
 
-def published_files(root, revision):
+def published_files(root, revision, package=None):
     """(commit ID, {relative path: bytes}, [(path, reason)]) of the published directory at a commit.
 
     A commit without the directory gives no files and no errors: nothing was published there. With errors,
     the files that could be read are still returned; a strict reader refuses them all, a lenient one (the
     base of `memory diff`) compares what it can.
+
+    `package` is a publication identity: the directory `<root>/<package>` of a checkout of a separate
+    memory repository (the checkout carrier, #173) is read instead of `.memory/cairnmind-published`.
     """
+    if package is not None and not canonical_uuid(package):
+        raise ValueError("A package is named by its publication identity, a UUID")
     commit = resolve(root, revision)
     prefix = prefix_of(root)
-    base = prefix + PUBLISHED_RELATIVE.as_posix()
-    for directory in (prefix + ".memory", base):
+    base = prefix + (package if package is not None else PUBLISHED_RELATIVE.as_posix())
+    for directory in ((base,) if package is not None else (prefix + ".memory", base)):
         found = _entry_at(root, commit, directory)
         if found is not None and found[1] != "tree":
             # The directory itself, or .memory above it, is a link, a submodule or a file: refused as on disk.
@@ -173,21 +178,19 @@ def file_at(root, commit, relative, limit):
     return None
 
 
-def project_files(root, commit):
+def project_files(root, commit, nested=()):
     """{project-relative path: (object ID, size)} of the files of the project at a commit.
 
     Links are excluded, and so are the reserved memory directories: a passage is only ever compared with
     the project's own code, never with a published file (which always holds its own quote) or the archive.
+    `nested` (memory_paths.nested_reserved) are the reserved directories of the projects registered below
+    the root (#174). A directory of the same name anywhere else is ordinary files, as indexing reads it.
     """
     prefix = prefix_of(root)
     files = {}
     for mode, kind, oid, size, name in list_tree(root, commit, prefix.rstrip("/") or None):
         relative = name[len(prefix):]
-        if kind == "blob" and mode != "120000" and name.startswith(prefix) and not _memory_path(relative):
+        if (kind == "blob" and mode != "120000" and name.startswith(prefix) and not is_reserved_memory(relative)
+                and not is_reserved_below(relative, nested)):
             files[relative] = (oid, size)
     return files
-
-
-def _memory_path(relative) -> bool:
-    """A path in a reserved memory directory, of this project or of a project nested in it (#174)."""
-    return is_reserved_memory(relative) or ".memory" in (part.lower() for part in relative.split("/")[:-1])

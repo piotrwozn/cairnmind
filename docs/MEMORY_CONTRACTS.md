@@ -357,13 +357,16 @@ why degraded records are never published); that a statement is true.
 
 ## Reading a change
 
-`memory diff BASE HEAD [--project-root DIR] [--markdown] [--max-chars N] [--json]` compares the
+`memory diff BASE HEAD [--project-root DIR] [--package ID] [--markdown] [--max-chars N] [--json]` compares the
 published memory of two commits with no store, service, network or model. It reads the directory of
 each commit with `git ls-tree` and `git cat-file` (nothing is checked out or written); the project
 root is the directory it runs on, so a project in a subdirectory of a repository reads its own
 directory. The entries of a commit are held to the rules of a directory on disk (only the static
 files and `<kind>/<uuid>.md`, no links or submodules, the budgets above), and the head must pass every
-check of `check-published`. Records are compared by ID:
+check of `check-published`, the secrets scan included with the head commit's
+`.cairnmind/publication.toml`. In a checkout of a separate memory repository (#173), `--package ID`
+compares the package `<project root>/<ID>/` of that publication identity instead. Records are compared
+by ID:
 
 - a new file is `added` (a new task is `opened`, or `closed` when it arrives done);
 - new revisions of a known file are `changed`, `superseded` or `disputed`; a task whose state becomes
@@ -433,8 +436,15 @@ author's own machine) is left to local indexing. Files over 32 MiB are left unch
 
 Only a quote whose covering review hashed it (`evidence_sha256`) is compared; a record whose quote no
 audit hashes is judged by its file, as if it quoted nothing. A passage is compared with the project's
-own files only: paths inside a `.memory` directory (the published files, which always hold their own
-quotes, and the archive), at any depth, read as gone.
+own files only: paths inside its reserved memory directories (the published files, which always hold
+their own quotes, and the archive), and inside those of the projects registered below it (#174), read
+as gone. A directory of the same name anywhere else is ordinary files, as indexing reads it.
+
+The commit is held to the secrets gate (#171) like a directory: the commit's own
+`.cairnmind/publication.toml` and this machine's registered secrets. A project whose carrier is a
+separate repository (#173) is refused with the command that imports its package instead: the commits
+of its own repository hold none of its memory, and those of the memory repository hold no code to
+compare passages with.
 
 The output adds `commit`, `rechecked` (the sources whose result changed), `unchecked`, `evidence`
 (the imported records by state, with path and first line) and `withdrawn`: records imported earlier

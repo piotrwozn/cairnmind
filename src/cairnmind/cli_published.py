@@ -167,7 +167,11 @@ def register(memory_app, initialized):
                     markdown: Annotated[bool, typer.Option(
                         "--markdown", help="A bounded Markdown comment for a pull request.")] = False,
                     max_chars: Annotated[int, typer.Option("--max-chars", min=2000, max=60000)] = 60000,
-                    as_json: Annotated[bool, typer.Option("--json", help="The comparison as JSON.")] = False):
+                    as_json: Annotated[bool, typer.Option("--json", help="The comparison as JSON.")] = False,
+                    package: Annotated[str | None, typer.Option(
+                        "--package", help="In a separate memory repository (the checkout carrier): the publication "
+                                          "identity whose directory to compare, instead of .memory/cairnmind-published.")]
+                    = None):
         """Compare the published memory of two commits, without a store, service or model.
 
         Exit 0 when the head's published memory would import, 1 when it would not, 2 on a usage error.
@@ -180,8 +184,8 @@ def register(memory_app, initialized):
         from cairnmind.memory_published_secrets import SecretRulesError, load_rules
         root = project_root.expanduser().absolute()
         try:
-            base_commit, base_files, base_errors = published_files(root, base)
-            head_commit, head_files, head_errors = published_files(root, head)
+            base_commit, base_files, base_errors = published_files(root, base, package)
+            head_commit, head_files, head_errors = published_files(root, head, package)
             rules = load_rules(commit_config_text(root, head_commit))
         except (ValueError, SecretRulesError) as exc:
             refuse(str(exc), 2)

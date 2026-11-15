@@ -29,8 +29,10 @@ def _rows(tx, sql, identifiers, params=None):
     return rows
 
 
-def recheck(tx, project_id, tree, root, commit):
-    """{source ID: result} for every imported file stub whose result changed; writes those results."""
+def recheck(tx, project_id, tree, root, commit, nested=()):
+    """{source ID: result} for every imported file stub whose result changed; writes those results.
+
+    `nested` are the reserved directories of projects registered below the root (#174), left out like its own."""
     targets = {source_id: source for source_id, source in tree["sources"].items() if ref_class(source["ref"]) == "file"}
     stubs = {row["id"]: row for row in _rows(tx, "SELECT id,project_id,kind,metadata FROM sources WHERE id IN :ids",
                                              targets) if row.get("project_id") == project_id}
@@ -46,7 +48,7 @@ def recheck(tx, project_id, tree, root, commit):
         for source_id, text in covered_quotes(model):
             if source_id in targets:
                 quotes.setdefault(source_id, set()).add(text)
-    files = project_files(root, commit)
+    files = project_files(root, commit, nested)
     found = {source_id: files.get(source["ref"]["path"]) for source_id, source in targets.items()}
     blobs = read_blobs(root, {entry[0] for entry in found.values() if entry and (entry[1] or 0) <= MAX_CHECKED_BYTES})
     changed, unchecked = {}, 0
@@ -91,9 +93,23 @@ def _claimed(record):
 def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, bind=False, authorize=None):
     from .evidence import evidence_states
     from .memory import MemoryConflict
-    from .memory_published import Publisher, _listing
+    from .memory import MemoryManager
+    from .memory_paths import nested_reserved
+    from .memory_published import _listing
+    from .memory_published_carrier import carrier_of
     from .memory_published_import import PublishedImporter
-    _, root, _ = Publisher(store).destination(project_id, worktree)
+    project, root = MemoryManager(store)._scope(project_id, worktree)
+    carrier = carrier_of(store, project_id)
+    if carrier["kind"] != "repository":
+        # The checkout carrier (#173) keeps the package in a separate repository, whose commits hold no code to
+        # re-check passages against: a commit of the project's repository does not hold this project's memory.
+        identity = project.get("publication_id") or project_id
+        raise ValueError(f"The published memory of this project goes to a checkout of a separate repository "
+                         f"({safe_text(str(carrier.get('path')))}), not to its own repository, so a commit of the "
+                         f"project holds none of it. Import that package with `cairnmind memory import-published "
+                         f"{safe_text(str(carrier.get('path')))}/{identity} --project {safe_text(project['name'])}`.")
+    # The memory directories of projects registered below this one (#174) are not its code.
+    nested = nested_reserved(store, root)
     commit, files, errors = published_files(root, revision)
     if errors:
         raise MemoryConflict(f"The published memory of commit {commit[:12]} was refused: " + _listing(errors))
@@ -105,7 +121,7 @@ def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, 
 
     def after(tx, tree, result):
         seen["tree"] = tree
-        seen["changed"], seen["unchecked"] = recheck(tx, project_id, tree, root, commit)
+        seen["changed"], seen["unchecked"] = recheck(tx, project_id, tree, root, commit, nested)
 
     # The secrets gate (#171): the commit's own personal-data patterns, as CI read them on the pull request,
     # and this machine's registered secrets.
