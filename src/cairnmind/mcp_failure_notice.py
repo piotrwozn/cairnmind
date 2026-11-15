@@ -16,7 +16,7 @@ from .terminal_notices import about
 SERVER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,23}$")
 # Every code McpHost.start reports for a server that did not start (mcp_host._START_CODES and start()).
 START_FAILURE_CODES = frozenset({"start_failed", "start_timeout", "protocol_unsupported", "catalogue_invalid",
-                                 "definition_refused"})
+                                 "definition_refused", "program_unavailable"})
 # The reason in words, English source. configuration_invalid is the launcher's (mcp_servers.frozen_servers),
 # shown in the agent pane only.
 REASONS = {
@@ -26,6 +26,7 @@ REASONS = {
     "catalogue_invalid": "its list of tools cannot be used",
     "definition_refused": "its definition was refused",
     "configuration_invalid": "the list of servers of this project cannot be read",
+    "program_unavailable": "its program does not exist or cannot be run on this computer",
 }
 NOTICE = "Third-party MCP server {server} did not start: {reason}. The agent works without its tools."
 MESSAGES = {
@@ -35,6 +36,7 @@ MESSAGES = {
     REASONS["catalogue_invalid"]: "jego listy narzędzi nie da się użyć",
     REASONS["definition_refused"]: "jego definicję odrzucono",
     REASONS["configuration_invalid"]: "listy serwerów tego projektu nie da się odczytać",
+    REASONS["program_unavailable"]: "jego programu nie ma albo nie da się go uruchomić na tym komputerze",
     NOTICE: "Zewnętrzny serwer MCP {server} nie uruchomił się: {reason}. Agent pracuje bez jego narzędzi.",
 }
 MAX_SHOWN = 1000  # (run, generation, server) keys remembered by one sidebar; a run has at most 4 servers
