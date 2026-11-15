@@ -101,7 +101,11 @@ database names the one installation that writes it; no database leases are kept.
   takeover back on this installation lets the same store, and a running service, write again without
   a restart). A transaction that read the head before a takeover fails on commit
   with the engine's concurrent-change error. Writes outside the journal (Store.command DDL, restore)
-  read the writer row first. Restore and a journal reset keep the writer in the head.
+  read the writer row and the head first and are refused when either names another installation.
+  Row and head are read outside a transaction, the row once more after the head (a transaction is not
+  one view of two records: a record it reads for the first time shows the latest commit), so a
+  takeover between the reads is not taken for a broken store; `store writer`, `doctor` and `status`
+  read them the same way. Restore and a journal reset keep the writer in the head.
 - `cairnmind store takeover --yes [--note]` (a person, never a coding session) rewrites both, appends
   the change to the history and returns the jobs the previous writer was running to pending. It also
   works when this release cannot read the store as a reader (schema of another release, no journal
@@ -117,13 +121,18 @@ database names the one installation that writes it; no database leases are kept.
   help. Every stamp of the head therefore also writes `writer_change`, a new random value, so the
   head always changes: of two overlapping transactions the second commit fails whole (the command
   says so and is run again), or it started after the first and commits on top with both records its
-  own. Row and head never name different installations.
+  own. Row and head never name different installations. The head also changes with every journaled
+  write of the writer (`seq`), so a takeover that overlaps one is refused in the same way, with
+  nothing changed; the refusal names both causes, and against a writer that keeps writing it can
+  come more than once.
 - A store left with row and head apart by a build before that rule: `store writer`, `doctor` and
-  the role in `status` add `head_writer` and `problem`. The head is the fence, so at most one installation
-  commits: the one the head names, from a process already running; the one the row names opens the
-  store as its writer but its writes are refused with the same text. Opening a store never repairs
-  it; `store takeover --yes` on either installation does (on the one the row names: history entry
-  `how: repair`, result `repaired`).
+  the role in `status` add `head_writer` and `problem`. Data is committed only by the installation
+  the head names, and only from a process that was already running (a new one opens as a reader,
+  because the row names the other). The installation the row names is not opened read-only, but
+  every write of it is refused with the same text, in a running process and in a new one, and a new
+  process runs no schema statement or upgrade. Schema statements are refused on both until the
+  repair. Opening a store never repairs it; `store takeover --yes` on either installation does (on
+  the one the row names: history entry `how: repair`, result `repaired`).
 - Not fenced: a job claimed before a takeover runs on in the previous writer until it tries to store
   its result (bounded by its lease and model timeout); files that process writes outside the
   database; installations of a release before #70, which do not check the writer.
