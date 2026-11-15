@@ -279,6 +279,9 @@ class Store:
     # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
     not_ready = None
     _for_takeover = False
+    # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
+    # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
+    confirmations_before_rule = None
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
@@ -506,6 +509,10 @@ class Store:
                 other = settle(self.client, self.installation)
             if other:
                 self._open_as_reader(other)
+                return
+        # As the writer, once the schema is current: the writer lock is taken again by the transaction.
+        from .confirmation_upgrade import mark_confirmed_before_rule
+        self.confirmations_before_rule = mark_confirmed_before_rule(self)
 
     def _open_as_reader(self, writer):
         """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
@@ -1795,6 +1802,9 @@ class Store:
             require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
             self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
             self._restore_from(source)
+        # A backup of a store before 0.11.0 brings records confirmed before the rule back (#215).
+        from .confirmation_upgrade import mark_confirmed_before_rule
+        self.confirmations_before_rule = mark_confirmed_before_rule(self, force=True)
 
     def _restore_from(self, source):
         # DDL is deliberately outside the data transaction; no live data has been removed.

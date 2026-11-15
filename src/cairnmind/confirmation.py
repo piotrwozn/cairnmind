@@ -17,7 +17,8 @@ to be confirmed. A client can neither send it nor clear it. It has these forms:
         given here can lapse: an imported one, evaluation seed data, and the checkpoint record.
 
 A confirmed record without the field was confirmed before this rule existed (`before_rule`): its status
-is kept and nothing is claimed about who confirmed it.
+is kept and nothing is claimed about who confirmed it. A one-time step at upgrade marks such a record as a
+person's when a local act still covers it (confirmation_upgrade, #215).
 
 A write that is not a person's act never takes a person's confirmation away (`kept_verdict`, `VerdictKept`):
 it may not replace such a record, set another status on it or change what the confirmation covers.

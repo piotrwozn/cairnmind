@@ -294,7 +294,7 @@ can neither send it nor remove it, and a package never carries it.
 
 | `by` | Meaning | Fields |
 | --- | --- | --- |
-| `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at` |
+| `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at`; `marked_at_upgrade` when the upgrade step below gave it |
 | `import` | Confirmed elsewhere and brought by a package. Never verified here. | `package` (`archive` or `published`), `where`, `confirmed_by` (claims: name, action, branch, commit, time), `imported_at`, `version` |
 | `seed` | Written by `cairnmind eval` into its own store. Not a person. | `route`, `source_id`, `version` |
 | `lapsed` | No longer confirmed: a write that was not a person's act changed what was confirmed or set another status. Written only over a confirmation that was not a person's verdict given here (an imported one, seed data, the checkpoint record); a store may also hold it from before that was so. Kept until a person gives a verdict again. | `confirmed_version`, `version`, `status` |
@@ -302,9 +302,25 @@ can neither send it nor remove it, and a package never carries it.
 A confirmed record without the field was confirmed before this rule existed
 (0.10.0 or earlier). Its status is kept, nothing is claimed about who confirmed
 it, and it is shown as "confirmed before only a person could confirm; who
-confirmed it was not recorded". No migration rewrites such records: the rule is
-applied when a record is read. The person can confirm such a record in the
+confirmed it was not recorded". The person can confirm such a record in the
 inspector, once, and it is then theirs.
+
+One step at upgrade (#215, `confirmation_upgrade.py`) marks such a record as a
+person's when the store can show the act: a review audit (`review://`, origin
+`local_user_review`) that covers the record as it stands (the hashes of its text,
+of kind, key and replaced record and of the quoted passage when the audit has
+them, and of a task's definition; and the record says what the first confirmed
+revision citing the audit said, by `said`, which also covers every field an
+audit of 0.10.0 does not hash), or the workspace form note of a finding the
+form saved as confirmed whose record still says what was typed. Only a note
+written on this machine counts: a source that a memory package brought (listed
+in the import's receipt) does not, and neither does a command line note, which
+hashes nothing. The mark is the one the route would have written, with the note
+as `source_id`, the time of the act as `at` and `marked_at_upgrade`. The step
+runs once when this installation opens the store as its writer, and again after
+a restore; it records in `devbrain_meta` (`person_marks_before_rule`) that it
+ran and how many records it marked and left, and changes no status, version,
+source or evidence. Every other such record stays before the rule.
 
 Where it is shown: the inspector's record view and each side of its conflict
 view (line "Confirmation", in English and Polish), the inspector's list rows
