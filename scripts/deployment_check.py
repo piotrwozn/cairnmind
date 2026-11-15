@@ -10,7 +10,7 @@ With the URLs given it uses two servers that are already running, stops nothing 
 
 Then, with the cairnmind CLI and a temporary data directory for each server:
   1. the server answers /api/v1/ready, and `engine status` and `doctor` see the pinned version;
-  2. `init`, `project add` and `remember` write a project and a confirmed record to the first one;
+  2. `init`, `project add` and `remember` write a project and a record to the first one;
   3. `backup` from the first and `restore` into the second, empty one;
   4. `project list` and `records` read the same project and records back from the second;
   5. the first is stopped, its volume archived with tar and unpacked into a new volume, and a third
@@ -106,8 +106,8 @@ def roundtrip(source: Server, target: Server, work: Path) -> tuple[list, list]:
     tree.mkdir()
     (tree / "README.md").write_text("# Demo\n\nA project for the deployment check.\n")
     source.cli("project", "add", "demo", str(tree))
-    source.cli("remember", "demo", "The deployment check wrote this record.", "--confirmed",
-               "--key", "deployment-check")
+    # Not --confirmed: only a person in their own terminal confirms, and this check has none.
+    source.cli("remember", "demo", "The deployment check wrote this record.", "--key", "deployment-check")
     projects, records = source.cli("project", "list"), source.cli("records", "demo")
     if not any(record.get("key") == "deployment-check" for record in records):
         raise SystemExit(f"source: the record just remembered is missing: {records}")

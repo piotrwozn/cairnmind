@@ -18,8 +18,8 @@ from cairnmind.replaced_chunks import drop_replaced_chunks
 from cairnmind.retrieval import Retriever
 from cairnmind.sql import clean_row
 from cairnmind.store import Store
-from tests.test_index_batching import rewrite, tree
-from tests.test_portable_memory import destination, head_path, origin  # noqa: F401 (origin is a fixture)
+from test_index_batching import rewrite, tree
+from test_portable_memory import destination, head_path, origin  # noqa: F401 (origin is a fixture)
 
 
 class Vectors:
