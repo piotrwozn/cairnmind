@@ -477,6 +477,10 @@ class Store:
         return bool(act) and act["route"] in PERSON_ROUTES and not (
             self.current_origin() or getattr(self._local, "session_write", None))
 
+    def open_person_act(self):
+        """The person's act open on this thread ({route, source_id}), or None when this write is not one."""
+        return dict(self._local.person_act) if self._persons_act() else None
+
     def _kept(self, record) -> bool:
         """Whether this write is not a person's act and `record` is confirmed by a person here (#177)."""
         from .confirmation import kept_verdict
