@@ -102,10 +102,12 @@ def test_creating_the_same_user_and_database_again_changes_nothing_and_shows_no_
     data, name, secret, root_secret, admin_file = dedicated_user
     first = create(data, admin_file)
     assert first.exit_code == 0 and json.loads(first.output)["created"] is True
+    assert json.loads(first.output)["database_created"] is True
     again = create(data, admin_file)
     assert again.exit_code == 0, (again.output, again.exception)
     report = json.loads(again.output)
     assert report["user"] == name and report["created"] is False and report["signed_in"] is True
+    assert report["database_created"] is False
     text = first.output + again.output + repr(again.exception)
     assert secret not in text and root_secret not in text
 
@@ -131,6 +133,26 @@ def test_an_existing_user_gets_no_second_database_and_nothing_is_left_behind(ded
     from cairnmind.database_mode import missing_database
     said = " ".join(missing_database(Settings.load(data)).split())
     assert f"or the user {name} has no rights on it" in said and "each database gets its own user" in said
+
+
+def test_a_user_left_without_its_database_gets_the_database_on_the_next_run(dedicated_user, arcade_test_engine):
+    """A user whose database is missing (a rollback that failed, or a database deleted on the server) was a
+    dead end (#242 review): every later run answered 409 and sent the person to choose a new user name."""
+    data, name, secret, root_secret, admin_file = dedicated_user
+    database = Settings.load(data).arcade_database
+    with closing(ArcadeClient(arcade_test_engine[0])) as root:
+        payload = {"name": name, "password": secret, "databases": {database: ["admin"]}}
+        root.server_command("create user " + json.dumps(payload))
+    database_root = replace(arcade_test_engine[0], arcade_database=database)
+    with closing(ArcadeClient(database_root)) as root:
+        assert root.database_exists() is False
+    completed = create(data, admin_file)
+    assert completed.exit_code == 0, (completed.output, completed.exception)
+    report = json.loads(completed.output)
+    assert report["created"] is False and report["database_created"] is True and report["signed_in"] is True
+    with closing(ArcadeClient(database_root)) as root:
+        assert root.database_exists() is True
+    assert secret not in completed.output and root_secret not in completed.output
 
 
 def test_the_user_is_not_created_while_its_password_is_in_the_settings_file(dedicated_user):
