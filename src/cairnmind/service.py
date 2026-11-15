@@ -18,8 +18,11 @@ from pydantic import BaseModel, Field
 
 from cairnmind import __version__
 from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
+from cairnmind.store_backup import stale_temporaries
 
 log = logging.getLogger(__name__)
+# How often background work that lost the writer role looks again whether a person took it back (#70).
+WRITER_LOST_RETRY_SECONDS = 30
 
 
 class InferenceQueue:
@@ -204,6 +207,47 @@ class MemoryImportBody(MemoryInspectBody):
     root: str = Field(min_length=1)
     name: str | None = None
     dry_run: bool = Field(default=False, strict=True)
+    replace_confirmed: bool = Field(default=False, strict=True)
+    packet_id: str | None = None
+
+
+class MemoryPublishBody(MemorySnapshotBody):
+    model_config = {"extra": "forbid"}
+    preview: bool = Field(default=False, strict=True)
+    new_package: bool = Field(default=False, strict=True)
+
+
+class MemoryImportCommitBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    revision: str = Field(min_length=1, max_length=256)
+    project: str = Field(min_length=1)
+    worktree: str | None = Field(default=None, max_length=4096)
+    dry_run: bool = Field(default=False, strict=True)
+    bind: bool = Field(default=False, strict=True)
+    replace_confirmed: bool = Field(default=False, strict=True)
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
+class MemoryImportPublishedBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    path: str = Field(min_length=1, max_length=4096)
+    project: str = Field(min_length=1)
+    dry_run: bool = Field(default=False, strict=True)
+    bind: bool = Field(default=False, strict=True)
+    take_published: list[str] = Field(default_factory=list, max_length=1000)
+    replace_confirmed: bool = Field(default=False, strict=True)
+    session_id: str | None = None
+    packet_id: str | None = None
+
+
+class MemoryCarrierBody(BaseModel):
+    model_config = {"extra": "forbid"}
+    project: str = Field(min_length=1)
+    kind: str = Field(min_length=1, max_length=32)
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+    worktree: str | None = None
+    session_id: str | None = None
     packet_id: str | None = None
 
 
@@ -232,10 +276,22 @@ def instance_id(settings: Settings) -> str:
     return hashlib.sha256(str(settings.data_dir).encode()).hexdigest()[:16]
 
 
-def schedule_embeddings(store, namespace: str, *, project_ids=None) -> int:
-    """Repair missing/digest-changed derived vectors without touching archived evidence."""
+def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=None, report=None,
+                        known_held=None) -> int:
+    """Repair missing/digest-changed derived vectors without touching archived evidence.
+
+    With ``settings``, chunks a remote embedding server may not receive are not queued (#181); their
+    number goes to ``report["embedding_held_back"]``. They are queued by the first repair that allows them.
+    ``known_held`` keeps the held chunks between repairs (memory_egress.held_chunk_ids).
+    """
     rows = (store.missing_embeddings(namespace) if project_ids is None else
             [row for pid in project_ids for row in store.missing_embeddings(namespace, pid)])
+    if settings is not None:
+        from cairnmind.memory_egress import held_chunk_ids
+        held = held_chunk_ids(store, settings, rows, known_held)
+        rows = [row for row in rows if row["id"] not in held]
+        if report is not None:
+            report["embedding_held_back"] = len(held)
     for row in rows:
         job_id = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]},
                                f"embedding-namespace:{namespace}:{row['id']}")
@@ -268,6 +324,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     from cairnmind.plans import PlanManager
     from cairnmind.sessions import SessionManager, origin_mark
     from cairnmind.memory import MemoryConflict, MemoryManager, inspect_snapshot
+    from cairnmind.store_writer import StoreNotWriter
 
     settings = settings or Settings.load(create=True)
     if settings.host not in {"127.0.0.1", "localhost", "::1"}:
@@ -275,6 +332,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     if not settings.token:
         raise ValueError("Run cairnmind init to create a local authentication token")
     store = Store(settings.data_dir)
+    if store.not_writer:
+        # The service writes sessions, jobs and the queue: it runs only for the store's writer (#70).
+        raise StoreNotWriter(store.not_writer)
     model = ollama or from_settings(settings)
     retriever = Retriever(store, settings, ollama=model)
     agent = KnowledgeAgent(store, settings, ollama=model, retriever=retriever)
@@ -283,6 +343,19 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     memory = MemoryManager(store)
     inference = InferenceQueue()
     background_status: dict = {"scanner_error": None, "model_error": None, "memory_error": None}
+
+    async def writer_lost(exc) -> None:
+        # Another installation took over writing: the background work pauses instead of failing on every turn.
+        # Each retry costs one read of the writer row (store_writer.recheck); when a person takes writing back
+        # here, the next pass writes again, so the service needs no restart.
+        if background_status.get("writer_lost") != str(exc):
+            log.warning("Background work paused: %s", exc)
+        background_status["writer_lost"] = str(exc)
+        await asyncio.sleep(WRITER_LOST_RETRY_SECONDS)
+
+    def writer_back() -> None:
+        if background_status.pop("writer_lost", None):
+            log.warning("Background work resumed: this installation writes the store again")
     cache: dict = {}
     inference_projects: set[str] = set()
     background_ready = asyncio.Event()
@@ -307,9 +380,13 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         while True:
             try:
                 result = await asyncio.to_thread(memory.tick)
+                writer_back()
                 background_status["memory_error"] = result.get("errors") or None
             except asyncio.CancelledError:
                 raise
+            except StoreNotWriter as exc:
+                await writer_lost(exc)
+                continue
             except Exception as exc:
                 background_status["memory_error"] = {"code": type(exc).__name__}
                 log.exception("Portable memory scheduler failed")
@@ -358,6 +435,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 from cairnmind.verification import recover_interrupted_runs
                 await asyncio.to_thread(recover_interrupted_runs, store, settings)
                 backup_dir = settings.data_dir / "backups"
+                # A backup killed midway leaves its temporary file; one a day old is no longer being written.
+                for stale in stale_temporaries(backup_dir, 86400):
+                    stale.unlink(missing_ok=True)
                 backups = daily_backups(backup_dir)
                 if not backups or time.time() - backups[-1].stat().st_mtime > 86400:
                     backup_dir.mkdir(exist_ok=True)
@@ -367,8 +447,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 background_status["scanner_error"] = "; ".join(scan_errors[:5]) or None
                 background_status["scan_errors"] = scan_errors[:20]
                 background_status["last_scan_at"] = time.time()
+                writer_back()
             except asyncio.CancelledError:
                 raise
+            except StoreNotWriter as exc:
+                await writer_lost(exc)
+                continue
             except Exception as exc:
                 background_status["scanner_error"] = str(exc)
                 log.exception("Archive scan failed")
@@ -376,10 +460,16 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     async def jobs() -> None:
         last_namespace, last_repair, last_projects = None, 0.0, None
+        released, known_held = False, {}
         while True:
             try:
                 # Opening a UI or acknowledging context does not authorize model work.
                 await background_ready.wait()
+                if not released:
+                    # Extractions held back for a remote chat server whose class is allowed now (#181).
+                    from cairnmind.memory_egress import release_held_extractions
+                    await asyncio.to_thread(release_held_extractions, store, settings)
+                    released = True
                 selected = None if background_inference else tuple(sorted(inference_projects))
                 # Keep pending work pending when Ollama is offline, instead of failing the whole queue.
                 # With split model servers, each job kind waits only for the server of its own role.
@@ -389,12 +479,15 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     namespace = await identity(settings.embedding_model)
                     if (namespace != last_namespace or selected != last_projects
                             or time.monotonic() - last_repair > 60):
-                        missing = await asyncio.to_thread(schedule_embeddings, store, namespace, project_ids=selected)
-                        background_status.update(embedding_namespace=namespace, embedding_missing=missing)
+                        held: dict = {}
+                        missing = await asyncio.to_thread(schedule_embeddings, store, namespace, project_ids=selected,
+                                                          settings=settings, report=held, known_held=known_held)
+                        background_status.update(embedding_namespace=namespace, embedding_missing=missing, **held)
                         last_namespace, last_repair, last_projects = namespace, time.monotonic(), selected
                 background_status["model_error"] = str(role_error) if role_error else None
                 job = await asyncio.to_thread(store.claim_job, "inference", inference_lease_seconds(), kinds,
                                               project_ids=selected)
+                writer_back()
                 if job:
                     try:
                         async def process():
@@ -412,6 +505,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     await asyncio.sleep(2)
             except asyncio.CancelledError:
                 raise
+            except StoreNotWriter as exc:
+                await writer_lost(exc)
+                continue
             except Exception as exc:
                 background_status["model_error"] = str(exc)
                 await asyncio.sleep(10)
@@ -470,7 +566,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                     # An own-agent session that received a third-party MCP result writes as unverified (#126).
                     from cairnmind.agent_memory import third_party_origin
                     mark = third_party_origin(store, pid, session_id)
-            with store.write_origin(mark):
+            # A write that names a session is never a person's act (#177), whatever the session's client.
+            with store.write_origin(mark), store.session_write(session_id):
                 return operation(scope)
 
     def read_scope(pid: str, requested: str | None, session_id: str | None = None) -> str | None:
@@ -487,8 +584,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @app.exception_handler(ValueError)
     async def bad_input(request: Request, exc: ValueError):
         from fastapi.responses import JSONResponse
+        from cairnmind.confirmation import ConfirmationRefused
         status = 409 if (isinstance(exc, MemoryConflict) or any(
             word in str(exc).lower() for word in ("version", "conflict", "stale", "resume_required"))) else 400
+        if isinstance(exc, ConfirmationRefused):
+            # Not something to read again and retry (#177), whatever words the refusal uses ("conflict inbox").
+            status = 400
         return JSONResponse(status_code=status, content={"detail": str(exc)})
 
     from cairnmind.arcade import ArcadeError
@@ -532,7 +633,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         result = await asyncio.to_thread(store.status, pid)
         error_rows = await asyncio.to_thread(store.recent_job_errors, pid)
         pipeline = await asyncio.to_thread(store.job_summary, pid)
-        return {**result, "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
+        writer = await asyncio.to_thread(store.writer_state)
+        return {**result, "writer": writer,
+                "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                 "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                 "recent_job_errors": error_rows}
 
@@ -555,6 +658,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
         await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, authorize_enable)
         return enable_background(pid)
+
+    def person_imports(body):
+        """A memory import writes records that count as confirmed and can move on what a person confirmed
+        here, so only a person runs it (#177): never a request that names a session. A dry run writes
+        nothing and stays open to a session."""
+        if body.session_id and not body.dry_run:
+            from cairnmind.confirmation import IMPORT_IN_SESSION
+            raise ValueError(IMPORT_IN_SESSION)
 
     def memory_write_authorization(pid: str, requested: str | None,
                                    session_id: str | None, packet_id: str | None):
@@ -603,9 +714,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pid = inspected["project"]["id"]
         def restore(scope, authorize=None):
             selected_memory_scope(pid, body.root, scope)
+            person_imports(body)  # After the scope checks: a session learns of another project's memory as before.
             return memory.import_snapshot(
                 body.path, body.root, body.name, body.dry_run,
-                expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize)
+                expected_snapshot_id=inspected["snapshot_id"], expected_project_id=pid, authorize=authorize,
+                replace_confirmed=body.replace_confirmed)
         if body.dry_run:
             scope = await asyncio.to_thread(read_scope, pid, body.root, body.session_id)
             return await asyncio.to_thread(restore, scope)
@@ -617,11 +730,81 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         forget_index_signature(store, pid)
         return result
 
+    @app.post("/memory/publish", dependencies=auth)
+    async def memory_publish(body: MemoryPublishBody):
+        # Team memory (#170): one file per confirmed record, written into the worktree; never committed.
+        from cairnmind.memory_published import Publisher
+        pid = project(body.project)["id"]
+        if body.preview:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+            return await asyncio.to_thread(Publisher(store).publish, pid, scope, preview=True,
+                                           new_package=body.new_package)
+        scope, authorize = await asyncio.to_thread(
+            memory_write_authorization, pid, body.worktree, body.session_id, body.packet_id)
+        return await asyncio.to_thread(Publisher(store).publish, pid, scope, authorize=authorize,
+                                       new_package=body.new_package)
+
+    @app.post("/memory/carrier", dependencies=auth)
+    async def memory_carrier(body: MemoryCarrierBody):
+        # Where published memory goes (#173): a person's choice, never a coding session's; nothing is moved.
+        from cairnmind.memory_published_carrier import configure
+        pid = project(body.project)["id"]
+        if body.session_id:
+            raise ValueError("Where published memory goes is chosen only by a person, not inside a coding session")
+        worktree = str(Path(body.worktree).expanduser().resolve()) if body.worktree else None
+        return await asyncio.to_thread(configure, store, pid, body.kind, body.path, worktree)
+
+    @app.post("/memory/import-published", dependencies=auth)
+    async def memory_import_published(body: MemoryImportPublishedBody):
+        from cairnmind.memory_published_import import PublishedImporter
+        pid = project(body.project)["id"]
+        authorize = None
+        if (body.take_published or body.replace_confirmed) and body.session_id:
+            # Putting the published side over a record that diverged here, or over one confirmed or disputed
+            # here, replaces a person's own verdict (#177): that choice is a person's, never a coding
+            # session's, and a session cannot preview it as if it were one.
+            raise ValueError("Taking the published side of a record that diverged here, or that was confirmed or "
+                             "disputed here, is chosen only by a person, not inside a coding session")
+        person_imports(body)
+        if body.dry_run:
+            await asyncio.to_thread(read_scope, pid, None, body.session_id)
+        else:
+            _, authorize = await asyncio.to_thread(memory_write_authorization, pid, None, body.session_id,
+                                                   body.packet_id)
+        result = await asyncio.to_thread(PublishedImporter(store).import_published, body.path, pid,
+                                         dry_run=body.dry_run, bind=body.bind, take_published=body.take_published,
+                                         authorize=authorize, replace_confirmed=body.replace_confirmed)
+        if not body.dry_run:
+            cache.clear()
+        return result
+
+    @app.post("/memory/import-commit", dependencies=auth)
+    async def memory_import_commit(body: MemoryImportCommitBody):
+        # The main-branch import (#172): a commit's published memory, re-checked against that commit's code.
+        from cairnmind.memory_published_main import import_commit
+        pid = project(body.project)["id"]
+        authorize = None
+        person_imports(body)
+        if body.dry_run:
+            scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+        else:
+            scope, authorize = await asyncio.to_thread(memory_write_authorization, pid, body.worktree,
+                                                       body.session_id, body.packet_id)
+        result = await asyncio.to_thread(import_commit, store, pid, body.revision, worktree=scope,
+                                         dry_run=body.dry_run, bind=body.bind, authorize=authorize,
+                                         replace_confirmed=body.replace_confirmed)
+        if not body.dry_run:
+            cache.clear()
+        return result
+
     @app.get("/memory/status", dependencies=auth)
     async def memory_status(project: str, worktree: str | None = None, session_id: str | None = None):
         pid = store.resolve_project(project)["id"]
         scope = await asyncio.to_thread(read_scope, pid, worktree, session_id)
-        return await asyncio.to_thread(memory.status, pid, scope)
+        result = await asyncio.to_thread(memory.status, pid, scope)
+        from cairnmind.memory_published import publication_status
+        result["published"] = await asyncio.to_thread(publication_status, store, pid, scope)
+        return result
 
     @app.patch("/memory/settings", dependencies=auth)
     async def memory_settings(body: MemorySettingsBody):

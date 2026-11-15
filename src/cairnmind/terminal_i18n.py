@@ -1,6 +1,7 @@
 """Small explicit terminal catalog. User content and API identifiers are never translated."""
 from __future__ import annotations
 
+from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
 
@@ -225,6 +226,7 @@ CATALOG = {
     "Records": "Ustalenia", "Sources": "Źródła", "Plans": "Plany", "Tasks": "Zadania",
     "Stated": "Dowód z dnia", "Observed no later than": "Zaobserwowano nie później niż",
     "Mixed evidence": "Dowody mieszane", "Warning": "Ostrzeżenie",
+    "Sensitivity": "Wrażliwość", "conversation": "rozmowa", "third party": "strona trzecia",
     "The superseded finding had newer evidence": "Zastąpione ustalenie miało nowsze dowody",
     "Checks": "Testy", "Queue": "Kolejka", "Unassigned": "Nieprzypisane", "Snapshot": "Snapshot",
     "Filter loaded page…": "Filtruj załadowaną stronę…", "List": "Lista", "Filters": "Filtry",
@@ -601,8 +603,11 @@ CATALOG.update({
     "memory changed after ACK": "pamięć zmieniona po ACK", "new packet without ACK": "nowy pakiet bez ACK",
     "ACK does not match packet": "ACK nie pasuje do pakietu", "scope cannot be read": "nie można odczytać zakresu",
     "session continuity broken": "przerwana ciągłość sesji",
+    # Pane and control words on the pane's border (workspace_border, #208); the others are shared.
+    "Client 1": "Klient 1", "Client 2": "Klient 2", "Inspector": "Inspektor", "In control": "Steruje",
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
+CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

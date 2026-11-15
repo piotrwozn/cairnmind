@@ -145,9 +145,14 @@ async def test_symlink_file_and_directory_are_not_followed(executor, tmp_path):
 async def test_managed_snapshot_is_excluded_but_other_memory_is_normal(executor):
     (executor.worktree / ".memory/devbrain").mkdir(parents=True)
     (executor.worktree / ".memory/devbrain/manifest.json").write_text("needle snapshot")
+    (executor.worktree / ".memory/cairnmind-published/fact").mkdir(parents=True)
+    (executor.worktree / ".memory/cairnmind-published/fact/a.md").write_text("needle published")
     (executor.worktree / ".memory/notes.txt").write_text("needle normal")
     result = await executor.execute("search_files", {"query": "needle"})
     assert [row["path"] for row in result["matches"]] == [".memory/notes.txt"]
+    refused = await executor.execute("write_file", {"path": ".memory/cairnmind-published/fact/b.md", "content": "x",
+                                                    "expected_sha256": None})
+    assert not refused["ok"]
     result = await executor.execute("write_file", {"path": ".memory/extra", "content": "normal", "expected_sha256": None})
     assert result["ok"]
 

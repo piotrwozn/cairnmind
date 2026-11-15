@@ -122,8 +122,12 @@ def _event_key(table, row):
 class JournalTransaction:
     """A Store transaction proxy; SQL and the final outbox share one commit."""
 
-    def __init__(self, native):
+    def __init__(self, native, *, writer=None, check=None):
         self.native = native
+        # The writing installation (#70): carried into a recreated journal head, and ``check(head, native)``
+        # refuses the commit when the head read in flush names another writer (store_writer.check_head).
+        self.writer = writer
+        self.check = check
         self.changes = {}
         self.explicit = {}
         self.graph_resets = set()
@@ -187,6 +191,25 @@ class JournalTransaction:
         self._record(table, before, after)
         return result
 
+    def script(self, statements, params, project_id):
+        """Graph statements of one project sent in one request, the last of which may be a SELECT that checks them.
+
+        Only in a transaction that reports that project's graph as reset: the journal then names no single
+        node or edge of it, so it needs none of the rows these statements write (see ``command``).
+        """
+        if self.reset_reason is None and project_id not in self.graph_resets:
+            raise ValueError("Grouped graph statements need a transaction that reports the project's graph as reset")
+        if not isinstance(statements, list) or not statements:
+            raise ValueError("Grouped graph statements require a list of statements")
+        for index, sql in enumerate(statements):
+            parsed = mutation(sql) if isinstance(sql, str) else None
+            checking = isinstance(sql, str) and index == len(statements) - 1 and sql.lstrip().upper().startswith("SELECT ")
+            if (not checking and (parsed is None or parsed[1] not in {"nodes", "edges"})) or ";" in sql:
+                raise ValueError("Grouped graph statements may only write nodes and edges")
+        if self.known is not None and not self.keeps_known:
+            self.known = None
+        return self.native.script(";\n".join(statements), params)
+
     def touch(self, project_id, entity_type, entity_id=None, op="upsert"):
         if (not isinstance(entity_type, str) or not _IDENTIFIER.fullmatch(entity_type)
                 or op not in {"upsert", "delete", "reset"}
@@ -226,13 +249,19 @@ class JournalTransaction:
         if not events and self.reset_reason is None:
             return
         state = self.native.query("SELECT FROM journal_state WHERE id='current'")
+        if self.check is not None:
+            # The head is updated below in this same commit: a takeover committed after this read makes
+            # the commit fail with a conflict, one committed before it is seen here.
+            self.check(state[0] if state else None, self.native)
         if self.reset_reason is not None or not state:
             epoch = str(uuid4())
             sequence = 0
             self.native.command("DELETE FROM journal_events")
             self.native.command("DELETE FROM journal_state")
-            self.native.command("INSERT INTO journal_state CONTENT :row", {"row": {
-                "id": "current", "epoch": epoch, "seq": 0, "first_seq": 1}})
+            head = {"id": "current", "epoch": epoch, "seq": 0, "first_seq": 1}
+            if self.writer is not None:
+                head["writer"] = self.writer
+            self.native.command("INSERT INTO journal_state CONTENT :row", {"row": head})
             events = {(None, "reset", None): "reset"}
         else:
             epoch, sequence = state[0]["epoch"], state[0]["seq"]

@@ -10,6 +10,7 @@ import argparse
 import asyncio
 from contextlib import suppress
 from dataclasses import replace
+from functools import partial
 import inspect
 import json
 import math
@@ -26,6 +27,7 @@ from textual.widgets import Button, Footer, Header, RichLog, Static, TextArea
 
 from . import terminal_theme
 from .config import Settings
+from .mcp_failure_notice import reason as mcp_reason, valid_report
 from .terminal_panels import ConfirmModal
 from .terminal_safe import plain, safe_text
 from .terminal_ui import ChoiceModal, Field, FormModal
@@ -134,8 +136,11 @@ class AgentApp(App):
                 Binding("ctrl+enter", "send", "Send", priority=True),
                 Binding("ctrl+r", "resolve", "Resolve", priority=True)]
 
-    def __init__(self, settings, run, profile, *, key=None, engine_factory=None, mcp_servers=None, mcp_problems=None):
+    def __init__(self, settings, run, profile, *, key=None, engine_factory=None, mcp_servers=None, mcp_problems=None,
+                 report=None):
         super().__init__()
+        # report(server_id, code): sends a server of this run that did not start to the broker (#209).
+        self._report = report
         terminal_theme.install(self)
         self.settings, self.run_record, self.profile = settings, dict(run), dict(profile)
         # Third-party MCP servers fixed for this run by the launcher (#126); API runs only.
@@ -318,6 +323,7 @@ class AgentApp(App):
                             kind={"error": "error", "memory_required": "warn"}.get(kind, "running" if self._busy else "idle"))
         elif kind == "mcp_server_failed":
             self.mcp_server_off(data.get("server_id"), data.get("code"))
+            self.report_mcp_failure(data.get("server_id"), data.get("code"))
         elif kind == "mcp_tool_withdrawn":
             text = self.t("A third-party MCP tool took too long to check its arguments and is withdrawn for this run.")
             self.set_status(text, kind="warn")
@@ -336,19 +342,28 @@ class AgentApp(App):
             self.write_history(label, json.dumps(data, ensure_ascii=False, default=str), body_role="muted")
 
     def mcp_server_off(self, server_id, code):
-        """A fixed code and a validated id only: never text from the server."""
+        """A fixed code and a validated id only: never text from the server. The code is shown as its
+        reason in words (#169, #209)."""
         server = server_id if isinstance(server_id, str) and _SERVER_ID.fullmatch(server_id) else "unknown"
         code = code if isinstance(code, str) and _CODE.fullmatch(code) else "unknown"
-        text = self.t("Third-party MCP server {server} is off ({code}); the agent works without its tools.",
-                      server=server, code=code)
+        text = self.t("Third-party MCP server {server} is off ({reason}); the agent works without its tools.",
+                      server=server, reason=mcp_reason(code, self.t))
         self.set_status(text, kind="warn")
         self.write_history(text, head_role="warn")
         self._mcp_off[server] = code
         self.show_mcp_off()
 
+    def report_mcp_failure(self, server_id, code):
+        """Tell the broker, in the background, that a server of this run did not start (#209): the server's
+        id and the fixed code, nothing else. A report that cannot be sent leaves the pane's own row."""
+        if self._report is None or not valid_report(server_id, code):
+            return
+        self.run_worker(partial(self._report, server_id, code), thread=True, group="mcp-report",
+                        exit_on_error=False)
+
     def show_mcp_off(self):
         """Later statuses replace the status line; the servers that are off stay named on their own row."""
-        servers = ", ".join(f"{server} ({code})" for server, code in self._mcp_off.items())
+        servers = ", ".join(f"{server} ({mcp_reason(code, self.t)})" for server, code in self._mcp_off.items())
         row = self.query_one("#agent-mcp", Static)
         row.update(self.display_text(self.t("Third-party MCP servers off in this run: {servers}", servers=servers),
                                      limit=1000) if servers else "")
@@ -566,14 +581,15 @@ def main():
         raise SystemExit("A terminal is required. Start cairnmind.")
     settings = None
     try:
-        from .api_runtime import api_worker_config
+        from .api_runtime import api_worker_config, report_mcp_failure
         settings = Settings.load(args.data_dir, create=False)
         config = api_worker_config(settings, args.run_id, args.generation)
         run = config["run"]
         if run.get("id") != args.run_id or run.get("generation") != args.generation:
             raise ValueError("worker scope mismatch")
         app = AgentApp(settings, run, config["profile"], key=config.get("key"),
-                       mcp_servers=config.get("mcp_servers"), mcp_problems=config.get("mcp_problems"))
+                       mcp_servers=config.get("mcp_servers"), mcp_problems=config.get("mcp_problems"),
+                       report=partial(report_mcp_failure, settings, dict(run)))
         config.pop("key", None)
     except Exception:
         raise SystemExit(tr("Cannot restore this run. Check the profile status in Cairnmind.", language_for(settings) if settings else "en")) from None

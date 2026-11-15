@@ -354,7 +354,10 @@ MEMORY_TOOLS = [
                      } for name in ("plan", "task")}}}, ["packet_id", "packet_hash", "readback"]),
     _tool("ask", "Ask this project's local source-grounded knowledge agent.", {
         "question": {"type": "string", "minLength": 1, "maxLength": 16000}}, ["question"]),
-    _tool("remember", "Save source-backed knowledge using expected versions when updating.", {
+    _tool("remember", "Save source-backed knowledge as proposed, using expected versions when updating. "
+          "Only the person confirms a record: status confirmed is refused, and so is changing or replacing a "
+          "record the person confirmed (save a new proposed record that names it in "
+          "metadata.possible_conflicts).", {
         "record": {"type": "object"}, "sources": {"type": "array", "items": {"type": "string"}}},
           ["record", "sources"]),
     _tool("checkpoint", "Save reported state and next steps; not machine proof or human approval.",

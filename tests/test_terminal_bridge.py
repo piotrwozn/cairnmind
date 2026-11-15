@@ -17,7 +17,7 @@ import pytest
 
 from cairnmind.config import Settings
 from cairnmind import native_worker
-from cairnmind.terminal_bridge import PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
+from cairnmind.terminal_bridge import CONTROL_STATES, PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
 
 
 class Pane:
@@ -30,6 +30,8 @@ class Pane:
         return self.nonce
 
     def state(self, value):
+        # The pane border has a label only for these (#208); the bridge never writes another value.
+        assert value in CONTROL_STATES, value
         self.states.append(value)
 
     def auth_finished(self):

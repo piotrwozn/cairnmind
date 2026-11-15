@@ -16,6 +16,7 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, DataTable, Input, Label
 
 from . import terminal_theme
+from .confirmation import LIST_WORDS
 from .terminal_i18n_messages import display_word
 from .terminal_detail import BAR, evidence_parts, join_lines, joined, labelled, state_role
 from .terminal_notices import about
@@ -152,10 +153,16 @@ class ImpactView:
         terminal_theme.column_labels(table, [self.t(label) for label in COLUMNS[self._columns_kind]])
         self.fit_columns()
 
-    def state_cell(self, kind, state):
-        """`kind / state` as one cell in the panel language; the state takes the colour of its stored word."""
-        return terminal_theme.assemble([("muted", display_word(kind, self.t) + " / "),
-                                        (state_role(state), display_word(state, self.t))])
+    def state_cell(self, kind, state, confirmed_by=None):
+        """`kind / state` as one cell in the panel language; the state takes the colour of its stored word.
+
+        A record whose confirmation is not a person's own here says so in the list already (#177):
+        confirmed elsewhere, confirmed before the rule, or no longer confirmed. Plain text, no colour."""
+        parts = [("muted", display_word(kind, self.t) + " / "), (state_role(state), display_word(state, self.t))]
+        word = LIST_WORDS.get(confirmed_by) if isinstance(confirmed_by, str) else None
+        if word:
+            parts.append(("muted", " · " + self.t(word)))
+        return terminal_theme.assemble(parts)
 
     def fit_columns(self, width=None):
         """Give the text column the width the others leave, so every column is on screen without scrolling.

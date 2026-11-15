@@ -47,6 +47,9 @@ NO_ARCADE_MODULES = frozenset({
     "test_api_runtime", "test_api_worker", "test_arcade_transport", "test_client_auth", "test_repository_evaluation",
     "test_client_runtime", "test_cockpit_cli", "test_cockpit_server", "test_cockpit_state",
     "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view", "test_module_alias",
+    "test_published_memory_format",
+    "test_published_memory_secrets",
+    "test_published_memory_diff",
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parallel_isolation", "test_parsing", "test_readonly_cli",
     "test_runtime_pane", "test_runtime_selection", "test_sample_memory", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
@@ -95,6 +98,59 @@ def plain_words(text: str) -> str:
     else is changed: the words, digits and punctuation of the message must still be there.
     """
     return " ".join(_BOX.sub(" ", _ANSI.sub("", text)).split())
+
+
+def as_person(store, project_id, record, sources=None):
+    """Store `record` the way a person does on the command line in their own terminal (#177).
+
+    This helper stands for a person: it calls the function `cairnmind remember --confirmed` calls after
+    it has found a terminal and no coding session. A test that needs a confirmed record and is not about
+    how it was confirmed uses this instead of asking the store for the status, which only a person's
+    route may do.
+    """
+    from cairnmind.confirmation import remember_as_person
+    return remember_as_person(store, project_id, {"status": "confirmed", **record}, sources)
+
+
+def person_edit(store, project_id, record, sources):
+    """Write `record` as a person's own act that confirms nothing (#177).
+
+    Once a person confirmed a record, only a person changes or replaces it. This helper stands for that
+    person: it opens the act the command line opens for `cairnmind plan save` in a person's terminal. A
+    changed record is stored as proposed, without a lapsed mark, until the person confirms it again.
+    """
+    from cairnmind.confirmation import person_source
+    with store.transaction():
+        note = person_source(store, project_id, "edit", action="person_edit")
+        with store.person_act("cli", note["id"]):
+            return store.remember(project_id, record, sources)
+
+
+def confirmed_before_rule(store, record_id):
+    """Turn a stored record into one that was confirmed before only a person could confirm (#177).
+
+    Writes the rows directly, as an old store holds them: status confirmed and no confirmation mark.
+    """
+    from cairnmind.sql import clean_row, update_document
+    with store.transaction() as tx:
+        row = clean_row(tx.query("SELECT FROM records WHERE id=:id", {"id": record_id})[0])
+        row["status"] = "confirmed"
+        row["metadata"] = {key: value for key, value in row["metadata"].items() if key != "confirmation"}
+        update_document(tx, "records", {"status": "confirmed", "metadata": row["metadata"]},
+                        "id=:id", {"id": record_id})
+        update_document(tx, "record_revisions", {"snapshot": row}, "id=:id",
+                        {"id": f"{record_id}:{row['version']}"})
+    return row
+
+
+@pytest.fixture
+def person_terminal(monkeypatch):
+    """The command line as a person runs it: a terminal on both ends and no coding session (#177).
+
+    CliRunner has no terminal, so without this fixture a CLI test is what an agent's command is.
+    """
+    import cairnmind.confirmation as confirmation
+    monkeypatch.setattr(confirmation, "person_at_terminal", lambda *args, **kwargs: True)
 
 
 @pytest.hookimpl(trylast=True)  # after the tmp_path plugin has set up the base directory

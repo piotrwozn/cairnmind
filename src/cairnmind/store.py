@@ -8,17 +8,19 @@ import gzip
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import re
-import tempfile
 import threading
 import time
 from uuid import uuid4
 
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
+# The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
+from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
+from .backup_reader import opened_backup
+from .store_backup import payload_digest, streamed_backup, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -28,6 +30,8 @@ LOOKUP_INDEXES = (("chunks", "source_id"), ("nodes", "source_id"), ("edges", "so
                   ("record_revisions", "record_id"), ("check_runs", "task_id"), ("session_events", "session_id"),
                   ("resume_packets", "session_id"))
 LOOKUP_INDEX_SET = 1
+# Graph rows written by one request of Store.write_graph (issue #167).
+GRAPH_ROWS_PER_REQUEST = 250
 KINDS = {"decision", "task", "fact", "constraint", "question", "preference", "checkpoint"}
 STATUSES = {"proposed", "confirmed", "disputed", "superseded"}
 TASK_STATES = {"todo", "in_progress", "needs_test", "needs_review", "done", "blocked"}
@@ -42,6 +46,8 @@ LEGACY_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, "nodes", "edges")
 V03_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, "nodes", "edges")
 V04_EXPORT_TYPES = (*LEGACY_DOCUMENT_TYPES, *V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, "nodes", "edges")
 EXPORT_TYPES = (*DOCUMENT_TYPES, "nodes", "edges")
+# What restore checks a backup against; an earlier format's payload has the later types empty.
+RESTORE_TYPES = {"export": EXPORT_TYPES, "v03": V03_DOCUMENT_TYPES, "v04": V04_DOCUMENT_TYPES, "v05": V05_DOCUMENT_TYPES}
 MANAGED_DEFINITION_METADATA_FIELDS = frozenset({
     "plan_ref", "step_key", "required_profiles", "plan_context_hash", "depends_on", "acceptance_criteria",
     "requires_test", "requires_review", "step_index", "plan_archived", "criterion_checks", "check_proposals", "scope",
@@ -197,10 +203,32 @@ ORIGIN_METADATA = ("origin_client", "origin_session_id", "origin_history", "orig
 # the archived source this version was extracted from (#168). A client can neither set nor keep it.
 EXTRACTION_MARK = "extraction_source_id"
 
+# How the extraction worker made a record (#192): the extractor version, the prompt hash and the model as
+# name@digest (extraction_input.extractor_stamp). Set only by the worker's own write; unlike EXTRACTION_MARK
+# it describes the record, not this machine, so later writes keep it and portable memory carries it.
+EXTRACTOR_STAMP = "extractor"
+EXTRACTOR_MODEL_CHARS = 400
+_PROMPT_SHA = re.compile(r"[0-9a-f]{16}")
+
 # Record metadata derived by the store; values supplied by a client are never kept.
+# "publication" is set only by the importer of published memory (#170): a client can neither forge it
+# nor clear it, and it stays on later local versions the way an origin mark does.
+# "confirmation" says how the record came to be confirmed (#177, confirmation.py): the store sets it from a
+# person's act it checked itself, an importer sets it for what a package brings, and no client can.
 DERIVED_RECORD_METADATA = ("evidence_earliest", "evidence_latest", "evidence_basis",
                            "supersede_warning", "supersede_replaced_evidence_latest", EXTRACTION_MARK,
-                           *ORIGIN_METADATA)
+                           EXTRACTOR_STAMP, *ORIGIN_METADATA, "publication", "confirmation")
+
+
+def validate_extractor_stamp(value) -> dict:
+    """A copy of a well-formed extractor stamp; ValueError for anything else."""
+    if (not isinstance(value, dict) or set(value) != {"version", "prompt_sha256", "model"}
+            or type(value["version"]) is not int or not 1 <= value["version"] <= 10**6
+            or not isinstance(value["prompt_sha256"], str) or not _PROMPT_SHA.fullmatch(value["prompt_sha256"])
+            or not isinstance(value["model"], str) or not 3 <= len(value["model"]) <= EXTRACTOR_MODEL_CHARS
+            or "@" not in value["model"][1:-1]):
+        raise ValueError("Invalid extractor stamp")
+    return dict(value)
 
 
 # Not part of what a plan step says: plan-level or transient fields and everything the store derives.
@@ -239,8 +267,18 @@ CACHE_STAMP_IGNORED = frozenset({"job", "session", "import", "inbox", "memory", 
 
 
 class Store:
-    # True only for a store from open_readonly, which starts, creates and writes nothing.
+    # True for a store from open_readonly, which starts, creates and writes nothing, and for a store whose
+    # installation is not the writer of its database (#70, store_writer).
     read_only = False
+    # Why this installation only reads the store (another installation is its writer), or None.
+    not_writer = None
+    # Set when another installation took over writing after this store was opened: every write is refused.
+    _writer_lost = None
+    installation = None
+    _writable = None
+    # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
+    not_ready = None
+    _for_takeover = False
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
@@ -260,14 +298,17 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
-    def __init__(self, data_dir: Path, *, settings: Settings | None = None):
+    def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False):
         from .arcade import ArcadeClient
         from .engine import ensure_engine
+        self._for_takeover = bool(for_takeover)
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if settings is not None and settings.data_dir.expanduser().resolve() != self.data_dir:
             raise ValueError("Provided settings must belong to this data directory")
         self.settings = settings if settings is not None else Settings.load(self.data_dir, create=True)
+        from .store_writer import installation
+        self.installation = installation(self.data_dir)
         ensure_engine(self.settings)
         self.client = ArcadeClient(self.settings)
         self.client.ensure_database()
@@ -291,6 +332,9 @@ class Store:
     def command(self, sql, params=None):
         from .journal import mutation
         if self.read_only:
+            if self.not_writer:
+                from .store_writer import StoreNotWriter
+                raise StoreNotWriter(self.not_writer)
             from .store_readonly import ReadOnlyStoreError
             raise ReadOnlyStoreError("A store opened for reading cannot run a database command")
         tx = getattr(self._local, "transaction", None)
@@ -299,7 +343,10 @@ class Store:
         if mutation(sql):
             with self.transaction() as tx:
                 return tx.command(sql, params)
+        from .store_writer import require_writer
         with self._lock():
+            # Not journaled, so not fenced by the journal head: the writer is read before the statement.
+            require_writer(self)
             return self.client.command(sql, params)
 
     @contextmanager
@@ -319,8 +366,13 @@ class Store:
                     del self._local.transaction
             return
         from .journal import JournalTransaction
+        from .store_writer import StoreWriterLost, check_head, recheck
+        recheck(self)  # one read, only while the role is lost: a person may have taken it back
+        if self._writer_lost:
+            raise StoreWriterLost(self._writer_lost)
         with self._lock(), self.client.transaction() as native:
-            tx = JournalTransaction(native)
+            tx = JournalTransaction(native, writer=self.installation.id,
+                                    check=lambda head, reader: check_head(self, head, reader))
             self._local.transaction = tx
             self._local.after_commit = pending = []
             try:
@@ -350,65 +402,191 @@ class Store:
     def current_origin(self):
         return getattr(self._local, "write_origin", None)
 
+    @contextmanager
+    def session_write(self, session_id):
+        """Mark what this thread writes inside the block as a session's: never a person's act (#177)."""
+        previous = getattr(self._local, "session_write", None)
+        self._local.session_write = session_id or previous
+        try:
+            yield
+        finally:
+            self._local.session_write = previous
+
+    @contextmanager
+    def person_act(self, route, source_id):
+        """Open a person's act for the record writes of this thread inside the block (#177).
+
+        Only the code of a person's route opens it, where it knows a person is acting, and it names the
+        audit or note source that route has just written. Nothing in a request can open it. The write
+        itself checks the source again (_confirmation), so a wrong caller is refused, not trusted.
+        """
+        from .confirmation import PERSON_ROUTES, SEED_ROUTE
+        if route not in PERSON_ROUTES and route != SEED_ROUTE:
+            raise ValueError("Unknown route of a person's act")
+        previous = getattr(self._local, "person_act", None)
+        self._local.person_act = {"route": route, "source_id": source_id}
+        try:
+            yield
+        finally:
+            self._local.person_act = previous
+
+    def _confirmation(self, tx, project_id, old, asked, status, statement, sources, version):
+        """The one rule for the status confirmed (#177): (status, mark) as this write stores them.
+
+        A write stores `confirmed` only (a) as a person's act the store checks here, or (b) by keeping a
+        confirmation whose statement it does not change (progress on a task, a note of a conflict decision).
+        Anything else that asks for `confirmed` is refused. A write that is not a person's act never
+        reaches this point on a record a person confirmed (_keep_verdict refuses it first). On a
+        confirmation that is not a person's verdict given here (imported, seed data, the checkpoint record)
+        a write that does not ask for a status and changes what was confirmed is stored as proposed, with a
+        mark that says the confirmation lapsed; the same mark is left when such a write sets another status.
+        A person's act leaves no such mark.
+        """
+        from .confirmation import (MARK, PERSON_ROUTES, SEED_ROUTE, SEED_SOURCE, ConfirmationRefused, lowered,
+                                   person_mark, said)
+        act = getattr(self._local, "person_act", None)
+        if status != "confirmed":
+            # A person's act (a dispute, a conflict decision) leaves no such mark and clears an earlier one.
+            was = ((old or {}).get("metadata") or {}).get(MARK)
+            return status, None if act else lowered(old, status, version) or (
+                was if isinstance(was, dict) and was.get("by") == "lapsed" else None)
+        if asked == "confirmed" and act:
+            if self.current_origin() or getattr(self._local, "session_write", None):
+                raise ConfirmationRefused()
+            prefix, origin = SEED_SOURCE if act["route"] == SEED_ROUTE else PERSON_ROUTES[act["route"]]
+            source = one_row(tx, "SELECT id,project_id,uri,metadata,content FROM sources WHERE id=:id",
+                             {"id": act["source_id"]}, False) if act["source_id"] in sources else None
+            if (not source or source.get("project_id") != project_id
+                    or not str(source.get("uri", "")).startswith(prefix)
+                    or (source.get("metadata") or {}).get("origin") != origin):
+                raise ConfirmationRefused()
+            return status, person_mark(act["route"], source, version, utc_now())
+        if old and old["status"] == "confirmed" and statement == said(
+                old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata")):
+            kept = (old.get("metadata") or {}).get(MARK)
+            return status, kept if isinstance(kept, dict) and kept.get("by") != "lapsed" else None
+        if asked == "confirmed" or not old or old["status"] != "confirmed":
+            raise ConfirmationRefused()
+        return "proposed", None if act else lowered(old, "proposed", version)
+
+    def _persons_act(self) -> bool:
+        """Whether this thread writes as a person: an act of a person's route is open (evaluation seed data
+        is not one), and no session or marked origin writes."""
+        from .confirmation import PERSON_ROUTES
+        act = getattr(self._local, "person_act", None)
+        return bool(act) and act["route"] in PERSON_ROUTES and not (
+            self.current_origin() or getattr(self._local, "session_write", None))
+
+    def _kept(self, record) -> bool:
+        """Whether this write is not a person's act and `record` is confirmed by a person here (#177)."""
+        from .confirmation import kept_verdict
+        return not self._persons_act() and kept_verdict(record)
+
+    def _keep_verdict(self, record, change, status=None, differs=()):
+        """A write that is not a person's act never takes a person's confirmation away (#177): refused."""
+        from .confirmation import VerdictKept
+        if self._kept(record):
+            raise VerdictKept(record, change, status, differs)
+
     def init(self):
+        from .arcade import ArcadeError
+        from .store_writer import read_writer, settle
         with self._lock():
-            self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
-            meta = {row.get("name"): row.get("value") for row in self.client.query(
-                "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
-            version, indexed = meta.get("schema_version"), meta.get("lookup_indexes")
-            if version is not None:
-                if version not in {1, 2, 3, SCHEMA_VERSION}:
-                    raise ValueError("Database schema version is incompatible")
-                if version == SCHEMA_VERSION:
-                    if indexed != LOOKUP_INDEX_SET:
-                        self._lookup_indexes(indexed)
-                    return
-                # Snapshot only existing types. Hold the writer lock through
-                # backup, additive DDL, and the version-last commit.
-                with self.client.transaction() as tx:
-                    payload = self._export_snapshot(tx, None,
-                        LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
-                        version + 1)
-                destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
-                self._write_backup(destination, payload)
-            collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
-                           else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
-                           else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
-            exports = collections if version is not None else EXPORT_TYPES
-            for collection in collections:
-                self.client.command(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
-            if version is None:
-                self.client.command("CREATE VERTEX TYPE nodes IF NOT EXISTS")
-                self.client.command("CREATE EDGE TYPE edges IF NOT EXISTS")
-            for collection in exports:
-                self.client.command(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
-                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
-                if collection != "projects":
-                    self.client.command(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
-                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
-            if version is None:
-                for collection, field in (("projects", "name"), ("projects", "root"), ("project_roots", "path"),
-                                          ("sources", "current_key"), ("records", "active_key"), ("jobs", "job_key"),
-                                          ("import_cursors", "path")):
-                    self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
-                for collection in ("sources", "chunks", "nodes", "edges"):
-                    self.client.command(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
-                for collection, field in (("chunks", "text"), ("records", "content")):
-                    self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
-                    self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
-            self.client.command("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
-            self.client.command("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
-            self.client.command("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+            types = {row.get("name") for row in self.client.query("SELECT name FROM schema:types")}
+            writer = read_writer(self.client) if "devbrain_meta" in types else None
+            if writer and writer.get("installation_id") != self.installation.id:
+                # Another installation writes this database: no schema statement, no upgrade and no write here.
+                self._open_as_reader(writer)
+                return
+            self._prepare_schema()
+            try:
+                other = settle(self.client, self.installation)
+            except ArcadeError:
+                # Two installations claimed a store without a writer at the same moment: one commit failed.
+                other = settle(self.client, self.installation)
+            if other:
+                self._open_as_reader(other)
+
+    def _open_as_reader(self, writer):
+        """Go on as a store that reads only: every write is refused with the reason (store_writer)."""
+        from .store_readonly import ReadOnlyClient, StoreNotReady, check_ready
+        from .store_writer import reader_reason
+        reason = reader_reason(self.installation, writer)
+        try:
+            check_ready(self.client, self.settings)
+        except StoreNotReady as exc:
+            if not self._for_takeover:
+                # `cairnmind init` does not help a reader: the writer, or a takeover, makes the store ready.
+                raise StoreNotReady(f"{exc} {reason}") from None
+            self.not_ready = str(exc)
+        self.not_writer = reason
+        self._writable = self.client
+        self.client = ReadOnlyClient(self.client, self.not_writer)
+        self.read_only = True
+
+    def writer_state(self):
+        """Which installation writes this store, and whether this one is the writer, a reader or lost it (#70)."""
+        from .store_writer import state
+        return state(self)
+
+    def _prepare_schema(self):
+        """Create or upgrade the schema; called by init, with the writer lock held, when no other installation writes."""
+        self.client.command("CREATE DOCUMENT TYPE devbrain_meta IF NOT EXISTS")
+        meta = {row.get("name"): row.get("value") for row in self.client.query(
+            "SELECT FROM devbrain_meta WHERE name IN ['schema_version','lookup_indexes']")}
+        version, indexed = meta.get("schema_version"), meta.get("lookup_indexes")
+        if version is not None:
+            if version not in {1, 2, 3, SCHEMA_VERSION}:
+                raise ValueError("Database schema version is incompatible")
+            if version == SCHEMA_VERSION:
+                if indexed != LOOKUP_INDEX_SET:
+                    self._lookup_indexes(indexed)
+                return
+            # Snapshot only existing types. Hold the writer lock through
+            # backup, additive DDL, and the version-last commit.
+            destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
             with self.client.transaction() as tx:
-                if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
-                    insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
-                if version is None:
-                    insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
-                else:
-                    update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
-            if indexed != LOOKUP_INDEX_SET:
-                self._lookup_indexes(indexed)
+                self._write_backup(destination, streamed_export(tx,
+                    LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
+                    version + 1))
+        collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
+                       else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
+                       else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
+        exports = collections if version is not None else EXPORT_TYPES
+        for collection in collections:
+            self.client.command(f"CREATE DOCUMENT TYPE {collection} IF NOT EXISTS")
+        if version is None:
+            self.client.command("CREATE VERTEX TYPE nodes IF NOT EXISTS")
+            self.client.command("CREATE EDGE TYPE edges IF NOT EXISTS")
+        for collection in exports:
+            self.client.command(f"CREATE PROPERTY {collection}.id IF NOT EXISTS STRING")
+            self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(id) UNIQUE NULL_STRATEGY SKIP")
+            if collection != "projects":
+                self.client.command(f"CREATE PROPERTY {collection}.project_id IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}(project_id) NOTUNIQUE NULL_STRATEGY SKIP")
+        if version is None:
+            for collection, field in (("projects", "name"), ("projects", "root"), ("project_roots", "path"),
+                                      ("sources", "current_key"), ("records", "active_key"), ("jobs", "job_key"),
+                                      ("import_cursors", "path")):
+                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) UNIQUE NULL_STRATEGY SKIP")
+            for collection in ("sources", "chunks", "nodes", "edges"):
+                self.client.command(f"CREATE PROPERTY {collection}.is_current IF NOT EXISTS BOOLEAN")
+            for collection, field in (("chunks", "text"), ("records", "content")):
+                self.client.command(f"CREATE PROPERTY {collection}.{field} IF NOT EXISTS STRING")
+                self.client.command(f"CREATE INDEX IF NOT EXISTS ON {collection}({field}) FULL_TEXT METADATA {{similarity:'BM25'}}")
+        self.client.command("CREATE PROPERTY journal_events.epoch IF NOT EXISTS STRING")
+        self.client.command("CREATE PROPERTY journal_events.seq IF NOT EXISTS LONG")
+        self.client.command("CREATE INDEX IF NOT EXISTS ON journal_events(epoch,seq) UNIQUE")
+        with self.client.transaction() as tx:
+            if not tx.query("SELECT id FROM journal_state WHERE id='current'"):
+                insert_document(tx, "journal_state", {"id": "current", "epoch": str(uuid4()), "seq": 0, "first_seq": 1})
+            if version is None:
+                insert_document(tx, "devbrain_meta", {"name": "schema_version", "value": SCHEMA_VERSION})
+            else:
+                update_document(tx, "devbrain_meta", {"value": SCHEMA_VERSION}, "name='schema_version'", {})
+        if indexed != LOOKUP_INDEX_SET:
+            self._lookup_indexes(indexed)
 
     def _lookup_indexes(self, recorded):
         """Create the lookup indexes that are missing. Called with the writer lock held; safe to repeat.
@@ -545,6 +723,16 @@ class Store:
             if name and IDENTIFIER.fullmatch(name) and name.startswith("vector_"):
                 tx.command(f"DELETE FROM {quote_name(name)} WHERE source_id IN :ids", {"ids": source_ids})
 
+    @staticmethod
+    def drop_chunks(tx, source_ids):
+        """Delete the chunks of sources that stop being current, in the transaction that replaces them (#186).
+
+        Nothing reads a chunk of a source that is not current: search, vectors and the reparse of a transcript take
+        current chunks only, and an import rebuilds chunks from the source text. The source itself, its text and
+        its hash stay, so evidence that cites the old version can still be read and checked."""
+        if source_ids:
+            tx.command("DELETE FROM chunks WHERE source_id IN :ids", {"ids": list(source_ids)})
+
     def snapshot(self, project_id, uri, content, kind="document", metadata=None):
         if not isinstance(content, str) or not isinstance(uri, str) or not uri:
             raise ValueError("Source requires a URI and text content")
@@ -557,7 +745,7 @@ class Store:
             if existing:
                 params = {"id": existing["id"]}
                 update_document(tx, "sources", {"is_current": False, "current_key": None}, "id=:id", params)
-                update_document(tx, "chunks", {"is_current": False}, "source_id=:id", params)
+                self.drop_chunks(tx, [existing["id"]])
                 update_document(tx, "nodes", {"is_current": False}, "source_id=:id AND kind NOT IN ['source','decision','task','fact','constraint','question','preference','checkpoint']", params)
                 update_document(tx, "edges", {"is_current": False}, "source_id=:id AND kind NOT IN ['supported_by','depends_on','supersedes']", params)
                 self._delete_old_vectors(tx, [existing["id"]])
@@ -680,6 +868,20 @@ class Store:
         if tx is None:
             with self.transaction() as native:
                 return self.upsert_node(node, native)
+        node, existing = self._checked_node(tx, node)
+        with self._keeping(tx) as known:
+            if existing:
+                # The project, checked above, lets a transaction that resets the project's graph skip reading
+                # the row before and after: the journal names no single node of a graph it reports as reset.
+                update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
+            else:
+                tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
+            if known is not None:
+                known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
+        return node
+
+    def _checked_node(self, tx, node):
+        """The vertex upsert_node writes, after its checks, and the stored row with its ID if there is one."""
         node = {"metadata": {}, **node}
         for key in ("id", "project_id", "kind", "label"):
             if not isinstance(node.get(key), str):
@@ -697,21 +899,31 @@ class Store:
             tx, "SELECT FROM nodes WHERE id=:id", {"id": node["id"]}, False))
         if existing and existing.get("project_id") != node["project_id"]:
             raise ValueError("Graph vertex belongs to another project")
-        with self._keeping(tx) as known:
-            if existing:
-                # The project, checked above, lets a transaction that resets the project's graph skip reading
-                # the row before and after: the journal names no single node of a graph it reports as reset.
-                update_document(tx, "nodes", node, "id=:id", {"id": node["id"], "project_id": node["project_id"]})
-            else:
-                tx.command(f"CREATE VERTEX nodes CONTENT {json_text(node)}")
-            if known is not None:
-                known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
-        return node
+        return node, existing
 
     def upsert_edge(self, edge, tx=None):
         if tx is None:
             with self.transaction() as native:
                 return self.upsert_edge(edge, native)
+        edge, existing = self._checked_edge(tx, edge)
+        with self._keeping(tx) as known:
+            if known is not None:
+                known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
+            if existing:
+                # The project is the checked one, as in upsert_node.
+                mine = {"id": edge["id"], "project_id": edge["project_id"]}
+                if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
+                    tx.command("DELETE FROM edges WHERE id=:id", mine)
+                else:
+                    update_document(tx, "edges", edge, "id=:id", mine)
+                    return edge
+            tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
+                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
+                       {"from_id": edge["from_id"], "to_id": edge["to_id"]})
+        return edge
+
+    def _checked_edge(self, tx, edge):
+        """The edge upsert_edge writes, after its checks, and the stored row with its ID if there is one."""
         edge = {"status": "observed", **edge}
         for key in ("id", "project_id", "from_id", "to_id", "kind"):
             if not isinstance(edge.get(key), str):
@@ -732,21 +944,96 @@ class Store:
             tx, "SELECT FROM edges WHERE id=:id", {"id": edge["id"]}, False))
         if existing and existing.get("project_id") != edge["project_id"]:
             raise ValueError("Graph edge belongs to another project")
-        with self._keeping(tx) as known:
-            if known is not None:
-                known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
+        return edge, existing
+
+    def write_graph(self, tx, project_id, nodes, edges):
+        """Write graph rows as upsert_node, then upsert_edge, would for each, with one request per group of rows.
+
+        Every row passes the checks of its upsert before its group is written. Grouped only in a transaction
+        that reports the project's graph as reset, whose journal needs no single row; otherwise row by row.
+        A group the database did not write in full fails the transaction, which then leaves the graph as it was.
+        """
+        from .journal import JournalTransaction
+        nodes, edges = list(nodes), list(edges)
+        if not isinstance(tx, JournalTransaction) or (tx.reset_reason is None and project_id not in tx.graph_resets):
+            for item in nodes:
+                self.upsert_node(item, tx)
+            for item in edges:
+                self.upsert_edge(item, tx)
+            return
+        for rows, kind in ((nodes, "node"), (edges, "edge")):
+            if any(not isinstance(item, dict) or item.get("project_id") != project_id for item in rows):
+                raise ValueError(f"Every graph {kind} of a grouped write belongs to its project")
+            if len({item.get("id") for item in rows}) != len(rows):
+                raise ValueError(f"A grouped graph write names a {kind} twice")
+        created, updated = [], []
+        for item in nodes:
+            node, existing = self._checked_node(tx, item)
+            (updated if existing else created).append(node)
+            if tx.known is not None:
+                tx.known["nodes"][node["id"]] = {"id": node["id"], "project_id": node["project_id"]}
+        with self._keeping(tx):
+            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
+                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
+                # The project names the reset graph, so the journal reads nothing for this statement.
+                stored = tx.command("CREATE VERTEX nodes CONTENT :rows", {"rows": part, "project_id": project_id})
+                if len(stored) != len(part):
+                    raise RuntimeError("The database did not create every graph vertex of a group")
+            for offset in range(0, len(updated), GRAPH_ROWS_PER_REQUEST):
+                statements, params = [], {}
+                for index, node in enumerate(updated[offset:offset + GRAPH_ROWS_PER_REQUEST]):
+                    statements.append(f"UPDATE nodes SET {','.join(f'{quote_name(key)}=:u{index}_{key}' for key in node)} "
+                                      f"WHERE id=:w{index}")
+                    params.update({f"u{index}_{key}": value for key, value in node.items()})
+                    params[f"w{index}"] = node["id"]
+                tx.script(statements, params, project_id)
+        created, existing_edges = [], []
+        for item in edges:
+            edge, existing = self._checked_edge(tx, item)
             if existing:
-                # The project is the checked one, as in upsert_node.
-                mine = {"id": edge["id"], "project_id": edge["project_id"]}
-                if any(existing.get(k) != edge[k] for k in ("project_id", "from_id", "to_id")):
-                    tx.command("DELETE FROM edges WHERE id=:id", mine)
-                else:
-                    update_document(tx, "edges", edge, "id=:id", mine)
-                    return edge
-            tx.command("CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:from_id) "
-                       f"TO (SELECT FROM nodes WHERE id=:to_id) CONTENT {json_text(edge)}",
-                       {"from_id": edge["from_id"], "to_id": edge["to_id"]})
-        return edge
+                existing_edges.append(item)
+            else:
+                created.append(edge)
+                if tx.known is not None:
+                    tx.known["edges"][edge["id"]] = {key: edge[key] for key in ("id", "project_id", "from_id", "to_id")}
+        with self._keeping(tx):
+            for offset in range(0, len(created), GRAPH_ROWS_PER_REQUEST):
+                part = created[offset:offset + GRAPH_ROWS_PER_REQUEST]
+                statements, params = [], {"ids": [edge["id"] for edge in part]}
+                for index, edge in enumerate(part):
+                    statements.append(f"CREATE EDGE edges FROM (SELECT FROM nodes WHERE id=:f{index}) "
+                                      f"TO (SELECT FROM nodes WHERE id=:t{index}) CONTENT :e{index}")
+                    params.update({f"f{index}": edge["from_id"], f"t{index}": edge["to_id"], f"e{index}": edge})
+                # CREATE EDGE writes nothing, without an error, when an endpoint is not found: count what it wrote.
+                statements.append("SELECT count(*) AS n FROM edges WHERE id IN :ids")
+                found = tx.script(statements, params, project_id)
+                if not found or found[0].get("n") != len(part):
+                    raise RuntimeError("The database did not create every graph edge of a group")
+        for item in existing_edges:  # rare here: an edge that is kept is not written again
+            self.upsert_edge(item, tx)
+
+    def remove_graph_nodes(self, tx, project_id, identifiers):
+        """Delete the project's vertices among `identifiers` that no edge names, one group per request.
+
+        The same rows go as when each one was checked and deleted on its own: a vertex that an edge
+        still names (a knowledge record's relationship, say) is kept, so that edge never dangles.
+        A group the database did not delete in full fails the transaction, which then leaves the graph as it was.
+        """
+        identifiers = sorted({identifier for identifier in identifiers if isinstance(identifier, str)})
+        for offset in range(0, len(identifiers), GRAPH_ROWS_PER_REQUEST):
+            part = identifiers[offset:offset + GRAPH_ROWS_PER_REQUEST]
+            named = set()
+            for row in tx.query("SELECT from_id,to_id FROM edges WHERE from_id IN :ids OR to_id IN :ids", {"ids": part}):
+                named.update((row.get("from_id"), row.get("to_id")))
+            unlinked = [identifier for identifier in part if identifier not in named]
+            if not unlinked:
+                continue
+            # The project names the graph a reset transaction reports, so the journal reads nothing for this statement.
+            deleted = tx.command("DELETE FROM nodes WHERE project_id=:project AND id IN :ids",
+                                 {"project": project_id, "ids": unlinked})
+            count = deleted[0].get("count") if isinstance(deleted, list) and deleted and isinstance(deleted[0], dict) else None
+            if isinstance(count, int) and count != len(unlinked):
+                raise RuntimeError("The database did not delete every graph vertex of a group")
 
     def _record_graph(self, tx, record):
         node_id = f"record:{record['id']}"
@@ -780,8 +1067,12 @@ class Store:
         self._record_graph(tx, record)
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
-                  replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None):
+                  replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None,
+                  extractor=None, slot=False):
         """Write one record version.
+
+        slot: the write replaces the content of the one checkpoint record, which is a slot for the latest
+        state and not a statement: a confirmation of an earlier state lapses instead of refusing the write.
 
         replace_origin: the origin mark follows this writer instead of the old version (checkpoints).
         replace_metadata: the metadata is built from this write alone, not merged onto the old version's.
@@ -789,6 +1080,7 @@ class Store:
         unmarked; state that earlier native checkpoints set and neither checkpoint repeats is dropped too.
         mark_only_changes: stamp the current origin only if the stored result differs (plan steps).
         extracted_from: the extraction worker's new record from this one source (EXTRACTION_MARK).
+        extractor: that record's extractor stamp (EXTRACTOR_STAMP), only together with extracted_from.
         """
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
@@ -805,6 +1097,13 @@ class Store:
                 raise ValueError("New managed records must not provide expected_version")
             if old and old["status"] == "superseded" and not managed_batch:
                 raise ValueError("A superseded record is immutable; create a new record")
+        # A write that is not a person's act and reaches a record a person confirmed (it can only leave the
+        # statement as it is: progress on a task, or nothing) does not make that confirmation worth less: the
+        # record keeps every source it had, the note of the person's act among them, and the write only adds.
+        kept = bool(old) and not slot and self._kept(old)
+        if kept:
+            held = old.get("source_ids") or []
+            sources = list(dict.fromkeys([*(json.loads(held) if isinstance(held, str) else held), *sources]))
         kind, status = record.get("kind", old["kind"] if old else None), record.get("status", old["status"] if old else "proposed")
         content = record.get("content", old["content"] if old else None)
         if not isinstance(kind, str) or not isinstance(status, str) or kind not in KINDS or status not in STATUSES:
@@ -879,8 +1178,9 @@ class Store:
                                 assert_completion=explicit_completion, validate_dependencies=not managed_batch)
         # Decided on the final metadata, after every field this write drops (criteria links, reported proof).
         origin = self.current_origin()
-        if origin and mark_only_changes and not outcome_changed(old, content, key, metadata):
-            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none.
+        if origin and (mark_only_changes or kept) and not outcome_changed(old, content, key, metadata):
+            # A plan save rewrites every step; one it leaves as it was keeps its own mark, or none. The same
+            # for a record a person confirmed: a write that stores nothing new does not stamp its origin on it.
             origin = None
         metadata.update(origin or {})
         metadata.pop(EXTRACTION_MARK, None)
@@ -888,6 +1188,11 @@ class Store:
             if old or list(sources) != [extracted_from]:
                 raise ValueError("An extraction mark belongs only to a new record from its one source")
             metadata[EXTRACTION_MARK] = extracted_from
+        if extractor is not None:
+            # After the client's metadata, which can neither set nor clear it; a later write keeps it.
+            if extracted_from is None:
+                raise ValueError("An extractor stamp belongs only to the extraction worker's new record")
+            metadata[EXTRACTOR_STAMP] = validate_extractor_stamp(extractor)
         supersedes = record.get("supersedes", old.get("supersedes") if old else None)
         if supersedes and (not old or supersedes != old.get("supersedes")):
             previous = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": supersedes, "project": project_id}, False)
@@ -899,6 +1204,12 @@ class Store:
                 raise ValueError("Managed task membership must be changed through PlanManager")
             if not old and "expected_version" in record and record["expected_version"] != previous["version"]:
                 raise ValueError("Record version conflict; replaced record has changed")
+            from .confirmation import MARK as mark_name, lowered
+            self._keep_verdict(previous, "replace")
+            if not getattr(self._local, "person_act", None) and previous["status"] == "confirmed":
+                # A replacement that is not a person's act takes a confirmed record out of use: it says so.
+                previous["metadata"] = {**(previous.get("metadata") or {}),
+                                        mark_name: lowered(previous, "superseded", previous["version"] + 1)}
             previous.update(status="superseded", active_key=None, version=previous["version"] + 1, updated_at=utc_now())
             update_document(tx, "records", previous, "id=:id", {"id": supersedes})
             self._revision(tx, previous)
@@ -920,6 +1231,20 @@ class Store:
             if replaced_latest and latest and latest < replaced_latest:
                 metadata["supersede_warning"] = "anachronistic_supersede"
                 metadata["supersede_replaced_evidence_latest"] = replaced_time["latest"]
+        # The rule for `confirmed`, on the final statement of this write and for every route (#177).
+        from .confirmation import MARK, said, said_difference
+        statement = said(kind, content, key, supersedes, metadata)
+        if old and status != "confirmed":
+            self._keep_verdict(old, "status", status)
+        elif old and not slot:
+            before = said(old["kind"], old["content"], old["key"], old.get("supersedes"), old.get("metadata"))
+            if statement != before:
+                self._keep_verdict(old, "change", differs=said_difference(before, statement))
+        status, confirmation = self._confirmation(
+            tx, project_id, old, record.get("status"), status, statement, sources, old["version"] + 1 if old else 1)
+        metadata.pop(MARK, None)
+        if confirmation:
+            metadata[MARK] = confirmation
         active_key = json_text([project_id, kind, key]) if status != "superseded" else None
         collision = one_row(tx, "SELECT id FROM records WHERE active_key=:key", {"key": active_key}, False) if active_key else None
         if collision and collision["id"] != record_id:
@@ -960,10 +1285,10 @@ class Store:
         if pending is not None:
             pending.append(call)
 
-    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None):
+    def remember(self, project_id, record, sources, *, conflict_review=False, extracted_from=None, extractor=None):
         with self.transaction() as tx:
             return self._remember(tx, project_id, record, sources, conflict_review=conflict_review,
-                                  extracted_from=extracted_from)
+                                  extracted_from=extracted_from, extractor=extractor)
 
     def checkpoint(self, project_id, state):
         if not isinstance(state, dict):
@@ -979,7 +1304,8 @@ class Store:
             # an external session replaces an external checkpoint, none of the external fields may stay behind
             # unmarked: the metadata is then built from this state alone. Any other succession merges as before.
             fresh = bool(old) and degraded_origin(old.get("metadata")) and not self.current_origin()
-            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True, replace_metadata=fresh)
+            return self._remember(tx, project_id, record, [source["id"]], replace_origin=True, replace_metadata=fresh,
+                                  slot=True)
 
     def list_records(self, project_id, include_history=False):
         self._require_project(self, project_id)
@@ -1015,6 +1341,10 @@ class Store:
                 raise ValueError("Job project filter must contain explicit project IDs")
             if not project_ids:
                 return None  # An empty authorization set must never claim global work.
+        if self.not_writer:
+            # Only the writer's worker claims jobs (#70): a lease is measured by the claiming machine's clock.
+            from .store_writer import StoreNotWriter
+            raise StoreNotWriter(self.not_writer)
         with self.transaction() as tx:
             job = one_row(tx, "SELECT FROM jobs WHERE (state='pending' OR (state='running' AND lease_until<:now))" +
                        (" AND kind IN :kinds" if kinds is not None else "") +
@@ -1374,31 +1704,13 @@ class Store:
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
             destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
-        return self._write_backup(destination, self.export())
+        # Rows are read, hashed and compressed a page at a time inside one transaction; the file is moved
+        # into place only after that transaction commits (#196).
+        return streamed_backup(self.transaction, destination, EXPORT_TYPES, 5)
 
     @staticmethod
     def _write_backup(destination, payload):
-        destination = Path(destination).expanduser().resolve()
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        envelope = {"format": BACKUP_FORMATS[0], "version": 1, "sha256": hashlib.sha256(json_text(payload).encode()).hexdigest(), "payload": payload}
-        fd, name = tempfile.mkstemp(prefix=".cairnmind-backup-", dir=destination.parent)
-        temporary = Path(name)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
-                    compressed.write(json_text(envelope).encode())
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            temporary.replace(destination)
-            directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-            return destination
-        finally:
-            temporary.unlink(missing_ok=True)
+        return write_backup(destination, payload)
 
     @staticmethod
     def _validated_backup(path):
@@ -1408,7 +1720,7 @@ class Store:
             if not isinstance(envelope, dict) or envelope.get("format") not in BACKUP_FORMATS or envelope.get("version") != 1:
                 raise ValueError("This file is not a supported Cairnmind ArcadeDB backup")
             payload = envelope["payload"]
-            if hashlib.sha256(json_text(payload).encode()).hexdigest() != envelope.get("sha256"):
+            if payload_digest(payload) != envelope.get("sha256"):
                 raise ValueError("Backup checksum mismatch")
             if not isinstance(payload, dict):
                 raise ValueError("Backup payload must be an object")
@@ -1476,10 +1788,17 @@ class Store:
 
     def restore(self, backup):
         """Restore validated data atomically. Stop Cairnmind workers before calling."""
-        payload = self._validated_backup(Path(backup).expanduser().resolve())
-        self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
+        # The file is validated in two passes over it before anything changes, and read a third time for
+        # the inserts; it is never held in memory whole (#196, backup_reader).
+        from .store_writer import require_writer
+        with opened_backup(Path(backup).expanduser().resolve(), self._validated_backup, RESTORE_TYPES) as source:
+            require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
+            self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
+            self._restore_from(source)
+
+    def _restore_from(self, source):
         # DDL is deliberately outside the data transaction; no live data has been removed.
-        for registry in payload["vector_indexes"]:
+        for registry in source.vector_indexes:
             name, dimension = registry.get("type_name"), registry.get("dimension")
             if not isinstance(name, str) or not name.startswith("vector_") or type(dimension) is not int or dimension <= 0:
                 raise ValueError("Invalid vector namespace in backup")
@@ -1499,20 +1818,25 @@ class Store:
             tx.command("DELETE FROM nodes")
             for collection in reversed(DOCUMENT_TYPES):
                 tx.command(f"DELETE FROM {quote_name(collection)}")
-            for collection in DOCUMENT_TYPES:
-                for original in payload[collection]:
-                    row = dict(original)
-                    if collection == "jobs" and row.get("state") == "running":
-                        row.update(state="pending", worker=None, lease_until=None)
-                    insert_document(tx, collection, row)
-            for node in payload["nodes"]:
+            # Documents first (projects and sources before the graph that checks them), then vertices,
+            # then edges and vectors; a streamed file is read once for each of the three.
+            for _, collection, original in source.rows(DOCUMENT_TYPES):
+                row = dict(original)
+                if collection == "jobs" and row.get("state") == "running":
+                    row.update(state="pending", worker=None, lease_until=None)
+                if collection == "journal_state":
+                    # The backup's head may name the writer of the time it was made, or none.
+                    row["writer"] = self.installation.id
+                insert_document(tx, collection, row)
+            for _, _, node in source.rows(("nodes",)):
                 self.upsert_node(node, tx)
-            for edge in payload["edges"]:
-                self.upsert_edge(edge, tx)
-            for name, rows in payload.get("vector_data", {}).items():
+            for kind, name, row in source.rows(("edges",), vectors=True):
+                if kind == "row":
+                    self.upsert_edge(row, tx)
+                    continue
                 if not isinstance(name, str) or not name.startswith("vector_"):
                     raise ValueError("Invalid vector type in backup")
-                for row in rows:
+                if row is not None:
                     insert_document(tx, name, row)
 
     def forget_project(self, project_id):

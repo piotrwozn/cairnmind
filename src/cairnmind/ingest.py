@@ -26,7 +26,8 @@ from cairnmind.arcade import ArcadeError
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
-from cairnmind.memory_paths import bound_metadata, imported_source_ids, is_memory_path, memory_bindings
+from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, memory_bindings,
+                                    nested_reserved)
 from cairnmind.sql import json_text as _json_text
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -144,17 +145,51 @@ def _roots(store, project: dict) -> list[Path]:
     return list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(r["path"]).resolve() for r in rows]]))
 
 
-def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None):
+class _NestedMemory:
+    """The memory directories of the projects registered below a root (#174), which are their memory.
+
+    Every such directory lies under a `.memory` directory, so the registered roots are only read once a
+    path below the root has a part of that name: a walk or a freshness check of a tree with none costs
+    no query, as before #174."""
+
+    def __init__(self, store, root: Path):
+        self.store, self.root, self._bases = store, root, None
+
+    def covers(self, path: Path) -> bool:
+        try:
+            parts = path.relative_to(self.root).parts
+        except ValueError:
+            return False
+        if ".memory" not in (part.casefold() for part in parts):
+            return False
+        if self._bases is None:
+            self._bases = tuple(self.root / directory for directory in nested_reserved(self.store, self.root))
+        return any(path.is_relative_to(base) for base in self._bases)
+
+
+def _walk_args(store, root: Path, errors: list[OSError]):
+    """(excluded, errors, nested) for _files: what a walk of a root leaves out besides its own reserved
+    memory, the data directory and the memory directories of the projects registered below it (#174)."""
+    return (store.data_dir,), errors, _NestedMemory(store, root)
+
+
+def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | None = None,
+           nested: _NestedMemory | None = None):
     """Walk with nested gitignore rules. Symlinks are deliberately not followed.
 
     A directory that cannot be listed is appended to `errors`: the walk is then incomplete,
-    and its caller must not treat the files it did not see as deleted.
+    and its caller must not treat the files it did not see as deleted. `nested`: the memory
+    directories of projects registered below the root (#174), also left out.
     """
     rules: dict[Path, pathspec.GitIgnoreSpec] = {}
+
+    def left_out(path: Path) -> bool:
+        return any(path.is_relative_to(base) for base in excluded) or (nested is not None and nested.covers(path))
+
     for directory, dirs, names in os.walk(root, followlinks=False,
                                           onerror=errors.append if errors is not None else None):
         folder = Path(directory)
-        if is_memory_path(folder, root) or any(folder.is_relative_to(base) for base in excluded):
+        if is_memory_path(folder, root) or left_out(folder):
             dirs[:] = []
             continue
         ignore = folder / ".gitignore"
@@ -181,7 +216,7 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
             # and not text of this project: its rows are not indexed as sources.
             and not (folder.name == ".memory" and name in ("cairnmind", "devbrain"))
-            and not any((folder / name).is_relative_to(base) for base in excluded)
+            and not left_out(folder / name)
             and not ignored(folder / name, True)
         )
         for name in sorted(names):
@@ -224,6 +259,8 @@ def _write_chunks(store, project_id: str, source_id: str, text: str, metadata: d
                 raise ValueError("Chunk source does not belong to the requested project")
             if is_verdict_source(sources[0]) or is_mcp_source(sources[0]):
                 return 0  # a person's verdict on an impact list is never searchable text
+            if sources[0].get("is_current") is False:
+                return 0  # replaced meanwhile: its chunks were deleted with it and are not written again (#186)
             existing = tx.query("SELECT id FROM chunks WHERE source_id=:source", {"source": source_id})
             ids = []
             if not existing:
@@ -259,7 +296,7 @@ def _deactivate_together(store, tx, source_ids: list[str]) -> None:
     """What ``snapshot`` and ``_deactivate_source`` do to one replaced source, for several in one statement each."""
     params = {"sources": source_ids}
     tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id IN :sources", params)
-    tx.command("UPDATE chunks SET is_current=false WHERE source_id IN :sources", params)
+    store.drop_chunks(tx, source_ids)
     tx.command(f"UPDATE nodes SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_NODE_KINDS}", params)
     tx.command(f"UPDATE edges SET is_current=false WHERE source_id IN :sources AND kind NOT IN {_KEPT_EDGE_KINDS}", params)
     store._delete_old_vectors(tx, source_ids)
@@ -279,15 +316,15 @@ def _vector_tables(store) -> int:
 def _hanging_events(store, source_ids: list[str], vector_tables: int) -> dict[str, int]:
     """The journal events that deactivating each of these sources writes, counted before anything is written.
 
-    One for the source, one per chunk, node and edge that ``_deactivate_together`` deactivates, one per
-    vector it deletes. On real code the graph rows of the old source outweigh what the new one writes.
+    One for the source, one per chunk it deletes, one per node and edge it deactivates, one per vector it
+    deletes. On real code the graph rows of the old source outweigh what the new one writes.
     """
     weights = dict.fromkeys(source_ids, 1)
     if not source_ids:
         return weights
     live = "(is_current=true OR is_current IS NULL)"
     for table, condition, times in (
-            ("chunks", live, 1),
+            ("chunks", "true", 1),
             ("nodes", f"{live} AND kind NOT IN {_KEPT_NODE_KINDS}", 1),
             ("edges", f"{live} AND kind NOT IN {_KEPT_EDGE_KINDS}", 1),
             ("embeddings", "true", 1 + vector_tables)):
@@ -407,7 +444,7 @@ def _source_before(store, project_id: str, uri: str):
 def _deactivate_source(store, source_id: str) -> None:
     with store.transaction() as tx:
         tx.command("UPDATE sources SET is_current=false,current_key=null WHERE id=:source", {"source": source_id})
-        tx.command("UPDATE chunks SET is_current=false WHERE source_id=:source", {"source": source_id})
+        store.drop_chunks(tx, [source_id])
         tx.command(f"UPDATE nodes SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_NODE_KINDS}",
                    {"source": source_id})
         tx.command(f"UPDATE edges SET is_current=false WHERE source_id=:source AND kind NOT IN {_KEPT_EDGE_KINDS}",
@@ -495,7 +532,7 @@ def _tree_state(store, project_id: str) -> tuple[str, int, bool]:
         if not root.is_dir():
             entries.append([str(root), None])
             continue
-        for path in _files(root, excluded=(store.data_dir,), errors=errors):
+        for path in _files(root, *_walk_args(store, root, errors)):
             try:
                 status = os.stat(path, follow_symlinks=False)
             except OSError:
@@ -665,7 +702,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             counts["errors"].append(f"Project root unavailable: {root}")
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
-        for path in _files(root, excluded=(store.data_dir,), errors=walk_errors):
+        for path in _files(root, *_walk_args(store, root, walk_errors)):
             name = str(path)
             try:
                 # Before the file is opened: an edit made while it is read then shows as a new identity.
@@ -996,23 +1033,17 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
             changed_nodes, new_edges = list(nodes.values()), list(edges.values())
         # What the upserts look up row by row is read here in a few requests; the checks stay theirs.
         store.prefetch_graph(tx, changed_nodes, new_edges)
-        for item in changed_nodes:
-            store.upsert_node(item, tx=tx)
-        for item in new_edges:
-            store.upsert_edge(item, tx=tx)
+        # The transaction reports the graph as reset, so its rows are written in groups (issue #167).
+        store.write_graph(tx, project_id, changed_nodes, new_edges)
         if hasattr(tx, "known"):
             tx.known = None
         previous_nodes = tx.query(
             "SELECT id FROM nodes WHERE project_id=:project AND kind IN :kinds",
             {"project": project_id, "kinds": list(GRAPH_NODE_KINDS)},
         )
-        for row in previous_nodes:
-            if row["id"] not in nodes:
-                # Knowledge-record relationships referencing a removed code node must
-                # not silently become dangling. Retain the archived node in that case.
-                linked = tx.query("SELECT id FROM edges WHERE from_id=:id OR to_id=:id LIMIT 1", {"id": row["id"]})
-                if not linked:
-                    tx.command("DELETE FROM nodes WHERE id=:id", {"id": row["id"]})
+        # Knowledge-record relationships referencing a removed code node must not silently
+        # become dangling: such a node is retained. The rest go in groups (issue #167).
+        store.remove_graph_nodes(tx, project_id, [row["id"] for row in previous_nodes if row["id"] not in nodes])
         # This marker commits atomically with the native vertex/edge replacement.
         # An interrupted/failed graph transaction can never claim completion.
         tx.command(
@@ -1532,6 +1563,7 @@ def current_source(store, source_id: str) -> dict:
     excluded_directory = any(part in EXCLUDED_DIRS for root in allowed_roots for part in path.relative_to(root).parts[:-1])
     if (path.is_symlink() or not allowed_roots or _is_secret(path) or excluded_directory
             or any(is_memory_path(path, root) for root in roots)
+            or any(_NestedMemory(store, root).covers(path) for root in allowed_roots)
             or path.resolve().is_relative_to(store.data_dir)):
         raise ValueError("Source path is outside registered roots or excluded")
     if not path.is_file():

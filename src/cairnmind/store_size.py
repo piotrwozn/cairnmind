@@ -34,6 +34,7 @@ import time
 from .brief import _line
 from .config import BACKUP_SUFFIXES
 from .sql import IDENTIFIER, quote_name
+from .store_backup import TEMPORARY_PREFIX
 from .terminal_safe import safe_text
 
 EXACT_ROWS = 1000
@@ -231,7 +232,9 @@ def _backups(directory: Path) -> dict:
     groups = {name: {"count": 0, "bytes": 0} for name in ("scheduled", "before_schema", "before_restore", "other")}
     if directory.is_dir() and not directory.is_symlink():
         for path in directory.iterdir():
-            if not path.is_file() or path.is_symlink() or path.name.startswith("."):
+            # A backup still being written, or left by a killed one, takes space too: it counts as other.
+            if (not path.is_file() or path.is_symlink()
+                    or path.name.startswith(".") and not path.name.startswith(TEMPORARY_PREFIX)):
                 continue
             stem = next((path.name[:-len(suffix)] for suffix in BACKUP_SUFFIXES if path.name.endswith(suffix)), None)
             group = ("scheduled" if stem is not None and stem.isdigit() else

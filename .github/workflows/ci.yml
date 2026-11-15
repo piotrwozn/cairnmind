@@ -242,3 +242,34 @@ jobs:
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -q -m "Coverage of $GITHUB_SHA"
           git push -q --force "$remote" HEAD:refs/heads/badges
+
+  kubernetes-manifests:
+    # The Kubernetes manifests of docs/DEPLOYMENT.md, beside the other jobs and not a required check,
+    # like deployment-image. On a kind cluster of the runner: every manifest under deploy/kubernetes is
+    # checked against the cluster's schemas (server-side dry run, strict validation), then applied, and
+    # the documented connection check runs as a Job with the passwords mounted from Secrets and again
+    # through kubectl port-forward. See scripts/kubernetes_check.py.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      KIND_VERSION: v0.27.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - name: kind and kubectl
+        # Both are on the hosted runner image; kind is fetched, and checked against the SHA-256 its
+        # release publishes, only when it is missing.
+        run: |
+          if ! command -v kind >/dev/null; then
+            base="https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION"
+            curl -fsSL --retry 3 -o kind "$base/kind-linux-amd64"
+            curl -fsSL --retry 3 -o kind.sha256 "$base/kind-linux-amd64.sha256sum"
+            echo "$(awk '{print $1}' kind.sha256)  kind" | sha256sum -c -
+            sudo install -m 0755 kind /usr/local/bin/kind
+          fi
+          docker version && kind version && kubectl version --client
+      - run: kind create cluster --name cairnmind-check --wait 180s
+      - run: uv run python scripts/kubernetes_check.py --kind-cluster cairnmind-check
+      - if: ${{ always() }}
+        run: kind delete cluster --name cairnmind-check

@@ -10,12 +10,14 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Input, Select, Static
 
 from . import terminal_theme
-from .terminal_detail import EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts  # noqa: F401
+from .terminal_detail import (EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts,  # noqa: F401
+                              sensitivity_parts)
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
 from .terminal_safe import plain, safe_text
-from .terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, summary_text
+from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
+                          summary_text)
 
 _VIEWS = [("Records", "records"), ("Sources", "sources"), ("Plans", "plans"),
           ("Tasks", "tasks"), ("Checks", "checks"), ("Queue", "jobs"),
@@ -282,7 +284,7 @@ class InspectorApp(ImpactView, BasePanel):
                     continue
                 metadata = row.get("metadata") or {}
                 state = row.get("state", metadata.get("state", row.get("status", row.get("outcome", ""))))
-                table.add_row(self.state_cell(row.get("kind", self.view), state), plain(str(content).replace("\n", " "), limit=300),
+                table.add_row(self.state_cell(row.get("kind", self.view), state, row.get("confirmed_by")), plain(str(content).replace("\n", " "), limit=300),
                               plain(row.get("version", row.get("attempts", ""))), key=str(row["id"]))
             self.fit_columns()
         table.display = True
@@ -405,8 +407,10 @@ class InspectorApp(ImpactView, BasePanel):
             self.source_content = (self.source_content if offset else "") + result.get("text", "")
             source = result.get("source", {})
             header = str(source.get("uri") or self.t("Sources"))
+            # The class the service derived (#180), between the name and the literal text.
+            marked = [("value", "\n"), *line[0]] if (line := sensitivity_parts(result, self.t)) else []
             self.show_detail(result, kind=collection,
-                             parts=[("stored-lead", header), ("stored", "\n\n" + self.source_content)])
+                             parts=[("stored-lead", header), *marked, ("stored", "\n\n" + self.source_content)])
             self.notice(self.t("Literal source · choose Sources for text/raw/metadata · More loads the next part"))
         else:
             self.show_detail(result, kind=collection)
@@ -631,13 +635,14 @@ class InspectorApp(ImpactView, BasePanel):
                     submit=self.t("Check import"), on_submit=check_import))
                 if value and scope == self._scope_version:
                     payload, result = checked["payload"], checked["result"]
-                    self.pending_import = payload
+                    self.pending_import = {**payload, "replace_confirmed": replaces_here(result)}
                     self.query_one("#memory-apply", Button).disabled = False
                     self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + summary_text(result, self.language))
             elif action == "apply":
                 if not self.pending_import:
                     raise ValueError(self.t("Check the import with its source and destination folders first."))
                 payload = dict(self.pending_import)
+                # The check listed what the import replaces of this machine's own verdicts; Apply is the choice.
                 result = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": False})
                 self.pending_import = None
                 self.query_one("#memory-apply", Button).disabled = True

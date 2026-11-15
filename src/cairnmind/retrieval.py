@@ -12,8 +12,10 @@ from typing import Any
 
 from .arcade import ArcadeError
 from .config import Settings
-from .context_selection import select_entries
+from .confirmation import confirmation_text, confirmed_by as _confirmed_by
+from .context_selection import context_place, select_entries
 from .memory_paths import bound_metadata, memory_bindings
+from .memory_egress import ASK, held_back_class
 from .memory_models import from_settings
 
 
@@ -47,11 +49,13 @@ RECORD_METADATA_KEYS = (
     "plan_id", "step_index", "requires_test", "requires_review", "test_passed",
     "review_passed", "acceptance_passed", "depends_on", "acceptance_criteria", "scope", "test_source_ids",
     "review_source_ids", "acceptance_source_ids", "possible_conflicts", "unresolved_dependencies",
-    "evidence", "goal", "next_step", "summary", "next_steps", "blockers", "origin", "extracted_by",
+    "evidence", "goal", "next_step", "summary", "next_steps", "blockers", "origin", "extracted_by", "extractor",
     "evidence_earliest", "evidence_latest", "evidence_basis", "supersede_warning",
     "supersede_replaced_evidence_latest", "conflicts_resolved", "conflict_decisions", "conflict_scope_note",
     "superseded_ids", "superseded_by",
 )
+# The only object values a bounded view shows, with the fields it shows of each (store.EXTRACTOR_STAMP).
+_FLAT_OBJECT_FIELDS = {"extractor": ("version", "prompt_sha256", "model")}
 # Positions a record moves down within the record ranking, by status. At similar
 # relevance a confirmed finding comes first and a disputed one later, while a strongly
 # relevant disputed or proposed record is not buried under many weak confirmed matches.
@@ -131,6 +135,11 @@ def public_metadata(value: Any, keys: tuple[str, ...], budget: int = 900) -> dic
             truncated |= candidate != original
         elif original is None or type(original) in (int, float, bool):
             candidate = original
+        elif key in _FLAT_OBJECT_FIELDS and isinstance(original, dict):
+            candidate = {field: value[:180] if isinstance(value, str) else value
+                         for field, value in original.items()
+                         if field in _FLAT_OBJECT_FIELDS[key] and type(value) in (str, int)}
+            truncated |= candidate != original
         else:
             omitted += 1
             truncated = True
@@ -192,8 +201,19 @@ def public_record(record: dict, *, content_limit: int = 500, metadata_budget: in
     item["source_ids_total"] = len(sources)
     if len(sources) > 8:
         item["source_ids_truncated"] = True
-    item["metadata"] = public_metadata(record.get("metadata"), RECORD_METADATA_KEYS, metadata_budget)
     metadata = json_value(record.get("metadata"), {})
+    # The confirmation mark is shown as confirmed_by below, so it is not a field the bounded view left out:
+    # counting it would mark every confirmed record as truncated.
+    shown = ({key: value for key, value in metadata.items() if key != "confirmation"}
+             if isinstance(metadata, dict) else metadata)
+    item["metadata"] = public_metadata(shown, RECORD_METADATA_KEYS, metadata_budget)
+    if _confirmed_by({**record, "metadata": metadata}):
+        # Only on a confirmed record: person (here), import (confirmed elsewhere, never verified here),
+        # before_rule (nobody recorded), seed, or lapsed on a record that lost its confirmation (#177).
+        item["confirmed_by"] = _confirmed_by({**record, "metadata": metadata})
+        text = confirmation_text({**record, "metadata": metadata})
+        if item["confirmed_by"] == "import" and text:
+            item["confirmation"] = text
     if isinstance(metadata, dict) and (metadata.get("test_passed") or metadata.get("test_source_ids")):
         item["test_evidence_kind"] = "reported"
     return item
@@ -284,9 +304,14 @@ class Retriever:
     def records(self, project_id, include_history=False, worktree=None):
         project_id, root, roots = self._scope(project_id, worktree)
         bindings = memory_bindings(self.store, project_id)
-        return [record for record in self.store.list_records(project_id, include_history)
+        gate = ASK.get()  # set only while an answer is built for a remote chat server (#181)
+        rows = self.store.list_records(project_id, include_history)
+        if gate:
+            gate.prime(rows)
+        return [record for record in rows
                 if self._matches_scope(bound_metadata(self.store, project_id, record.get("metadata"),
-                                                     bindings=bindings), root, roots)]
+                                                     bindings=bindings), root, roots)
+                and not (gate and gate.record_held(record))]
 
     def _graph_ids(self, project_id, root, roots, source_ids):
         bindings = memory_bindings(self.store, project_id)
@@ -306,6 +331,29 @@ class Retriever:
                  and (row["kind"] in {"supported_by", "depends_on", "supersedes", "has_step"}
                       or not row.get("source_id") or row["source_id"] in source_ids)}
         return sorted(nodes), sorted(edges)
+
+    def _graph_held(self, rows) -> set:
+        """Graph nodes an answer for a remote chat server leaves out: of a held source, record or plan.
+
+        A record or plan node is judged as a whole (all its sources, now or before, and its own origin
+        mark), not by the one source the node names: a plan node names only its latest snapshot.
+        """
+        gate = ASK.get()
+        if not gate:
+            return set()
+        held = set()
+        for prefix, table in (("record:", "records"), ("plan:", "plans")):
+            nodes = {row["id"][len(prefix):]: row["id"] for row in rows
+                     if isinstance(row.get("id"), str) and row["id"].startswith(prefix)}
+            if not nodes:
+                continue
+            found = self.store.query(f"SELECT FROM {table} WHERE id IN :ids", {"ids": list(nodes)})
+            gate.prime(found)
+            held |= {nodes[row["id"]] for row in found if gate.record_held(row)}
+        for row in rows:
+            if row.get("source_id") and row["id"] not in held and gate.source_id_held(row["source_id"]):
+                held.add(row["id"])
+        return held
 
     @staticmethod
     def _vector_type(project_id: str, namespace: str, dimension: int) -> str:
@@ -351,6 +399,9 @@ class Retriever:
     def _chunk_hit(self, chunk: dict) -> dict | None:
         source = self.store.get_source(chunk["source_id"])
         if source["project_id"] != chunk["project_id"] or not source["is_current"]:
+            return None
+        gate = ASK.get()
+        if gate and gate.chunk_held(chunk["id"], source):
             return None
         metadata = json_value(source.get("metadata"), {})
         relative = metadata.get("relative_path") if isinstance(metadata, dict) else None
@@ -466,12 +517,16 @@ class Retriever:
                 f"AND id IN :eligible_records AND key IN :keys LIMIT {limit}",
                 {"project": project_id, "keys": words, "eligible_records": eligible_records},
             )
-            record_hits, seen = [], set()
+            record_hits, seen, gate = [], set(), ASK.get()
+            if gate:
+                gate.prime([*records, *keyed])
             for record in [*records, *keyed]:
                 ids = json_value(record.get("source_ids"), [])
                 if record["id"] in seen or not ids:
                     continue
                 seen.add(record["id"])
+                if gate and gate.record_held(record):
+                    continue
                 source = self.store.get_source(ids[0])
                 if source["project_id"] != project_id:
                     continue
@@ -497,6 +552,11 @@ class Retriever:
         result = sorted(fused.values(), key=lambda hit: hit["score"], reverse=True)[:limit]
         for hit in result:
             hit.pop("_path", None)
+            if hit.get("record_id") and _confirmed_by(hit):
+                hit["confirmed_by"] = _confirmed_by(hit)  # Who confirmed it: a person here, or an import (#177).
+                if hit["confirmed_by"] != "person":
+                    # In words as well, for a model that answers from the hit: not this machine's confirmation.
+                    hit["confirmation"] = confirmation_text(hit)
             hit["metadata"] = (public_metadata(hit.get("metadata"), RECORD_METADATA_KEYS)
                                if hit.get("record_id") else public_source_metadata(hit.get("metadata")))
         return result
@@ -548,7 +608,10 @@ class Retriever:
         )
         truncated = len(seeds) > 6 or len(rows) > limit
         nodes, sources = [], {}
+        held = self._graph_held(rows[:limit])
         for row in rows[:limit]:
+            if row.get("id") in held:
+                continue
             source_id = row.get("source_id")
             if source_id and source_id in eligible_sources:
                 source = self.store.get_source(source_id)
@@ -607,6 +670,10 @@ class Retriever:
         root = str(Path(worktree if worktree is not None else project["root"]).expanduser().resolve())
         current = PlanManager(self.store).next_task(project["id"], plan_id, root)
         plan, task, blocked = current["plan"], current["task"], current["blocked"]
+        gate = ASK.get()
+        if gate:  # a held plan or task is left out of an answer's context whole
+            plan = None if plan and gate.record_held(plan) else plan
+            task = None if task and gate.record_held(task) else task
         projection = {
             "worktree": root, "plan": None, "next_task": None, "reason": current["reason"],
             "blocked": [{"task_id": item["task_id"], "reasons": item["reasons"],
@@ -632,13 +699,12 @@ class Retriever:
         project = self.store.resolve_project(project_id)
         workflow = self.workflow(project["id"], worktree)
         records = self.records(project["id"], worktree=worktree)
-        # Recent checkpoint first, tasks needing attention next, then decisions. Within each
-        # group the store's order (most recently updated first) is kept by the stable sort.
+        # The checkpoint and open tasks first, then decisions and constraints in force, other
+        # confirmed records, new findings, finished tasks last (#213). Within each group the
+        # store's order (most recently updated first) is kept by the stable sort.
         def order(record):
-            return (record["kind"] != "checkpoint", not open_task(record), record.get("status") != "confirmed")
-
-        def open_task(record):
-            return record["kind"] == "task" and json_value(record.get("metadata"), {}).get("state") != "done"
+            finished = json_value(record.get("metadata"), {}).get("state") == "done"
+            return context_place(record["kind"], record.get("status"), finished)
 
         records = [record for record in records if record.get("status") != "superseded"]
         records.sort(key=order)
@@ -651,7 +717,9 @@ class Retriever:
         # confirmed records (#188). Checkpoints and tasks, finished or not, keep their own places.
         reserve = [record.get("status") == "proposed" and record["kind"] not in ("checkpoint", "task")
                    for record in records]
-        budget = max(2500, 6500 - len(json.dumps(workflow, ensure_ascii=False)))
+        # 7000 since #177: a confirmed record says who confirmed it and cites that note, about 60 characters
+        # each, and the same number of records as before must fit.
+        budget = max(2500, 7000 - len(json.dumps(workflow, ensure_ascii=False)))
         selected, omitted = select_entries(entries, reserve, budget)
         return {
             "project": {k: project[k] for k in ("id", "name", "root")}, "records": selected,
@@ -698,6 +766,8 @@ class Retriever:
             "SELECT FROM embeddings WHERE chunk_id=:chunk AND project_id=:project AND namespace=:namespace",
             {"chunk": chunk["id"], "project": job["project_id"], "namespace": namespace},
         )
+        if not canonical and held_back_class(self.settings, "embedding", source):
+            return  # left unembedded for a remote server (#181); text search still finds it
         vector = validate_vector(canonical[0]["vector"] if canonical else (await self.ollama.embed([chunk["text"]]))[0])
         index = await asyncio.to_thread(self._ensure_vector_index, job["project_id"], namespace, len(vector))
         if index is None:

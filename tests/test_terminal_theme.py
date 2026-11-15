@@ -97,18 +97,55 @@ def test_dialog_hints_exist_in_both_languages():
         assert text in CATALOG and tr(text, "pl") != text
 
 
-def test_tmux_pane_badge_is_green_only_for_ack():
+# The words on a pane's border (#208): the internal value each option holds, and what tmux shows for it.
+BORDER_WORDS = {
+    "en": {"role": {"sidebar": "Projects", "client1": "Client 1", "client2": "Client 2", "inspector": "Inspector",
+                    "graph": "Graph", "activity": "Activity"},
+           "control": {"controller": "In control", "readonly": "Read only", "offline": "Offline",
+                       "exited": "Ended", "failed": "Failed", "interrupted": "Interrupted", "stale": "Stale"},
+           "memory": {"ack": "ACK ready", "ACK required": "ACK needed", "partial": "Partial",
+                      "unavailable": "Unavailable"}},
+    "pl": {"role": {"sidebar": "Projekty", "client1": "Klient 1", "client2": "Klient 2", "inspector": "Inspektor",
+                    "graph": "Graf", "activity": "Aktywność"},
+           "control": {"controller": "Steruje", "readonly": "Tylko odczyt", "offline": "Offline",
+                       "exited": "Koniec", "failed": "Błąd", "interrupted": "Przerwana", "stale": "Nieaktualna"},
+           "memory": {"ack": "ACK gotowa", "ACK required": "Brak ACK", "partial": "Częściowa",
+                      "unavailable": "Niedostępny"}},
+}
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_tmux_pane_badge_is_green_only_for_ack(language):
     from cairnmind.workspace import tmux_chrome
-    options = dict(tmux_chrome())
+    from cairnmind.terminal_bridge import CONTROL_STATES
+    from cairnmind.workspace_border import CONTROL_LABELS, MEMORY_LABELS, ROLE_LABELS
+    options = dict(tmux_chrome(language))
     border = options["pane-border-format"]
     ok, warn, danger = (f"colour{theme.TMUX[name]}" for name in ("ok", "warn", "danger"))
+    # The colour reads the internal memory value, never a label: green only for exactly `ack`.
     assert border.count(ok) == 1
     assert "#{?#{==:#{@cairnmind_memory},ack},#[fg=" + ok + "]," in border
     assert "#{==:#{@cairnmind_memory},unavailable},#[fg=" + danger + "],#[fg=" + warn + "]}" in border
-    # The words tmux shows are the raw option values, in the old order.
+    # The internal values are the ones the code writes (workspace, terminal_bridge); only their labels change.
+    words = BORDER_WORDS[language]
+    assert set(ROLE_LABELS) == set(words["role"]) and set(CONTROL_LABELS) == set(words["control"])
+    # Every value the bridge writes to @cairnmind_control has a label, a finished run's end state included.
+    assert set(CONTROL_LABELS) == CONTROL_STATES
+    assert set(MEMORY_LABELS) == {*words["memory"], "stale"}
     shown = re.sub(r"#\[[^]]*\]", "", border)
-    assert shown.index("#{@cairnmind_role} ") < shown.index("#{@cairnmind_control} ") < shown.rindex("#{@cairnmind_memory} ")
-    assert shown.endswith("#{@cairnmind_memory} ")
+    for option, labels in words.items():
+        for value, label in labels.items():
+            assert "#{?#{==:#{@cairnmind_" + option + "}," + value + "}," + label + "," in shown, (option, value)
+    assert "#{?#{m:stale*,#{@cairnmind_memory}}," + {"en": "Stale", "pl": "Nieaktualna"}[language] in shown
+    # A raw value is never printed: each option is only ever compared, in the old order role, control, memory.
+    assert re.findall(r"[^:,]#\{@cairnmind_\w+\}", shown) == []
+    assert shown.index("#{@cairnmind_role}") < shown.index("#{@cairnmind_control}") < shown.index(
+        "#{m:stale*,#{@cairnmind_memory}}")
+    other = BORDER_WORDS["en" if language == "pl" else "pl"]
+    for option, labels in other.items():
+        for value, label in labels.items():
+            if label != words[option][value]:
+                assert "," + label + "," not in shown, label
     for option, value in options.items():
         assert "'" not in value and "\n" not in value, option  # each is written into one quoted config line
 

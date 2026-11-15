@@ -37,7 +37,7 @@ jobs_app = typer.Typer(help="Diagnostics and explicit retry of one project's job
 memory_app = typer.Typer(help="Portable memory of one project and the local snapshot schedule.")
 cockpit_app = typer.Typer(help="The local cockpit, persistent terminals and the memory view.")
 workspace_app = typer.Typer(help="The terminal workspace: status, detaching and stopping.")
-store_app = typer.Typer(help="How large the store is. Reads only; starts nothing.")
+store_app = typer.Typer(help="How large the store is, which installation writes it, and removing rows that nothing reads.")
 db_app = typer.Typer(help="Access to a database on another host: its own user (#72).")
 answers_app = typer.Typer(help="The opt-in log of ask answers and the evidence they cited.")
 app.add_typer(projects_app, name="project")
@@ -81,7 +81,11 @@ def entrypoint() -> None:
 
 def store_for(settings: Settings):
     from cairnmind.store import Store
-    return Store(settings.data_dir)
+    store = Store(settings.data_dir)
+    if store.not_writer:
+        # Another installation writes this database (#70): reads work, every write is refused with this reason.
+        typer.echo(f"Cairnmind: {store.not_writer}", err=True)
+    return store
 
 
 def store_for_read(settings: Settings):
@@ -153,6 +157,18 @@ def service_alive(settings: Settings) -> bool:
         return False
 
 
+def last_log_line(path: Path) -> str:
+    """The last line of a log, bounded and with control characters replaced: what a stopped process said."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(max(0, path.stat().st_size - 4096))
+            lines = [line for line in handle.read().decode("utf-8", "replace").splitlines() if line.strip()]
+    except OSError:
+        return f"see {path}"
+    text = lines[-1] if lines else f"see {path}"
+    return "".join(char if char.isprintable() else "?" for char in text)[:500]
+
+
 def ensure_service(settings: Settings, *, background_inference: bool = True) -> None:
     if service_alive(settings):
         return
@@ -165,11 +181,18 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         command = [sys.executable, "-m", "cairnmind", "--data-dir", str(settings.data_dir), "serve"]
         if not background_inference:
             command.append("--defer-background-inference")
-        subprocess.Popen(command,
-                         stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+        process = subprocess.Popen(command,
+                                   stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
     for _ in range(300):
         if service_alive(settings):
             return
+        if getattr(process, "poll", lambda: None)() is not None:
+            # It stopped instead of starting, for example on an installation that only reads the store (#70).
+            # One that met a service starting at the same moment is waited for, as before.
+            said = last_log_line(log)
+            if "already running" not in said:
+                raise typer.BadParameter(f"The service stopped at start: {said}")
+            process = None
         time.sleep(0.2)
     raise typer.BadParameter(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
@@ -197,7 +220,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
         pass
     elif (method.upper() == "POST" and (retry_job or path in {
             "/remember", "/findings", "/checkpoint", "/plans/save", "/plans/activate",
-            "/memory/snapshot", "/memory/import"})
+            "/memory/snapshot", "/memory/import", "/memory/publish", "/memory/import-published",
+            "/memory/import-commit", "/memory/carrier"})
             or method.upper() == "PATCH" and path == "/memory/settings"):
         session_id = session_value("SESSION_ID")
         if session_id:
@@ -330,8 +354,11 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 @initialized
 def init(ctx: typer.Context):
     """Create the local store. Downloads no models and changes no client configuration."""
-    store_for(ctx.obj)
-    output({"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"})
+    store = store_for(ctx.obj)
+    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
+    if getattr(store, "not_writer", None):
+        result["writer"] = store.writer_state()
+    output(result)
 
 
 @engine_app.command("install")
@@ -413,6 +440,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
         for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
     result["models_lock_present"] = (ctx.obj.data_dir / "models.lock.json").exists()
+    from cairnmind.store_writer import inspect as writer_role
+    result["store_writer"] = writer_role(ctx.obj)
     from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     output(result)
@@ -651,6 +680,52 @@ def store_size(ctx: typer.Context, project: Annotated[str | None, typer.Argument
         typer.echo(report["text"])
 
 
+@store_app.command("writer")
+@initialized
+def store_writer_show(ctx: typer.Context):
+    """Which installation writes this store, and whether this one is it. Starts no engine; writes no row."""
+    from cairnmind.store_writer import inspect
+    output(inspect(ctx.obj))
+
+
+@store_app.command("takeover")
+@initialized
+def store_takeover(ctx: typer.Context,
+                   yes: Annotated[bool, typer.Option("--yes", help="Take over writing; without it nothing changes.")] = False,
+                   note: Annotated[str | None, typer.Option(help="Why, kept with the change (one line).")] = None):
+    """Make this installation the store's writer. The previous writer stops at its next write; its running jobs
+    go back to the queue. The change, with its time, host and note, is kept in the store."""
+    from cairnmind.store_writer import inspect, take_over_at, valid_note
+    # Moving the writer is a person's decision, as a verdict is: a coding session cannot make it.
+    if session_value("SESSION_ID"):
+        refuse("A coding session cannot take over writing the store; only a person can, outside the session.")
+    try:
+        valid_note(note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--note") from None
+    if not yes:
+        current = inspect(ctx.obj)
+        output({"taken_over": False, **current,
+                "next": "Run `cairnmind store takeover --yes` to make this installation the writer."})
+        raise typer.Exit(1)
+    output(take_over_at(ctx.obj.data_dir, note))
+
+
+@store_app.command("drop-replaced-chunks")
+@initialized
+def store_drop_replaced_chunks(
+        ctx: typer.Context,
+        batch: Annotated[int, typer.Option(min=1, max=1000, help="Rows (chunks or vectors) deleted per transaction.")] = 200,
+        max_batches: Annotated[int | None, typer.Option(
+            min=1, help="Stop after this many transactions; run again to go on.")] = None):
+    """Delete the chunks that earlier releases kept for replaced sources, in every project; prints how many rows went.
+
+    Nothing searches them. Every source stays with its full text and hash, so evidence citing an old version
+    is still readable and checkable. Short transactions, safe to stop and run again (#186)."""
+    from cairnmind.replaced_chunks import drop_replaced_chunks
+    output(drop_replaced_chunks(store_for(ctx.obj), batch=batch, max_batches=max_batches))
+
+
 @jobs_app.command("list")
 def jobs_list(ctx: typer.Context, project: str,
               state: Annotated[str | None, typer.Option("--state", "--status")] = None,
@@ -707,15 +782,24 @@ def source(ctx: typer.Context, source_id: str):
 def remember(ctx: typer.Context, project: str, content: str, kind: str = "fact",
              source_id: Annotated[list[str] | None, typer.Option("--source")] = None,
              confirmed: bool = False, key: str | None = None):
+    """Store a finding as proposed. --confirmed stores it as confirmed, for a person in their own terminal."""
+    from cairnmind import confirmation
+    if confirmed and not confirmation.person_at_terminal():
+        # Only a person confirms (#177). A coding session's shell and an agent's command are not one:
+        # refused before anything is written, with what to do instead.
+        refuse(confirmation.CLI_REFUSED)
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
     with actor_write(store, ctx.obj, pid):
-        sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
-                                              {"role": "user", "origin": "cli"})["id"]]
         record = {"kind": kind, "content": content, "status": "confirmed" if confirmed else "proposed"}
         if key is not None:
             record["key"] = key
-        result = store.remember(pid, record, sources)
+        sources = source_id or [store.snapshot(pid, f"manual://{uuid.uuid4()}", content, "manual",
+                                              {"role": "user", "origin": "cli"})["id"]]
+        if confirmed:
+            result = confirmation.remember_as_person(store, pid, record, sources)
+        else:
+            result = store.remember(pid, record, sources)
     output(result)
 
 
@@ -752,10 +836,21 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
                 "acceptance_criteria": criterion or [], "depends_on": depends_on or [],
                 "requires_test": requires_test, "requires_review": requires_review}
     text = json.dumps({"title": title, **metadata}, ensure_ascii=False)
+    from cairnmind import confirmation
+    # A task a person adds in their own terminal is confirmed, as before. Inside a coding session, from an
+    # agent's command or a script there is no person (#177): the task is stored as proposed, and says so.
+    person = confirmation.person_at_terminal()
     with actor_write(store, ctx.obj, pid):
         src = store.snapshot(pid, f"manual://task/{uuid.uuid4()}", text, "manual", {"role": "user"})
-        result = store.remember(pid, {"kind": "task", "content": title, "status": "confirmed",
-                                     "metadata": metadata}, [src["id"]])
+        record = {"kind": "task", "content": title, "status": "confirmed" if person else "proposed",
+                  "metadata": metadata}
+        if person:
+            result = confirmation.remember_as_person(store, pid, record, [src["id"]])
+        else:
+            result = store.remember(pid, record, [src["id"]])
+    if not person:
+        typer.echo("Stored as proposed: only a person in their own terminal adds a confirmed task. "
+                   "The person confirms it in the inspector.", err=True)
     output(result)
 
 
@@ -820,7 +915,11 @@ def plan_save(ctx: typer.Context, project: str, input_json: Path,
                 else document.get("task_versions"))
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    with actor_write(store, ctx.obj, pid, worktree) as scope:
+    from cairnmind import confirmation
+    # Typed by a person in their own terminal, a save may change or remove a step they confirmed (#177);
+    # from a coding session's shell or an agent's command the store refuses that, with the step named.
+    with actor_write(store, ctx.obj, pid, worktree) as scope, \
+            confirmation.person_command(store, pid, "command_line_plan_save"):
         result = PlanManager(store).save(pid, document.get("plan", {}), document.get("steps", []),
             idempotency_key, expected_version if expected_version is not None else document.get("expected_version"),
             versions, scope, activate)
@@ -891,7 +990,10 @@ def plan_adopt(ctx: typer.Context, project: str, group: str,
     from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    with actor_write(store, ctx.obj, pid, worktree) as scope:
+    from cairnmind import confirmation
+    # Adoption gives each task a plan key: on a task a person confirmed, only a person's command does (#177).
+    with actor_write(store, ctx.obj, pid, worktree) as scope, \
+            confirmation.person_command(store, pid, "command_line_plan_adopt"):
         result = PlanManager(store).adopt_legacy(pid, group, plan={"title": title} if title else None,
             idempotency_key=idempotency_key, worktree=scope, activate=activate)
     output(result)
@@ -1270,7 +1372,10 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: Path,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
-                  dry_run: bool = False):
+                  dry_run: bool = False,
+                  replace_confirmed: Annotated[bool, typer.Option(
+                      "--replace-confirmed", help="Let the package replace records that were confirmed or disputed "
+                      "on this machine; the dry run lists them.")] = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())
@@ -1278,6 +1383,8 @@ def memory_import(ctx: typer.Context, path: Path,
     if not dry_run:
         ctx.obj = Settings.load(ctx.obj.data_dir, create=True)
     payload = {"path": selected, "root": str(root.expanduser().resolve()), "dry_run": dry_run}
+    if replace_confirmed:
+        payload["replace_confirmed"] = True
     if name is not None:
         payload["name"] = name
     output(request(ctx.obj, "POST", "/memory/import", start_service=not dry_run, json=payload))
@@ -1303,6 +1410,12 @@ def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None
     if worktree is not None:
         params["worktree"] = str(worktree.expanduser().resolve())
     output(request(ctx.obj, "GET", "/memory/status", start_service=False, params=params))
+
+
+# Published team memory (#170): publish, check-published, import-published, show-published, confirm-plan.
+from cairnmind.cli_published import register as _register_published  # noqa: E402
+
+_register_published(memory_app, initialized)
 
 
 @app.command()
@@ -1471,9 +1584,13 @@ def rebuild_vectors(ctx: typer.Context, project: str):
     pid = store.resolve_project(project)["id"]
     namespace = asyncio.run(from_settings(settings).model_identity(settings.embedding_model))
     store.delete_embeddings(pid)
-    count = schedule_embeddings(store, namespace)
-    output({"project": pid, "missing_vectors_queued": count, "namespace": namespace,
-            "sources_preserved": True})
+    held: dict = {}
+    count = schedule_embeddings(store, namespace, settings=settings, report=held)
+    result = {"project": pid, "missing_vectors_queued": count, "namespace": namespace, "sources_preserved": True}
+    if held.get("embedding_held_back"):
+        # Chunks of a class the remote embedding server may not receive (memory_remote_classes, #181).
+        result["vectors_held_back"] = held["embedding_held_back"]
+    output(result)
 
 
 @app.command()

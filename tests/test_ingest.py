@@ -380,6 +380,7 @@ def test_native_graph_fingerprint_skips_unchanged_rebuild(workspace, monkeypatch
         raise AssertionError("Unchanged graph must not perform native vertex upserts")
 
     monkeypatch.setattr(store, "upsert_node", unexpected_upsert)
+    monkeypatch.setattr(store, "write_graph", unexpected_upsert)
     result = index_project(store, project["id"])
     assert result["graph_unchanged"] is True
     assert result["nodes"] == initial["nodes"]
@@ -393,16 +394,20 @@ def test_native_graph_marker_commits_only_with_complete_graph(workspace, monkeyp
     index_project(store, project["id"])
     previous = store.query("SELECT graph_fingerprint FROM projects WHERE id=:id", {"id": project["id"]})[0]
     code.write_text("def app():\n    return False\n")
-    original = store.upsert_edge
+    from cairnmind.journal import JournalTransaction
+    real = JournalTransaction.script
 
-    def fail_graph_write(*args, **kwargs):
-        raise RuntimeError("Simulated interruption during native edge writes")
+    def fail_graph_write(self, statements, *args):
+        # The edges are written in groups since #167: the request that sends a group of them is interrupted.
+        if statements[0].startswith("CREATE EDGE"):
+            raise RuntimeError("Simulated interruption during native edge writes")
+        return real(self, statements, *args)
 
-    monkeypatch.setattr(store, "upsert_edge", fail_graph_write)
-    with pytest.raises(RuntimeError, match="interruption"):
-        index_project(store, project["id"])
+    with monkeypatch.context() as patch:
+        patch.setattr(JournalTransaction, "script", fail_graph_write)
+        with pytest.raises(RuntimeError, match="interruption"):
+            index_project(store, project["id"])
     assert store.query("SELECT graph_fingerprint FROM projects WHERE id=:id", {"id": project["id"]})[0] == previous
-    monkeypatch.setattr(store, "upsert_edge", original)
     repaired = index_project(store, project["id"])
     assert repaired["changed"] == 0  # Sources committed before the failed graph transaction.
     assert repaired["graph_unchanged"] is False

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 from uuid import uuid4
 
+from .confirmation import confirmed_by
 from .sql import evidence_time, json_text, one_row, parse_utc, utc_now
 
 KINDS = ("fact", "decision")
@@ -83,7 +84,9 @@ def _view(record, uris, states, times):
             "evidence_basis": when.get("basis"),
             "scope": metadata.get("worktree") or metadata.get("root"),
             "sources": sources[:5], "sources_total": len(sources),
-            "evidence_state": state.get("evidence_state"), "quote_survives": state.get("quote_survives")}
+            "evidence_state": state.get("evidence_state"), "quote_survives": state.get("quote_survives"),
+            # How it came to be confirmed (#177): the store's own mark. Names in it are a package's claim.
+            "confirmed_by": confirmed_by({**record, "metadata": metadata}), "confirmation": metadata.get("confirmation")}
 
 
 def _newer(first, second):
@@ -112,7 +115,8 @@ def list_conflicts(store, project_id, scoped_records, in_scope=None):
     # A review or decision note is not a source of the finding itself.
     uris = {row["id"]: row["uri"] for row in store.query(
         "SELECT id,uri,metadata.origin AS origin FROM sources WHERE id IN :ids AND project_id=:project",
-        {"ids": source_ids, "project": project_id}) if row.get("origin") != "local_user_review"} if source_ids else {}
+        {"ids": source_ids, "project": project_id})
+        if row.get("origin") not in ("local_user_review", "cli_person", "evaluation_seed")} if source_ids else {}
     states = evidence_states(store, project_id, involved.values()) if involved else {}
     with store.transaction() as tx:
         # Read from the sources now: a time stored on a record before audit notes were
@@ -148,6 +152,8 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         raise ValueError("Superseding requires the ID of the finding to keep")
     if action != "supersede" and keep is not None:
         raise ValueError("Only superseding takes a finding to keep")
+    from .memory_acts import act_context, identity_hash, record_evidence, row_definition_hash
+    context = act_context(store, project_id)  # Who decided, on which branch and commit (#170).
     with store.transaction() as tx:
         rows = {identifier: one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
                                  {"id": identifier, "project": project_id}, False) for identifier in (record_id, other_id)}
@@ -168,13 +174,27 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
                  "conflict_decisions": [*_ids(metadata.get("conflict_decisions")), f"{other_id}:{action}"]}
         if action == "different_scopes":
             notes["conflict_scope_note"] = reason[:500]
-        audit = {"actor": "local_user", "action": "resolve_conflict", "decision": action, "record_id": record_id,
+        audit = {"actor": "local_user", **context, "action": "resolve_conflict", "decision": action, "record_id": record_id,
                  "other_record_id": other_id, "marked_as": marked, "kept_record_id": keep, "reason": reason, "at": utc_now(),
                  "versions": {record_id: expected_version, other_id: other_expected_version},
                  "previous_status": {record_id: candidate["status"], other_id: existing["status"]},
                  "status": "confirmed" if action == "supersede" else None,
                  "content_sha256": {identifier: hashlib.sha256(row["content"].encode()).hexdigest()
-                                    for identifier, row in rows.items()}}
+                                    for identifier, row in rows.items()},
+                 # The quoted passage each finding carries: a published quote must be this one (#172).
+                 "evidence_sha256": {identifier: record_evidence(row) for identifier, row in rows.items()}}
+        if any(row["kind"] == "task" for row in rows.values()):
+            audit["definition_sha256"] = {identifier: row_definition_hash(row["content"], row.get("metadata"))
+                                          for identifier, row in rows.items() if row["kind"] == "task"}
+        if action == "supersede":
+            # Kind, key and replaced record of both findings as this decision leaves them (#170).
+            winner, loser = (candidate, existing) if keep == record_id else (existing, candidate)
+            renamed = winner is candidate and metadata.get("suggested_key") == existing["key"]
+            chained = bool(winner.get("supersedes")) and winner["supersedes"] != loser["id"]
+            audit["identity_sha256"] = {
+                winner["id"]: identity_hash(winner["kind"], existing["key"] if renamed else winner["key"],
+                                            winner["supersedes"] if chained else loser["id"]),
+                loser["id"]: identity_hash(loser["kind"], loser["key"], loser.get("supersedes"))}
         # The same address and origin as a review note: it documents a decision and never
         # counts as evidence that a finding is true, nor as the time of its evidence.
         source = store.snapshot(project_id, "review://" + str(uuid4()), json_text(audit), "manual",
@@ -182,7 +202,10 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
                                  "conflict_with": other_id})
 
         def write(update, record):
-            return store.remember(project_id, update, [*record["source_ids"], source["id"]], conflict_review=True)
+            # A person's decision (#177): the finding chosen to stand is confirmed by this act.
+            with store.person_act("conflict_decision", source["id"]):
+                return store.remember(project_id, update, [*record["source_ids"], source["id"]],
+                                      conflict_review=True)
 
         if action != "supersede":
             saved = write({"id": record_id, "expected_version": expected_version, "metadata": notes}, candidate)

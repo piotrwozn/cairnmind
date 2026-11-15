@@ -13,6 +13,8 @@ from cairnmind.inspector import Inspector, InspectorNotFound
 from cairnmind.inspector_api import attach_inspector_routes
 from cairnmind.store import Store
 
+from conftest import as_person
+
 
 @pytest.fixture
 def workspace(tmp_path):
@@ -29,8 +31,8 @@ def pair(store, project, *, kind="decision", key="session-ttl", old="Sessions la
     """An existing finding and a later one that extraction marked as a possible conflict."""
     first = store.snapshot(project["id"], f"transcript://{key}/old", old, "transcript",
                            {"source_timestamp": old_time} if old_time else {})
-    existing = store.remember(project["id"], {"kind": kind, "key": key, "content": old, "status": "confirmed"},
-                              [first["id"]])
+    # The existing finding is one a person confirmed (#177): only a person's route stores that status.
+    existing = as_person(store, project["id"], {"kind": kind, "key": key, "content": old}, [first["id"]])
     second = store.snapshot(project["id"], f"transcript://{key}/new", new, "transcript",
                             {"source_timestamp": new_time} if new_time else {})
     candidate = store.remember(project["id"], {"kind": kind, "key": f"{key}~abc", "content": new, "metadata": {
@@ -264,11 +266,12 @@ def test_a_pair_follows_its_counterpart_to_whatever_replaced_it(workspace):
     assert saved["possible_conflicts"] == [] and set(saved["conflicts_resolved"]) == {existing["id"], first["id"]}
     assert json.loads(store.get_source(result["audit_source_id"])["content"])["marked_as"] == [existing["id"]]
     assert pending(store, project)["items"] == []
-    # A replacement made by an ordinary write is followed as well.
+    # A replacement a person made outside the inbox is followed as well. (An ordinary write cannot replace
+    # a finding a person confirmed, #177.)
     third, other = pair(store, project, kind="fact", key="region", old="EU only.", new="EU and US.")
     note = store.snapshot(project["id"], "manual://replacement", "EU, US and Asia.", "manual")
-    replacement = store.remember(project["id"], {"kind": "fact", "key": "region-new", "content": "EU, US and Asia.",
-                                                 "supersedes": other["id"]}, [note["id"]])
+    replacement = as_person(store, project["id"], {"kind": "fact", "key": "region-new", "content": "EU, US and Asia.",
+                                                   "supersedes": other["id"]}, [note["id"]])
     assert [item["id"] for item in pending(store, project)["items"]] == [f"{third['id']}:{replacement['id']}"]
 
 

@@ -24,6 +24,8 @@ EVIDENCE_LABELS = {
 }
 _EVIDENCE_TIME = {"stated": "Stated", "observed": "Observed no later than", "mixed": "Mixed evidence"}
 BAR = ("quote-bar", "  | ")
+# The sensitivity class the inspector derives for a source or a record (sensitivity.py, #180).
+SENSITIVITY_LABELS = {"project": "project", "conversation": "conversation", "third_party": "third party"}
 
 
 def joined(parts) -> str:
@@ -56,6 +58,12 @@ def evidence_parts(item, translate):
     if not label:
         return []
     return [labelled(translate("Evidence"), translate(label), evidence_style(item.get("evidence_state")))]
+
+
+def sensitivity_parts(value, translate):
+    """The `Sensitivity:` line of a source or record detail; nothing for a value that is not a class."""
+    label = SENSITIVITY_LABELS.get(value.get("sensitivity")) if isinstance(value, dict) else None
+    return [labelled(translate("Sensitivity"), translate(label))] if label else []
 
 
 def _evidence_date(value):
@@ -95,9 +103,17 @@ def record_parts(value, translate):
         lines.append(labelled(translate("Version"), str(item["version"])))
     if item.get("source_ids"):
         lines.append(labelled(translate("Sources"), str(len(item["source_ids"]))))
+    lines += sensitivity_parts(value, translate)
 
     if isinstance(value.get("record"), dict):
         # Any record detail, including a task opened from the task list.
+        from .confirmation import confirmation_text
+        confirmation = confirmation_text(item, translate)
+        if confirmation:
+            # Who confirmed it (#177): a person here, a package that brought it (never verified here), or
+            # nobody on record. The sentence and the words that stand for a missing value are ours and
+            # translated; the names in it are escaped text from memory.
+            lines.append(labelled(translate("Confirmation"), confirmation))
         earliest = _evidence_date(metadata.get("evidence_earliest"))
         latest = _evidence_date(metadata.get("evidence_latest"))
         basis = metadata.get("evidence_basis")
@@ -141,6 +157,12 @@ def _finding_parts(letter, role, item, translate):
     latest, basis = str(item.get("evidence_latest") or "")[:10], item.get("evidence_basis")
     if latest and basis in _EVIDENCE_TIME:
         lines.append(labelled(translate(_EVIDENCE_TIME[basis]), latest))
+    from .confirmation import confirmation_text
+    confirmation = confirmation_text({"status": item.get("status"), "metadata": {"confirmation": item.get("confirmation")}},
+                                     translate)
+    if confirmation:
+        # Who stands behind each side (#177), before the person chooses one: a person here, a package, nobody.
+        lines.append(labelled(translate("Confirmation"), confirmation))
     lines.append(labelled(translate("Scope"), str(item.get("scope") or translate("whole project"))))
     if item.get("sources"):
         more = item.get("sources_total", 0) - len(item["sources"])

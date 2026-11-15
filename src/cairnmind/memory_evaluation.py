@@ -109,8 +109,9 @@ async def _evaluate(stores: list[Store], roots: list[Path], settings: list[Setti
     neighbor = destination.add_project("Unrelated local fixture", neighbor_root)
     private_marker = "other-project-" + uuid4().hex
     private_source = destination.snapshot(neighbor["id"], "fixture://private", private_marker, "manual")
-    destination.remember(neighbor["id"], {"kind": "fact", "content": private_marker,
-                                        "status": "confirmed"}, [private_source["id"]])
+    from .evaluation import _seeded
+    _seeded(destination, neighbor["id"], {"kind": "fact", "content": private_marker, "status": "confirmed"},
+            [private_source["id"]])
     neighbor_before = {table: _semantic_rows(_project_rows(destination, neighbor["id"], table))
                        for table in ("sources", "records", "record_revisions", "nodes", "edges")}
     cases = _cases(uuid4().hex[:12])

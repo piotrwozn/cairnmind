@@ -9,6 +9,8 @@ import time
 import pytest
 
 from cairnmind.store import Store
+
+from conftest import as_person, person_edit
 from cairnmind.verification import run_check, verification_status
 
 
@@ -86,9 +88,14 @@ def test_native_fulltext_update_delete_and_transaction_rollback(store, project):
 
 def test_record_version_conflict_and_supersede_history(store, project):
     s = source(store, project)
-    first = store.remember(project["id"], {"kind": "decision", "key": "auth", "content": "Use tokens", "status": "confirmed"}, [s["id"]])
-    changed = store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "Use signed tokens"}, [s["id"]])
-    assert changed["version"] == 2
+    first = as_person(store, project["id"], {"kind": "decision", "key": "auth", "content": "Use tokens"}, [s["id"]])
+    assert first["status"] == "confirmed"
+    # Only a person changes what a person confirmed (#177): any other write is refused and stores nothing.
+    with pytest.raises(ValueError, match="Only a person takes a confirmation away"):
+        store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "Use signed tokens"}, [s["id"]])
+    changed = person_edit(store, project["id"], {"id": first["id"], "expected_version": 1, "content": "Use signed tokens"}, [s["id"]])
+    # The person changed it and has not confirmed the new text yet.
+    assert changed["version"] == 2 and changed["status"] == "proposed"
     with pytest.raises(ValueError, match="version conflict"):
         store.remember(project["id"], {"id": first["id"], "expected_version": 1, "content": "stale update"}, [s["id"]])
     replacement = store.remember(project["id"], {"kind": "decision", "key": "auth", "content": "Use sessions", "supersedes": first["id"], "expected_version": 2}, [s["id"]])
@@ -353,7 +360,7 @@ def test_snapshot_invalidates_native_ann_and_lexical_current_flags(store, projec
     store.command("INSERT INTO embeddings CONTENT :row", {"row": row})
     store.command(f"INSERT INTO {index['type_name']} CONTENT :row", {"row": row})
     source(store, project, "Replacement authentication design")
-    assert store.query("SELECT is_current FROM chunks WHERE id='old-chunk'")[0]["is_current"] is False
+    assert not store.query("SELECT id FROM chunks WHERE id='old-chunk'")  # deleted with its source's version (#186)
     assert store.query("SELECT count(*) AS total FROM embeddings")[0]["total"] == 0
     assert store.query(f"SELECT count(*) AS total FROM {index['type_name']}")[0]["total"] == 0
 

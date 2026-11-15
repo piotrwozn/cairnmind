@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from .confirmation import PLAN_CONTEXT_KEPT, ConfirmationRefused, VerdictKept, kept_step_refusal, kept_verdict
 from .store import ORIGIN_METADATA, outcome_changed
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
 
@@ -189,6 +190,14 @@ class PlanManager:
                 raise ValueError("Plan constraints must be nonempty strings")
             plan_id = old["id"] if old else str(uuid4())
             previous = _tasks(tx, project_id, old) if old else []
+            # A person who confirms a plan confirms its title, goal and constraints with the steps (the audit
+            # hashes them). While a step still carries that confirmation, only a person changes them (#177).
+            differs = [name for name, new in (("title", title), ("goal", goal), ("constraints", constraints))
+                       if old and new != old[name]]
+            if differs and not self.store._persons_act() and any(
+                    kept_verdict(task) and (task["metadata"].get("confirmation") or {}).get("route") == "confirm_plan"
+                    for task in previous):
+                raise ConfirmationRefused(PLAN_CONTEXT_KEPT.format(them=" and ".join(differs)))
             existing_by_id = {task["id"]: task for task in previous}
             if adoption:
                 existing_by_id.update(adoption["tasks"])
@@ -303,16 +312,24 @@ class PlanManager:
                 sources = list(dict.fromkeys([source["id"]] + (existing["source_ids"] if existing else [])))
                 # Only a step whose stored result differs carries the writer's mark (decided inside _remember on
                 # what it stores, so a field the write drops counts too); an unchanged step keeps its own.
-                saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True,
-                                                  mark_only_changes=True)
+                try:
+                    saved[key] = self.store._remember(tx, project_id, record, sources, managed_batch=True,
+                                                      mark_only_changes=True)
+                except VerdictKept as refusal:
+                    # A step a person confirmed is changed only by a person (#177): the step is named.
+                    raise ConfirmationRefused(kept_step_refusal(key, refusal, bool(adoption))) from None
                 changed_steps |= outcome_changed(existing, saved[key]["content"], saved[key]["key"],
                                                  saved[key]["metadata"])
             for task_id, task in removed.items():
                 # Archiving a step changes nothing it says; its own mark, or none, stays.
                 with self.store.write_origin(None):
-                    self.store._remember(tx, project_id, {"id": task_id, "expected_version": task["version"],
-                        "status": "superseded", "metadata": {"plan_archived": True}},
-                        list(dict.fromkeys(task["source_ids"] + [source["id"]])), managed_batch=True)
+                    try:
+                        self.store._remember(tx, project_id, {"id": task_id, "expected_version": task["version"],
+                            "status": "superseded", "metadata": {"plan_archived": True}},
+                            list(dict.fromkeys(task["source_ids"] + [source["id"]])), managed_batch=True)
+                    except VerdictKept as refusal:
+                        raise ConfirmationRefused(kept_step_refusal(
+                            task["metadata"].get("step_key") or task["key"], refusal)) from None
             tasks = [saved[key] for key in definitions]
             # All vertices now exist; rebuild batch dependency edges as a final pass.
             for task in tasks:

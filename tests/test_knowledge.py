@@ -16,6 +16,8 @@ from cairnmind.config import Settings
 from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.retrieval import Retriever, public_record
 from cairnmind.store import Store
+
+from conftest import as_person
 from cairnmind.support import SUPPORT_SYSTEM
 
 
@@ -530,8 +532,9 @@ async def test_citation_catalog_never_expands_other_worktree_record_pointers(wor
                           {"project": project["id"]})
     source_a = next(row for row in sources if row["uri"] == str(first / "branch_private.py"))
     source_b = next(row for row in sources if row["uri"] == str(second / "policy.py"))
-    record = store.remember(project["id"], {"kind": "fact", "content": "Shared project note referencing earlier code",
-                                            "status": "confirmed"}, [source_a["id"]])
+    record = as_person(store, project["id"], {"kind": "fact",
+                                              "content": "Shared project note referencing earlier code"},
+                       [source_a["id"]])
     model = FakeOllama([calls(("records", {"query": record["id"]})),
                         {"content": "malformed final JSON"}, final(source_b["id"], public_text)])
     agent = KnowledgeAgent(store, settings, model)
@@ -1042,8 +1045,8 @@ def test_graph_reports_node_budget_truncation(workspace):
 async def test_missing_key_and_existing_key_conflict_are_preserved_as_proposals(workspace):
     store, project, settings = workspace
     previous, _ = document(store, project, "Use bearer tokens.", "decision://old")
-    original = store.remember(project["id"], {"kind": "decision", "key": "authentication",
-                                             "content": "Bearer tokens", "status": "confirmed"}, [previous["id"]])
+    original = as_person(store, project["id"], {"kind": "decision", "key": "authentication",
+                                                "content": "Bearer tokens"}, [previous["id"]])
     source, _ = document(store, project, "Use secure cookies. Also create tests.", "decision://new")
     response = {"content": json.dumps({"records": [
         {"kind": "decision", "key": "authentication", "content": "Use secure cookies", "evidence": "Use secure cookies."},
@@ -1440,8 +1443,9 @@ async def test_current_worktree_filters_native_fts_ann_graph_and_direct_source_r
     source_b = next(source for source in code_rows if source["metadata"]["root"] == str(root_b))
     sources_a = [source for source in code_rows if source["metadata"]["root"] == str(root_a)]
     shared, _ = document(store, project, "Organization keeps public API compatibility.", "manual://shared", kind="manual")
-    fact = store.remember(project["id"], {"kind": "fact", "content": "Organization keeps public API compatibility.",
-                                         "status": "confirmed"}, [shared["id"]])
+    fact = as_person(store, project["id"], {"kind": "fact",
+                                            "content": "Organization keeps public API compatibility."},
+                     [shared["id"]])
     scoped, _ = document(store, project, "Alpha deployment procedure", "manual://a-only", kind="manual",
                          metadata={"root": str(root_a)})
     store.remember(project["id"], {"kind": "fact", "content": "Alpha deployment procedure",
@@ -1489,8 +1493,10 @@ async def test_current_worktree_filters_native_fts_ann_graph_and_direct_source_r
 
 def _record(store, project, key, status, content):
     source = store.snapshot(project["id"], f"notes://{key}", f"Note for {key}", "document")
-    return store.remember(project["id"], {"kind": "decision", "key": key, "status": status,
-                                          "content": content}, [source["id"]])
+    record = {"kind": "decision", "key": key, "status": status, "content": content}
+    if status == "confirmed":
+        return as_person(store, project["id"], record, [source["id"]])  # Only a person confirms (#177).
+    return store.remember(project["id"], record, [source["id"]])
 
 
 def _record_ids(retriever, project, query, limit=8):

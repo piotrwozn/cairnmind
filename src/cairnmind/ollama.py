@@ -16,6 +16,9 @@ import httpx
 
 from .config import Settings
 
+# What a model list may give as a model's digest; anything else counts as no digest (#192).
+MODEL_DIGEST = re.compile(r"(?:sha256:)?[0-9a-f]{12,128}")
+
 
 class OllamaUnavailable(RuntimeError):
     """The configured local runtime or model could not satisfy a request."""
@@ -234,6 +237,17 @@ class Ollama:
                     raise OllamaUnavailable("Local model has no digest; cannot version its embeddings")
                 return f"{name}@{digest}"
         raise OllamaUnavailable(f"Required local model {name!r} is not installed")
+
+    async def model_digest(self, name: str) -> str | None:
+        """The digest the model list gives for ``name``, or None: not listed, listed without one (what a
+        server other than Ollama lists, memory_openai.OpenAICompatible), or not shaped as a digest."""
+        cached = self._model_cache
+        data = cached[1] if cached and time.monotonic() - cached[0] < 30 else await self.models()
+        for model in data["models"]:
+            if isinstance(model, dict) and (model.get("name") == name or model.get("model") == name):
+                digest = model.get("digest")
+                return digest if isinstance(digest, str) and MODEL_DIGEST.fullmatch(digest) else None
+        return None
 
     async def aclose(self) -> None:
         if self._client:

@@ -30,6 +30,12 @@ from .retrieval import Retriever
 from .store import Store
 
 
+def _seeded(store, project_id, record, sources):
+    """A fixture record stored as confirmed: marked as evaluation seed data, never as a person's act (#177)."""
+    from .confirmation import SEED_ROUTE, remember_as_person
+    return remember_as_person(store, project_id, record, sources, route=SEED_ROUTE)
+
+
 @dataclass(frozen=True)
 class GoldenCase:
     key: str
@@ -202,14 +208,14 @@ def _seed(store: Store, root: Path, other: Path) -> tuple[dict, list[GoldenCase]
     private = store.add_project("Other isolated fixture", other)
     evidence = store.snapshot(project["id"], "fixture://canonical", "Canonical fixture: use ArcadeDB. "
         "Constraint: local inference only. Next action: run named unit profile.", kind="manual")
-    previous = store.remember(project["id"], {"kind": "decision", "key": "engine", "status": "confirmed",
+    previous = _seeded(store, project["id"], {"kind": "decision", "key": "engine", "status": "confirmed",
         "content": "Historical engine: SQLite."}, [evidence["id"]])
-    current = store.remember(project["id"], {"id": previous["id"], "kind": "decision", "key": "engine",
+    current = _seeded(store, project["id"], {"id": previous["id"], "kind": "decision", "key": "engine",
         "expected_version": previous["version"], "status": "confirmed", "content": "Current engine: ArcadeDB."},
         [evidence["id"]])
     tasks = {}
     for name in ("needs_test", "needs_review", "done", "blocked"):
-        tasks[name] = store.remember(project["id"], {"kind": "task", "key": "step-" + name,
+        tasks[name] = _seeded(store, project["id"], {"kind": "task", "key": "step-" + name,
             "status": "confirmed", "content": "Fixture task " + name,
             "metadata": {"state": name, "acceptance_criteria": ["Exact result is visible"]
                          if name == "todo" else []}}, [evidence["id"]])
@@ -221,14 +227,14 @@ def _seed(store: Store, root: Path, other: Path) -> tuple[dict, list[GoldenCase]
           "metadata": {"acceptance_criteria": ["Exact result is visible"]}}],
         idempotency_key="fixture-plan", worktree=str(root), activate=True)
     tasks["todo"] = managed["tasks"][0]
-    dependent = store.remember(project["id"], {"kind": "task", "status": "confirmed",
+    dependent = _seeded(store, project["id"], {"kind": "task", "status": "confirmed",
         "content": "Dependent fixture task", "metadata": {"depends_on": [tasks["todo"]["id"]]}},
         [evidence["id"]])
     store.remember(project["id"], {"kind": "decision", "status": "proposed",
         "content": "Proposed engine: SurrealDB; this was never approved."}, [evidence["id"]])
     secret = "other-project-" + uuid4().hex
     other_source = store.snapshot(private["id"], "fixture://private", "Secret marker: " + secret, kind="manual")
-    store.remember(private["id"], {"kind": "fact", "content": "Secret marker: " + secret,
+    _seeded(store, private["id"], {"kind": "fact", "content": "Secret marker: " + secret,
         "status": "confirmed"}, [other_source["id"]])
     values = [
         ("engine", {"engine": "ArcadeDB"}, False),
