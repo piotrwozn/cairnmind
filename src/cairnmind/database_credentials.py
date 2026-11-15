@@ -194,19 +194,27 @@ def problem(settings) -> str | None:
         return (f"ArcadeDB on {parsed.host}, a host other than this machine, must be reached with https://; "
                 "plain http:// is allowed only for 127.0.0.1, localhost and ::1.")
     if settings.arcade_user == "root":
-        return (f"ArcadeDB user root is refused for {parsed.host}, a host other than this machine. Create a "
-                "user with rights on this database only (cairnmind db create-user) and set arcade_user.")
+        refusal = (f"ArcadeDB user root is refused for {parsed.host}, a host other than this machine. Create a "
+                   "user with rights on this database only (cairnmind db create-user) and set arcade_user.")
+        if not settings.arcade_password:
+            # Everything the command lacks at once (#242): the password and the database too, not root alone.
+            refusal += " " + _no_password(parsed.host, origin) + _unset(settings, user=False)
+        return refusal
     if not USER_NAME.fullmatch(settings.arcade_user or ""):
         return "arcade_user must be a user name of letters, digits, _ and -, starting with a letter."
     if not settings.arcade_password:
-        if origin.get("password") == "config_refused":
-            return (f"The password stored in config.json is used only for the engine on this machine, not for "
-                    f"{parsed.host}: {PASSWORD_HELP}.")
-        return f"ArcadeDB on {parsed.host} needs a password: {PASSWORD_HELP}.{_unset(settings)}"
+        return _no_password(parsed.host, origin) + _unset(settings)
     return None
 
 
-def _unset(settings) -> str:
+def _no_password(host: str, origin: dict) -> str:
+    if origin.get("password") == "config_refused":
+        return (f"The password stored in config.json is used only for the engine on this machine, not for "
+                f"{host}: {PASSWORD_HELP}.")
+    return f"ArcadeDB on {host} needs a password: {PASSWORD_HELP}."
+
+
+def _unset(settings, *, user: bool = True) -> str:
     """The other settings a command without a password also lacks, and what it would use in their place.
 
     Only named, not refused (#242): root on this machine and a database name derived from the data directory
@@ -215,14 +223,14 @@ def _unset(settings) -> str:
     """
     origin = getattr(settings, "_origin", None) or {}
     missing = []
-    if origin.get("user") == "default":
-        missing.append(f"arcade_user ({settings.arcade_user} would be used)")
+    if user and origin.get("user") == "default":
+        missing.append(f"arcade_user ({settings.arcade_user}, the default, would be used)")
     if origin.get("database") == "derived":
         missing.append(f"arcade_database (the name {settings.arcade_database}, derived from this data directory's "
                        "path, would be used)")
     if not missing:
         return ""
-    return (" Not set either: " + " and ".join(missing) + ". Set them in config.json, or as CAIRNMIND_ARCADE_USER and "
+    return (" Not set either, or left at the default: " + " and ".join(missing) + ". Set them in config.json, or as CAIRNMIND_ARCADE_USER and "
             "CAIRNMIND_ARCADE_DATABASE, to the user and the database created for this installation.")
 
 

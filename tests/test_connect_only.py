@@ -233,13 +233,37 @@ def test_engine_status_with_only_the_address_is_refused_and_names_what_is_missin
     assert status["available"] is None and "needs the password set where that server runs" in status["error"]
     settings = Settings.load(data)
     message = words(status["error"])
-    assert "arcade_user (root would be used)" in message
+    assert "arcade_user (root, the default, would be used)" in message
     assert f"arcade_database (the name {settings.arcade_database}, derived from this data directory's path" in message
+    # The first command saved config.json with the default root in it (#242 review): later commands still
+    # name the user, which was never set on purpose.
+    assert json.loads((data / "config.json").read_text())["arcade_user"] == "root"
+    later = words(json.loads(cli(data, "engine", "status").output)["error"])
+    assert "arcade_user (root, the default, would be used)" in later and "arcade_database (the name" in later
     # With the user and the database set, only the password is named.
     monkeypatch.setenv("CAIRNMIND_ARCADE_USER", "cairnmind")
     monkeypatch.setenv("CAIRNMIND_ARCADE_DATABASE", "cairnmind")
     named = words(json.loads(cli(data, "engine", "status").output)["error"])
     assert "needs the password" in named and "arcade_user" not in named and "arcade_database" not in named
+
+
+def test_another_host_with_only_the_address_names_root_the_password_and_the_database(tmp_path, test_engine,
+                                                                                     monkeypatch):
+    """On a host other than this machine the root refusal came alone (#242 review): it named neither the
+    missing password nor the derived database name. A user set in config.json is not called the default."""
+    from cairnmind.database_credentials import problem
+    data = data_directory(tmp_path)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example.org:2490")
+    settings = Settings.load(data)
+    said = words(problem(settings))
+    assert "ArcadeDB user root is refused for db.example.org" in said
+    assert "ArcadeDB on db.example.org needs a password" in said
+    assert f"arcade_database (the name {settings.arcade_database}, derived" in said
+    assert "arcade_user (root" not in said  # the root refusal already says to set it
+    config = json.loads((data / "config.json").read_text())
+    (data / "config.json").write_text(json.dumps({**config, "arcade_user": "cmuser"}))
+    named = words(problem(Settings.load(data)))
+    assert "needs a password" in named and "arcade_user" not in named and "arcade_database (the name" in named
 
 
 def test_two_different_addresses_are_refused_and_both_settings_are_named(tmp_path, test_engine, monkeypatch):
