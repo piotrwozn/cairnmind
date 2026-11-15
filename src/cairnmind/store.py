@@ -8,10 +8,8 @@ import gzip
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import re
-import tempfile
 import threading
 import time
 from uuid import uuid4
@@ -19,6 +17,7 @@ from uuid import uuid4
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
+from .store_backup import payload_digest, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -365,12 +364,11 @@ class Store:
                     return
                 # Snapshot only existing types. Hold the writer lock through
                 # backup, additive DDL, and the version-last commit.
-                with self.client.transaction() as tx:
-                    payload = self._export_snapshot(tx, None,
-                        LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
-                        version + 1)
                 destination = self.data_dir / "backups" / f"before-schema-{version}-to-{SCHEMA_VERSION}-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
-                self._write_backup(destination, payload)
+                with self.client.transaction() as tx:
+                    self._write_backup(destination, streamed_export(tx,
+                        LEGACY_EXPORT_TYPES if version == 1 else V03_EXPORT_TYPES if version == 2 else V04_EXPORT_TYPES,
+                        version + 1))
             collections = ((*V03_DOCUMENT_TYPES, *V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 1
                            else (*V04_DOCUMENT_TYPES, *V05_DOCUMENT_TYPES) if version == 2
                            else V05_DOCUMENT_TYPES if version == 3 else DOCUMENT_TYPES)
@@ -1374,31 +1372,13 @@ class Store:
         destination = Path(destination).expanduser().resolve()
         if destination.is_dir():
             destination /= f"cairnmind-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid4().hex[:8]}{BACKUP_SUFFIXES[0]}"
-        return self._write_backup(destination, self.export())
+        # Rows are read, hashed and compressed a page at a time inside one transaction (#196).
+        with self.transaction() as tx:
+            return self._write_backup(destination, streamed_export(tx, EXPORT_TYPES, 5))
 
     @staticmethod
     def _write_backup(destination, payload):
-        destination = Path(destination).expanduser().resolve()
-        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        envelope = {"format": BACKUP_FORMATS[0], "version": 1, "sha256": hashlib.sha256(json_text(payload).encode()).hexdigest(), "payload": payload}
-        fd, name = tempfile.mkstemp(prefix=".cairnmind-backup-", dir=destination.parent)
-        temporary = Path(name)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
-                    compressed.write(json_text(envelope).encode())
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            temporary.replace(destination)
-            directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-            return destination
-        finally:
-            temporary.unlink(missing_ok=True)
+        return write_backup(destination, payload)
 
     @staticmethod
     def _validated_backup(path):
@@ -1408,7 +1388,7 @@ class Store:
             if not isinstance(envelope, dict) or envelope.get("format") not in BACKUP_FORMATS or envelope.get("version") != 1:
                 raise ValueError("This file is not a supported Cairnmind ArcadeDB backup")
             payload = envelope["payload"]
-            if hashlib.sha256(json_text(payload).encode()).hexdigest() != envelope.get("sha256"):
+            if payload_digest(payload) != envelope.get("sha256"):
                 raise ValueError("Backup checksum mismatch")
             if not isinstance(payload, dict):
                 raise ValueError("Backup payload must be an object")
