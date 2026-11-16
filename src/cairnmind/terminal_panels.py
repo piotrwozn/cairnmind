@@ -374,13 +374,18 @@ class SidebarApp(BasePanel):
     async def workspace_changed(self, value):
         self.render_project()
         if value.get("launch_errors") or value.get("last_error"):
-            text = self.launch_notice(value)
-            if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
-                self.notice(text)  # once while the line shows it, not again on every change of the state
+            self.post_launch_notice(value)
         else:
             self._update_launch_feedback(value)
         from .terminal_record_kinds import check_partial
         check_partial(self, value)  # an unknown transcript record kind that blocks the packet (#210)
+
+    def post_launch_notice(self, value):
+        """The launch problem, once while the line shows it: the state poll and Start work or Open both
+        report it, and a change of the state that does not change the text adds nothing to Notices."""
+        text = self.launch_notice(value)
+        if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
+            self.notice(text)
 
     def notice(self, value, kind="info"):
         # A form result or another action owns its own message. Later lifecycle
@@ -388,6 +393,15 @@ class SidebarApp(BasePanel):
         self._launch_feedback = None
         self._launch_feedback_state = None
         super().notice(value, kind)
+        self.keep_focus_in_view()
+
+    def keep_focus_in_view(self):
+        """A notice of several rows shortens the scrolling project page: the focused button stays visible."""
+        def show():
+            focused = self.focused
+            if focused is not None and focused.is_attached:
+                focused.scroll_visible(animate=False)
+        self.call_after_refresh(show)
 
     def selected_native_status(self, value=None):
         """Read the exact selected slot from fresh workspace data, not cached GETs."""
@@ -432,6 +446,7 @@ class SidebarApp(BasePanel):
                        "Assistant started." if run["lifecycle"] == "running" else
                        "Session ended or changed. Review the project before choosing Start work.")
         super().notice(message)
+        self.keep_focus_in_view()
 
     def launch_notice(self, value):
         codes = [row.get("code") for row in value.get("launch_errors", [])]
@@ -684,7 +699,7 @@ class SidebarApp(BasePanel):
                     (returning["id"], returning["generation"], returning["slot_id"], returning["client"])
                     and s.get("lifecycle") in {"starting", "running", "stopping"} for s in current.get("slots", []))
             if current.get("launch_errors") or current.get("last_error"):
-                self.notice(self.launch_notice(current))
+                self.post_launch_notice(current)  # the state poll may have said it already
             elif intent == "work" and not returning:
                 self._update_launch_feedback(current, begin=True)
             else:
@@ -1269,7 +1284,7 @@ class SidebarApp(BasePanel):
             if profile["client"] == "copilot":
                 result = {**result, "message": self.t("Local setup only. Use Connect GitHub account to sign in; Choose model checks available models.")}
             elif hint := connection_hint([result.get("code")], self.t):
-                result = {**result, "message": hint}  # before the bare code, which stays for a report
+                result = {**result, "message": hint}  # the bare code stays under Technical details
             await self.push_screen_wait(MessageModal("Status", result))
 
     @work(group="sidebar-sessions", exclusive=True, exit_on_error=False)
