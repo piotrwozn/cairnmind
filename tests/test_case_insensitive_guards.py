@@ -144,6 +144,51 @@ async def test_a_short_alias_does_not_pass_the_gate_for_files_that_configure_exe
     assert list((root / ".claude").iterdir()) == [] and list((root / ".github" / "workflows").iterdir()) == []
 
 
+# Windows resolves these to `.git` (a trailing dot or space is dropped, a backslash separates, `::$INDEX_ALLOCATION`
+# names the directory itself); elsewhere they are entries that `git add` refuses.
+_WINDOWS_SPELLINGS = [".git./hooks/pre-commit", ".git /hooks/x", ".GIT\\hooks\\x", ".GIT::$INDEX_ALLOCATION/hooks/x",
+                      "sub/.git../config", "src/file:stream", "src/notes.", "src/notes ", "src\\app.py"]
+
+
+@pytest.mark.parametrize("path", _WINDOWS_SPELLINGS)
+async def test_every_file_tool_refuses_parts_that_windows_rewrites(tmp_path, path):
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "notes").write_text("x")
+    executor = make_executor(tmp_path, root)
+    for name, arguments in (("write_file", {"path": path, "content": "#!/bin/sh\n", "expected_sha256": None}),
+                            ("apply_patch", {"path": path, "expected_sha256": digest("x"), "old_text": "x",
+                                             "new_text": "y"}),
+                            ("delete_file", {"path": path, "expected_sha256": digest("x")}),
+                            ("read_file", {"path": path}), ("list_files", {"path": path}),
+                            ("search_files", {"path": path, "query": "x"}),
+                            ("run_command", {"command": "true", "cwd": path})):
+        result = await executor.execute(name, arguments)
+        assert not result["ok"] and result["error_code"] == "invalid_path", (name, path)
+    assert not executor.journal.pending_actions()
+    assert sorted(item.name for item in root.iterdir()) == ["src"]
+    assert [item.name for item in (root / "src").iterdir()] == ["notes"]
+
+
+async def test_ordinary_names_near_those_spellings_still_work(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    executor = make_executor(tmp_path, root)
+    for path in (".gitignore", ".gitkeep","x.git/a", "my notes/a b.txt", ".env.local", "a.b.c/d.e"):
+        result = await executor.execute("write_file", {"path": path, "content": "x", "expected_sha256": None})
+        assert result["ok"], (path, result)
+        assert (root / path).read_text() == "x"
+
+
+async def test_a_listing_leaves_out_names_that_windows_rewrites(tmp_path):
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    for name in ("app.py", "notes.", "a:b"):
+        (root / "src" / name).write_text("x")
+    listed = await make_executor(tmp_path, root).execute("list_files", {"recursive": True})
+    assert [row["path"] for row in listed["files"]] == ["src", "src/app.py"]
+
+
 # Third-party MCP servers: the worktree check ----------------------------------------------------------------
 
 def test_a_server_in_the_worktree_spelled_with_other_case_is_refused(caseless):
