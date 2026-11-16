@@ -120,10 +120,12 @@ This is the backup to go back to: keep it until you are sure you stay on 0.11.0.
 Finish and close the coding sessions started from the workspace, then stop what keeps running in the background:
 
 ```bash
-cairnmind workspace stop
+cairnmind workspace stop --clients
 cairnmind cockpit stop
 cairnmind stop
 ```
+
+`--clients` also stops the coding sessions that belong to the workspace. Without it, the finished pane of a client run can keep the session's terminal server alive, and the installer then stops and asks you to close it.
 
 ### 3. Get 0.11.0 and run the installer
 
