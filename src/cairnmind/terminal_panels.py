@@ -19,6 +19,7 @@ from . import terminal_theme
 from .config import Settings
 from .mcp_failure_notice import announce as announce_mcp_failures
 from .terminal_safe import plain
+from .terminal_connection_hints import NOT_STARTED, connection_hint
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
 from .terminal_i18n_messages import broker_error_text
@@ -373,11 +374,19 @@ class SidebarApp(BasePanel):
     async def workspace_changed(self, value):
         self.render_project()
         if value.get("launch_errors") or value.get("last_error"):
-            self.notice(self.launch_notice(value))
+            self.post_launch_notice(value)
         else:
             self._update_launch_feedback(value)
         from .terminal_record_kinds import check_partial
         check_partial(self, value)  # an unknown transcript record kind that blocks the packet (#210)
+
+    def post_launch_notice(self, value, about=None):
+        """The launch problem, once while the line shows it: the state poll and Start work, Open or Run
+        next stage all report it, and a change of the state that does not change the text adds nothing
+        to Notices. `about` is the project a press was for (see notice_for)."""
+        text = self.launch_notice(value)
+        if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
+            self.notice_for(about, text) if about else self.notice(text)
 
     def notice(self, value, kind="info"):
         # A form result or another action owns its own message. Later lifecycle
@@ -385,6 +394,15 @@ class SidebarApp(BasePanel):
         self._launch_feedback = None
         self._launch_feedback_state = None
         super().notice(value, kind)
+        self.keep_focus_in_view()
+
+    def keep_focus_in_view(self):
+        """A notice of several rows shortens the scrolling project page: the focused button stays visible."""
+        def show():
+            focused = self.focused
+            if focused is not None and focused.is_attached:
+                focused.scroll_visible(animate=False)
+        self.call_after_refresh(show)
 
     def selected_native_status(self, value=None):
         """Read the exact selected slot from fresh workspace data, not cached GETs."""
@@ -429,10 +447,14 @@ class SidebarApp(BasePanel):
                        "Assistant started." if run["lifecycle"] == "running" else
                        "Session ended or changed. Review the project before choosing Start work.")
         super().notice(message)
+        self.keep_focus_in_view()
 
     def launch_notice(self, value):
-        if any(row.get("code") == "background_inference_deferred" for row in value.get("launch_errors", [])):
+        codes = [row.get("code") for row in value.get("launch_errors", [])]
+        if "background_inference_deferred" in codes:
             return "Assistant started. Memory processing may still be paused. Use More → Queue → Process memory."
+        if hint := connection_hint(codes, self.t):
+            return self.t(NOT_STARTED) + " " + hint  # what to do, not only that something needs attention
         return self.t("Operation needs attention.") + " " + self.t("Connections")
 
     def show_page(self, page):
@@ -678,7 +700,7 @@ class SidebarApp(BasePanel):
                     (returning["id"], returning["generation"], returning["slot_id"], returning["client"])
                     and s.get("lifecycle") in {"starting", "running", "stopping"} for s in current.get("slots", []))
             if current.get("launch_errors") or current.get("last_error"):
-                self.notice(self.launch_notice(current))
+                self.post_launch_notice(current)  # the state poll may have said it already
             elif intent == "work" and not returning:
                 self._update_launch_feedback(current, begin=True)
             else:
@@ -933,17 +955,20 @@ class SidebarApp(BasePanel):
                         fields[index] = Field("model", self.t("Model"), "auto")
 
             async def save(values):
-                from .api_profiles import normalize_profile
+                from .api_profiles import _RANGES, normalize_profile
                 defaults = {f.name: f.value for f in profile_fields(old, client=client, provider=provider)}
                 values = {**defaults, **values}
                 for field in fields:
-                    if field.name in {"max_model_calls", "max_output_tokens", "context_window_tokens", "max_tool_calls", "max_turn_seconds", "command_timeout_seconds"}:
+                    if field.name in _RANGES:
+                        # The range the profile check applies, named with its field, before anything is sent.
+                        minimum, maximum = _RANGES[field.name]
                         try:
-                            valid = int(values[field.name]) > 0
+                            valid = minimum <= int(values[field.name]) <= maximum
                         except ValueError:
                             valid = False
                         if not valid:
-                            raise FieldError(field.name, self.t("Enter a positive whole number."))
+                            raise FieldError(field.name, self.t(field.label) + ": " + self.t(
+                                "Enter a whole number from {minimum} to {maximum}.", minimum=minimum, maximum=maximum))
                 try:
                     updated = normalize_profile(profile_from_form(values, identifier=identifier, client=client, provider=provider))
                 except ValueError as exc:
@@ -1259,6 +1284,8 @@ class SidebarApp(BasePanel):
             result = await self.request("GET", "/api/auth", params={"client": profile["client"]}) if profile["client"] in {"codex", "claude"} else await self.request("GET", base + "/status")
             if profile["client"] == "copilot":
                 result = {**result, "message": self.t("Local setup only. Use Connect GitHub account to sign in; Choose model checks available models.")}
+            elif hint := connection_hint([result.get("code")], self.t):
+                result = {**result, "message": hint}  # the bare code stays under Technical details
             await self.push_screen_wait(MessageModal("Status", result))
 
     @work(group="sidebar-sessions", exclusive=True, exit_on_error=False)

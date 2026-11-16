@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
+from .check_profile_messages import MESSAGES as CHECK_PROFILE_MESSAGES
+from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
@@ -257,7 +259,10 @@ CATALOG = {
     "Local setup only. Use Connect GitHub account to sign in; Choose model checks available models.": "To stan lokalnej konfiguracji. Połącz konto GitHub służy do logowania; Wybierz model sprawdza dostępne modele.",
     "The project changed. Close this form and open it again.": "Projekt zmienił się. Zamknij formularz i otwórz go ponownie.",
     "Enter a whole number from 1 to 10080.": "Wpisz liczbę całkowitą od 1 do 10080.",
+    "Enter a whole number from {minimum} to {maximum}.": "Wpisz liczbę całkowitą od {minimum} do {maximum}.",
     "{count} items · read only": "{count} wpisów · tylko odczyt", "More pages available": "Dalsza strona dostępna",
+    "1 item · read only": "1 wpis · tylko odczyt",
+    "Review saved with an audit note.": "Ocena zapisana z audytem.", "Save dispute": "Zapisz zakwestionowanie",
     "Review changes confidence; it does not complete a task.": "Ocena zmienia pewność; nie kończy zadania.",
     "Review was not retried. The current version was reloaded.": "Ocena nie została ponowiona. Odczytano aktualną wersję.",
     "Memory updates": "Aktualizacje pamięci", "Account login": "Logowanie konta",
@@ -289,7 +294,7 @@ CATALOG = {
     "Codex — ChatGPT account": "Codex — konto ChatGPT", "Claude Code — Claude account": "Claude Code — konto Claude",
     "GitHub Copilot — GitHub account": "GitHub Copilot — konto GitHub", "Ollama — local models": "Ollama — modele lokalne",
     "OpenAI — API key": "OpenAI — klucz API", "Anthropic — API key": "Anthropic — klucz API", "OpenAI-compatible API": "API zgodne z OpenAI",
-    "Ctrl+B, then Space: search all commands\n"
+    "Ctrl+B, then Space: search the main commands\n"
     "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
     "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
     "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
@@ -303,7 +308,7 @@ CATALOG = {
     "Graph: a switches between all memory and the project; r resets the camera; Backspace goes up.\n"
     "Native assistants keep their own shortcuts, paste, Ctrl+C and approval dialogs.\n"
     "Memory readiness, session activity and terminal control are separate states.":
-    "Ctrl+B, potem Spacja: wyszukaj polecenie\n"
+    "Ctrl+B, potem Spacja: wyszukaj jedno z głównych poleceń\n"
     "Ctrl+B, potem p / 1 / 2 / i / g: projekty / asystent / drugi asystent / pamięć / graf\n"
     "Ctrl+B, potem Tab: następny widok\nCtrl+B, potem z: powiększ lub przywróć panele\n"
     "Ctrl+B, potem n: zapisz ustalenie w pamięci (Ctrl+S zapisuje, Esc zamyka)\n"
@@ -612,8 +617,9 @@ CATALOG.update({
     "C-b Space: menu · C-b ?: help · C-b d: detach": "C-b Spacja: menu · C-b ?: pomoc · C-b d: odłącz",
     "C-b ?: help": "C-b ?: pomoc", "Read only · C-b d: detach": "Tylko odczyt · C-b d: odłącz",
     "C-b d: detach": "C-b d: odłącz",
+    "READ ONLY: C-b d, then cairnmind workspace takeover": "TYLKO ODCZYT: C-b d, potem cairnmind workspace takeover",
     # Why a kept ACK went stale, beside "stale" in the pane's border (workspace.STALE_WORDS, #161).
-    "memory changed after ACK": "pamięć zmieniona po ACK", "new packet without ACK": "nowy pakiet bez ACK",
+    "project changed after ACK": "projekt zmieniony po ACK", "new packet without ACK": "nowy pakiet bez ACK",
     "ACK does not match packet": "ACK nie pasuje do pakietu", "scope cannot be read": "nie można odczytać zakresu",
     "session continuity broken": "przerwana ciągłość sesji",
     # Pane and control words on the pane's border (workspace_border, #208); the others are shared.
@@ -621,6 +627,8 @@ CATALOG.update({
 })
 CATALOG.update(MESSAGES)  # fixed backend messages (#153)
 CATALOG.update(MCP_FAILURE_MESSAGES)  # a third-party MCP server that did not start (#209)
+CATALOG.update(CONNECTION_HINT_MESSAGES)  # a connection key that is missing or unusable (#243)
+CATALOG.update(CHECK_PROFILE_MESSAGES)  # a check profile the worktree does not declare (#243)
 CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
@@ -655,6 +663,20 @@ def tr(text, language="en", **values):
     english = LEGACY.get(text, text)
     translated = CATALOG.get(english, text if text in LEGACY else english) if language == "pl" else english
     return translated.format(**values) if values else translated
+
+
+# A Polish count of 2-4, 22-24, … (never 12-14) takes this form; 5 and more take the catalog's form.
+FEW = {"{count} items · read only": "{count} wpisy · tylko odczyt"}
+
+
+def tr_count(one, many, count, language="en"):
+    """`one` for exactly 1, `many` for any other count, in the forms the language has for that count."""
+    if count == 1:
+        return tr(one, language, count=count)
+    if (language == "pl" and many in FEW and type(count) is int
+            and count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14)):
+        return FEW[many].format(count=count)
+    return tr(many, language, count=count)
 
 
 def language_for(settings):

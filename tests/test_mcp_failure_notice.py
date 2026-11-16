@@ -26,6 +26,8 @@ from test_workspace_stage_scope import notice_of, wait_until
 SECRET = "SERVER_SAID_PRIVATE_TEXT"
 REASON_EN = "its program did not start or stopped during its start"
 REASON_PL = "jego program nie uruchomił się albo zakończył się w trakcie startu"
+MISSING_EN = "its program does not exist or cannot be run on this computer"
+MISSING_PL = "jego programu nie ma albo nie da się go uruchomić na tym komputerze"
 
 
 def started_run(runner, project, servers):
@@ -210,22 +212,22 @@ def as_shown(rows, project):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("language,reason", [("en", REASON_EN), ("pl", REASON_PL)])
+@pytest.mark.parametrize("language,reason", [("en", MISSING_EN), ("pl", MISSING_PL)])
 async def test_acceptance_a_missing_program_is_one_notice_and_stays_in_notices(tmp_path, monkeypatch, runtime,  # noqa: F811
                                                                                language, reason):
     # The whole way: the host's fixed code, the report through the broker's route, the run record, the
-    # sidebar's poll. The program does not exist.
+    # sidebar's poll. The program does not exist, and the notice says so (#240).
     runner, _, project, _, _ = runtime
     host = McpHost([{"id": "gone", "command": "/nonexistent/server"}], worktree=tmp_path, reserved=set())
     events = await host.start()
-    assert events == [("mcp_server_failed", {"server_id": "gone", "code": "start_failed"})]
+    assert events == [("mcp_server_failed", {"server_id": "gone", "code": "program_unavailable"})]
     run = started_run(runner, project, [mcp_server("gone", command="/nonexistent/server", args=())])
     assert post_report(runner, run, events[0][1]).status_code == 200
     app, shown = await sidebar_with(tmp_path, monkeypatch, lambda: as_shown(runner.list_runs(), shown), language)
     async with app.run_test(size=(120, 35)) as pilot:
         await settle(app, pilot)
         await wait_until(pilot, lambda: "gone" in notice_of(app))
-        assert reason in notice_of(app) and "start_failed" not in notice_of(app)
+        assert reason in notice_of(app) and "program_unavailable" not in notice_of(app)
         for _ in range(3):  # later polls: still one notice, not one per poll
             await app.load_state()
         entries = [entry for entry in app.notice_history.entries if "gone" in entry.text]
@@ -350,7 +352,8 @@ def test_every_code_the_host_reports_has_a_reason_in_both_languages():
     from cairnmind.terminal_agent_i18n import tr as agent_tr
     from cairnmind.terminal_i18n import tr
     produced = set(mcp_host._START_CODES.values()) | {"start_failed", "start_timeout", "protocol_unsupported",
-                                                      "catalogue_invalid", "definition_refused"}
+                                                      "catalogue_invalid", "definition_refused",
+                                                      "program_unavailable"}
     assert produced == START_FAILURE_CODES and START_FAILURE_CODES <= set(REASONS)
     for code in REASONS:
         for translate in (tr, agent_tr):

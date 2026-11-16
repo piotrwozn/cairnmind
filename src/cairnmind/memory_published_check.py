@@ -185,10 +185,12 @@ def payload_of(project_id, records, plans, sources):
     return payload
 
 
-def check_files(files, rules=None, *, secrets=True):
+def check_files(files, rules=None, *, secrets=True, whole=True):
     """Phase 1 of an import: (tree, errors). The tree is None whenever there is an error, a secret included.
 
-    `secrets=False` checks the structure only; the publisher scans on its own terms (Publisher.publish)."""
+    `secrets=False` checks the structure only; the publisher scans on its own terms (Publisher.publish).
+    `whole=False` checks each file alone and skips what holds between files: the publisher checks the tree
+    on disk that way, since the files it writes may complete it (a published file that went missing, #239)."""
     from .memory import _parse, _validate
     errors = []
     for path, raw in sorted(files.items()):
@@ -235,11 +237,12 @@ def check_files(files, rules=None, *, secrets=True):
     if errors:
         return None, errors
     cross, sources = _cross_file(records, plans, paths)
-    if cross:
+    if cross and whole:
         return None, cross
     payload = payload_of(project_id, records, plans, sources)
     try:
-        _validate(payload, project_id, graph=False)
+        if whole:
+            _validate(payload, project_id, graph=False)
     except ValueError as exc:
         return None, [("", f"the tree as a whole is invalid: {exc}")]
     hits = scan({"records": records, "plans": plans, "paths": paths}, rules) if secrets else []

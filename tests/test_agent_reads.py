@@ -168,6 +168,9 @@ async def test_slices_that_each_arrive_whole_allow_a_full_rewrite(setup):
     provider = ScriptedProvider(
         reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
         *slices, rewrite, reply(text="Done."))
+    # Three slices and a 28 KB rewrite do not fit the default 32k Ollama window, whose provider check would
+    # refuse the last request; the engine asks for compaction before that (#240). This test is about reads.
+    setup[2]["limits"] = {"context_window_tokens": 131072}
     agent = engine(setup, provider, memory)
     result = await agent.turn("Rename the first line")
     assert result["status"] == "completed"

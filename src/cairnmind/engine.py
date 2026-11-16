@@ -1,6 +1,7 @@
 """Pinned, checksum-verified ArcadeDB distribution and local Java process lifecycle."""
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -8,7 +9,9 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -26,6 +29,16 @@ def runtime_dir(settings: Settings) -> Path:
 
 
 LOG_BYTES, LOG_COPIES, MAX_LOG_COPIES = 10 * 1024 * 1024, 3, 20
+
+
+def stopped_engine_advice(error: str) -> str:
+    """What `engine status` says for a transport failure: only a refused connection means "not running";
+    a timeout or a broken answer may come from an engine that is starting or busy, so it keeps its cause."""
+    cause = error.partition("(")[2].partition(")")[0]
+    if cause == "ConnectError":
+        return "Local ArcadeDB is not running; start it with `cairnmind engine start`."
+    return (f"Local ArcadeDB is not reachable ({cause or 'unknown error'}); it may be starting or busy. "
+            "If it is stopped, start it with `cairnmind engine start`.")
 
 
 def rotate_log(path: Path, limit, copies) -> bool:
@@ -47,6 +60,9 @@ def rotate_log(path: Path, limit, copies) -> bool:
     numbered = [path.with_name(f"{path.name}.{number}") for number in range(1, max(copies, MAX_LOG_COPIES) + 1)]
     for old in numbered[max(copies, 1) - 1:]:
         old.unlink(missing_ok=True)  # the oldest kept copy's place, and any copy beyond the count
+    # os.replace keeps a file's mode: an old copy written under a looser umask is made private too (#238).
+    for kept in [path, *numbered[:copies - 1]] if copies else []:
+        _make_private(kept)
     for number in range(copies - 1, 0, -1):
         if os.path.lexists(numbered[number - 1]):
             os.replace(numbered[number - 1], numbered[number])
@@ -55,6 +71,38 @@ def rotate_log(path: Path, limit, copies) -> bool:
     else:
         path.unlink()
     return True
+
+
+def _make_private(path: Path) -> None:
+    """Mode 0600 for a regular file; a link (not followed), a missing file or anything else is left as it is.
+
+    Best effort: a file the owner may not open or chmod (mode 0000, or owned by another user after a run under
+    sudo) keeps its mode, because moving it needs only the folder and the size bound matters more (#238)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except (FileNotFoundError, PermissionError):
+        return
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            return
+        raise
+    try:
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            os.fchmod(fd, 0o600)
+    except PermissionError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def log_settings_problems(settings: Settings) -> list[str]:
+    """A line for each engine log setting that rotate_log replaces by its default, so it is not silent (#238)."""
+    rules = (("engine_log_bytes", settings.engine_log_bytes, LOG_BYTES, "a whole number of bytes above 0",
+              lambda value: type(value) is int and value > 0),
+             ("engine_log_copies", settings.engine_log_copies, LOG_COPIES, f"a whole number from 0 to {MAX_LOG_COPIES}",
+              lambda value: type(value) is int and 0 <= value <= MAX_LOG_COPIES))
+    return [f"cairnmind: {name} in config.json is {repr(value)[:80]}, not {rule}; using {default}"
+            for name, value, default, rule, valid in rules if not valid(value)]
 
 
 def resolve_java(settings: Settings) -> str | None:
@@ -173,10 +221,15 @@ def engine_status(settings: Settings) -> dict:
             result["problem"] = refused
     except ArcadeError as exc:
         result["error"] = str(exc)
+        if not connect_only(settings) and result["error"].startswith("Local ArcadeDB is unavailable"):
+            # The client's generic advice names this very command (#238).
+            result["error"] = stopped_engine_advice(result["error"])
     except ValueError as exc:
         if not connect_only(settings):
             raise
-        result["error"] = str(exc)  # a broken rule of #72: which one, without sending anything
+        # A broken rule of #72: which one, without sending anything. The server was not asked, so whether it
+        # answers is not known (None), and `engine status` is refused like every other command (#242).
+        result.update(available=None, error=str(exc))
     return result
 
 
@@ -253,14 +306,20 @@ def start_engine(settings: Settings) -> dict:
                    f"-Darcadedb.server.httpIncomingPort={port}",
                    f"-Djava.util.logging.config.file={state / 'config' / 'arcadedb-log.properties'}",
                    "-cp", str(home / "lib" / "*"), "com.arcadedb.server.ArcadeDBServer"]
-        note = b""
+        problems = log_settings_problems(settings)
+        for line in problems:
+            print(line, file=sys.stderr)
+        note = "".join(line + "\n" for line in problems).encode()
         try:
             rotate_log(state / "engine.log", settings.engine_log_bytes, settings.engine_log_copies)
         except OSError as exc:
             # Rotation is housekeeping: when the filesystem refuses it, the engine still starts and appends.
-            note = (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
-                    "appending to it\n").encode()
-        with (state / "engine.log").open("ab") as log:
+            note += (f"cairnmind: engine.log was not rotated ({type(exc).__name__}: {exc.strerror or exc}); "
+                     "appending to it\n").encode()
+        # Private like the other files of the data directory, whatever the umask (#238); a link is not followed.
+        fd = os.open(state / "engine.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "ab") as log:
             if note:
                 log.write(note)
                 log.flush()

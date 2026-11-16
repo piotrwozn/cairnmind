@@ -16,7 +16,7 @@ from .agent import source_text
 from .memory_paths import bound_metadata, memory_bindings
 from .retrieval import Retriever, public_record, public_source_metadata
 from .sensitivity import record_classes, source_sensitivity
-from .sql import clean_row, json_text, one_row, utc_now
+from .sql import clean_row, json_text, one_row, unregistered_root, utc_now
 
 
 TABLES = {"records", "sources", "plans", "check_runs", "jobs"}
@@ -72,7 +72,7 @@ class Inspector:
             "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})]
         root = Path(worktree).expanduser().resolve() if worktree else None
         if root is not None and root not in roots:
-            raise ValueError("Inspector worktree must be a registered project root")
+            raise ValueError(unregistered_root(root, project))
         return project, root, roots, memory_bindings(self.store, project["id"])
 
     def _matches(self, scope, row, *, source=False):
@@ -335,8 +335,14 @@ class Inspector:
             old = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record_id, "project": pid}, False)
             if not old:
                 raise InspectorNotFound("Unknown record in requested project")
-            if old["version"] != expected_version or review_refused(reader, old, status, action):
+            if old["version"] != expected_version:
                 raise ValueError("Review version conflict; read the current record")
+            if review_refused(reader, old, status, action):
+                # A review that would change nothing (#239): say which, not a version conflict.
+                raise ValueError(
+                    "A historical version cannot be reviewed." if old["status"] == "superseded" else
+                    "Already confirmed by a person here at this version; nothing to do." if status == "confirmed" else
+                    "Already disputed at this version; nothing to do.")
             plan_id = old.get("metadata", {}).get("plan_ref") if old["kind"] == "task" else None
             if plan_id:
                 current = one_row(reader, "SELECT version FROM plans WHERE id=:id AND project_id=:project", {"id": plan_id, "project": pid})

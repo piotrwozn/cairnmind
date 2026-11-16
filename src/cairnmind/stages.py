@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from .check_profile_messages import check_error_text, unknown_profile_message
 from .terminal_i18n_messages import display_word
 
 STAGES = ("implement", "review", "test")
@@ -232,7 +233,20 @@ def resolve_stage(next_result: dict, stage_map: dict, slots: list, profiles: lis
     return decision
 
 
+def check_declared(decision: dict, declared) -> dict:
+    """Pure: a test stage whose check profile the worktree does not declare offers no check run (#243).
+
+    `declared` holds the profile names of the worktree's checks file, or is None when that file could
+    not be read; the check run then says itself what is wrong, as it always did.
+    """
+    if decision.get("action") != "run_check" or declared is None or decision.get("check_profile") in declared:
+        return decision
+    return {**decision, "action": "none", "problem": "unknown_check_profile",
+            "declared_profiles": sorted(name for name in declared if isinstance(name, str))[:10]}
+
+
 FROM_WORKSPACE = "Start this stage from the workspace with Run next stage."
+MAP_HINT = "Map stages in More → Plan stages."
 
 
 def next_command(decision: dict, project_id: str, worktree: str, *, slots: list, profiles: list,
@@ -289,18 +303,8 @@ _REASONS = {"no_active_plan": "No active plan in this folder.", "completed": "Ev
             "blocked": "Every remaining step is blocked."}
 
 
-def describe(decision: dict, translate=lambda text: text) -> str:
-    """Readable lines. Fixed text is translated; stored names are appended, never formatted in."""
+def _stage_lines(decision: dict, translate) -> list[str]:
     lines = []
-    if decision.get("plan"):
-        plan = decision["plan"]
-        lines.append(translate("Plan") + ": " + str(plan.get("title") or plan.get("id"))
-                     + " (v" + str(plan.get("version")) + ")")
-    task = decision.get("task")
-    if task:
-        lines.append(translate("Step") + ": " + task["content"] + " [" + display_word(task["state"], translate)
-                     + ", v"
-                     + str(task.get("version")) + "]")
     if decision.get("stage"):
         lines.append(translate("Stage") + ": " + translate(decision["stage"]))
     if decision.get("slot_id"):
@@ -313,6 +317,30 @@ def describe(decision: dict, translate=lambda text: text) -> str:
         else:
             named = assistant_name(decision, translate)
         lines.append(translate("Assistant") + ": " + named)
+    return lines
+
+
+def stage_head(decision: dict, translate=lambda text: text) -> str:
+    """`Stage: … · Assistant: …` on one line: what a notice cut to its first rows must still say."""
+    return " · ".join(_stage_lines(decision, translate))
+
+
+def describe(decision: dict, translate=lambda text: text, *, head=False) -> str:
+    """Readable lines. Fixed text is translated; stored names are appended, never formatted in.
+
+    `head` leaves out the stage and assistant lines, for text shown under `stage_head`."""
+    lines = []
+    if decision.get("plan"):
+        plan = decision["plan"]
+        lines.append(translate("Plan") + ": " + str(plan.get("title") or plan.get("id"))
+                     + " (v" + str(plan.get("version")) + ")")
+    task = decision.get("task")
+    if task:
+        lines.append(translate("Step") + ": " + task["content"] + " [" + display_word(task["state"], translate)
+                     + ", v"
+                     + str(task.get("version")) + "]")
+    if not head:
+        lines += _stage_lines(decision, translate)
     if decision.get("client") in AGENT_CLIENTS:
         named = " · ".join(str(value) for value in (decision.get("provider"), decision.get("model")) if value)
         lines.append(translate("Model") + ": " + (named or translate("default model")))
@@ -323,6 +351,11 @@ def describe(decision: dict, translate=lambda text: text) -> str:
     problem = decision.get("problem")
     if problem == "no_task":
         lines.append(translate(_REASONS.get(decision.get("reason"), _PROBLEMS["no_task"])))
+    elif problem == "unknown_check_profile":
+        # The sentence `check run` would give, before anything is run, and where the mapping is changed.
+        lines.append(check_error_text(unknown_profile_message(decision.get("check_profile"),
+                                                              decision.get("declared_profiles") or []), translate))
+        lines.append(translate(MAP_HINT))
     elif problem:
         lines.append(translate(_PROBLEMS[problem]))
         if decision.get("changed"):

@@ -17,6 +17,7 @@ interrupted stops what it started and is tried again on the next turn.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import re
@@ -211,8 +212,11 @@ class McpServer:
             self.workdir = tempfile.mkdtemp(prefix="cairnmind-mcp-")
             try:
                 await self._spawn()
-            except (OSError, ValueError):
-                raise McpFailure("start_failed") from None
+            except (OSError, ValueError) as error:
+                # A program that does not exist, or cannot be run here, is told apart from one that exits (#240).
+                missing = isinstance(error, (FileNotFoundError, PermissionError, NotADirectoryError)) or (
+                    isinstance(error, OSError) and error.errno == errno.ENOEXEC)
+                raise McpFailure("program_unavailable" if missing else "start_failed") from None
             self._reader = asyncio.create_task(self._read())
             loop = asyncio.get_running_loop()
 

@@ -27,7 +27,9 @@ def planned(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
     store = Store(settings.data_dir)
     root = tmp_path / "repo"
-    root.mkdir()
+    (root / ".cairnmind").mkdir(parents=True)
+    # The test stage's profile is declared: `stage next` offers a check run only for a declared one (#243).
+    (root / ".cairnmind" / "checks.toml").write_text('[checks.unit]\nargv = ["python", "-c", "pass"]\n')
     project = store.add_project("demo", root)
     plans = PlanManager(store)
     saved = plans.save(project["id"], {"title": "Two \x1b[31msteps"},
@@ -54,8 +56,9 @@ def test_cli_stage_next_prints_the_existing_command_and_changes_nothing(planned)
     assert "Stage: implement" in shown.output and "Assistant: Codex\n" in shown.output
     assert "Two \\x1b[31msteps" in shown.output and "\x1b" not in shown.output
     root = str(store.resolve_project("demo")["root"])
-    # The project by the name the person knows, not its id (#154).
-    assert f"Next: cairnmind run demo codex --worktree {root}" in shown.output
+    # The project by the name the person knows, not its id (#154), and this installation's data directory,
+    # which is not the default one (#244).
+    assert f"Next: cairnmind --data-dir {settings.data_dir} run demo codex --worktree {root}\n" in shown.output
     assert project["id"] not in shown.output
     assert plans.get(project["id"], saved["plan"]["id"]) == before
 
@@ -63,8 +66,8 @@ def test_cli_stage_next_prints_the_existing_command_and_changes_nothing(planned)
     decision = json.loads(runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo",
                                                   "--json"]).output)
     assert (decision["stage"], decision["action"], decision["check_profile"]) == ("test", "run_check", "unit")
-    assert decision["command"] == ["cairnmind", "check", "run", "demo", "unit", "--task", moved["id"],
-                                   "--worktree", root]
+    assert decision["command"] == ["cairnmind", "--data-dir", str(settings.data_dir), "check", "run", "demo", "unit",
+                                   "--task", moved["id"], "--worktree", root]
     assert decision["task"]["version"] == moved["version"]
     assert store.query("SELECT FROM check_runs WHERE project_id=:p", {"p": project["id"]}) == []
 
@@ -72,6 +75,39 @@ def test_cli_stage_next_prints_the_existing_command_and_changes_nothing(planned)
     unmapped = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo"])
     assert unmapped.exit_code == 0 and "No assistant or check is mapped to this stage." in unmapped.output
     assert "Next:" not in unmapped.output
+    # The remedy the workspace gives for the same decision (#244).
+    assert unmapped.output.endswith("Map stages in More → Plan stages.\n")
+
+
+def test_cli_stage_next_names_no_data_directory_for_the_default_installation(planned, monkeypatch):
+    settings, store, project, plans, saved = planned
+    monkeypatch.setattr("cairnmind.config.default_data_dir", lambda environ=None: settings.data_dir)
+    shown = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo", "--json"])
+    assert json.loads(shown.output)["command"][:2] == ["cairnmind", "run"]
+
+
+@pytest.mark.parametrize("variable", ["CAIRNMIND_HOME", "DEVBRAIN_HOME"])
+def test_cli_stage_next_names_the_data_directory_that_a_wrapper_set_in_a_variable(planned, monkeypatch, tmp_path,
+                                                                                 variable):
+    # A wrapper sets the variable; the printed command is pasted into a plain shell, where it is not set (#244).
+    settings, store, project, plans, saved = planned
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for name in ("CAIRNMIND_HOME", "DEVBRAIN_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(variable, str(settings.data_dir))
+    for extra in ([], ["--data-dir", str(settings.data_dir)]):
+        shown = CliRunner().invoke(cli.app, [*extra, "stage", "next", "demo", "--json"])
+        assert shown.exit_code == 0, shown.output
+        assert json.loads(shown.output)["command"][:3] == ["cairnmind", "--data-dir", str(settings.data_dir)]
+
+
+def test_cli_stage_next_gives_the_mapping_remedy_for_an_assistant_that_is_not_configured(planned):
+    settings, store, project, plans, saved = planned
+    CockpitState(settings).update({"project_slots": {project["id"]: [{"id": "claude", "profile_id": "claude"}]}})
+    shown = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo"])
+    assert shown.exit_code == 0, shown.output
+    assert "The mapped assistant is not configured for this project." in shown.output
+    assert shown.output.endswith("Map stages in More → Plan stages.\n")
 
 
 def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says(planned):
@@ -101,7 +137,8 @@ def test_cli_prints_a_launch_command_only_when_it_does_exactly_what_the_map_says
     value = json.loads(ask("--plan-id", other["plan"]["id"], "--json"))
     assert value["plan"]["id"] == other["plan"]["id"] and value["action"] == "start_slot"
     assert (value["command"], value["command_reason"]) == (None, "inactive_plan")
-    assert json.loads(ask("--plan-id", saved["plan"]["id"], "--json"))["command"][:2] == ["cairnmind", "run"]
+    assert json.loads(ask("--plan-id", saved["plan"]["id"], "--json"))["command"][:4] == [
+        "cairnmind", "--data-dir", str(settings.data_dir), "run"]
 
 
 def running_cockpit(monkeypatch, answer):

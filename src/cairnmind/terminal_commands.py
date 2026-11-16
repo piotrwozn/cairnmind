@@ -6,6 +6,7 @@ import textwrap
 from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Input, Static
 
@@ -84,7 +85,7 @@ class CommandPaletteApp(App):
 
     def compose_help(self):
         yield Static(help_text(self.translate(
-                "Ctrl+B, then Space: search all commands\n"
+                "Ctrl+B, then Space: search the main commands\n"
                 "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
                 "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
                 "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
@@ -267,7 +268,9 @@ class JoinWorkspaceApp(App):
     #join-explanation { color: $cm-muted; margin-bottom: 1; }
     #join-takeover, #join-takeover:focus { color: $cm-warn; }
     """)
-    BINDINGS = [("escape", "cancel", "Back")]
+    # The arrows move between the three choices as Tab does; the hint under them names the keys.
+    BINDINGS = [("escape", "cancel", "Back"), Binding("down", "focus_next", show=False),
+                Binding("up", "focus_previous", show=False)]
 
     def __init__(self, settings):
         super().__init__()
@@ -286,6 +289,7 @@ class JoinWorkspaceApp(App):
             yield Button(self.t("Observe (read only)"), id="join-observe", variant="primary")
             yield Button(self.t("Take control"), id="join-takeover")
             yield Button(self.t("Return to shell"), id="join-cancel")
+            yield Static(self.t("Enter: select · Esc: back"), classes="cm-hint", markup=False)
 
     def on_mount(self):
         terminal_theme.size_classes(self)

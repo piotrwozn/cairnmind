@@ -154,6 +154,8 @@ def summary_text(value, language="en"):
                         "Applying the import puts the imported text or status in their place.",
                         language, count=value["replaces_confirmed_here"]["total"]))
     for key in ("message", "summary", "status", "state", "code", "reason"):
+        if key == "code" and isinstance(value.get("message"), str) and value["message"]:
+            continue  # the sentence says it; the bare code stays under Technical details (#243)
         item = value.get(key)
         if isinstance(item, (str, int, float, bool)):
             lines.append(safe_text(item)[:500])
@@ -631,6 +633,11 @@ class BasePanel(App):
             self.show_notice_mark()
         else:  # a view without a notice line (the activity column)
             self.notify(self.t(text), timeout=8, markup=False)
+
+    def view_hint(self, text) -> None:
+        """What the view shows or how to use it (a count, the keys of an open entry), not an event:
+        on the notice line like a key hint, never kept in Notices or copied to the activity feed."""
+        self.leave_hint(text)
 
 
 class ChoiceModal(LocalizedModal, ModalScreen[str | None]):

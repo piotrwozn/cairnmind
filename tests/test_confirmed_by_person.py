@@ -371,7 +371,7 @@ def test_a_record_confirmed_before_the_rule_keeps_its_status_and_names_nobody(fi
     # The person can confirm it, once, and then it is theirs.
     theirs = Inspector(fixture.store).review(fixture.pid, saved["id"], "confirm", 2)["record"]
     assert theirs["metadata"]["confirmation"]["by"] == "person"
-    with pytest.raises(ValueError, match="Review version conflict"):
+    with pytest.raises(ValueError, match="Already confirmed by a person here at this version; nothing to do"):
         Inspector(fixture.store).review(fixture.pid, saved["id"], "confirm", 3)
 
 

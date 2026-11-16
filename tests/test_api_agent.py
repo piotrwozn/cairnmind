@@ -792,3 +792,343 @@ async def test_a_kept_ack_ends_when_the_same_packet_is_refused_for_credential_ma
     assert len(provider.requests) == asked + 1  # the model is asked again instead of a stop before it
     assert "write_file" not in {row["name"] for row in provider.requests[-1]["tools"]}
     assert second["status"] == "resume_required"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_confirmation_reaches_the_model_with_what_to_do_on_real_arcade(tmp_path):
+    # #240: the store's "only a person confirms" refusals reached the model as a bare tool_failed, or as a
+    # state_conflict that sends it to read and retry; a key that exists came back as tool_failed.
+    from conftest import as_person
+    from cairnmind.confirmation import REFUSED
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    root.joinpath("app.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    store = Store(tmp_path / "data")
+    project = store.add_project("refusals", root)
+    source = store.snapshot(project["id"], "doc://notes", "The engine is ArcadeDB.")["id"]
+    confirmed = as_person(store, project["id"], {"kind": "fact", "key": "engine", "content": "ArcadeDB"}, [source])
+    store.remember(project["id"], {"kind": "fact", "key": "proposed-one", "content": "One"}, [source])
+    sid = uuid4().hex
+    run = {"id": uuid4().hex, "generation": 1, "project_id": project["id"],
+           "worktree": str(root), "session_id": sid, "client": "api"}
+    memory = AgentMemoryClient(store.settings, project["id"], root, sid,
+                               transport=httpx.ASGITransport(app=create_app(store.settings, start_worker=False)))
+
+    def ack(messages, tools):
+        packet = json.loads(messages[-1]["content"])["packet"]
+        return reply(call("ack_resume", {"packet_id": packet["id"], "packet_hash": packet["hash"],
+                                           "readback": {"plan": None, "task": None}}))
+
+    remember = [
+        {"record": {"kind": "fact", "key": "new-one", "content": "Two", "status": "confirmed"}, "sources": [source]},
+        {"record": {"id": confirmed["id"], "expected_version": confirmed["version"], "kind": "fact",
+                    "key": "engine", "content": "PostgreSQL"}, "sources": [source]},
+        {"record": {"kind": "fact", "key": "proposed-one", "content": "Changed"}, "sources": [source]},
+    ]
+    provider = ScriptedProvider(reply(call("resume_context")), ack,
+                                reply(*(call("remember", arguments) for arguments in remember)),
+                                reply(text="Stored nothing."))
+    profile = {"id": "local", "client": "api", "provider": "ollama", "model": "fixture", "limits": {}}
+    agent = AgentEngine(store.settings, run, profile, provider=provider, memory=memory)
+    try:
+        result = await agent.turn("Remember these")
+        assert len(tools_results(agent)) == 5, result
+        refused, kept, exists = tools_results(agent)[-3:]
+        assert refused["error_code"] == "confirmation_refused" and refused["message"] == REFUSED
+        assert kept["error_code"] == "confirmation_refused"
+        assert kept["message"].startswith(f"A person confirmed record {confirmed['id']} (fact)")
+        assert "Nothing was saved" in kept["message"] and "possible_conflicts" in kept["message"]
+        assert exists["error_code"] == "key_exists"
+        assert "record.id and record.expected_version" in exists["message"]
+        assert "inside the record argument" in exists["message"] and "Changed" not in exists["message"]
+        assert not store.query("SELECT FROM records WHERE `key`='new-one'")
+        assert store.query("SELECT FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["content"] == "ArcadeDB"
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_arguments_say_which_argument_and_why_without_its_value(setup):
+    # #240: write_file with expected_sha256 "" came back as a bare invalid_tool_arguments.
+    memory = Memory()
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("write_file", {"path": "app.py", "content": "VALUE=1\n", "expected_sha256": "not-a-hash"}),
+              call("write_file", {"path": "app.py", "content": "VALUE=1\n"})),
+        reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        await agent.turn("Create app.py")
+        bad_hash, missing = tools_results(agent)[-2:]
+        assert bad_hash["error_code"] == missing["error_code"] == "invalid_tool_arguments"
+        assert bad_hash["argument"] == "expected_sha256" and "not-a-hash" not in json.dumps(bad_hash)
+        assert "null" in bad_hash["hint"] and "read_file" in bad_hash["hint"]
+        assert missing["keyword"] == "required" and "expected_sha256" in missing["hint"]
+        assert not setup[3].joinpath("app.py").exists()
+    finally:
+        await agent.close()
+
+
+def test_the_instructions_say_effect_tools_appear_only_after_the_ack():
+    # #240: a small model asked to write a file said it had no write tool and never acknowledged.
+    from cairnmind.api_agent import SYSTEM
+    assert "offered only after" in SYSTEM and "ack_resume" in SYSTEM
+
+
+@pytest.mark.asyncio
+async def test_a_ready_packet_before_its_ack_names_the_next_step(setup):
+    memory = Memory()
+    provider = ScriptedProvider(reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+                                reply(call("resume_context")), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        await agent.turn("Check")
+        first, _, again = tools_results(agent)
+        assert "ack_resume" in first["next_step"] and "next_step" not in again
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_record_field_and_an_unknown_source_reach_the_model_with_what_to_do_on_real_arcade(tmp_path):
+    # #240, second trial: remember with record.text and read_source with a made-up id, a session id or an id
+    # of a bad shape reached the model as a bare tool_failed.
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    root.joinpath("app.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    store = Store(tmp_path / "data")
+    project = store.add_project("unknowns", root)
+    source = store.snapshot(project["id"], "doc://notes", "The engine is ArcadeDB.")["id"]
+    sid = uuid4().hex
+    run = {"id": uuid4().hex, "generation": 1, "project_id": project["id"],
+           "worktree": str(root), "session_id": sid, "client": "api"}
+    memory = AgentMemoryClient(store.settings, project["id"], root, sid,
+                               transport=httpx.ASGITransport(app=create_app(store.settings, start_worker=False)))
+
+    def ack(messages, tools):
+        packet = json.loads(messages[-1]["content"])["packet"]
+        return reply(call("ack_resume", {"packet_id": packet["id"], "packet_hash": packet["hash"],
+                                           "readback": {"plan": None, "task": None}}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), ack,
+        reply(call("remember", {"record": {"kind": "fact", "text": "Two"}, "sources": [source]}),
+              call("read_source", {"source_id": "made-up-source"}), call("read_source", {"source_id": sid}),
+              call("read_source", {"source_id": "../etc/passwd"}), call("read_source", {"source_id": source})),
+        reply(text="Done."))
+    profile = {"id": "local", "client": "api", "provider": "ollama", "model": "fixture", "limits": {}}
+    agent = AgentEngine(store.settings, run, profile, provider=provider, memory=memory)
+    try:
+        result = await agent.turn("Remember and read")
+        assert len(tools_results(agent)) == 7, result
+        record, made_up, session, bad_shape, found = tools_results(agent)[-5:]
+        assert record["error_code"] == "invalid_record"
+        assert "'text' is not a record field" in record["message"] and "Nothing was saved" in record["message"]
+        for refused in (made_up, session, bad_shape):
+            assert refused["error_code"] == "unknown_source", refused
+            assert "memory_records" in refused["message"] and "passwd" not in refused["message"]
+        assert "error_code" not in found and "ArcadeDB" in json.dumps(found)
+        assert not store.query("SELECT FROM records WHERE content='Two'")
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_reread_packet_replaces_the_earlier_ones_in_the_model_context(setup):
+    # #240, second trial: every resume_context read appended another full packet, until an Ollama
+    # request no longer fitted its window.
+    memory = Memory()
+    memory.packet["records"] = [{"content": "R" * 12_000}]
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("resume_context")), reply(call("resume_context")), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        assert (await agent.turn("Check"))["status"] == "completed"
+        packets = [json.loads(row["content"]) for row in provider.requests[-1]["messages"]
+                   if row.get("role") == "tool" and row.get("name") == "resume_context"]
+        assert len(packets) == 3
+        assert [("R" * 12_000) in json.dumps(packet) for packet in packets] == [False, False, True]
+        assert packets[0]["packet_id"] == "packet-1" and packets[0]["replaced_by_a_later_read"] is True
+        # The journal and the archive keep every read whole.
+        assert sum(("R" * 12_000) in row.get("content", "") for row in agent.messages()) == 3
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window,notice", [(32768, True), (131072, False)])
+async def test_the_compaction_notice_comes_before_the_ollama_window_refuses(setup, window, notice):
+    # #240, second trial: on the default 32k Ollama window a turn ended in context_limit, because the
+    # notice waited for 80,000 characters while the provider's own check refused at about 50,000.
+    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+    settings, run, profile, _ = setup
+    profile = {**profile, "limits": {"context_window_tokens": window, "max_output_tokens": 4096}}
+    provider = ScriptedProvider(reply(text="Need the packet first."))
+    agent = AgentEngine(settings, run, profile, provider=provider, memory=Memory())
+    try:
+        await agent.turn("x" * 40_000)
+        request = provider.requests[0]
+        names = {tool["name"] for tool in request["tools"]}
+        assert ("compact_context" in names) is notice
+        assert any("HOST CONTEXT BUDGET" in str(row.get("content")) for row in request["messages"]) is notice
+        if notice:
+            # The notice still fits: the provider's own pre-check would send this request.
+            tools = [{"type": "function", "function": tool} for tool in request["tools"]]
+            assert ollama_prompt_estimate(_ollama_messages(request["messages"]), tools) + 4096 <= window
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_record_the_store_does_not_save_reaches_the_model_with_what_to_do_on_real_arcade(tmp_path):
+    # #240, review: an unknown kind, a missing content or metadata that is not an object reached the model as
+    # a bare tool_failed; only unknown field names were refused with a reason.
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    root.joinpath("app.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    store = Store(tmp_path / "data")
+    project = store.add_project("shapes", root)
+    source = store.snapshot(project["id"], "doc://notes", "The engine is ArcadeDB.")["id"]
+    sid = uuid4().hex
+    run = {"id": uuid4().hex, "generation": 1, "project_id": project["id"],
+           "worktree": str(root), "session_id": sid, "client": "api"}
+    memory = AgentMemoryClient(store.settings, project["id"], root, sid,
+                               transport=httpx.ASGITransport(app=create_app(store.settings, start_worker=False)))
+
+    def ack(messages, tools):
+        packet = json.loads(messages[-1]["content"])["packet"]
+        return reply(call("ack_resume", {"packet_id": packet["id"], "packet_hash": packet["hash"],
+                                           "readback": {"plan": None, "task": None}}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), ack,
+        reply(call("remember", {"record": {"kind": "note", "content": "Kind"}, "sources": [source]}),
+              call("remember", {"record": {"kind": "fact"}, "sources": [source]}),
+              call("remember", {"record": {"kind": "fact", "content": "Meta", "metadata": "x"},
+                                "sources": [source]})),
+        reply(text="Done."))
+    profile = {"id": "local", "client": "api", "provider": "ollama", "model": "fixture", "limits": {}}
+    agent = AgentEngine(store.settings, run, profile, provider=provider, memory=memory)
+    try:
+        await agent.turn("Remember")
+        kind, content, metadata = tools_results(agent)[-3:]
+        for refused, sentence in ((kind, "Unknown record kind or status"),
+                                  (content, "Record content must be nonempty text"),
+                                  (metadata, "Record metadata must be an object")):
+            assert refused["error_code"] == "invalid_record", refused
+            assert refused["message"].startswith(sentence) and "Nothing was saved" in refused["message"]
+        assert not store.query("SELECT FROM records WHERE content='Kind' OR content='Meta'")
+    finally:
+        await agent.close()
+
+
+def _pad_catalogue(agent, target):
+    """Add tool schemas until the system prompt, the whole catalogue and the output room alone are
+    estimated at about `target` tokens, as a large MCP catalogue would be."""
+    from cairnmind.api_agent import SYSTEM
+    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+
+    def fixed():
+        tools = [{"type": "function", "function": tool} for tool in agent._schemas.values()]
+        return ollama_prompt_estimate(_ollama_messages([{"role": "system", "content": SYSTEM}]), tools) + 4096
+
+    number = 0
+    while fixed() < target:
+        number += 1
+        agent._schemas[f"pad_{number}"] = {"name": f"pad_{number}", "description": "d" * 400,
+                                           "parameters": {"type": "object", "properties": {}}}
+    return fixed()
+
+
+def _fits_the_window(request, window=32768):
+    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+    tools = [{"type": "function", "function": tool} for tool in request["tools"]]
+    return ollama_prompt_estimate(_ollama_messages(request["messages"]), tools) + 4096 <= window
+
+
+@pytest.mark.asyncio
+async def test_a_large_tool_catalogue_alone_never_withdraws_the_effect_tools(setup):
+    # #240, review: the 80% trigger counted the tool catalogue, which a compaction cannot shrink. A catalogue
+    # past the share set the notice on every call after the ACK, though the provider would send the request.
+    memory = Memory()
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        _pad_catalogue(agent, int(32768 * 0.85))
+        result = await agent.turn("Check")
+        assert result["status"] == "completed", result
+        last = provider.requests[-1]
+        assert "write_file" in {tool["name"] for tool in last["tools"]}
+        assert not any("HOST CONTEXT BUDGET" in str(row.get("content")) for row in last["messages"])
+        assert _fits_the_window(last)
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_renewed_context_that_a_compaction_cannot_shorten_gets_no_second_notice(setup):
+    # #240, review: with the catalogue just under the share, the context a compaction keeps (request, packet,
+    # ACK) put the request past it again, so each compaction bought one tool batch at most.
+    memory = Memory()
+    compact = {"state": {"goal": "Continue", "results": ["Read"], "next_step": "Write"}}
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("compact_context", compact)), reply(call("resume_context")),
+        reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("write_file", {"path": "app.py", "content": "VALUE=7\n", "expected_sha256": None})),
+        reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        _pad_catalogue(agent, int(32768 * 0.8) - 1500)
+        result = await agent.turn("r" * 12_000)
+        assert result["status"] == "completed", result
+        assert sum(name == "checkpoint" for name, _ in memory.calls) == 1
+        assert (setup[3] / "app.py").read_text() == "VALUE=7\n"
+        assert sum(row["type"] == "context_notice" for row in agent.journal.events()) == 1
+        # Every request still fitted the provider's own check of the whole window.
+        assert all(_fits_the_window(request) for request in provider.requests)
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reread_keeps_the_acknowledged_packet_in_the_model_context(setup):
+    # #240, review: a reread that failed stubbed out the only copy of the packet the run had acknowledged.
+    class FlakyMemory(Memory):
+        async def execute(self, name, arguments):
+            if name == "resume_context" and any(called == "resume_context" for called, _ in self.calls):
+                self.calls.append((name, deepcopy(arguments)))
+                raise RuntimeError("service unavailable")
+            return await super().execute(name, arguments)
+
+    memory = FlakyMemory()
+    memory.packet["records"] = [{"content": "R" * 2_000}]
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("resume_context")), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        assert (await agent.turn("Check"))["status"] == "completed"
+        rows = [json.loads(row["content"]) for row in provider.requests[-1]["messages"]
+                if row.get("role") == "tool" and row.get("name") == "resume_context"]
+        assert rows[1]["error_code"] == "tool_failed"
+        assert rows[0]["packet"]["hash"] == "a" * 64 and "R" * 2_000 in json.dumps(rows[0])
+    finally:
+        await agent.close()

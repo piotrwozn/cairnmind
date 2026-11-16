@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import suppress
 import hashlib
 import json
 import os
@@ -58,7 +59,8 @@ def _status_text(value, columns):
 
 
 # Why a kept ACK went stale (sessions.stale_reason), beside "stale" in the pane's border (#161).
-STALE_WORDS = {"state_changed": "memory changed after ACK", "packet_changed": "new packet without ACK",
+# "state_changed" is any change of the project state the packet was built from: code, plan, decision or memory.
+STALE_WORDS = {"state_changed": "project changed after ACK", "packet_changed": "new packet without ACK",
                "ack_mismatch": "ACK does not match packet", "scope_unavailable": "scope cannot be read",
                "continuity": "session continuity broken"}
 
@@ -331,8 +333,9 @@ class WorkspaceManager:
             return True
         if not own["readonly"]:
             self.tmux("refresh-client", "-t", own["tty"], "-f", "read-only,ignore-size")
+        from .terminal_i18n import language_for, tr
         self.tmux("display-message", "-c", own["tty"], "-d", "8000",
-                  "READ ONLY: C-b d, potem cairnmind workspace takeover", check=False)
+                  tr("READ ONLY: C-b d, then cairnmind workspace takeover", language_for(self.settings)), check=False)
         return False
 
     def attach(self, *, takeover=False):
@@ -1028,9 +1031,13 @@ def stop_workspace(settings, stop_clients=False):
                         continue
                     raise
                 if run.get("lifecycle") in _ENDED:
-                    # Its process has already ended: there is nothing to stop, and that is not an error.
+                    # Its process has already ended: there is nothing to stop, and that is not an error. The stop
+                    # still clears the dead pane tmux keeps for it, and keeps the run's own end (NativeRuntime.stop).
                     ended.append(run_id)
                     finished[run_id] = run["lifecycle"]
+                    with suppress(Exception):
+                        manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop",
+                                               json={"generation": run["generation"]})
                     continue
                 result = manager.broker.request("POST", "/api/client-runs/" + run_id + "/stop", json={"generation": run["generation"]})
                 stopped.append(run_id)

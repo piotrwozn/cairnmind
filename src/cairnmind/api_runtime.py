@@ -17,6 +17,7 @@ import httpx
 from .client_runtime import LIVE, NativeRuntime, _ID, _atomic
 from .config import ENV_PREFIXES, Settings
 from .mcp_servers import MAX_SERVERS
+from .path_spelling import lies_in
 
 AGENT_CLIENTS = {"api", "copilot"}
 NATIVE_CLIENTS = {"codex", "claude"}
@@ -122,6 +123,7 @@ class RuntimeSupervisor(NativeRuntime):
                 code = str(exc).partition(":")[0]
                 allowed = {"login_required", "client_missing", "client_unsupported", "native_resume_unavailable",
                            "native_resume_unsupported", "tmux_missing_or_unsupported", "credential_missing",
+                           "credential_invalid", "credential_unavailable",
                            "copilot_runtime_missing", "copilot_sdk_missing", "profile_invalid",
                            "copilot_sdk_unsupported", "copilot_runtime_invalid", "agent_storage_in_project",
                            "memory_unavailable", "agent_resume_unavailable"}
@@ -137,7 +139,7 @@ class RuntimeSupervisor(NativeRuntime):
                 or type(resume) is not bool):
             raise ValueError("profile_invalid: invalid agent profile")
         root = str(Path(project["root"]).resolve())
-        if self.settings.data_dir.resolve().is_relative_to(Path(root)):
+        if lies_in(self.settings.data_dir.resolve(), root):
             raise ValueError("agent_storage_in_project: move the Cairnmind data directory outside the worktree")
         with self._locked():
             rows = self._read()
@@ -148,9 +150,14 @@ class RuntimeSupervisor(NativeRuntime):
                 if old["lifecycle"] in LIVE:
                     self._save(rows)
                     return dict(old)
-            if (client == "api" and (profile.get("credential_ref") or profile.get("provider") in {"openai", "anthropic"})
-                    and not self.credentials.resolve(profile)):
-                raise ValueError("credential_missing: configure the profile key")
+            if client == "api" and (profile.get("credential_ref") or profile.get("provider") in {"openai", "anthropic"}):
+                try:
+                    usable = self.credentials.resolve(profile)
+                except ValueError as exc:  # its message is never shown: only the fixed code below
+                    code = "credential_invalid" if str(exc) == "Invalid API key." else "credential_unavailable"
+                    raise ValueError(code + ": the profile key cannot be used") from None
+                if not usable:
+                    raise ValueError("credential_missing: configure the profile key")
             if client == "copilot":
                 from .copilot_adapter import runtime_status
                 status = runtime_status(self.settings)

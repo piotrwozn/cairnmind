@@ -16,8 +16,8 @@ from pathlib import Path
 
 from .memory_published_carrier import carrier_of, destination as carrier_destination, unbound_in_checkout
 from .memory_published_check import STATIC_FILES, check_files, format_bytes, read_tree, scan
-from .memory_published_release import SecretsRefused, publication_rules, release_sources
-from .memory_published_secrets import described
+from .memory_published_release import REGISTERED_ADVICE, SecretsRefused, publication_rules, release_sources
+from .memory_published_secrets import REGISTERED, described, scan_text
 from .memory_published_format import (
     GITATTRIBUTES, GITIGNORE, MAX_NOTE_CHARS, canonical_uuid, MAX_QUOTE_CHARS, PUBLISHED_KINDS, J, _audit, _when, clean_text,
     clean_value, derive_covered, derive_plan_covered, path_of, plan_hash, projection, ref_class, render, same,
@@ -25,6 +25,7 @@ from .memory_published_format import (
 )
 from .sql import clean_row, one_row, update_document
 from .store import degraded_origin
+from .terminal_safe import safe_text
 
 # Writing stayed behind this switch until the secrets gate of #171 refused registered secrets and private
 # keys. It is no longer read; the name is kept for scripts and tests that still set it.
@@ -273,11 +274,11 @@ class Publisher:
                 if not canonical_uuid(record["id"]):
                     raise Held("its ID is not a canonical UUID")
                 if degraded_origin(record.get("metadata")):
-                    raise Held("an external or third-party session wrote it (degraded origin)")
+                    raise Held(_degraded(record))
                 history = select_history(record["kind"], record["id"], versions.get(record["id"], []), sources,
                                          as_source)
                 if not history:
-                    raise Held("no person's act covers it; review it in the inspector")
+                    raise Held(_uncovered(record))
                 if any(degraded_origin(sources[s].get("metadata")) for r in history for s in r["sources"]):
                     raise Held("it cites a source of degraded origin")
                 _writable(model_of(record["kind"], record["id"], record["created_at"], "revisions", history))
@@ -302,7 +303,12 @@ class Publisher:
                    for plan in plans if plan["id"] in definitions]
         files = {path_of(model): render(model) for model in models}
         held.update({plan_id: ("plan", reason) for plan_id, reason in held_plans.items()})
-        return {"project": project, "root": root, "folder": folder, "files": files, "models": models, "held": held}
+        # What a person needs to tell the held entries apart (#239): a record's key and a plan's title, and the start
+        # of the text.
+        labels = {r["id"]: (r.get("key"), r.get("content")) for r in records if r["id"] in held}
+        labels.update({p["id"]: (None, p.get("title")) for p in plans if p["id"] in held})
+        return {"project": project, "root": root, "folder": folder, "files": files, "models": models, "held": held,
+                "labels": labels, "heads": heads}
 
     @staticmethod
     def _close(histories, held, definitions, held_plans, heads):
@@ -315,7 +321,10 @@ class Publisher:
                 for revision in history:
                     names = [revision["supersedes"], *revision.get("depends_on", [])]
                     missing = next((n for n in names if n and n not in histories), None)
-                    if missing:
+                    if missing and held.get(missing, ("", ""))[1].startswith(DEGRADED):
+                        reason = (f"it names record {missing}, which an external or third-party session wrote "
+                                  "and which is never published")
+                    elif missing:
                         reason = f"it names record {missing}, which is not published"
                     elif revision.get("plan") and revision["plan"] not in definitions:
                         reason = f"its plan {revision['plan']} is not published"
@@ -361,7 +370,7 @@ class Publisher:
             if hits:
                 raise SecretsRefused("Publishing refused, nothing was written: " + "; ".join(
                     described(hit) for hit in hits[:50]) + (f"; and {len(hits) - 50} more" if len(hits) > 50 else "")
-                    + ". Remove the value, or read the record and release it with `cairnmind memory release`.")
+                    + "." + _secret_advice({hit["kind"] for hit in hits}))
             # folder.parent is <root>/.memory for the repository carrier, the checkout for a checkout (#173).
             if any(p.is_symlink() for p in (folder.parent, folder)):
                 raise ValueError("Memory publication needs a real directory, not a symbolic link")
@@ -373,9 +382,12 @@ class Publisher:
             if "FORMAT.json" in existing:
                 # The structure only: what is already there was scanned when it was written, and a rule added
                 # since (or a teammate's file) must not block the records this store publishes, nor a release.
-                tree, errors = check_files(existing, secrets=False)
+                # Each file alone (#239): what holds between files is checked on the merged tree below, since the files
+                # this store writes may complete it (one that went missing is written again).
+                tree, errors = check_files(existing, secrets=False, whole=False)
                 if errors:
-                    raise MemoryConflict("The published memory is invalid; fix or import it first: " + _listing(errors))
+                    raise MemoryConflict("The published memory is invalid; resolve the conflict, or restore the file "
+                                         "with `git checkout -- <path>`, then publish again: " + _listing(errors))
                 if tree["project_id"] != identity:
                     raise MemoryConflict(f"The published memory here belongs to {tree['project_id']}; import it first")
                 self._compare(tree, built)
@@ -399,7 +411,13 @@ class Publisher:
                       "files": len(merged), "bytes": sum(len(data) for data in merged.values()),
                       "records": sum(m["kind"] != "plan" for m in built["models"]),
                       "plans": sum(m["kind"] == "plan" for m in built["models"]),
-                      "held": _held(built["held"]), "git": "nothing was staged, committed or pushed"}
+                      "held": _held(built["held"], built["labels"], rules), "git": "nothing was staged, committed or pushed"}
+            alone = _without_replacement(built["models"], built["held"], built["heads"])
+            if alone:
+                result["superseded_without_replacement"] = {
+                    "total": len(alone), "records": alone[:200],
+                    "note": "published as superseded while the record that replaced it is held: a reader sees it "
+                            "withdrawn, without its replacement"}
             if others:
                 result["not_ours"] = {"hits": [described(hit) for hit in others[:50]], "total": len(others),
                                       "hint": "files this store does not write hold values the secrets gate refuses; "
@@ -451,13 +469,90 @@ def _writable(model):
         raise Held(f"it cannot be written in the published format: {exc}") from None
 
 
+def _secret_advice(kinds):
+    """What a person can do about the hits: `memory release` never takes a registered secret (#239)."""
+    advice = ""
+    if REGISTERED in kinds:
+        # Every version a person confirmed is published, so a later text without the value does not help.
+        advice += (" " + REGISTERED_ADVICE)
+    if kinds - {REGISTERED}:
+        advice += (" For the other values: remove the value, or read the record and release it with"
+                   " `cairnmind memory release`." if REGISTERED in kinds else
+                   " Remove the value, or read the record and release it with `cairnmind memory release`.")
+    return advice
+
+
 def _listing(errors):
     return "; ".join(f"{path or '(tree)'}: {reason}" for path, reason in errors[:50]) + (
         f"; and {len(errors) - 50} more" if len(errors) > 50 else "")
 
 
-def _held(held):
-    items = [{"id": identifier, "kind": kind, "reason": reason} for identifier, (kind, reason) in sorted(held.items())]
+DEGRADED = "an external or third-party session wrote it (degraded origin)"
+
+
+def _degraded(record):
+    """Why a record of degraded origin is held (#239): one a person kept in a conflict decision says how to
+    publish that decision, which only a person's own record can carry."""
+    from .confirmation import confirmation_of
+    mark = confirmation_of(record) or {}
+    if record["status"] == "confirmed" and mark.get("route") == "conflict_decision":
+        return (DEGRADED + "; a person kept it in a conflict decision, which does not publish it: store the "
+                "decision again in your own words to publish it")
+    return DEGRADED
+
+
+def _without_replacement(models, held, heads):
+    """Records published as superseded while the record that replaced them is held (#239): a reader sees
+    each one withdrawn, without what replaced it."""
+    found, replacing = [], {row.get("supersedes"): i for i, row in heads.items() if i in held}
+    for model in models:
+        if model["kind"] == "plan" or model["revisions"][-1]["status"] != "superseded":
+            continue
+        winner = (heads[model["id"]].get("metadata") or {}).get("superseded_by")
+        winner = winner if winner in held else replacing.get(model["id"])
+        if winner:
+            found.append({"id": model["id"], "kind": model["kind"], "replaced_by": winner})
+    return found
+
+
+def _uncovered(record):
+    """Why no person's act covers a record (#239): a terminal confirmation is a person's, but writes no audit."""
+    from .confirmation import confirmation_of
+    mark = confirmation_of(record) or {}
+    if record["status"] == "confirmed" and mark.get("by") == "person" and mark.get("route") == "cli":
+        return ("confirmed in a terminal, which writes no audit that travels; confirm it again in the inspector "
+                "to publish it")
+    if record["status"] == "proposed":
+        return "proposed, not yet confirmed; review it in the inspector"
+    return "no person's act covers it; review it in the inspector"
+
+
+def _excerpt(text, limit=80):
+    """The start of a text a person can recognise, on one line and safe for a terminal; it is the record's own."""
+    if not isinstance(text, str):
+        return None
+    line = " ".join(safe_text(text).split())
+    return line if len(line) <= limit else line[:limit - 1] + "…"
+
+
+WITHHELD = ("its key or text holds a value the secrets gate refuses, so neither is shown; read the record in the "
+            "inspector")
+
+
+def _label(identifier, kind, reason, label, rules):
+    """One held entry. A held record is never scanned for publishing, so its key and text are scanned here, and
+    shown only when nothing in them is a value the gate refuses (#239): a held record prints no secret either."""
+    key, text = label or (None, None)
+    item = {"id": identifier, "kind": kind, "reason": reason, "key": _excerpt(key, 120), "excerpt": _excerpt(text)}
+    if rules is not None and any(scan_text(value, rules) for value in (key, text) if isinstance(value, str)):
+        item.update(key=None, excerpt=None, withheld=WITHHELD)
+    return item
+
+
+def _held(held, labels=None, rules=None):
+    labels = labels or {}
+    items = [_label(identifier, kind, reason, labels.get(identifier), rules)
+             for identifier, (kind, reason) in sorted(held.items())]
     reasons = {}
     for item in items:
         reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1

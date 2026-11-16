@@ -12,10 +12,12 @@ import json
 import subprocess
 import sys
 
+from .check_profile_messages import check_error_text
+from .terminal_connection_hints import connection_hint
 from .terminal_i18n_messages import display_word
 from .terminal_notices import about
 from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
-                     assistant_name, changed_since_confirmed, confirmed_choice, describe, stage_slot,
+                     assistant_name, changed_since_confirmed, confirmed_choice, describe, stage_head, stage_slot,
                      validate_stage_map)
 
 _UNSET = ":unset"
@@ -45,14 +47,20 @@ def run_stage_check(settings, decision: dict, runner=subprocess.run) -> dict:
     return {key: run.get(key) for key in ("id", "passed", "outcome", "returncode", "reasons", "error")}
 
 
+def _not_run(result: dict) -> bool:
+    """No run was recorded (an unknown profile, a runner that did not start): nothing passed or failed."""
+    return result.get("passed") is not True and not result.get("id") and bool(result.get("error"))
+
+
 def check_summary(result: dict, translate) -> str:
-    lines = [translate("Check passed." if result.get("passed") is True else "Check did not pass.")]
+    lines = [translate("The check could not run") + "." if _not_run(result) else
+             translate("Check passed." if result.get("passed") is True else "Check did not pass.")]
     if result.get("outcome"):
         lines.append(translate("Outcome") + ": " + display_word(result["outcome"], translate))
     for reason in (result.get("reasons") or [])[:10]:
         lines.append("- " + str(reason))
     if result.get("error"):
-        lines.append(translate("Error") + ": " + str(result["error"]))
+        lines.append(translate("Error") + ": " + check_error_text(result["error"], translate))
     if result.get("id"):
         lines.append(translate("Check run") + ": " + str(result["id"]))
     lines.append(translate("The task state is unchanged. Update it after you review the result."))
@@ -83,18 +91,28 @@ def _hint(decision: dict) -> str | None:
     return MAP_HINT if decision.get("problem") in MAP_PROBLEMS else None
 
 
+def _headed(app, decision: dict, explanation: str) -> str:
+    """The stage and its assistant first, on one line, then what happened, then the rest of the step.
+
+    The notice line shows its first rows only (the whole text is in Notices): a long explanation
+    first used to push the stage and the assistant out of it."""
+    head = stage_head(decision, app.t)
+    return "\n".join(part for part in (head, explanation, describe(decision, app.t, head=bool(head))) if part)
+
+
 async def _shown(app, scope) -> bool:
     current = await asyncio.to_thread(app.workspace.read)
     return (current.get("project_id"), current.get("worktree")) == scope
 
 
 def _outcome(app, profile, result=None, error=None) -> str:
-    if error is not None:
-        return app.t("The check could not run") + ": " + profile + " · " + str(error)
+    if error is not None or _not_run(result):
+        return (app.t("The check could not run") + ": " + profile + " · "
+                + check_error_text(error if error is not None else result["error"], app.t))
     verdict = "Check passed." if result.get("passed") is True else "Check did not pass."
     return (app.t("Check finished") + ": " + profile + " · " + app.t(verdict)
             + (" " + app.t("Outcome") + ": " + display_word(result["outcome"], app.t) if result.get("outcome") else "")
-            + (" · " + str(result["error"]) if result.get("error") else ""))
+            + (" · " + check_error_text(result["error"], app.t) if result.get("error") else ""))
 
 
 def _deliver(app, scope, subject, text, current=None) -> None:
@@ -151,7 +169,7 @@ async def run_next_stage(app):
         # The launcher returns a live process of this slot unchanged: no new session, no packet.
         # The built-in agent's launcher (start_agent) reuses a live run by the same identity.
         if reusable_native_run(app.data.get("runs", []), scope[0], scope[1], decision["client"], decision["slot_id"]):
-            app.notice_for(subject, app.t(ALREADY_RUNNING) + "\n" + text)
+            app.notice_for(subject, _headed(app, decision, app.t(ALREADY_RUNNING)))
             return
         # Exactly Start work for one assistant: the supervisor posts /api/client-runs once
         # and the launcher prepares a fresh resume packet that the assistant must ACK. For
@@ -168,13 +186,20 @@ async def run_next_stage(app):
         failed = [row.get("code") for row in current.get("launch_errors", [])
                   if row.get("slot_id") == decision["slot_id"]]
         if failed:
-            app.notice_for(subject, app.t("The assistant did not start") + ": " + ", ".join(map(str, failed)) + "\n" + text)
+            # The stage, its assistant and the codes of this slot, then what to do when a code has a
+            # sentence: the state poll's notice before it says only that something needs attention.
+            explanation = app.t("The assistant did not start") + ": " + ", ".join(map(str, failed))
+            if hint := connection_hint(failed, app.t):
+                explanation += "\n" + hint
+            app.notice_for(subject, _headed(app, decision, explanation))
         elif current.get("last_error"):
-            app.notice_for(subject, app.launch_notice(current))
+            # The state poll inside reconcile has usually posted this same text already: once per press.
+            app.post_launch_notice(current, about=subject)
         elif decision["client"] in AGENT_CLIENTS:
-            app.notice_for(subject, app.t(AGENT_STARTED) + "\n" + text)
+            app.notice_for(subject, _headed(app, decision, app.t(AGENT_STARTED)))
         else:
-            app.notice_for(subject, app.t("Stage started. The assistant must acknowledge its resume packet.") + "\n" + text)
+            app.notice_for(subject, _headed(app, decision,
+                                            app.t("Stage started. The assistant must acknowledge its resume packet.")))
     elif decision.get("action") == "run_check":
         profile = decision["check_profile"]
         running = getattr(app, "_stage_check", None)

@@ -111,6 +111,23 @@ def test_filling_continues_past_an_entry_that_does_not_fit():
     assert omitted == [{"kind": "decision", "status": "confirmed", "count": 1}]
 
 
+def test_rules_reserve_does_not_push_the_checkpoint_out_of_the_smallest_budget():
+    # Review of #241: at the 2,500 floor (an active plan with a large workflow) a long newest finding and a
+    # long confirmed rule, each taken by its own reserve, left no room for the checkpoint, which 0.10 showed.
+    from cairnmind.context_selection import entry_size, select_entries
+
+    entries = [entry("checkpoint-0", status="proposed", kind="checkpoint", size=940),
+               entry("constraint-0", kind="constraint", size=1040),
+               entry("fact-0", status="proposed", kind="fact", size=1240)]
+    assert [round(entry_size(item), -2) for item in entries] == [1000, 1100, 1300]
+    selected, omitted = select_entries(entries, [False, False, True], 2500)
+    assert [item["id"] for item in selected] == ["checkpoint-0", "fact-0"]
+    assert omitted == [{"kind": "constraint", "status": "confirmed", "count": 1}]
+    # With room for all three, the rule is still shown, in presentation order.
+    selected, _ = select_entries(entries, [False, False, True], 3500)
+    assert [item["id"] for item in selected] == ["checkpoint-0", "constraint-0", "fact-0"]
+
+
 def test_selection_rejects_mismatched_reserve_flags():
     from cairnmind.context_selection import select_entries
 
@@ -300,9 +317,9 @@ def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
     seen = {}
     real = retrieval.select_entries
 
-    def spy(entries, reserve, budget):
+    def spy(entries, reserve, budget, **options):
         seen.update({item["id"]: (item["kind"], item["status"], flag) for item, flag in zip(entries, reserve)})
-        return real(entries, reserve, budget)
+        return real(entries, reserve, budget, **options)
 
     monkeypatch.setattr(retrieval, "select_entries", spy)
     context = Retriever(store, settings, NoModel()).context(project["id"])
@@ -310,3 +327,178 @@ def test_finished_tasks_do_not_take_the_finding_reserve(workspace, monkeypatch):
     assert {flag for kind, status, flag in seen.values() if kind == "task"} == {False}
     assert {status for kind, status, flag in seen.values() if kind == "task"} == {"proposed"}
     assert seen[finding["id"]][2] is True and finding["id"] in shown_ids(context)
+
+
+def open_tasks(store, project, count, evidence):
+    """Open tasks of the size the 0.11.0 trial measured, about 1,200 characters each in the context (#241)."""
+    return [store.remember(project["id"], {
+        "kind": "task", "key": f"open-{index}", "content": f"Open step {index}: " + "acceptance details " * 30,
+        "metadata": {"state": "todo", "acceptance_criteria": [f"Criterion {n} of step {index} holds." for n in range(8)],
+                     "requires_test": True, "required_profiles": ["unit"]}}, [evidence["id"]])
+        for index in range(count)]
+
+
+def test_rules_in_force_are_seen_beside_many_open_tasks_and_some_tasks_are_counted_as_omitted(workspace):
+    from cairnmind.context_selection import entry_size
+
+    store, project, settings = workspace
+    evidence = source(store, project)
+    rules = [remember(store, project, {"kind": "constraint", "key": "tokens", "status": "confirmed",
+                                       "content": "Never log tokens."}, evidence),
+             remember(store, project, {"kind": "decision", "key": "gateway", "status": "confirmed",
+                                       "content": "Payments go through the gateway module only."}, evidence),
+             remember(store, project, {"kind": "constraint", "key": "local", "status": "confirmed",
+                                       "content": "All inference stays on this machine."}, evidence)]
+    # Updated after the rules, as in the trial: the open tasks and a new finding are the newest records.
+    tasks = open_tasks(store, project, 8, evidence)
+    finding = proposed_finding(store, project, 0)
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    shown = shown_ids(context)
+    by_id = {item["id"]: item for item in context["records"]}
+    assert all(entry_size(by_id[task["id"]]) > 1000 for task in tasks if task["id"] in by_id)
+    assert {rule["id"] for rule in rules} <= shown
+    assert finding["id"] in shown
+    # Tasks get the rest: some are shown, first, and the others are counted, not lost.
+    assert context["records"][0]["kind"] == "task"
+    assert 0 < sum(task["id"] in shown for task in tasks) < len(tasks)
+    assert {"kind": "task", "status": "proposed", "count": context["omitted_records"]} in \
+        context["omitted_by_kind_status"]
+    # The presentation order of #213 is kept among what is shown.
+    kinds = [item["kind"] for item in context["records"]]
+    assert kinds == sorted(kinds, key=lambda kind: {"task": 1, "constraint": 2, "decision": 2}.get(kind, 4))
+
+
+def test_all_four_rules_are_seen_beside_eight_open_tasks_and_a_contradicting_proposal(workspace):
+    # Second trial of #241 (ctxproj): 8 open tasks of about 790 characters, 4 short confirmed rules and a
+    # proposed constraint that contradicts the oldest rule. The rules reserve held three; the main pass then
+    # walked presentation order, where the open tasks come first, and the oldest rule was left out while the
+    # proposal that contradicts it was shown.
+    from cairnmind.context_selection import entry_size
+
+    store, project, settings = workspace
+    evidence = source(store, project)
+    texts = ["Never log tokens or API keys, not even in debug output.", "Payments go through the gateway module only.",
+             "All inference stays on this machine.", "Migrations are reviewed by a person before they run."]
+    rules = [remember(store, project, {"kind": "constraint" if index % 2 == 0 else "decision", "key": f"rule-{index}",
+                                       "status": "confirmed", "content": text}, evidence)
+             for index, text in enumerate(texts)]
+    tasks = [store.remember(project["id"], {
+        "kind": "task", "key": f"open-{index}", "content": f"Open step {index}: " + "acceptance details " * 8,
+        "metadata": {"state": "todo"}}, [evidence["id"]]) for index in range(8)]
+    proposal = store.remember(project["id"], {
+        "kind": "constraint", "key": "tokens-debug", "content": "Tokens may be logged for debugging.",
+        "metadata": {"possible_conflicts": [rules[0]["id"]]}}, [evidence["id"]])
+    context = Retriever(store, settings, NoModel()).context(project["id"])
+    shown = shown_ids(context)
+    by_id = {item["id"]: item for item in context["records"]}
+    sizes = [entry_size(by_id[task["id"]]) for task in tasks if task["id"] in by_id]
+    assert all(600 < size < 1000 for size in sizes), sizes
+    assert {rule["id"] for rule in rules} <= shown
+    assert proposal["id"] in shown
+    assert 0 < sum(task["id"] in shown for task in tasks) < len(tasks)
+    assert context["records"][0]["kind"] == "task"
+    assert {"kind": "task", "status": "proposed", "count": context["omitted_records"]} in \
+        context["omitted_by_kind_status"]
+
+
+def conflicting(identifier, others, size=100):
+    return {**entry(identifier, status="proposed", kind="constraint", size=size),
+            "metadata": {"possible_conflicts": others}}
+
+
+def test_a_proposal_is_not_shown_while_the_confirmed_record_it_contradicts_is_left_out():
+    from cairnmind.context_selection import entry_size, select_entries
+
+    entries = [entry("task-0", status="proposed", kind="task", size=1000),
+               entry("rule-0", kind="constraint", size=600),
+               conflicting("proposal-0", ["rule-0"], size=600)]
+    assert [round(entry_size(item), -2) for item in entries] == [1100, 700, 700]
+    # With room for the pair, both are shown, in presentation order; the proposal reserve holds the pair.
+    selected, omitted = select_entries(entries, [False, False, True], 2000, rules_share=0.0)
+    assert [item["id"] for item in selected] == ["rule-0", "proposal-0"]
+    assert omitted == [{"kind": "task", "status": "proposed", "count": 1}]
+    # Without room for the pair, the proposal waits and is counted; the rule in force is shown.
+    selected, omitted = select_entries(entries, [False, False, True], 1300, rules_share=0.0)
+    assert [item["id"] for item in selected] == ["rule-0"]
+    assert omitted == [{"kind": "constraint", "status": "proposed", "count": 1},
+                       {"kind": "task", "status": "proposed", "count": 1}]
+    # The same holds in the main pass, with no reserve flag on the proposal, and for a confirmed record
+    # that is not a rule in force, which no reserve holds.
+    other = [entries[0], entry("fact-0", kind="fact", size=600),
+             {**entries[2], "metadata": {"possible_conflicts": ["fact-0"]}}]
+    for budget in range(500, 3000, 50):
+        for flags in ([False] * 3, [False, False, True]):
+            ids = [item["id"] for item in select_entries(other, flags, budget, share=0.0, rules_share=0.0)[0]]
+            assert "proposal-0" not in ids or "fact-0" in ids, (budget, flags, ids)
+
+
+def test_a_conflict_mark_names_only_confirmed_records_present_and_cannot_pull_in_other_entries():
+    from cairnmind.context_selection import select_entries
+
+    # A mark naming a proposed record, an unknown id or itself does not hold the proposal back.
+    entries = [entry("other-proposal", status="proposed", kind="fact", size=2000),
+               conflicting("proposal-0", ["other-proposal", "missing", "proposal-0", 7, None], size=100)]
+    selected, _ = select_entries(entries, [False, True], 1000)
+    assert [item["id"] for item in selected] == ["proposal-0"]
+    # A malformed mark is ignored, not trusted.
+    selected, _ = select_entries([{**conflicting("p", []), "metadata": {"possible_conflicts": "rule"}}], [True], 1000)
+    assert [item["id"] for item in selected] == ["p"]
+    # The stored marks given in full count even when the bounded view shows only the first five.
+    entries = [entry("task-0", status="proposed", kind="task", size=1000), entry("fact-5", kind="fact", size=600),
+               conflicting("proposal-0", [f"fact-{n}" for n in range(5)], size=600)]
+    full = [None, None, [f"fact-{n}" for n in range(6)]]
+    selected, _ = select_entries(entries, [False, False, True], 1300, rules_share=0.0)
+    assert [item["id"] for item in selected] == ["proposal-0"]
+    selected, _ = select_entries(entries, [False, False, True], 1300, rules_share=0.0, conflicts=full)
+    assert [item["id"] for item in selected] == ["task-0"]
+    with pytest.raises(ValueError):
+        select_entries(entries, [False, False, True], 1300, conflicts=full[:2])
+
+
+def test_many_rules_take_their_share_and_the_open_tasks_get_the_rest():
+    # The owner's decision of 15 November (#241): a share is reserved for the rules in force; tasks get the
+    # rest. Many confirmed rules must not push all but one open task out.
+    from cairnmind.context_selection import RULES_SHARE, entry_size, select_entries
+
+    budget = 6800
+    for rule_count in (4, 8, 12, 20):
+        entries = [entry(f"task-{n}", status="proposed", kind="task", size=700) for n in range(10)] + \
+            [entry(f"rule-{n}", kind="constraint", size=500) for n in range(rule_count)]
+        task_size, rule_size = entry_size(entries[0]), entry_size(entries[-1])
+        selected, omitted = select_entries(entries, [False] * len(entries), budget)
+        ids = [item["id"] for item in selected]
+        rules_shown = sum(identifier.startswith("rule-") for identifier in ids)
+        tasks_shown = sum(identifier.startswith("task-") for identifier in ids)
+        assert rules_shown == int(budget * RULES_SHARE) // rule_size, (rule_count, ids)
+        assert tasks_shown == (budget - rules_shown * rule_size) // task_size, (rule_count, ids)
+        assert ids[0] == "task-0" and tasks_shown >= 5
+        assert {"kind": "constraint", "status": "confirmed", "count": rule_count - rules_shown} in omitted
+
+
+def test_a_proposal_waits_for_the_record_that_replaced_the_rule_it_contradicts(workspace):
+    # A replaced rule's successor has a new id, and the proposal's mark still names the old one (#241).
+    store, project, settings = workspace
+    evidence = source(store, project)
+    old = remember(store, project, {"kind": "constraint", "key": "tokens", "status": "confirmed",
+                                    "content": "Never log tokens."}, evidence)
+    proposal = store.remember(project["id"], {
+        "kind": "constraint", "key": "tokens-debug", "content": "Tokens may be logged for debugging.",
+        "metadata": {"possible_conflicts": [old["id"]]}}, [evidence["id"]])
+    new = as_person(store, project["id"], {"kind": "constraint", "key": "tokens", "supersedes": old["id"],
+                                           "content": "Never log tokens or API keys. " + "detail " * 300},
+                    [evidence["id"]])
+    assert new["id"] != old["id"]
+    # Newer rules fill the rules reserve, and the open tasks take the rest.
+    for index, text in enumerate(["Payments go through the gateway module only.",
+                                  "All inference stays on this machine.", "Migrations are reviewed by a person."]):
+        remember(store, project, {"kind": "decision", "key": f"rule-{index}", "status": "confirmed",
+                                  "content": text}, evidence)
+    tasks = open_tasks(store, project, 8, evidence)
+    shown = shown_ids(Retriever(store, settings, NoModel()).context(project["id"]))
+    assert old["id"] not in shown
+    assert proposal["id"] not in shown or new["id"] in shown, shown
+    assert any(task["id"] in shown for task in tasks)
+    # The same through select_entries: the stored mark resolved to the successor holds the proposal back.
+    from cairnmind.conflicts import standing_marks
+    assert standing_marks(store, project["id"], set(), [[old["id"], "missing"], None]) == \
+        [[new["id"], "missing"], None]

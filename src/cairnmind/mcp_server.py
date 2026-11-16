@@ -111,10 +111,16 @@ def _looks_like_path(value: str) -> bool:
 
     Any other value is settled on the first resume_context (_project_for_service): a registered project
     id or name is sent as given, even when a folder of that name exists here; otherwise a relative path
-    that exists from the editor's working directory ("packages/api") is made absolute, because the
-    service would read it from its own working directory.
+    with a separator that exists from the editor's working directory ("packages/api") is made absolute,
+    because the service would read it from its own working directory. A bare name ("app") is never read
+    as a local folder, as on the command line (cli.caller_path) and in Store.resolve_project (#238).
     """
     return value.startswith((".", "~")) or os.path.isabs(value)
+
+
+def _written_as_path(value: str) -> bool:
+    """A value that reads as a path by its form: a leading . or ~, or a separator anywhere."""
+    return value.startswith((".", "~")) or "/" in value or os.sep in value
 
 
 class ServiceClient:
@@ -183,7 +189,7 @@ class ServiceClient:
             return project
         local = Path(project).expanduser()
         # Otherwise sent as given, and the service answers "Unknown project".
-        return str(local.resolve()) if local.exists() else project
+        return str(local.resolve()) if _written_as_path(project) and local.exists() else project
 
     async def _containing_root(self, project: str) -> str | None:
         """The most specific registered root containing the project path (or the working directory)."""

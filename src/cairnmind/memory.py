@@ -23,7 +23,8 @@ from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_dir
 from .memory_size import package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
-from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
+from .sql import (clean_row, insert_document, json_text, one_row, unregistered_root, update_document,
+                  utc_now)
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
 # earlier name are read as they are: rewriting one would change its identifier and its history.
@@ -564,7 +565,7 @@ class MemoryManager:
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
         if not reader.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
                             {"project": project_id, "path": str(root)}):
-            raise ValueError("Memory worktree must be a registered project root")
+            raise ValueError(unregistered_root(root, project))
         return project, root
 
     @staticmethod
@@ -786,10 +787,23 @@ class MemoryManager:
                                  {"project": project_id}, False)
                 baseline = published or prior
                 exact_current = existing_payload == payload
-                if ((baseline and (baseline["snapshot_id"] not in manifest.get("ancestors", [])
-                                   or (captured["state_hash"] != baseline["state_hash"] and not exact_current)))
-                        or (not baseline and not exact_current)):
-                    raise MemoryConflict("Memory histories diverged or local knowledge changed")
+                unchanged = bool(baseline) and (captured["state_hash"] == baseline["state_hash"] or exact_current)
+                if baseline and baseline["snapshot_id"] == snapshot_id and unchanged:
+                    # This store's own latest snapshot (#239): a manifest never lists itself among its ancestors.
+                    if not roots:
+                        raise MemoryConflict(f"This snapshot is this store's own, for the root {current['root']}")
+                    return {**result, "status": "unchanged", "project": current}
+                # One reason each (#239); an import never merges two histories, so nothing is imported.
+                if baseline and baseline["snapshot_id"] not in [snapshot_id, *manifest.get("ancestors", [])]:
+                    raise MemoryConflict(f"The package does not continue this store's last snapshot "
+                                         f"{baseline['snapshot_id']}: the two histories diverged, and an import does "
+                                         "not merge them. Nothing was imported.")
+                if (baseline and not unchanged) or (not baseline and not exact_current):
+                    since = f"since its last snapshot {baseline['snapshot_id']}" if baseline else "and it has no snapshot"
+                    raise MemoryConflict(f"Local knowledge of project {current['name']} changed {since}, and an import "
+                                         "does not merge it with the package. Nothing was imported. Record it with "
+                                         f"`cairnmind memory snapshot {current['name']}` before choosing which "
+                                         "history to keep.")
                 focus = one_row(tx, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
                              {"project": project_id, "root": str(root)}, False)
                 selected = focus.get("active_plan_id") if focus else None

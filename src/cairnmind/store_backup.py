@@ -130,8 +130,12 @@ def write_temporary(destination, payload: dict) -> Path:
     The caller moves it into place with ``publish`` or removes it. On any failure here it is removed.
     """
     destination = Path(destination).expanduser().resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, name = tempfile.mkstemp(prefix=TEMPORARY_PREFIX, dir=destination.parent)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, name = tempfile.mkstemp(prefix=TEMPORARY_PREFIX, dir=destination.parent)
+    except OSError as exc:
+        # Said plainly, without an errno or the name of the temporary file (#238).
+        raise ValueError(f"Cannot write a backup into {destination.parent}: {exc.strerror or exc}") from None
     temporary = Path(name)
     try:
         with os.fdopen(fd, "wb") as handle:

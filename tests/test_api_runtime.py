@@ -89,6 +89,32 @@ def test_missing_credential_or_unknown_resume_cannot_spawn(runtime):
     assert not spawned
 
 
+def test_an_unusable_key_is_refused_by_its_own_code_and_never_quoted(runtime, monkeypatch):
+    runner, credentials, project, spawned, requests = runtime
+    secret = 'not a valid key'
+    monkeypatch.setenv('BAD_SECRET_SOURCE', secret)
+    invalid = normalize_profile({'id': 'api', 'client': 'api', 'label': 'Cloud', 'provider': 'openai',
+                                 'model': 'tools', 'credential_ref': 'env:BAD_SECRET_SOURCE'})
+    with pytest.raises(ValueError, match='^credential_invalid:') as error:
+        runner.start_agent(project, invalid, slot_id='slot')
+    assert secret not in str(error.value)
+    stored = normalize_profile({'id': 'saved', 'client': 'api', 'label': 'Cloud', 'provider': 'openai',
+                                'model': 'tools', 'credential_ref': 'profile:saved'})
+    monkeypatch.setattr(credentials, '_read', lambda: (_ for _ in ()).throw(
+        ValueError('The credential store cannot be read safely.')))
+    with pytest.raises(ValueError, match='^credential_unavailable:'):
+        runner.start_agent(project, stored, slot_id='other')
+    assert not spawned and not requests
+    # Start work reports both by name, so the sidebar can say what to do (#243).
+    from cairnmind.cockpit_state import CockpitState
+    state = CockpitState(runner.settings)
+    state.update({'profiles': [*state.load()['profiles'], invalid, stored]})
+    started = runner.start_project(project, slots=[{**invalid, 'id': 'one', 'profile_id': 'api'},
+                                                   {**stored, 'id': 'two', 'profile_id': 'saved'}])
+    assert [e['code'] for e in started['errors']] == ['credential_invalid', 'credential_unavailable']
+    assert secret not in json.dumps(started)
+
+
 def test_invalid_private_configuration_refuses_identity_and_symlink(runtime, tmp_path):
     runner, credentials, project, spawned, requests = runtime
     profile = normalize_profile({'id': 'local', 'client': 'api', 'label': 'Local', 'provider': 'ollama', 'model': 'local'})

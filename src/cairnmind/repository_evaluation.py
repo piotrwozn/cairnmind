@@ -80,6 +80,19 @@ def _forms(value: str, forms: list[str]) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def _unreadable(path: Path, exc: Exception) -> str:
+    """Why the question file cannot be read, as a sentence without the Errno form (#244)."""
+    from cairnmind.terminal_safe import safe_text
+    shown = safe_text(str(path))
+    if isinstance(exc, FileNotFoundError):
+        return f"The question file {shown} does not exist."
+    if isinstance(exc, IsADirectoryError):
+        return f"The question file {shown} is a folder, not a file."
+    if isinstance(exc, OSError):
+        return f"Cannot read the question file {shown}: {exc.strerror or 'the system refused'}."
+    return f"The question file {shown} is not valid JSON: {safe_text(str(exc))}"
+
+
 def load_questions(path: Path, root: Path) -> list[dict]:
     """Questions of ``path`` with their accepted forms resolved against ``root``.
 
@@ -89,9 +102,9 @@ def load_questions(path: Path, root: Path) -> list[dict]:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise ValueError(f"Cannot read the question file {path}: {exc}") from None
+        raise ValueError(_unreadable(path, exc)) from None
     questions = data.get("questions") if isinstance(data, dict) else None
-    if data.get("format_version") != 1 or not isinstance(questions, list) or not questions:
+    if not isinstance(data, dict) or data.get("format_version") != 1 or not isinstance(questions, list) or not questions:
         raise ValueError("A question file needs format_version 1 and a nonempty questions list")
     resolved, seen = [], set()
     for item in questions:

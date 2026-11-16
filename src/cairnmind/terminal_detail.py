@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from .terminal_i18n_messages import display_word
 from .terminal_theme import evidence_style, state_style
 
 # (evidence_state, quote_survives) as returned by the inspector for one record.
@@ -50,6 +51,13 @@ def labelled(label, value, role="value"):
 def state_role(word):
     """Style of a state read from a field; only an exact known word gets a colour."""
     return state_style(word if isinstance(word, str) else "")
+
+
+def task_state(item):
+    """A task's progress (metadata.state). Only a task has one: extraction can still write the field on a
+    fact or a decision, and there it is not the record's state, which is its status."""
+    metadata = item.get("metadata") if isinstance(item, dict) else None
+    return metadata.get("state") if item.get("kind") == "task" and isinstance(metadata, dict) else None
 
 
 def evidence_parts(item, translate):
@@ -96,9 +104,10 @@ def record_parts(value, translate):
     if not isinstance(metadata, dict):
         metadata = {}
 
-    state = item.get("state", metadata.get("state", item.get("status")))
+    state = item.get("state", task_state(item) or item.get("status"))
     if state:
-        lines.append(labelled(translate("Status"), str(state), state_role(state)))
+        # The stored word in the panel's language, as the list shows it; any other value as it is.
+        lines.append(labelled(translate("Status"), display_word(state, translate), state_role(state)))
     if item.get("version"):
         lines.append(labelled(translate("Version"), str(item["version"])))
     if item.get("source_ids"):

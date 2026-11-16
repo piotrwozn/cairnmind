@@ -208,6 +208,11 @@ BROKER_MESSAGES = {
     "The memory service is unavailable. Restart cairnmind.":
         "Usługa pamięci jest niedostępna. Uruchom ponownie cairnmind.",
     "The memory service gave an invalid answer.": "Usługa pamięci zwróciła niepoprawną odpowiedź.",
+    # The inspector's refusal of a review that would change nothing (#239).
+    "A historical version cannot be reviewed.": "Wersja historyczna nie podlega ocenie.",
+    "Already confirmed by a person here at this version; nothing to do.":
+        "Już potwierdzone przez osobę na tym komputerze w tej wersji; nie ma nic do zrobienia.",
+    "Already disputed at this version; nothing to do.": "Już zakwestionowane w tej wersji; nie ma nic do zrobienia.",
     "The memory service gave an invalid response.": "Niepoprawna odpowiedź usługi pamięci.",
     "Invalid graph projection format.": "Niepoprawny format projekcji grafu.",
     "The project of the chosen entry is unknown.": "Nieznany projekt wskazanego wpisu.",

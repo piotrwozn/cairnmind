@@ -153,7 +153,7 @@ async def test_a_running_inspector_switches_every_label_to_the_new_language(tmp_
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         table = app.query_one("#inspector-rows", DataTable)
-        assert str(app.query_one("#panel-notice", Static).render()) == "1 items · read only"
+        assert str(app.query_one("#panel-notice", Static).render()) == "1 item · read only"
         assert app.title == "Cairnmind · Memory"
         language[0] = "pl"  # Settings → Language → Polski, while the panel runs
         await wait_until(pilot, lambda: app.language == "pl")
@@ -163,7 +163,7 @@ async def test_a_running_inspector_switches_every_label_to_the_new_language(tmp_
         assert app.view == "records"
         assert [str(column.label) for column in table.ordered_columns] == [
             "Typ / stan", "Treść / źródło", "Wersja / próba"]
-        assert str(app.query_one("#panel-notice", Static).render()) == "1 wpisów · tylko odczyt"
+        assert str(app.query_one("#panel-notice", Static).render()) == "1 wpis · tylko odczyt"
         assert app.title == "Cairnmind · Pamięć"
         assert str(table.get_row("record-a")[0]) == "zadanie / do przeglądu"
 
