@@ -99,6 +99,7 @@ Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in i
 | Extraction from conversations: share of proposals a person would reject | 29% of 28 proposals on 0.11.0, every kept record found; 65% on 0.10.0 |
 | Questions about Cairnmind's own repository, complete and right | 20 of 20 in the release run, 19, 19 and 20 in three runs before it; none complete and wrong |
 | Questions about things the repository does not have, refused | 20 of 21; the one answered (a name in lower case) was answered wrong |
+| 22 further questions about Cairnmind's own repository, one run before the release | 15 complete and right, 2 complete and wrong |
 
 The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/evaluation/RESULTS.md](docs/evaluation/RESULTS.md).
 
@@ -448,7 +449,7 @@ An external MCP session (Cursor, Cline, Zed) has no archived conversation to quo
 - [docs/API.md](docs/API.md): API, Ollama and Copilot connections and permissions.
 - [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, evidence states and MCP calls.
 - [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.
-- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the 0.8.0 results and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
+- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the results for 0.11.0 and 0.8.0 and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): the database in a container, on a server or in Kubernetes, and connect-only installations.
 - [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing installation.
 - [docs/CONTRACTS.md](docs/CONTRACTS.md): implementation contracts for the backend and its components, and the [extension surfaces](docs/CONTRACTS.md#extension-surfaces): what can be added (checks, reactions to events, MCP clients, model connections), what is planned, and why there are no plugins.
@@ -479,7 +480,7 @@ The automated tests need no Ollama, no models and no signed-in coding clients; t
 
 ## Status and roadmap
 
-Version 0.11.0 is the current release; 0.9.0 was the first under the name Cairnmind. See the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from 0.10.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Both are in [docs/UPGRADING.md](docs/UPGRADING.md).
+Version 0.11.0 is the current release; 0.9.0 was the first under the name Cairnmind. See the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from 0.10.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Each of these is in [docs/UPGRADING.md](docs/UPGRADING.md).
 
 Planned work is tracked in [issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 
