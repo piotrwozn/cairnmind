@@ -379,6 +379,12 @@ def test_a_plan_file_or_an_evidence_file_of_another_shape_is_a_refusal(tmp_path)
     said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(store.data_dir), "plan", "save", "demo",
                                                   str(plan), "--idempotency-key", "k"]))
     assert "plan and steps" in said
+    # A file that is not JSON at all is refused the same way, naming the file, before any service starts.
+    plan.write_text("{not json")
+    for arguments in (("plan", "save", "demo", str(plan), "--idempotency-key", "k"), ("checkpoint", "demo", str(plan)),
+                      ("session", "ack", "s", "p", "h", str(plan))):
+        said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(store.data_dir), *arguments]))
+        assert said.startswith(f"Error: The file {plan} is not valid JSON: Expecting property name"), arguments
     pid = store.resolve_project("demo")["id"]
     source = store.snapshot(pid, "manual://task", "Build it", "manual")
     task = store.remember(pid, {"kind": "task", "content": "Build it", "metadata": {"state": "todo"}},

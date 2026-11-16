@@ -91,6 +91,39 @@ def entrypoint() -> None:
         raise SystemExit(1) from None
 
 
+# The data directory of the running command, set by the app callback, for the commands a refusal prints.
+_INVOCATION: dict = {}
+
+
+def _data_dir_arguments(data_dir) -> list[str]:
+    """`--data-dir DIR` when a plain shell would use another directory: CAIRNMIND_HOME, set by a wrapper, is not
+    set in the shell a printed command is pasted into (#244)."""
+    from cairnmind.config import default_data_dir
+    return [] if data_dir is None or data_dir == default_data_dir(environ={}) else ["--data-dir", str(data_dir)]
+
+
+def _pasteable(message: str) -> str:
+    """A refusal whose register command (`cairnmind project root ...`, from sql.unregistered_root, built where no
+    settings are known) acts on this installation when pasted, not on the default one. Only that command: it
+    writes to the store, so pasting it bare would register the folder in another installation. Other commands a
+    refusal names (`cairnmind init`, `cairnmind serve`) are printed as they are."""
+    arguments = _data_dir_arguments(_INVOCATION.get("data_dir"))
+    if not arguments or "`cairnmind project root " not in message:
+        return message
+    import shlex
+    from cairnmind.terminal_safe import safe_text
+    return message.replace("`cairnmind project root ", f"`cairnmind {safe_text(shlex.join(arguments))} project root ")
+
+
+def _json_file(path: Path):
+    """A JSON file named on the command line. One that is not JSON is refused in one line that names it, as one of
+    another shape is, not as the parser's bare message (#244)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:  # JSONDecodeError, or bytes that are not UTF-8
+        refuse(f"The file {_shortened(str(path))} is not valid JSON: {_shortened(str(exc), 300)}")
+
+
 def _shortened(text: str, limit: int = 200) -> str:
     from cairnmind.terminal_safe import safe_text
     text = safe_text(text)
@@ -650,7 +683,7 @@ def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree
         payload["log"] = True
     if answer_schema is not None:
         from cairnmind.answer_contract import prepare_answer_schema
-        payload["answer_schema"] = prepare_answer_schema(json.loads(answer_schema.read_text(encoding="utf-8")))
+        payload["answer_schema"] = prepare_answer_schema(_json_file(answer_schema))
     output(request(ctx.obj, "POST", "/ask", json=payload))
 
 
@@ -1003,7 +1036,7 @@ def remember(ctx: typer.Context, project: ProjectArg,
 def checkpoint(ctx: typer.Context, project: ProjectArg, state_file: StateFileArg):
     """Store where work stands, from a JSON file, as the project's checkpoint. Starts the service when needed."""
     output(request(ctx.obj, "POST", "/checkpoint", json={"project": project,
-                   "state": json.loads(state_file.read_text(encoding="utf-8"))}))
+                   "state": _json_file(state_file)}))
 
 
 @tasks_app.command("list")
@@ -1117,10 +1150,10 @@ def plan_save(ctx: typer.Context,
               activate: Annotated[bool, typer.Option(help="Make the saved plan the active one.")] = False):
     """Save a new version of a plan from a JSON file; --activate makes it the active plan."""
     from cairnmind.plans import PlanManager
-    document = json.loads(input_json.read_text(encoding="utf-8"))
+    document = _json_file(input_json)
     if not isinstance(document, dict):
         refuse("The file must contain an object with the fields plan and steps")
-    versions = (json.loads(task_versions.read_text(encoding="utf-8")) if task_versions
+    versions = (_json_file(task_versions) if task_versions
                 else document.get("task_versions"))
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
@@ -1369,7 +1402,7 @@ def session_ack(ctx: typer.Context, session_id: SessionIdArg, packet_id: PacketI
         raise typer.BadParameter("Another session cannot be acknowledged")
     output(request(ctx.obj, "POST", "/sessions/ack", json={"session_id": session_id,
         "packet_id": packet_id, "packet_hash": packet_hash,
-        "readback": json.loads(readback_json.read_text(encoding="utf-8"))}))
+        "readback": _json_file(readback_json)}))
 
 
 @eval_app.command("run")
