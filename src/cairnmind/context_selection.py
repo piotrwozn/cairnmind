@@ -6,8 +6,10 @@ tasks last, each group most recently updated first. Before that order is applied
 the budget is reserved for the most recently updated proposed records, so new findings are
 seen even when many confirmed records or open tasks exist, and another for the confirmed decisions
 and constraints in force, so open tasks do not push the rules out (#241); the checkpoint is taken
-between the two, as before #241, so the rules reserve cannot push it out of a small budget, and tasks
-get the rest. Each
+between the two, as before #241, so the rules reserve cannot push it out of a small budget. After the
+newest open task, what is left is offered to the rules in force before the other tasks and findings
+take it, and a proposal that contradicts
+a confirmed record (metadata.possible_conflicts) is shown only beside it. Each
 reserve always grows to hold the newest of its records when that fits what is left of the budget,
 so a long finding with metadata beside an active plan is not passed over for an older, shorter one.
 A reserve is not lost when there are few such records: the main pass fills the whole budget. An
@@ -62,8 +64,34 @@ def entry_size(entry: dict) -> int:
     return len(json.dumps(entry, ensure_ascii=False))
 
 
+def _state(entry: dict):
+    metadata = entry.get("metadata")
+    return metadata.get("state") if isinstance(metadata, dict) else None
+
+
+def _contradicted(entries: list[dict], conflicts: list | None) -> list[list[int]]:
+    """For each entry that is not confirmed, the confirmed entries its metadata.possible_conflicts names.
+
+    ``conflicts[i]`` is the stored mark of entry i in full; without it the mark in the entry's bounded
+    metadata is read. Only ids of confirmed entries in this list count; anything else is ignored.
+    """
+    confirmed = {entry.get("id"): index for index, entry in enumerate(entries)
+                 if entry.get("status") == "confirmed" and isinstance(entry.get("id"), str)}
+    result: list[list[int]] = []
+    for position, entry in enumerate(entries):
+        metadata = entry.get("metadata")
+        marks = (conflicts[position] if conflicts is not None
+                 else metadata.get("possible_conflicts") if isinstance(metadata, dict) else None)
+        if entry.get("status") == "confirmed" or not isinstance(marks, list):
+            result.append([])
+            continue
+        result.append(list(dict.fromkeys(confirmed[mark] for mark in marks if isinstance(mark, str) and mark in confirmed)))
+    return result
+
+
 def select_entries(entries: list[dict], reserve: list[bool], budget: int,
-                   share: float = PROPOSED_SHARE, rules_share: float = RULES_SHARE) -> tuple[list[dict], list[dict]]:
+                   share: float = PROPOSED_SHARE, rules_share: float = RULES_SHARE,
+                   conflicts: list | None = None) -> tuple[list[dict], list[dict]]:
     """Return the selected entries in presentation order and omitted counts per kind and status.
 
     ``reserve[i]`` marks an entry that may use the reserved share; such entries are tried for the
@@ -71,27 +99,45 @@ def select_entries(entries: list[dict], reserve: list[bool], budget: int,
     whenever it fits the whole budget: the reserve grows to its size when the share is smaller.
     Then the checkpoint is taken when it fits what is left, and ``rules_share`` is reserved the same
     way for the rules in force (rule_in_force), the first of them taken whenever it fits what is left.
+    Then the newest open task is taken when it fits what is left, and what is left after that goes to
+    the rules in force first and to the rest in presentation order. A proposal
+    is taken only together with the confirmed entries it contradicts (``conflicts``, see _contradicted),
+    so it is never shown while one of them is left out: both are shown or the proposal waits.
     """
-    if len(entries) != len(reserve):
+    if len(entries) != len(reserve) or (conflicts is not None and len(conflicts) != len(entries)):
         raise ValueError("Every entry needs a reserve flag")
     sizes = [entry_size(entry) for entry in entries]
     chosen: set[int] = set()
     used = 0
+    contradicted = _contradicted(entries, conflicts)
+
+    def unit(index: int) -> tuple[list[int], int]:
+        # A proposal comes with the confirmed records it contradicts that are not shown yet (#241).
+        members = [index, *(other for other in contradicted[index] if other not in chosen)]
+        return members, sum(sizes[member] for member in members)
+
     checkpoint = [entry.get("kind") == "checkpoint" for entry in entries]
-    for flags, part in ((reserve, share), (checkpoint, 1.0), ([rule_in_force(entry) for entry in entries], rules_share)):
+    rules = [rule_in_force(entry) for entry in entries]
+    # The newest open task (the active plan's next step, #213) keeps its place before the rules take what is left.
+    open_task = [entry.get("kind") == "task" and _state(entry) != "done" for entry in entries]
+    for flags, part in ((reserve, share), (checkpoint, 1.0), (rules, rules_share), (open_task, 0.0)):
         reserved = int(max(0, budget) * min(max(part, 0.0), 1.0))
         newest = next((index for index, flag in enumerate(flags) if flag and index not in chosen), None)
-        if newest is not None and sizes[newest] <= budget - used:
-            reserved = max(reserved, sizes[newest])
+        if newest is not None and unit(newest)[1] <= budget - used:
+            reserved = max(reserved, unit(newest)[1])
         taken = 0
-        for index, size in enumerate(sizes):
+        for index in range(len(entries)):
+            members, size = unit(index)
             if flags[index] and index not in chosen and taken + size <= reserved and used + size <= budget:
-                chosen.add(index)
+                chosen.update(members)
                 taken += size
                 used += size
-    for index, size in enumerate(sizes):
+    # What is left goes to the rules in force before tasks and findings take it (#241): the reserve above
+    # holds about three short rules, and in presentation order the open tasks come before them.
+    for index in sorted(range(len(entries)), key=lambda index: not rules[index]):
+        members, size = unit(index)
         if index not in chosen and used + size <= budget:
-            chosen.add(index)
+            chosen.update(members)
             used += size
     selected = [entry for index, entry in enumerate(entries) if index in chosen]
     left = Counter((str(entry.get("kind")), str(entry.get("status")))
