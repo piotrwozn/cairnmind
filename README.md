@@ -32,7 +32,7 @@ Shared memory for a team works through Git ([Team memory](#team-memory)). Planne
 
 ## Who it is for
 
-Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux or WSL2 with a local model through Ollama. It is a single-user, local tool. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
+Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux or WSL2 with a local model through Ollama. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
 
 ## What it guarantees, and what it does not
 
@@ -64,7 +64,7 @@ Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot
 
 - **Storage:** a single pinned [ArcadeDB](https://github.com/ArcadeData/arcadedb) engine holds documents, the code dependency graph, full-text and vector indexes. Cairnmind installs and runs it on your machine, or only connects to one you run in a container, on a server or in Kubernetes ([connect-only installations](docs/DEPLOYMENT.md#connect-only-installations)).
 - **Retrieval:** full-text search, HNSW vectors and graph traversal, fused and re-checked against source content.
-- **Knowledge agent:** `qwen3.5:9b` through Ollama with a 16k-token working context, and `qwen3-embedding:0.6b` embeddings. Coding assistants are chosen independently.
+- **Knowledge agent:** `qwen3.5:9b` through Ollama with a 16k-token working context, and `qwen3-embedding:0.6b` embeddings, by default. `cairnmind models set` can put either role on another Ollama or a server with the OpenAI-compatible API; a server on another computer needs HTTPS and your explicit consent, and receives only the sensitivity classes you allow ([docs/API.md](docs/API.md#the-knowledge-agents-models)). Coding assistants are chosen independently.
 - **Code graph:** tree-sitter analysis of Python, JavaScript and TypeScript. Other languages remain searchable as text.
 - **Memory:** versioned records and independent source snapshots, including uncommitted code.
 - **Queue:** one inference queue shared by all clients; questions take priority over pending extraction and embedding work.
@@ -89,15 +89,19 @@ The coding assistants it works with, Codex CLI and Claude Code among them, are n
 
 ## Measured results
 
-Measured on 9 November 2026 on release 0.8.0 with `qwen3.5:9b` on an RTX 4080 Super, in isolated databases with synthetic fixtures. They were not repeated for 0.9.0, and they are not proof of behaviour on every real project.
+Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in isolated databases: on release 0.8.0 on 9 November 2026, and on the code of 0.11.0 on 16 November 2026 (one run of each command for the release, and three runs of the repository questions before it). Recall, portable memory and extraction use synthetic fixtures; the repository questions use Cairnmind's own repository. None of them is proof of behaviour on every real project.
 
 | Evaluation | Result |
 |---|---|
-| Recall: 20 golden questions, pass threshold 0.9 | 1.0 in 6 of 6 runs |
+| Recall: 20 golden questions, pass threshold 0.9 | 1.0 on 0.11.0; 1.0 in 6 of 6 runs on 0.8.0 |
 | Hand-off Codex → Claude Code → fresh Codex, real clients | passed once, before the 0.8.0 fixes; not repeated since |
-| Portable memory: extraction, transfer, cited recall, project isolation | 3 of 3 runs on 0.8.0 |
+| Portable memory: extraction, transfer, cited recall, project isolation | passed on 0.11.0; 3 of 3 runs on 0.8.0 |
+| Extraction from conversations: share of proposals a person would reject | 29% of 28 proposals on 0.11.0, every kept record found; 65% on 0.10.0 |
+| Questions about Cairnmind's own repository, complete and right | 20 of 20 in the release run, 19, 19 and 20 in three runs before it; none complete and wrong |
+| Questions about things the repository does not have, refused | 20 of 21; the one answered (a name in lower case) was answered wrong |
+| 22 further questions about Cairnmind's own repository, one run before the release | 15 complete and right, 2 complete and wrong |
 
-The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](docs/EVALUATION.md).
+The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/evaluation/RESULTS.md](docs/evaluation/RESULTS.md).
 
 ## Look before you install
 
@@ -105,7 +109,7 @@ The full system needs Java, tmux, Ollama and several gigabytes of models. To see
 
 ## Quick start
 
-Cairnmind runs on Linux, and on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform). It needs Java 21+, tmux 3.4+, uv and Ollama. With those in place:
+Cairnmind runs on Linux, and on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform). macOS is planned for 0.12.0; native Windows is not supported. It needs Java 21+, tmux 3.4+, uv and Ollama. With those in place:
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
@@ -218,7 +222,7 @@ cairnmind task list my-app
 
 The format of `plan.json`, with an example, is in [docs/WORKFLOW.md](docs/WORKFLOW.md#a-whole-plan-in-one-transaction).
 
-Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` and `blocked`. A separate `proposed`/`confirmed` status describes how certain a finding is. A `done` result remains part of the execution history; a later code change can turn its verification to `stale`. The plan format, check profiles and MCP calls are described in [docs/WORKFLOW.md](docs/WORKFLOW.md).
+Progress states are `todo`, `in_progress`, `needs_test`, `needs_review`, `done` and `blocked`. A separate `proposed`/`confirmed` status describes how certain a finding is. Only a person confirms: a coding session, an MCP client or the built-in agent stores a finding as proposed, and cannot change a record a person confirmed ([MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md#only-a-person-confirms-a-record)). A `done` result remains part of the execution history; a later code change can turn its verification to `stale`. The plan format, check profiles and MCP calls are described in [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
 A step's state also names its stage: `implement` (`todo`, `in_progress`), `review` (`needs_review`) or `test` (`needs_test`). In the workspace, **More → Plan stages** maps each stage of a project to one of its assistants (Codex, Claude Code, the built-in API agent or GitHub Copilot), or `test` to a check profile, and **Run next stage** starts the mapped assistant like **Start work** (with its own resume packet to acknowledge) or runs the mapped check with `cairnmind check run`. It never moves a step on and never starts another assistant in place of a missing one or of the one you chose (a stage whose slot now names another profile waits until you save it again), and an API or Copilot profile without its key or runtime is shown as such with nothing started; `cairnmind stage next my-app` shows the same decision without starting anything. See [Plan stages](docs/WORKFLOW.md#plan-stages).
 
@@ -445,7 +449,8 @@ An external MCP session (Cursor, Cline, Zed) has no archived conversation to quo
 - [docs/API.md](docs/API.md): API, Ollama and Copilot connections and permissions.
 - [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, evidence states and MCP calls.
 - [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.
-- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations and the 0.8.0 results.
+- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the results for 0.11.0 and 0.8.0 and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): the database in a container, on a server or in Kubernetes, and connect-only installations.
 - [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing installation.
 - [docs/CONTRACTS.md](docs/CONTRACTS.md): implementation contracts for the backend and its components, and the [extension surfaces](docs/CONTRACTS.md#extension-surfaces): what can be added (checks, reactions to events, MCP clients, model connections), what is planned, and why there are no plugins.
 - [CHANGELOG.md](CHANGELOG.md): release history.
@@ -458,6 +463,7 @@ An external MCP session (Cursor, Cline, Zed) has no archived conversation to quo
 | [`tests/`](tests/) | Automated tests; see [CONTRIBUTING.md](CONTRIBUTING.md) for the tiers and a code map. |
 | [`docs/`](docs/) | Guides and implementation contracts. |
 | [`scripts/`](scripts/) | The installer. |
+| [`deploy/`](deploy/) | The database image, a Compose file and Kubernetes manifests ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). |
 | [`pilot/`](pilot/) | Material for a hand-off pilot between coding assistants. |
 
 ## Development
@@ -474,7 +480,7 @@ The automated tests need no Ollama, no models and no signed-in coding clients; t
 
 ## Status and roadmap
 
-Version 0.10.0 is the current release; 0.9.0 was the first under the name Cairnmind. See the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from 0.9.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Both are in [docs/UPGRADING.md](docs/UPGRADING.md).
+Version 0.11.0 is the current release; 0.9.0 was the first under the name Cairnmind. See the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from 0.10.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Each of these is in [docs/UPGRADING.md](docs/UPGRADING.md).
 
 Planned work is tracked in [issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 

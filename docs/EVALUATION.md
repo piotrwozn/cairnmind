@@ -14,6 +14,20 @@ Exit codes are 0 for passed, 1 for failed and 3 when a required model or client 
 
 The evaluations use the models the knowledge agent is configured with, on their servers (`cairnmind models set`, see [API.md](API.md#the-knowledge-agents-models)). A passing `eval run`, `eval memory` or `eval repository` is recorded in `models.evaluated.json` in the data directory, for exactly the pair of model identities and the setup it ran with: each role's server, the chat context window and the reasoning effort (`"models_evaluation_recorded": true` in its output). The `eval memory` report says `"inference": "local_ollama"` with the default local Ollama, and otherwise `"configured_model_servers"` with `model_servers`, which names each role's kind of server and whether its content left this computer. A pair counts as evaluated once `eval run` and `eval memory` have both passed with it; `cairnmind doctor` shows the record, and answers given with other models than the release's are labelled `unevaluated` until then. After changing only the chat model, run both again; after changing the embedding model, run `rebuild-vectors` first.
 
+## Results for 0.11.0
+
+The evaluations of the release gate, run once each on 16 November 2026 on the code of the release (46095ba, with the version set to 0.11.0), with `qwen3.5:9b` (digest 56671c2a…) and `qwen3-embedding:0.6b` (digest ac6da0df…) on an NVIDIA RTX 4080 Super under WSL2, default settings (`ask_timeout` 60). Each command had its own temporary data directory and engine, never an installation. The hand-off with real clients (`eval run --clients`) was not run.
+
+| Command | Result | Time |
+| --- | --- | --- |
+| `cairnmind eval run` | passed: 20 of 20, factual accuracy 1.0, every critical fact and deterministic check true | 89 s |
+| `cairnmind eval memory` | passed: extraction of the fact, decision and task, portable transfer, cited recall in the second database, abstention about the neighbouring project | 31 s |
+| `cairnmind eval extraction --runs 3` | passed: three identical runs, 28 proposals, 8 rejected or duplicate (29%), 15 of 15 kept records found | 106 s |
+| `cairnmind eval repository .` | passed: 20 of 20 complete and right, none complete and wrong (423 files, 2,318 chunks indexed) | 287 s |
+| `cairnmind eval repository . --questions docs/evaluation/absent-questions.json` | failed (exit 1): 20 of 21 questions about things the project does not have refused, none failed, one answered complete and wrong | 384 s |
+
+The recall and extraction figures equal the earlier ones (1.0 for 0.8.0; the shipped row of the extraction table below). The three runs of `eval repository .` on the final tree of this release's development gave 19, 19 and 20 ([evaluation/RESULTS.md](evaluation/RESULTS.md)); this one run gave 20. The absent set is not one of the four commands of the gate in [RELEASING.md](RELEASING.md), and its result is the one recorded on the merged tree: the question about the default nginx port, with the name in lower case, was answered with the port of Cairnmind's own service. The subject check of #245 does not read a lower-case name; that part of #245 is deferred.
+
 ## Results for 0.8.0
 
 Measured on 9 November 2026 with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an NVIDIA RTX 4080 Super under WSL2, Codex CLI 0.166.0 and Claude Code 2.1.319. Every run used its own data directory and engine, never a production installation.
