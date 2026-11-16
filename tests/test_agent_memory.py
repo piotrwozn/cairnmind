@@ -292,11 +292,15 @@ async def test_scope_override_and_foreign_sources_are_rejected(workspace, tmp_pa
     for args in ({"project": other["id"]}, {"session_id": "foreign"}, {"worktree": str(other_root)}):
         with pytest.raises(ValueError, match="cannot override"):
             await memory.execute("checkpoint", args)
-    with pytest.raises(RuntimeError, match="rejected"):
+    # #240: refused with a fixed hint the model can act on, never the service's text or the source.
+    from cairnmind.agent_memory import MemoryRefusal
+    with pytest.raises(MemoryRefusal) as foreign:
         await memory.execute("read_source", {"source_id": source["id"]})
+    assert foreign.value.code == "unknown_source" and "Not visible" not in foreign.value.message
     for unsafe in ("../inbox", "..", "%2e%2e%2finbox", "foreign/source", "x?project=other"):
-        with pytest.raises(ValueError, match="valid source ID"):
+        with pytest.raises(MemoryRefusal) as refused:
             await memory.execute("read_source", {"source_id": unsafe})
+        assert refused.value.code == "unknown_source"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=store.settings.url) as client:
         assert (await client.post("/sessions/agent/archive", json={"session_id": sid})).status_code == 401
         assert (await client.post("/sessions/agent/archive", json={"session_id": sid, "path": "/etc/passwd"},
@@ -411,3 +415,77 @@ async def test_only_a_marked_refusal_or_a_known_conflict_becomes_a_refusal_for_t
         assert raised.value.message == KEY_EXISTS_HINT
     else:
         assert raised.value.message == "Only a person can store\\x1b[31m it"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name,status,body,code", [
+    ("remember", 400, {"detail": "Nothing was saved: 'text' is not a record field\x1b[2J.", "refusal": "record"},
+     "invalid_record"),
+    ("remember", 400, {"detail": "Nothing was saved: 'text' is not a record field."}, None),  # not marked
+    ("remember", 503, {"detail": "Nothing was saved", "refusal": "record"}, None),
+    ("read_source", 404, {"detail": "Unknown source in requested scope"}, "unknown_source"),
+    ("read_source", 503, {"detail": "Unknown source in requested scope"}, None),
+    ("memory_records", 404, {"detail": "Unknown source in requested scope"}, None),
+])
+async def test_a_wrong_record_field_or_an_unknown_source_becomes_a_refusal_for_the_model(
+        tmp_path, name, status, body, code):
+    # #240, second trial: both came back to the model as tool_failed; a service failure still does.
+    from cairnmind.agent_memory import UNKNOWN_SOURCE_HINT, MemoryRefusal
+    from cairnmind.config import Settings
+    transport = httpx.MockTransport(lambda request: httpx.Response(status, json=body))
+    worktree = tmp_path / "project"
+    worktree.mkdir()
+    memory = AgentMemoryClient(Settings(tmp_path / "data"), "project-one", worktree, "session-one",
+                               transport=transport)
+    memory.packet_id = "packet-1"
+    arguments = {"remember": {"record": {"kind": "fact", "text": "x"}, "sources": ["s"]},
+                 "read_source": {"source_id": "made-up"}, "memory_records": {}}[name]
+    with pytest.raises(RuntimeError) as raised:
+        await memory.execute(name, arguments)
+    if code is None:
+        assert not isinstance(raised.value, MemoryRefusal)
+        return
+    assert isinstance(raised.value, MemoryRefusal) and raised.value.code == code
+    if code == "unknown_source":
+        assert raised.value.message == UNKNOWN_SOURCE_HINT
+    else:
+        assert raised.value.message == "Nothing was saved: 'text' is not a record field\\x1b[2J."
+
+
+@pytest.mark.asyncio
+async def test_a_source_id_of_a_bad_shape_is_the_same_refusal_and_reaches_no_service(tmp_path):
+    from cairnmind.agent_memory import UNKNOWN_SOURCE_HINT, MemoryRefusal
+    from cairnmind.config import Settings
+    requests = []
+    transport = httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(200, json={}))
+    worktree = tmp_path / "project"
+    worktree.mkdir()
+    memory = AgentMemoryClient(Settings(tmp_path / "data"), "project-one", worktree, "session-one",
+                               transport=transport)
+    for value in ("../etc/passwd", "", 7):
+        with pytest.raises(MemoryRefusal) as raised:
+            await memory.execute("read_source", {"source_id": value})
+        assert raised.value.code == "unknown_source" and raised.value.message == UNKNOWN_SOURCE_HINT
+    assert not requests
+
+
+@pytest.mark.asyncio
+async def test_the_store_sentence_about_a_record_shape_gets_what_a_record_looks_like(tmp_path):
+    # #240, review: a record of an unknown kind or without content came back as a bare tool_failed.
+    from cairnmind.agent_memory import RECORD_SHAPE_HINT, MemoryRefusal
+    from cairnmind.config import Settings
+    from cairnmind.store import KINDS
+    body = {"detail": "Record content must be nonempty text", "refusal": "record"}
+    transport = httpx.MockTransport(lambda request: httpx.Response(400, json=body))
+    worktree = tmp_path / "project"
+    worktree.mkdir()
+    memory = AgentMemoryClient(Settings(tmp_path / "data"), "project-one", worktree, "session-one",
+                               transport=transport)
+    memory.packet_id = "packet-1"
+    with pytest.raises(MemoryRefusal) as raised:
+        await memory.execute("remember", {"record": {"kind": "fact"}, "sources": ["s"]})
+    assert raised.value.code == "invalid_record"
+    assert raised.value.message == "Record content must be nonempty text. " + RECORD_SHAPE_HINT
+    # The hint names every kind the store saves, and no other.
+    listed = RECORD_SHAPE_HINT.split("kind (")[1].split(")")[0].replace(" or ", ", ").split(", ")
+    assert set(listed) == KINDS

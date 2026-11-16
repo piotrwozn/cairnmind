@@ -648,6 +648,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             # Not something to read again and retry (#177), whatever words the refusal uses ("conflict inbox").
             # Marked, so that the built-in agent hands the model this reason and what to do instead (#240).
             return JSONResponse(status_code=400, content={"detail": str(exc), "refusal": "confirmation"})
+        from cairnmind.store import RecordRefused
+        if isinstance(exc, RecordRefused):
+            # The store's fixed sentence about the record's shape, marked like record_error's (#240).
+            return JSONResponse(status_code=400, content={"detail": str(exc), "refusal": "record"})
         return JSONResponse(status_code=status, content={"detail": str(exc)})
 
     from cairnmind.arcade import ArcadeError
@@ -1124,8 +1128,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         from cairnmind.remember_input import external_report_source, record_error
         error = record_error(body.record)
         if error:
-            # A plain 400: the word-based mapping of ValueError would read a named field as a conflict.
-            raise HTTPException(status_code=400, detail=error)
+            # A plain 400: the word-based mapping of ValueError would read a named field as a conflict. Marked,
+            # so that the built-in agent hands the model which field is wrong (#240).
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=400, content={"detail": error, "refusal": "record"})
         pid = project(body.project)["id"]
         def save(scope):
             record = dict(body.record)
