@@ -322,6 +322,11 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             from cairnmind.terminal_safe import safe_text
             if raise_refusal:
                 raise ServiceRefusal(safe_text(str(detail)))
+            from cairnmind.sql import missing_row_text
+            if response.status_code == 404 or missing_row_text(str(detail)):
+                # An unknown id or project is said as the commands that read the store say it (#244).
+                typer.echo(f"Cairnmind: {safe_text(str(detail))}", err=True)
+                raise typer.Exit(1)
             refuse(safe_text(str(detail)))
         return response.json()
 
@@ -1053,7 +1058,7 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
     pid = store.resolve_project(project)["id"]
     task = next((r for r in store.list_records(pid) if r["id"] == task_id and r["kind"] == "task"), None)
     if task is None:
-        raise typer.BadParameter("No such task in this project")
+        raise ValueError("Task does not exist in this project")  # as the store says a missing row (#244)
     sources = task["source_ids"]
     if isinstance(sources, str):
         sources = json.loads(sources)
@@ -1323,7 +1328,7 @@ def check_list(ctx: typer.Context, project: str,
         records = store.query("SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task'",
                               {"id": task, "project": pid})
         if not records:
-            raise typer.BadParameter("No such task in this project")
+            raise ValueError("Task does not exist in this project")  # as the store says a missing row (#244)
         result["verification"] = verification_status(store, records[0], scope)
     output(result)
 

@@ -254,6 +254,42 @@ def test_a_missing_row_is_named_by_its_kind():
     assert one_row(empty, "SELECT FROM plans", required=False) is None
 
 
+def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session(tmp_path, monkeypatch, capsys):
+    # One prefix and one exit code, whether the store or the service finds the row missing (#244).
+    import httpx
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    data = str(store.data_dir)
+    unknown = "00000000-0000-0000-0000-000000000000"
+    for arguments, said in ((("task", "update", "demo", unknown, "done"), "Task does not exist in this project"),
+                            (("check", "list", "demo", "--task", unknown), "Task does not exist in this project"),
+                            (("plan", "show", "demo", unknown), "Plan does not exist"),
+                            (("source", unknown), "Source does not exist")):
+        code, shown = entry(monkeypatch, capsys, "--data-dir", data, *arguments)
+        assert (code, shown.out, shown.err) == (1, "", f"Cairnmind: {said}\n"), arguments
+    answers = {"/sessions/" + unknown: (400, "Session does not exist"), "/memory/status": (404, "Unknown project"),
+               "/sessions/context": (409, "resume_required: the packet changed")}
+    real_client = httpx.Client
+
+    def client(**kwargs):
+        def answer(request):
+            status, detail = answers[request.url.path]
+            return httpx.Response(status, json={"detail": detail})
+        return real_client(transport=httpx.MockTransport(answer), **kwargs)
+
+    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
+    monkeypatch.setattr(cli.httpx, "Client", client)
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "session", "show", unknown)
+    assert (code, shown.err) == (1, "Cairnmind: Session does not exist\n")
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "memory", "status", "nowhere")
+    assert (code, shown.err) == (1, "Cairnmind: Unknown project\n")
+    # A refusal that is not about a missing row stays a refusal.
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "session", "context", unknown)
+    assert (code, shown.err) == (2, "Error: resume_required: the packet changed\n")
+
+
 @pytest.mark.parametrize("content", ["[]", '[{"id": "a"}]', '"x"', "{}"])
 def test_a_question_file_of_another_shape_is_refused_in_a_sentence(tmp_path, content):
     from cairnmind.repository_evaluation import load_questions

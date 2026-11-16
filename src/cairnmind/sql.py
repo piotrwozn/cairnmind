@@ -74,6 +74,11 @@ MISSING_KIND = {"plans": "Plan", "sessions": "Session", "sources": "Source", "pr
 _FROM = re.compile(r"\bFROM\s+`?([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
 
 
+def missing_row_text(text: str) -> bool:
+    """Whether `text` is one_row's refusal for a missing row, as a service answer carries it (#244)."""
+    return text in {f"{kind} does not exist" for kind in (*MISSING_KIND.values(), "Record")}
+
+
 def one_row(tx, sql, params=None, required=True):
     rows = tx.query(sql, params)
     if not rows:
