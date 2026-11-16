@@ -307,6 +307,8 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
     assert any(line.startswith("Store writer: reader.") and "\x1b" not in line for line in lines)
     for report, first in ((healthy, "Nothing needs attention."), (broken, "Needs attention:"),
                           ([1, 2], "The doctor report could not be read."),
+                          ({}, "The doctor report could not be read."),
+                          ({"service": {"available": True}}, "The doctor report could not be read."),
                           ({"java": "of another shape"}, "The doctor report could not be read.")):
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(report)))
         assert doctor_attention.main() == 0
