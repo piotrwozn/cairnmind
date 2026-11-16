@@ -74,10 +74,13 @@ def rotate_log(path: Path, limit, copies) -> bool:
 
 
 def _make_private(path: Path) -> None:
-    """Mode 0600 for a regular file; a link (not followed), a missing file or anything else is left as it is."""
+    """Mode 0600 for a regular file; a link (not followed), a missing file or anything else is left as it is.
+
+    Best effort: a file the owner may not open or chmod (mode 0000, or owned by another user after a run under
+    sudo) keeps its mode, because moving it needs only the folder and the size bound matters more (#238)."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         return
     except OSError as exc:
         if exc.errno == errno.ELOOP:
@@ -86,6 +89,8 @@ def _make_private(path: Path) -> None:
     try:
         if stat.S_ISREG(os.fstat(fd).st_mode):
             os.fchmod(fd, 0o600)
+    except PermissionError:
+        pass
     finally:
         os.close(fd)
 

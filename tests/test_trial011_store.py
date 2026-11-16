@@ -232,6 +232,32 @@ def test_rotated_engine_log_copies_are_private_too(tmp_path):
     assert not os.path.lexists(log)
 
 
+@pytest.mark.parametrize("refusal", ["open", "chmod"])
+def test_a_log_or_copy_the_owner_cannot_open_or_chmod_is_still_rotated(tmp_path, monkeypatch, refusal):
+    # Making a copy private is best effort: a mode-0000 copy, a write-only live log, or a copy owned by another
+    # user (EPERM on fchmod) must not stop the move, or the log would grow without the size bound.
+    import os
+    from cairnmind import engine
+    log = tmp_path / "engine.log"
+    log.write_bytes(b"new" * 100)
+    (tmp_path / "engine.log.1").write_bytes(b"old" * 100)
+    if refusal == "open":
+        log.chmod(0o200)
+        (tmp_path / "engine.log.1").chmod(0o000)
+    else:
+        def refuse(fd, mode):
+            raise PermissionError(1, "Operation not permitted")
+        monkeypatch.setattr(engine.os, "fchmod", refuse)
+    try:
+        assert engine.rotate_log(log, 100, 3)
+    finally:
+        for path in tmp_path.iterdir():
+            path.chmod(0o600)
+    assert not os.path.lexists(log)
+    assert (tmp_path / "engine.log.1").read_bytes()[:3] == b"new"
+    assert (tmp_path / "engine.log.2").read_bytes()[:3] == b"old"
+
+
 @pytest.mark.parametrize("name,value", [("engine_log_bytes", "2000"), ("engine_log_bytes", -5),
                                         ("engine_log_copies", 99)])
 def test_doctor_names_an_invalid_engine_log_setting(tmp_path, monkeypatch, name, value):
