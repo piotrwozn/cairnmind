@@ -281,6 +281,52 @@ def test_a_question_file_that_is_missing_or_a_folder_is_a_sentence(tmp_path, mon
     assert "Errno" not in shown.output
 
 
+@pytest.mark.parametrize("content", ["[]", "{not json", '{"format_version": 2, "questions": [{"id": "a"}]}',
+                                     '{"format_version": 1, "questions": [{"question": "no id"}]}'])
+def test_a_bad_question_file_through_the_command_is_a_refusal_not_a_usage_error(tmp_path, monkeypatch, content):
+    # The file is wrong, not the command line: no usage frame, and the run starts nothing (#244).
+    monkeypatch.setattr(cli, "_managed_only", lambda *args: None)
+    monkeypatch.setattr("cairnmind.repository_evaluation._preflight", lambda *args: pytest.fail("a model was asked"))
+    data = tmp_path / "memory"
+    Settings.load(data, create=True)
+    questions = tmp_path / "q.json"
+    questions.write_text(content)
+    said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(data), "eval", "repository", str(tmp_path),
+                                                  "--questions", str(questions)]))
+    assert len(said) > len("Error: ")
+
+
+@pytest.mark.parametrize("content", ["[]", "{not json"])
+def test_a_bad_transcript_file_through_the_command_is_a_refusal_not_a_usage_error(tmp_path, content):
+    data = tmp_path / "memory"
+    Settings.load(data, create=True)
+    transcripts = tmp_path / "t.json"
+    transcripts.write_text(content)
+    no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(data), "eval", "extraction",
+                                           "--transcripts", str(transcripts)]))
+
+
+def test_a_plan_file_or_an_evidence_file_of_another_shape_is_a_refusal(tmp_path):
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    plan = tmp_path / "plan.json"
+    plan.write_text("[]")
+    said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(store.data_dir), "plan", "save", "demo",
+                                                  str(plan), "--idempotency-key", "k"]))
+    assert "plan and steps" in said
+    pid = store.resolve_project("demo")["id"]
+    source = store.snapshot(pid, "manual://task", "Build it", "manual")
+    task = store.remember(pid, {"kind": "task", "content": "Build it", "metadata": {"state": "todo"}},
+                          [source["id"]])
+    evidence = tmp_path / "evidence.txt"
+    evidence.write_text("  \n")
+    said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(store.data_dir), "task", "update", "demo",
+                                                  task["id"], "done", "--evidence", str(evidence), "--test-passed"]))
+    assert "non-empty check result" in said
+
+
 # --- What the installer prints of doctor -------------------------------------------------------------------------
 
 def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):

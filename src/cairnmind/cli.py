@@ -1066,7 +1066,7 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
             raise typer.BadParameter("Verification requires --evidence FILE with the check result")
         evidence_text = evidence.read_text(encoding="utf-8")
         if not evidence_text.strip():
-            raise typer.BadParameter("The evidence file must contain a non-empty check result")
+            refuse("The evidence file must contain a non-empty check result")
     with actor_write(store, ctx.obj, pid, worktree) as scope:
         if evidence_text is not None:
             src = store.snapshot(pid, f"verification://{uuid.uuid4()}", evidence_text, "verification",
@@ -1108,7 +1108,7 @@ def plan_save(ctx: typer.Context,
     from cairnmind.plans import PlanManager
     document = json.loads(input_json.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
-        raise typer.BadParameter("The file must contain an object with the fields plan and steps")
+        refuse("The file must contain an object with the fields plan and steps")
     versions = (json.loads(task_versions.read_text(encoding="utf-8")) if task_versions
                 else document.get("task_versions"))
     store = store_for(ctx.obj)
@@ -1405,7 +1405,7 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
     try:
         result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
     output({key: value for key, value in result.items() if key != "runs"}
            | {"runs": [{"run": run["run"], **run["summary"], "failures": run["failures"]} for run in result["runs"]]})
     if result.get("status") != "passed":
@@ -1428,7 +1428,7 @@ def eval_repository(ctx: typer.Context, root: Path,
     try:
         result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
     _record_evaluation(ctx.obj, "repository", result)
     output(result)
     if result.get("status") != "passed":
@@ -1460,7 +1460,7 @@ def eval_replay(ctx: typer.Context, project: str,
                                                               raise_refusal=True),
                         limit=limit, report_dir=report_dir)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
     output(result)
     if result["status"] != "passed":
         raise typer.Exit(3 if result["status"] == "not_run" else 1)
