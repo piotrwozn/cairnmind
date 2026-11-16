@@ -81,12 +81,21 @@ def missing_row_text(text: str) -> bool:
 
 def unregistered_root(root, project: dict) -> str:
     """The refusal for a folder that is not a registered root of `project`, with the command that registers it
-    (#244). The project name and the path come from the user; they are quoted for the shell and made printable."""
+    (#244). The project name and the path come from the user; they are quoted for the shell and made printable.
+    The sentence stays bounded without losing the command: the shown folder and project keep their head and
+    tail, and a command too long to paste names its two arguments instead of cutting them."""
     import shlex
     from .terminal_safe import safe_text
-    handle = project.get("name") or project.get("id") or ""
-    return safe_text(f"{root} is not a registered project root of {handle}; register it with "
-                     f"`cairnmind project root {shlex.quote(str(handle))} {shlex.quote(str(root))}`.", limit=1200)
+
+    def middle(text: str, limit: int) -> str:
+        return text if len(text) <= limit else text[:limit // 2 - 1] + "…" + text[-(limit // 2):]
+
+    handle, folder = str(project.get("name") or project.get("id") or ""), str(root)
+    command = safe_text(f"cairnmind project root {shlex.quote(handle)} {shlex.quote(folder)}")
+    if len(command) > 1000:
+        command = "cairnmind project root <project> <folder>"
+    return (f"{middle(safe_text(folder), 300)} is not a registered project root of {middle(safe_text(handle), 200)}; "
+            f"register it with `{command}`.")
 
 
 def one_row(tx, sql, params=None, required=True):

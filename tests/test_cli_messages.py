@@ -294,6 +294,7 @@ def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session
 def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tmp_path):
     # The same refusal for memory, retrieval, the inspector, checks and plans (#244): the folder, the project
     # and the command, quoted for the shell.
+    from cairnmind.ingest import register_default_histories
     from cairnmind.inspector import Inspector
     from cairnmind.memory import MemoryManager
     from cairnmind.plans import PlanManager
@@ -311,10 +312,65 @@ def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tm
                     lambda: Retriever(store, store.settings, ollama=object())._scope(project["id"], folder),
                     lambda: Inspector(store)._scope(project["id"], folder),
                     lambda: _root(store, project["id"], folder),
-                    lambda: PlanManager(store).next_task(project["id"], worktree=folder)):
+                    lambda: PlanManager(store).next_task(project["id"], worktree=folder),
+                    lambda: register_default_histories(store, project["id"], folder)):
         with pytest.raises(ValueError) as caught:
             refused()
         assert str(caught.value) == said
+
+
+def test_a_long_unregistered_folder_keeps_the_command_that_registers_it():
+    # The sentence is bounded, but never by cutting off the command it is there to give (#244).
+    from cairnmind.sql import unregistered_root
+    fits = "/a/" + "b" * 600
+    said = unregistered_root(fits, {"name": "demo"})
+    assert said.endswith(f"register it with `cairnmind project root demo {fits}`.")
+    assert said.startswith("/a/bbb") and "…" in said.split(";")[0]  # the leading copy is shortened
+    for folder, project in (("/a/" + "b" * 2000, {"name": "demo"}), ("/repo", {"name": "n" * 2000})):
+        said = unregistered_root(folder, project)
+        assert said.endswith("register it with `cairnmind project root <project> <folder>`.") and len(said) < 700
+
+
+def test_a_printed_command_names_the_data_directory_it_was_refused_in(tmp_path, monkeypatch, capsys):
+    # A refusal's command is pasted into a plain shell, where neither --data-dir nor a wrapper's CAIRNMIND_HOME
+    # holds: it names this installation's directory, as `stage next` does (#244).
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    folder = tmp_path / "elsewhere"
+    folder.mkdir()
+    data = str(store.data_dir)
+    named = f"`cairnmind --data-dir {data} project root demo {folder.resolve()}`."
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "stage", "next", "demo", "--worktree", str(folder))
+    assert code == 1 and shown.err.startswith("Cairnmind: ") and named in shown.err, shown.err
+    monkeypatch.setattr(cli, "ensure_service", lambda settings: None)
+    monkeypatch.setattr("cairnmind.integrations.run_client", lambda *args: pytest.fail("the client started"))
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "run", "demo", "codex", "--worktree", str(folder))
+    assert code == 2 and shown.err.startswith("Error: ") and named in shown.err, shown.err
+    # Only the register command, which writes to the store, is given the directory.
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "answers", "show", "demo", "x")
+    assert code == 2 and "`cairnmind answers list`" in shown.err, shown.err
+    for name in ("CAIRNMIND_HOME", "DEVBRAIN_HOME"):
+        monkeypatch.setenv(name, data)
+        code, shown = entry(monkeypatch, capsys, "stage", "next", "demo", "--worktree", str(folder))
+        assert code == 1 and named in shown.err, (name, shown.err)
+        monkeypatch.delenv(name)
+    # The default installation, the one a plain shell uses: the command is printed as it is.
+    monkeypatch.setattr("cairnmind.config.default_data_dir", lambda environ=None: store.data_dir)
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "stage", "next", "demo", "--worktree", str(folder))
+    assert code == 1 and f"`cairnmind project root demo {folder.resolve()}`." in shown.err, shown.err
+    assert "--data-dir" not in shown.err
+
+
+def test_an_unknown_answer_id_is_refused_as_an_unknown_task_is(tmp_path, monkeypatch, capsys):
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    monkeypatch.setattr("cairnmind.config.default_data_dir", lambda environ=None: store.data_dir)
+    code, shown = entry(monkeypatch, capsys, "--data-dir", str(store.data_dir), "answers", "show", "demo", "f" * 32)
+    assert (code, shown.out, shown.err) == (1, "", "Cairnmind: No logged answer with this id in this project\n")
 
 
 @pytest.mark.parametrize("content", ["[]", '[{"id": "a"}]', '"x"', "{}"])

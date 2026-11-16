@@ -87,7 +87,8 @@ def entrypoint() -> None:
         from cairnmind.store_writer import StoreNotWriter
         if not (isinstance(exc, StoreNotWriter) and str(exc) in _NOTICES_SHOWN):
             # The reader's notice was printed when the store opened: the refusal is not said twice (#244).
-            typer.echo(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}", err=True)
+            typer.echo(_pasteable(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}"),
+                       err=True)
         raise SystemExit(1) from None
 
 
@@ -284,7 +285,7 @@ def _ensure_service_or_refuse(settings: Settings) -> None:
 
 def refuse(message: str, code: int = 2):
     """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
-    typer.echo(f"Error: {message}", err=True)
+    typer.echo(_pasteable(f"Error: {message}"), err=True)
     raise typer.Exit(code)
 
 
@@ -363,7 +364,7 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             from cairnmind.sql import missing_row_text
             if response.status_code == 404 or missing_row_text(str(detail)):
                 # An unknown id or project is said as the commands that read the store say it (#244).
-                typer.echo(f"Cairnmind: {safe_text(str(detail))}", err=True)
+                typer.echo(_pasteable(f"Cairnmind: {safe_text(str(detail))}"), err=True)
                 raise typer.Exit(1)
             refuse(safe_text(str(detail)))
         return response.json()
@@ -371,7 +372,9 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context, data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None):
+    _INVOCATION.clear()
     ctx.obj = Settings.load(data_dir, create=False)
+    _INVOCATION["data_dir"] = ctx.obj.data_dir
     if ctx.invoked_subcommand is None:
         _launch_terminal_workspace(ctx)
 
@@ -1330,11 +1333,9 @@ def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = No
     decision["command"], decision["command_reason"] = next_command(
         decision, _project_handle(store, selected), scope or str(Path(selected["root"]).resolve()),
         slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
-    from cairnmind.config import default_data_dir
-    if decision["command"] and ctx.obj.data_dir != default_data_dir(environ={}):
-        # The printed command acts on this installation, not on the default one (#244). It is compared with
-        # what a plain shell would use: CAIRNMIND_HOME, set by a wrapper, is not set where it is pasted.
-        decision["command"][1:1] = ["--data-dir", str(ctx.obj.data_dir)]
+    if decision["command"]:
+        # The printed command acts on this installation, not on the default one (#244).
+        decision["command"][1:1] = _data_dir_arguments(ctx.obj.data_dir)
     if as_json:
         output(decision)
         return
@@ -1526,7 +1527,10 @@ def answers_show(ctx: typer.Context, project: ProjectArg, answer_id: AnswerIdArg
     pid = store_for_read(ctx.obj).resolve_project(project)["id"]
     try:
         output(find(ctx.obj, pid, answer_id))
-    except (ValueError, LookupError) as exc:
+    except LookupError as exc:
+        # An unknown id is said as an unknown task or plan is: "Cairnmind: ...", exit 1 (#244).
+        raise ValueError(str(exc)) from None
+    except ValueError as exc:  # an id of the wrong form
         refuse(str(exc))
 
 
