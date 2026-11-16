@@ -26,6 +26,10 @@ _KEY_EXISTS = "Active record key already exists"
 KEY_EXISTS_HINT = ("An active record of this kind already has this key. Nothing was saved. To change it, read it "
                    "with memory_records and call remember with record.id and record.expected_version set from "
                    "that record, inside the record argument (a record a person confirmed stays as it is); to keep both, store yours under another key.")
+# A read_source id that names no source of this project: a made-up id, a session id or one of a bad shape.
+UNKNOWN_SOURCE_HINT = ("No archived source of this project has this id. Nothing was read. Use a source id that "
+                       "resume_context, memory_records or a tool result gave you (full_result_source_id); a "
+                       "session, record or packet id is not a source id.")
 _SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
 _SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _PROVIDER_FIELDS = {"continuation", "reasoning", "thinking", "encrypted_content", "signature"}
@@ -436,8 +440,13 @@ class AgentMemoryClient:
                     payload, detail = {}, "Request rejected"
                 if response.status_code == 400 and payload.get("refusal") == "confirmation":
                     raise MemoryRefusal("confirmation_refused", safe_text(detail, limit=4000))
+                if response.status_code == 400 and payload.get("refusal") == "record":
+                    # remember_input.record_error: the fields that are wrong and the ones a record has.
+                    raise MemoryRefusal("invalid_record", safe_text(detail, limit=4000))
                 if response.status_code == 409 and detail.startswith(_KEY_EXISTS):
                     raise MemoryRefusal("key_exists", KEY_EXISTS_HINT)
+                if response.status_code == 404 and path.startswith("/inspector/sources/"):
+                    raise MemoryRefusal("unknown_source", UNKNOWN_SOURCE_HINT)
                 raise RuntimeError(f"Cairnmind service rejected the request ({response.status_code}): {detail[:500]}")
             result = response.json()
             if not isinstance(result, dict):
@@ -502,7 +511,7 @@ class AgentMemoryClient:
         if name == "read_source":
             sid = args.get("source_id")
             if not isinstance(sid, str) or not _SOURCE.fullmatch(sid):
-                raise ValueError("A valid source ID is required")
+                raise MemoryRefusal("unknown_source", UNKNOWN_SOURCE_HINT)
             return await self._request("GET", "/inspector/sources/" + quote(sid, safe=""), params={
                 "project": self.project_id, "worktree": self.worktree,
                 "offset": args.get("offset", 0), "limit": args.get("limit", 16384),

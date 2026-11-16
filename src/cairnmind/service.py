@@ -1122,8 +1122,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         from cairnmind.remember_input import external_report_source, record_error
         error = record_error(body.record)
         if error:
-            # A plain 400: the word-based mapping of ValueError would read a named field as a conflict.
-            raise HTTPException(status_code=400, detail=error)
+            # A plain 400: the word-based mapping of ValueError would read a named field as a conflict. Marked,
+            # so that the built-in agent hands the model which field is wrong (#240).
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=400, content={"detail": error, "refusal": "record"})
         pid = project(body.project)["id"]
         def save(scope):
             record = dict(body.record)
