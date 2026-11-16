@@ -580,6 +580,9 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
         for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
+    from cairnmind.engine import log_settings_problems
+    # The same lines `engine start` prints, so a mistyped log setting is not seen only at start (#238).
+    result["environment_notes"] += [line.removeprefix("cairnmind: ") for line in log_settings_problems(ctx.obj)]
     result["models_lock_present"] = (ctx.obj.data_dir / "models.lock.json").exists()
     from cairnmind.store_writer import inspect as writer_role
     result["store_writer"] = writer_role(ctx.obj)

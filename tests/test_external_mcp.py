@@ -220,6 +220,23 @@ def test_a_project_name_is_sent_as_given_even_when_it_looks_local(tmp_path, clea
         assert ServiceClient(settings, external={"project": name, "worktree": None}).external["project"] == name
 
 
+async def test_a_bare_unregistered_folder_name_is_not_read_as_a_local_folder(tmp_path, clean_env, monkeypatch):
+    # As on the command line (cli.caller_path, Store.resolve_project): only a value written as a path is read
+    # as a local folder; a bare name that is no registered project stays a name and is refused (#238).
+    settings = Settings.load(tmp_path / "memory", create=True)
+    (tmp_path / "editor" / "project").mkdir(parents=True)
+    (tmp_path / "editor" / "packages" / "api").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path / "editor")
+    bridge = ServiceClient(settings, external={"project": "project", "worktree": None})
+
+    async def listed(*args, **kwargs):
+        return {"items": [{"id": "p1", "name": "registered"}]}
+    monkeypatch.setattr(bridge, "_send", listed)
+    assert await bridge._project_for_service("project") == "project"
+    assert await bridge._project_for_service("registered") == "registered"
+    assert await bridge._project_for_service("packages/api") == str((tmp_path / "editor" / "packages" / "api").resolve())
+
+
 async def test_a_name_equal_to_a_local_folder_binds_the_named_project(tmp_path, clean_env):
     web = repository(tmp_path / "elsewhere" / "web-root")
     mono = repository(tmp_path / "mono")

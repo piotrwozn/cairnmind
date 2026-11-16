@@ -210,3 +210,70 @@ def test_the_command_line_key_clash_names_what_a_person_can_do(tmp_path, monkeyp
         assert "another key" in words and "inspector" in words
     import json
     assert [row["content"] for row in json.loads(run("records", "demo").output)] == ["Queue in the database"]
+
+
+def test_rotated_engine_log_copies_are_private_too(tmp_path):
+    # The first fix made only the new live log 0600; os.replace keeps the mode of each copy it moves.
+    import os
+    from cairnmind import engine
+    log = tmp_path / "engine.log"
+    for name in ("engine.log", "engine.log.1"):
+        (tmp_path / name).write_bytes(b"x" * 200)
+        (tmp_path / name).chmod(0o644)
+    target = tmp_path / "elsewhere"
+    target.write_bytes(b"not a log")
+    target.chmod(0o644)
+    (tmp_path / "engine.log.2").symlink_to(target)
+    assert engine.rotate_log(log, 100, 3)
+    for name in ("engine.log.1", "engine.log.2"):
+        assert (tmp_path / name).stat().st_mode & 0o777 == 0o600, name
+    # A link is moved as it is: neither followed nor its target's mode changed.
+    assert (tmp_path / "engine.log.3").is_symlink() and target.stat().st_mode & 0o777 == 0o644
+    assert not os.path.lexists(log)
+
+
+@pytest.mark.parametrize("refusal", ["open", "chmod"])
+def test_a_log_or_copy_the_owner_cannot_open_or_chmod_is_still_rotated(tmp_path, monkeypatch, refusal):
+    # Making a copy private is best effort: a mode-0000 copy, a write-only live log, or a copy owned by another
+    # user (EPERM on fchmod) must not stop the move, or the log would grow without the size bound.
+    import os
+    from cairnmind import engine
+    log = tmp_path / "engine.log"
+    log.write_bytes(b"new" * 100)
+    (tmp_path / "engine.log.1").write_bytes(b"old" * 100)
+    if refusal == "open":
+        log.chmod(0o200)
+        (tmp_path / "engine.log.1").chmod(0o000)
+    else:
+        def refuse(fd, mode):
+            raise PermissionError(1, "Operation not permitted")
+        monkeypatch.setattr(engine.os, "fchmod", refuse)
+    try:
+        assert engine.rotate_log(log, 100, 3)
+    finally:
+        for path in tmp_path.iterdir():
+            path.chmod(0o600)
+    assert not os.path.lexists(log)
+    assert (tmp_path / "engine.log.1").read_bytes()[:3] == b"new"
+    assert (tmp_path / "engine.log.2").read_bytes()[:3] == b"old"
+
+
+@pytest.mark.parametrize("name,value", [("engine_log_bytes", "2000"), ("engine_log_bytes", -5),
+                                        ("engine_log_copies", 99)])
+def test_doctor_names_an_invalid_engine_log_setting(tmp_path, monkeypatch, name, value):
+    import json
+    from typer.testing import CliRunner
+    from cairnmind import cli, integrations
+    from cairnmind.config import Settings
+    data = tmp_path / "data"
+    Settings.load(data, create=True)
+    config = data / "config.json"
+    stored = json.loads(config.read_text())
+    stored[name] = value
+    config.write_text(json.dumps(stored))
+    monkeypatch.setattr(integrations, "doctor", lambda settings: {})
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "doctor"])
+    assert result.exit_code == 0, result.output
+    notes = json.loads(result.output)["environment_notes"]
+    assert any(name in note and repr(value) in note and "config.json" in note for note in notes), notes
+    assert not any(note.startswith("cairnmind:") for note in notes)
