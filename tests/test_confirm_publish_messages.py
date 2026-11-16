@@ -69,6 +69,12 @@ def test_a_refusal_for_a_command_without_a_terminal_names_piped_or_redirected_in
     for result in (plan, remember):
         assert result.exit_code == 2 and "piped or redirected" in " ".join(result.output.split()), result.output
     assert "piped or redirected" in record_kinds.CLI_REFUSED and "piped or redirected" in confirmation.CLI_REFUSED
+    # The two other commands that need a person's terminal (#239): one stores a task as proposed, one refuses.
+    task = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "task", "add", pid, "Write the guide"])
+    assert task.exit_code == 0 and "Stored as proposed" in task.output
+    assert "piped or redirected" in " ".join(task.output.split()), task.output
+    prune = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "store", "prune-backups", "--keep", "1"])
+    assert prune.exit_code == 2 and "piped or redirected" in " ".join(prune.output.split()), prune.output
 
 
 def test_adopting_a_confirmed_legacy_task_names_it_by_its_text_and_its_id_once(workspace):  # noqa: F811
