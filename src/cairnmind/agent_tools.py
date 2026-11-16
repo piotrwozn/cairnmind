@@ -90,6 +90,23 @@ def _bounded_int(value, default, minimum, maximum):
     return value
 
 
+def _windows_reading(parts):
+    """The casefolded parts as a Windows file system would read them, for the protected-name comparison only.
+
+    Windows separates on a backslash, ends a name at a colon (`.git::$INDEX_ALLOCATION` is the directory itself)
+    and drops trailing dots and spaces, so `.git.`, `.git `, `.GIT\\hooks` and `.git::$INDEX_ALLOCATION` all name
+    `.git` there (#230), the way git's own NTFS check reads them. On Linux these are ordinary names: the parts
+    the tools open stay as they were, and only a name that reads as a protected one is refused.
+    """
+    read = []
+    for part in parts:
+        for piece in part.split("\\"):
+            piece = piece.split(":", 1)[0].rstrip(". ").casefold()
+            if piece:
+                read.append(piece)
+    return tuple(read)
+
+
 def _parts(value, *, allow_root=False):
     if not isinstance(value, str) or not value or len(value) > 4096 or "\0" in value:
         raise ToolError("invalid_path", "A project-relative path is required")
@@ -99,17 +116,12 @@ def _parts(value, *, allow_root=False):
     parts = tuple(part for part in path.parts if part not in {"", "."})
     if not parts and not allow_root:
         raise ToolError("invalid_path", "A regular file path is required")
-    # Windows resolves `.git.`, `.git `, `.git\hooks` and `.git::$INDEX_ALLOCATION` to `.git`, and elsewhere such
-    # names are entries git refuses to add (#230): a part ending in a dot or a space, or holding a backslash or a
-    # colon, is refused before any spelling is compared.
-    if any(part[-1] in ". " or "\\" in part or ":" in part for part in parts):
-        raise ToolError("invalid_path", "A path part cannot end in a dot or a space or contain a backslash or a colon")
     # Compared without case, as memory_paths does: on a case-insensitive file system `.GIT/hooks` is
     # `.git/hooks` (#230) and `.Memory/Cairnmind-Published` is the published directory (#170). A short alias
     # (`GIT~1`) and any other spelling are refused by identity when the directories are opened.
-    folded = tuple(part.casefold() for part in parts)
+    folded = _windows_reading(parts)
     if any(part == ".git" for part in folded) or any(
-        folded[index:index + 2] in _MEMORY_PAIRS for index in range(len(parts))
+        folded[index:index + 2] in _MEMORY_PAIRS for index in range(len(folded))
     ):
         raise ToolError("protected_path", "Git internals and managed memory must use their dedicated interfaces")
     return parts
