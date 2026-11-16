@@ -144,6 +144,84 @@ async def test_a_short_alias_does_not_pass_the_gate_for_files_that_configure_exe
     assert list((root / ".claude").iterdir()) == [] and list((root / ".github" / "workflows").iterdir()) == []
 
 
+# Windows reads these as `.git` or as managed memory (a trailing dot or space is dropped, a backslash separates,
+# a colon ends the name and `::$INDEX_ALLOCATION` names the directory itself), as git's own NTFS check does.
+_WINDOWS_SPELLINGS = [".git./hooks/pre-commit", ".git /hooks/x", ".GIT\\hooks\\x", ".GIT::$INDEX_ALLOCATION/hooks/x",
+                      "sub/.git../config", ".git:stream", "src/.Git. ./x", ".memory\\Cairnmind/x",
+                      ".Memory./Cairnmind-Published/a.md", ".memory/cairnmind-published::$DATA/a.md"]
+
+
+@pytest.mark.parametrize("path", _WINDOWS_SPELLINGS)
+async def test_every_file_tool_refuses_what_windows_reads_as_a_protected_name(tmp_path, path):
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "notes").write_text("x")
+    executor = make_executor(tmp_path, root)
+    for name, arguments in (("write_file", {"path": path, "content": "#!/bin/sh\n", "expected_sha256": None}),
+                            ("apply_patch", {"path": path, "expected_sha256": digest("x"), "old_text": "x",
+                                             "new_text": "y"}),
+                            ("delete_file", {"path": path, "expected_sha256": digest("x")}),
+                            ("read_file", {"path": path}), ("list_files", {"path": path}),
+                            ("search_files", {"path": path, "query": "x"}),
+                            ("run_command", {"command": "true", "cwd": path})):
+        result = await executor.execute(name, arguments)
+        assert not result["ok"] and result["error_code"] == "protected_path", (name, path)
+    assert not executor.journal.pending_actions()
+    assert sorted(item.name for item in root.iterdir()) == ["src"]
+    assert [item.name for item in (root / "src").iterdir()] == ["notes"]
+
+
+# Ordinary Linux names with the same characters: only a name that reads as a protected one is refused.
+_ORDINARY_NAMES = (".gitignore", ".gitkeep", "x.git/a", "my notes/a b.txt", ".env.local", "a.b.c/d.e",
+                   "src/notes.", "src/notes ", "src/a:b", "logs/2026-11-16T10:00.log", "dir./x", "my notes /x",
+                   "src\\app.py", ".gitx:y", "git/x", ".git~/x")
+
+
+async def test_ordinary_names_near_those_spellings_still_work(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    executor = make_executor(tmp_path, root)
+    for path in _ORDINARY_NAMES:
+        result = await executor.execute("write_file", {"path": path, "content": "x", "expected_sha256": None})
+        assert result["ok"], (path, result)
+        assert (root / path).read_text() == "x"
+        read = await executor.execute("read_file", {"path": path})
+        assert read["ok"], (path, read)
+
+
+async def test_a_listing_keeps_ordinary_names_with_those_characters(tmp_path):
+    root = tmp_path / "project"
+    (root / "logs:2026").mkdir(parents=True)
+    (root / "logs:2026" / "run.log").write_text("x")
+    (root / ".git.").mkdir()
+    (root / ".git." / "config").write_text("x")
+    (root / "src").mkdir()
+    for name in ("app.py", "notes.", "a:b"):
+        (root / "src" / name).write_text("x")
+    listed = await make_executor(tmp_path, root).execute("list_files", {"recursive": True})
+    assert [row["path"] for row in listed["files"]] == ["logs:2026", "logs:2026/run.log", "src", "src/a:b",
+                                                         "src/app.py", "src/notes."]
+
+
+def test_a_journal_write_to_a_path_now_refused_marks_the_list_incomplete():
+    # A journal from an older version may hold a completed write to a path this version refuses: the list
+    # cannot show it, so the approval dialog says it may be incomplete instead of dropping it silently.
+    from cairnmind.agent_write_guard import ChangeLedger
+
+    def completed(path):
+        return {"type": "action_completed", "data": {"name": "write_file", "action_id": path,
+                                                      "arguments": {"path": path, "expected_sha256": None},
+                                                      "result": {"ok": True}}}
+    ledger = ChangeLedger()
+    ledger.replay([completed(".git./hooks/pre-commit"), completed("Makefile")],
+                  lambda value: "/".join(agent_tools._parts(value)))
+    fields = ledger.fields()
+    assert [row["path"] for row in fields["changed_files"]] == ["Makefile"]
+    assert fields["changed_files_complete"] is False
+    ledger.approved()
+    assert "changed_files_complete" not in ledger.fields()
+
+
 # Third-party MCP servers: the worktree check ----------------------------------------------------------------
 
 def test_a_server_in_the_worktree_spelled_with_other_case_is_refused(caseless):

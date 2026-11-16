@@ -147,6 +147,9 @@ class ChangeLedger:
             try:
                 path = normalise(arguments.get("path"))
             except ValueError:
+                # A write recorded by an older version to a path this one refuses: the list cannot show it,
+                # so it says it is incomplete rather than leave the change out silently (#230).
+                self.complete = False
                 continue
             self.record(path, change_of(name, arguments, result if kind == "action_completed" else None))
 
