@@ -250,3 +250,48 @@ def test_an_interrupted_run_still_drops_its_database_and_writes_its_report(tmp_p
     assert dropped and dropped[0].startswith("drop database cairnmind_eval_")
     saved = json.loads(next((tmp_path / "reports").glob("repository-*.json")).read_text())
     assert saved["failure_stage"] == "interrupted" and saved["isolation"]["database_dropped"] is True
+
+
+def test_a_question_about_an_absent_thing_is_right_only_when_it_is_refused(tmp_path):
+    # Issue #245: a question about something the repository does not have needs no file and no
+    # accepted form; any complete answer to it is complete and wrong.
+    cases = load_questions(write(tmp_path / "q.json", [
+        {"id": "gone", "question": "Which Zookeeper port?", "answer": {"absent": True}},
+        {"id": "there", "question": "?", "file": "a.py", "answer": {"accepted": ["7"]}}]), tmp_path)
+    assert cases[0] == {"id": "gone", "question": "Which Zookeeper port?", "file": None, "accepted": [], "absent": True}
+    with pytest.raises(ValueError, match="needs id, question and file"):
+        load_questions(write(tmp_path / "q2.json", [{"id": "x", "question": "?", "answer": {"absent": "yes"}}]), tmp_path)
+    answered = {"status": "complete", "answer": "2181", "sources": [], "diagnostics": {"code": "ok"}}
+    refused = {"status": "partial", "answer": "Not verified.", "sources": [], "diagnostics": {"code": "answer_unsupported"}}
+    known = {"status": "complete", "answer": "7", "sources": [], "diagnostics": {"code": "ok"}}
+    wrong = [case_result(cases[0], answered, tmp_path, 2, 1.0), case_result(cases[1], known, tmp_path, 2, 1.0)]
+    assert wrong[0]["absent"] is True and wrong[0]["right"] is False and "absent" not in wrong[1]
+    assert summarize(wrong) == {"asked": 2, "complete": 2, "complete_and_right": 1, "complete_and_wrong": 1,
+                                "not_complete": 0, "required_complete_and_right": 1, "absent": 1,
+                                "absent_refused": 0, "absent_failed": 0, "status": "failed"}
+    right = [case_result(cases[0], refused, tmp_path, 2, 1.0), wrong[1]]
+    assert right[0]["right"] is True
+    assert summarize(right) == {"asked": 2, "complete": 1, "complete_and_right": 1, "complete_and_wrong": 0,
+                                "not_complete": 1, "required_complete_and_right": 1, "absent": 1,
+                                "absent_refused": 1, "absent_failed": 0, "status": "passed"}
+    assert summarize(right[:1])["status"] == "passed" and summarize(wrong[:1])["status"] == "failed"
+    # An ask that broke (no model, a timeout, a reply that is not JSON) refused nothing: it is
+    # counted apart, is not right, and the file does not pass on it. A known question is unchanged.
+    for broken in ({"status": "unavailable", "answer": "", "sources": [], "diagnostics": {"code": "model_unavailable"}},
+                   {"status": "partial", "answer": "", "sources": [], "diagnostics": {"code": "invalid_json"}},
+                   {"status": "partial", "answer": "", "sources": [], "diagnostics": {"code": "timeout"}}):
+        row = case_result(cases[0], broken, tmp_path, 1, 1.0)
+        assert row["failed"] is True and row["right"] is False
+        counted = summarize([row, wrong[1]])
+        assert (counted["absent_refused"], counted["absent_failed"], counted["status"]) == (0, 1, "failed")
+        assert "failed" not in case_result(cases[1], broken, tmp_path, 1, 1.0)
+    for kept in ("insufficient_evidence", "citation_invalid", "support_unverified"):
+        judged = {"status": "partial", "answer": "", "sources": [], "diagnostics": {"code": kept}}
+        assert case_result(cases[0], judged, tmp_path, 1, 1.0)["right"] is True
+
+
+def test_the_repository_s_absent_questions_load_and_are_never_indexed():
+    path = REPOSITORY / "docs" / "evaluation" / "absent-questions.json"
+    cases = load_questions(path, REPOSITORY)
+    assert len(cases) >= 12 and all(case["absent"] and not case["accepted"] for case in cases)
+    assert any(path.relative_to(REPOSITORY).as_posix().startswith(item) for item in NOT_INDEXED)

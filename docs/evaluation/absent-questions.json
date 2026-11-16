@@ -1,0 +1,27 @@
+{
+  "format_version": 1,
+  "about": "Questions about things this repository does not have, for `cairnmind eval repository . --questions docs/evaluation/absent-questions.json` (see docs/EVALUATION.md). Every one must end as not complete: a complete answer to any of them is complete and wrong. They have the shapes of the questions with known answers (a default port, a version, a timeout, an address, a count) with the name of a product or a setting the project never uses. Four of them write the name where a capital alone does not show it or among other names (first in the sentence, with a possessive, in a Polish question, beside two names the project does have). The last three name their subject in a way the subject check does not read (a lower-case name, an abbreviation in capitals, a name in capitals), so they rest on the model's support check alone. Like everything in this directory, the file is left out of the copy that is indexed.",
+  "questions": [
+    {"id": "elasticsearch-port", "question": "What is the default Elasticsearch port used by this project?", "answer": {"absent": true}},
+    {"id": "redis-port", "question": "What is the default Redis port used by this project?", "answer": {"absent": true}},
+    {"id": "memcached-port", "question": "What is the default Memcached port used by this project?", "answer": {"absent": true}},
+    {"id": "kafka-port", "question": "What is the default Kafka port used by this project?", "answer": {"absent": true}},
+    {"id": "postgresql-version", "question": "Which PostgreSQL version does Cairnmind need?", "answer": {"absent": true}},
+    {"id": "rabbitmq-timeout", "question": "What is the default timeout of the RabbitMQ connection, in seconds?", "answer": {"absent": true}},
+    {"id": "mongodb-address", "question": "At which address does Cairnmind expect MongoDB by default?", "answer": {"absent": true}},
+    {"id": "prometheus-port", "question": "On which port does the Prometheus metrics endpoint listen by default?", "answer": {"absent": true}},
+    {"id": "celery-workers", "question": "How many Celery workers does the service start by default?", "answer": {"absent": true}},
+    {"id": "grafana-version", "question": "Which Grafana version is the tested platform for the dashboards?", "answer": {"absent": true}},
+    {"id": "grpc-port-setting", "question": "What is the default value of grpc_port in the settings?", "answer": {"absent": true}},
+    {"id": "cassandra-nodes", "question": "How many Cassandra nodes does the database engine need at least?", "answer": {"absent": true}},
+    {"id": "graphql-port", "question": "What is the default port of the GraphQL API?", "answer": {"absent": true}},
+    {"id": "mysql-version", "question": "Which MySQL version does Cairnmind use by default?", "answer": {"absent": true}},
+    {"id": "elasticsearch-first-word", "question": "Elasticsearch listens on which port by default?", "answer": {"absent": true}},
+    {"id": "kafka-possessive", "question": "Kafka's default port is what?", "answer": {"absent": true}},
+    {"id": "redis-polish", "question": "Redis ma domyślnie jaki port?", "answer": {"absent": true}},
+    {"id": "elasticsearch-three-names", "question": "What port do Elasticsearch, Ollama and ArcadeDB use by default?", "answer": {"absent": true}},
+    {"id": "nginx-port-lowercase", "question": "What is the default nginx port in the settings?", "answer": {"absent": true}},
+    {"id": "smtp-port-abbreviation", "question": "What is the default SMTP port for sending notices?", "answer": {"absent": true}},
+    {"id": "elasticsearch-capitals", "question": "What is the default ELASTICSEARCH port?", "answer": {"absent": true}}
+  ]
+}

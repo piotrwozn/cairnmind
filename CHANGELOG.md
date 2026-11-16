@@ -261,6 +261,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Every argument in `--help` has an upper-case name and a short description, and the later paragraphs of command help no longer break mid-sentence (#244).
 - The installer's doctor summary says the report could not be read when it gets a JSON object that is not a full doctor report, such as the output of `cairnmind init`, instead of 'Nothing needs attention.' (#244).
 - The keyboard help and docs/TERMINAL.md describe the `Ctrl+B Space` menu as the main commands and name `Ctrl+B a` for the activity panel (#244).
+- `ask` no longer gives a complete answer about a product or setting that the quoted sources never name: a check that asks no model looks for every name the question uses for its subject (a capitalised name, an identifier, a word in backticks) in the quotes, their paths and their sources, and withholds the answer with `answer_unsupported`, listing the names, when one is missing. A name that is only context (an operating system, a person) withholds the answer too when no quoted source has it. Not read by this check: a name written in lower case without backticks, a word in capitals, a question in headline case; not caught: a name the quoted file has elsewhere than beside the quoted value (#245).
+- `cairnmind eval repository` accepts questions about things a repository does not have (`"answer": {"absent": true}`), which are right only when they are refused; an ask that broke (timeout, unavailable model, invalid JSON) is counted as `absent_failed`, not as a refusal. Cairnmind's own set of twenty-one is `docs/evaluation/absent-questions.json` (#245).
 
 ## 0.10.0
 

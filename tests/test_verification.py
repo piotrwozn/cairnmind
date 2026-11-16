@@ -313,10 +313,13 @@ def test_timeout_terminates_process_group(workspace, tmp_path):
     profile(root, "import subprocess, sys, time\nfrom pathlib import Path\n"
                   "child = subprocess.Popen([sys.executable, sys.argv[1]])\n"
                   "Path(sys.argv[2]).write_text(str(child.pid))\ntime.sleep(20)\n",
-            timeout=0.3, args=[str(child), str(child_pid)])
+            # Long enough for the check's interpreter to start its child and write the pid before the timeout:
+            # with 0.3 s a slow runner timed out first and the file this test reads did not exist.
+            timeout=2, args=[str(child), str(child_pid)])
     record = task(store, project)
     run = run_check(store, settings, project["id"], "unit", record["id"])
     assert run["outcome"] == "timeout"
+    assert child_pid.exists(), "the check timed out before it had started its child"
     from cairnmind.verification import _process_identity
     pid = int(child_pid.read_text())
     deadline = time.monotonic() + 3
