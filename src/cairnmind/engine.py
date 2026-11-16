@@ -1,6 +1,7 @@
 """Pinned, checksum-verified ArcadeDB distribution and local Java process lifecycle."""
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -8,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tarfile
@@ -58,6 +60,9 @@ def rotate_log(path: Path, limit, copies) -> bool:
     numbered = [path.with_name(f"{path.name}.{number}") for number in range(1, max(copies, MAX_LOG_COPIES) + 1)]
     for old in numbered[max(copies, 1) - 1:]:
         old.unlink(missing_ok=True)  # the oldest kept copy's place, and any copy beyond the count
+    # os.replace keeps a file's mode: an old copy written under a looser umask is made private too (#238).
+    for kept in [path, *numbered[:copies - 1]] if copies else []:
+        _make_private(kept)
     for number in range(copies - 1, 0, -1):
         if os.path.lexists(numbered[number - 1]):
             os.replace(numbered[number - 1], numbered[number])
@@ -66,6 +71,23 @@ def rotate_log(path: Path, limit, copies) -> bool:
     else:
         path.unlink()
     return True
+
+
+def _make_private(path: Path) -> None:
+    """Mode 0600 for a regular file; a link (not followed), a missing file or anything else is left as it is."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            return
+        raise
+    try:
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
 
 
 def log_settings_problems(settings: Settings) -> list[str]:
