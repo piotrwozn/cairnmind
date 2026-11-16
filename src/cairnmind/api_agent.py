@@ -58,6 +58,7 @@ NEXT_STEP = ("Call ack_resume with this packet's exact packet_id, packet_hash an
 MAX_INPUT_CHARS = 64_000
 MAX_REPLY_CHARS = 262_144
 CONTEXT_BUDGET_CHARS = 80_000
+COMPACT_SHARE = 0.8  # of an Ollama window, by the provider's own estimate, with room for the output
 TOOL_CONTEXT_CHARS = 16_000
 MAX_TOOLS_PER_REPLY = 32
 _BOOTSTRAP_TOOLS = {"resume_context", "ack_resume", "session_status"}
@@ -126,6 +127,14 @@ class AgentEngine:
         self.max_turn_seconds = self._limit(limits.get("max_turn_seconds"), 900, 1, 86400)
         self.tools.command_timeout_seconds = self._limit(
             limits.get("command_timeout_seconds"), 120, 1, 3600)
+        self._ollama_window = None  # (context window, maximum output) of an API Ollama profile
+        if run["client"] == "api" and self.profile.get("provider") == "ollama":
+            from .api_profiles import normalize_profile
+            try:
+                normal = normalize_profile(self.profile)["limits"]
+                self._ollama_window = (normal["context_window_tokens"], normal["max_output_tokens"])
+            except (ValueError, KeyError, TypeError):
+                pass  # the provider refuses an invalid profile itself
         self.provider = provider
         if self.provider is None:
             if run["client"] == "copilot":
@@ -299,9 +308,46 @@ class AgentEngine:
             if len(sources) >= event["seq"] and isinstance(sources[event["seq"] - 1], str):
                 projection["full_result_source_id"] = sources[event["seq"] - 1]
             delivered = {**message, "content": _json(projection)}
+        if message.get("role") == "tool" and message.get("name") == "resume_context":
+            self._replace_packets()
         self._context.append(delivered)
         await self._notify("message", message)
         return delivered
+
+    def _replace_packets(self):
+        """Only the latest resume_context result stays whole in the model context (#240): each read of a
+        14-18 KB packet was kept, until a small Ollama window refused the request. The journal and the
+        archive keep every read; the tool message stays, so the call still has its result."""
+        for index, row in enumerate(self._context):
+            if row.get("role") != "tool" or row.get("name") != "resume_context":
+                continue
+            try:
+                old = json.loads(row.get("content", ""))
+            except (ValueError, TypeError):
+                old = {}
+            if isinstance(old, dict) and old.get("replaced_by_a_later_read") is True:
+                continue
+            packet = old.get("packet") if isinstance(old, dict) else None
+            packet_id = packet.get("id") if isinstance(packet, dict) else None
+            self._context[index] = {**row, "content": _json({
+                "replaced_by_a_later_read": True, "packet_id": packet_id if isinstance(packet_id, str) else None})}
+
+    def _over_budget(self):
+        """Whether the model context should be compacted now: past the character budget, or, on an Ollama
+        window, past COMPACT_SHARE of the window by the provider's own estimate (#240). The provider refuses
+        a request over the whole window, so at 32k the character budget alone came too late."""
+        if sum(len(_json(row)) for row in self._context) >= CONTEXT_BUDGET_CHARS:
+            return True
+        if self._ollama_window is None:
+            return False
+        from .api_providers import ProviderError, _ollama_messages, ollama_prompt_estimate
+        window, maximum = self._ollama_window
+        try:
+            messages = _ollama_messages([{"role": "system", "content": SYSTEM}, *self._context])
+        except ProviderError:
+            return False  # the provider refuses this request itself
+        tools = [{"type": "function", "function": tool} for tool in self._available_tools()]
+        return ollama_prompt_estimate(messages, tools) + maximum > window * COMPACT_SHARE
 
     @staticmethod
     def _bounded_projection(value, depth=0):
@@ -707,7 +753,7 @@ class AgentEngine:
         await self._notify("status", {"memory": "requires_model_ack"})
 
     async def _context_notice(self):
-        if sum(len(_json(row)) for row in self._context) < CONTEXT_BUDGET_CHARS:
+        if not self._over_budget():
             return
         self._needs_compaction = True
         if not self._compaction_notice:

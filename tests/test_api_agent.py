@@ -892,3 +892,99 @@ async def test_a_ready_packet_before_its_ack_names_the_next_step(setup):
         assert "ack_resume" in first["next_step"] and "next_step" not in again
     finally:
         await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_record_field_and_an_unknown_source_reach_the_model_with_what_to_do_on_real_arcade(tmp_path):
+    # #240, second trial: remember with record.text and read_source with a made-up id, a session id or an id
+    # of a bad shape reached the model as a bare tool_failed.
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    root.joinpath("app.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    store = Store(tmp_path / "data")
+    project = store.add_project("unknowns", root)
+    source = store.snapshot(project["id"], "doc://notes", "The engine is ArcadeDB.")["id"]
+    sid = uuid4().hex
+    run = {"id": uuid4().hex, "generation": 1, "project_id": project["id"],
+           "worktree": str(root), "session_id": sid, "client": "api"}
+    memory = AgentMemoryClient(store.settings, project["id"], root, sid,
+                               transport=httpx.ASGITransport(app=create_app(store.settings, start_worker=False)))
+
+    def ack(messages, tools):
+        packet = json.loads(messages[-1]["content"])["packet"]
+        return reply(call("ack_resume", {"packet_id": packet["id"], "packet_hash": packet["hash"],
+                                           "readback": {"plan": None, "task": None}}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), ack,
+        reply(call("remember", {"record": {"kind": "fact", "text": "Two"}, "sources": [source]}),
+              call("read_source", {"source_id": "made-up-source"}), call("read_source", {"source_id": sid}),
+              call("read_source", {"source_id": "../etc/passwd"}), call("read_source", {"source_id": source})),
+        reply(text="Done."))
+    profile = {"id": "local", "client": "api", "provider": "ollama", "model": "fixture", "limits": {}}
+    agent = AgentEngine(store.settings, run, profile, provider=provider, memory=memory)
+    try:
+        result = await agent.turn("Remember and read")
+        assert len(tools_results(agent)) == 7, result
+        record, made_up, session, bad_shape, found = tools_results(agent)[-5:]
+        assert record["error_code"] == "invalid_record"
+        assert "'text' is not a record field" in record["message"] and "Nothing was saved" in record["message"]
+        for refused in (made_up, session, bad_shape):
+            assert refused["error_code"] == "unknown_source", refused
+            assert "memory_records" in refused["message"] and "passwd" not in refused["message"]
+        assert "error_code" not in found and "ArcadeDB" in json.dumps(found)
+        assert not store.query("SELECT FROM records WHERE content='Two'")
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_reread_packet_replaces_the_earlier_ones_in_the_model_context(setup):
+    # #240, second trial: every resume_context read appended another full packet, until an Ollama
+    # request no longer fitted its window.
+    memory = Memory()
+    memory.packet["records"] = [{"content": "R" * 12_000}]
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("resume_context")), reply(call("resume_context")), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        assert (await agent.turn("Check"))["status"] == "completed"
+        packets = [json.loads(row["content"]) for row in provider.requests[-1]["messages"]
+                   if row.get("role") == "tool" and row.get("name") == "resume_context"]
+        assert len(packets) == 3
+        assert [("R" * 12_000) in json.dumps(packet) for packet in packets] == [False, False, True]
+        assert packets[0]["packet_id"] == "packet-1" and packets[0]["replaced_by_a_later_read"] is True
+        # The journal and the archive keep every read whole.
+        assert sum(("R" * 12_000) in row.get("content", "") for row in agent.messages()) == 3
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window,notice", [(32768, True), (131072, False)])
+async def test_the_compaction_notice_comes_before_the_ollama_window_refuses(setup, window, notice):
+    # #240, second trial: on the default 32k Ollama window a turn ended in context_limit, because the
+    # notice waited for 80,000 characters while the provider's own check refused at about 50,000.
+    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+    settings, run, profile, _ = setup
+    profile = {**profile, "limits": {"context_window_tokens": window, "max_output_tokens": 4096}}
+    provider = ScriptedProvider(reply(text="Need the packet first."))
+    agent = AgentEngine(settings, run, profile, provider=provider, memory=Memory())
+    try:
+        await agent.turn("x" * 40_000)
+        request = provider.requests[0]
+        names = {tool["name"] for tool in request["tools"]}
+        assert ("compact_context" in names) is notice
+        assert any("HOST CONTEXT BUDGET" in str(row.get("content")) for row in request["messages"]) is notice
+        if notice:
+            # The notice still fits: the provider's own pre-check would send this request.
+            tools = [{"type": "function", "function": tool} for tool in request["tools"]]
+            assert ollama_prompt_estimate(_ollama_messages(request["messages"]), tools) + 4096 <= window
+    finally:
+        await agent.close()
