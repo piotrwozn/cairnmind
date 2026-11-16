@@ -16,7 +16,7 @@ from .agent import source_text
 from .memory_paths import bound_metadata, memory_bindings
 from .retrieval import Retriever, public_record, public_source_metadata
 from .sensitivity import record_classes, source_sensitivity
-from .sql import clean_row, json_text, one_row, utc_now
+from .sql import clean_row, json_text, one_row, unregistered_root, utc_now
 
 
 TABLES = {"records", "sources", "plans", "check_runs", "jobs"}
@@ -72,7 +72,7 @@ class Inspector:
             "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})]
         root = Path(worktree).expanduser().resolve() if worktree else None
         if root is not None and root not in roots:
-            raise ValueError("Inspector worktree must be a registered project root")
+            raise ValueError(unregistered_root(root, project))
         return project, root, roots, memory_bindings(self.store, project["id"])
 
     def _matches(self, scope, row, *, source=False):

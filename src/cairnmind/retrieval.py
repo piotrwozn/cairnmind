@@ -18,6 +18,7 @@ from .context_selection import context_place, select_entries
 from .memory_paths import bound_metadata, memory_bindings
 from .memory_egress import ASK, held_back_class
 from .memory_models import from_settings
+from .sql import unregistered_root
 
 
 STOPWORDS = {
@@ -252,7 +253,7 @@ class Retriever:
             "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})]
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
         if root not in roots:
-            raise ValueError("Retrieval worktree must be a registered project root")
+            raise ValueError(unregistered_root(root, project))
         return project["id"], root, roots
 
     @staticmethod

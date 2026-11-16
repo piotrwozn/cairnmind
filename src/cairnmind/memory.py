@@ -23,7 +23,8 @@ from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_dir
 from .memory_size import package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
-from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
+from .sql import (clean_row, insert_document, json_text, one_row, unregistered_root, update_document,
+                  utc_now)
 
 # Written into every new manifest, and so into its identifier. Manifests written under the
 # earlier name are read as they are: rewriting one would change its identifier and its history.
@@ -564,7 +565,7 @@ class MemoryManager:
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
         if not reader.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
                             {"project": project_id, "path": str(root)}):
-            raise ValueError("Memory worktree must be a registered project root")
+            raise ValueError(unregistered_root(root, project))
         return project, root
 
     @staticmethod

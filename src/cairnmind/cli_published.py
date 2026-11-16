@@ -6,11 +6,13 @@ from typing import Annotated
 
 import typer
 
+from cairnmind.cli_arguments import BaseArg, HeadArg, PlanArg, ProjectArg, PublishedArg, RecordArg, RevisionArg
+
 
 def register(memory_app, initialized):
     @memory_app.command("publish")
     @initialized
-    def memory_publish(ctx: typer.Context, project: str, worktree: Path | None = None,
+    def memory_publish(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None,
                        preview: Annotated[bool, typer.Option(
                            "--preview", help="Show what would be written, and the size, without writing.")] = False,
                        new_package: Annotated[bool, typer.Option(
@@ -18,8 +20,8 @@ def register(memory_app, initialized):
                        = False):
         """Write the project's confirmed knowledge as one file per record where its carrier says.
 
-        By default under .memory/cairnmind-published/; see `memory carrier`. Never stages, commits or pushes.
-        Held records are listed with the reason. Exit 1 when refused."""
+        By default under .memory/cairnmind-published/; see `memory carrier`. Never stages, commits or pushes. Held records are listed with the reason. Exit 1 when refused.
+        """
         from cairnmind.cli import output, request
         payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None,
                    "preview": preview}
@@ -29,7 +31,7 @@ def register(memory_app, initialized):
 
     @memory_app.command("carrier")
     @initialized
-    def memory_carrier(ctx: typer.Context, project: str,
+    def memory_carrier(ctx: typer.Context, project: ProjectArg,
                        repository: Annotated[bool, typer.Option(
                            "--repository", help="Publish into the project's repository (the default).")] = False,
                        checkout: Annotated[Path | None, typer.Option(
@@ -49,15 +51,15 @@ def register(memory_app, initialized):
             **({"worktree": str(worktree.expanduser().resolve())} if worktree else {})}))
 
     @memory_app.command("check-published")
-    def memory_check_published(ctx: typer.Context, path: Path,
+    def memory_check_published(ctx: typer.Context, path: PublishedArg,
                                config: Annotated[Path | None, typer.Option(
                                    "--config", help="Personal-data patterns; default: .cairnmind/publication.toml "
                                                     "of the checkout holding PATH.")] = None):
         """Check a published memory directory without a store, service or model. Exit 0 valid, 1 refused, 2 when
         PATH is not a directory.
 
-        Includes the secrets scan (private keys, key and token shapes, passwords in connection strings,
-        random strings, and personal data when the project turns it on); no secret is printed."""
+        Includes the secrets scan (private keys, key and token shapes, passwords in connection strings, random strings, and personal data when the project turns it on); no secret is printed.
+        """
         from cairnmind.memory_published_check import check_directory, releases_in
         from cairnmind.memory_published_release import checkout_rules
         from cairnmind.memory_published_secrets import SecretRulesError
@@ -81,7 +83,7 @@ def register(memory_app, initialized):
             typer.echo(safe_text(line))
 
     @memory_app.command("import-published")
-    def memory_import_published(ctx: typer.Context, path: Path,
+    def memory_import_published(ctx: typer.Context, path: PublishedArg,
                                 project: Annotated[str, typer.Option("--project")],
                                 dry_run: bool = False,
                                 bind: Annotated[bool, typer.Option(
@@ -109,7 +111,7 @@ def register(memory_app, initialized):
                              **({"replace_confirmed": True} if replace_confirmed else {})}))
 
     @memory_app.command("import-commit")
-    def memory_import_commit(ctx: typer.Context, revision: str,
+    def memory_import_commit(ctx: typer.Context, revision: RevisionArg,
                              project: Annotated[str, typer.Option("--project")],
                              worktree: Path | None = None, dry_run: bool = False,
                              bind: Annotated[bool, typer.Option(
@@ -132,7 +134,7 @@ def register(memory_app, initialized):
                              "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
 
     @memory_app.command("show-published")
-    def memory_show_published(ctx: typer.Context, path: Path,
+    def memory_show_published(ctx: typer.Context, path: PublishedArg,
                               kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
                               status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None):
         """Read a published memory directory as text. Writes nothing and needs no store or service."""
@@ -154,13 +156,13 @@ def register(memory_app, initialized):
 
     @memory_app.command("release")
     @initialized
-    def memory_release(ctx: typer.Context, project: str, record: str,
+    def memory_release(ctx: typer.Context, project: ProjectArg, record: RecordArg,
                        reason: Annotated[str, typer.Option("--reason", help="Why the hits are not secrets; published.")],
                        worktree: Path | None = None):
         """Let a record's false alarms of the secrets scan be published, after reading the record.
 
-        The release names each field and kind of hit and is published in the record's file with the reason.
-        A registered secret is never released."""
+        The release names each field and kind of hit and is published in the record's file with the reason. A registered secret is never released.
+        """
         from cairnmind.cli import output, refuse, request
         from cairnmind.config import session_value
         if session_value("SESSION_ID"):
@@ -173,7 +175,7 @@ def register(memory_app, initialized):
                              "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
 
     @memory_app.command("diff")
-    def memory_diff(ctx: typer.Context, base: str, head: str,
+    def memory_diff(ctx: typer.Context, base: BaseArg, head: HeadArg,
                     project_root: Annotated[Path, typer.Option(
                         "--project-root", help="The project's directory in the Git repository (default: here).")] = Path("."),
                     markdown: Annotated[bool, typer.Option(
@@ -186,9 +188,8 @@ def register(memory_app, initialized):
                     = None):
         """Compare the published memory of two commits, without a store, service or model.
 
-        Exit 0 when the head's published memory would import, 1 when it would not, 2 on a usage error.
-        The head is held to the secrets scan of `check-published`, with the head commit's
-        .cairnmind/publication.toml; no secret is printed."""
+        Exit 0 when the head's published memory would import, 1 when it would not, 2 on a usage error. The head is held to the secrets scan of `check-published`, with the head commit's .cairnmind/publication.toml; no secret is printed.
+        """
         from cairnmind.cli import output, refuse
         from cairnmind.memory_published_diff import compare, render_markdown, render_text
         from cairnmind.memory_published_git import published_files
@@ -220,7 +221,7 @@ def register(memory_app, initialized):
 
     @memory_app.command("confirm-plan")
     @initialized
-    def memory_confirm_plan(ctx: typer.Context, project: str, plan: str,
+    def memory_confirm_plan(ctx: typer.Context, project: ProjectArg, plan: PlanArg,
                             expected_version: Annotated[int, typer.Option("--expected-version", min=1)],
                             reason: str | None = None):
         """Confirm a plan and all its active steps as a person, so that they can be published."""

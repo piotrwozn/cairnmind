@@ -85,7 +85,7 @@ class CommandPaletteApp(App):
 
     def compose_help(self):
         yield Static(help_text(self.translate(
-                "Ctrl+B, then Space: search all commands\n"
+                "Ctrl+B, then Space: search the main commands\n"
                 "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
                 "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
                 "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"

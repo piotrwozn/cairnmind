@@ -6,6 +6,7 @@ an installation that only reads the store is told what it can do, once; help nam
 from __future__ import annotations
 
 import fcntl
+import inspect
 import json
 from pathlib import Path
 import re
@@ -254,6 +255,124 @@ def test_a_missing_row_is_named_by_its_kind():
     assert one_row(empty, "SELECT FROM plans", required=False) is None
 
 
+def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session(tmp_path, monkeypatch, capsys):
+    # One prefix and one exit code, whether the store or the service finds the row missing (#244).
+    import httpx
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    data = str(store.data_dir)
+    unknown = "00000000-0000-0000-0000-000000000000"
+    for arguments, said in ((("task", "update", "demo", unknown, "done"), "Task does not exist in this project"),
+                            (("check", "list", "demo", "--task", unknown), "Task does not exist in this project"),
+                            (("plan", "show", "demo", unknown), "Plan does not exist"),
+                            (("source", unknown), "Source does not exist")):
+        code, shown = entry(monkeypatch, capsys, "--data-dir", data, *arguments)
+        assert (code, shown.out, shown.err) == (1, "", f"Cairnmind: {said}\n"), arguments
+    answers = {"/sessions/" + unknown: (400, "Session does not exist"), "/memory/status": (404, "Unknown project"),
+               "/sessions/context": (409, "resume_required: the packet changed")}
+    real_client = httpx.Client
+
+    def client(**kwargs):
+        def answer(request):
+            status, detail = answers[request.url.path]
+            return httpx.Response(status, json={"detail": detail})
+        return real_client(transport=httpx.MockTransport(answer), **kwargs)
+
+    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
+    monkeypatch.setattr(cli.httpx, "Client", client)
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "session", "show", unknown)
+    assert (code, shown.err) == (1, "Cairnmind: Session does not exist\n")
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "memory", "status", "nowhere")
+    assert (code, shown.err) == (1, "Cairnmind: Unknown project\n")
+    # A refusal that is not about a missing row stays a refusal.
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "session", "context", unknown)
+    assert (code, shown.err) == (2, "Error: resume_required: the packet changed\n")
+
+
+def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tmp_path):
+    # The same refusal for memory, retrieval, the inspector, checks and plans (#244): the folder, the project
+    # and the command, quoted for the shell.
+    from cairnmind.ingest import register_default_histories
+    from cairnmind.inspector import Inspector
+    from cairnmind.memory import MemoryManager
+    from cairnmind.plans import PlanManager
+    from cairnmind.retrieval import Retriever
+    from cairnmind.verification import _root
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = store.add_project("my team", root)
+    folder = (tmp_path / "scratch dir").resolve()
+    folder.mkdir()
+    said = (f"{folder} is not a registered project root of my team; register it with "
+            f"`cairnmind project root 'my team' '{folder}'`.")
+    for refused in (lambda: MemoryManager(store)._scope(project["id"], folder),
+                    lambda: Retriever(store, store.settings, ollama=object())._scope(project["id"], folder),
+                    lambda: Inspector(store)._scope(project["id"], folder),
+                    lambda: _root(store, project["id"], folder),
+                    lambda: PlanManager(store).next_task(project["id"], worktree=folder),
+                    lambda: register_default_histories(store, project["id"], folder)):
+        with pytest.raises(ValueError) as caught:
+            refused()
+        assert str(caught.value) == said
+
+
+def test_a_long_unregistered_folder_keeps_the_command_that_registers_it():
+    # The sentence is bounded, but never by cutting off the command it is there to give (#244).
+    from cairnmind.sql import unregistered_root
+    fits = "/a/" + "b" * 600
+    said = unregistered_root(fits, {"name": "demo"})
+    assert said.endswith(f"register it with `cairnmind project root demo {fits}`.")
+    assert said.startswith("/a/bbb") and "…" in said.split(";")[0]  # the leading copy is shortened
+    for folder, project in (("/a/" + "b" * 2000, {"name": "demo"}), ("/repo", {"name": "n" * 2000})):
+        said = unregistered_root(folder, project)
+        assert said.endswith("register it with `cairnmind project root <project> <folder>`.") and len(said) < 700
+
+
+def test_a_printed_command_names_the_data_directory_it_was_refused_in(tmp_path, monkeypatch, capsys):
+    # A refusal's command is pasted into a plain shell, where neither --data-dir nor a wrapper's CAIRNMIND_HOME
+    # holds: it names this installation's directory, as `stage next` does (#244).
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    folder = tmp_path / "elsewhere"
+    folder.mkdir()
+    data = str(store.data_dir)
+    named = f"`cairnmind --data-dir {data} project root demo {folder.resolve()}`."
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "stage", "next", "demo", "--worktree", str(folder))
+    assert code == 1 and shown.err.startswith("Cairnmind: ") and named in shown.err, shown.err
+    monkeypatch.setattr(cli, "ensure_service", lambda settings: None)
+    monkeypatch.setattr("cairnmind.integrations.run_client", lambda *args: pytest.fail("the client started"))
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "run", "demo", "codex", "--worktree", str(folder))
+    assert code == 2 and shown.err.startswith("Error: ") and named in shown.err, shown.err
+    # Only the register command, which writes to the store, is given the directory.
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "answers", "show", "demo", "x")
+    assert code == 2 and "`cairnmind answers list`" in shown.err, shown.err
+    for name in ("CAIRNMIND_HOME", "DEVBRAIN_HOME"):
+        monkeypatch.setenv(name, data)
+        code, shown = entry(monkeypatch, capsys, "stage", "next", "demo", "--worktree", str(folder))
+        assert code == 1 and named in shown.err, (name, shown.err)
+        monkeypatch.delenv(name)
+    # The default installation, the one a plain shell uses: the command is printed as it is.
+    monkeypatch.setattr("cairnmind.config.default_data_dir", lambda environ=None: store.data_dir)
+    code, shown = entry(monkeypatch, capsys, "--data-dir", data, "stage", "next", "demo", "--worktree", str(folder))
+    assert code == 1 and f"`cairnmind project root demo {folder.resolve()}`." in shown.err, shown.err
+    assert "--data-dir" not in shown.err
+
+
+def test_an_unknown_answer_id_is_refused_as_an_unknown_task_is(tmp_path, monkeypatch, capsys):
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    monkeypatch.setattr("cairnmind.config.default_data_dir", lambda environ=None: store.data_dir)
+    code, shown = entry(monkeypatch, capsys, "--data-dir", str(store.data_dir), "answers", "show", "demo", "f" * 32)
+    assert (code, shown.out, shown.err) == (1, "", "Cairnmind: No logged answer with this id in this project\n")
+
+
 @pytest.mark.parametrize("content", ["[]", '[{"id": "a"}]', '"x"', "{}"])
 def test_a_question_file_of_another_shape_is_refused_in_a_sentence(tmp_path, content):
     from cairnmind.repository_evaluation import load_questions
@@ -281,6 +400,58 @@ def test_a_question_file_that_is_missing_or_a_folder_is_a_sentence(tmp_path, mon
     assert "Errno" not in shown.output
 
 
+@pytest.mark.parametrize("content", ["[]", "{not json", '{"format_version": 2, "questions": [{"id": "a"}]}',
+                                     '{"format_version": 1, "questions": [{"question": "no id"}]}'])
+def test_a_bad_question_file_through_the_command_is_a_refusal_not_a_usage_error(tmp_path, monkeypatch, content):
+    # The file is wrong, not the command line: no usage frame, and the run starts nothing (#244).
+    monkeypatch.setattr(cli, "_managed_only", lambda *args: None)
+    monkeypatch.setattr("cairnmind.repository_evaluation._preflight", lambda *args: pytest.fail("a model was asked"))
+    data = tmp_path / "memory"
+    Settings.load(data, create=True)
+    questions = tmp_path / "q.json"
+    questions.write_text(content)
+    said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(data), "eval", "repository", str(tmp_path),
+                                                  "--questions", str(questions)]))
+    assert len(said) > len("Error: ")
+
+
+@pytest.mark.parametrize("content", ["[]", "{not json"])
+def test_a_bad_transcript_file_through_the_command_is_a_refusal_not_a_usage_error(tmp_path, content):
+    data = tmp_path / "memory"
+    Settings.load(data, create=True)
+    transcripts = tmp_path / "t.json"
+    transcripts.write_text(content)
+    no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(data), "eval", "extraction",
+                                           "--transcripts", str(transcripts)]))
+
+
+def test_a_plan_file_or_an_evidence_file_of_another_shape_is_a_refusal(tmp_path):
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    store.add_project("demo", root)
+    plan = tmp_path / "plan.json"
+    plan.write_text("[]")
+    said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(store.data_dir), "plan", "save", "demo",
+                                                  str(plan), "--idempotency-key", "k"]))
+    assert "plan and steps" in said
+    # A file that is not JSON at all is refused the same way, naming the file, before any service starts.
+    plan.write_text("{not json")
+    for arguments in (("plan", "save", "demo", str(plan), "--idempotency-key", "k"), ("checkpoint", "demo", str(plan)),
+                      ("session", "ack", "s", "p", "h", str(plan))):
+        said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(store.data_dir), *arguments]))
+        assert said.startswith(f"Error: The file {plan} is not valid JSON: Expecting property name"), arguments
+    pid = store.resolve_project("demo")["id"]
+    source = store.snapshot(pid, "manual://task", "Build it", "manual")
+    task = store.remember(pid, {"kind": "task", "content": "Build it", "metadata": {"state": "todo"}},
+                          [source["id"]])
+    evidence = tmp_path / "evidence.txt"
+    evidence.write_text("  \n")
+    said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(store.data_dir), "task", "update", "demo",
+                                                  task["id"], "done", "--evidence", str(evidence), "--test-passed"]))
+    assert "non-empty check result" in said
+
+
 # --- What the installer prints of doctor -------------------------------------------------------------------------
 
 def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
@@ -292,7 +463,8 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
                "tmux": {"code": "ready"}, "arcadedb": {"available": True, "database_available": True},
                "ollama": {"available": True, "chat_model_installed": True, "embedding_model_installed": True},
                "memory_models": {"chat": {"reachable": True}}, "service": {"available": False},
-               "environment_notes": [], "store_writer": {"role": "writer"}}
+               "environment_notes": [], "data_dir": "/home/me/.local/share/cairnmind",
+               "store_writer": {"role": "writer"}}
     assert doctor_attention.attention(healthy) == []
     broken = {**healthy, "environment_notes": ["CAIRNMIND_X and DEVBRAIN_X are both set and differ."],
               "tmux": {"code": "too_old", "minimum_version": "3.4"},
@@ -307,6 +479,11 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
     assert any(line.startswith("Store writer: reader.") and "\x1b" not in line for line in lines)
     for report, first in ((healthy, "Nothing needs attention."), (broken, "Needs attention:"),
                           ([1, 2], "The doctor report could not be read."),
+                          ({}, "The doctor report could not be read."),
+                          ({"service": {"available": True}}, "The doctor report could not be read."),
+                          # What `cairnmind init` prints, and a part of a report: not a report that found nothing.
+                          ({"data_dir": "/x", "next": "cairnmind doctor"}, "The doctor report could not be read."),
+                          ({"store_writer": []}, "The doctor report could not be read."),
                           ({"java": "of another shape"}, "The doctor report could not be read.")):
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(report)))
         assert doctor_attention.main() == 0
@@ -346,6 +523,57 @@ def test_every_top_level_command_has_a_description():
         for sub in getattr(command, "commands", {"": command}).values():
             first = (sub.help or "").strip().split("\n\n")[0]
             assert "\n" not in first, (name, sub.name, first)
+
+
+def _leaf_commands(command, path=()):
+    for name, sub in (getattr(command, "commands", None) or {}).items():
+        yield from _leaf_commands(sub, (*path, name))
+    if not getattr(command, "commands", None):
+        yield " ".join(path), command
+
+
+def test_every_argument_of_every_command_is_named_and_described_and_no_paragraph_breaks_early():
+    # The first round fixed `plan save` and the first paragraphs only; every command is walked now (#244).
+    commands = list(_leaf_commands(typer.main.get_command(cli.app)))
+    assert len(commands) > 90
+    bare = [(path, param.name) for path, command in commands for param in command.params
+            if param.param_type_name == "argument" and not (getattr(param, "help", None) or "").strip()]
+    assert bare == []
+    lowercase = [(path, param.name) for path, command in commands for param in command.params
+                 if param.param_type_name == "argument" and param.metavar != (param.metavar or "").upper()]
+    assert lowercase == []
+    # Typer joins the lines of the first paragraph and keeps those of the later ones as they are written.
+    wrapped = [path for path, command in commands
+               if any("\n" in part for part in inspect.cleandoc(command.help or "").split("\n\n")[1:])]
+    assert wrapped == []
+
+
+def test_remember_and_store_takeover_help_read_as_sentences(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "200")
+    remember = runner.invoke(cli.app, ["remember", "--help"]).output
+    assert "remember [OPTIONS] {PROJECT} {CONTENT}" in plain_words(remember)  # not {project}
+    assert "PROJECT <str> The project's name, id or folder. [required]" in plain_words(remember)
+    takeover = runner.invoke(cli.app, ["store", "takeover", "--help"]).output
+    # At 200 columns the second paragraph is one line: it does not break after "with its".
+    assert any(line.strip().startswith("The previous writer stops") and line.rstrip().endswith("kept in the store.")
+               for line in takeover.splitlines()), takeover
+
+
+def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
+    # The activity panel has its own key and no menu entry (Notices stays the last entry): the help and the
+    # guide say "main commands" and name the key (#244).
+    from cairnmind.terminal_commands import COMMANDS
+    from cairnmind.terminal_i18n import tr
+    assert "activ" not in " ".join(title.lower() for title, *_ in COMMANDS)
+    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal_commands.py").read_text()
+    assert "search all commands" not in source and "Ctrl+B, then Space: search the main commands" in source
+    assert "Ctrl+B, then a: activity panel" in source
+    english = source.split("help_text(self.translate(")[1].split("))")[0]
+    text = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', english)).encode().decode("unicode_escape")
+    polish = tr(text, "pl")
+    assert polish != text and "głównych poleceń" in polish
+    guide = (Path(__file__).resolve().parents[1] / "docs" / "TERMINAL.md").read_text()
+    assert "menu of all commands" not in guide and "the activity panel has its own key, `a`" in guide
 
 
 def test_plan_save_names_and_explains_its_arguments(monkeypatch):

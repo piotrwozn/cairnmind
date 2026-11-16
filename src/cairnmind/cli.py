@@ -18,6 +18,11 @@ from typing import Annotated
 import httpx
 import typer
 
+from cairnmind.cli_arguments import (
+    AnswerIdArg, ClientArg, ExportArg, FolderArg, GroupArg, JobIdArg, PacketHashArg, PacketIdArg, PlanIdArg,
+    ProfileArg, ProjectArg, ProjectNameArg, ProjectRootArg, QuestionArg, ReadbackArg, RecordIdArg, RepositoryArg,
+    SessionClientArg, SessionIdArg, SnapshotArg, SourceIdArg, StateArg, StateFileArg, TaskIdArg, TitleArg,
+    TranscriptArg)
 from cairnmind.config import SERVICE_NAMES, Settings, drop_env, session_value
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
@@ -82,8 +87,42 @@ def entrypoint() -> None:
         from cairnmind.store_writer import StoreNotWriter
         if not (isinstance(exc, StoreNotWriter) and str(exc) in _NOTICES_SHOWN):
             # The reader's notice was printed when the store opened: the refusal is not said twice (#244).
-            typer.echo(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}", err=True)
+            typer.echo(_pasteable(f"Cairnmind: {_os_error_text(exc) if isinstance(exc, OSError) else exc}"),
+                       err=True)
         raise SystemExit(1) from None
+
+
+# The data directory of the running command, set by the app callback, for the commands a refusal prints.
+_INVOCATION: dict = {}
+
+
+def _data_dir_arguments(data_dir) -> list[str]:
+    """`--data-dir DIR` when a plain shell would use another directory: CAIRNMIND_HOME, set by a wrapper, is not
+    set in the shell a printed command is pasted into (#244)."""
+    from cairnmind.config import default_data_dir
+    return [] if data_dir is None or data_dir == default_data_dir(environ={}) else ["--data-dir", str(data_dir)]
+
+
+def _pasteable(message: str) -> str:
+    """A refusal whose register command (`cairnmind project root ...`, from sql.unregistered_root, built where no
+    settings are known) acts on this installation when pasted, not on the default one. Only that command: it
+    writes to the store, so pasting it bare would register the folder in another installation. Other commands a
+    refusal names (`cairnmind init`, `cairnmind serve`) are printed as they are."""
+    arguments = _data_dir_arguments(_INVOCATION.get("data_dir"))
+    if not arguments or "`cairnmind project root " not in message:
+        return message
+    import shlex
+    from cairnmind.terminal_safe import safe_text
+    return message.replace("`cairnmind project root ", f"`cairnmind {safe_text(shlex.join(arguments))} project root ")
+
+
+def _json_file(path: Path):
+    """A JSON file named on the command line. One that is not JSON is refused in one line that names it, as one of
+    another shape is, not as the parser's bare message (#244)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:  # JSONDecodeError, or bytes that are not UTF-8
+        refuse(f"The file {_shortened(str(path))} is not valid JSON: {_shortened(str(exc), 300)}")
 
 
 def _shortened(text: str, limit: int = 200) -> str:
@@ -246,7 +285,7 @@ def _ensure_service_or_refuse(settings: Settings) -> None:
 
 def refuse(message: str, code: int = 2):
     """A refusal that is not about the command line: no usage line and no "Invalid value" (#154)."""
-    typer.echo(f"Error: {message}", err=True)
+    typer.echo(_pasteable(f"Error: {message}"), err=True)
     raise typer.Exit(code)
 
 
@@ -363,13 +402,20 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
             from cairnmind.terminal_safe import safe_text
             if raise_refusal:
                 raise ServiceRefusal(safe_text(str(detail)))
+            from cairnmind.sql import missing_row_text
+            if response.status_code == 404 or missing_row_text(str(detail)):
+                # An unknown id or project is said as the commands that read the store say it (#244).
+                typer.echo(_pasteable(f"Cairnmind: {safe_text(str(detail))}"), err=True)
+                raise typer.Exit(1)
             refuse(safe_text(str(detail)))
         return response.json()
 
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context, data_dir: Annotated[Path | None, typer.Option("--data-dir")] = None):
+    _INVOCATION.clear()
     ctx.obj = Settings.load(data_dir, create=False)
+    _INVOCATION["data_dir"] = ctx.obj.data_dir
     if ctx.invoked_subcommand is None:
         _launch_terminal_workspace(ctx)
 
@@ -627,7 +673,7 @@ def stop(ctx: typer.Context):
 
 @projects_app.command("add")
 @initialized
-def project_add(ctx: typer.Context, name: str, root: Path):
+def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg):
     root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
@@ -646,7 +692,7 @@ def project_list(ctx: typer.Context):
 
 @projects_app.command("root")
 @initialized
-def project_root(ctx: typer.Context, project: str, path: Path):
+def project_root(ctx: typer.Context, project: ProjectArg, path: FolderArg):
     """Explicitly assign an additional folder or worktree to the project."""
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
@@ -659,14 +705,14 @@ def project_root(ctx: typer.Context, project: str, path: Path):
 
 @app.command()
 @initialized
-def index(ctx: typer.Context, project: str):
+def index(ctx: typer.Context, project: ProjectArg):
     """Index the project's files again through the service, which it starts when needed."""
     output(request(ctx.obj, "POST", "/ingest", json={"project": project}))
 
 
 @app.command("import")
 @initialized
-def import_command(ctx: typer.Context, path: Path, project: str | None = None, client: str = "auto"):
+def import_command(ctx: typer.Context, path: TranscriptArg, project: str | None = None, client: str = "auto"):
     """Import a client's JSONL; without a project, keep the history in the import inbox."""
     output(request(ctx.obj, "POST", "/import", json={"path": str(path.expanduser().resolve()),
                                                     "project": project, "client": client}))
@@ -674,7 +720,7 @@ def import_command(ctx: typer.Context, path: Path, project: str | None = None, c
 
 @app.command()
 @initialized
-def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None = None,
+def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree: Path | None = None,
         answer_schema: Path | None = None,
         log: Annotated[bool, typer.Option("--log", help="Keep this answer and its citations in the project's "
                                           "answer log, for `cairnmind eval replay`.")] = False):
@@ -685,13 +731,13 @@ def ask(ctx: typer.Context, project: str, question: str, worktree: Path | None =
         payload["log"] = True
     if answer_schema is not None:
         from cairnmind.answer_contract import prepare_answer_schema
-        payload["answer_schema"] = prepare_answer_schema(json.loads(answer_schema.read_text(encoding="utf-8")))
+        payload["answer_schema"] = prepare_answer_schema(_json_file(answer_schema))
     output(request(ctx.obj, "POST", "/ask", json=payload))
 
 
 @app.command()
 @initialized
-def context(ctx: typer.Context, project: str, worktree: Path | None = None):
+def context(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None):
     """Show the context a coding session starts with: checkpoint, tasks and records. Starts the service when needed."""
     output(request(ctx.obj, "GET", "/context", params={"project": project,
                    **({"worktree": str(worktree.resolve())} if worktree else {})}))
@@ -699,7 +745,7 @@ def context(ctx: typer.Context, project: str, worktree: Path | None = None):
 
 @app.command()
 @initialized
-def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
+def brief(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None,
           as_json: Annotated[bool, typer.Option("--json", help="Print the marked lines as JSON.")] = False):
     """Show where work stopped: checkpoint, next task, check evidence, commits and proposals. Asks no model."""
     from cairnmind.brief import build_brief
@@ -714,7 +760,7 @@ def brief(ctx: typer.Context, project: str, worktree: Path | None = None,
 
 
 @app.command()
-def impact(ctx: typer.Context, project: str,
+def impact(ctx: typer.Context, project: ProjectArg,
            since: Annotated[str, typer.Option("--since", help="Commit, tag or branch to compare the worktree with.")],
            worktree: Path | None = None,
            as_json: Annotated[bool, typer.Option("--json", help="Print the linked records as JSON.")] = False,
@@ -737,7 +783,7 @@ def impact(ctx: typer.Context, project: str,
 
 @app.command("impact-verdict")
 @initialized
-def impact_verdict(ctx: typer.Context, project: str, record_id: str,
+def impact_verdict(ctx: typer.Context, project: ProjectArg, record_id: RecordIdArg,
                    fingerprint: Annotated[str, typer.Option(help="The entry's fingerprint, from --json.")],
                    verdict: Annotated[str, typer.Option(help="still_valid, needs_update or not_related.")],
                    since: Annotated[str, typer.Option(help="The commit the list was made against.")],
@@ -755,7 +801,8 @@ def impact_verdict(ctx: typer.Context, project: str, record_id: str,
         result = record_verdict(store, pid, record_id, fingerprint, verdict, since,
                                 str(worktree.expanduser().resolve()) if worktree else None, note)
     except LookupError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        # The record is not in that list (it may exist): a refusal of the state, not a usage error (#244).
+        refuse(str(exc))
     output(result)
 
 
@@ -765,7 +812,7 @@ class UsageBy(str, Enum):
 
 
 @app.command()
-def usage(ctx: typer.Context, project: str,
+def usage(ctx: typer.Context, project: ProjectArg,
           since: Annotated[str, typer.Option("--since", help="How far back to look: Nd (days) or Nh (hours).")] = "7d",
           by: Annotated[UsageBy, typer.Option("--by", help="Group by UTC day or by ISO week.")] = UsageBy.day,
           warn_over: Annotated[int | None, typer.Option(
@@ -820,6 +867,7 @@ def status(ctx: typer.Context, project: str | None = None):
 
 @store_app.command("size")
 def store_size(ctx: typer.Context, project: Annotated[str | None, typer.Argument(
+                   metavar="PROJECT",
                    help="Measure only this project's rows; the disk use is always the whole data directory.")] = None,
                as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False):
     """Rows and approximate bytes per collection, kind and namespace, and the disk use of the data directory.
@@ -858,8 +906,8 @@ def store_takeover(ctx: typer.Context,
                    note: Annotated[str | None, typer.Option(help="Why, kept with the change (one line).")] = None):
     """Make this installation the store's writer.
 
-    The previous writer stops at its next write; its running jobs go back to the queue. The change, with its
-    time, host and note, is kept in the store."""
+    The previous writer stops at its next write; its running jobs go back to the queue. The change, with its time, host and note, is kept in the store.
+    """
     from cairnmind.store_writer import inspect, take_over_at, valid_note
     # Moving the writer is a person's decision, as a verdict is: a coding session cannot make it.
     if session_value("SESSION_ID"):
@@ -884,8 +932,8 @@ def store_drop_replaced_chunks(
             min=1, help="Stop after this many transactions; run again to go on.")] = None):
     """Delete the chunks that earlier releases kept for replaced sources, in every project; prints how many rows went.
 
-    Nothing searches them. Every source stays with its full text and hash, so evidence citing an old version
-    is still readable and checkable. Short transactions, safe to stop and run again (#186)."""
+    Nothing searches them. Every source stays with its full text and hash, so evidence citing an old version is still readable and checkable. Short transactions, safe to stop and run again (#186).
+    """
     from cairnmind.replaced_chunks import drop_replaced_chunks
     output(drop_replaced_chunks(store_for(ctx.obj), batch=batch, max_batches=max_batches))
 
@@ -897,8 +945,8 @@ def store_prune_backups(
         yes: Annotated[bool, typer.Option("--yes", help="Delete without asking again.")] = False):
     """Delete old safety backups (before-schema-*, before-restore-*), keeping the newest K of each kind.
 
-    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled
-    backups and backups you named are never touched. Starts no engine (#190)."""
+    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled backups and backups you named are never touched. Starts no engine (#190).
+    """
     from cairnmind.confirmation import person_at_terminal
     from cairnmind.store_prune import delete_backups, prune_plan
     directory = ctx.obj.data_dir / "backups"
@@ -920,7 +968,7 @@ def store_prune_backups(
 
 
 @jobs_app.command("list")
-def jobs_list(ctx: typer.Context, project: str,
+def jobs_list(ctx: typer.Context, project: ProjectArg,
               state: Annotated[str | None, typer.Option("--state", "--status")] = None,
               kind: str | None = None,
               limit: Annotated[int, typer.Option(min=1, max=100)] = 50):
@@ -934,14 +982,14 @@ def jobs_list(ctx: typer.Context, project: str,
 
 
 @jobs_app.command("show")
-def jobs_show(ctx: typer.Context, project: str, job_id: str):
+def jobs_show(ctx: typer.Context, project: ProjectArg, job_id: JobIdArg):
     """Read a job that belongs to the given project."""
     output(request(ctx.obj, "GET", f"/jobs/{job_id}", start_service=False, params={"project": project}))
 
 
 @jobs_app.command("retry")
 @initialized
-def jobs_retry(ctx: typer.Context, project: str, job_id: str,
+def jobs_retry(ctx: typer.Context, project: ProjectArg, job_id: JobIdArg,
                expected_attempts: Annotated[int, typer.Option("--expected-attempts", min=0)],
                include_omissions: Annotated[bool, typer.Option(
                    "--include-omissions", help="Include a finished extraction in which every record was rejected.")
@@ -954,7 +1002,7 @@ def jobs_retry(ctx: typer.Context, project: str, job_id: str,
 
 
 @app.command()
-def records(ctx: typer.Context, project: str, history: bool = False):
+def records(ctx: typer.Context, project: ProjectArg, history: bool = False):
     """List the project's records as JSON; --history adds the replaced ones. Read-only; starts nothing."""
     store = store_for_read(ctx.obj)
 
@@ -966,15 +1014,15 @@ def records(ctx: typer.Context, project: str, history: bool = False):
 
 
 @app.command()
-def proposed(ctx: typer.Context, project: str,
+def proposed(ctx: typer.Context, project: ProjectArg,
              days: Annotated[int, typer.Option("--days", min=0, max=3650,
                                                help="List the ones not updated for this many days or more.")] = 30,
              worktree: Path | None = None,
              as_json: Annotated[bool, typer.Option("--json", help="Print the list as JSON.")] = False):
     """List proposed findings not updated for a number of days, oldest first. Read-only; asks no model.
 
-    Each one shows its id, kind, source count and newest evidence time. Confirm or dispute them in the
-    memory inspector, which records your review with its version check and audit note (#189)."""
+    Each one shows its id, kind, source count and newest evidence time. Confirm or dispute them in the memory inspector, which records your review with its version check and audit note (#189).
+    """
     from cairnmind.inspector import Inspector
     from cairnmind.stale_proposed import stale_proposed, stale_text
     store = store_for_read(ctx.obj)
@@ -994,14 +1042,14 @@ def proposed(ctx: typer.Context, project: str,
 
 
 @app.command()
-def source(ctx: typer.Context, source_id: str):
+def source(ctx: typer.Context, source_id: SourceIdArg):
     """Read the stored snapshot of a source, even when the original no longer exists."""
     output(store_for_read(ctx.obj).get_source(source_id))
 
 
 @app.command()
 @initialized
-def remember(ctx: typer.Context, project: str,
+def remember(ctx: typer.Context, project: ProjectArg,
              content: Annotated[str, typer.Argument(
                  metavar="CONTENT", help="The text to keep. Text that begins with - goes last, after --, with the "
                                          "options before it: `cairnmind remember PROJECT --kind decision -- '-text'`.")],
@@ -1042,14 +1090,14 @@ def remember(ctx: typer.Context, project: str,
 
 @app.command()
 @initialized
-def checkpoint(ctx: typer.Context, project: str, state_file: Path):
+def checkpoint(ctx: typer.Context, project: ProjectArg, state_file: StateFileArg):
     """Store where work stands, from a JSON file, as the project's checkpoint. Starts the service when needed."""
     output(request(ctx.obj, "POST", "/checkpoint", json={"project": project,
-                   "state": json.loads(state_file.read_text(encoding="utf-8"))}))
+                   "state": _json_file(state_file)}))
 
 
 @tasks_app.command("list")
-def task_list(ctx: typer.Context, project: str, worktree: Path | None = None):
+def task_list(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None):
     from cairnmind.verification import verification_status
     store = store_for_read(ctx.obj)
 
@@ -1064,7 +1112,7 @@ def task_list(ctx: typer.Context, project: str, worktree: Path | None = None):
 
 @tasks_app.command("add")
 @initialized
-def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = None, step: int = 1,
+def task_add(ctx: typer.Context, project: ProjectArg, title: TitleArg, plan: str | None = None, step: int = 1,
              criterion: Annotated[list[str] | None, typer.Option("--criterion")] = None,
              depends_on: Annotated[list[str] | None, typer.Option("--depends-on")] = None,
              requires_test: bool = False, requires_review: bool = False):
@@ -1097,7 +1145,7 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
 
 @tasks_app.command("update")
 @initialized
-def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
+def task_update(ctx: typer.Context, project: ProjectArg, task_id: TaskIdArg, state: StateArg,
                 evidence: Path | None = None, test_passed: bool = False,
                 review_passed: bool = False, acceptance_passed: bool = False,
                 version: int | None = None, worktree: Path | None = None,
@@ -1107,7 +1155,7 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
     pid = store.resolve_project(project)["id"]
     task = next((r for r in store.list_records(pid) if r["id"] == task_id and r["kind"] == "task"), None)
     if task is None:
-        raise typer.BadParameter("No such task in this project")
+        raise ValueError("Task does not exist in this project")  # as the store says a missing row (#244)
     sources = task["source_ids"]
     if isinstance(sources, str):
         sources = json.loads(sources)
@@ -1120,7 +1168,7 @@ def task_update(ctx: typer.Context, project: str, task_id: str, state: str,
             raise typer.BadParameter("Verification requires --evidence FILE with the check result")
         evidence_text = evidence.read_text(encoding="utf-8")
         if not evidence_text.strip():
-            raise typer.BadParameter("The evidence file must contain a non-empty check result")
+            refuse("The evidence file must contain a non-empty check result")
     with actor_write(store, ctx.obj, pid, worktree) as scope:
         if evidence_text is not None:
             src = store.snapshot(pid, f"verification://{uuid.uuid4()}", evidence_text, "verification",
@@ -1160,10 +1208,10 @@ def plan_save(ctx: typer.Context,
               activate: Annotated[bool, typer.Option(help="Make the saved plan the active one.")] = False):
     """Save a new version of a plan from a JSON file; --activate makes it the active plan."""
     from cairnmind.plans import PlanManager
-    document = json.loads(input_json.read_text(encoding="utf-8"))
+    document = _json_file(input_json)
     if not isinstance(document, dict):
-        raise typer.BadParameter("The file must contain an object with the fields plan and steps")
-    versions = (json.loads(task_versions.read_text(encoding="utf-8")) if task_versions
+        refuse("The file must contain an object with the fields plan and steps")
+    versions = (_json_file(task_versions) if task_versions
                 else document.get("task_versions"))
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
@@ -1179,7 +1227,7 @@ def plan_save(ctx: typer.Context,
 
 
 @plans_app.command("list")
-def plan_list(ctx: typer.Context, project: str):
+def plan_list(ctx: typer.Context, project: ProjectArg):
     from cairnmind.plans import PlanManager
     store = store_for_read(ctx.obj)
 
@@ -1191,7 +1239,7 @@ def plan_list(ctx: typer.Context, project: str):
 
 
 @plans_app.command("show")
-def plan_show(ctx: typer.Context, project: str, plan_id: str):
+def plan_show(ctx: typer.Context, project: ProjectArg, plan_id: PlanIdArg):
     from cairnmind.plans import PlanManager
     store = store_for_read(ctx.obj)
 
@@ -1203,7 +1251,7 @@ def plan_show(ctx: typer.Context, project: str, plan_id: str):
 
 
 @plans_app.command("next")
-def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None):
+def plan_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = None, worktree: Path | None = None):
     from cairnmind.plans import PlanManager
     store = store_for_read(ctx.obj)
 
@@ -1225,7 +1273,7 @@ def plan_next(ctx: typer.Context, project: str, plan_id: str | None = None, work
 
 @plans_app.command("activate")
 @initialized
-def plan_activate(ctx: typer.Context, project: str, plan_id: str, worktree: Path | None = None):
+def plan_activate(ctx: typer.Context, project: ProjectArg, plan_id: PlanIdArg, worktree: Path | None = None):
     from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
@@ -1236,7 +1284,7 @@ def plan_activate(ctx: typer.Context, project: str, plan_id: str, worktree: Path
 
 @plans_app.command("adopt")
 @initialized
-def plan_adopt(ctx: typer.Context, project: str, group: str,
+def plan_adopt(ctx: typer.Context, project: ProjectArg, group: GroupArg,
                idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
                title: str | None = None, worktree: Path | None = None, activate: bool = False):
     from cairnmind.plans import PlanManager
@@ -1252,7 +1300,7 @@ def plan_adopt(ctx: typer.Context, project: str, group: str,
 
 
 @plans_app.command("contract")
-def plan_contract(ctx: typer.Context, project: str,
+def plan_contract(ctx: typer.Context, project: ProjectArg,
                   plan_id: Annotated[str | None, typer.Option("--plan-id", help="The plan; the active one if omitted.")] = None,
                   worktree: Path | None = None,
                   write: Annotated[str | None, typer.Option(
@@ -1281,7 +1329,7 @@ def plan_contract(ctx: typer.Context, project: str,
 
 
 @checks_app.command("profiles")
-def check_profiles(ctx: typer.Context, project: str, worktree: Path | None = None):
+def check_profiles(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None):
     from cairnmind.verification import load_profiles
     store = store_for_read(ctx.obj)
 
@@ -1294,7 +1342,7 @@ def check_profiles(ctx: typer.Context, project: str, worktree: Path | None = Non
 
 @checks_app.command("run")
 @initialized
-def check_run(ctx: typer.Context, project: str, profile: str,
+def check_run(ctx: typer.Context, project: ProjectArg, profile: ProfileArg,
               task: Annotated[str, typer.Option("--task")], worktree: Path | None = None):
     from cairnmind.verification import run_check
     store = store_for(ctx.obj)
@@ -1320,7 +1368,7 @@ def _project_handle(store, project: dict) -> str:
 
 @stage_app.command("next")
 @initialized
-def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, worktree: Path | None = None,
+def stage_next(ctx: typer.Context, project: ProjectArg, plan_id: str | None = None, worktree: Path | None = None,
                as_json: Annotated[bool, typer.Option("--json", help="Print the decision as JSON.")] = False):
     """Show the next plan step's stage and what is mapped to it. Changes no task and starts nothing."""
     import shlex
@@ -1343,10 +1391,9 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
     decision["command"], decision["command_reason"] = next_command(
         decision, _project_handle(store, selected), scope or str(Path(selected["root"]).resolve()),
         slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
-    from cairnmind.config import default_data_dir
-    if decision["command"] and ctx.obj.data_dir != default_data_dir():
+    if decision["command"]:
         # The printed command acts on this installation, not on the default one (#244).
-        decision["command"][1:1] = ["--data-dir", str(ctx.obj.data_dir)]
+        decision["command"][1:1] = _data_dir_arguments(ctx.obj.data_dir)
     if as_json:
         output(decision)
         return
@@ -1362,7 +1409,7 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
 
 @checks_app.command("list")
 @initialized
-def check_list(ctx: typer.Context, project: str,
+def check_list(ctx: typer.Context, project: ProjectArg,
                task: Annotated[str | None, typer.Option("--task")] = None,
                worktree: Path | None = None):
     from cairnmind.verification import recover_interrupted_runs, verification_status
@@ -1379,14 +1426,14 @@ def check_list(ctx: typer.Context, project: str,
         records = store.query("SELECT FROM records WHERE id=:id AND project_id=:project AND kind='task'",
                               {"id": task, "project": pid})
         if not records:
-            raise typer.BadParameter("No such task in this project")
+            raise ValueError("Task does not exist in this project")  # as the store says a missing row (#244)
         result["verification"] = verification_status(store, records[0], scope)
     output(result)
 
 
 @sessions_app.command("prepare")
 @initialized
-def session_prepare(ctx: typer.Context, project: str, client: str, worktree: Path | None = None):
+def session_prepare(ctx: typer.Context, project: ProjectArg, client: SessionClientArg, worktree: Path | None = None):
     result = request(ctx.obj, "POST", "/sessions/prepare", json={"project": project, "client": client,
                      "worktree": str(worktree.resolve()) if worktree else None})
     output(result)
@@ -1396,25 +1443,25 @@ def session_prepare(ctx: typer.Context, project: str, client: str, worktree: Pat
 
 @sessions_app.command("show")
 @initialized
-def session_show(ctx: typer.Context, session_id: str):
+def session_show(ctx: typer.Context, session_id: SessionIdArg):
     output(request(ctx.obj, "GET", f"/sessions/{session_id}"))
 
 
 @sessions_app.command("context")
 @initialized
-def session_context(ctx: typer.Context, session_id: str):
+def session_context(ctx: typer.Context, session_id: SessionIdArg):
     output(request(ctx.obj, "POST", "/sessions/context", json={"session_id": session_id}))
 
 
 @sessions_app.command("ack")
 @initialized
-def session_ack(ctx: typer.Context, session_id: str, packet_id: str, packet_hash: str, readback_json: Path):
+def session_ack(ctx: typer.Context, session_id: SessionIdArg, packet_id: PacketIdArg, packet_hash: PacketHashArg, readback_json: ReadbackArg):
     actor = session_value("SESSION_ID")
     if actor and actor != session_id:
         raise typer.BadParameter("Another session cannot be acknowledged")
     output(request(ctx.obj, "POST", "/sessions/ack", json={"session_id": session_id,
         "packet_id": packet_id, "packet_hash": packet_hash,
-        "readback": json.loads(readback_json.read_text(encoding="utf-8"))}))
+        "readback": _json_file(readback_json)}))
 
 
 @eval_app.command("run")
@@ -1453,15 +1500,14 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
                     report_dir: Path | None = None):
     """Measure what extraction proposes from conversations against the records a person would keep.
 
-    TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory.
-    Needs Ollama with the configured chat model, no engine; nothing is stored. Exits 3 without the model.
+    TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory. Needs Ollama with the configured chat model, no engine; nothing is stored. Exits 3 without the model.
     """
     from cairnmind.extraction_evaluation import run_extraction_evaluation
     path = transcripts or Path("docs") / "evaluation" / "extraction-transcripts.json"
     try:
         result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
     output({key: value for key, value in result.items() if key != "runs"}
            | {"runs": [{"run": run["run"], **run["summary"], "failures": run["failures"]} for run in result["runs"]]})
     if result.get("status") != "passed":
@@ -1470,13 +1516,12 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
 
 @eval_app.command("repository")
 @initialized
-def eval_repository(ctx: typer.Context, root: Path,
+def eval_repository(ctx: typer.Context, root: RepositoryArg,
                     questions: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
                     report_dir: Path | None = None):
     """Ask questions with known answers about a real repository, in a throwaway copy and database.
 
-    QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the
-    configured models and a running engine; exits 3 when the models are not available.
+    QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the configured models and a running engine; exits 3 when the models are not available.
     """
     from cairnmind.repository_evaluation import run_repository_evaluation
     _managed_only(ctx.obj, "`cairnmind eval repository`")
@@ -1484,7 +1529,7 @@ def eval_repository(ctx: typer.Context, root: Path,
     try:
         result = run_repository_evaluation(ctx.obj, root, path, report_dir=report_dir)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
     _record_evaluation(ctx.obj, "repository", result)
     output(result)
     if result.get("status") != "passed":
@@ -1500,13 +1545,12 @@ def _record_evaluation(settings, kind: str, result: dict) -> None:
 
 @eval_app.command("replay")
 @initialized
-def eval_replay(ctx: typer.Context, project: str,
+def eval_replay(ctx: typer.Context, project: ProjectArg,
                 limit: Annotated[int, typer.Option("--limit", help="How many distinct logged questions, newest first.")] = 20,
                 report_dir: Path | None = None):
     """Ask the logged questions of a project again and report answers that changed status or lost sources.
 
-    Compares the status and the set of cited source addresses, not the wording. Needs the service and its
-    model; exits 1 when an answer regressed or lost sources, 3 when nothing was logged.
+    Compares the status and the set of cited source addresses, not the wording. Needs the service and its model; exits 1 when an answer regressed or lost sources, 3 when nothing was logged.
     """
     from cairnmind.answer_log import replay
     pid = store_for_read(ctx.obj).resolve_project(project)["id"]
@@ -1516,14 +1560,14 @@ def eval_replay(ctx: typer.Context, project: str,
                                                               raise_refusal=True),
                         limit=limit, report_dir=report_dir)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
     output(result)
     if result["status"] != "passed":
         raise typer.Exit(3 if result["status"] == "not_run" else 1)
 
 
 @answers_app.command("list")
-def answers_list(ctx: typer.Context, project: str,
+def answers_list(ctx: typer.Context, project: ProjectArg,
                  limit: Annotated[int, typer.Option("--limit", help="How many answers, newest first.")] = 20):
     """List the logged answers of a project, newest first. Asks no model and writes nothing."""
     from cairnmind.answer_log import listing
@@ -1535,18 +1579,21 @@ def answers_list(ctx: typer.Context, project: str,
 
 
 @answers_app.command("show")
-def answers_show(ctx: typer.Context, project: str, answer_id: str):
+def answers_show(ctx: typer.Context, project: ProjectArg, answer_id: AnswerIdArg):
     """Show one logged answer with its question, citations, code state, model and timings."""
     from cairnmind.answer_log import find
     pid = store_for_read(ctx.obj).resolve_project(project)["id"]
     try:
         output(find(ctx.obj, pid, answer_id))
-    except (ValueError, LookupError) as exc:
+    except LookupError as exc:
+        # An unknown id is said as an unknown task or plan is: "Cairnmind: ...", exit 1 (#244).
+        raise ValueError(str(exc)) from None
+    except ValueError as exc:  # an id of the wrong form
         refuse(str(exc))
 
 
 @answers_app.command("prune")
-def answers_prune(ctx: typer.Context, project: str,
+def answers_prune(ctx: typer.Context, project: ProjectArg,
                   keep: Annotated[int, typer.Option("--keep", min=0, help="How many of the newest answers to keep; "
                                                     "0 deletes the log.")]):
     """Keep only the newest logged answers of a project."""
@@ -1560,7 +1607,7 @@ SNAPSHOT_WAIT_SECONDS = 1800
 
 @memory_app.command("snapshot")
 @initialized
-def memory_snapshot(ctx: typer.Context, project: str, worktree: Path | None = None, preview: bool = False):
+def memory_snapshot(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None, preview: bool = False):
     """Save the project's full memory; --preview shows the scope without writing a snapshot."""
     payload = {"project": project, "worktree": str(worktree.expanduser().resolve()) if worktree else None}
     if preview:
@@ -1579,7 +1626,7 @@ def memory_snapshot(ctx: typer.Context, project: str, worktree: Path | None = No
 
 
 @memory_app.command("inspect")
-def memory_inspect(ctx: typer.Context, path: Path):
+def memory_inspect(ctx: typer.Context, path: SnapshotArg):
     """Check a snapshot's files without initializing the store or starting services."""
     from cairnmind.memory import inspect_snapshot
     # Preserve symlink components for the package validator to reject them.
@@ -1591,7 +1638,7 @@ def memory_inspect(ctx: typer.Context, path: Path):
 
 
 @memory_app.command("show")
-def memory_show(ctx: typer.Context, path: Path,
+def memory_show(ctx: typer.Context, path: SnapshotArg,
                 kind: Annotated[str | None, typer.Option("--kind", help="Record kind, or 'plan'.")] = None,
                 status: Annotated[str | None, typer.Option("--status", help="Record status.")] = None,
                 grep: Annotated[str | None, typer.Option(
@@ -1616,7 +1663,7 @@ def memory_show(ctx: typer.Context, path: Path,
 
 
 @memory_app.command("orphans")
-def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = None,
+def memory_orphans(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None,
                    as_json: Annotated[bool, typer.Option("--json", help="Print the records as JSON.")] = False):
     """List records whose evidence is no longer current: orphaned, or resting on a changed source. Read-only."""
     from cairnmind.brief import _scoped_records
@@ -1637,7 +1684,7 @@ def memory_orphans(ctx: typer.Context, project: str, worktree: Path | None = Non
 
 
 @memory_app.command("extraction-stats")
-def memory_extraction_stats(ctx: typer.Context, project: str,
+def memory_extraction_stats(ctx: typer.Context, project: ProjectArg,
                             as_json: Annotated[bool, typer.Option("--json", help="Print the numbers as JSON.")] = False):
     """Per extractor version: how many extracted records are proposed, confirmed, disputed or superseded. Read-only."""
     from cairnmind.extraction_stats import extraction_stats, render
@@ -1655,7 +1702,7 @@ def memory_extraction_stats(ctx: typer.Context, project: str,
 
 
 @memory_app.command("import")
-def memory_import(ctx: typer.Context, path: Path,
+def memory_import(ctx: typer.Context, path: SnapshotArg,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
                   dry_run: bool = False,
                   replace_confirmed: Annotated[bool, typer.Option(
@@ -1676,7 +1723,7 @@ def memory_import(ctx: typer.Context, path: Path,
 
 
 @memory_app.command("auto")
-def memory_auto(ctx: typer.Context, project: str, enable: bool = False, disable: bool = False,
+def memory_auto(ctx: typer.Context, project: ProjectArg, enable: bool = False, disable: bool = False,
                 interval_minutes: Annotated[int, typer.Option(min=1, max=10080)] = 15,
                 worktree: Path | None = None):
     """Enable or disable the local schedule of one project; no commits and nothing is sent to GitHub."""
@@ -1689,7 +1736,7 @@ def memory_auto(ctx: typer.Context, project: str, enable: bool = False, disable:
 
 
 @memory_app.command("status")
-def memory_status(ctx: typer.Context, project: str, worktree: Path | None = None):
+def memory_status(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None):
     """Read the last snapshot and the schedule; start no service and create no configuration."""
     params = {"project": project}
     if worktree is not None:
@@ -1710,7 +1757,7 @@ _register_record_kinds(app, initialized)
 
 @app.command()
 @initialized
-def install(ctx: typer.Context, project: str):
+def install(ctx: typer.Context, project: ProjectArg):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
     store = store_for(ctx.obj)
@@ -1719,7 +1766,7 @@ def install(ctx: typer.Context, project: str):
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 @initialized
-def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = None):
+def run(ctx: typer.Context, project: ProjectArg, client: ClientArg, worktree: Path | None = None):
     """Start Codex or Claude Code in the project, bound to its memory. Arguments after -- go to the client."""
     from cairnmind.integrations import run_client
     _ensure_service_or_refuse(ctx.obj)
@@ -1729,7 +1776,8 @@ def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = N
         root = str(worktree.expanduser().resolve())
         if not store.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
                             {"project": selected["id"], "path": root}):
-            raise typer.BadParameter("The worktree must be a registered folder of the project")
+            from cairnmind.sql import unregistered_root
+            refuse(unregistered_root(root, selected))
         selected = {**selected, "root": root}
     args = list(ctx.args)
     if args[:1] == ["--"]:
@@ -1875,7 +1923,7 @@ def retry_jobs(ctx: typer.Context):
 
 @app.command("rebuild-vectors")
 @initialized
-def rebuild_vectors(ctx: typer.Context, project: str):
+def rebuild_vectors(ctx: typer.Context, project: ProjectArg):
     """Rebuild the project's derived vectors, keeping sources and history."""
     from cairnmind.memory_models import from_settings
     from cairnmind.service import schedule_embeddings
@@ -1910,7 +1958,7 @@ def rebuild_vectors(ctx: typer.Context, project: str):
 
 @app.command()
 @initialized
-def export(ctx: typer.Context, destination: Path, project: str | None = None, markdown: bool = False):
+def export(ctx: typer.Context, destination: ExportArg, project: str | None = None, markdown: bool = False):
     """Write the records and sources, of one project or all, as JSON or Markdown for reading. Not a backup."""
     store = store_for(ctx.obj, notice=False)  # it only reads, so a reader is not shown the refusal-like notice
     pid = store.resolve_project(project)["id"] if project else None
@@ -1945,7 +1993,8 @@ def backup(ctx: typer.Context, destination: Annotated[str, typer.Argument(
 @app.command()
 @initialized
 def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
-        exists=True, dir_okay=False, readable=True, help="A backup file written by `cairnmind backup`.")]):
+        metavar="SOURCE", exists=True, dir_okay=False, readable=True,
+        help="A backup file written by `cairnmind backup`.")]):
     """Replace the store with a backup, after a safety backup of the current one. The service must be stopped."""
     # A missing path or a folder is refused while the arguments are read, before the store or engine is touched.
     with (ctx.obj.data_dir / "service.lock").open("a") as lock:
@@ -1964,7 +2013,7 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
 
 @app.command()
 @initialized
-def forget(ctx: typer.Context, project: str,
+def forget(ctx: typer.Context, project: ProjectArg,
            delete_project: Annotated[bool, typer.Option("--delete-project", help="Explicitly delete the project's data")] = False):
     """Delete a project and all its memory from the store. Backups are not changed; only a restore brings it back."""
     if not delete_project:
@@ -1979,7 +2028,7 @@ def forget(ctx: typer.Context, project: str,
 
 @app.command()
 @initialized
-def benchmark(ctx: typer.Context, project: str, question: str):
+def benchmark(ctx: typer.Context, project: ProjectArg, question: QuestionArg):
     """Time the first answer and the cached repeat; this does not replace a quality evaluation."""
     runs = []
     for label in ("first", "cached"):

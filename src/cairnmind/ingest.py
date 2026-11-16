@@ -1529,7 +1529,8 @@ def register_default_histories(store, project_id: str, root: Path) -> dict:
     roots = _roots(store, project)
     root = Path(root).resolve()
     if root not in roots:
-        raise ValueError("History discovery root must be a registered project root")
+        from .sql import unregistered_root
+        raise ValueError(unregistered_root(root, project))
     codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     claude_home = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
     locations = [(codex_home / "sessions", "codex"), (codex_home / "archived_sessions", "codex"), (claude_home / "projects", "claude")]

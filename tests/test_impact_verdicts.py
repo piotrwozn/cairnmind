@@ -224,6 +224,8 @@ def test_the_command_records_a_verdict_and_refuses_inside_a_coding_session(chang
     assert json.loads(saved.output)["verdict"]["verdict"] == "still_valid" and len(verdicts(store, pid)) == 1
     missing = CliRunner().invoke(app, [*command[:4], records["revoke"]["id"], *command[5:]])
     assert missing.exit_code == 2 and "not in the impact list" in missing.output
+    # A refusal of the state, not of the command line: no usage block (#244).
+    assert missing.output.startswith("Error: ") and "Usage:" not in missing.output
 
 
 def test_the_inspector_route_takes_a_person_s_verdict_and_no_session(changed):

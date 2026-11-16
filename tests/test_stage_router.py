@@ -81,9 +81,24 @@ def test_cli_stage_next_prints_the_existing_command_and_changes_nothing(planned)
 
 def test_cli_stage_next_names_no_data_directory_for_the_default_installation(planned, monkeypatch):
     settings, store, project, plans, saved = planned
-    monkeypatch.setattr("cairnmind.config.default_data_dir", lambda: settings.data_dir)
+    monkeypatch.setattr("cairnmind.config.default_data_dir", lambda environ=None: settings.data_dir)
     shown = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "stage", "next", "demo", "--json"])
     assert json.loads(shown.output)["command"][:2] == ["cairnmind", "run"]
+
+
+@pytest.mark.parametrize("variable", ["CAIRNMIND_HOME", "DEVBRAIN_HOME"])
+def test_cli_stage_next_names_the_data_directory_that_a_wrapper_set_in_a_variable(planned, monkeypatch, tmp_path,
+                                                                                 variable):
+    # A wrapper sets the variable; the printed command is pasted into a plain shell, where it is not set (#244).
+    settings, store, project, plans, saved = planned
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for name in ("CAIRNMIND_HOME", "DEVBRAIN_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(variable, str(settings.data_dir))
+    for extra in ([], ["--data-dir", str(settings.data_dir)]):
+        shown = CliRunner().invoke(cli.app, [*extra, "stage", "next", "demo", "--json"])
+        assert shown.exit_code == 0, shown.output
+        assert json.loads(shown.output)["command"][:3] == ["cairnmind", "--data-dir", str(settings.data_dir)]
 
 
 def test_cli_stage_next_gives_the_mapping_remedy_for_an_assistant_that_is_not_configured(planned):

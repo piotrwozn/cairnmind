@@ -22,7 +22,7 @@ import threading
 from uuid import UUID, uuid4
 
 from .check_profile_messages import unknown_profile_message
-from .sql import clean_row, insert_document, json_text, utc_now
+from .sql import clean_row, insert_document, json_text, unregistered_root, utc_now
 from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 from .path_spelling import lies_in
 
@@ -44,7 +44,7 @@ def _root(store, project_id, worktree=None) -> Path:
     root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
     registered = store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
     if str(root) not in {str(Path(row["path"]).resolve()) for row in registered}:
-        raise ValueError("Check worktree must be a registered project root")
+        raise ValueError(unregistered_root(root, project))
     return root
 
 
