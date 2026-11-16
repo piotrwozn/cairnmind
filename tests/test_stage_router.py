@@ -27,7 +27,9 @@ def planned(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
     store = Store(settings.data_dir)
     root = tmp_path / "repo"
-    root.mkdir()
+    (root / ".cairnmind").mkdir(parents=True)
+    # The test stage's profile is declared: `stage next` offers a check run only for a declared one (#243).
+    (root / ".cairnmind" / "checks.toml").write_text('[checks.unit]\nargv = ["python", "-c", "pass"]\n')
     project = store.add_project("demo", root)
     plans = PlanManager(store)
     saved = plans.save(project["id"], {"title": "Two \x1b[31msteps"},
