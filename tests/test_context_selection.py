@@ -423,7 +423,7 @@ def test_a_proposal_is_not_shown_while_the_confirmed_record_it_contradicts_is_le
     assert omitted == [{"kind": "constraint", "status": "proposed", "count": 1},
                        {"kind": "task", "status": "proposed", "count": 1}]
     # The same holds in the main pass, with no reserve flag on the proposal, and for a confirmed record
-    # that is not a rule in force, which the main pass does not offer the budget to first.
+    # that is not a rule in force, which no reserve holds.
     other = [entries[0], entry("fact-0", kind="fact", size=600),
              {**entries[2], "metadata": {"possible_conflicts": ["fact-0"]}}]
     for budget in range(500, 3000, 50):
@@ -455,14 +455,22 @@ def test_a_conflict_mark_names_only_confirmed_records_present_and_cannot_pull_in
         select_entries(entries, [False, False, True], 1300, conflicts=full[:2])
 
 
-def test_the_newest_open_task_keeps_its_place_when_many_rules_take_what_is_left():
-    from cairnmind.context_selection import select_entries
+def test_many_rules_take_their_share_and_the_open_tasks_get_the_rest():
+    # The owner's decision of 15 November (#241): a share is reserved for the rules in force; tasks get the
+    # rest. Many confirmed rules must not push all but one open task out.
+    from cairnmind.context_selection import RULES_SHARE, entry_size, select_entries
 
-    entries = [entry("task-0", status="proposed", kind="task", size=800),
-               entry("task-1", status="proposed", kind="task", size=800)] + \
-        [entry(f"rule-{n}", kind="constraint", size=500) for n in range(20)] + \
-        [{**entry("done-0", status="proposed", kind="task", size=10), "metadata": {"state": "done"}}]
-    selected, _ = select_entries(entries, [False] * len(entries), 4000)
-    ids = [item["id"] for item in selected]
-    assert ids[0] == "task-0" and "task-1" not in ids
-    assert sum(identifier.startswith("rule-") for identifier in ids) >= 5
+    budget = 6800
+    for rule_count in (4, 8, 12, 20):
+        entries = [entry(f"task-{n}", status="proposed", kind="task", size=700) for n in range(10)] + \
+            [entry(f"rule-{n}", kind="constraint", size=500) for n in range(rule_count)]
+        task_size, rule_size = entry_size(entries[0]), entry_size(entries[-1])
+        selected, omitted = select_entries(entries, [False] * len(entries), budget)
+        ids = [item["id"] for item in selected]
+        rules_shown = sum(identifier.startswith("rule-") for identifier in ids)
+        tasks_shown = sum(identifier.startswith("task-") for identifier in ids)
+        assert rules_shown == int(budget * RULES_SHARE) // rule_size, (rule_count, ids)
+        assert tasks_shown == (budget - rules_shown * rule_size) // task_size, (rule_count, ids)
+        assert ids[0] == "task-0" and tasks_shown >= 5
+        assert {"kind": "constraint", "status": "confirmed", "count": rule_count - rules_shown} in omitted
+
