@@ -902,7 +902,7 @@ def store_prune_backups(
     plan = prune_plan(directory, keep)
     if not person_at_terminal():
         refuse("Only a person can delete safety backups: run this command in your own terminal, outside a "
-               "coding session. Nothing was deleted.")
+               "coding session, with input and output not piped or redirected. Nothing was deleted.")
     shown = {"directory": plan["directory"], "keep": keep, "delete_bytes": plan["delete_bytes"],
              "delete": [{key: entry[key] for key in ("name", "kind", "bytes", "modified")} for entry in plan["delete"]],
              "kept": [entry["name"] for entry in plan["kept"]]}
@@ -1086,7 +1086,8 @@ def task_add(ctx: typer.Context, project: str, title: str, plan: str | None = No
         else:
             result = store.remember(pid, record, [src["id"]])
     if not person:
-        typer.echo("Stored as proposed: only a person in their own terminal adds a confirmed task. "
+        typer.echo("Stored as proposed: only a person in their own terminal adds a confirmed task. This command "
+                   "runs inside a coding session, or its input or output is not a terminal (piped or redirected). "
                    "The person confirms it in the inspector.", err=True)
     output(result)
 

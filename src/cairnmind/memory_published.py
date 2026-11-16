@@ -274,7 +274,7 @@ class Publisher:
                 if not canonical_uuid(record["id"]):
                     raise Held("its ID is not a canonical UUID")
                 if degraded_origin(record.get("metadata")):
-                    raise Held("an external or third-party session wrote it (degraded origin)")
+                    raise Held(_degraded(record))
                 history = select_history(record["kind"], record["id"], versions.get(record["id"], []), sources,
                                          as_source)
                 if not history:
@@ -308,7 +308,7 @@ class Publisher:
         labels = {r["id"]: (r.get("key"), r.get("content")) for r in records if r["id"] in held}
         labels.update({p["id"]: (None, p.get("title")) for p in plans if p["id"] in held})
         return {"project": project, "root": root, "folder": folder, "files": files, "models": models, "held": held,
-                "labels": labels}
+                "labels": labels, "heads": heads}
 
     @staticmethod
     def _close(histories, held, definitions, held_plans, heads):
@@ -321,7 +321,10 @@ class Publisher:
                 for revision in history:
                     names = [revision["supersedes"], *revision.get("depends_on", [])]
                     missing = next((n for n in names if n and n not in histories), None)
-                    if missing:
+                    if missing and held.get(missing, ("", ""))[1].startswith(DEGRADED):
+                        reason = (f"it names record {missing}, which an external or third-party session wrote "
+                                  "and which is never published")
+                    elif missing:
                         reason = f"it names record {missing}, which is not published"
                     elif revision.get("plan") and revision["plan"] not in definitions:
                         reason = f"its plan {revision['plan']} is not published"
@@ -409,6 +412,12 @@ class Publisher:
                       "records": sum(m["kind"] != "plan" for m in built["models"]),
                       "plans": sum(m["kind"] == "plan" for m in built["models"]),
                       "held": _held(built["held"], built["labels"], rules), "git": "nothing was staged, committed or pushed"}
+            alone = _without_replacement(built["models"], built["held"], built["heads"])
+            if alone:
+                result["superseded_without_replacement"] = {
+                    "total": len(alone), "records": alone[:200],
+                    "note": "published as superseded while the record that replaced it is held: a reader sees it "
+                            "withdrawn, without its replacement"}
             if others:
                 result["not_ours"] = {"hits": [described(hit) for hit in others[:50]], "total": len(others),
                                       "hint": "files this store does not write hold values the secrets gate refuses; "
@@ -476,6 +485,34 @@ def _secret_advice(kinds):
 def _listing(errors):
     return "; ".join(f"{path or '(tree)'}: {reason}" for path, reason in errors[:50]) + (
         f"; and {len(errors) - 50} more" if len(errors) > 50 else "")
+
+
+DEGRADED = "an external or third-party session wrote it (degraded origin)"
+
+
+def _degraded(record):
+    """Why a record of degraded origin is held (#239): one a person kept in a conflict decision says how to
+    publish that decision, which only a person's own record can carry."""
+    from .confirmation import confirmation_of
+    mark = confirmation_of(record) or {}
+    if record["status"] == "confirmed" and mark.get("route") == "conflict_decision":
+        return (DEGRADED + "; a person kept it in a conflict decision, which does not publish it: store the "
+                "decision again in your own words to publish it")
+    return DEGRADED
+
+
+def _without_replacement(models, held, heads):
+    """Records published as superseded while the record that replaced them is held (#239): a reader sees
+    each one withdrawn, without what replaced it."""
+    found, replacing = [], {row.get("supersedes"): i for i, row in heads.items() if i in held}
+    for model in models:
+        if model["kind"] == "plan" or model["revisions"][-1]["status"] != "superseded":
+            continue
+        winner = (heads[model["id"]].get("metadata") or {}).get("superseded_by")
+        winner = winner if winner in held else replacing.get(model["id"])
+        if winner:
+            found.append({"id": model["id"], "kind": model["kind"], "replaced_by": winner})
+    return found
 
 
 def _uncovered(record):

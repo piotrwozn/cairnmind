@@ -69,6 +69,48 @@ def test_a_refusal_for_a_command_without_a_terminal_names_piped_or_redirected_in
     for result in (plan, remember):
         assert result.exit_code == 2 and "piped or redirected" in " ".join(result.output.split()), result.output
     assert "piped or redirected" in record_kinds.CLI_REFUSED and "piped or redirected" in confirmation.CLI_REFUSED
+    # The two other commands that need a person's terminal (#239): one stores a task as proposed, one refuses.
+    task = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "task", "add", pid, "Write the guide"])
+    assert task.exit_code == 0 and "Stored as proposed" in task.output
+    assert "piped or redirected" in " ".join(task.output.split()), task.output
+    prune = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "store", "prune-backups", "--keep", "1"])
+    assert prune.exit_code == 2 and "piped or redirected" in " ".join(prune.output.split()), prune.output
+
+
+def test_a_piped_plan_save_that_changes_a_confirmed_plan_names_piped_or_redirected_input_or_output(workspace, tmp_path,  # noqa: F811
+                                                                                                    monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from cairnmind import cli, confirmation
+    from cairnmind.memory_acts import confirm_plan
+    from cairnmind.plans import PlanManager
+    store, pid, _, _ = workspace
+    for name in ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", *confirmation.CLIENT_MARKERS):
+        monkeypatch.delenv(name, raising=False)
+    run, document = CliRunner(), tmp_path / "plan.json"
+    steps = [{"key": "read", "content": "Read the package"}]
+    document.write_text(json.dumps({"plan": {"title": "Importer", "goal": "Import memory", "constraints": []},
+                                    "steps": steps}), encoding="utf-8")
+    first = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "plan", "save", pid, str(document),
+                                 "--idempotency-key", "plan-1", "--activate"])
+    assert first.exit_code == 0, first.output
+    plan_id = json.loads(first.output)["plan"]["id"]
+    confirm_plan(store, pid, plan_id, PlanManager(store).get(pid, plan_id)["plan"]["version"])
+    current = PlanManager(store).get(pid, plan_id)
+    for key, plan, saved in (("plan-2", {"id": plan_id, "title": "Importer, second part"}, steps),
+                             ("plan-3", {"id": plan_id}, [{**steps[0], "content": "Read it twice"}])):
+        document.write_text(json.dumps({"plan": plan, "steps": saved, "expected_version": current["plan"]["version"],
+                                        "task_versions": {t["id"]: t["version"] for t in current["tasks"]}}),
+                            encoding="utf-8")
+        # CliRunner gives the command no terminal: as `cairnmind plan save ... < plan.json | head`.
+        refused = run.invoke(cli.app, ["--data-dir", str(store.data_dir), "plan", "save", pid, str(document),
+                                       "--idempotency-key", key])
+        words = " ".join((refused.output + str(refused.exception or "")).split())
+        assert refused.exit_code != 0 and "Nothing was saved" in words, words
+        assert "piped or redirected" in words and "`cairnmind plan save` in their own terminal, with input" in words
+    assert PlanManager(store).get(pid, plan_id) == current
 
 
 def test_adopting_a_confirmed_legacy_task_names_it_by_its_text_and_its_id_once(workspace):  # noqa: F811

@@ -98,7 +98,12 @@ def test_keeping_a_replacement_an_external_session_wrote_still_withdraws_the_rej
     result = Publisher(store).publish(pid)
     reasons = {item["id"]: item["reason"] for item in result["held"]["items"]}
     # Degraded records are never published (docs/MEMORY_CONTRACTS.md, "Trust"), even once a person kept one ...
-    assert set(reasons) == {new["id"]} and reasons[new["id"]].endswith("(degraded origin)")
+    assert set(reasons) == {new["id"]} and "(degraded origin)" in reasons[new["id"]]
+    # ... and the preview says why the kept one stays, and that the rejected one goes out without it.
+    assert "a person kept it in a conflict decision" in reasons[new["id"]]
+    assert "in your own words" in reasons[new["id"]]
+    assert result["superseded_without_replacement"]["records"] == [
+        {"id": old["id"], "kind": "decision", "replaced_by": new["id"]}]
     # ... but the decision the person rejected is no longer published as confirmed: their act covers it.
     folder = folder_of(root)
     rejected = head(folder, "decision", old["id"])
@@ -109,6 +114,25 @@ def test_keeping_a_replacement_an_external_session_wrote_still_withdraws_the_rej
     PublishedImporter(cy["store"]).import_published(folder_of(cy["root"]), cy["project"])
     history = {row["id"]: row for row in cy["store"].list_records(cy["project"], include_history=True)}
     assert history[old["id"]]["status"] == "superseded"
+
+
+def test_a_record_that_names_an_external_proposal_is_held_with_that_reason(ada):  # noqa: F811
+    from cairnmind.inspector import Inspector
+
+    from conftest import person_edit
+    store, pid = ada["store"], ada["project"]
+    with store.write_origin(EXTERNAL):
+        note = store.snapshot(pid, "transcript://proposal", "Sessions last a week.", "transcript")
+        proposal = store.remember(pid, {"kind": "decision", "key": "ttl", "content": "Sessions last a week."},
+                                  [note["id"]])
+    source = store.snapshot(pid, "note://replacement", "Sessions last an hour.", "note")
+    mine = person_edit(store, pid, {"kind": "decision", "key": "ttl-2", "content": "Sessions last an hour.",
+                                    "supersedes": proposal["id"]}, [source["id"]])
+    Inspector(store).review(pid, mine["id"], "confirm", mine["version"])
+    result = Publisher(store).publish(pid, preview=True)
+    reasons = {item["id"]: item["reason"] for item in result["held"]["items"]}
+    assert reasons[mine["id"]] == (f"it names record {proposal['id']}, which an external or third-party session "
+                                   "wrote and which is never published")
 
 
 def test_keeping_the_confirmed_decision_withdraws_the_proposal_it_was_marked_against(ada):  # noqa: F811
@@ -135,8 +159,56 @@ def test_keeping_the_confirmed_decision_against_an_external_proposal_never_publi
     new = proposed_against(store, pid, old, "Sessions last an hour.", EXTERNAL)
     conflicts.resolve_conflict(store, pid, new["id"], old["id"], "supersede", new["version"], old["version"],
                                keep=old["id"])
-    Publisher(store).publish(pid)
+    result = Publisher(store).publish(pid)
+    # The person's decision is published; only the external proposal is held, for its origin (#239).
+    reasons = {item["id"]: item["reason"] for item in result["held"]["items"]}
+    assert set(reasons) == {new["id"]} and reasons[new["id"]].endswith("(degraded origin)"), reasons
+    assert "superseded_without_replacement" not in result
     folder = folder_of(root)
     assert not (folder / f"decision/{new['id']}.md").exists()
-    assert head(folder, "decision", old["id"])["status"] == "confirmed"
+    kept = head(folder, "decision", old["id"])
+    assert (kept["status"], kept["supersedes"]) == ("confirmed", None)
     assert check_directory(folder)[1] == []
+    stored = {row["id"]: row for row in store.list_records(pid, include_history=True)}
+    assert stored[new["id"]]["status"] == "superseded"
+    assert stored[new["id"]]["metadata"]["superseded_by"] == old["id"]
+    assert stored[old["id"]]["metadata"]["superseded_ids"] == [new["id"]]
+    commit(root, "Keep the day-long sessions")
+    cy = teammate(ada, "cy", "Cy Park")
+    PublishedImporter(cy["store"]).import_published(folder_of(cy["root"]), cy["project"])
+    rows = {row["id"]: row for row in cy["store"].list_records(cy["project"], include_history=False)}
+    assert rows[old["id"]]["status"] == "confirmed" and new["id"] not in rows
+
+
+def test_keeping_the_confirmed_decision_against_a_proposal_citing_an_external_source_publishes_it(ada):  # noqa: F811
+    # A proposal of native origin that cites a source an external session wrote is never published either,
+    # so the decision a person kept must not name it (#239).
+    store, pid, root = ada["store"], ada["project"], ada["root"]
+    old = reviewed(store, pid, "decision", "Sessions last a day.", "ttl")
+    with store.write_origin(EXTERNAL):
+        source = store.snapshot(pid, "transcript://external", "Sessions last an hour.", "transcript")
+    new = store.remember(pid, {"kind": "decision", "key": "ttl~a", "content": "Sessions last an hour.",
+                               "metadata": {"possible_conflicts": [old["id"]], "suggested_key": "ttl"}},
+                         [source["id"]])
+    conflicts.resolve_conflict(store, pid, new["id"], old["id"], "supersede", new["version"], old["version"],
+                               keep=old["id"])
+    result = Publisher(store).publish(pid)
+    reasons = {item["id"]: item["reason"] for item in result["held"]["items"]}
+    assert set(reasons) == {new["id"]} and reasons[new["id"]] == "it cites a source of degraded origin", reasons
+    kept = head(folder_of(root), "decision", old["id"])
+    assert (kept["status"], kept["supersedes"]) == ("confirmed", None)
+    assert check_directory(folder_of(root))[1] == []
+    stored = {row["id"]: row for row in store.list_records(pid, include_history=True)}
+    assert stored[new["id"]]["metadata"]["superseded_by"] == old["id"]
+    assert stored[old["id"]]["metadata"]["superseded_ids"] == [new["id"]]
+
+
+def test_keeping_the_confirmed_decision_against_a_native_proposal_still_links_it(ada):  # noqa: F811
+    store, pid = ada["store"], ada["project"]
+    old = reviewed(store, pid, "decision", "Sessions last a day.", "ttl")
+    new = proposed_against(store, pid, old, "Sessions last an hour.")
+    conflicts.resolve_conflict(store, pid, new["id"], old["id"], "supersede", new["version"], old["version"],
+                               keep=old["id"])
+    stored = {row["id"]: row for row in store.list_records(pid, include_history=True)}
+    assert stored[old["id"]]["supersedes"] == new["id"]
+    assert "superseded_ids" not in (stored[old["id"]].get("metadata") or {})

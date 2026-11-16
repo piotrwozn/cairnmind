@@ -96,12 +96,16 @@ class VerdictKept(ConfirmationRefused):
 _KEPT_CHANGES = {"replace": "replace it (supersedes)", "status": "set its status to {status}",
                  "change": "change what was confirmed (its text, key or a field beside it)",
                  "key": "store another statement under its key"}
+# Why a plan save is not a person's act, and where it is one (#239): a piped `plan save` is refused too.
+NOT_A_PERSON_SAVE = ("this save is not a person's act (it comes from a coding session, a tool or a script, or its "
+                     "input or output is not a terminal: piped or redirected)")
+IN_OWN_TERMINAL = "in their own terminal, with input and output not piped or redirected"
 PLAN_CONTEXT_KEPT = (
-    "A person confirmed this plan with its title, goal and constraints, and this save is not a person's act: it "
+    "A person confirmed this plan with its title, goal and constraints, and " + NOT_A_PERSON_SAVE + ": it "
     "would change its {them}. Only a person takes a confirmation away. Nothing was saved. Save the plan with its "
     "title, goal and constraints as they are (leave them out of the request; steps can be added and steps that "
-    "are not confirmed can change); the person changes them with `cairnmind plan save` in their own terminal, or "
-    "disputes the steps they confirmed with the plan in the inspector.")
+    "are not confirmed can change); the person changes them with `cairnmind plan save` " + IN_OWN_TERMINAL + ", "
+    "or disputes the steps they confirmed with the plan in the inspector.")
 
 
 def _would(change, status=None, differs=()) -> str:
@@ -160,13 +164,13 @@ def kept_step_refusal(step_key, refusal, adoption=False, title=None) -> str:
         return (f"Task {name!r} (task {refusal.record_id}) was confirmed by a person, or before "
                 "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
                 f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
-                "The person runs `cairnmind plan adopt` in their own terminal; the adopted steps are then proposed "
+                f"The person runs `cairnmind plan adopt` {IN_OWN_TERMINAL}; the adopted steps are then proposed "
                 "until they confirm the plan.")
     return (f"Step {str(step_key)[:200]!r} of this plan (task {refusal.record_id}) was confirmed by a person, and "
-            f"this save is not a person's act: it would {would}. Only a person takes a confirmation away. Nothing "
+            f"{NOT_A_PERSON_SAVE}: it would {would}. Only a person takes a confirmation away. Nothing "
             "was saved. Save the plan with that step exactly as `plan show` returns it, every field included (other "
-            "steps can change and new steps can be added); the person disputes the step in the inspector, or saves the plan with `cairnmind plan save` "
-            "in their own terminal.")
+            "steps can change and new steps can be added); the person disputes the step in the inspector, or saves "
+            f"the plan with `cairnmind plan save` {IN_OWN_TERMINAL}.")
 
 
 def said(kind, content, key, supersedes, metadata) -> tuple:
