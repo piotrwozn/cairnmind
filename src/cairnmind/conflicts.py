@@ -25,12 +25,27 @@ def _ids(value):
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
-def _recorded_on_both(winner, loser):
+def _recorded_on_both(tx, winner, loser):
     """Whether a supersession is recorded on both records instead of the winner's one "supersedes" link:
-    the winner already replaces another record, or the loser is of degraded origin and never published."""
+    the winner already replaces another record, or the loser can never be published (#239)."""
+    return (bool(winner.get("supersedes")) and winner["supersedes"] != loser["id"]) or _never_published(tx, loser)
+
+
+def _never_published(tx, record):
+    """Whether publication always holds this record (#239), by the checks of memory_published that depend
+    on the record alone: a non-canonical ID, degraded origin, or a cited source of degraded origin. A link
+    to such a record would hold the person's decision back from publication too."""
+    from .memory_published_format import canonical_uuid
     from .store import degraded_origin
-    return (bool(winner.get("supersedes")) and winner["supersedes"] != loser["id"]) \
-        or degraded_origin(loser.get("metadata"))
+    if not canonical_uuid(record["id"]) or degraded_origin(record.get("metadata")):
+        return True
+    cited = set(_ids(record.get("source_ids")))
+    for row in tx.query("SELECT snapshot FROM record_revisions WHERE project_id=:project AND record_id=:id",
+                        {"project": record["project_id"], "id": record["id"]}):
+        snapshot = row.get("snapshot")
+        cited |= set(_ids(snapshot.get("source_ids") if isinstance(snapshot, dict) else None))
+    return bool(cited) and any(degraded_origin(row.get("metadata")) for row in tx.query(
+        "SELECT id,metadata FROM sources WHERE id IN :ids", {"ids": sorted(cited)}))
 
 
 def _metadata(record):
@@ -198,7 +213,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
             # Kind, key and replaced record of both findings as this decision leaves them (#170).
             winner, loser = (candidate, existing) if keep == record_id else (existing, candidate)
             renamed = winner is candidate and metadata.get("suggested_key") == existing["key"]
-            chained = _recorded_on_both(winner, loser)
+            chained = _recorded_on_both(tx, winner, loser)
             audit["identity_sha256"] = {
                 winner["id"]: identity_hash(winner["kind"], existing["key"] if renamed else winner["key"],
                                             winner.get("supersedes") if chained else loser["id"]),
@@ -225,11 +240,11 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         if winner is candidate and metadata.get("suggested_key") == existing["key"]:
             # The marked finding was stored under a suffixed key only because the key was taken.
             update["key"] = existing["key"]
-        if _recorded_on_both(winner, loser):
+        if chained:
             # A record has one "supersedes" link. The winner keeps the one it has; this later
             # replacement is recorded on both records instead, so no part of the chain is lost.
-            # The same when the loser is an external session's proposal (#239): it is never published,
-            # so a link to it would hold the person's decision back from publication too.
+            # The same when the loser can never be published, such as an external session's proposal or
+            # one citing its source (#239): a link to it would hold the person's decision back too.
             write({"id": loser["id"], "expected_version": loser["version"], "status": "superseded",
                    "metadata": {"superseded_by": winner["id"]}}, loser)
             update["metadata"]["superseded_ids"] = [*_ids(_metadata(winner).get("superseded_ids")), loser["id"]]
