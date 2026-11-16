@@ -474,3 +474,31 @@ def test_many_rules_take_their_share_and_the_open_tasks_get_the_rest():
         assert ids[0] == "task-0" and tasks_shown >= 5
         assert {"kind": "constraint", "status": "confirmed", "count": rule_count - rules_shown} in omitted
 
+
+def test_a_proposal_waits_for_the_record_that_replaced_the_rule_it_contradicts(workspace):
+    # A replaced rule's successor has a new id, and the proposal's mark still names the old one (#241).
+    store, project, settings = workspace
+    evidence = source(store, project)
+    old = remember(store, project, {"kind": "constraint", "key": "tokens", "status": "confirmed",
+                                    "content": "Never log tokens."}, evidence)
+    proposal = store.remember(project["id"], {
+        "kind": "constraint", "key": "tokens-debug", "content": "Tokens may be logged for debugging.",
+        "metadata": {"possible_conflicts": [old["id"]]}}, [evidence["id"]])
+    new = as_person(store, project["id"], {"kind": "constraint", "key": "tokens", "supersedes": old["id"],
+                                           "content": "Never log tokens or API keys. " + "detail " * 300},
+                    [evidence["id"]])
+    assert new["id"] != old["id"]
+    # Newer rules fill the rules reserve, and the open tasks take the rest.
+    for index, text in enumerate(["Payments go through the gateway module only.",
+                                  "All inference stays on this machine.", "Migrations are reviewed by a person."]):
+        remember(store, project, {"kind": "decision", "key": f"rule-{index}", "status": "confirmed",
+                                  "content": text}, evidence)
+    tasks = open_tasks(store, project, 8, evidence)
+    shown = shown_ids(Retriever(store, settings, NoModel()).context(project["id"]))
+    assert old["id"] not in shown
+    assert proposal["id"] not in shown or new["id"] in shown, shown
+    assert any(task["id"] in shown for task in tasks)
+    # The same through select_entries: the stored mark resolved to the successor holds the proposal back.
+    from cairnmind.conflicts import standing_marks
+    assert standing_marks(store, project["id"], set(), [[old["id"], "missing"], None]) == \
+        [[new["id"], "missing"], None]
