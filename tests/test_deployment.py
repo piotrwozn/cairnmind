@@ -304,3 +304,11 @@ def test_every_cairnmind_command_in_the_guide_exists():
     text = GUIDE.read_text()
     assert len(re.findall(r"`cairnmind [a-z]", text)) > 5
     assert unknown_commands(text, cli_commands()) == []
+
+
+def test_the_guides_name_the_sign_in_lockout_and_one_user_per_database():
+    """Second trial of #242: both rules were said only by the messages of the program and the changelog."""
+    for path in (GUIDE, ROOT / "SECURITY.md"):
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        assert "each database gets its own user" in text.lower(), path
+        assert "about 30 seconds, even with the right password" in text, path
