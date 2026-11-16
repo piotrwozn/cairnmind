@@ -343,6 +343,22 @@ def test_the_command_line_says_who_writes_and_takes_over_only_on_request(tmp_pat
     assert json.loads(done.output)["taken_over"] is True
     shown = json.loads(runner.invoke(app, ["--data-dir", str(first.data_dir), "store", "writer"]).output)
     assert shown["role"] == "reader" and shown["writer"]["history"][-1]["how"] == "takeover"
+    # The note a person gave is shown with the takeover (#242), by `store writer` and by `doctor`.
+    assert shown["writer"]["history"][-1]["note"] == "handover"
+    from cairnmind.config import Settings
+    assert store_writer.inspect(Settings.load(first.data_dir))["writer"]["history"][-1]["note"] == "handover"
+
+
+def test_a_note_read_from_the_store_is_shown_as_inert_text():
+    """Another installation wrote the note: control characters come out as visible escapes, never live."""
+    row = {"installation_id": "a" * 32, "history": [
+        {"installation_id": "a" * 32, "how": "takeover", "note": "moving\x1b[31m to the ‮new laptop" + "x" * 300},
+        {"installation_id": "b" * 32, "how": "first", "note": 42}]}
+    first, second = store_writer.describe(row)["history"]
+    assert "\x1b" not in first["note"] and "‮" not in first["note"]
+    assert first["note"].startswith("moving\\x1b[31m to the \\u202enew laptop")
+    assert len(first["note"]) <= store_writer.NOTE_LIMIT + 1
+    assert "note" not in second
 
 
 def test_the_service_runs_only_for_the_writer(tmp_path):

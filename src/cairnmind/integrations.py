@@ -265,6 +265,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
                 pass
         except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:  # a reply of another shape
             result["ollama"]["error"] = type(exc).__name__
+        # The address asked, so a reader of the report can tell a model server at the same address (#244).
+        result["ollama"]["url"] = settings.ollama_url
         from .memory_models import doctor_models
         result["memory_models"] = doctor_models(settings, client)
         try:
@@ -971,7 +973,7 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
             if not isinstance(payload, dict) or payload.get("client") not in CLIENTS:
                 raise ValueError("Invalid hook spool payload")
             try:
-                project = store.resolve_project(str(payload.get("cwd") or ""))
+                project = store.resolve_project(str(payload.get("cwd") or ""), recorded=True)
             except ValueError:
                 counts["unassigned"] += 1
                 continue

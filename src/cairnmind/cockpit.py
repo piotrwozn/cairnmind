@@ -25,6 +25,7 @@ import httpx
 
 from . import __version__
 from .config import BROKER_NAMES, SESSION_NAMES, drop_env
+from .path_spelling import lies_in
 from .cockpit_state import (CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, _snapshot,
                             normalize_path)
 
@@ -463,7 +464,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
                 if roots_response.is_error:
                     raise HTTPException(503, "The location of the key store could not be checked.")
                 roots = roots_response.json().get("roots", [registered["root"]])
-                if any(settings.data_dir.resolve().is_relative_to(Path(root).resolve()) for root in roots):
+                if any(lies_in(settings.data_dir.resolve(), Path(root).resolve()) for root in roots):
                     raise HTTPException(409, "The key store must be outside project folders.")
         await asyncio.to_thread(credentials.set, profile_id, value["key"], persist=value.get("persist", False))
         config = state.load()
@@ -868,11 +869,14 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         if response.is_error:
             return forward(response)
         from .api_runtime import stage_readiness
-        from .stages import project_routing, resolve_stage
+        from .stages import check_declared, project_routing, resolve_stage
+        from .verification import declared_check_names
         # The built-in agent's credential is read from this cockpit's store, which also holds
         # keys saved only for its session; nothing is sent to a provider.
         result = await asyncio.to_thread(resolve_stage, response.json(), *project_routing(state.load(), selected["id"]),
                                          readiness=stage_readiness(settings, credentials))
+        if result.get("action") == "run_check":  # a profile the folder does not declare is not offered
+            result = check_declared(result, await asyncio.to_thread(declared_check_names, worktree))
         return {**result, "project_id": selected["id"], "worktree": worktree}
 
     @app.get("/api/plans")

@@ -11,7 +11,8 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Select, St
 
 from . import terminal_theme
 from .terminal_detail import (EVIDENCE_LABELS, conflict_parts, conflict_text, joined, record_parts,  # noqa: F401
-                              sensitivity_parts)
+                              sensitivity_parts, task_state)
+from .terminal_i18n import tr_count
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
@@ -84,6 +85,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self._detail_parts = None
         self._technical_details = False
         self._count_notice = None  # (count, more pages, the text shown) of the last page read
+        self._entry_hint = None  # (the English hint of the open entry, the text shown)
+        self._memory_body = None  # (what the Snapshot body shows: status/preview/saved/import/applied, its result)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -164,6 +167,16 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             self.render_rows(list(self.rows.values()))
             if table.row_count:
                 table.move_cursor(row=max(0, min(row, table.row_count - 1)))
+        elif self.view == "memory" and self.query_one("#inspector-details").display:
+            if self._memory_body is None or self._memory_body[0] == "status":
+                self.refresh_page()  # the snapshot status is read again and said in the new language
+            else:  # a preview or an import check stays on screen, from its kept result: Apply needs it read
+                technical = self._technical_details
+                self.show_memory(*self._memory_body)
+                if technical:
+                    self.toggle_technical()
+        else:
+            self.redraw_detail()  # an open entry or saved version, in the new language
 
     async def workspace_changed(self, value):
         scope = (value.get("project_id"), value.get("worktree"))
@@ -211,6 +224,13 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#inspector-filter").display = not is_memory
         self.query_one("#impact-bar").display = view == "impact"
         self.query_one("#entity-actions").display = not is_memory
+        if is_memory and self._count_notice is not None:
+            # The snapshot view has no list: a count left on the line belongs to the list before it.
+            line = self.query_one("#panel-notice", Static)
+            if str(line.render()) == self._count_notice[2]:
+                line.update("")
+                line.display = False
+            self._count_notice = None
 
     @on(Select.Changed, "#inspector-view")
     def view_changed(self, event):
@@ -272,9 +292,10 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.count_notice(result.get("total", len(self.rows)), bool(self.next_cursor))
 
     def count_notice(self, count, more):
-        text = self.t("{count} items · read only", count=count) + (" · " + self.t("More pages available") if more else "")
+        text = (tr_count("1 item · read only", "{count} items · read only", count, self.language)
+                + (" · " + self.t("More pages available") if more else ""))
         self._count_notice = (count, more, text)
-        self.notice(text)
+        self.view_hint(text)  # read again on every journal event: a count is never an entry of Notices
 
     def render_rows(self, rows):
         table = self.query_one("#inspector-rows", DataTable)
@@ -290,8 +311,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 content = row.get("content", row.get("title", row.get("uri", row.get("profile_id", row.get("id", "")))))
                 if query and query not in str(content).casefold():
                     continue
-                metadata = row.get("metadata") or {}
-                state = row.get("state", metadata.get("state", row.get("status", row.get("outcome", ""))))
+                state = row.get("state", task_state(row) or row.get("status", row.get("outcome", "")))
                 table.add_row(self.state_cell(row.get("kind", self.view), state, row.get("confirmed_by")), plain(str(content).replace("\n", " "), limit=300),
                               plain(row.get("version", row.get("attempts", ""))), key=str(row["id"]))
             self.fit_columns()
@@ -384,7 +404,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 self._entity_request += 1
                 self.entity_kind, self.entity, self.history_owner, self.source_next = "conflicts", pair, None, None
                 self.show_detail(pair, kind="conflicts", parts=conflict_parts(pair, self.t))
-                self.notice(self.t("Resolve records your decision with an audit note. No source is removed."))
+                self.entry_hint("Resolve records your decision with an audit note. No source is removed.")
             return
         collection = "records" if kind in {"tasks", "proposed"} else kind  # a record of either list, reviewed as one
         scope = self._scope_version
@@ -413,16 +433,47 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.plan_version = plan_version
         if collection in {"sources", "inbox"}:
             self.source_content = (self.source_content if offset else "") + result.get("text", "")
-            source = result.get("source", {})
-            header = str(source.get("uri") or self.t("Sources"))
-            # The class the service derived (#180), between the name and the literal text.
-            marked = [("value", "\n"), *line[0]] if (line := sensitivity_parts(result, self.t)) else []
-            self.show_detail(result, kind=collection,
-                             parts=[("stored-lead", header), *marked, ("stored", "\n\n" + self.source_content)])
-            self.notice(self.t("Literal source · choose Sources for text/raw/metadata · More loads the next part"))
+            self.show_detail(result, kind=collection, parts=self.source_parts(result))
+            self.entry_hint("Literal source · choose Sources for text/raw/metadata · More loads the next part")
         else:
             self.show_detail(result, kind=collection)
-            self.notice(self.t("History and Sources show saved evidence. Review changes confidence only."))
+            self.entry_hint("History and Sources show saved evidence. Review changes confidence only.")
+
+    def entry_hint(self, key):
+        """The hint of an open entry, kept by its English text so a language switch can say it again."""
+        text = self.t(key)
+        self._entry_hint = (key, text)
+        self.view_hint(text)
+
+    def source_parts(self, result):
+        source = result.get("source", {})
+        header = str(source.get("uri") or self.t("Sources"))
+        # The class the service derived (#180), between the name and the literal text.
+        marked = [("value", "\n"), *line[0]] if (line := sensitivity_parts(result, self.t)) else []
+        return [("stored-lead", header), *marked, ("stored", "\n\n" + self.source_content)]
+
+    def redraw_detail(self):
+        """The open entry again in the panel's language, from what was read: nothing is requested."""
+        technical, kind = self._technical_details, self.entity_kind
+        if not self.query_one("#inspector-details").display or self.view == "memory":
+            return
+        if kind == "impact" and self.entity:
+            self.open_impact(self.entity["id"])
+        elif kind == "conflicts" and self.entity:
+            self.show_detail(self.entity, kind=kind, parts=conflict_parts(self.entity, self.t))
+        elif kind in {"sources", "inbox"} and self.entity:
+            self.show_detail(self.detail_data, kind=kind, parts=self.source_parts(self.detail_data))
+        elif self.history_owner or self.entity is None and self._detail_parts is not None:
+            self.show_detail(self.detail_data, kind="revision")  # one saved version: never reviewed from here
+        elif kind in {"records", "plans", "checks", "jobs"} and self.entity:
+            self.show_detail(self.detail_data, kind=kind)
+        else:
+            return
+        if technical:
+            self.toggle_technical()
+        hint = self._entry_hint
+        if kind != "impact" and hint and str(self.query_one("#panel-notice", Static).render()) == hint[1]:
+            self.entry_hint(hint[0])  # the line still shows the entry's hint: say it in the new language
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def review(self, action):
@@ -434,11 +485,12 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         project_id = self.workspace_data.get("project_id")
         plan_version = self.plan_version
         if record.get("status") == "superseded":
-            self.notice("A historical version cannot be reviewed.")
+            self.notice(self.t("A historical version cannot be reviewed."))
             return
         form = await self.push_screen_wait(FormModal(self.t("Confirm record") if action == "confirm" else self.t("Dispute record"),
             [Field("reason", self.t("Reason"), required=action == "dispute", multiline=True)],
-            note=f"v{record['version']}" + (f" · plan v{self.plan_version}" if self.plan_version else "") + " · " + self.t("Review changes confidence; it does not complete a task."), submit=self.t("Confirm review")))
+            note=f"v{record['version']}" + (f" · plan v{self.plan_version}" if self.plan_version else "") + " · " + self.t("Review changes confidence; it does not complete a task."),
+            submit=self.t("Confirm review") if action == "confirm" else self.t("Save dispute")))
         if form is None:
             return
         if scope != self._scope_version:
@@ -452,7 +504,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             await self.request("POST", f"/api/inspector/records/{record['id']}/review", json=payload)
             if scope == self._scope_version:
                 await self.open_entity(record["id"], "records")
-                self.notice("Ocena zapisana z audytem.")
+                self.notice(self.t("Review saved with an audit note."))
         except (OSError, ValueError, RuntimeError) as exc:
             if scope == self._scope_version:
                 await self.open_entity(record["id"], "records")
@@ -516,7 +568,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.next_cursor = result.get("next_cursor")
         self.render_rows(list(self.rows.values()))
         self.history_owner = (kind, owner)
-        self.notice(self.t("History is read-only. Enter opens the exact saved version."))
+        self.view_hint(self.t("History is read-only. Enter opens the exact saved version."))
 
     async def open_revision(self, selection):
         owner_type = selection.get("owner_type", "record")
@@ -538,7 +590,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 return
             cursor = result.get("next_cursor")
             if not cursor:
-                self.notice("The chosen version was not found.")
+                self.notice(self.t("The chosen version was not found."))
                 return
 
     @work(group="inspector-source-choice", exclusive=True, exit_on_error=False)
@@ -571,16 +623,28 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.set_view("memory")
         if not self.workspace_data.get("project_id"):
             self.memory_status = {}
-            self.show_detail({}, text=self.t("No project selected. Import is available with an explicit destination folder."), empty=True)
+            self.show_memory("status", None)
             return
         scope = self._scope_version
         result = await self.request("GET", "/api/memory/status", params=self.params())
         if scope != self._scope_version:
             return
         self.memory_status = result
-        self.show_detail(result, text=self.t("Snapshots contain complete conversations and sources. Review before sharing.") + "\n\n" +
-                         str(result.get("path") or "") + "\n" + summary_text(result, self.language))
+        self.show_memory("status", result)
         self.query_one("#memory-save", Button).disabled = self.preview_scope != (self.workspace_data.get("project_id"), self.workspace_data.get("worktree"))
+
+    def show_memory(self, shown, result):
+        """The Snapshot body: the status, a preview, a saved snapshot, an import check or an applied import."""
+        self._memory_body = (shown, result)
+        if shown == "status" and result is None:
+            self.show_detail({}, text=self.t("No project selected. Import is available with an explicit destination folder."), empty=True)
+        elif shown == "status":
+            self.show_detail(result, text=self.t("Snapshots contain complete conversations and sources. Review before sharing.") + "\n\n" +
+                             str(result.get("path") or "") + "\n" + summary_text(result, self.language))
+        elif shown == "import":
+            self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + summary_text(result, self.language))
+        else:
+            self.show_detail(result)
 
     @work(group="inspector-memory", exclusive=True, exit_on_error=False)
     async def memory_operation(self, action):
@@ -597,7 +661,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     return
                 self.preview_scope = (params["project"], params["worktree"])
                 self.query_one("#memory-save", Button).disabled = False
-                self.show_detail(result)
+                self.show_memory(action if action == "preview" else "saved", result)
                 self.notice(self.t("Preview ready. Saving and publishing to Git remain explicit actions.") if action == "preview" else self.t("Snapshot saved."))
             elif action == "auto":
                 if not params["project"]:
@@ -645,7 +709,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     payload, result = checked["payload"], checked["result"]
                     self.pending_import = {**payload, "replace_confirmed": replaces_here(result)}
                     self.query_one("#memory-apply", Button).disabled = False
-                    self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + summary_text(result, self.language))
+                    self.show_memory("import", result)
             elif action == "apply":
                 if not self.pending_import:
                     raise ValueError(self.t("Check the import with its source and destination folders first."))
@@ -661,7 +725,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     await asyncio.to_thread(refresh_workspace, self.settings, self.workspace_id)
                     # Read the new scope before the notice, so the notice belongs to it and stays on the line (#161).
                     await self._poll_workspace()
-                self.show_detail(result)
+                self.show_memory("applied", result)
                 self.notice(self.t("Memory imported. No client was started automatically."))
             else:
                 await self.load_memory()

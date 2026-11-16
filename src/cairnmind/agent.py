@@ -72,7 +72,7 @@ in project_state is a pointer, not inspected source text: call read_source befor
 The initial_evidence text and citation_catalog quote_excerpt are inspected source excerpts;
 you may cite their source_id without an additional read. Copy quotes exactly, including
 JSON punctuation and whitespace; do not quote a structured record as though it were source text.
-Return at most 8 citations with quotes of at most 750 characters each.
+Return at most 8 citations with quotes of at most 900 characters each.
 Do not output thinking or analysis. Do not manufacture a citation to satisfy the schema.
 """
 
@@ -418,7 +418,7 @@ class KnowledgeAgent:
                         "required": ["source_id", "quote"], "properties": {
                             "source_id": {"type": "string",
                                           "enum": list(dict.fromkeys(item["source_id"] for item in catalog))},
-                            "quote": {"type": "string", "minLength": quote_floor, "maxLength": 750}}}},
+                            "quote": {"type": "string", "minLength": quote_floor, "maxLength": EXCERPT_CHARS}}}},
                     "unknowns": {"type": "array", "maxItems": 8,
                                  "items": {"type": "string", "maxLength": 240}}}}
 
@@ -940,7 +940,7 @@ class KnowledgeAgent:
                 continue
             if len(sources) >= 8:
                 continue
-            quote = quote[:750]
+            quote = quote[:EXCERPT_CHARS]  # a whole shown passage may be quoted
             start = content[:span[0]].count("\n") + 1
             sources.append({"id": source["id"], "uri": source["uri"], "sha256": source["sha256"],
                             "kind": source["kind"], "quote": quote, "line_start": start,
@@ -1556,7 +1556,8 @@ class KnowledgeAgent:
                 record = self.store.remember(project_id, candidate, [source["id"]], extracted_from=source["id"],
                                              extractor=stamp)
             except ValueError as exc:
-                if "Active record key already exists" not in str(exc):
+                # The key is taken, by a record a person confirmed (VerdictKept "key") or by another one.
+                if "Active record key already exists" not in str(exc) and getattr(exc, "change", None) != "key":
                     raise
                 # A foreground client may have inserted the key after our snapshot.
                 latest = self.store.list_records(project_id)

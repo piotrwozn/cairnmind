@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .memory_paths import PUBLISHED_RELATIVE, RESERVED_DIRECTORIES
 from .memory_published_format import canonical_uuid
+from .path_spelling import lies_in, path_identity
 from .sql import insert_document, one_row, update_document, utc_now
 from .terminal_safe import safe_text
 
@@ -53,23 +54,25 @@ def checkout_path(store, project_id, raw):
     if Path(os.path.realpath(path)) != path:
         raise ValueError(f"The checkout path {path} is or passes through a symbolic link; give the real directory")
     data_dir = Path(os.path.realpath(store.data_dir))
-    if path == data_dir or path.is_relative_to(data_dir) or data_dir.is_relative_to(path):
+    # Containment is decided by identity too (path_spelling): on a file system that ignores letter case the
+    # same directory can be written in another spelling, and a comparison of text would let it through (#230).
+    if lies_in(path, data_dir) or lies_in(data_dir, path):
         raise ValueError(f"The checkout path {path} overlaps Cairnmind's own data directory")
     names = {row["id"]: row["name"] for row in store.query("SELECT id,name FROM projects")}
     for row in store.query("SELECT project_id,path FROM project_roots"):
         root = Path(row["path"])
         name = names.get(row["project_id"], row["project_id"])
         for reserved in RESERVED_DIRECTORIES:
-            if path.is_relative_to(root / reserved):
+            if lies_in(path, root / reserved):
                 raise ValueError(f"The checkout path {path} is inside the memory of project {name} ({root / reserved})")
-        if path.is_relative_to(root):
+        if lies_in(path, root):
             if row["project_id"] == project_id:
                 raise ValueError(f"The checkout path {path} is inside this project's own files; "
                                  "the repository carrier (the default) writes there")
             raise ValueError(f"The checkout path {path} is inside the files of project {name}, "
                              "which would index the package as its code")
         top = _git_top(root)
-        if root.is_relative_to(path) or (top is not None and top == _git_top(path)):
+        if lies_in(root, path) or (top is not None and _same_directory(top, _git_top(path))):
             # A package beside a project in its own repository sits outside every reserved directory: whoever
             # registers that repository's top level would index and fingerprint it as code (#174).
             raise ValueError(f"The checkout path {path} shares a Git repository with project {name} ({root}); "
@@ -79,6 +82,14 @@ def checkout_path(store, project_id, raw):
     if _git_top(path) is None:
         raise ValueError(f"The checkout path {path} is not in a Git checkout; clone the memory repository first")
     return path
+
+
+def _same_directory(one, other) -> bool:
+    """Whether two paths name one directory, whatever their spelling."""
+    if other is None:
+        return False
+    first = path_identity(one)
+    return one == other or (first is not None and first == path_identity(other))
 
 
 def _git_top(path):

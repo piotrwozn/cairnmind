@@ -13,10 +13,12 @@ from typing import Any
 from .arcade import ArcadeError
 from .config import Settings
 from .confirmation import confirmation_text, confirmed_by as _confirmed_by
+from .conflicts import standing_marks
 from .context_selection import context_place, select_entries
 from .memory_paths import bound_metadata, memory_bindings
 from .memory_egress import ASK, held_back_class
 from .memory_models import from_settings
+from .sql import unregistered_root
 
 
 STOPWORDS = {
@@ -251,7 +253,7 @@ class Retriever:
             "SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})]
         root = Path(worktree if worktree is not None else project["root"]).expanduser().resolve()
         if root not in roots:
-            raise ValueError("Retrieval worktree must be a registered project root")
+            raise ValueError(unregistered_root(root, project))
         return project["id"], root, roots
 
     @staticmethod
@@ -714,13 +716,20 @@ class Retriever:
             entry["sources"] = entry.pop("source_ids")
             entries.append(entry)
         # A share of the budget goes to the newest proposed findings, so they are seen beside many
-        # confirmed records (#188). Checkpoints and tasks, finished or not, keep their own places.
+        # confirmed records (#188), and select_entries reserves another for the decisions and constraints in
+        # force, so open tasks do not push them out (#241). Checkpoints and tasks keep their own places.
         reserve = [record.get("status") == "proposed" and record["kind"] not in ("checkpoint", "task")
                    for record in records]
         # 7000 since #177: a confirmed record says who confirmed it and cites that note, about 60 characters
         # each, and the same number of records as before must fit.
         budget = max(2500, 7000 - len(json.dumps(workflow, ensure_ascii=False)))
-        selected, omitted = select_entries(entries, reserve, budget)
+        # The stored conflict marks in full, not the bounded view's first five, each resolved to the record
+        # that stands for the marked one now: a replaced rule's successor has a new id (#241).
+        stored = [json_value(record.get("metadata"), {}) for record in records]
+        conflicts = standing_marks(self.store, project["id"], {record["id"] for record in records},
+                                   [metadata.get("possible_conflicts") if isinstance(metadata, dict) else None
+                                    for metadata in stored])
+        selected, omitted = select_entries(entries, reserve, budget, conflicts=conflicts)
         return {
             "project": {k: project[k] for k in ("id", "name", "root")}, "records": selected,
             "total_records": len(records), "omitted_records": len(records) - len(selected),

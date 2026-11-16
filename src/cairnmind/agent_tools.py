@@ -21,6 +21,7 @@ from .agent_journal import AgentJournal, JournalError
 from .agent_write_guard import ChangeLedger, change_of, change_preview, configures_execution
 from .config import ENV_PREFIXES
 from .native_worker import process_start
+from .path_spelling import entry_identity, identity, is_alias
 
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -36,6 +37,8 @@ KILL_WAIT_SECONDS = 1.0
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _SECRET_ENV = re.compile(r"(?:TOKEN|PASSWORD|SECRET|API_?KEY|AUTHORIZATION|CREDENTIAL)", re.I)
 _FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_MEMORY_NAMES = ("cairnmind", "devbrain", "cairnmind-published")
+_MEMORY_PAIRS = tuple((".memory", name) for name in _MEMORY_NAMES)
 
 
 def _tool(name, description, properties, required):
@@ -87,6 +90,23 @@ def _bounded_int(value, default, minimum, maximum):
     return value
 
 
+def _windows_reading(parts):
+    """The casefolded parts as a Windows file system would read them, for the protected-name comparison only.
+
+    Windows separates on a backslash, ends a name at a colon (`.git::$INDEX_ALLOCATION` is the directory itself)
+    and drops trailing dots and spaces, so `.git.`, `.git `, `.GIT\\hooks` and `.git::$INDEX_ALLOCATION` all name
+    `.git` there (#230), the way git's own NTFS check reads them. On Linux these are ordinary names: the parts
+    the tools open stay as they were, and only a name that reads as a protected one is refused.
+    """
+    read = []
+    for part in parts:
+        for piece in part.split("\\"):
+            piece = piece.split(":", 1)[0].rstrip(". ").casefold()
+            if piece:
+                read.append(piece)
+    return tuple(read)
+
+
 def _parts(value, *, allow_root=False):
     if not isinstance(value, str) or not value or len(value) > 4096 or "\0" in value:
         raise ToolError("invalid_path", "A project-relative path is required")
@@ -96,12 +116,12 @@ def _parts(value, *, allow_root=False):
     parts = tuple(part for part in path.parts if part not in {"", "."})
     if not parts and not allow_root:
         raise ToolError("invalid_path", "A regular file path is required")
-    # The memory directories are compared without case, as memory_paths does: on a case-insensitive file
-    # system `.Memory/Cairnmind-Published` is the published directory (#170).
-    folded = tuple(part.casefold() for part in parts)
-    if any(part == ".git" for part in parts) or any(
-        folded[index:index + 2] in ((".memory", "cairnmind"), (".memory", "devbrain"), (".memory", "cairnmind-published"))
-        for index in range(len(parts))
+    # Compared without case, as memory_paths does: on a case-insensitive file system `.GIT/hooks` is
+    # `.git/hooks` (#230) and `.Memory/Cairnmind-Published` is the published directory (#170). A short alias
+    # (`GIT~1`) and any other spelling are refused by identity when the directories are opened.
+    folded = _windows_reading(parts)
+    if any(part == ".git" for part in folded) or any(
+        folded[index:index + 2] in _MEMORY_PAIRS for index in range(len(folded))
     ):
         raise ToolError("protected_path", "Git internals and managed memory must use their dedicated interfaces")
     return parts
@@ -227,12 +247,27 @@ class ToolExecutor:
         finally:
             os.close(fd)
 
+    @staticmethod
+    def _spelled(directory, name):
+        if is_alias(name, directory):
+            raise ToolError("invalid_path", "A short alias of a file name is not accepted; use its full name")
+
+    @staticmethod
+    def _not_protected(directory, found, in_memory):
+        """Refuse an entry of `directory` that is `.git` (or, in `.memory`, a managed memory directory) under
+        another spelling: decided by identity, which no spelling changes (#230)."""
+        if found is not None and any(entry_identity(name, directory) == found
+                                     for name in (".git", *(_MEMORY_NAMES if in_memory else ()))):
+            raise ToolError("protected_path", "Git internals and managed memory must use their dedicated interfaces")
+
     @contextmanager
-    def _directory(self, parts, *, create=False):
+    def _directory(self, parts, *, create=False, leaf=None):
         with self._root() as root:
             current = os.dup(root)
+            in_memory = False
             try:
                 for part in parts:
+                    self._spelled(current, part)
                     try:
                         following = os.open(part, _FLAGS, dir_fd=current)
                     except FileNotFoundError:
@@ -240,8 +275,18 @@ class ToolExecutor:
                             raise
                         os.mkdir(part, 0o755, dir_fd=current)
                         following = os.open(part, _FLAGS, dir_fd=current)
+                    found = identity(os.fstat(following))
+                    try:
+                        self._not_protected(current, found, in_memory)
+                    except ToolError:
+                        os.close(following)
+                        raise
+                    in_memory = found == entry_identity(".memory", current)
                     os.close(current)
                     current = following
+                if leaf is not None:
+                    self._spelled(current, leaf)
+                    self._not_protected(current, entry_identity(leaf, current), in_memory)
                 yield current
             finally:
                 os.close(current)
@@ -249,7 +294,7 @@ class ToolExecutor:
     @contextmanager
     def _parent(self, value, *, create=False):
         parts = _parts(value)
-        with self._directory(parts[:-1], create=create) as parent:
+        with self._directory(parts[:-1], create=create, leaf=parts[-1]) as parent:
             yield parent, parts[-1], "/".join(parts)
 
     @staticmethod

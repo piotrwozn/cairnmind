@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 
 from cairnmind.memory import _load_snapshot
-from cairnmind.sensitivity import record_sensitivity
+from cairnmind.sensitivity import record_sensitivity, source_sensitivity
 from cairnmind.store import STATUSES
 from cairnmind.terminal_safe import safe_text
 
@@ -203,7 +203,9 @@ def _source_lines(ids, sources, left, cache):
     lines, seen, used, limited = [], [], 0, False
     for identifier in dict.fromkeys(ids):
         row = sources.get(identifier)
-        name = _line(row["uri"]) + _source_mark(row) if row else _line(identifier)
+        # Each text names its own class, as the record's block names the highest of them (#180, #241).
+        name = (_line(row["uri"]) + _source_mark(row) + f" (sensitivity: {source_sensitivity(row)})"
+                if row else _line(identifier))
         why, whole = _prepared(identifier, sources, cache)
         if why:
             lines.append(f"  source {name}: {why}, not shown")

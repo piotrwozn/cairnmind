@@ -41,7 +41,7 @@ import subprocess
 from pathlib import PurePosixPath
 
 from cairnmind.brief import _line
-from cairnmind.ingest import EXCLUDED_DIRS, _is_secret
+from cairnmind.ingest import _is_secret, excluded_directory
 
 DOC_SUFFIXES = (".md", ".mdx", ".rst", ".txt")
 FENCED_SUFFIXES = (".md", ".mdx")
@@ -86,7 +86,7 @@ def _doc_names(root):
             continue
         parts = PurePosixPath(name).parts
         # The indexer never reads these directories or secret-looking files, so neither does this report.
-        if not RESERVED & {part.lower() for part in parts} and not EXCLUDED_DIRS & set(parts[:-1]) \
+        if not RESERVED & {part.lower() for part in parts} and not any(map(excluded_directory, parts[:-1])) \
                 and not _is_secret(PurePosixPath(name)):
             names.append(name)
     return sorted(names, key=lambda name: PurePosixPath(name).parts)

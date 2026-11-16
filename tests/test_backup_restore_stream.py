@@ -219,11 +219,14 @@ def test_cases_that_must_be_refused_are_refused(store, tmp_path):
             _streamed(path, [])
 
 
-def test_restore_refuses_a_file_changed_after_validation_and_changes_nothing(store, tmp_path, monkeypatch):
+@pytest.mark.parametrize("replacement", ["another backup", "not gzip"])
+def test_restore_refuses_a_file_changed_after_validation_and_changes_nothing(store, tmp_path, monkeypatch, replacement):
     payload, _, _ = _backup_payload(store, tmp_path)
     path = store.backup(tmp_path / "first.cairnmind.json.gz")
     store.add_project("later", tmp_path / "later")
     other = store.backup(tmp_path / "second.cairnmind.json.gz").read_bytes()
+    if replacement == "not gzip":
+        other = b"not a backup any more"
     before = comparable(store.export())
     backup = Store.backup
 
@@ -235,9 +238,27 @@ def test_restore_refuses_a_file_changed_after_validation_and_changes_nothing(sto
         return result
 
     monkeypatch.setattr(Store, "backup", swap_then_backup)
-    with pytest.raises(ValueError, match="checksum mismatch"):
+    # The file was valid when checked: it changed, it is not called corrupt or a checksum mismatch (#238).
+    with pytest.raises(ValueError, match="^The backup file changed while it was being read"):
         store.restore(path)
     assert comparable(store.export()) == before
+
+
+def test_a_file_changed_between_the_two_checking_passes_says_it_changed(store, tmp_path, monkeypatch):
+    _backup_payload(store, tmp_path)
+    path = store.backup(tmp_path / "first.cairnmind.json.gz")
+    store.add_project("later", tmp_path / "later")
+    other = store.backup(tmp_path / "second.cairnmind.json.gz").read_bytes()
+    check_index = backup_reader._check_index
+
+    def swap_after_first_pass(index, canonical):
+        path.write_bytes(other)
+        return check_index(index, canonical)
+
+    monkeypatch.setattr(backup_reader, "_check_index", swap_after_first_pass)
+    with pytest.raises(ValueError, match="^The backup file changed while it was being read"):
+        with opened_backup(path, lambda p: pytest.fail("a written backup is read as a stream"), RESTORE_TYPES):
+            pass
 
 
 def test_restore_that_fails_midway_changes_nothing(store, tmp_path, monkeypatch):

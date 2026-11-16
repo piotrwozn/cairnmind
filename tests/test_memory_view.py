@@ -178,16 +178,31 @@ def test_sources_prints_the_text_of_a_source_under_the_record_it_supports(snapsh
     manifest, payload = snapshot
     block = _block(render_snapshot(manifest, payload, kind="decision", sources_text=True), "d1")
     lines = block.splitlines()
-    heading = lines.index("  source chat://session/1:")
+    heading = lines.index("  source chat://session/1 (sensitivity: conversation):")
     assert lines[heading - 1] == "  sources: chat://session/1, file://src/login.py"
     assert lines[heading + 1:heading + 3] == ["    | Meeting, 1 November: keep login errors in one module.", "    | Owner: Mira."]
-    assert "  source file://src/login.py:" in lines and "    |     return None" in lines
+    assert "  source file://src/login.py (sensitivity: project):" in lines and "    |     return None" in lines
     # Without the option nothing of a source is printed but its address.
     plain = render_snapshot(manifest, payload, kind="decision")
     assert "Meeting, 1 November" not in plain and "return None" not in plain and "  source chat" not in plain
     # A source that supports several records is printed under each.
     text = render_snapshot(manifest, payload, sources_text=True)
-    assert text.count("    | Owner: Mira.") == 4 and text.count("  source chat://session/1:") == 4
+    assert text.count("    | Owner: Mira.") == 4 and text.count("  source chat://session/1 (sensitivity: conversation):") == 4
+
+
+def test_each_printed_source_names_its_sensitivity_class(snapshot):
+    # Issue #241: a record's block says its class; the source texts it rests on say theirs (#180).
+    manifest, payload = snapshot
+    payload["sources"].append({"id": "s3", "uri": "manual://ext", "kind": "manual", "content": "Use Redis.",
+                               "metadata": dict(EXTERNAL)})
+    payload["records"][0]["source_ids"] = ["s1", "s2", "s3", "ghost"]
+    payload["sources"][0]["content"] = "  \n"
+    block = _block(render_snapshot(manifest, payload, kind="decision", sources_text=True), "d1")
+    assert "  source chat://session/1 (sensitivity: conversation): empty, not shown" in block
+    assert "  source file://src/login.py (sensitivity: project):" in block
+    assert "  source manual://ext (external client's session, never verified) (sensitivity: third_party):" in block
+    # A source the package does not hold has no class to show.
+    assert "  source ghost: missing from this package, not shown" in block
 
 
 def test_a_long_source_is_cut_at_a_line_boundary_and_says_how_much_was_left_out(snapshot):
@@ -231,7 +246,7 @@ def test_a_source_that_is_not_text_or_empty_is_named_and_not_printed(snapshot, c
     manifest, payload = snapshot
     payload["sources"][0]["content"] = content
     text = render_snapshot(manifest, payload, kind="decision", sources_text=True)
-    assert f"  source chat://session/1: {reason}, not shown" in text
+    assert f"  source chat://session/1 (sensitivity: conversation): {reason}, not shown" in text
     assert "binary" not in text and "    | 7" not in text
     assert "    | def login():" in text
 
@@ -382,7 +397,7 @@ def test_a_text_of_which_no_character_fits_is_not_printed_as_an_empty_block(snap
     monkeypatch.setattr(memory_view, "TOTAL_TEXT_LIMIT", 3)
     payload["sources"][0]["content"] = "\x1b[31mred"
     text = render_snapshot(manifest, payload, sources_text=True)
-    assert "  source chat://session/1:" not in text and "  source file://src/login.py:" not in text
+    assert "  source chat://session/1" not in text and "  source file://src/login.py" not in text
     assert "    | \n" not in text and "more characters left out" not in text and "    | def login" not in text
     assert text.count("Source texts are limited to 3 characters in all; further texts are not shown.") == 1
 
@@ -413,7 +428,7 @@ def test_what_an_external_session_wrote_is_marked_never_verified(snapshot):
     block = text[text.index("  id: x1"):]
     assert EXTERNAL_LINE in block
     assert "  sources: checkpoint://c1 (external client's session, never verified)" in block
-    assert "  source checkpoint://c1 (external client's session, never verified):" in block
+    assert "  source checkpoint://c1 (external client's session, never verified) (sensitivity: third_party):" in block
     whole = render_snapshot(manifest, payload)
     assert whole[whole.index("  id: p1"):].splitlines()[2] == (
         "  origin: rests only on sources from an external client's session or a third-party tool result; "

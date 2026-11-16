@@ -14,7 +14,8 @@ from uuid import uuid4
 
 from .confirmation import PLAN_CONTEXT_KEPT, ConfirmationRefused, VerdictKept, kept_step_refusal, kept_verdict
 from .store import ORIGIN_METADATA, outcome_changed
-from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
+from .sql import (clean_row, insert_document, json_text, one_row, unregistered_root, update_document,
+                  utc_now)
 
 
 _EVIDENCE_FIELDS = {
@@ -105,7 +106,7 @@ class PlanManager:
         root = str(Path(worktree if worktree is not None else project["root"]).expanduser().resolve())
         if not tx.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
                         {"project": project_id, "path": root}):
-            raise ValueError("Worktree must be a registered root of this project")
+            raise ValueError(unregistered_root(root, project))
         return root
 
     def get(self, project_id, plan_id):
@@ -317,7 +318,8 @@ class PlanManager:
                                                       mark_only_changes=True)
                 except VerdictKept as refusal:
                     # A step a person confirmed is changed only by a person (#177): the step is named.
-                    raise ConfirmationRefused(kept_step_refusal(key, refusal, bool(adoption))) from None
+                    raise ConfirmationRefused(kept_step_refusal(key, refusal, bool(adoption),
+                                                                (existing or {}).get("content"))) from None
                 changed_steps |= outcome_changed(existing, saved[key]["content"], saved[key]["key"],
                                                  saved[key]["metadata"])
             for task_id, task in removed.items():

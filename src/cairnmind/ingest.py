@@ -26,8 +26,9 @@ from cairnmind.arcade import ArcadeError
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
-from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, memory_bindings,
-                                    nested_reserved)
+from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, is_reserved_below,
+                                    memory_bindings, nested_reserved)
+from cairnmind.path_spelling import has_alias, path_identity, same_or_below
 from cairnmind.secret_mask import ingest_masker, masked_metadata
 from cairnmind.sql import json_text as _json_text
 
@@ -38,6 +39,15 @@ EXCLUDED_DIRS = {
     "target", "vendor", ".idea", ".cairnmind", ".devbrain", ".terraform", ".ssh", ".aws", ".azure", ".gnupg",
     ".codex", ".claude",
 }
+
+
+def excluded_directory(name: str) -> bool:
+    """Whether the indexer skips a directory of this name. A name with a leading dot (Git's, credentials',
+    clients') is compared without case: on a file system that ignores case `.SSH` is `.ssh` (#230). The
+    others (`Build`, `Vendor`) are compared exactly, as different folders on a file system that respects case."""
+    return name in EXCLUDED_DIRS or (name[:1] == "." and name.casefold() in EXCLUDED_DIRS)
+
+
 SECRET_NAMES = {".env", ".netrc", ".npmrc", ".pypirc", "credentials", "credentials.json", "id_rsa", "id_ed25519"}
 SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".keystore", ".sqlite", ".sqlite3", ".db"}
 GRAPH_EDGE_KINDS = ("imports", "defines", "calls", "references", "test_imports", "snapshot_of")
@@ -164,8 +174,8 @@ class _NestedMemory:
         if ".memory" not in (part.casefold() for part in parts):
             return False
         if self._bases is None:
-            self._bases = tuple(self.root / directory for directory in nested_reserved(self.store, self.root))
-        return any(path.is_relative_to(base) for base in self._bases)
+            self._bases = nested_reserved(self.store, self.root)
+        return is_reserved_below(Path(*parts), self._bases)
 
 
 def _walk_args(store, root: Path, errors: list[OSError]):
@@ -183,9 +193,13 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
     directories of projects registered below the root (#174), also left out.
     """
     rules: dict[Path, pathspec.GitIgnoreSpec] = {}
+    # Also by identity: on a file system that ignores case the root may be registered with other letter
+    # case than the data directory is spelled with, and no text comparison sees that one lies in the other (#230).
+    excluded_ids = {path_identity(base) for base in excluded} - {None}
 
     def left_out(path: Path) -> bool:
-        return any(path.is_relative_to(base) for base in excluded) or (nested is not None and nested.covers(path))
+        return (any(path.is_relative_to(base) for base in excluded) or (nested is not None and nested.covers(path))
+                or (bool(excluded_ids) and path_identity(path) in excluded_ids))
 
     for directory, dirs, names in os.walk(root, followlinks=False,
                                           onerror=errors.append if errors is not None else None):
@@ -212,11 +226,11 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
 
         dirs[:] = sorted(
             name for name in dirs
-            if name not in EXCLUDED_DIRS and not (folder / name).is_symlink()
+            if not excluded_directory(name) and not (folder / name).is_symlink()
             and not is_memory_path(folder / name, root)
             # A memory package kept deeper in the tree, such as a sample, is somebody's stored memory
             # and not text of this project: its rows are not indexed as sources.
-            and not (folder.name == ".memory" and name in ("cairnmind", "devbrain"))
+            and not (folder.name.casefold() == ".memory" and name.casefold() in ("cairnmind", "devbrain"))
             and not left_out(folder / name)
             and not ignored(folder / name, True)
         )
@@ -1213,7 +1227,7 @@ def _source_project(store, requested: str | None, cwd: str | None) -> tuple[str 
     inferred = None
     if cwd:
         try:
-            inferred = store.resolve_project(cwd)["id"]
+            inferred = store.resolve_project(cwd, recorded=True)["id"]
         except ValueError:
             pass
     if requested and cwd and requested != inferred:
@@ -1515,7 +1529,8 @@ def register_default_histories(store, project_id: str, root: Path) -> dict:
     roots = _roots(store, project)
     root = Path(root).resolve()
     if root not in roots:
-        raise ValueError("History discovery root must be a registered project root")
+        from .sql import unregistered_root
+        raise ValueError(unregistered_root(root, project))
     codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     claude_home = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
     locations = [(codex_home / "sessions", "codex"), (codex_home / "archived_sessions", "codex"), (claude_home / "projects", "claude")]
@@ -1545,7 +1560,7 @@ def register_default_histories(store, project_id: str, root: Path) -> dict:
                 if not declared:
                     continue
                 try:
-                    belongs = store.resolve_project(declared)["id"] == project["id"]
+                    belongs = store.resolve_project(declared, recorded=True)["id"] == project["id"]
                 except ValueError:
                     belongs = False
                 if belongs:
@@ -1582,11 +1597,15 @@ def current_source(store, source_id: str) -> dict:
                 "freshness_warning": "Imported file snapshot is historical until the local checkout is indexed"}
     allowed_roots = [root for root in roots if path.is_absolute() and path.is_relative_to(root)
                      and path.resolve().is_relative_to(root)]
-    excluded_directory = any(part in EXCLUDED_DIRS for root in allowed_roots for part in path.relative_to(root).parts[:-1])
-    if (path.is_symlink() or not allowed_roots or _is_secret(path) or excluded_directory
+    in_excluded = any(excluded_directory(part) for root in allowed_roots for part in path.relative_to(root).parts[:-1])
+    # A short 8.3 alias (`SSH~1`) and a data directory spelled with other letter case are not seen by the
+    # name checks; they are refused by spelling and by identity (#230).
+    if (path.is_symlink() or not allowed_roots or _is_secret(path) or in_excluded
+            or any(has_alias(path, root) for root in allowed_roots)
             or any(is_memory_path(path, root) for root in roots)
             or any(_NestedMemory(store, root).covers(path) for root in allowed_roots)
-            or path.resolve().is_relative_to(store.data_dir)):
+            or path.resolve().is_relative_to(store.data_dir)
+            or same_or_below(path.resolve(), path_identity(store.data_dir))):
         raise ValueError("Source path is outside registered roots or excluded")
     if not path.is_file():
         if not any(root.is_dir() for root in allowed_roots):

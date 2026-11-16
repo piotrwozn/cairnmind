@@ -257,7 +257,7 @@ def test_an_api_stage_without_a_usable_credential_says_so_and_starts_nothing(sta
     started = stack["runner"].start_project({**project, "root": str(stack["root"])}, worktree=str(stack["root"]),
                                             slots=[{**normalize_profile(profile), "id": "cloud",
                                                     "profile_id": "api-cloud"}])
-    # The launcher agrees: it refuses the missing key by name and the invalid one as a failed launch.
-    assert started["runs"] == [] and [e["code"] for e in started["errors"]] == [
-        "credential_missing" if value is None else "agent_launch_failed"]
+    # The launcher agrees and names the same problem, so Start work can say what to do (#243).
+    assert started["runs"] == [] and [e["code"] for e in started["errors"]] == [problem]
+    assert value is None or value not in json.dumps(started)
     assert stack["spawned"] == [] and stack["store"].query("SELECT FROM sessions") == sessions_before

@@ -1241,7 +1241,7 @@ class SessionManager:
         native_id = payload.get("session_id")
         logical_id = payload.get("cairnmind_session_id") or payload.get("devbrain_session_id")
         cwd = payload.get("cwd")
-        project = self.store.resolve_project(cwd)
+        project = self.store.resolve_project(cwd, recorded=True)
         # Most-specific registered root, not an inherited project environment hint.
         roots = self.store.query("SELECT path FROM project_roots WHERE project_id=:project", {"project": project["id"]})
         matching = [str(Path(row["path"]).resolve()) for row in roots if _scope_contains(str(Path(row["path"]).resolve()), cwd)]

@@ -230,11 +230,28 @@ def test_outer_keyboard_claim_requires_exact_identity_and_explicit_takeover(tmp_
     assert workspace._claim_attached(999, observer["tty"]) is None and not calls
     assert workspace._claim_attached(observer["pid"], observer["tty"]) is False
     assert all(command[0] == "display-message" for command in calls)
+    # #243: the line was Polish ("potem") in an English workspace.
+    assert calls[-1][-1] == "READ ONLY: C-b d, then cairnmind workspace takeover"
     calls.clear()
     assert workspace._claim_attached(observer["pid"], observer["tty"], takeover=True) is True
     assert calls[0] == ("refresh-client", "-t", writer["tty"], "-f", "read-only,ignore-size")
     assert calls[1] == ("switch-client", "-r", "-c", observer["tty"], "-t", "cairnmind-ui")
     assert not (tmp_path / "missing").exists()
+
+
+def test_the_read_only_line_of_an_observer_reads_in_the_workspace_language(tmp_path, monkeypatch):
+    from cairnmind.cockpit_state import CockpitState
+    settings = Settings.load(tmp_path / "data")
+    CockpitState(settings).update({"language": "pl"})
+    workspace = WorkspaceManager(settings)
+    calls = []
+    writer = {"pid": 10, "tty": "/dev/pts/10", "readonly": False, "ignore_size": False}
+    observer = {"pid": 20, "tty": "/dev/pts/20", "readonly": True, "ignore_size": True}
+    monkeypatch.setattr(workspace, "clients", lambda: [writer, observer])
+    monkeypatch.setattr(workspace, "tmux", lambda *args, **kwargs: calls.append(args) or SimpleNamespace(stdout="", returncode=0))
+    assert workspace._claim_attached(observer["pid"], observer["tty"]) is False
+    assert calls[-1] == ("display-message", "-c", observer["tty"], "-d", "8000",
+                         "TYLKO ODCZYT: C-b d, potem cairnmind workspace takeover")
 
 
 @pytest.mark.parametrize("stop_clients", [False, True])
@@ -272,10 +289,36 @@ def test_stop_with_clients_skips_ended_runs_and_saves_what_it_stopped(manager, m
     result = module.stop_workspace(workspace.settings, stop_clients=True)
     assert result["errors"] == [] and result["clients_stopped"] == ["live"]
     assert result["clients_already_ended"] == ["ended"]
-    assert [path for method, path, _ in broker.calls if method == "POST"] == ["/api/client-runs/live/stop"]
+    # #243: the ended run is sent the stop too, which clears the dead pane tmux kept for it; its end stays.
+    assert sorted(path for method, path, _ in broker.calls if method == "POST") == [
+        "/api/client-runs/ended/stop", "/api/client-runs/live/stop"]
     saved = workspace.state.read()
     assert [slot["lifecycle"] for slot in saved["slots"]] == ["exited", "exited"]
     assert saved["run_ids"] == []
+
+
+def test_stop_with_clients_still_reports_an_ended_run_whose_pane_cannot_be_cleared(manager, monkeypatch):
+    # #243: clearing the dead pane of an ended run is best effort; a refused stop is not a client error.
+    from cairnmind import workspace as module
+    from cairnmind.terminal_client import BrokerError
+    workspace, broker, project = manager
+    workspace.create(start_supervisor=False)
+    broker.value["runs"] = [{"id": "ended", "generation": 3, "project_id": project["id"], "lifecycle": "failed"}]
+    workspace._adopt(["ended"])
+    known = broker.request
+
+    def request(method, path, **kwargs):
+        if method == "POST":
+            broker.calls.append((method, path, kwargs))
+            raise BrokerError(409, "Native run generation changed")
+        return known(method, path, **kwargs)
+    monkeypatch.setattr(broker, "request", request)
+    monkeypatch.setattr(module, "WorkspaceManager", lambda *args, **kwargs: workspace)
+    result = module.stop_workspace(workspace.settings, stop_clients=True)
+    assert result["errors"] == [] and result["clients_already_ended"] == ["ended"] and result["clients_stopped"] == []
+    assert [(method, path, kwargs["json"]) for method, path, kwargs in broker.calls if method == "POST"] == [
+        ("POST", "/api/client-runs/ended/stop", {"generation": 3})]
+    assert workspace.state.read()["run_ids"] == []
 
 
 @pytest.mark.parametrize("answer", [(404, "Unknown native run"), (400, "Unknown native run")])

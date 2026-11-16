@@ -82,9 +82,17 @@ async def test_a_server_that_does_not_start_is_reported_by_a_fixed_code_and_left
 
 
 @pytest.mark.asyncio
-async def test_a_missing_program_is_start_failed(tmp_path):
-    host, events = await started(tmp_path, {"id": "gone", "command": "/nonexistent/server"})
-    assert events == [("mcp_server_failed", {"server_id": "gone", "code": "start_failed"})]
+async def test_a_missing_program_is_told_apart_from_one_that_exits_at_once(tmp_path):
+    # #240: both were start_failed, although the program of the first does not exist at all.
+    plain = tmp_path / "not-executable"
+    plain.write_text("#!/bin/sh\nexit 0\n")
+    plain.chmod(0o644)
+    host, events = await started(tmp_path, {"id": "gone", "command": "/nonexistent/server"},
+                                 {"id": "plain", "command": str(plain)},
+                                 {"id": "exits", "command": sys.executable, "args": ["-c", "raise SystemExit(1)"]})
+    assert sorted(events, key=lambda event: event[1]["server_id"]) == [("mcp_server_failed", {"server_id": "exits", "code": "start_failed"}),
+                              ("mcp_server_failed", {"server_id": "gone", "code": "program_unavailable"}),
+                              ("mcp_server_failed", {"server_id": "plain", "code": "program_unavailable"})]
     assert host.catalogue == {}
 
 

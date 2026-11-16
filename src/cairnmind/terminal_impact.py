@@ -310,8 +310,8 @@ class ImpactView:
         self.entity_kind, self.entity, self.history_owner, self.source_next = "impact", row, None, None
         report = {"since": self.impact_shown[2], "commit": self.impact_commit}
         self.show_detail(row, kind="impact", parts=impact_parts(row, report, self.t))
-        self.notice(self.t("Verdict saves your judgement of this entry as an audit note. It changes no record, "
-                           "no status and no task."))
+        self.view_hint(self.t("Verdict saves your judgement of this entry as an audit note. It changes no record, "
+                              "no status and no task."))
 
     def on_input_submitted(self, event):
         if event.input.id != "impact-since":

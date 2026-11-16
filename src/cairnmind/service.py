@@ -345,6 +345,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     if not settings.token:
         raise ValueError("Run cairnmind init to create a local authentication token")
     store = Store(settings.data_dir)
+    # A caller sends a path as an absolute one; a relative one would be read from the service's directory (#238).
+    store.relative_paths = False
     if store.not_writer:
         # The service writes sessions, jobs and the queue: it runs only for the store's writer (#70).
         raise StoreNotWriter(store.not_writer)
@@ -644,7 +646,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             word in str(exc).lower() for word in ("version", "conflict", "stale", "resume_required"))) else 400
         if isinstance(exc, ConfirmationRefused):
             # Not something to read again and retry (#177), whatever words the refusal uses ("conflict inbox").
-            status = 400
+            # Marked, so that the built-in agent hands the model this reason and what to do instead (#240).
+            return JSONResponse(status_code=400, content={"detail": str(exc), "refusal": "confirmation"})
+        from cairnmind.store import RecordRefused
+        if isinstance(exc, RecordRefused):
+            # The store's fixed sentence about the record's shape, marked like record_error's (#240).
+            return JSONResponse(status_code=400, content={"detail": str(exc), "refusal": "record"})
         return JSONResponse(status_code=status, content={"detail": str(exc)})
 
     from cairnmind.arcade import ArcadeError
@@ -1121,8 +1128,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         from cairnmind.remember_input import external_report_source, record_error
         error = record_error(body.record)
         if error:
-            # A plain 400: the word-based mapping of ValueError would read a named field as a conflict.
-            raise HTTPException(status_code=400, detail=error)
+            # A plain 400: the word-based mapping of ValueError would read a named field as a conflict. Marked,
+            # so that the built-in agent hands the model which field is wrong (#240).
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=400, content={"detail": error, "refusal": "record"})
         pid = project(body.project)["id"]
         def save(scope):
             record = dict(body.record)

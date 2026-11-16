@@ -111,8 +111,10 @@ def read_private_file(path: str, setting: str) -> str:
             raise ValueError(f"{setting} names {path}, a symbolic link: {LINK_RULE}.") from None
         reason = os.strerror(error.errno) if error.errno else "unknown error"
         raise ValueError(f"{setting} names {path}, which cannot be opened ({reason}).") from None
-    with os.fdopen(fd, "rb") as handle:
-        info = os.fstat(handle.fileno())
+    # The checks run on the descriptor before it becomes a file object: os.fdopen refuses a folder with
+    # "[Errno 21] Is a directory", which would name neither the setting nor the rule (#242).
+    try:
+        info = os.fstat(fd)
         if mounted:
             if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or info.st_size > FILE_LIMIT:
                 raise ValueError(f"{setting} names {path}, a mounted secret whose file must be a regular file of "
@@ -122,6 +124,11 @@ def read_private_file(path: str, setting: str) -> str:
                 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > FILE_LIMIT):
             raise ValueError(f"{setting} names {path}, which must be a regular file of this user with mode 0600 "
                              f"(chmod 600) and at most {FILE_LIMIT} bytes.")
+        handle = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with handle:
         raw = handle.read(FILE_LIMIT + 1)
     try:
         text = raw.decode("utf-8")
@@ -181,22 +188,50 @@ def problem(settings) -> str | None:
             # Connect-only (#68): no engine is started here, so no password is generated for one either.
             from .database_mode import address
             return (f"ArcadeDB at {address(settings)}, which this installation only connects to, needs the "
-                    f"password set where that server runs: {PASSWORD_HELP}.")
+                    f"password set where that server runs: {PASSWORD_HELP}.{_unset(settings)}")
         return None
     if parsed.scheme != "https":
         return (f"ArcadeDB on {parsed.host}, a host other than this machine, must be reached with https://; "
                 "plain http:// is allowed only for 127.0.0.1, localhost and ::1.")
     if settings.arcade_user == "root":
-        return (f"ArcadeDB user root is refused for {parsed.host}, a host other than this machine. Create a "
-                "user with rights on this database only (cairnmind db create-user) and set arcade_user.")
+        refusal = (f"ArcadeDB user root is refused for {parsed.host}, a host other than this machine. Create a "
+                   "user with rights on this database only (cairnmind db create-user) and set arcade_user.")
+        if not settings.arcade_password:
+            # Everything the command lacks at once (#242): the password and the database too, not root alone.
+            refusal += " " + _no_password(parsed.host, origin) + _unset(settings, user=False)
+        return refusal
     if not USER_NAME.fullmatch(settings.arcade_user or ""):
         return "arcade_user must be a user name of letters, digits, _ and -, starting with a letter."
     if not settings.arcade_password:
-        if origin.get("password") == "config_refused":
-            return (f"The password stored in config.json is used only for the engine on this machine, not for "
-                    f"{parsed.host}: {PASSWORD_HELP}.")
-        return f"ArcadeDB on {parsed.host} needs a password: {PASSWORD_HELP}."
+        return _no_password(parsed.host, origin) + _unset(settings)
     return None
+
+
+def _no_password(host: str, origin: dict) -> str:
+    if origin.get("password") == "config_refused":
+        return (f"The password stored in config.json is used only for the engine on this machine, not for "
+                f"{host}: {PASSWORD_HELP}.")
+    return f"ArcadeDB on {host} needs a password: {PASSWORD_HELP}."
+
+
+def _unset(settings, *, user: bool = True) -> str:
+    """The other settings a command without a password also lacks, and what it would use in their place.
+
+    Only named, not refused (#242): root on this machine and a database name derived from the data directory
+    are what the managed engine has always used, and #72 refuses root only for another host. Named together
+    with the password, a command started from a shell without the variables says everything it lacks at once.
+    """
+    origin = getattr(settings, "_origin", None) or {}
+    missing = []
+    if user and origin.get("user") == "default":
+        missing.append(f"arcade_user ({settings.arcade_user}, the default, would be used)")
+    if origin.get("database") == "derived":
+        missing.append(f"arcade_database (the name {settings.arcade_database}, derived from this data directory's "
+                       "path, would be used)")
+    if not missing:
+        return ""
+    return (" Not set either, or left at the default: " + " and ".join(missing) + ". Set them in config.json, or as CAIRNMIND_ARCADE_USER and "
+            "CAIRNMIND_ARCADE_DATABASE, to the user and the database created for this installation.")
 
 
 def tls_context(settings) -> ssl.SSLContext:
@@ -262,6 +297,9 @@ def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
         client = ArcadeClient(settings)
     except ValueError as exc:
         result["error"] = str(exc)
+        if connect:
+            # Nothing was sent, so whether the server answers is not known: None, as in `engine status` (#242).
+            result["available"] = None
         return result
     try:
         info = client._request("GET", "/api/v1/server?mode=basic", timeout=timeout).json()
@@ -303,6 +341,7 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
     The user is ``arcade_user`` and the password the one resolved for it (environment or file); both
     must already be configured, so that the password never passes through this command's arguments.
     """
+    from contextlib import suppress
     from dataclasses import replace
     from .arcade import ArcadeClient, ArcadeError
     import json
@@ -318,23 +357,59 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
         raise ValueError("The new user's password must be one line of printable characters without spaces.")
     admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     payload = {"name": name, "password": secret, "databases": {settings.arcade_database: [group]}}
+    created = database_created = False
     try:
-        # The version first (#68): root creates nothing on a server this release does not support.
-        from .database_mode import version_problem
-        refused = version_problem(settings, admin.server_info())
-        if refused:
-            raise ArcadeError(refused)
-        admin.ensure_database()
-        admin.server_command("create user " + json.dumps(payload))
-    except ArcadeError as exc:
-        message = str(exc).replace(secret, "[redacted]").replace(admin_secret, "[redacted]")
-        raise ArcadeError(f"The user {name} was not created: {message}", status_code=exc.status_code) from None
+        try:
+            # The version first (#68): root creates nothing on a server this release does not support.
+            from .database_mode import version_problem
+            refused = version_problem(settings, admin.server_info())
+            if refused:
+                raise ArcadeError(refused)
+            # The user before the database (#242): ArcadeDB accepts a user for a database that does not exist
+            # yet, and answers 409 for a user that exists. That user is checked below.
+            try:
+                admin.server_command("create user " + json.dumps(payload))
+                created = True
+            except ArcadeError as exc:
+                if exc.status_code != 409:
+                    raise
+            if created:
+                try:
+                    database_created = not admin.database_exists()
+                    admin.ensure_database()
+                except ArcadeError:
+                    with suppress(ArcadeError):  # the user made a moment ago, for a database that is not there
+                        admin.server_command(f"drop user {name}")
+                    raise
+            elif not admin.database_exists():
+                # A user left without its database: a rollback above that failed too, or a database deleted on
+                # the server. The database is made, and dropped again below unless this user can use it.
+                admin.ensure_database()
+                database_created = True
+        except ArcadeError as exc:
+            message = str(exc).replace(secret, "[redacted]").replace(admin_secret, "[redacted]")
+            raise ArcadeError(f"The user {name} was not created: {message}", status_code=exc.status_code) from None
+        check = ArcadeClient(settings)
+        try:
+            check.query("SELECT 1 AS ok")
+        except ArcadeError as exc:
+            if created:
+                raise
+            # An existing user is used as it is only when it already signs in to this database: a run again
+            # for the same pair. Rights on a second database are never added to a user of another one.
+            if database_created:
+                with suppress(ArcadeError):  # empty, made a moment ago by this run
+                    admin.server_command(f"drop database {settings.arcade_database}")
+            raise ArcadeError(
+                f"The user {name} already exists, and it cannot use the database {settings.arcade_database} with "
+                f"the password this installation reads. Each database gets its own user: set arcade_user to a new "
+                f"name and its password ({PASSWORD_HELP}), then run `cairnmind db create-user` again. If this "
+                "user was created for this database with another password, set that password instead. Nothing "
+                "was created.", status_code=exc.status_code) from None
+        finally:
+            check.close()
     finally:
         admin.close()
-    check = ArcadeClient(settings)
-    try:
-        check.query("SELECT 1 AS ok")
-    finally:
-        check.close()
-    return {"user": name, "database": settings.arcade_database, "group": group, "signed_in": True}
+    return {"user": name, "database": settings.arcade_database, "group": group, "created": created,
+            "database_created": database_created, "signed_in": True}
 

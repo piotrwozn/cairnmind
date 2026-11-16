@@ -787,7 +787,7 @@ def test_end_hook_survives_unavailable_backend_and_restart(settings, tmp_path, m
     assert time.monotonic() - start < 1
 
     class UnavailableBackend:
-        def resolve_project(self, value):
+        def resolve_project(self, value, **options):
             raise RuntimeError("ArcadeDB is temporarily unavailable")
 
     failed = integrations.drain_hook_spool(settings, UnavailableBackend())
