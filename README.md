@@ -167,7 +167,7 @@ A client the launcher cannot start uses the same memory through an **external se
 cairnmind mcp --client external --project /path/to/my-app
 ```
 
-`--project` takes the project id, its name or a path inside it. A relative path is read from the editor's working directory, not the service's, and a registered name wins over a folder of the same name. Without it the client's working directory is used, which an editor does not always set to the project. `--worktree` picks a registered worktree; by default it is the one containing the project path. Use the absolute path of the `cairnmind` command (`command -v cairnmind`), since an editor may not read your shell's `PATH`. For Cursor (`.cursor/mcp.json`) and Cline (its MCP settings file):
+`--project` takes the project id, its name or a path inside it. A relative path is read from the editor's working directory, not the service's, and a registered name wins over a folder of the same name. A value is read as a path only when it is written as one, starting with `.` or `~` or containing a `/` (`./app`, `packages/api`), as on the command line: a bare `app` is a project name, and one that is not registered is refused even when a folder of that name exists here. Without it the client's working directory is used, which an editor does not always set to the project. `--worktree` picks a registered worktree; by default it is the one containing the project path. Use the absolute path of the `cairnmind` command (`command -v cairnmind`), since an editor may not read your shell's `PATH`. For Cursor (`.cursor/mcp.json`) and Cline (its MCP settings file):
 
 ```json
 {
