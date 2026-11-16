@@ -80,6 +80,20 @@ def _successors(store, project_id):
     return active, standing
 
 
+def standing_marks(store, project_id, present, marks):
+    """Each record's ``possible_conflicts`` with every replaced record resolved to the one standing for it (#241).
+
+    ``marks[i]`` is a stored mark list (anything else is passed through) and ``present`` the IDs already at
+    hand. History is read only when a mark names an ID that is not present; an ID with no standing
+    record is kept as marked, so the caller can ignore it.
+    """
+    if all(mark in present for value in marks for mark in _ids(value)):
+        return list(marks)
+    _, standing = _successors(store, project_id)
+    return [[standing(mark) or mark for mark in _ids(value)] if isinstance(value, list) else value
+            for value in marks]
+
+
 def _pending(record, active, standing):
     """Unresolved pairs of this record: ``{standing counterpart ID: [IDs as they were marked]}``."""
     metadata = _metadata(record)
