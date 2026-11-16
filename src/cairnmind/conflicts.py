@@ -25,6 +25,14 @@ def _ids(value):
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
+def _recorded_on_both(winner, loser):
+    """Whether a supersession is recorded on both records instead of the winner's one "supersedes" link:
+    the winner already replaces another record, or the loser is of degraded origin and never published."""
+    from .store import degraded_origin
+    return (bool(winner.get("supersedes")) and winner["supersedes"] != loser["id"]) \
+        or degraded_origin(loser.get("metadata"))
+
+
 def _metadata(record):
     value = record.get("metadata")
     return value if isinstance(value, dict) else {}
@@ -190,10 +198,10 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
             # Kind, key and replaced record of both findings as this decision leaves them (#170).
             winner, loser = (candidate, existing) if keep == record_id else (existing, candidate)
             renamed = winner is candidate and metadata.get("suggested_key") == existing["key"]
-            chained = bool(winner.get("supersedes")) and winner["supersedes"] != loser["id"]
+            chained = _recorded_on_both(winner, loser)
             audit["identity_sha256"] = {
                 winner["id"]: identity_hash(winner["kind"], existing["key"] if renamed else winner["key"],
-                                            winner["supersedes"] if chained else loser["id"]),
+                                            winner.get("supersedes") if chained else loser["id"]),
                 loser["id"]: identity_hash(loser["kind"], loser["key"], loser.get("supersedes"))}
         # The same address and origin as a review note: it documents a decision and never
         # counts as evidence that a finding is true, nor as the time of its evidence.
@@ -217,9 +225,11 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
         if winner is candidate and metadata.get("suggested_key") == existing["key"]:
             # The marked finding was stored under a suffixed key only because the key was taken.
             update["key"] = existing["key"]
-        if winner.get("supersedes") and winner["supersedes"] != loser["id"]:
+        if _recorded_on_both(winner, loser):
             # A record has one "supersedes" link. The winner keeps the one it has; this later
             # replacement is recorded on both records instead, so no part of the chain is lost.
+            # The same when the loser is an external session's proposal (#239): it is never published,
+            # so a link to it would hold the person's decision back from publication too.
             write({"id": loser["id"], "expected_version": loser["version"], "status": "superseded",
                    "metadata": {"superseded_by": winner["id"]}}, loser)
             update["metadata"]["superseded_ids"] = [*_ids(_metadata(winner).get("superseded_ids")), loser["id"]]
