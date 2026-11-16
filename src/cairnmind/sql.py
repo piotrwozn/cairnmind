@@ -79,6 +79,16 @@ def missing_row_text(text: str) -> bool:
     return text in {f"{kind} does not exist" for kind in (*MISSING_KIND.values(), "Record")}
 
 
+def unregistered_root(root, project: dict) -> str:
+    """The refusal for a folder that is not a registered root of `project`, with the command that registers it
+    (#244). The project name and the path come from the user; they are quoted for the shell and made printable."""
+    import shlex
+    from .terminal_safe import safe_text
+    handle = project.get("name") or project.get("id") or ""
+    return safe_text(f"{root} is not a registered project root of {handle}; register it with "
+                     f"`cairnmind project root {shlex.quote(str(handle))} {shlex.quote(str(root))}`.", limit=1200)
+
+
 def one_row(tx, sql, params=None, required=True):
     rows = tx.query(sql, params)
     if not rows:

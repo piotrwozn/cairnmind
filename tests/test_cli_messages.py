@@ -290,6 +290,32 @@ def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session
     assert (code, shown.err) == (2, "Error: resume_required: the packet changed\n")
 
 
+def test_an_unregistered_folder_is_refused_with_the_command_that_registers_it(tmp_path):
+    # The same refusal for memory, retrieval, the inspector, checks and plans (#244): the folder, the project
+    # and the command, quoted for the shell.
+    from cairnmind.inspector import Inspector
+    from cairnmind.memory import MemoryManager
+    from cairnmind.plans import PlanManager
+    from cairnmind.retrieval import Retriever
+    from cairnmind.verification import _root
+    store = Store(tmp_path / "memory")
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = store.add_project("my team", root)
+    folder = (tmp_path / "scratch dir").resolve()
+    folder.mkdir()
+    said = (f"{folder} is not a registered project root of my team; register it with "
+            f"`cairnmind project root 'my team' '{folder}'`.")
+    for refused in (lambda: MemoryManager(store)._scope(project["id"], folder),
+                    lambda: Retriever(store, store.settings, ollama=object())._scope(project["id"], folder),
+                    lambda: Inspector(store)._scope(project["id"], folder),
+                    lambda: _root(store, project["id"], folder),
+                    lambda: PlanManager(store).next_task(project["id"], worktree=folder)):
+        with pytest.raises(ValueError) as caught:
+            refused()
+        assert str(caught.value) == said
+
+
 @pytest.mark.parametrize("content", ["[]", '[{"id": "a"}]', '"x"', "{}"])
 def test_a_question_file_of_another_shape_is_refused_in_a_sentence(tmp_path, content):
     from cairnmind.repository_evaluation import load_questions

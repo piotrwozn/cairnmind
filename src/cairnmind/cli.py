@@ -1678,7 +1678,8 @@ def run(ctx: typer.Context, project: str, client: str, worktree: Path | None = N
         root = str(worktree.expanduser().resolve())
         if not store.query("SELECT id FROM project_roots WHERE project_id=:project AND path=:path",
                             {"project": selected["id"], "path": root}):
-            raise typer.BadParameter("The worktree must be a registered folder of the project")
+            from cairnmind.sql import unregistered_root
+            refuse(unregistered_root(root, selected))
         selected = {**selected, "root": root}
     args = list(ctx.args)
     if args[:1] == ["--"]:
