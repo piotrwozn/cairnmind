@@ -869,11 +869,14 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         if response.is_error:
             return forward(response)
         from .api_runtime import stage_readiness
-        from .stages import project_routing, resolve_stage
+        from .stages import check_declared, project_routing, resolve_stage
+        from .verification import declared_check_names
         # The built-in agent's credential is read from this cockpit's store, which also holds
         # keys saved only for its session; nothing is sent to a provider.
         result = await asyncio.to_thread(resolve_stage, response.json(), *project_routing(state.load(), selected["id"]),
                                          readiness=stage_readiness(settings, credentials))
+        if result.get("action") == "run_check":  # a profile the folder does not declare is not offered
+            result = check_declared(result, await asyncio.to_thread(declared_check_names, worktree))
         return {**result, "project_id": selected["id"], "worktree": worktree}
 
     @app.get("/api/plans")

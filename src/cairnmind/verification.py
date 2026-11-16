@@ -322,6 +322,19 @@ def load_profiles(store, project_id, worktree=None) -> dict:
     return profiles
 
 
+def declared_check_names(root) -> list[str] | None:
+    """The check profile names a worktree's checks file declares ([] without one), None if it cannot be read.
+
+    Only the names: `stage next` uses them to offer a check run; the run itself still validates the profile.
+    """
+    try:
+        document = _config_document(Path(root).expanduser().resolve())
+    except (OSError, ValueError):
+        return None
+    checks = (document or {}).get("checks", {})
+    return [name for name in checks if isinstance(name, str)] if isinstance(checks, dict) else None
+
+
 def _stop_group(process):
     try:
         os.killpg(process.pid, signal.SIGTERM)

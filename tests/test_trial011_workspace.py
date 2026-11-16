@@ -398,7 +398,9 @@ async def test_check_connection_explains_a_missing_or_invalid_key(tmp_path, monk
     result = shown[-1].value
     from cairnmind.terminal_ui import summary_text
     text = summary_text(result, language)
-    assert text.splitlines()[0].startswith(sentence) and code in text  # the code stays, after the words
+    # Second trial: the sentence alone; the bare code is kept for a report under Technical details.
+    assert text.splitlines()[0].startswith(sentence) and code not in text
+    assert result["code"] == code
 
 
 # Out-of-range profile limit says only 'A profile limit is outside the allowed range.', attached to Connection name

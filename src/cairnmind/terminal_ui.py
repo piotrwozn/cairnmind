@@ -154,6 +154,8 @@ def summary_text(value, language="en"):
                         "Applying the import puts the imported text or status in their place.",
                         language, count=value["replaces_confirmed_here"]["total"]))
     for key in ("message", "summary", "status", "state", "code", "reason"):
+        if key == "code" and isinstance(value.get("message"), str) and value["message"]:
+            continue  # the sentence says it; the bare code stays under Technical details (#243)
         item = value.get(key)
         if isinstance(item, (str, int, float, bool)):
             lines.append(safe_text(item)[:500])

@@ -224,6 +224,13 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#inspector-filter").display = not is_memory
         self.query_one("#impact-bar").display = view == "impact"
         self.query_one("#entity-actions").display = not is_memory
+        if is_memory and self._count_notice is not None:
+            # The snapshot view has no list: a count left on the line belongs to the list before it.
+            line = self.query_one("#panel-notice", Static)
+            if str(line.render()) == self._count_notice[2]:
+                line.update("")
+                line.display = False
+            self._count_notice = None
 
     @on(Select.Changed, "#inspector-view")
     def view_changed(self, event):

@@ -1327,8 +1327,10 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
     from cairnmind.api_runtime import cli_stage_readiness
     from cairnmind.cockpit_state import CockpitState
     from cairnmind.plans import PlanManager
-    from cairnmind.stages import FROM_WORKSPACE, describe, next_command, project_routing, resolve_stage
+    from cairnmind.stages import (FROM_WORKSPACE, check_declared, describe, next_command, project_routing,
+                                  resolve_stage)
     from cairnmind.terminal_safe import safe_text
+    from cairnmind.verification import declared_check_names
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
     scope = actor_scope(store, selected["id"], worktree)
@@ -1336,6 +1338,7 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
     stages, slots, profiles = project_routing(CockpitState(ctx.obj).load(), selected["id"])
     decision = resolve_stage(plans.next_task(selected["id"], plan_id, scope), stages, slots, profiles,
                              readiness=cli_stage_readiness(ctx.obj))
+    decision = check_declared(decision, declared_check_names(scope or selected["root"]))
     active = decision["plan"] if plan_id is None else plans.next_task(selected["id"], None, scope)["plan"]
     decision["command"], decision["command_reason"] = next_command(
         decision, _project_handle(store, selected), scope or str(Path(selected["root"]).resolve()),
