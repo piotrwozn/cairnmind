@@ -289,7 +289,7 @@ CATALOG = {
     "Codex — ChatGPT account": "Codex — konto ChatGPT", "Claude Code — Claude account": "Claude Code — konto Claude",
     "GitHub Copilot — GitHub account": "GitHub Copilot — konto GitHub", "Ollama — local models": "Ollama — modele lokalne",
     "OpenAI — API key": "OpenAI — klucz API", "Anthropic — API key": "Anthropic — klucz API", "OpenAI-compatible API": "API zgodne z OpenAI",
-    "Ctrl+B, then Space: search all commands\n"
+    "Ctrl+B, then Space: search the main commands\n"
     "Ctrl+B, then p / 1 / 2 / i / g: projects / assistant / second assistant / memory / graph\n"
     "Ctrl+B, then Tab: next view\nCtrl+B, then z: expand or restore panes\n"
     "Ctrl+B, then n: save a finding to memory (Ctrl+S saves, Esc closes)\n"
@@ -303,7 +303,7 @@ CATALOG = {
     "Graph: a switches between all memory and the project; r resets the camera; Backspace goes up.\n"
     "Native assistants keep their own shortcuts, paste, Ctrl+C and approval dialogs.\n"
     "Memory readiness, session activity and terminal control are separate states.":
-    "Ctrl+B, potem Spacja: wyszukaj polecenie\n"
+    "Ctrl+B, potem Spacja: wyszukaj jedno z głównych poleceń\n"
     "Ctrl+B, potem p / 1 / 2 / i / g: projekty / asystent / drugi asystent / pamięć / graf\n"
     "Ctrl+B, potem Tab: następny widok\nCtrl+B, potem z: powiększ lub przywróć panele\n"
     "Ctrl+B, potem n: zapisz ustalenie w pamięci (Ctrl+S zapisuje, Esc zamyka)\n"

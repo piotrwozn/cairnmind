@@ -458,6 +458,23 @@ def test_every_top_level_command_has_a_description():
             assert "\n" not in first, (name, sub.name, first)
 
 
+def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
+    # The activity panel has its own key and no menu entry (Notices stays the last entry): the help and the
+    # guide say "main commands" and name the key (#244).
+    from cairnmind.terminal_commands import COMMANDS
+    from cairnmind.terminal_i18n import tr
+    assert "activ" not in " ".join(title.lower() for title, *_ in COMMANDS)
+    source = (Path(__file__).resolve().parents[1] / "src" / "cairnmind" / "terminal_commands.py").read_text()
+    assert "search all commands" not in source and "Ctrl+B, then Space: search the main commands" in source
+    assert "Ctrl+B, then a: activity panel" in source
+    english = source.split("help_text(self.translate(")[1].split("))")[0]
+    text = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', english)).encode().decode("unicode_escape")
+    polish = tr(text, "pl")
+    assert polish != text and "głównych poleceń" in polish
+    guide = (Path(__file__).resolve().parents[1] / "docs" / "TERMINAL.md").read_text()
+    assert "menu of all commands" not in guide and "the activity panel has its own key, `a`" in guide
+
+
 def test_plan_save_names_and_explains_its_arguments(monkeypatch):
     monkeypatch.setenv("COLUMNS", "200")
     shown = plain_words(runner.invoke(cli.app, ["plan", "save", "--help"]).output)

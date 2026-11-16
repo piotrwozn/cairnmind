@@ -68,7 +68,7 @@ Press the `Ctrl+B` prefix first, then the listed key:
 
 | Key after `Ctrl+B` | Action |
 |---|---|
-| `Space` | Searchable menu of all commands |
+| `Space` | Searchable menu of the main commands; the activity panel has its own key, `a` |
 | `?` | Keyboard help |
 | `p` | Projects, profiles and settings pane |
 | `1` | First visible client |
