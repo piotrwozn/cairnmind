@@ -369,7 +369,8 @@ def test_doctor_reports_the_user_and_the_encryption_and_refuses_root_on_a_remote
     settings = Settings.load(root)
     block = doctor_block(settings, monkeypatch, lambda request: pytest.fail("a refused setup sent a request"))
     assert block["user"] == "root" and block["transport"] == "https (certificate verification on)"
-    assert block["password_source"] == "file" and not block["available"]
+    # Refused before anything is sent: whether the server answers is not known (#242).
+    assert block["mode"] == "connect" and block["password_source"] == "file" and block["available"] is None
     assert "root" in block["error"] and SECRET not in json.dumps(block)
 
 
