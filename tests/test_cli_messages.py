@@ -401,7 +401,8 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
                "tmux": {"code": "ready"}, "arcadedb": {"available": True, "database_available": True},
                "ollama": {"available": True, "chat_model_installed": True, "embedding_model_installed": True},
                "memory_models": {"chat": {"reachable": True}}, "service": {"available": False},
-               "environment_notes": [], "store_writer": {"role": "writer"}}
+               "environment_notes": [], "data_dir": "/home/me/.local/share/cairnmind",
+               "store_writer": {"role": "writer"}}
     assert doctor_attention.attention(healthy) == []
     broken = {**healthy, "environment_notes": ["CAIRNMIND_X and DEVBRAIN_X are both set and differ."],
               "tmux": {"code": "too_old", "minimum_version": "3.4"},
@@ -418,6 +419,9 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
                           ([1, 2], "The doctor report could not be read."),
                           ({}, "The doctor report could not be read."),
                           ({"service": {"available": True}}, "The doctor report could not be read."),
+                          # What `cairnmind init` prints, and a part of a report: not a report that found nothing.
+                          ({"data_dir": "/x", "next": "cairnmind doctor"}, "The doctor report could not be read."),
+                          ({"store_writer": []}, "The doctor report could not be read."),
                           ({"java": "of another shape"}, "The doctor report could not be read.")):
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(report)))
         assert doctor_attention.main() == 0

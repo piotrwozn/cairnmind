@@ -12,7 +12,8 @@ import sys
 from .terminal_safe import safe_text
 
 FULL_REPORT = "The full report: cairnmind doctor"
-# Keys every doctor report has; an object with none of them is not a report that found nothing.
+# Keys every doctor report has; an object without all of them (`cairnmind init` prints one with data_dir alone)
+# is not a report that found nothing.
 REPORT_KEYS = frozenset({"environment_notes", "data_dir", "store_writer"})
 
 
@@ -78,7 +79,7 @@ def attention(report: dict) -> list[str]:
 def main() -> int:
     try:
         report = json.loads(sys.stdin.read())
-        if not isinstance(report, dict) or not REPORT_KEYS & report.keys():
+        if not isinstance(report, dict) or not REPORT_KEYS <= report.keys():
             # Any other object, even {}, is not a report that found nothing (#244).
             raise ValueError("not a doctor report")
         lines = attention(report)
