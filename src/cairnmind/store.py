@@ -1089,7 +1089,10 @@ class Store:
             target = f"record:{dependency}"
             if tx.query("SELECT id FROM nodes WHERE id=:id", {"id": target}):
                 edge(target, "depends_on", record["source_ids"][0])
-        if record.get("supersedes"):
+        # As for a dependency: a replacement written before the record it replaces (an import in ID order)
+        # gets its edge when its graph is written again after that record's (#239).
+        if record.get("supersedes") and tx.query("SELECT id FROM nodes WHERE id=:id",
+                                                 {"id": f"record:{record['supersedes']}"}):
             edge(f"record:{record['supersedes']}", "supersedes", record["source_ids"][0])
 
     def _revision(self, tx, record):

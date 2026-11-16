@@ -254,7 +254,8 @@ class PublishedImporter:
                 row = {**head, "metadata": {**head["metadata"], **wanted}, "version": head["version"] + 1, "updated_at": now}
                 heads[task_id] = self._store(tx, row, tree["paths"][task_id])
                 written.setdefault(task_id, None)
-        for _ in range(2):  # The second pass adds dependency edges to records written after their dependants.
+        # The second pass adds the dependency and supersedes edges to records written after the record naming them.
+        for _ in range(2):
             for record_id in written:
                 self.store._record_graph(tx, heads[record_id])
         from .plans import _plan_graph, _tasks
