@@ -1287,8 +1287,9 @@ def stage_next(ctx: typer.Context, project: str, plan_id: str | None = None, wor
         decision, _project_handle(store, selected), scope or str(Path(selected["root"]).resolve()),
         slots=slots, profiles=profiles, active_plan_id=(active or {}).get("id"))
     from cairnmind.config import default_data_dir
-    if decision["command"] and ctx.obj.data_dir != default_data_dir():
-        # The printed command acts on this installation, not on the default one (#244).
+    if decision["command"] and ctx.obj.data_dir != default_data_dir(environ={}):
+        # The printed command acts on this installation, not on the default one (#244). It is compared with
+        # what a plain shell would use: CAIRNMIND_HOME, set by a wrapper, is not set where it is pasted.
         decision["command"][1:1] = ["--data-dir", str(ctx.obj.data_dir)]
     if as_json:
         output(decision)

@@ -111,14 +111,15 @@ def _holds_a_store(path: Path) -> bool:
         return False
 
 
-def default_data_dir() -> Path:
+def default_data_dir(environ=None) -> Path:
     """Where this installation keeps its data when no --data-dir is given.
 
     A directory that an earlier version created is used where it is: it is never moved or
     copied, because project files, running services and the database name all refer to its
-    path. Only an installation with no data yet starts under the current name.
+    path. Only an installation with no data yet starts under the current name. environ={} gives
+    the directory of a plain shell, where no CAIRNMIND_HOME is set.
     """
-    chosen = _home_override()
+    chosen = _home_override(environ)
     if chosen:
         return Path(chosen).expanduser().resolve()
     base = Path("~/.local/share").expanduser()
