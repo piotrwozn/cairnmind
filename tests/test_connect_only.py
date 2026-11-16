@@ -235,6 +235,11 @@ def test_engine_status_with_only_the_address_is_refused_and_names_what_is_missin
     message = words(status["error"])
     assert "arcade_user (root, the default, would be used)" in message
     assert f"arcade_database (the name {settings.arcade_database}, derived from this data directory's path" in message
+    # doctor says the same (second trial of #242): the server was not asked, so it is not reported as one that
+    # does not answer, which an installer turns into "the database engine does not answer".
+    from cairnmind.database_credentials import doctor_block
+    block = doctor_block(settings)
+    assert block["available"] is None and "needs the password set where that server runs" in block["error"]
     # The first command saved config.json with the default root in it (#242 review): later commands still
     # name the user, which was never set on purpose.
     assert json.loads((data / "config.json").read_text())["arcade_user"] == "root"

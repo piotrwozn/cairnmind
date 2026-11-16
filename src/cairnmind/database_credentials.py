@@ -297,6 +297,9 @@ def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
         client = ArcadeClient(settings)
     except ValueError as exc:
         result["error"] = str(exc)
+        if connect:
+            # Nothing was sent, so whether the server answers is not known: None, as in `engine status` (#242).
+            result["available"] = None
         return result
     try:
         info = client._request("GET", "/api/v1/server?mode=basic", timeout=timeout).json()
