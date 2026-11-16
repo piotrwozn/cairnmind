@@ -89,15 +89,16 @@ The coding assistants it works with, Codex CLI and Claude Code among them, are n
 
 ## Measured results
 
-The first three rows were measured on 9 November 2026 on release 0.8.0 with `qwen3.5:9b` on an RTX 4080 Super, in isolated databases with synthetic fixtures. The last two were measured on 16 November 2026 on the tree of 0.11.0 with the default models, on Cairnmind's own repository. None of them is proof of behaviour on every real project.
+Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in isolated databases: on release 0.8.0 on 9 November 2026, and on the code of 0.11.0 on 16 November 2026 (one run of each command for the release, and three runs of the repository questions before it). Recall, portable memory and extraction use synthetic fixtures; the repository questions use Cairnmind's own repository. None of them is proof of behaviour on every real project.
 
 | Evaluation | Result |
 |---|---|
-| Recall: 20 golden questions, pass threshold 0.9 | 1.0 in 6 of 6 runs |
+| Recall: 20 golden questions, pass threshold 0.9 | 1.0 on 0.11.0; 1.0 in 6 of 6 runs on 0.8.0 |
 | Hand-off Codex → Claude Code → fresh Codex, real clients | passed once, before the 0.8.0 fixes; not repeated since |
-| Portable memory: extraction, transfer, cited recall, project isolation | 3 of 3 runs on 0.8.0 |
-| Questions about Cairnmind's own repository, complete and right | 19, 19 and 20 of 20 in three runs, none complete and wrong |
-| Questions about things the repository does not have, refused | 20 of 21 |
+| Portable memory: extraction, transfer, cited recall, project isolation | passed on 0.11.0; 3 of 3 runs on 0.8.0 |
+| Extraction from conversations: share of proposals a person would reject | 29% of 28 proposals on 0.11.0, every kept record found; 65% on 0.10.0 |
+| Questions about Cairnmind's own repository, complete and right | 20 of 20 in the release run, 19, 19 and 20 in three runs before it; none complete and wrong |
+| Questions about things the repository does not have, refused | 20 of 21; the one answered (a name in lower case) was answered wrong |
 
 The method, the problems the measurement uncovered and the limits of these numbers are described in [docs/EVALUATION.md](docs/EVALUATION.md) and [docs/evaluation/RESULTS.md](docs/evaluation/RESULTS.md).
 
