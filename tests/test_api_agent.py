@@ -1037,3 +1037,98 @@ async def test_a_record_the_store_does_not_save_reaches_the_model_with_what_to_d
     finally:
         await agent.close()
 
+
+def _pad_catalogue(agent, target):
+    """Add tool schemas until the system prompt, the whole catalogue and the output room alone are
+    estimated at about `target` tokens, as a large MCP catalogue would be."""
+    from cairnmind.api_agent import SYSTEM
+    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+
+    def fixed():
+        tools = [{"type": "function", "function": tool} for tool in agent._schemas.values()]
+        return ollama_prompt_estimate(_ollama_messages([{"role": "system", "content": SYSTEM}]), tools) + 4096
+
+    number = 0
+    while fixed() < target:
+        number += 1
+        agent._schemas[f"pad_{number}"] = {"name": f"pad_{number}", "description": "d" * 400,
+                                           "parameters": {"type": "object", "properties": {}}}
+    return fixed()
+
+
+def _fits_the_window(request, window=32768):
+    from cairnmind.api_providers import _ollama_messages, ollama_prompt_estimate
+    tools = [{"type": "function", "function": tool} for tool in request["tools"]]
+    return ollama_prompt_estimate(_ollama_messages(request["messages"]), tools) + 4096 <= window
+
+
+@pytest.mark.asyncio
+async def test_a_large_tool_catalogue_alone_never_withdraws_the_effect_tools(setup):
+    # #240, review: the 80% trigger counted the tool catalogue, which a compaction cannot shrink. A catalogue
+    # past the share set the notice on every call after the ACK, though the provider would send the request.
+    memory = Memory()
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        _pad_catalogue(agent, int(32768 * 0.85))
+        result = await agent.turn("Check")
+        assert result["status"] == "completed", result
+        last = provider.requests[-1]
+        assert "write_file" in {tool["name"] for tool in last["tools"]}
+        assert not any("HOST CONTEXT BUDGET" in str(row.get("content")) for row in last["messages"])
+        assert _fits_the_window(last)
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_renewed_context_that_a_compaction_cannot_shorten_gets_no_second_notice(setup):
+    # #240, review: with the catalogue just under the share, the context a compaction keeps (request, packet,
+    # ACK) put the request past it again, so each compaction bought one tool batch at most.
+    memory = Memory()
+    compact = {"state": {"goal": "Continue", "results": ["Read"], "next_step": "Write"}}
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("compact_context", compact)), reply(call("resume_context")),
+        reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("write_file", {"path": "app.py", "content": "VALUE=7\n", "expected_sha256": None})),
+        reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        _pad_catalogue(agent, int(32768 * 0.8) - 1500)
+        result = await agent.turn("r" * 12_000)
+        assert result["status"] == "completed", result
+        assert sum(name == "checkpoint" for name, _ in memory.calls) == 1
+        assert (setup[3] / "app.py").read_text() == "VALUE=7\n"
+        assert sum(row["type"] == "context_notice" for row in agent.journal.events()) == 1
+        # Every request still fitted the provider's own check of the whole window.
+        assert all(_fits_the_window(request) for request in provider.requests)
+    finally:
+        await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reread_keeps_the_acknowledged_packet_in_the_model_context(setup):
+    # #240, review: a reread that failed stubbed out the only copy of the packet the run had acknowledged.
+    class FlakyMemory(Memory):
+        async def execute(self, name, arguments):
+            if name == "resume_context" and any(called == "resume_context" for called, _ in self.calls):
+                self.calls.append((name, deepcopy(arguments)))
+                raise RuntimeError("service unavailable")
+            return await super().execute(name, arguments)
+
+    memory = FlakyMemory()
+    memory.packet["records"] = [{"content": "R" * 2_000}]
+    provider = ScriptedProvider(
+        reply(call("resume_context")), reply(call("ack_resume", memory.ack_arguments())),
+        reply(call("resume_context")), reply(text="Done."))
+    agent = engine(setup, provider, memory)
+    try:
+        assert (await agent.turn("Check"))["status"] == "completed"
+        rows = [json.loads(row["content"]) for row in provider.requests[-1]["messages"]
+                if row.get("role") == "tool" and row.get("name") == "resume_context"]
+        assert rows[1]["error_code"] == "tool_failed"
+        assert rows[0]["packet"]["hash"] == "a" * 64 and "R" * 2_000 in json.dumps(rows[0])
+    finally:
+        await agent.close()
