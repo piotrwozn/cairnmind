@@ -467,3 +467,25 @@ async def test_a_source_id_of_a_bad_shape_is_the_same_refusal_and_reaches_no_ser
             await memory.execute("read_source", {"source_id": value})
         assert raised.value.code == "unknown_source" and raised.value.message == UNKNOWN_SOURCE_HINT
     assert not requests
+
+
+@pytest.mark.asyncio
+async def test_the_store_sentence_about_a_record_shape_gets_what_a_record_looks_like(tmp_path):
+    # #240, review: a record of an unknown kind or without content came back as a bare tool_failed.
+    from cairnmind.agent_memory import RECORD_SHAPE_HINT, MemoryRefusal
+    from cairnmind.config import Settings
+    from cairnmind.store import KINDS
+    body = {"detail": "Record content must be nonempty text", "refusal": "record"}
+    transport = httpx.MockTransport(lambda request: httpx.Response(400, json=body))
+    worktree = tmp_path / "project"
+    worktree.mkdir()
+    memory = AgentMemoryClient(Settings(tmp_path / "data"), "project-one", worktree, "session-one",
+                               transport=transport)
+    memory.packet_id = "packet-1"
+    with pytest.raises(MemoryRefusal) as raised:
+        await memory.execute("remember", {"record": {"kind": "fact"}, "sources": ["s"]})
+    assert raised.value.code == "invalid_record"
+    assert raised.value.message == "Record content must be nonempty text. " + RECORD_SHAPE_HINT
+    # The hint names every kind the store saves, and no other.
+    listed = RECORD_SHAPE_HINT.split("kind (")[1].split(")")[0].replace(" or ", ", ").split(", ")
+    assert set(listed) == KINDS

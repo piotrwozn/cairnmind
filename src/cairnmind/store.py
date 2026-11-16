@@ -148,6 +148,11 @@ class JobNotFoundError(ValueError):
     """No job is visible in the requested project."""
 
 
+class RecordRefused(ValueError):
+    """A record of a shape the store does not save (kind, status, content, key, metadata). The service marks
+    it, so that the built-in agent hands the model the reason instead of a bare tool failure (#240)."""
+
+
 def validate_task_state(value):
     """Validate a supplied task state without coercing or inferring a value."""
     if not isinstance(value, str) or value not in TASK_STATES:
@@ -1116,7 +1121,7 @@ class Store:
         self._require_project(tx, project_id)
         self._validate_sources(tx, project_id, sources)
         if not isinstance(record, dict):
-            raise ValueError("record must be an object")
+            raise RecordRefused("record must be an object")
         old = None
         if record.get("id"):
             old = one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record["id"], "project": project_id}, False)
@@ -1138,19 +1143,19 @@ class Store:
         kind, status = record.get("kind", old["kind"] if old else None), record.get("status", old["status"] if old else "proposed")
         content = record.get("content", old["content"] if old else None)
         if not isinstance(kind, str) or not isinstance(status, str) or kind not in KINDS or status not in STATUSES:
-            raise ValueError("Unknown record kind or status")
+            raise RecordRefused("Unknown record kind or status")
         if old and kind != old["kind"]:
-            raise ValueError("Record kind cannot change")
+            raise RecordRefused("Record kind cannot change")
         if not isinstance(content, str) or not content.strip():
-            raise ValueError("Record content must be nonempty text")
+            raise RecordRefused("Record content must be nonempty text")
         record_id, key = (old["id"] if old else record.get("id") or str(uuid4())), record.get("key", old["key"] if old else None)
         key = record_id if key is None else key
         if not isinstance(key, str) or not key.strip():
-            raise ValueError("Record key must be nonempty text")
+            raise RecordRefused("Record key must be nonempty text")
         metadata = dict(old.get("metadata", {})) if old and not replace_metadata else {}
         updates = record.get("metadata", {})
         if not isinstance(updates, dict):
-            raise ValueError("Record metadata must be an object")
+            raise RecordRefused("Record metadata must be an object")
         if not conflict_review:
             # An agent may mark a possible conflict when it creates a finding, but it can
             # neither unmark one later nor record a decision about it.

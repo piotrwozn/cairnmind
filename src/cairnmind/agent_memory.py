@@ -30,6 +30,10 @@ KEY_EXISTS_HINT = ("An active record of this kind already has this key. Nothing 
 UNKNOWN_SOURCE_HINT = ("No archived source of this project has this id. Nothing was read. Use a source id that "
                        "resume_context, memory_records or a tool result gave you (full_result_source_id); a "
                        "session, record or packet id is not a source id.")
+# After the store's refusal of a record's shape (store.RecordRefused): what a record it saves looks like.
+RECORD_SHAPE_HINT = ("Nothing was saved. A record has kind (decision, task, fact, constraint, question, preference "
+                     "or checkpoint), content (nonempty text), and optionally key (nonempty text), status "
+                     "(proposed) and metadata (an object); an existing record keeps its kind.")
 _SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$")
 _SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _PROVIDER_FIELDS = {"continuation", "reasoning", "thinking", "encrypted_content", "signature"}
@@ -441,8 +445,12 @@ class AgentMemoryClient:
                 if response.status_code == 400 and payload.get("refusal") == "confirmation":
                     raise MemoryRefusal("confirmation_refused", safe_text(detail, limit=4000))
                 if response.status_code == 400 and payload.get("refusal") == "record":
-                    # remember_input.record_error: the fields that are wrong and the ones a record has.
-                    raise MemoryRefusal("invalid_record", safe_text(detail, limit=4000))
+                    # remember_input.record_error: the fields that are wrong and the ones a record has; or the
+                    # store's sentence about a kind, status, content, key or metadata it does not save.
+                    text = safe_text(detail, limit=4000)
+                    if "Nothing was saved" not in text:
+                        text = f"{text.rstrip('.')}. {RECORD_SHAPE_HINT}"
+                    raise MemoryRefusal("invalid_record", text)
                 if response.status_code == 409 and detail.startswith(_KEY_EXISTS):
                     raise MemoryRefusal("key_exists", KEY_EXISTS_HINT)
                 if response.status_code == 404 and path.startswith("/inspector/sources/"):

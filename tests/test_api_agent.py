@@ -988,3 +988,52 @@ async def test_the_compaction_notice_comes_before_the_ollama_window_refuses(setu
             assert ollama_prompt_estimate(_ollama_messages(request["messages"]), tools) + 4096 <= window
     finally:
         await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_a_record_the_store_does_not_save_reaches_the_model_with_what_to_do_on_real_arcade(tmp_path):
+    # #240, review: an unknown kind, a missing content or metadata that is not an object reached the model as
+    # a bare tool_failed; only unknown field names were refused with a reason.
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    root.joinpath("app.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True)
+    store = Store(tmp_path / "data")
+    project = store.add_project("shapes", root)
+    source = store.snapshot(project["id"], "doc://notes", "The engine is ArcadeDB.")["id"]
+    sid = uuid4().hex
+    run = {"id": uuid4().hex, "generation": 1, "project_id": project["id"],
+           "worktree": str(root), "session_id": sid, "client": "api"}
+    memory = AgentMemoryClient(store.settings, project["id"], root, sid,
+                               transport=httpx.ASGITransport(app=create_app(store.settings, start_worker=False)))
+
+    def ack(messages, tools):
+        packet = json.loads(messages[-1]["content"])["packet"]
+        return reply(call("ack_resume", {"packet_id": packet["id"], "packet_hash": packet["hash"],
+                                           "readback": {"plan": None, "task": None}}))
+
+    provider = ScriptedProvider(
+        reply(call("resume_context")), ack,
+        reply(call("remember", {"record": {"kind": "note", "content": "Kind"}, "sources": [source]}),
+              call("remember", {"record": {"kind": "fact"}, "sources": [source]}),
+              call("remember", {"record": {"kind": "fact", "content": "Meta", "metadata": "x"},
+                                "sources": [source]})),
+        reply(text="Done."))
+    profile = {"id": "local", "client": "api", "provider": "ollama", "model": "fixture", "limits": {}}
+    agent = AgentEngine(store.settings, run, profile, provider=provider, memory=memory)
+    try:
+        await agent.turn("Remember")
+        kind, content, metadata = tools_results(agent)[-3:]
+        for refused, sentence in ((kind, "Unknown record kind or status"),
+                                  (content, "Record content must be nonempty text"),
+                                  (metadata, "Record metadata must be an object")):
+            assert refused["error_code"] == "invalid_record", refused
+            assert refused["message"].startswith(sentence) and "Nothing was saved" in refused["message"]
+        assert not store.query("SELECT FROM records WHERE content='Kind' OR content='Meta'")
+    finally:
+        await agent.close()
+
