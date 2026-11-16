@@ -756,7 +756,8 @@ def impact_verdict(ctx: typer.Context, project: ProjectArg, record_id: RecordIdA
         result = record_verdict(store, pid, record_id, fingerprint, verdict, since,
                                 str(worktree.expanduser().resolve()) if worktree else None, note)
     except LookupError as exc:
-        raise typer.BadParameter(str(exc)) from None
+        # The record is not in that list (it may exist): a refusal of the state, not a usage error (#244).
+        refuse(str(exc))
     output(result)
 
 
