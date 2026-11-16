@@ -554,9 +554,11 @@ def test_remember_and_store_takeover_help_read_as_sentences(monkeypatch):
     assert "remember [OPTIONS] {PROJECT} {CONTENT}" in plain_words(remember)  # not {project}
     assert "PROJECT <str> The project's name, id or folder. [required]" in plain_words(remember)
     takeover = runner.invoke(cli.app, ["store", "takeover", "--help"]).output
-    # At 200 columns the second paragraph is one line: it does not break after "with its".
-    assert any(line.strip().startswith("The previous writer stops") and line.rstrip().endswith("kept in the store.")
-               for line in takeover.splitlines()), takeover
+    # At 200 columns the second paragraph is one line: it does not break after "with its". Each line is
+    # compared without colour codes: on CI the help is coloured, and the codes stand at both ends of the line.
+    lines = [plain_words(line) for line in takeover.splitlines()]
+    assert any(line.startswith("The previous writer stops") and line.endswith("kept in the store.")
+               for line in lines), takeover
 
 
 def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
