@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 from .check_profile_messages import check_error_text
+from .terminal_connection_hints import connection_hint
 from .terminal_i18n_messages import display_word
 from .terminal_notices import about
 from .stages import (AGENT_CLIENTS, CLIENT_STAGES, CONFIRM_PROBLEMS, CONNECTION_PROBLEMS, LAUNCHABLE_CLIENTS, STAGES,
@@ -185,10 +186,15 @@ async def run_next_stage(app):
         failed = [row.get("code") for row in current.get("launch_errors", [])
                   if row.get("slot_id") == decision["slot_id"]]
         if failed:
-            app.notice_for(subject, _headed(app, decision,
-                                            app.t("The assistant did not start") + ": " + ", ".join(map(str, failed))))
+            # The stage, its assistant and the codes of this slot, then what to do when a code has a
+            # sentence: the state poll's notice before it says only that something needs attention.
+            explanation = app.t("The assistant did not start") + ": " + ", ".join(map(str, failed))
+            if hint := connection_hint(failed, app.t):
+                explanation += "\n" + hint
+            app.notice_for(subject, _headed(app, decision, explanation))
         elif current.get("last_error"):
-            app.notice_for(subject, app.launch_notice(current))
+            # The state poll inside reconcile has usually posted this same text already: once per press.
+            app.post_launch_notice(current, about=subject)
         elif decision["client"] in AGENT_CLIENTS:
             app.notice_for(subject, _headed(app, decision, app.t(AGENT_STARTED)))
         else:

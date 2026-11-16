@@ -170,3 +170,56 @@ async def test_a_long_notice_keeps_the_focused_project_button_in_view(tmp_path, 
         page = app.query_one("#project-page")
         assert page.max_scroll_y > 0  # the page does scroll at this size: the case of the trial
         assert app.focused is button and page.region.contains_region(button.region), (page.region, button.region)
+
+
+# Review of the second round: Run next stage posted the launch problem after the state poll inside reconcile had
+# already posted it (the same order as Open, left out of the guard), and its own stage text gave only the codes.
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_run_next_stage_records_a_launch_problem_once_per_press(tmp_path, monkeypatch, language):
+    from test_terminal_ux080 import setup_ui
+    from test_workspace_stage import answer_stage, decision
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    project = broker.projects[0]
+    answer_stage(broker, decision("start_slot", project, slot_id="slot-native", client="codex"))
+
+    def refused(*args, **kwargs):
+        workspace.update({"last_error": "Start work again explicitly after the workspace resumes."})
+        return workspace.read()
+    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", refused)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_next_stage()
+        await settle(app, pilot)
+        await pilot.pause(.3)
+        await settle(app, pilot)
+        expected = app.t(app.launch_notice(workspace.read()))
+        assert notice_of(app) == expected
+        same = [entry for entry in app.notice_history.entries if entry.text == expected]
+        assert sum(entry.count for entry in same) == 1, [(e.text, e.count) for e in app.notice_history.entries]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_run_next_stage_says_what_to_do_about_a_key_the_launch_refused(tmp_path, monkeypatch, language):
+    from test_terminal_ux080 import setup_ui
+    from test_workspace_stage import answer_stage, decision
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    project = broker.projects[0]
+    answer_stage(broker, decision("start_slot", project, slot_id="slot-api", client="api", label="Cloud API"))
+
+    def refused(*args, **kwargs):
+        workspace.update({"launch_errors": [{"slot_id": "slot-api", "client": "api", "code": "credential_invalid"}]})
+        return workspace.read()
+    monkeypatch.setattr("cairnmind.workspace.refresh_workspace", refused)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.action_next_stage()
+        await settle(app, pilot)
+        text = app.notice_history.entries[-1].text
+    assert tr("The assistant did not start", language) + ": credential_invalid" in text
+    assert tr("The API key of this connection is not a valid key. Open Connections, choose the connection, then "
+              "Set API key, or correct its environment variable.", language) in text

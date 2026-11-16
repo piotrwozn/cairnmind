@@ -380,12 +380,13 @@ class SidebarApp(BasePanel):
         from .terminal_record_kinds import check_partial
         check_partial(self, value)  # an unknown transcript record kind that blocks the packet (#210)
 
-    def post_launch_notice(self, value):
-        """The launch problem, once while the line shows it: the state poll and Start work or Open both
-        report it, and a change of the state that does not change the text adds nothing to Notices."""
+    def post_launch_notice(self, value, about=None):
+        """The launch problem, once while the line shows it: the state poll and Start work, Open or Run
+        next stage all report it, and a change of the state that does not change the text adds nothing
+        to Notices. `about` is the project a press was for (see notice_for)."""
         text = self.launch_notice(value)
         if str(self.query_one("#panel-notice", Static).render()) != self.t(text):
-            self.notice(text)
+            self.notice_for(about, text) if about else self.notice(text)
 
     def notice(self, value, kind="info"):
         # A form result or another action owns its own message. Later lifecycle
