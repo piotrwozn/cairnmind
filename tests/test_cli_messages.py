@@ -6,6 +6,7 @@ an installation that only reads the store is told what it can do, once; help nam
 from __future__ import annotations
 
 import fcntl
+import inspect
 import json
 from pathlib import Path
 import re
@@ -456,6 +457,40 @@ def test_every_top_level_command_has_a_description():
         for sub in getattr(command, "commands", {"": command}).values():
             first = (sub.help or "").strip().split("\n\n")[0]
             assert "\n" not in first, (name, sub.name, first)
+
+
+def _leaf_commands(command, path=()):
+    for name, sub in (getattr(command, "commands", None) or {}).items():
+        yield from _leaf_commands(sub, (*path, name))
+    if not getattr(command, "commands", None):
+        yield " ".join(path), command
+
+
+def test_every_argument_of_every_command_is_named_and_described_and_no_paragraph_breaks_early():
+    # The first round fixed `plan save` and the first paragraphs only; every command is walked now (#244).
+    commands = list(_leaf_commands(typer.main.get_command(cli.app)))
+    assert len(commands) > 90
+    bare = [(path, param.name) for path, command in commands for param in command.params
+            if param.param_type_name == "argument" and not (getattr(param, "help", None) or "").strip()]
+    assert bare == []
+    lowercase = [(path, param.name) for path, command in commands for param in command.params
+                 if param.param_type_name == "argument" and param.metavar != (param.metavar or "").upper()]
+    assert lowercase == []
+    # Typer joins the lines of the first paragraph and keeps those of the later ones as they are written.
+    wrapped = [path for path, command in commands
+               if any("\n" in part for part in inspect.cleandoc(command.help or "").split("\n\n")[1:])]
+    assert wrapped == []
+
+
+def test_remember_and_store_takeover_help_read_as_sentences(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "200")
+    remember = runner.invoke(cli.app, ["remember", "--help"]).output
+    assert "remember [OPTIONS] {PROJECT} {CONTENT}" in plain_words(remember)  # not {project}
+    assert "PROJECT <str> The project's name, id or folder. [required]" in plain_words(remember)
+    takeover = runner.invoke(cli.app, ["store", "takeover", "--help"]).output
+    # At 200 columns the second paragraph is one line: it does not break after "with its".
+    assert any(line.strip().startswith("The previous writer stops") and line.rstrip().endswith("kept in the store.")
+               for line in takeover.splitlines()), takeover
 
 
 def test_the_menu_help_and_the_guide_do_not_say_the_menu_holds_every_command():
