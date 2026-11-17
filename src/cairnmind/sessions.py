@@ -295,18 +295,58 @@ class SessionManager:
         if root not in {str(Path(row["path"]).expanduser().resolve()) for row in roots}:
             raise ValueError("Resume worktree is no longer a registered project root")
 
-    def _state(self, session: dict) -> dict:
-        """Relevant committed state only; transcript technical tails are excluded."""
-        with self.store.transaction():
-            return self._state_locked(session)
+    def _code(self, session: dict) -> dict:
+        """The code state of a session's worktree: Git and every file hashed, twice (#255).
 
-    def _state_locked(self, session: dict) -> dict:
-        from .plans import PlanManager
+        Slow where the worktree is (seconds on a /mnt/c checkout under WSL, more while indexing reads the
+        same files), and it reads no row that a transaction would protect. So it runs before the writer
+        transaction that compares it, never inside one: ArcadeDB ends a server transaction that sees no
+        request for about five seconds ("Remote transaction ... not found or expired"). A failure is kept
+        and raised where the state is computed, so callers see the error they saw before.
+        """
         from .verification import capture_code_state
+
+        project_id, root = session["project_id"], session["worktree"]
+        result: dict[str, Any] = {"scope": (project_id, root)}
+        try:
+            project, _ = self._root(project_id, root)
+            code = capture_code_state(self.store, project_id, worktree=root)
+            result["code"] = code
+            if code.get("status") != "fresh":
+                result["empty_scope"] = _empty_scope(root, self.settings, project)
+        except (OSError, ValueError) as exc:
+            result["error"] = exc
+        return result
+
+    def code_scope(self, session_id: str) -> dict | None:
+        """The code state for ``require_ack(..., code=)``, taken before the caller opens its transaction.
+
+        None for an unknown session: require_ack refuses that before it needs any code state.
+        """
+        try:
+            session = self._session(session_id)
+        except ValueError:
+            return None
+        return self._code(session)
+
+    def _state(self, session: dict, code: dict | None = None) -> dict:
+        """Relevant committed state only; transcript technical tails are excluded."""
+        if code is None:
+            code = self._code(session)
+        with self.store.transaction():
+            return self._state_locked(session, code)
+
+    def _state_locked(self, session: dict, code: dict) -> dict:
+        """The state of the rows, read in the caller's transaction, with ``code`` taken before it (_code)."""
+        from .plans import PlanManager
         from .memory_paths import bound_metadata, memory_bindings
 
         project_id, root = session["project_id"], session["worktree"]
-        project, _ = self._root(project_id, root)
+        if code.get("scope") != (project_id, root):
+            raise ValueError("resume_required: the code state was taken for another session scope")
+        if "error" in code:
+            raise code["error"]
+        self._root(project_id, root)
         following = PlanManager(self.store).next_task(project_id, worktree=root)
         plan, task = following.get("plan"), following.get("task")
         state_rows = self.store.query(
@@ -315,12 +355,16 @@ class SessionManager:
         worktree_state = clean_row(state_rows[0]) if state_rows else None
         records = self.store.list_records(project_id)
         bindings = memory_bindings(self.store, project_id)
-        relevant = []
+        relevant, resolved = [], {}
         for record in records:
             metadata = bound_metadata(self.store, project_id, record.get("metadata"), bindings=bindings)
             kind = record["kind"]
             record_root = metadata.get("worktree") or metadata.get("worktree_root")
-            if record_root and str(Path(record_root).expanduser().resolve()) != root:
+            # Each distinct root is resolved once: resolving reads the file system, and in a transaction
+            # time spent between two requests counts towards its expiry (#255).
+            if record_root and record_root not in resolved:
+                resolved[record_root] = str(Path(record_root).expanduser().resolve())
+            if record_root and resolved[record_root] != root:
                 continue
             if kind in {"decision", "constraint", "preference", "checkpoint"}:
                 relevant.append(record)
@@ -345,10 +389,10 @@ class SessionManager:
                              for source_id in row.get("source_ids", [])})
         state_unknowns = [f"A current plan/task/memory reference has no scoped durable source: {value}"
                           for value in missing_sources]
-        code = capture_code_state(self.store, project_id, worktree=root)
+        code, scope = dict(code["code"]), code
         initial_baseline = False
         if code.get("status") != "fresh":
-            empty_scope, inventory_hash, managed_paths = _empty_scope(root, self.settings, project)
+            empty_scope, inventory_hash, managed_paths = scope["empty_scope"]
             code["unverified_scope_fingerprint"] = inventory_hash
             sources = self.store.query("SELECT uri,kind FROM sources WHERE project_id=:project", {"project": project_id})
             initial_baseline = (empty_scope and not plan and not records and
@@ -1122,6 +1166,7 @@ class SessionManager:
 
     def exact_context(self, session_id: str, packet_id: str) -> dict:
         """Read an exact current packet without refreshing horizons or epochs."""
+        code = self._code(self._session(session_id))  # before the transaction (#255)
         with self.store.transaction():
             session = self._session(session_id)
             packet = self._packet(session)
@@ -1132,7 +1177,7 @@ class SessionManager:
             if continuity:
                 raise ValueError("resume_required: " + continuity[0])
             try:
-                current = self._state_locked(session)
+                current = self._state_locked(session, code)
             except (OSError, ValueError) as exc:
                 raise ValueError(f"resume_required: current project scope cannot be restored ({exc})") from None
             if current["state_hash"] != packet["state_hash"]:
@@ -1162,34 +1207,45 @@ class SessionManager:
         return self.prepare(session["project_id"], session["client"], session["worktree"], session_id,
                             reason="refresh", timeout=0)
 
+    @staticmethod
+    def _refuse_ack(session: dict, packet: dict | None, packet_id: str, packet_hash: str, readback: dict) -> None:
+        """Raise unless ``packet`` is the session's ready current packet and ``readback`` reads it exactly."""
+        if (packet and packet["status"] != "ready" and packet["id"] == packet_id
+                and packet["hash"] == packet_hash and packet["epoch"] == session["epoch"]):
+            # The exact current packet: say why it cannot be acknowledged instead of "does not match".
+            status = "unavailable" if packet["status"] == "unavailable" else "partial"
+            unknowns = [str(value) for value in packet.get("unknowns") or []]
+            reason = (unknowns[0][:300] + (f" (and {len(unknowns) - 1} more)" if len(unknowns) > 1 else "")
+                      if unknowns else "its code state cannot be checked" if status == "unavailable"
+                      else "its archive is incomplete")
+            raise ValueError(f"resume_required: the current packet is {status}, not ready, and cannot be acknowledged: {reason}")
+        if (not packet or packet["status"] != "ready" or packet["id"] != packet_id
+                or packet["hash"] != packet_hash or packet["epoch"] != session["epoch"]
+                or not _current_schema(packet)):
+            raise ValueError("resume_required: ACK does not match a ready current packet")
+        valid_types = (isinstance(readback, dict) and set(readback) == {"plan", "task"}
+                       and all(value is None or (isinstance(value, dict)
+                               and set(value) == {"id", "version"} and isinstance(value["id"], str)
+                               and type(value["version"]) is int and value["version"] > 0)
+                               for value in readback.values()))
+        if not valid_types or readback != _readback(packet):
+            raise ValueError("resume_required: readback must match active plan/task IDs and versions")
+
     def ack(self, session_id: str, packet_id: str, packet_hash: str, readback: dict) -> dict:
+        # Refused early without hashing the worktree; everything is checked again in the transaction.
+        session = self._session(session_id)
+        self._refuse_ack(session, self._packet(session), packet_id, packet_hash, readback)
+        # The code state is taken before the writer transaction, which then holds only database requests:
+        # hashing a slow worktree inside it let ArcadeDB expire it (#255).
+        code = self._code(session)
         with self.store.transaction() as tx:
             session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
             packet = self._packet(session)
-            if (packet and packet["status"] != "ready" and packet["id"] == packet_id
-                    and packet["hash"] == packet_hash and packet["epoch"] == session["epoch"]):
-                # The exact current packet: say why it cannot be acknowledged instead of "does not match".
-                status = "unavailable" if packet["status"] == "unavailable" else "partial"
-                unknowns = [str(value) for value in packet.get("unknowns") or []]
-                reason = (unknowns[0][:300] + (f" (and {len(unknowns) - 1} more)" if len(unknowns) > 1 else "")
-                          if unknowns else "its code state cannot be checked" if status == "unavailable"
-                          else "its archive is incomplete")
-                raise ValueError(f"resume_required: the current packet is {status}, not ready, and cannot be acknowledged: {reason}")
-            if (not packet or packet["status"] != "ready" or packet["id"] != packet_id
-                    or packet["hash"] != packet_hash or packet["epoch"] != session["epoch"]
-                    or not _current_schema(packet)):
-                raise ValueError("resume_required: ACK does not match a ready current packet")
-            valid_types = (isinstance(readback, dict) and set(readback) == {"plan", "task"}
-                           and all(value is None or (isinstance(value, dict)
-                                   and set(value) == {"id", "version"} and isinstance(value["id"], str)
-                                   and type(value["version"]) is int and value["version"] > 0)
-                                   for value in readback.values()))
-            if not valid_types or readback != _readback(packet):
-                raise ValueError("resume_required: readback must match active plan/task IDs and versions")
+            self._refuse_ack(session, packet, packet_id, packet_hash, readback)
             continuity = self._own_continuity(session)
             if continuity:
                 raise ValueError("resume_required: " + continuity[0])
-            if self._state(session)["state_hash"] != packet["state_hash"]:
+            if self._state_locked(session, code)["state_hash"] != packet["state_hash"]:
                 raise ValueError("resume_required: relevant project state or code changed before ACK")
             previous = one_row(tx, "SELECT FROM resume_acks WHERE id=:id", {"id": session.get("ack_id")}, False)
             if previous and previous.get("packet_id") == packet_id:
@@ -1203,8 +1259,12 @@ class SessionManager:
                  "id=:id", {"id": session_id})
             return acknowledgment
 
-    def require_ack(self, session_id: str, packet_id: str | None = None) -> None:
-        """Read-only; safe inside the caller's writer transaction; no import locks."""
+    def require_ack(self, session_id: str, packet_id: str | None = None, code: dict | None = None) -> None:
+        """Read-only; safe inside the caller's writer transaction; no import locks.
+
+        Inside a transaction pass ``code``, from code_scope taken before it began: without it the worktree is
+        hashed here, and a slow worktree let ArcadeDB expire the caller's transaction (#255).
+        """
         session = self._session(session_id)
         packet = self._packet(session)
         if (not packet or packet.get("status") != "ready" or packet["epoch"] != session["epoch"]
@@ -1222,7 +1282,7 @@ class SessionManager:
         if continuity:
             raise ValueError("resume_required: " + continuity[0])
         try:
-            current = self._state(session)
+            current = self._state(session, code)
         except (OSError, ValueError) as exc:
             raise ValueError(f"resume_required: current project scope cannot be restored ({exc})") from None
         if current["state_hash"] != packet["state_hash"]:

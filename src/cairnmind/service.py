@@ -604,14 +604,20 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     def write_scoped(pid: str, session_id: str | None, packet_id: str | None, operation):
-        """Session validation and the resulting mutation share one writer transaction."""
+        """Session validation and the resulting mutation share one writer transaction.
+
+        The worktree's code state is hashed before that transaction begins: inside it, a slow worktree let
+        ArcadeDB expire the transaction (#255).
+        """
+        code = None
         if session_id:
             from cairnmind.integrations import drain_hook_spool
             drain_hook_spool(settings, store)
+            code = sessions.code_scope(session_id)
         with store.transaction():
             scope, mark = None, None
             if session_id:
-                sessions.require_ack(session_id, packet_id)
+                sessions.require_ack(session_id, packet_id, code)
                 row = store.query("SELECT id,project_id,worktree,client FROM sessions WHERE id=:id", {"id": session_id})
                 if not row or row[0]["project_id"] != pid:
                     raise ValueError("resume_required: session belongs to another project")
@@ -737,9 +743,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             return requested, None
         from cairnmind.integrations import drain_hook_spool
         drain_hook_spool(settings, store)
+        # Hashed once, here, outside any transaction: core calls require inside its own (#255).
+        code = sessions.code_scope(session_id)
 
         def require():
-            sessions.require_ack(session_id, packet_id)
+            sessions.require_ack(session_id, packet_id, code)
             rows = store.query("SELECT project_id,worktree FROM sessions WHERE id=:id", {"id": session_id})
             if not rows or rows[0]["project_id"] != pid:
                 raise ValueError("resume_required: memory belongs to another project")
