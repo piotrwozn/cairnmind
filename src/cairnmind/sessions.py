@@ -66,6 +66,12 @@ def _current_schema(packet: dict) -> bool:
     return packet.get("schema_version") == PACKET_SCHEMA_VERSION
 
 
+def _registered_roots(reader) -> list[str]:
+    """Every registered project root as stored: the rows that decide what a code manifest leaves out (#255)."""
+    return sorted({row["path"] for row in reader.query("SELECT path FROM project_roots")
+                   if isinstance(row.get("path"), str)})
+
+
 def _hash(value: Any) -> str:
     return hashlib.sha256(json_text(value).encode("utf-8")).hexdigest()
 
@@ -303,12 +309,20 @@ class SessionManager:
         transaction that compares it, never inside one: ArcadeDB ends a server transaction that sees no
         request for about five seconds ("Remote transaction ... not found or expired"). A failure is kept
         and raised where the state is computed, so callers see the error they saw before.
+
+        The state is the worktree as it was just before the transaction began, including any wait for the
+        writer lock; the transaction never held the file system still either. Which registered roots below
+        the worktree the manifest leaves out is a database read made here, outside the transaction, so
+        the registered roots are kept with it and compared again inside (_state_locked).
         """
         from .verification import capture_code_state
 
         project_id, root = session["project_id"], session["worktree"]
         result: dict[str, Any] = {"scope": (project_id, root)}
         try:
+            # Read before the capture, which reads them again: a registration in between makes the
+            # comparison in the transaction refuse rather than miss it.
+            result["roots"] = _registered_roots(self.store)
             project, _ = self._root(project_id, root)
             code = capture_code_state(self.store, project_id, worktree=root)
             result["code"] = code
@@ -318,15 +332,23 @@ class SessionManager:
             result["error"] = exc
         return result
 
-    def code_scope(self, session_id: str) -> dict | None:
+    def code_scope(self, session_id: str, packet_id: str | None = None) -> dict:
         """The code state for ``require_ack(..., code=)``, taken before the caller opens its transaction.
 
-        None for an unknown session: require_ack refuses that before it needs any code state.
+        A session that require_ack refuses before it compares any code state (unknown, not acknowledged, or
+        another packet named) is not hashed: hashing a slow worktree only to refuse would cost seconds. If
+        such a session became acknowledged before the caller's transaction, require_ack refuses this one
+        write with the kept error instead of hashing inside that transaction; the client retries it.
         """
         try:
             session = self._session(session_id)
-        except ValueError:
-            return None
+            refusal = self._write_refusal(session, packet_id)
+        except ValueError as exc:
+            session, refusal = None, str(exc)
+        if refusal:
+            scope = (session["project_id"], session["worktree"]) if session else None
+            return {"scope": scope, "error": ValueError(
+                "the session was not acknowledged when this write began; retry it")}
         return self._code(session)
 
     def _state(self, session: dict, code: dict | None = None) -> dict:
@@ -346,6 +368,8 @@ class SessionManager:
             raise ValueError("resume_required: the code state was taken for another session scope")
         if "error" in code:
             raise code["error"]
+        if _registered_roots(self.store) != code["roots"]:
+            raise ValueError("resume_required: registered project roots changed while the code state was taken")
         self._root(project_id, root)
         following = PlanManager(self.store).next_task(project_id, worktree=root)
         plan, task = following.get("plan"), following.get("task")
@@ -1259,6 +1283,22 @@ class SessionManager:
                  "id=:id", {"id": session_id})
             return acknowledgment
 
+    def _write_refusal(self, session: dict, packet_id: str | None) -> str | None:
+        """require_ack's refusals that need no code state, from database reads only; None when none applies."""
+        packet = self._packet(session)
+        if (not packet or packet.get("status") != "ready" or packet["epoch"] != session["epoch"]
+                or (packet_id is not None and packet_id != packet["id"]) or not session.get("ack_id")):
+            return "resume_required: fetch and acknowledge the current ready resume packet"
+        acknowledgment = one_row(self.store, "SELECT FROM resume_acks WHERE id=:id", {"id": session["ack_id"]}, False)
+        if (not acknowledgment or acknowledgment.get("packet_id") != packet["id"]
+                or acknowledgment.get("packet_hash") != packet["hash"]
+                or acknowledgment.get("epoch") != session["epoch"]):
+            return "resume_required: current packet has no actual model ACK"
+        if not _current_schema(packet):
+            return ("resume_required: the acknowledged packet was made by an earlier version of Cairnmind; "
+                    "fetch and acknowledge the current ready resume packet")
+        return None
+
     def require_ack(self, session_id: str, packet_id: str | None = None, code: dict | None = None) -> None:
         """Read-only; safe inside the caller's writer transaction; no import locks.
 
@@ -1266,18 +1306,10 @@ class SessionManager:
         hashed here, and a slow worktree let ArcadeDB expire the caller's transaction (#255).
         """
         session = self._session(session_id)
+        refusal = self._write_refusal(session, packet_id)
+        if refusal:
+            raise ValueError(refusal)
         packet = self._packet(session)
-        if (not packet or packet.get("status") != "ready" or packet["epoch"] != session["epoch"]
-                or (packet_id is not None and packet_id != packet["id"]) or not session.get("ack_id")):
-            raise ValueError("resume_required: fetch and acknowledge the current ready resume packet")
-        acknowledgment = one_row(self.store, "SELECT FROM resume_acks WHERE id=:id", {"id": session["ack_id"]}, False)
-        if (not acknowledgment or acknowledgment.get("packet_id") != packet["id"]
-                or acknowledgment.get("packet_hash") != packet["hash"]
-                or acknowledgment.get("epoch") != session["epoch"]):
-            raise ValueError("resume_required: current packet has no actual model ACK")
-        if not _current_schema(packet):
-            raise ValueError("resume_required: the acknowledged packet was made by an earlier version of Cairnmind; "
-                             "fetch and acknowledge the current ready resume packet")
         continuity = self._own_continuity(session)
         if continuity:
             raise ValueError("resume_required: " + continuity[0])

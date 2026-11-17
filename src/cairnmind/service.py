@@ -613,7 +613,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if session_id:
             from cairnmind.integrations import drain_hook_spool
             drain_hook_spool(settings, store)
-            code = sessions.code_scope(session_id)
+            code = sessions.code_scope(session_id, packet_id)
         with store.transaction():
             scope, mark = None, None
             if session_id:
@@ -738,13 +738,17 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     def memory_write_authorization(pid: str, requested: str | None,
                                    session_id: str | None, packet_id: str | None):
-        """Keep file-lock -> DB-lock ordering, rechecking the actor in core's transaction."""
+        """Keep file-lock -> DB-lock ordering, rechecking the actor in core's transaction.
+
+        The worktree is hashed outside any transaction (#255): here for the first check, and again by
+        ``require.refresh()``, which core calls right before it opens the transaction it calls ``require`` in.
+        So the recheck compares the code as it was then, not as it was before core's own file work.
+        """
         if not session_id:
             return requested, None
         from cairnmind.integrations import drain_hook_spool
         drain_hook_spool(settings, store)
-        # Hashed once, here, outside any transaction: core calls require inside its own (#255).
-        code = sessions.code_scope(session_id)
+        code = sessions.code_scope(session_id, packet_id)
 
         def require():
             sessions.require_ack(session_id, packet_id, code)
@@ -753,6 +757,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 raise ValueError("resume_required: memory belongs to another project")
             return selected_memory_scope(pid, requested, rows[0]["worktree"])
 
+        def refresh():
+            nonlocal code
+            if getattr(store._local, "transaction", None) is None:  # inside one, keep the earlier capture
+                code = sessions.code_scope(session_id, packet_id)
+
+        require.refresh = refresh
         # Reject an already-unacknowledged actor before creating filesystem output.
         # Core invokes require again while capturing/importing in its transaction.
         return require(), require

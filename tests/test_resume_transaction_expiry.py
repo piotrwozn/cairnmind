@@ -134,6 +134,79 @@ def test_service_endpoints_hash_the_worktree_outside_any_transaction(fixture, tr
     assert len(transactions) >= 15 and set(transactions) == {0}, transactions
 
 
+def test_a_write_refused_for_its_session_hashes_nothing(fixture, transactions, monkeypatch):  # noqa: F811
+    from cairnmind.cli import actor_write
+    result = prepared(fixture)
+    packet, session_id = result["packet"], result["session_id"]
+    write = {"project": fixture.project["id"], "sources": [fixture.note["id"]], "session_id": session_id,
+             "record": {"kind": "fact", "content": "Refused"}}
+    transactions.clear()
+    response = fixture.client.post("/remember", json={**write, "packet_id": packet["id"]})  # no ACK yet
+    assert response.status_code == 409 and "acknowledge the current ready resume packet" in response.text
+    monkeypatch.setenv("CAIRNMIND_SESSION_ID", session_id)
+    with pytest.raises(ValueError, match="acknowledge the current ready resume packet"):
+        with actor_write(fixture.store, fixture.settings, fixture.project["id"]):
+            pass
+    assert transactions == []
+    fixture.manager.ack(session_id, packet["id"], packet["hash"], readback(packet))
+    transactions.clear()
+    response = fixture.client.post("/remember", json={**write, "packet_id": "another-packet"})
+    assert response.status_code == 409 and "acknowledge the current ready resume packet" in response.text
+    response = fixture.client.post("/memory/snapshot", json={"project": fixture.project["id"],
+                                                             "session_id": session_id, "packet_id": "another-packet"})
+    assert response.status_code == 409 and "resume_required" in response.text
+    assert transactions == []
+    assert not fixture.store.query("SELECT FROM records WHERE content='Refused'")
+
+
+def test_a_session_acknowledged_after_its_write_began_is_refused_without_hashing_in_the_transaction(
+        fixture, transactions):  # noqa: F811
+    result = prepared(fixture)
+    packet, session_id = result["packet"], result["session_id"]
+    transactions.clear()
+    code = fixture.manager.code_scope(session_id)  # not acknowledged yet: nothing is hashed
+    assert transactions == []
+    fixture.manager.ack(session_id, packet["id"], packet["hash"], readback(packet))
+    transactions.clear()
+    with pytest.raises(ValueError, match="retry it"):
+        with fixture.store.transaction():
+            fixture.manager.require_ack(session_id, packet["id"], code)
+    assert transactions == []
+    fixture.manager.require_ack(session_id, packet["id"])  # the retry
+
+
+def test_a_root_registered_after_the_code_state_was_taken_refuses_the_check(fixture):  # noqa: F811
+    bound = fixture.session("external")
+    code = fixture.manager.code_scope(bound["session_id"])
+    # Registered roots decide which directories the manifest leaves out, and that read is outside the transaction.
+    nested = fixture.root / "services" / "inner"
+    nested.mkdir(parents=True)
+    fixture.store.add_project("inner", nested)
+    with pytest.raises(ValueError, match="registered project roots changed"):
+        with fixture.store.transaction():
+            fixture.manager.require_ack(bound["session_id"], bound["packet_id"], code)
+
+
+def test_a_memory_write_rechecks_the_code_as_it_was_when_its_transaction_began(fixture, transactions,
+                                                                               monkeypatch):  # noqa: F811
+    from cairnmind.memory import MemoryManager
+    bound = fixture.session("external")
+    lock = MemoryManager._publisher_lock
+
+    @contextmanager
+    def edited_meanwhile(self, *args, **kwargs):
+        # After the first check, before core's transaction: the code changes while core does its own work.
+        with lock(self, *args, **kwargs):
+            (fixture.root / "app.py").write_text("VALUE = 3\n")
+            yield
+    monkeypatch.setattr(MemoryManager, "_publisher_lock", edited_meanwhile)
+    transactions.clear()
+    response = fixture.client.post("/memory/snapshot", json={"project": fixture.project["id"], **bound})
+    assert response.status_code == 409 and "changed since the acknowledged packet" in response.text
+    assert len(transactions) == 2 and set(transactions) == {0}, transactions
+    assert fixture.store.query("SELECT FROM memory_snapshots") == []
+
+
 def test_native_cli_write_hashes_the_worktree_before_its_transaction(fixture, transactions, monkeypatch):  # noqa: F811
     from cairnmind.cli import actor_write
     result = prepared(fixture)
