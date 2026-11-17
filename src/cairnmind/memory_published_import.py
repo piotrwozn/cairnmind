@@ -127,6 +127,8 @@ class PublishedImporter:
                   "publication_id": tree["project_id"], "inserted": [], "advanced": [], "unchanged": 0,
                   "taken": [], "stubs": 0, "plans": [], "verification": "nothing imported is verified here",
                   "model_calls": 0}
+        if hasattr(authorize, "refresh"):
+            authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
         try:
             with self.store.transaction() as tx:
                 if authorize is not None:

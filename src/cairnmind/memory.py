@@ -603,6 +603,8 @@ class MemoryManager:
 
     def _capture(self, project_id, worktree=None, reader=None, authorize=None):
         if reader is None:
+            if hasattr(authorize, "refresh"):
+                authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
             with self.store.transaction() as tx:
                 return self._capture(project_id, worktree, tx, authorize)
         if authorize is not None:
@@ -766,6 +768,8 @@ class MemoryManager:
         result = {"status": "dry_run" if dry_run else "imported", "project": {"id": project_id, "name": chosen_name, "root": str(root)},
                   "snapshot_id": snapshot_id, "counts": manifest["counts"], "active_plan_id": manifest.get("active_plan_id"),
                   "verification": "historical", "model_calls": 0}
+        if hasattr(authorize, "refresh"):
+            authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
         with self.store.transaction() as tx:
             if authorize is not None:
                 authorize()

@@ -207,15 +207,18 @@ def actor_scope(store, project_id: str, worktree: Path | str | None = None):
 def actor_write(store, settings: Settings, project_id: str, worktree: Path | str | None = None):
     """Native CLI commands inherit the launcher's logical session; manual repair stays possible."""
     session_id = session_value("SESSION_ID")
+    code = None
     if session_id:
         from cairnmind.integrations import drain_hook_spool
+        from cairnmind.sessions import SessionManager
         drain_hook_spool(settings, store)
+        manager = SessionManager(store, settings)
+        # Hashed before the transaction: inside it, a slow worktree let ArcadeDB expire it (#255).
+        code = manager.code_scope(session_id)
     with store.transaction():
         scope = actor_scope(store, project_id, worktree)
         if session_id:
-            from cairnmind.sessions import SessionManager
-            manager = SessionManager(store, settings)
-            manager.require_ack(session_id)
+            manager.require_ack(session_id, code=code)
         yield scope
 
 

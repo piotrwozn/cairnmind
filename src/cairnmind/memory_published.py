@@ -243,6 +243,8 @@ class Publisher:
     def build(self, project_id, worktree=None, authorize=None):
         """Render the package from one consistent read: {path: bytes}, the models, and what is held."""
         project, root, folder = self.destination(project_id, worktree)
+        if hasattr(authorize, "refresh"):
+            authorize.refresh()  # hashes the worktree: never inside the transaction below (#255)
         with self.store.transaction() as tx:
             if authorize is not None:
                 authorize()
