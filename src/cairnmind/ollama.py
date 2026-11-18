@@ -6,6 +6,7 @@ only when the person configured a memory model profile for it (memory_models.py)
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 import time
@@ -14,6 +15,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import structured_output
 from .config import Settings
 
 # What a model list may give as a model's digest; anything else counts as no digest (#192).
@@ -39,6 +41,7 @@ _ERROR_REASONS = {
     "runner_failed": "runtime reported a model runner or loading failure",
     "runtime_busy": "runtime reported a busy or unavailable runtime",
     "invalid_request": "runtime rejected the request",
+    "structured_output_unavailable": "runtime reported that structured output is unavailable",
     "http_error": "runtime returned an HTTP error",
     "runtime_error": "runtime returned a model error",
 }
@@ -57,6 +60,8 @@ def _api_error_code(response: httpx.Response) -> str:
                 error = found.casefold()
         except (ValueError, UnicodeError):
             pass
+    if response.status_code == 501 and structured_output.REFUSAL_TEXT.search(error):  # an MLX build (#231)
+        return structured_output.REFUSED
     for code, pattern in (
         ("memory_exhausted", r"out of memory|insufficient (?:system |gpu |device )?memory|cannot allocate memory|"
                              r"model requires more (?:system |gpu |device )?memory[^\n]{0,128}than is available"),
@@ -189,6 +194,35 @@ class Ollama:
         return data
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
+        """One chat request. A server that refuses ``format`` as unavailable is asked once more without it,
+        the schema in the prompt; the caller validates the JSON as before (structured_output.py, #231)."""
+        schema = kwargs.get("format")
+        if schema is None:
+            return await self._chat(messages, tools, **kwargs)
+        model = self.settings.chat_model
+        known = structured_output.seen_for(self.base_url, model)
+        digest = await self._capability_digest(model) if known else None
+        if not (known and structured_output.refused(self.base_url, model, digest)):
+            try:
+                return await self._chat(messages, tools, **kwargs)
+            except OllamaUnavailable as exc:
+                if exc.error_code != structured_output.REFUSED:
+                    raise
+            if not known:
+                digest = await self._capability_digest(model)
+            await asyncio.to_thread(structured_output.remember, self.settings.data_dir, self.base_url, model, digest)
+        plain = {key: value for key, value in kwargs.items() if key != "format"}
+        reply = await self._chat(structured_output.prompted_messages(messages, schema), tools, **plain)
+        return structured_output.unwrap(reply)
+
+    async def _capability_digest(self, model: str) -> str | None:
+        """The digest that names what a refusal is remembered for; None when the list cannot tell."""
+        try:
+            return await self.model_digest(model)
+        except OllamaUnavailable:
+            return None
+
+    async def _chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
         options = {
             "num_ctx": self.num_ctx,
             "num_predict": self.settings.answer_tokens,

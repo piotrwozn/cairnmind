@@ -125,6 +125,8 @@ def _model_diagnostics(response: dict, phase: str) -> dict:
         value = response.get(key)
         if type(value) is int and 0 <= value <= 2**63 - 1:
             result[key] = value
+    if response.get("structured_output") == "prompted":  # the server refused `format` (#231)
+        result["structured_output"] = "prompted"
     return result
 
 
