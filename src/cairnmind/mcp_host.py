@@ -27,7 +27,7 @@ import tempfile
 
 from .mcp_schema import MAX_BLOCKS, MAX_RESULT_BYTES, admit, convert, text  # noqa: F401 - re-exported
 from .mcp_schema import canonical as _canonical, clean as _clean, sha as _sha
-from .native_worker import process_start
+from .process_identity import start as process_start
 
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
