@@ -29,7 +29,7 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
-from conftest import time_budget
+from conftest import terminal_attributes, time_budget
 from cairnmind import client_auth
 from cairnmind.client_runtime import NativeRuntime
 from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
@@ -421,7 +421,7 @@ async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(termi
     master, slave = os.openpty()
     os.set_blocking(master, False)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 37, 112, 0, 0))
-    before_attributes = termios.tcgetattr(slave)
+    before_attributes = terminal_attributes(slave)
     before_flags = fcntl.fcntl(slave, fcntl.F_GETFL)
     previous_signal = signal.getsignal(signal.SIGTERM)
     broker = BrokerClient(stack.settings)
@@ -444,7 +444,7 @@ async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(termi
         else:
             os.write(master, b"quit\n")
         assert await asyncio.wait_for(task, 8) == 0
-        assert termios.tcgetattr(slave) == before_attributes
+        assert terminal_attributes(slave) == before_attributes
         assert fcntl.fcntl(slave, fcntl.F_GETFL) == before_flags
         assert signal.getsignal(signal.SIGTERM) == previous_signal
         if ending == "signal":
@@ -652,7 +652,7 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
     master, slave = os.openpty()
     os.set_blocking(master, False)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 180, 0, 0))
-    attributes = termios.tcgetattr(slave)
+    attributes = terminal_attributes(slave)
     environment = {**os.environ, "TERM": "xterm-256color"}
     process = subprocess.Popen([sys.executable, "-I", "-m", "cairnmind.native_worker", "--attach",
         "--tmux-bin", stack.tmux, "--socket", str(manager.socket), "--session", "cairnmind-ui"],
@@ -712,7 +712,7 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
         os.write(master, b"\x02d")
         assert await asyncio.to_thread(process.wait, timeout=8) == 0
         assert manager.exists()
-        assert termios.tcgetattr(slave) == attributes
+        assert terminal_attributes(slave) == attributes
         assert before == {row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
         assert len(stack.trace("coding")) == 2
     finally:

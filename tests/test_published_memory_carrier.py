@@ -161,6 +161,22 @@ def test_a_checkout_path_is_validated_every_time_it_is_used(ada):
     assert "not an existing directory" in publication_status(store, pid)["error"]
 
 
+def test_a_checkout_under_a_system_link_is_used_and_a_link_below_it_is_still_refused(ada, monkeypatch):
+    # On macOS /tmp is a link to /private/tmp (#229); here a fake one stands for it.
+    from test_system_links import fake_system_link
+    store, pid, tmp = ada["store"], ada["pid"], ada["tmp"]
+    link, target = fake_system_link(tmp, monkeypatch)
+    checkout = repository(target / "memory")
+    os.symlink(checkout, target / "linked")
+    changed = configure(store, pid, "checkout", str(link / "memory"))
+    assert changed["carrier"] == {"kind": "checkout", "path": str(checkout)}
+    for planted in (link / "linked", target / "linked"):
+        with pytest.raises(ValueError, match="symbolic link"):
+            configure(store, pid, "checkout", str(planted))
+    reviewed(store, pid, "decision", "Use cookies.", "auth")
+    assert Publisher(store).publish(pid)["destination"] == str(checkout / pid)
+
+
 def test_the_secrets_gate_refuses_before_a_checkout_is_written(ada, monkeypatch):
     store, pid, memory = ada["store"], ada["pid"], ada["memory"]
     reviewed(store, pid, "decision", "Use cookies.", "auth")

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 
 import pytest
@@ -713,11 +714,13 @@ def test_fences_need_to_start_a_line_after_at_most_three_spaces_and_code_spans_e
 def test_a_file_name_with_a_leading_blank_or_bytes_that_are_not_utf8_is_still_read(workspace):
     store, pid, root, records = workspace
     (root / " lead.md").write_text("refresh_token\n")
-    (root / "docs" / os.fsdecode(b"caf\xe9.md")).write_text("refresh_token\n")
+    not_utf8 = sys.platform != "darwin"  # APFS refuses a file name that is not UTF-8 (EILSEQ)
+    if not_utf8:
+        (root / "docs" / os.fsdecode(b"caf\xe9.md")).write_text("refresh_token\n")
     touch_auth(root)
     report = build_impact(store, pid, "HEAD")
     assert [entry["path"] for entry in report["documentation"]["documents"]] == [
-        "lead.md", "docs/caf\\xe9.md", "docs/login.md"]
+        "lead.md", *(["docs/caf\\xe9.md"] if not_utf8 else []), "docs/login.md"]
     json.dumps(report["documentation"], ensure_ascii=False).encode("utf-8")  # no lone surrogate reaches the output
 
 

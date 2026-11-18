@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 import subprocess
+import sys
 import time
 
 import pytest
@@ -323,7 +324,7 @@ def test_engine_log_stays_under_the_limit_after_repeated_starts(tmp_path, monkey
     java = tmp_path / "fake-jdk" / "bin" / "java"
     java.parent.mkdir(parents=True)
     java.write_text("#!/bin/sh\ncase \"$1\" in -version) echo 'openjdk version \"21.0.13\"' >&2; exit 0;; esac\n"
-                    f"stat -c %s engine.log >> '{at_launch}'\n"
+                    f"wc -c < engine.log >> '{at_launch}'\n"  # not GNU stat -c, which macOS lacks
                     "head -c 600 /dev/zero | tr '\\0' x\nexit 1\n")
     java.chmod(0o700)
     settings = Settings(tmp_path / "data", java_executable=str(java), arcade_database="prune_test",
@@ -363,7 +364,9 @@ def test_a_rotation_the_filesystem_refuses_does_not_stop_the_engine_from_startin
     with pytest.raises(ArcadeError, match="exited during startup"):
         engine.start_engine(settings)
     text = (state / "engine.log").read_bytes()
-    assert text.startswith(b"o" * 1500) and b"was not rotated (IsADirectoryError" in text
+    # unlink(2) of a directory: EISDIR on Linux, EPERM on macOS.
+    refused = b"IsADirectoryError" if sys.platform.startswith("linux") else b"PermissionError"
+    assert text.startswith(b"o" * 1500) and b"was not rotated (" + refused in text
     assert text.endswith(b"x" * 600)
 
 

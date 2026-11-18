@@ -28,7 +28,9 @@ import re
 from pathlib import Path
 import shutil
 import socket
+import subprocess
 import sys
+import termios
 import threading
 from urllib.parse import quote
 import uuid
@@ -36,6 +38,7 @@ import zlib
 
 import pytest
 
+from cairnmind import process_identity
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
@@ -60,6 +63,8 @@ NO_ARCADE_MODULES = frozenset({
     "test_workspace_state", "test_workspace_ux080", "test_workspace_focus_column", "test_shards",
     "test_run_guard", "test_process_identity", "test_machine_identity", "test_socket_base", "test_python_pin",
     "test_ci_macos_job",
+    "test_system_links",
+    "test_install_macos",
 })
 
 TMUX_MODULES = frozenset({
@@ -91,6 +96,15 @@ def time_budget(seconds: float) -> float:
     return seconds * 3 if measuring_coverage() else seconds
   
   
+def terminal_attributes(fd: int) -> list:
+    """termios.tcgetattr for comparing a terminal before and after: without PENDIN on macOS, whose kernel sets
+    that flag itself when a terminal goes back to canonical mode, so a correct restore still differs there."""
+    attributes = termios.tcgetattr(fd)
+    if sys.platform == "darwin":
+        attributes[3] &= ~termios.PENDIN
+    return attributes
+
+
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _BOX = re.compile("[\u2500-\u257f]")
 
@@ -226,10 +240,9 @@ def file_lock(path: Path):
 
 
 def _pytest_alive(pid: int) -> bool:
-    try:
-        return b"pytest" in Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return False
+    argv = process_identity.command_line(pid)
+    # An owner whose command line cannot be read keeps its engine while it lives: never reap a live run.
+    return process_identity.alive(pid) if argv is None else any("pytest" in argument for argument in argv)
 
 
 def reap_orphan_engines(runs_root: Path) -> None:
@@ -336,6 +349,9 @@ def no_inherited_session():
     """
     removed = {key: os.environ.pop(key) for name in (*SESSION_NAMES, "HOME", "JAVA_EXECUTABLE", "TMUX_EXECUTABLE")
                for key in env_names(name) if key in os.environ}
+    # The engine looks for Java in JAVA_HOME first (#232); a test chooses its Java itself.
+    if "JAVA_HOME" in os.environ:
+        removed["JAVA_HOME"] = os.environ.pop("JAVA_HOME")
     yield
     os.environ.update(removed)
 
@@ -351,19 +367,22 @@ MCP_MODULES = frozenset({"test_mcp_host", "test_mcp_agent", "test_mcp_sources", 
                          "test_mcp_round2"})
 
 
+def process_ids() -> list[int]:
+    """Every process id of the machine: procfs on Linux, ps(1) where there is none (macOS)."""
+    if sys.platform.startswith("linux"):
+        return [int(name) for name in os.listdir("/proc") if name.isdigit()]
+    listed = subprocess.run(["ps", "-A", "-o", "pid="], capture_output=True, text=True, check=True, timeout=30)
+    return [int(pid) for pid in listed.stdout.split()]
+
+
 def mcp_fixture_processes() -> list[int]:
     """Live processes of this checkout's fixture MCP server, and the children it marks with its path."""
     found = []
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit() or int(entry.name) == os.getpid():
-            continue
-        try:
-            arguments = (entry / "cmdline").read_bytes().split(b"\0")
-            state = (entry / "stat").read_text(errors="replace").rsplit(")", 1)[1].split()[0]
-        except (OSError, IndexError):
-            continue
-        if state != "Z" and any(MCP_FIXTURE.encode() in argument for argument in arguments):
-            found.append(int(entry.name))
+    for pid in process_ids():
+        if pid == os.getpid() or process_identity.start(pid, running=True) is None:
+            continue  # gone, a zombie, or unreadable
+        if any(MCP_FIXTURE in argument for argument in process_identity.command_line(pid) or []):
+            found.append(pid)
     return found
 
 
@@ -375,7 +394,7 @@ def no_mcp_server_outlives_its_test(request):
     """
     module = Path(str(request.node.fspath)).stem
     yield
-    if module not in MCP_MODULES or not Path("/proc").is_dir():
+    if module not in MCP_MODULES:
         return
     import signal
     import time

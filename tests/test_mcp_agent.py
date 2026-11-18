@@ -3,15 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-from pathlib import Path
 import sys
 
 import pytest
 
 import conftest
 
-from cairnmind import agent_tools
+from cairnmind import agent_tools, process_identity
 from cairnmind.agent_memory import MEMORY_TOOLS
 from cairnmind.api_agent import AgentEngine
 from cairnmind.api_worker import AgentApp
@@ -53,12 +51,7 @@ def acked(memory, *calls_after, final="Done."):
 
 
 def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    stat = Path(f"/proc/{pid}/stat")
-    return stat.exists() and stat.read_text().split(")")[-1].split()[0] != "Z"
+    return process_identity.start(pid, running=True) is not None  # exists and is no zombie
 
 
 @pytest.mark.asyncio

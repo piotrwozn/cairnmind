@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -413,6 +414,7 @@ def test_files_cairnmind_writes_itself_are_not_drift(workspace):
     assert scope_drift(store, task, root)["out_of_scope"] == [".codex/other.toml"]
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses a file name that is not UTF-8 (EILSEQ)")
 def test_a_file_name_that_is_not_text_is_shown_safely(workspace):
     store, pid, root, settings = workspace
     saved, task = scoped_plan(store, pid, root)

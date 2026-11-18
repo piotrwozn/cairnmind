@@ -10,11 +10,13 @@ import os
 from pathlib import Path
 import signal
 import struct
+import sys
 import termios
 from types import SimpleNamespace
 
 import pytest
 
+from conftest import terminal_attributes
 from cairnmind.config import Settings
 from cairnmind import native_worker
 from cairnmind.terminal_bridge import CONTROL_STATES, PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
@@ -148,15 +150,27 @@ def input_bytes(socket):
 
 def test_raw_context_restores_exact_terminal_state_after_exception(pty_pair):
     _, slave = pty_pair
-    attributes = termios.tcgetattr(slave)
+    attributes = terminal_attributes(slave)
     flags = fcntl.fcntl(slave, fcntl.F_GETFL)
     with pytest.raises(RuntimeError):
         with raw_terminal(slave, slave):
-            assert not termios.tcgetattr(slave)[3] & termios.ISIG
+            assert not terminal_attributes(slave)[3] & termios.ISIG
             assert not os.get_blocking(slave)
             raise RuntimeError("controlled interruption")
-    assert termios.tcgetattr(slave) == attributes
+    assert terminal_attributes(slave) == attributes
     assert fcntl.fcntl(slave, fcntl.F_GETFL) == flags
+
+
+def test_pendin_is_left_out_of_the_comparison_on_macos_only(pty_pair):
+    # The BSD kernel of macOS sets PENDIN itself after a restore; Linux keeps whatever was set.
+    _, slave = pty_pair
+    attributes = termios.tcgetattr(slave)
+    attributes[3] |= termios.PENDIN
+    termios.tcsetattr(slave, termios.TCSANOW, attributes)
+    assert terminal_attributes(slave)[3] & termios.PENDIN == (0 if sys.platform == "darwin" else termios.PENDIN)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys, "platform", "darwin")
+        assert terminal_attributes(slave)[3] & termios.PENDIN == 0
 
 
 @pytest.mark.parametrize(("columns", "rows", "expected"), [(10, 2, (20, 5)), (600, 250, (500, 200)), (99, 31, (99, 31))])
@@ -170,7 +184,7 @@ def test_resize_frames_always_fit_broker_bounds(pty_pair, columns, rows, expecte
 async def test_raw_binary_keyboard_output_and_native_exit_restore_terminal(pty_pair):
     master, slave = pty_pair
     client, pane = Client(), Pane()
-    original = termios.tcgetattr(slave)
+    original = terminal_attributes(slave)
     flags = fcntl.fcntl(slave, fcntl.F_GETFL)
     handler = signal.getsignal(signal.SIGINT)
     bridge = RawTerminalBridge(client, "run-fixture", 7, input_fd=slave, output_fd=slave, pane=pane)
@@ -189,7 +203,7 @@ async def test_raw_binary_keyboard_output_and_native_exit_restore_terminal(pty_p
     finally:
         bridge.stopped.set()
         await asyncio.wait_for(task, 4)
-    assert termios.tcgetattr(slave) == original
+    assert terminal_attributes(slave) == original
     assert fcntl.fcntl(slave, fcntl.F_GETFL) == flags
     assert signal.getsignal(signal.SIGINT) == handler
     assert pane.states[-1] == "exited"
@@ -262,10 +276,10 @@ async def test_stale_generation_and_non_tty_do_not_attach(pty_pair):
 @pytest.mark.asyncio
 async def test_operational_auth_exit_notifies_workspace_after_restoration(pty_pair):
     _, slave = pty_pair
-    original = termios.tcgetattr(slave)
+    original = terminal_attributes(slave)
     client, pane = Client(), Pane()
     client.purpose, client.lifecycle = "auth", "exited"
-    pane.auth_finished = lambda: setattr(pane, "auth_closed", termios.tcgetattr(slave) == original)
+    pane.auth_finished = lambda: setattr(pane, "auth_closed", terminal_attributes(slave) == original)
     bridge = RawTerminalBridge(client, "run-fixture", 7, input_fd=slave, output_fd=slave, pane=pane)
     assert await bridge.run() == 0
     assert pane.auth_closed
@@ -353,7 +367,7 @@ def test_native_attach_helper_drops_outer_tmux_markers(tmp_path, monkeypatch):
 async def test_terminal_failure_feedback_survives_each_exit_path_after_restore(pty_pair, language, state, path):
     from cairnmind.terminal_i18n import native_failure_notice
     master, slave = pty_pair
-    original = termios.tcgetattr(slave)
+    original = terminal_attributes(slave)
     client, pane = Client(), Pane()
     request = client.request
     def metadata(*args, **kwargs):
@@ -371,7 +385,7 @@ async def test_terminal_failure_feedback_survives_each_exit_path_after_restore(p
     final_writes = []
     async def observed_output(data):
         if data.startswith(b"\r\n\x18\x1b[0m"):
-            final_writes.append((data, termios.tcgetattr(slave)))
+            final_writes.append((data, terminal_attributes(slave)))
         return await output(data)
     bridge._final_output = observed_output
     task = asyncio.create_task(bridge.run())
@@ -396,7 +410,7 @@ async def test_terminal_failure_feedback_survives_each_exit_path_after_restore(p
         assert pane.states[-1] == state
         assert len(client.connections) <= 1
         assert all(method == "GET" for method, _ in client.requests)
-        assert termios.tcgetattr(slave) == original
+        assert terminal_attributes(slave) == original
     finally:
         bridge.stopped.set()
         await asyncio.wait_for(task, 4)
@@ -417,12 +431,12 @@ def test_failure_feedback_does_not_reflect_unknown_client_or_unbounded_exit_code
 async def test_auth_failure_keeps_connections_guidance_and_existing_post_restore_cleanup(pty_pair, language, path):
     from cairnmind.terminal_i18n import tr
     master, slave = pty_pair
-    original = termios.tcgetattr(slave)
+    original = terminal_attributes(slave)
     client, pane = Client(), Pane()
     client.purpose = "auth"
     if path == "initial_get":
         client.lifecycle = "failed"
-    pane.auth_finished = lambda: setattr(pane, "auth_closed", termios.tcgetattr(slave) == original)
+    pane.auth_finished = lambda: setattr(pane, "auth_closed", terminal_attributes(slave) == original)
     bridge = RawTerminalBridge(client, "run-fixture", 7, input_fd=slave, output_fd=slave,
                                pane=pane, language=language)
     task = asyncio.create_task(bridge.run())
@@ -455,7 +469,7 @@ async def test_stale_broker_rejection_shows_fixed_feedback_without_reattach(pty_
     from cairnmind.terminal_client import BrokerError
     from cairnmind.terminal_i18n import tr
     master, slave = pty_pair
-    original = termios.tcgetattr(slave)
+    original = terminal_attributes(slave)
     client = Client()
     def rejected():
         raise BrokerError(status, "PRIVATE_BROKER_DETAIL")
@@ -468,7 +482,7 @@ async def test_stale_broker_rejection_shows_fixed_feedback_without_reattach(pty_
     assert tr("The session changed.", language) in rendered
     assert tr("Open the menu with Ctrl+B Space to review the current session.", language) in rendered
     assert "PRIVATE_BROKER_DETAIL" not in rendered and not client.connections
-    assert termios.tcgetattr(slave) == original
+    assert terminal_attributes(slave) == original
 
 
 @pytest.mark.asyncio
@@ -497,11 +511,16 @@ def test_full_unread_terminal_cannot_block_final_feedback_or_terminal_restoratio
     import sys
     import textwrap
     script = textwrap.dedent("""
-        import asyncio, fcntl, json, os, termios, time
+        import asyncio, fcntl, json, os, sys, termios, time
         from cairnmind.terminal_bridge import RawTerminalBridge, raw_terminal
+        def terminal_attributes(fd):  # as in conftest: macOS sets PENDIN itself after a restore
+            attributes = termios.tcgetattr(fd)
+            if sys.platform == 'darwin':
+                attributes[3] &= ~termios.PENDIN
+            return attributes
         async def main():
             master, slave = os.openpty()
-            original = termios.tcgetattr(slave)
+            original = terminal_attributes(slave)
             flags = fcntl.fcntl(slave, fcntl.F_GETFL)
             try:
                 with raw_terminal(slave, slave):
@@ -532,7 +551,7 @@ def test_full_unread_terminal_cannot_block_final_feedback_or_terminal_restoratio
                     await asyncio.gather(pulse, return_exceptions=True)
                 elapsed = time.monotonic() - started
                 assert written is False and elapsed < .8 and len(ticks) >= 2
-                assert termios.tcgetattr(slave) == original
+                assert terminal_attributes(slave) == original
                 assert fcntl.fcntl(slave, fcntl.F_GETFL) == flags
                 print(json.dumps({'elapsed': elapsed, 'heartbeat_ticks': len(ticks), 'restored': True}))
             finally:
@@ -550,14 +569,14 @@ def test_full_unread_terminal_cannot_block_final_feedback_or_terminal_restoratio
 @pytest.mark.asyncio
 async def test_cancelled_final_feedback_still_closes_auth_pane_after_restoration(pty_pair):
     _, slave = pty_pair
-    original = termios.tcgetattr(slave)
+    original = terminal_attributes(slave)
     client, pane = Client(), Pane()
     client.purpose, client.lifecycle = "auth", "failed"
-    pane.auth_finished = lambda: setattr(pane, "auth_closed", termios.tcgetattr(slave) == original)
+    pane.auth_finished = lambda: setattr(pane, "auth_closed", terminal_attributes(slave) == original)
     bridge = RawTerminalBridge(client, "run-fixture", 7, input_fd=slave, output_fd=slave, pane=pane)
     async def cancelled(data):
         raise asyncio.CancelledError
     bridge._final_output = cancelled
     with pytest.raises(asyncio.CancelledError):
         await bridge.run()
-    assert pane.auth_closed and termios.tcgetattr(slave) == original
+    assert pane.auth_closed and terminal_attributes(slave) == original

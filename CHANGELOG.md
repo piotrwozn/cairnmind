@@ -16,6 +16,15 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Every test now has a time limit (300 s by default, set per test with @pytest.mark.time_limit or for the run with CAIRNMIND_TEST_TIME_LIMIT), so a hanging test fails instead of blocking the whole run, also under pytest-xdist at the exclusive-test gate (#236).
 - After each test, the child processes, tmux servers and test engines it started and left running are stopped (SIGTERM, then SIGKILL) and reported as a LeftRunning warning, without touching anything the test did not start (#236).
 - CI now runs the fast test tier on an Apple silicon macOS runner for every pull request and push to main, as a non-blocking job with a 30 minute limit that keeps the pytest output and JUnit report as an artifact (#237).
+- On macOS, memory packages, a published-memory checkout and the preview's data directory can now be under /tmp or /var, which are links of the system; any other symbolic link on the way is still refused (#229).
+- Portable recall no longer loses a project's files when one path was recorded as /var/folders/... and another as /private/var/folders/... on macOS (#229).
+- On a model server that refuses structured output (Ollama with an MLX build on Apple silicon), answers, their correction, the support check and extraction ask again without a response format and validate the JSON themselves, so ask no longer ends partial with the model reported as unavailable (#231).
+- cairnmind doctor shows "structured output: unavailable on this server" for the chat model once the service has seen that refusal (#231).
+- The installer runs on macOS with the bash that macOS ships. It finds Java 21 through JAVA_HOME, /usr/libexec/java_home or PATH, says when the java of macOS has no JDK behind it, and gives Homebrew hints, including the link that lets macOS find Homebrew's openjdk@21 (#232).
+- On macOS the engine looks for Java in JAVA_HOME before PATH; a java_executable in config.json still comes first. On Linux and WSL the engine and the installer use java on PATH as before, whatever JAVA_HOME says (#232).
+- docs/INSTALL.md describes installing on macOS with Homebrew (#232).
+- On a Mac, `doctor` says the GPU is not checked on macOS instead of giving an nvidia-smi and WSL note, and install hints for tmux, Java and the AI clients name Homebrew, in English and Polish; Linux and WSL keep their wording unchanged (#233).
+- The test suite no longer assumes Linux in its process checks, socket paths, terminal state comparisons, test certificates and file system expectations, so more of it runs on macOS (#236).
 
 ## 0.11.0
 

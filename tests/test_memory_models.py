@@ -377,6 +377,43 @@ def test_models_set_checks_the_server_before_saving_and_names_the_rebuild(tmp_pa
     assert Settings.load(data).memory_chat["context_window"] == 32768
 
 
+def test_doctor_names_a_server_without_structured_output_instead_of_unavailable(tmp_path):
+    from cairnmind import structured_output
+    settings = settings_with(tmp_path)
+
+    def server(request):
+        return httpx.Response(200, json={"models": [{"name": settings.chat_model, "digest": "f" * 64},
+                                                    {"name": settings.embedding_model, "digest": "a" * 64}]})
+
+    def chat_entry():
+        with httpx.Client(transport=httpx.MockTransport(server)) as http:
+            return memory_models.doctor_models(settings, http)["chat"]
+    assert chat_entry()["structured_output"] == {"refused": False, "text": "structured output: no refusal seen"}
+    # What the service notes when the server refuses `format` (#231), seen by doctor in another process.
+    structured_output.remember(settings.data_dir, settings.ollama_url, settings.chat_model)
+    entry = chat_entry()
+    assert entry["reachable"] and entry["model_available"]
+    assert entry["structured_output"]["refused"] is True
+    assert entry["structured_output"]["text"] == "structured output: unavailable on this server"
+
+
+def test_models_set_accepts_a_chat_model_without_structured_output_and_says_so(tmp_path, monkeypatch):
+    from cairnmind import cli
+
+    def server(request):
+        if request.url.path == "/v1/chat/completions" and "response_format" in json.loads(request.content):
+            return httpx.Response(501, json={"error": {"message": "structured output is unavailable"}})
+        return lmstudio_server(request)
+    mock_async_client(monkeypatch, server)
+    data = tmp_path / "data"
+    chat = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "set", "--role", "chat",
+                                        "--provider", "openai_compatible", "--base-url",
+                                        "http://127.0.0.1:1234/v1", "--model", "qwen/qwen3-8b"])
+    assert chat.exit_code == 0, chat.output
+    assert json.loads(chat.output)["checked"] == {"structured_output": False,
+                                                  "note": "structured output: unavailable on this server"}
+
+
 def test_models_set_saves_nothing_when_the_check_fails(tmp_path, monkeypatch):
     from cairnmind import cli
     mock_async_client(monkeypatch, lambda request: httpx.Response(200, json=(

@@ -34,6 +34,7 @@ from . import __version__
 from .cockpit import BrowserSessions, _birth, cockpit_status, instance_id
 from .cockpit_state import _atomic
 from .config import Settings
+from .system_links import system_spelling
 from .terminal_client import BrokerClient, BrokerError
 from .workspace import WorkspaceManager
 
@@ -48,7 +49,8 @@ def source_hashes():
 
 
 def preview_settings(root: Path, *, create=False, scenario="normal"):
-    root = root.expanduser().absolute()
+    # Spelled through the system's own links (/tmp on macOS, #229); any other link on the way is refused.
+    root = system_spelling(root.expanduser().absolute())
     if root.is_symlink() or root.resolve() != root:
         raise ValueError("Preview root must be a real directory, without symlink components.")
     marker = root / MARKER

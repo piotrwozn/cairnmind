@@ -401,6 +401,11 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
                 else:
                     entry["identity"] = fingerprinted
     entry["model_available"] = bool(listed)
+    if role == "chat" and listed:
+        # What the service saw (#231); doctor itself sends no model request, so nothing seen is not "available".
+        from .structured_output import doctor_note
+        entry["structured_output"] = doctor_note(settings.data_dir, row["base_url"], model) or {
+            "refused": False, "text": "structured output: no refusal seen"}
     return entry
 
 
@@ -438,6 +443,9 @@ async def _check(settings: Settings, role: str) -> tuple[dict, str]:
         if not isinstance(document, dict) or not isinstance(document.get("ok"), bool):
             raise ValueError("The chat model did not return structured JSON output for a JSON schema; extraction "
                              "and answer repair need it. Nothing was saved.")
+        if reply.get("structured_output") == "prompted":  # the server refused `format`; the JSON was checked (#231)
+            from .structured_output import DOCTOR_TEXT
+            return {"structured_output": False, "note": DOCTOR_TEXT}, identity
         return {"structured_output": True}, identity
     finally:
         await client.aclose()

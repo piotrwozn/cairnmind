@@ -657,6 +657,66 @@ async def test_final_repair_outage_preserves_original_partial_result(workspace):
     assert any("unavailable while correcting" in gap for gap in result["unknowns"])
 
 
+def _without_structured_output(settings, answers, refusal=None):
+    """Ollama with an MLX build on Apple silicon (#231): every request with `format` gets HTTP 501.
+
+    The answers go in order to the requests without `format` that are not the support check; the
+    support check, asked without `format`, accepts the answer."""
+    refusal = refusal or {"error": "structured output is unavailable"}
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if "format" in payload:
+            return httpx.Response(501, json=refusal)
+        if payload["messages"][0]["content"].startswith(SUPPORT_SYSTEM):
+            content = json.dumps({"supported": True, "reason": "Stated."})
+        else:
+            content = answers.pop(0)
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": content},
+                                         "done_reason": "stop"})
+    return httpx.MockTransport(respond), requests
+
+
+@pytest.mark.parametrize("corrected,complete", [("valid", True), ("invalid_quote", False), ("not_json", False)])
+async def test_a_server_without_structured_output_still_corrects_and_validates_the_answer(
+        workspace, corrected, complete):
+    store, project, settings = workspace
+    source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    reply = {"valid": final(source["id"], SUPPORTED_QUOTE, "Five attempts."),
+             "invalid_quote": final(source["id"], "An invented passage of the retry note.", "Six attempts."),
+             "not_json": {"content": "Five attempts, as the note says."}}[corrected]["content"]
+    transport, requests = _without_structured_output(settings, ["not JSON", reply])
+    async with httpx.AsyncClient(base_url=settings.ollama_url, transport=transport) as client:
+        result = await KnowledgeAgent(store, settings, Ollama(settings, client)).ask(
+            project["id"], "What is the retry budget?")
+    assert result["diagnostics"]["repair_attempted"] is True
+    if complete:
+        assert result["status"] == "complete" and result["answer"] == "Five attempts."
+        assert result["sources"][0]["id"] == source["id"] and result["sources"][0]["quote"] == SUPPORTED_QUOTE
+        assert result["diagnostics"]["repair_outcome"] == "succeeded"
+        assert result["diagnostics"]["support_check"] == "supported"
+    else:
+        assert result["status"] == "partial" and "Six attempts." not in result["answer"]
+        assert result["diagnostics"]["repair_outcome"] == "failed"
+    assert not any("unavailable" in gap for gap in result.get("unknowns", []))
+    # Nothing is cached: the correction, and the support check of a complete answer, each try `format` first.
+    assert len([payload for payload in requests if "format" in payload]) == (2 if complete else 1)
+
+
+async def test_a_501_for_another_reason_while_correcting_is_still_reported_as_unavailable(workspace):
+    store, project, settings = workspace
+    document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
+    transport, requests = _without_structured_output(settings, ["not JSON"], {"error": "not implemented"})
+    async with httpx.AsyncClient(base_url=settings.ollama_url, transport=transport) as client:
+        result = await KnowledgeAgent(store, settings, Ollama(settings, client)).ask(
+            project["id"], "What is the retry budget?")
+    assert result["status"] == "partial" and result["diagnostics"]["repair_outcome"] == "unavailable"
+    assert any("unavailable while correcting" in gap for gap in result["unknowns"])
+    assert len(requests) == 2  # the answer and the refused correction; nothing retried
+
+
 async def test_final_repair_timeout_preserves_original_partial_with_total_deadline(workspace):
     store, project, settings = workspace
     document(store, project, "Available source evidence.")
@@ -943,6 +1003,25 @@ async def test_extraction_requires_quote_and_keeps_records_proposed(workspace):
     assert len(records) == 1
     assert records[0]["status"] == "proposed"
     assert records[0]["metadata"]["evidence"] == "We decided to use auth.py."
+
+
+async def test_extraction_on_a_server_without_structured_output_keeps_its_quote_check(workspace):
+    store, project, settings = workspace
+    text = "We decided to use auth.py.\nImplement secure cookies."
+    source = store.snapshot(project["id"], "transcript://example", json.dumps({"text": text}),
+                            "transcript", metadata={"normalized_text": text, "role": "user"})
+    answer = "```json\n" + json.dumps({"records": [
+        {"kind": "decision", "key": "auth", "content": "Use auth.py", "evidence": "We decided to use auth.py."},
+        {"kind": "fact", "key": "bad", "content": "Unsupported fact", "evidence": "No such text"},
+    ]}) + "\n```"
+    transport, requests = _without_structured_output(settings, [answer])
+    async with httpx.AsyncClient(base_url=settings.ollama_url, transport=transport) as client:
+        await KnowledgeAgent(store, settings, Ollama(settings, client)).extract(
+            {"project_id": project["id"], "payload": {"source_id": source["id"]}})
+    records = store.list_records(project["id"])
+    assert [record["metadata"]["evidence"] for record in records] == ["We decided to use auth.py."]
+    assert records[0]["status"] == "proposed"
+    assert ["format" in payload for payload in requests] == [True, False]
 
 
 async def test_transcript_citations_use_normalized_text_without_losing_raw(workspace):
