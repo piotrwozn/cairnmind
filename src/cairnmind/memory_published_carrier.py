@@ -19,6 +19,7 @@ from .memory_paths import PUBLISHED_RELATIVE, RESERVED_DIRECTORIES
 from .memory_published_format import canonical_uuid
 from .path_spelling import lies_in, path_identity
 from .sql import insert_document, one_row, update_document, utc_now
+from .system_links import system_spelling
 from .terminal_safe import safe_text
 
 CARRIERS = ("repository", "checkout")
@@ -50,7 +51,8 @@ def checkout_path(store, project_id, raw):
     given = Path(raw).expanduser()
     if not given.is_absolute():
         raise ValueError(f"A checkout path must be absolute: {raw}")
-    path = Path(os.path.normpath(given))
+    # Spelled through the system's own links (/tmp on macOS, #229); any other link on the way is refused.
+    path = system_spelling(os.path.normpath(given))
     if Path(os.path.realpath(path)) != path:
         raise ValueError(f"The checkout path {path} is or passes through a symbolic link; give the real directory")
     data_dir = Path(os.path.realpath(store.data_dir))

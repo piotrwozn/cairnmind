@@ -23,6 +23,7 @@ from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_dir
 from .memory_size import package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
+from .system_links import passes_planted_link
 from .sql import (clean_row, insert_document, json_text, one_row, unregistered_root, update_document,
                   utc_now)
 
@@ -391,7 +392,7 @@ def _check_manifest(path):
     path = Path(path).expanduser().absolute()
     if path.is_dir():
         path /= "manifest.json"
-    if any(parent.is_symlink() for parent in [path, *path.parents]):
+    if passes_planted_link(path):  # The system's own links (/tmp on macOS) are not planted (#229).
         raise ValueError("Memory package paths cannot traverse symbolic links")
     # Snapshot paths are exact files, never unpacked archive paths.
     raw = _read(path, MAX_MANIFEST_BYTES)
