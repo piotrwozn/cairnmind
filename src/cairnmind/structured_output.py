@@ -36,6 +36,7 @@ INSTRUCTION = ("This server cannot enforce the response format. Return only one 
                "and no code fence, that is valid under this JSON schema: ")
 _FENCE = re.compile(r"\A```(?:json)?[ \t]*\n(.*)\n```\Z", re.S)
 
+
 def _name(server: str, model: str) -> str:
     return f"{str(server).rstrip('/')}|{model}"
 
