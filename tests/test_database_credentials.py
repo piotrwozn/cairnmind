@@ -405,17 +405,20 @@ def certificate_authority(folder: Path, address: str = "127.0.0.1") -> Path:
     folder.mkdir()
     # A config of our own, so the system one adds nothing: the openssl of macOS (LibreSSL) appends the v3_ca
     # extensions of /etc/ssl/openssl.cnf next to -addext, and OpenSSL 3 refuses an authority whose
-    # basicConstraints is there twice.
+    # basicConstraints is there twice. The key identifiers are named here, since LibreSSL adds none and
+    # strict verification (the default from Python 3.13) refuses a chain without them.
     (folder / "req.cnf").write_text("[req]\ndistinguished_name = dn\n[dn]\n")
     _openssl("req", "-config", "req.cnf", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
              "-out", "ca.pem", "-days", "2",
              "-subj", "/CN=Cairnmind test authority", "-addext", "basicConstraints=critical,CA:TRUE",
-             "-addext", "keyUsage=critical,keyCertSign,cRLSign", cwd=folder)
+             "-addext", "keyUsage=critical,keyCertSign,cRLSign", "-addext", "subjectKeyIdentifier=hash",
+             cwd=folder)
     _openssl("req", "-config", "req.cnf", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key",
              "-out", "server.csr", "-subj", "/CN=localhost", cwd=folder)
     (folder / "server.ext").write_text(f"subjectAltName=IP:{address},DNS:localhost\nbasicConstraints=CA:FALSE\n"
                                        "keyUsage=critical,digitalSignature,keyEncipherment\n"
-                                       "extendedKeyUsage=serverAuth\n")
+                                       "extendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\n"
+                                       "authorityKeyIdentifier=keyid\n")
     _openssl("x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial",
              "-out", "server.pem", "-days", "2", "-extfile", "server.ext", cwd=folder)
     return folder
@@ -449,6 +452,15 @@ def tls_endpoint(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(5)
+
+
+def test_the_test_certificates_pass_strict_verification(tls_endpoint):
+    # Python 3.13 verifies strictly by default, so the test chain must not rely on the laxer 3.12 default.
+    url, ca_file = tls_endpoint
+    context = ssl.create_default_context(cafile=ca_file)
+    context.verify_flags |= ssl.VERIFY_X509_STRICT
+    with httpx.Client(verify=context) as client:
+        assert client.get(url).json()["serverName"] == "tls-test"
 
 
 def test_a_certificate_from_an_unknown_authority_is_refused(tmp_path, tls_endpoint):
