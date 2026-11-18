@@ -43,8 +43,9 @@ def repository(root):
 
 
 @pytest.fixture
-def workspace(tmp_path):
-    root = repository(tmp_path / "repo")
+def workspace(tmp_path, short_tmp_path):
+    # The brief shows the root in a line of at most 120 characters; tmp_path on macOS is longer.
+    root = repository(short_tmp_path / "repo")
     store = Store(tmp_path / "memory")
     project = store.add_project("demo", root)
     return store, project, root, Settings.load(store.data_dir)

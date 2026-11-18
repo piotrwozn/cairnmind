@@ -66,8 +66,12 @@ class Fixture:
 
 
 @pytest.fixture
-def fixture(tmp_path):
-    return Fixture(tmp_path)
+def fixture(tmp_path, short_tmp_path):
+    made = Fixture(tmp_path)
+    # Transcripts: a packet's unknown starts with the transcript's path and is cut at 500 characters, and
+    # tmp_path on macOS is long enough to cut off how to accept the kind.
+    made.tmp = short_tmp_path
+    return made
 
 
 def kind_unknowns(result):

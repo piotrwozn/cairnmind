@@ -30,6 +30,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import termios
 import threading
 from urllib.parse import quote
@@ -103,6 +104,29 @@ def terminal_attributes(fd: int) -> list:
     if sys.platform == "darwin":
         attributes[3] &= ~termios.PENDIN
     return attributes
+
+
+# FWASWRITTEN in the <sys/fcntl.h> of macOS: its kernel marks a descriptor once it was written to, shows the mark in
+# F_GETFL, and F_SETFL cannot clear it.
+DARWIN_WRITTEN = 0x10000
+
+
+def status_flags(fd: int) -> int:
+    """fcntl F_GETFL for comparing a descriptor before and after: without the written mark on macOS (#236)."""
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    return flags & ~DARWIN_WRITTEN if sys.platform == "darwin" else flags
+
+
+@pytest.fixture
+def short_tmp_path():
+    """A short private folder of its own, for a path that has a length limit (#236).
+
+    tmp_path on macOS is under /private/var/folders/..., longer than a socket path may be and than some messages
+    show a path in full. Resolved, so a path the product resolves (/tmp is /private/tmp there) compares equal.
+    """
+    path = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp")).resolve()
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
