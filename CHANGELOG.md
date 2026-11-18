@@ -6,6 +6,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ### macOS
 
+- macOS on Apple silicon is supported: README says so, the package lists macOS among its operating systems, and the macOS job of CI fails the workflow like the Linux tiers (#237).
 - On macOS, Cairnmind now identifies its own processes (the cockpit broker, native runs, the database engine and its Java, check runs, agent commands and MCP servers) without /proc, so it can find and stop them there as on Linux (#226).
 - A stop or signal is still refused when a process id now belongs to another process, or when the process's identity cannot be read (#226).
 - `engine stop` now clears the record of a process that has already exited, instead of failing with a missing /proc file (#226).

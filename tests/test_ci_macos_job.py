@@ -1,4 +1,5 @@
-"""The macOS job of the CI workflow: it exists, it never blocks, and it cannot hang a runner.
+"""The macOS job of the CI workflow: it exists, it fails the workflow like the Linux tiers, and it cannot
+hang a runner.
 
 The repository has no YAML parser among its dependencies, so the workflow is read as text, one job
 block at a time (a job starts at two spaces of indentation, as test_published_memory_diff expects).
@@ -26,9 +27,9 @@ def test_macos_job_runs_the_fast_tier_on_apple_silicon():
     assert "uv sync --locked --extra dev" in block
 
 
-def test_macos_job_is_not_blocking_and_is_bounded():
+def test_macos_job_fails_the_workflow_and_is_bounded():
     block = job_block(JOB)
-    assert re.search(r"^    continue-on-error: true$", block, re.M)
+    assert "continue-on-error" not in block  # macOS is supported since 0.12.0 (#237)
     minutes = re.search(r"^    timeout-minutes: (\d+)$", block, re.M)
     assert minutes and 0 < int(minutes.group(1)) <= 45
 

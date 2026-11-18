@@ -41,13 +41,11 @@ jobs:
       - run: uv run pytest -n 4 -m "not arcade and not tmux" -q
 
   macos-fast-tests:
-    # The same fast tier on an Apple silicon runner (macos-15 is arm64), to show on every pull request
-    # of milestone 0.12.0 what still fails on macOS. NOT a required check and it never blocks:
-    # continue-on-error keeps the workflow green when this job is red, and the timeout stops a hang
-    # from burning runner minutes. The pytest output and the JUnit XML are kept as an artifact.
+    # The same fast tier on an Apple silicon runner (macos-15 is arm64). macOS is supported since 0.12.0
+    # (#237), so a failure here fails the workflow like the Linux tiers; the timeout stops a hang from
+    # burning runner minutes. The pytest output and the JUnit XML are kept as an artifact.
     runs-on: macos-15
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7

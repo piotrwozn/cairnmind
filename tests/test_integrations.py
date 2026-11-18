@@ -32,7 +32,9 @@ def settings(tmp_path, monkeypatch):
     for name in ("DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID", "DEVBRAIN_PROJECT", "DEVBRAIN_CLIENT",
                  "DEVBRAIN_CONTEXT_FILE"):
         monkeypatch.delenv(name, raising=False)
-    return Settings.load(tmp_path / "memory", create=True)
+    loaded = Settings.load(tmp_path / "memory", create=True)
+    loaded.ask_timeout = 60.0  # the generated client files below are pinned at the 60 s budget; macOS defaults to 120 (#231)
+    return loaded
 
 
 @pytest.fixture
