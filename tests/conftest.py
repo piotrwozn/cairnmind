@@ -30,6 +30,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import termios
 import threading
 from urllib.parse import quote
 import uuid
@@ -93,6 +94,15 @@ def time_budget(seconds: float) -> float:
     return seconds * 3 if measuring_coverage() else seconds
   
   
+def terminal_attributes(fd: int) -> list:
+    """termios.tcgetattr for comparing a terminal before and after: without PENDIN on macOS, whose kernel sets
+    that flag itself when a terminal goes back to canonical mode, so a correct restore still differs there."""
+    attributes = termios.tcgetattr(fd)
+    if sys.platform == "darwin":
+        attributes[3] &= ~termios.PENDIN
+    return attributes
+
+
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _BOX = re.compile("[\u2500-\u257f]")
 
