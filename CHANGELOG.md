@@ -2,6 +2,21 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+### macOS
+
+- On macOS, Cairnmind now identifies its own processes (the cockpit broker, native runs, the database engine and its Java, check runs, agent commands and MCP servers) without /proc, so it can find and stop them there as on Linux (#226).
+- A stop or signal is still refused when a process id now belongs to another process, or when the process's identity cannot be read (#226).
+- `engine stop` now clears the record of a process that has already exited, instead of failing with a missing /proc file (#226).
+- The built-in agent's approved commands now start in their verified directory without relying on /proc, so they run on macOS, and the shell no longer inherits the directory's descriptor (#227).
+- The development environment is pinned to Python 3.12 with a .python-version file, so uv sync --locked --extra dev no longer picks a newer Python that lacks wheels for some dependencies (#228).
+- On macOS, an installation is now identified by the Mac's hardware UUID (IOPlatformUUID) rather than its host name, so a change of network or host name no longer makes the installation a reader of its own store (#234).
+- On macOS the workspace and coding-session sockets live in one short private folder per user under /tmp, so a workspace started in a terminal app is found from an ssh session or launchd, and socket paths stay well under the system limit (#235).
+- Every test now has a time limit (300 s by default, set per test with @pytest.mark.time_limit or for the run with CAIRNMIND_TEST_TIME_LIMIT), so a hanging test fails instead of blocking the whole run, also under pytest-xdist at the exclusive-test gate (#236).
+- After each test, the child processes, tmux servers and test engines it started and left running are stopped (SIGTERM, then SIGKILL) and reported as a LeftRunning warning, without touching anything the test did not start (#236).
+- CI now runs the fast test tier on an Apple silicon macOS runner for every pull request and push to main, as a non-blocking job with a 30 minute limit that keeps the pytest output and JUnit report as an artifact (#237).
+
 ## 0.11.0
 
 ### Confirmation: only a person confirms

@@ -41,11 +41,13 @@ def inner_run(tmp_path: Path, source: str, *options: str, limit: str = "2", env:
             shutil.copyfile(HERE / name, tests / name)
     shutil.copyfile(HERE / "fixtures" / "mcp_fixture_server.py", tests / "fixtures" / "mcp_fixture_server.py")
     (tests / "test_shards.py").write_text(textwrap.dedent(source))
+    # GitHub's runner sets FORCE_COLOR and PY_COLORS, which colour the inner report the assertions read.
     environment = {key: value for key, value in os.environ.items()
-                   if key not in ("CAIRNMIND_TEST_TIME_LIMIT", "DEVBRAIN_TEST_TIME_LIMIT", "TMUX", "TMUX_PANE")}
-    environment.update({"CAIRNMIND_TEST_TIME_LIMIT": limit, **(env or {})})
+                   if key not in ("CAIRNMIND_TEST_TIME_LIMIT", "DEVBRAIN_TEST_TIME_LIMIT", "TMUX", "TMUX_PANE",
+                                  "FORCE_COLOR", "PY_COLORS")}
+    environment.update({"CAIRNMIND_TEST_TIME_LIMIT": limit, "NO_COLOR": "1", **(env or {})})
     started = time.monotonic()
-    process = subprocess.Popen([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-rA",
+    process = subprocess.Popen([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-rA", "--color=no",
                                 "--basetemp", str(tmp_path / "base"), "tests/test_shards.py", *options],
                                cwd=tests.parent, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
