@@ -232,7 +232,9 @@ def kill_and_focus_ten_times(workspace, role):
     other = "graph" if role != "graph" else "client1"
     for _ in range(10):
         pane = workspace.activity_pane() if role == "activity" else workspace.panes()[role]
-        os.kill(geometry(workspace)[role][3], signal.SIGKILL)
+        # A slow run can read the pid after the view has already ended; the pane is then dead all the same.
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(geometry(workspace)[role][3], signal.SIGKILL)
         deadline = time.monotonic() + 10
         while not geometry(workspace)[role][4]:
             assert time.monotonic() < deadline
