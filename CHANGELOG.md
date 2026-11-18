@@ -27,7 +27,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 ### Answers on a slower or more limited model server
 
 - On a model server that refuses structured output (Ollama with an MLX build on Apple silicon), answers, their correction, the support check and extraction ask again without a response format and validate the JSON themselves, so ask no longer ends partial with the model reported as unavailable (#231).
-- `cairnmind doctor` shows "structured output: unavailable on this server" for the chat model once the service has seen that refusal (#231).
+- `cairnmind doctor` shows "structured output: unavailable on this server" for the chat model once the service has seen that refusal (#231). A later successful request does not clear the note; it stays until `models.capabilities.json` is removed from the data directory.
 - On macOS a new installation gives each question 120 seconds instead of 60, so an answer from a slow local model on Apple silicon can finish its citation and support checks. Linux keeps 60, and a value already in config.json is kept (#231).
 - Codex waits for a Cairnmind tool for the question budget plus 15 seconds, never less than the earlier 75; `cairnmind install` writes this as `tool_timeout_sec` in `.codex/config.toml`, so Codex no longer cuts a longer question on macOS (#231).
 - A question no longer starts a second reading of whole passages when the time left is shorter than the calls that reading repeats (the answer, its repair and the support check). It ends sooner instead of holding the model for a pass that cannot finish (#231).

@@ -32,7 +32,7 @@ Shared memory for a team works through Git ([Team memory](#team-memory)). Planne
 
 ## Who it is for
 
-Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux, WSL2 or macOS with a local model through Ollama. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
+Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux, WSL2 or macOS on Apple silicon, with a local model through Ollama. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
 
 ## What it guarantees, and what it does not
 
@@ -89,7 +89,7 @@ The coding assistants it works with, Codex CLI and Claude Code among them, are n
 
 ## Measured results
 
-Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in isolated databases: on release 0.8.0 on 9 November 2026, and on the code of 0.11.0 on 16 November 2026 (one run of each command for the release, and three runs of the repository questions before it). Recall, portable memory and extraction use synthetic fixtures; the repository questions use Cairnmind's own repository. None of them is proof of behaviour on every real project.
+Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in isolated databases: on release 0.8.0 on 9 November 2026, and on the code of 0.11.0 on 16 November 2026 (one run of each command for the release, and three runs of the repository questions before it). The figures below are 0.11.0's; the release gate of 0.12.0, run on 18 November 2026, gave the same recall, memory and extraction results and 19 of 20 on the repository questions, none wrong (see [docs/EVALUATION.md](docs/EVALUATION.md#results-for-0120)). Recall, portable memory and extraction use synthetic fixtures; the repository questions use Cairnmind's own repository. None of them is proof of behaviour on every real project.
 
 | Evaluation | Result |
 |---|---|
@@ -449,7 +449,7 @@ An external MCP session (Cursor, Cline, Zed) has no archived conversation to quo
 - [docs/API.md](docs/API.md): API, Ollama and Copilot connections and permissions.
 - [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, evidence states and MCP calls.
 - [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.
-- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the results for 0.11.0 and 0.8.0 and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
+- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the results for 0.12.0, 0.11.0 and 0.8.0 and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): the database in a container, on a server or in Kubernetes, and connect-only installations.
 - [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing installation.
 - [docs/CONTRACTS.md](docs/CONTRACTS.md): implementation contracts for the backend and its components, and the [extension surfaces](docs/CONTRACTS.md#extension-surfaces): what can be added (checks, reactions to events, MCP clients, model connections), what is planned, and why there are no plugins.
