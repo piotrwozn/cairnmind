@@ -6,8 +6,8 @@ uses the same database. Instead of database leases, a database names the one ins
 writes it; every other installation reads it only, until a person moves the role explicitly.
 
 The installation. ``installation.json`` in the data directory holds a random identifier and a
-fingerprint of where that file belongs: the machine identity (``/etc/machine-id``, else the host
-name), the absolute path of the data directory and its inode. A copy of the data directory, to
+fingerprint of where that file belongs: the machine identity (``/etc/machine-id`` on Linux,
+IOPlatformUUID on macOS, else the host name), the absolute path of the data directory and its inode. A copy of the data directory, to
 another machine or to another path, or a restore of it onto a new filesystem, therefore does not
 match its fingerprint: it gets a new identifier at once and keeps the old one as ``copied_from``,
 so the copy never writes as the original silently. A host name is only a label, shown to people:
@@ -58,8 +58,10 @@ import os
 from pathlib import Path
 import re
 import socket
+import subprocess
+import sys
 import tempfile
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from .sql import clean_row, insert_document, update_document, utc_now
 
@@ -74,6 +76,12 @@ REFUSED_TAKEOVER = ("The store changed while this takeover ran: its writer wrote
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._:@/+-]")
+# macOS: the absolute path, so that no command of that name earlier on PATH answers instead (ioreg(8)).
+IOREG = ("/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
+IOREG_TIMEOUT = 5.0
+_IOREG_UUID = re.compile(r'^[ \t|]*"IOPlatformUUID" = "([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
+                         r'[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})"[ \t]*$', re.MULTILINE)
+_known_platform_uuid: str | None = None  # read once per process: a later failed run does not change it
 
 
 class StoreNotWriter(ValueError):
@@ -90,8 +98,35 @@ class Installation:
     copied_from: str | None = None
 
 
+def platform_uuid(output: str) -> str | None:
+    """The IOPlatformUUID in the output of ``ioreg -rd1 -c IOPlatformExpertDevice``, in lower case; None unless
+    the output names exactly one UUID on a line of its own (the nil UUID names no machine)."""
+    found = {match.lower() for match in _IOREG_UUID.findall(output)}
+    if len(found) != 1:
+        return None
+    value = str(UUID(found.pop()))
+    return None if value == str(UUID(int=0)) else value
+
+
+def _darwin_identity() -> str | None:
+    """IOPlatformUUID of this Mac: unlike its host name, it does not change with the network (#234)."""
+    global _known_platform_uuid
+    if _known_platform_uuid is None:
+        try:
+            done = subprocess.run(IOREG, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  stdin=subprocess.DEVNULL, timeout=IOREG_TIMEOUT, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        _known_platform_uuid = platform_uuid(done.stdout) if done.returncode == 0 else None
+    return _known_platform_uuid
+
+
 def machine_identity() -> str:
-    """What tells this machine from another: the systemd machine id, else the host name."""
+    """What tells this machine from another: the platform UUID on macOS, the systemd machine id on Linux, else
+    the host name."""
+    if sys.platform == "darwin":
+        value = _darwin_identity()
+        return "platform-uuid:" + value if value else "host:" + socket.gethostname()
     for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
         try:
             value = Path(path).read_text(encoding="ascii").strip()
