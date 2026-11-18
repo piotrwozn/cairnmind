@@ -20,6 +20,8 @@ cd cairnmind
 uv sync --locked --extra dev
 ```
 
+The file `.python-version` pins Python 3.12, the version the lock file and CI cover, so `uv sync` uses it even when a newer Python is installed (a newer one can lack wheels for some dependencies, such as tree-sitter). Do not run `uv sync` with another `--python` unless you are testing that on purpose.
+
 Ollama and the coding clients are needed only for the explicit evaluations, never for the automated test suite.
 
 ## Running checks
