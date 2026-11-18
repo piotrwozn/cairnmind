@@ -7,6 +7,7 @@ import secrets
 import fcntl
 import tempfile
 import hashlib
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -22,6 +23,9 @@ DATA_DIR_NAMES = ("cairnmind", "devbrain")
 SERVICE_NAMES = ("cairnmind", "devbrain")
 BROKER_NAMES = ("cairnmind-cockpit", "devbrain-cockpit")
 # Whole-database backups: the suffix written and the envelope format, each with its earlier form.
+# The question budget of a new installation on macOS: with an MLX build on Apple silicon one discovery
+# call took 43 s, so discovery, a repair and the support check need about twice the 60 s of Linux (#231).
+DARWIN_ASK_TIMEOUT = 120.0
 BACKUP_SUFFIXES = (".cairnmind.json.gz", ".devbrain.json.gz")
 BACKUP_FORMATS = ("cairnmind-arcadedb-backup", "devbrain-arcadedb-backup")
 
@@ -233,6 +237,8 @@ class Settings:
         values = json.loads(path.read_text()) if path.exists() else {}
         values.pop("data_dir", None)
         values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__ and not k.startswith("_")}
+        if sys.platform == "darwin":  # only where config.json names none: a stored budget is the user's
+            values.setdefault("ask_timeout", DARWIN_ASK_TIMEOUT)
         stored = dict(values)
         kept = {}
         for name, variable in (("arcade_url", "ARCADE_URL"),
