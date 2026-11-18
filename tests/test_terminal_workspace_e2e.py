@@ -29,7 +29,7 @@ import pytest
 import uvicorn
 from websockets.sync.client import connect
 
-from conftest import terminal_attributes, time_budget
+from conftest import status_flags, terminal_attributes, time_budget
 from cairnmind import client_auth
 from cairnmind.client_runtime import NativeRuntime
 from cairnmind.cockpit import _birth, create_cockpit_app, instance_id
@@ -422,7 +422,7 @@ async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(termi
     os.set_blocking(master, False)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 37, 112, 0, 0))
     before_attributes = terminal_attributes(slave)
-    before_flags = fcntl.fcntl(slave, fcntl.F_GETFL)
+    before_flags = status_flags(slave)
     previous_signal = signal.getsignal(signal.SIGTERM)
     broker = BrokerClient(stack.settings)
     bridge = RawTerminalBridge(broker, run["id"], run["generation"], input_fd=slave, output_fd=slave)
@@ -445,7 +445,7 @@ async def test_raw_bridge_real_pty_input_paste_resize_and_terminal_restore(termi
             os.write(master, b"quit\n")
         assert await asyncio.wait_for(task, 8) == 0
         assert terminal_attributes(slave) == before_attributes
-        assert fcntl.fcntl(slave, fcntl.F_GETFL) == before_flags
+        assert status_flags(slave) == before_flags
         assert signal.getsignal(signal.SIGTERM) == previous_signal
         if ending == "signal":
             assert stack.runtime.get_run(run["id"])["pid"] == run["pid"]
@@ -712,7 +712,9 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
         os.write(master, b"\x02d")
         assert await asyncio.to_thread(process.wait, timeout=8) == 0
         assert manager.exists()
-        assert terminal_attributes(slave) == attributes
+        # macOS revokes a terminal when the session that controlled it ends, and the test's own descriptor of it
+        # with it (ENOTTY); master and slave share one terminal there, so its state is read through the master.
+        assert terminal_attributes(master if sys.platform == "darwin" else slave) == attributes
         assert before == {row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
         assert len(stack.trace("coding")) == 2
     finally:
