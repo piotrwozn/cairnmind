@@ -301,7 +301,8 @@ def test_doctor_reports_selected_and_running_binary_without_starting_engine(tmp_
     monkeypatch.setattr(integrations.httpx, "Client", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(lambda request: httpx.Response(503))))
     result = integrations.doctor(settings)
-    assert probes == [[str(binary), "-version"]]
+    # On a Mac doctor also reads the chip with /usr/sbin/sysctl (#233); Java is still only asked its version.
+    assert [argv for argv in probes if argv[0] != "/usr/sbin/sysctl"] == [[str(binary), "-version"]]
     assert result["java"]["executable"] == str(binary)
     assert result["java"]["managed_executable"] == "/running/jdk/bin/java"
     assert result["java"]["compatible"] is True
