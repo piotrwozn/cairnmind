@@ -238,7 +238,9 @@ def file_lock(path: Path):
 
 
 def _pytest_alive(pid: int) -> bool:
-    return any("pytest" in argument for argument in process_identity.command_line(pid) or [])
+    argv = process_identity.command_line(pid)
+    # An owner whose command line cannot be read keeps its engine while it lives: never reap a live run.
+    return process_identity.alive(pid) if argv is None else any("pytest" in argument for argument in argv)
 
 
 def reap_orphan_engines(runs_root: Path) -> None:

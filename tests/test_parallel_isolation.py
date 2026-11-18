@@ -48,6 +48,17 @@ def test_the_processes_of_the_machine_are_listed_without_procfs():
     assert {os.getpid(), sleeper.pid} <= set(listed)
 
 
+def test_an_engine_owner_whose_command_line_cannot_be_read_counts_as_alive(monkeypatch):
+    # The orphan reaper must not stop the engine of a live run it cannot identify.
+    monkeypatch.setattr(conftest.process_identity, "command_line", lambda pid: None)
+    with subprocess.Popen(["sleep", "30"]) as sleeper:
+        try:
+            assert conftest._pytest_alive(sleeper.pid)
+        finally:
+            sleeper.kill()
+    assert not conftest._pytest_alive(sleeper.pid)
+
+
 def test_the_fixture_servers_of_another_worker_are_not_this_workers(tmp_path):
     other_copy = tmp_path / "popen-gw9" / "mcp-fixture" / Path(conftest.MCP_FIXTURE).name
     other_copy.parent.mkdir(parents=True)
