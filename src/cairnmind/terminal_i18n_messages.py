@@ -360,6 +360,10 @@ STATE_MESSAGES = {
     "Install tmux >= 3.4 in the same WSL distribution as Cairnmind.":
         "Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co Cairnmind.",
     "The workspace socket path is too long.": "Ścieżka gniazda środowiska jest zbyt długa.",
+    "The system temporary folder is not safe for private sockets.":
+        "Systemowy katalog tymczasowy nie jest bezpieczny dla prywatnych gniazd.",
+    "The socket folder must belong to the user, have permissions 0700 and not be a link.":
+        "Katalog gniazd musi należeć do użytkownika, mieć uprawnienia 0700 i nie być dowiązaniem.",
     "The workspace configuration must not be a link.": "Konfiguracja środowiska nie może być dowiązaniem.",
     "The workspace configuration must be a private file of the user.":
         "Konfiguracja środowiska musi być prywatnym plikiem użytkownika.",
