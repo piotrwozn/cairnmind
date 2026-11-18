@@ -15,12 +15,15 @@ from cairnmind.config import Settings
 
 
 @pytest.fixture
-def pane_runtime(tmp_path, monkeypatch):
+def pane_runtime(tmp_path, monkeypatch, request):
     runtime = NativeRuntime(Settings(tmp_path / 'home'), tmux_binary=sys.executable)
     # Short and owner-only: tmp_path on macOS (/private/var/folders/...) is longer than a socket path may be.
-    runtime.socket_directory = Path(tempfile.mkdtemp(prefix='cm-', dir='/tmp'))
+    socket_directory = Path(tempfile.mkdtemp(prefix='cm-', dir='/tmp'))
+    request.addfinalizer(lambda: shutil.rmtree(socket_directory, ignore_errors=True))
+    runtime.socket_directory = socket_directory
     runtime.socket = runtime.socket_directory / 'tmux.sock'
     listener = socket.socket(socket.AF_UNIX)
+    request.addfinalizer(listener.close)
     listener.bind(str(runtime.socket))
     row = {'id': 'owned-run', 'run_id': 'owned-run', 'tmux_session': 'devbrain_owned-run',
            'generation': 3, 'lifecycle': 'running', 'state': 'running', 'purpose': 'coding',
@@ -51,11 +54,7 @@ def pane_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(client_runtime.os, 'killpg', forbidden)
     with runtime._locked():
         runtime._save([row])
-    try:
-        yield runtime, row, metadata, calls
-    finally:
-        listener.close()
-        shutil.rmtree(runtime.socket_directory, ignore_errors=True)
+    yield runtime, row, metadata, calls
 
 
 @pytest.mark.parametrize(('exit_status', 'lifecycle', 'code'), [('0', 'exited', 0), ('9', 'failed', 9), ('', 'failed', None)])

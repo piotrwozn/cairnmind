@@ -74,7 +74,7 @@ def odd_name_process():
     # a two-byte letter, as the kernel cuts a long name.
     if not sys.platform.startswith("linux"):
         pytest.skip("prctl(PR_SET_NAME) and the name cut into /proc/<pid>/stat exist on Linux only")
-    code =("import ctypes, sys, time; ctypes.CDLL(None).prctl(15, 'przetwarzaniżż'.encode()[:15], 0, 0, 0); "
+    code = ("import ctypes, sys, time; ctypes.CDLL(None).prctl(15, 'przetwarzaniżż'.encode()[:15], 0, 0, 0); "
             "print(flush=True); time.sleep(60)")
     process = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE)
     process.stdout.readline()
