@@ -272,7 +272,8 @@ def start_engine(settings: Settings) -> dict:
             raise ArcadeError("ArcadeDB is not installed. Run cairnmind engine install first.")
         java = resolve_java(settings)
         if not java:
-            raise ArcadeError("Install Java 21 or newer in WSL (openjdk-21-jre-headless)")
+            from .platform_hints import hint
+            raise ArcadeError(hint("java"))
         probe = probe_java(java)
         import re
         version = re.search(r'version "(\d+)', probe.stderr + probe.stdout)
