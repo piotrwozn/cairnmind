@@ -320,6 +320,11 @@ def test_the_socket_directories_a_run_left_are_removed_and_nothing_else(short_tm
     with socket.socket(socket.AF_UNIX) as server:
         server.bind(str(live / "tmux.sock"))
         server.listen()
+        settled = time.time() - run_guard.SOCKET_DIRECTORY_SETTLE - 5
+        for path in (*left, live, unnamed):
+            os.utime(path, (settled, settled))
+        young = named("native", "9")  # another run has just made it; its server does not listen yet
+        young.mkdir()
         removed = run_guard.remove_socket_directories(before)
     assert removed == sorted(map(str, left))
-    assert earlier.is_dir() and live.is_dir() and link.is_symlink() and unnamed.is_dir()
+    assert earlier.is_dir() and live.is_dir() and link.is_symlink() and unnamed.is_dir() and young.is_dir()

@@ -371,20 +371,24 @@ def listening(path: str) -> bool:
 
 
 def remove_socket_directories(before: set[str]) -> list[str]:
-    """Remove the socket directories that are not in `before`, belong to this user, are not links and hold
-    no server that answers. shortcut: one that another program is creating at this very moment (made, its
-    server not yet listening) would be removed too; a per-run socket base in the product would end that."""
+    """Remove the socket directories that are not in `before`, belong to this user, are not links, have not
+    changed for SOCKET_DIRECTORY_SETTLE seconds and hold no server that answers. The age keeps a directory
+    that another run on this machine has just made and whose server does not listen yet. shortcut: such a
+    directory older than that, or one this run left in its last seconds, is still misjudged; a per-run socket
+    base in the product would end that."""
     removed = []
     for path in sorted(socket_directories() - before):
         with contextlib.suppress(OSError):
             info = os.lstat(path)
             if (stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+                    and time.time() - info.st_mtime >= SOCKET_DIRECTORY_SETTLE
                     and not listening(os.path.join(path, "tmux.sock"))):
                 shutil.rmtree(path)
                 removed.append(path)
     return removed
 
 
+SOCKET_DIRECTORY_SETTLE = 10.0  # seconds without change before a left socket directory is taken as left
 SOCKETS_BEFORE: set[str] | None = None  # in the process that ends the run: the directories there before it
 
 
