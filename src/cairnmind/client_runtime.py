@@ -27,6 +27,7 @@ from uuid import uuid4
 
 import httpx
 
+from . import platform_hints
 from .config import ENV_PREFIXES, Settings
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
@@ -91,7 +92,7 @@ class NativeRuntime:
         if self._binary_error:
             return {**result, "code": "tmux_invalid_executable", "error": self._binary_error}
         if not self.binary:
-            return {**result, "code": "tmux_missing", "action": "Install tmux >= 3.4 in the same WSL distribution"}
+            return {**result, "code": "tmux_missing", "action": platform_hints.hint("tmux_action")}
         try:
             probe = subprocess.run([self.binary, "-V"], capture_output=True, text=True, timeout=4)
             match = re.search(r"tmux (\d+)\.(\d+)", probe.stdout)
@@ -151,7 +152,7 @@ class NativeRuntime:
         if self._binary_error:
             raise ValueError("tmux_invalid_executable: " + self._binary_error)
         if not self.binary:
-            raise ValueError("tmux_missing: install tmux >= 3.4 in this WSL distribution")
+            raise ValueError(platform_hints.hint("tmux_code"))
         result = subprocess.run([self.binary, "-S", str(self.socket), "-f", str(self.config), *args],
                                 capture_output=True, text=True, timeout=5)
         if check and result.returncode:
@@ -314,7 +315,7 @@ class NativeRuntime:
         from .client_auth import probe_client
         auth = probe_client(client)
         if auth.get("installation") == "missing":
-            raise ValueError("client_missing: install the native CLI in this WSL distribution")
+            raise ValueError(platform_hints.hint("client_missing"))
         if auth.get("installation") == "unsupported":
             raise ValueError("client_unsupported: update the native CLI")
         if (auth.get("auth") == "expired_or_rejected" or auth.get("auth") == "signed_out"

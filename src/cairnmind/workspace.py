@@ -24,6 +24,7 @@ from .config import SESSION_NAMES, Settings, drop_env
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
+from . import platform_hints
 from . import workspace_activity as column
 from . import workspace_border as border
 from .terminal_theme import TMUX
@@ -244,7 +245,7 @@ class WorkspaceManager:
 
     def _initialize(self):
         if not self.diagnostics()["available"]:
-            raise ValueError("Install tmux >= 3.4 in the same WSL distribution as Cairnmind.")
+            raise ValueError(platform_hints.hint("tmux_workspace"))
         _private_directory(self.directory.parent)
         _private_directory(self.directory)
         prepare_socket_base()
@@ -953,7 +954,7 @@ def launch_workspace(settings, takeover=False):
         raise ValueError("Cairnmind needs an interactive terminal. Use `cairnmind workspace status` to diagnose.")
     manager = WorkspaceManager(settings)
     if not manager.diagnostics()["available"]:
-        raise ValueError("Install tmux >= 3.4 in Ubuntu: sudo apt install tmux")
+        raise ValueError(platform_hints.hint("tmux_launch"))
     manager.broker.ensure()
     manager.create()
     inherited = os.environ.get("TMUX", "").split(",", 1)[0]

@@ -98,7 +98,8 @@ def _probe_cli(client: str, cwd: str | None = None, *, env: dict[str, str] | Non
                             "session_binding": False, "isolated_process": False,
                             "verified_resume": False, "checks": {}, "notes": []}
     if not binary:
-        info["notes"].append(f"Install {client} in the same WSL distribution as Cairnmind.")
+        from .platform_hints import hint
+        info["notes"].append(hint("client_note", client=client))
         return info
     try:
         version = subprocess.run([binary, "--version"], capture_output=True, text=True,
@@ -202,16 +203,20 @@ def doctor(settings: Settings) -> dict[str, Any]:
     from .engine import managed_java_executable, resolve_java
     from .client_runtime import NativeRuntime
     import ssl
+    from . import platform_hints
+    on_a_mac = platform_hints.host_system() == "darwin"
     result: dict[str, Any] = {
         "python": platform.python_version(), "python_executable": str(Path(sys.executable).resolve()),
         "openssl": ssl.OPENSSL_VERSION, "platform": platform.system(),
-        "wsl": "microsoft" in platform.release().lower(),
+        "wsl": platform_hints.is_wsl(),
         "data_dir": str(settings.data_dir),
         "clients": {name: _probe_cli(name) for name in CLIENTS},
         "ollama": {"available": False}, "service": {"available": False},
         # The database block is read through ArcadeClient, so its rules (#72) apply to doctor too.
         "arcadedb": doctor_block(settings),
     }
+    if on_a_mac:
+        del result["wsl"]  # a flag that can only be False here, and the word the report should not carry
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
     result["tmux"] = NativeRuntime(settings).diagnostics()
     from .database_mode import connect_only
@@ -275,8 +280,11 @@ def doctor(settings: Settings) -> dict[str, Any]:
             result["service"] = {"available": True, "health": response.json()}
         except (httpx.HTTPError, ValueError) as exc:
             result["service"]["error"] = type(exc).__name__
-    nvidia = shutil.which("nvidia-smi")
-    if nvidia:
+    nvidia = None if on_a_mac else shutil.which("nvidia-smi")
+    if on_a_mac:
+        # Ollama uses Metal on a Mac; nvidia-smi and the WSL advice do not apply (#233).
+        result["gpu"] = platform_hints.apple_gpu()
+    elif nvidia:
         try:
             probe = subprocess.run([nvidia, "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"],
                                    capture_output=True, text=True, timeout=4, check=False)
@@ -284,7 +292,7 @@ def doctor(settings: Settings) -> dict[str, Any]:
         except (OSError, subprocess.SubprocessError) as exc:
             result["gpu"] = {"available": False, "error": type(exc).__name__}
     else:
-        result["gpu"] = {"available": False, "note": "nvidia-smi not found; verify Windows NVIDIA driver and WSL GPU access."}
+        result["gpu"] = {"available": False, "note": platform_hints.hint("gpu_missing")}
     return result
 
 
@@ -751,7 +759,8 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
         raise ValueError(f"Unsupported client: {client}")
     binary = shutil.which(client)
     if not binary:
-        raise ValueError(f"{client} is not installed in this WSL distribution")
+        from .platform_hints import hint
+        raise ValueError(hint("client_not_installed", client=client))
     root = Path(project["root"]).resolve()
     if not root.is_dir():
         raise ValueError(f"Project directory does not exist: {root}")

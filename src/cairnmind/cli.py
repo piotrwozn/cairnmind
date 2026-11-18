@@ -2040,9 +2040,5 @@ def benchmark(ctx: typer.Context, project: ProjectArg, question: QuestionArg):
         runs.append({"run": label, "seconds": round(time.perf_counter() - started, 3),
                      "status": result["status"], "cached": result.get("cached"),
                      "sources": len(result.get("sources", []))})
-    try:
-        gpu = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.used,memory.total", "--format=csv,noheader"],
-                             capture_output=True, text=True, timeout=5, check=False).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        gpu = "nvidia-smi unavailable"
-    output({"runs": runs, "gpu": gpu})
+    from cairnmind.platform_hints import benchmark_gpu
+    output({"runs": runs, "gpu": benchmark_gpu()})
