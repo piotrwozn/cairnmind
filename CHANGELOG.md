@@ -25,6 +25,13 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - docs/INSTALL.md describes installing on macOS with Homebrew (#232).
 - On a Mac, `doctor` says the GPU is not checked on macOS instead of giving an nvidia-smi and WSL note, and install hints for tmux, Java and the AI clients name Homebrew, in English and Polish; Linux and WSL keep their wording unchanged (#233).
 - The test suite no longer assumes Linux in its process checks, socket paths, terminal state comparisons, test certificates and file system expectations, so more of it runs on macOS (#236).
+- Stopping the last coding-session run now also stops its private terminal server, which was left running with no sessions after `workspace stop --clients` (#105).
+- On macOS a new installation gives each question 120 seconds instead of 60, so an answer from a slow local model on Apple silicon can finish its citation and support checks. Linux keeps 60, and a value already in config.json is kept (#231).
+- Codex now waits for a Cairnmind tool for the question budget plus 15 seconds, never less than the earlier 75, so it no longer cuts a longer question on macOS (#231).
+- A question no longer starts a second reading of whole passages when the time left is shorter than the calls that reading repeats (the answer, its repair and the support check). It ends sooner instead of holding the model for a pass that cannot finish (#231).
+- The test suite no longer fails on macOS where temporary paths are long, /tmp is /private/tmp, CoreFoundation adds an environment variable, a pty keeps a written mark or is revoked, and tmux 3.8 shows no pid for a dead pane (#236).
+- A test run removes the socket directories it left in the per-user socket folder, and keeps any whose server still answers or that another run has just made (#236).
+- docs/INSTALL.md says how to put Homebrew on the shell's PATH on macOS, without which tmux is installed but not found (#232).
 
 ## 0.11.0
 
