@@ -1379,6 +1379,23 @@ def test_a_block_of_an_earlier_version_converted_by_install_still_counts_as_gene
     assert _managed_empty_file(".codex/config.toml", path.read_bytes(), settings, project)
 
 
+def test_codex_waits_for_a_tool_as_long_as_the_question_budget_allows(settings, project, installed):
+    from cairnmind.sessions import _managed_empty_file
+
+    path = Path(project["root"]) / ".codex/config.toml"
+    integrations.install_integrations(settings, project, clients=("codex",))
+    assert tomllib.loads(path.read_text())["mcp_servers"]["cairnmind"]["tool_timeout_sec"] == 75  # 60 s
+    written = path.read_bytes()
+    settings.ask_timeout = 120.0  # the macOS budget (#231): Codex must not cut a question the client waits for
+    assert str(path) in integrations.install_integrations(settings, project, clients=("codex",))["changed"]
+    assert tomllib.loads(path.read_text())["mcp_servers"]["cairnmind"]["tool_timeout_sec"] == 135
+    # Both the block written by an earlier version (75) and the new one count as generated.
+    assert _managed_empty_file(".codex/config.toml", written, settings, project)
+    assert _managed_empty_file(".codex/config.toml", path.read_bytes(), settings, project)
+    settings.ask_timeout = 30.0
+    assert integrations.codex_tool_timeout(settings) == 75  # never shorter than before
+
+
 def test_a_table_renamed_by_hand_under_the_earlier_markers_is_accepted(settings, project):
     path = Path(project["root"]) / ".codex/config.toml"
     path.parent.mkdir()

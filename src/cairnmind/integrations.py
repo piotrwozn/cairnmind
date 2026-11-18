@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
 import platform
 import re
@@ -432,6 +433,11 @@ def _renamed_toml(text: str, path: Path) -> str:
     return renamed
 
 
+def codex_tool_timeout(settings: Settings) -> int:
+    """How long Codex waits for a tool: as long as the MCP client waits for an ask, never under 75 s."""
+    return max(75, math.ceil(settings.ask_timeout) + 15)
+
+
 def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
     original = path.read_bytes().decode("utf-8") if path.exists() else ""
     text = _renamed_toml(original, path)
@@ -481,7 +487,7 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
             raise ValueError("Invalid Cairnmind env_vars; original file left unchanged")
         desired = {"command": sys.executable, "args": _command(settings, "mcp")[1:],
                    "env_vars": [*env_vars, *(name for name in SESSION_ENV_VARS if name not in env_vars)],
-                   "startup_timeout_sec": 15, "tool_timeout_sec": 75}
+                   "startup_timeout_sec": 15, "tool_timeout_sec": codex_tool_timeout(settings)}
         if all(existing.get(field) == value for field, value in desired.items()):
             return text != original and _write_changed(path, text, new_mode=0o600)
         server = document["mcp_servers"][key]
@@ -498,7 +504,7 @@ def _merge_toml_mcp(path: Path, settings: Settings) -> bool:
             # rather than the complete verified launcher's environment.
             f"env_vars = {json.dumps(SESSION_ENV_VARS)}\n"
             "startup_timeout_sec = 15\n"
-            "tool_timeout_sec = 75\n"
+            f"tool_timeout_sec = {codex_tool_timeout(settings)}\n"
             f"{TOML_END}\n")
     updated = text.rstrip() + "\n\n" + body
     # Catch unsupported/ambiguous preexisting tables before touching disk.
