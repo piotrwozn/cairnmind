@@ -369,6 +369,8 @@ def test_real_tmux_ctrl_q_in_a_view_detaches_only_and_reaches_an_assistant_pane(
     for role, detaches in (("client1", False), ("sidebar", True), ("graph", True)):
         workspace.focus(role)
         terminal = PreviewTerminal(workspace, (120, 40), readonly=False)
+        # Named now: macOS revokes the terminal, and this descriptor of it, when the client that controlled it ends.
+        tty = os.ttyname(terminal.slave)
         try:
             assert wait_for(lambda: len(workspace.clients()) == 1)
             active = workspace.tmux("display-message", "-p", "#{@cairnmind_role}").stdout.strip()
@@ -382,7 +384,7 @@ def test_real_tmux_ctrl_q_in_a_view_detaches_only_and_reaches_an_assistant_pane(
                 assert len(workspace.clients()) == 1  # the key went to the assistant pane instead
             assert not any(dead(workspace, view) for view in ("sidebar", "inspector", "graph"))
         finally:
-            workspace.tmux("detach-client", "-t", os.ttyname(terminal.slave), check=False)
+            workspace.tmux("detach-client", "-t", tty, check=False)
             terminal.close()
 
 

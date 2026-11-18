@@ -294,3 +294,37 @@ def test_a_tmux_server_a_failed_test_started_is_stopped_after_it(tmp_path):
     finally:
         subprocess.run([tmux, "-S", str(socket), "kill-server"], capture_output=True, timeout=10)
         shutil.rmtree(folder, ignore_errors=True)
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_the_socket_directories_a_run_left_are_removed_and_nothing_else(short_tmp_path, monkeypatch, platform):
+    import socket
+    from cairnmind import runtime_sockets
+    monkeypatch.setattr(runtime_sockets, "SYSTEM_TEMP", str(short_tmp_path))  # macOS: <it>/cairnmind-UID
+    monkeypatch.setattr(tempfile, "tempdir", str(short_tmp_path))  # Linux: the temporary folder itself
+    monkeypatch.setattr(sys, "platform", platform)
+    named = lambda kind, letter: runtime_sockets.socket_directory(kind, letter * 16)  # noqa: E731
+    named("ui", "a").parent.mkdir(mode=0o700, exist_ok=True)
+    earlier = named("ui", "a")
+    earlier.mkdir()
+    before = run_guard.socket_directories()
+    left = [named("native", "b"), named("ui", "c")]
+    for path in left:
+        path.mkdir()
+    with socket.socket(socket.AF_UNIX) as ended:  # a socket whose server is gone: refused
+        ended.bind(str(left[1] / "tmux.sock"))
+    live, link, unnamed = named("ui", "d"), named("native", "e"), named("ui", "f").with_name("ui-not-ours")
+    live.mkdir()
+    link.symlink_to(short_tmp_path)
+    unnamed.mkdir()
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(str(live / "tmux.sock"))
+        server.listen()
+        settled = time.time() - run_guard.SOCKET_DIRECTORY_SETTLE - 5
+        for path in (*left, live, unnamed):
+            os.utime(path, (settled, settled))
+        young = named("native", "9")  # another run has just made it; its server does not listen yet
+        young.mkdir()
+        removed = run_guard.remove_socket_directories(before)
+    assert removed == sorted(map(str, left))
+    assert earlier.is_dir() and live.is_dir() and link.is_symlink() and unnamed.is_dir() and young.is_dir()
