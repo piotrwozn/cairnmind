@@ -40,6 +40,9 @@ from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
 
+# A time limit for every test, and a stop for what a test left running (#236).
+pytest_plugins = ("run_guard",)
+
 # Verified on 2026-11-09: each passes in full with no ArcadeDB engine available.
 NO_ARCADE_MODULES = frozenset({
     "test_agent_journal", "test_agent_tools", "test_answer_contract", "test_api_broker",
@@ -55,6 +58,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
     "test_terminal_ux080", "test_usage", "test_workspace","test_workspace_cli", "test_workspace_locale",
     "test_workspace_state", "test_workspace_ux080", "test_workspace_focus_column", "test_shards",
+    "test_run_guard",
 })
 
 TMUX_MODULES = frozenset({
@@ -298,18 +302,21 @@ def run_slot(request, tmp_path_factory):
     and tears it down after it, and calls require_slot, which fails if the slot is not held.
     """
     global _slot_held
+    import run_guard  # loaded as a plugin already (pytest_plugins); imported here so pytest can rewrite it
     if not is_xdist_worker(request.config):
         yield
         return
     run_root = tmp_path_factory.getbasetemp().parent
     exclusive = request.node.get_closest_marker("exclusive") is not None
     with (run_root / "test-slot.gate").open("a") as gate, (run_root / "test-slot.lock").open("a") as lock:
-        fcntl.flock(gate, fcntl.LOCK_EX)
-        if exclusive:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-        else:
-            fcntl.flock(lock, fcntl.LOCK_SH)
-            fcntl.flock(gate, fcntl.LOCK_UN)
+        # Bounded (#236): a test that hangs elsewhere must not keep this one, and every one behind it, waiting.
+        with run_guard.waiting(run_guard.slot_wait(), "waiting for the test slot"):
+            fcntl.flock(gate, fcntl.LOCK_EX)
+            if exclusive:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_SH)
+                fcntl.flock(gate, fcntl.LOCK_UN)
         _slot_held = True
         try:
             yield
