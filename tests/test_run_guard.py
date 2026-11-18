@@ -9,7 +9,6 @@ import contextlib
 import fcntl
 import json
 import os
-import re
 from pathlib import Path
 import shutil
 import signal
@@ -43,9 +42,12 @@ def inner_run(tmp_path: Path, source: str, *options: str, limit: str = "2", env:
     shutil.copyfile(HERE / "fixtures" / "mcp_fixture_server.py", tests / "fixtures" / "mcp_fixture_server.py")
     (tests / "test_shards.py").write_text(textwrap.dedent(source))
     # GitHub's runner sets FORCE_COLOR and PY_COLORS, which colour the inner report the assertions read.
+    # Coverage's subprocess patch (pyproject: patch = ["subprocess"]) would measure the inner run too and
+    # double its limits, so the inner run gets none of the variables that start it.
     environment = {key: value for key, value in os.environ.items()
                    if key not in ("CAIRNMIND_TEST_TIME_LIMIT", "DEVBRAIN_TEST_TIME_LIMIT", "TMUX", "TMUX_PANE",
-                                  "FORCE_COLOR", "PY_COLORS")}
+                                  "FORCE_COLOR", "PY_COLORS")
+                   and not key.startswith(("COVERAGE_", "COV_CORE_"))}
     environment.update({"CAIRNMIND_TEST_TIME_LIMIT": limit, "NO_COLOR": "1", **(env or {})})
     started = time.monotonic()
     process = subprocess.Popen([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-rA", "--color=no",
@@ -116,8 +118,7 @@ def test_a_test_sets_its_own_limit(tmp_path):
     """)
     assert "1 failed, 1 passed" in result.stdout, result.stdout
     assert "FAILED tests/test_shards.py::test_shorter_than_the_default" in result.stdout
-    # The limit is doubled while coverage measures the run (run_guard.py).
-    assert re.search(r"took longer than [12] s", result.stdout), result.stdout
+    assert "took longer than 1 s" in result.stdout
     assert took < 60
 
 
