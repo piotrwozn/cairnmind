@@ -40,6 +40,35 @@ jobs:
       - run: uv sync --locked --extra dev
       - run: uv run pytest -n 4 -m "not arcade and not tmux" -q
 
+  macos-fast-tests:
+    # The same fast tier on an Apple silicon runner (macos-15 is arm64), to show on every pull request
+    # of milestone 0.12.0 what still fails on macOS. NOT a required check and it never blocks:
+    # continue-on-error keeps the workflow green when this job is red, and the timeout stops a hang
+    # from burning runner minutes. The pytest output and the JUnit XML are kept as an artifact.
+    runs-on: macos-15
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      # The hosted macOS runner has 3 cores. No per-test time limit yet: the job timeout above is
+      # the bound until pytest-timeout is a dev dependency.
+      - name: Fast tier
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest -n 3 -m "not arcade and not tmux" -q -ra --junitxml=macos-junit.xml 2>&1 | tee macos-pytest.txt
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: macos-fast-tests-report
+          path: |
+            macos-junit.xml
+            macos-pytest.txt
+          if-no-files-found: warn
+          retention-days: 7
+
   tests:
     # The whole suite in four parts that run at the same time, each on a runner of its own: real pinned
     # ArcadeDB on Java 21 plus tmux, as on the target WSL host. `--shard I/4` picks a part by test id
