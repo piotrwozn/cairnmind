@@ -140,11 +140,11 @@ def test_doctor_on_wsl_says_what_it_always_said(settings, monkeypatch):
     assert "wsl" in result
 
 
-def test_doctor_on_plain_linux_names_apt_and_not_wsl(settings, monkeypatch):
+def test_doctor_on_plain_linux_says_what_it_always_said(settings, monkeypatch):
     result = quiet_doctor(settings, monkeypatch, "linux")
-    assert "WSL" not in result["gpu"]["note"] and "Windows" not in result["gpu"]["note"]
-    assert result["tmux"]["action"] == "Install tmux >= 3.4, for example with: sudo apt install tmux"
-    assert "WSL" not in json.dumps(result["clients"])
+    assert result["gpu"]["note"] == "nvidia-smi not found; verify Windows NVIDIA driver and WSL GPU access."
+    assert result["tmux"]["action"] == "Install tmux >= 3.4 in the same WSL distribution"
+    assert result["clients"]["codex"]["notes"] == ["Install codex in the same WSL distribution as Cairnmind."]
     assert isinstance(result["wsl"], bool)  # the key stays on Linux; its value is the kernel's, not the test's
 
 
@@ -203,12 +203,14 @@ def test_every_hint_has_a_polish_translation_in_the_catalog(topic):
 
 
 @pytest.mark.parametrize("topic", sorted(platform_hints.TEXTS))
-def test_only_the_wsl_texts_mention_wsl_and_only_linux_ones_apt(topic):
+def test_only_the_wsl_texts_mention_wsl_and_only_the_mac_ones_brew(topic):
+    assert "linux" not in platform_hints.TEXTS[topic]  # plain Linux reads the 'wsl' texts, unchanged
+    if "wsl" in platform_hints.TEXTS[topic]:
+        assert platform_hints.hint(topic, "linux") == platform_hints.hint(topic, "wsl")
     for system, (english, polish) in platform_hints.TEXTS[topic].items():
         if system != "wsl":
-            assert not re.search(r"wsl|ubuntu|distribution|dystrybuc", english + polish, re.I), (topic, system)
+            assert not re.search(r"wsl|ubuntu|distribution|dystrybuc|apt install", english + polish, re.I), (topic, system)
         installs = topic.startswith("tmux") or topic == "java"
-        assert ("apt install" in english) == (installs and (system == "linux" or (system, topic) == ("wsl", "tmux_launch")))
         assert ("brew install" in english) == (installs and system == "darwin")
 
 

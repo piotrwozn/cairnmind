@@ -1,7 +1,7 @@
 """Which system this is, the install hint that fits it, and the GPU an Apple Mac reports (#233).
 
-Linux and WSL keep the sentences they always had; a Mac gets Homebrew and no mention of WSL or apt, and a
-plain Linux machine gets apt without WSL. The hint texts are fixed English sentences with a Polish
+Linux and WSL keep the sentences they always had (TEXTS has no 'linux' entries: Linux reads the 'wsl'
+ones); a Mac gets Homebrew and no mention of WSL or apt. The hint texts are fixed English sentences with a Polish
 translation in MESSAGES, which the terminal catalog merges. Everything read from the machine is data: the
 Darwin probes run without a shell, with a timeout and from the system's own folders, and fail soft.
 """
@@ -28,11 +28,8 @@ def host_system(platform_name: str | None = None, release: str | None = None) ->
     return "wsl" if is_wsl(release) else "linux"
 
 
-_TMUX_APT = "Install tmux >= 3.4, for example with: sudo apt install tmux"
 _TMUX_BREW = "Install tmux >= 3.4, for example with: brew install tmux"
-_TMUX_APT_PL = "Zainstaluj tmux >= 3.4, na przykład poleceniem: sudo apt install tmux"
 _TMUX_BREW_PL = "Zainstaluj tmux >= 3.4, na przykład poleceniem: brew install tmux"
-_CODE_APT = "tmux_missing: install tmux >= 3.4, for example with: sudo apt install tmux"
 _CODE_BREW = "tmux_missing: install tmux >= 3.4, for example with: brew install tmux"
 
 # topic -> system -> (English, Polish). The WSL texts are the ones the code had before #233, word for word.
@@ -40,57 +37,46 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
     "tmux_workspace": {
         "wsl": ("Install tmux >= 3.4 in the same WSL distribution as Cairnmind.",
                 "Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL co Cairnmind."),
-        "linux": (_TMUX_APT, _TMUX_APT_PL), "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
+        "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
     "tmux_launch": {
         "wsl": ("Install tmux >= 3.4 in Ubuntu: sudo apt install tmux",
                 "Zainstaluj tmux >= 3.4 w Ubuntu: sudo apt install tmux"),
-        "linux": (_TMUX_APT, _TMUX_APT_PL), "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
+        "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
     "tmux_action": {
         "wsl": ("Install tmux >= 3.4 in the same WSL distribution",
                 "Zainstaluj tmux >= 3.4 w tej samej dystrybucji WSL"),
-        "linux": (_TMUX_APT, _TMUX_APT_PL), "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
+        "darwin": (_TMUX_BREW, _TMUX_BREW_PL)},
     "tmux_code": {
         "wsl": ("tmux_missing: install tmux >= 3.4 in this WSL distribution",
                 "tmux_missing: zainstaluj tmux >= 3.4 w tej dystrybucji WSL"),
-        "linux": (_CODE_APT, "tmux_missing: zainstaluj tmux >= 3.4, na przykład poleceniem: sudo apt install tmux"),
         "darwin": (_CODE_BREW, "tmux_missing: zainstaluj tmux >= 3.4, na przykład poleceniem: brew install tmux")},
     "client_missing": {
         "wsl": ("client_missing: install the native CLI in this WSL distribution",
                 "client_missing: zainstaluj natywne CLI w tej dystrybucji WSL"),
-        "linux": ("client_missing: install the native CLI on this machine",
-                  "client_missing: zainstaluj natywne CLI na tym komputerze"),
         "darwin": ("client_missing: install the native CLI on this machine",
                    "client_missing: zainstaluj natywne CLI na tym komputerze")},
     "client_note": {
         "wsl": ("Install {client} in the same WSL distribution as Cairnmind.",
                 "Zainstaluj {client} w tej samej dystrybucji WSL co Cairnmind."),
-        "linux": ("Install {client} on the same machine as Cairnmind.",
-                  "Zainstaluj {client} na tym samym komputerze co Cairnmind."),
         "darwin": ("Install {client} on the same machine as Cairnmind.",
                    "Zainstaluj {client} na tym samym komputerze co Cairnmind.")},
     "client_not_installed": {
         "wsl": ("{client} is not installed in this WSL distribution",
                 "{client} nie jest zainstalowany w tej dystrybucji WSL"),
-        "linux": ("{client} is not installed on this machine", "{client} nie jest zainstalowany na tym komputerze"),
         "darwin": ("{client} is not installed on this machine", "{client} nie jest zainstalowany na tym komputerze")},
     "java": {
         "wsl": ("Install Java 21 or newer in WSL (openjdk-21-jre-headless)",
                 "Zainstaluj Javę 21 lub nowszą w WSL (openjdk-21-jre-headless)"),
-        "linux": ("Install Java 21 or newer, for example with: sudo apt install openjdk-21-jre-headless",
-                  "Zainstaluj Javę 21 lub nowszą, na przykład poleceniem: sudo apt install openjdk-21-jre-headless"),
         "darwin": ("Install Java 21 or newer, for example with: brew install openjdk@21",
                    "Zainstaluj Javę 21 lub nowszą, na przykład poleceniem: brew install openjdk@21")},
     "gpu_missing": {
         "wsl": ("nvidia-smi not found; verify Windows NVIDIA driver and WSL GPU access.",
-                "Nie znaleziono nvidia-smi; sprawdź sterownik NVIDIA w Windows i dostęp WSL do GPU."),
-        "linux": ("nvidia-smi not found; verify that the NVIDIA driver is installed.",
-                  "Nie znaleziono nvidia-smi; sprawdź, czy sterownik NVIDIA jest zainstalowany.")},
+                "Nie znaleziono nvidia-smi; sprawdź sterownik NVIDIA w Windows i dostęp WSL do GPU.")},
     "gpu_unreadable": {
         "darwin": ("The GPU could not be read from system_profiler or sysctl.",
                    "Nie udało się odczytać GPU przez system_profiler ani sysctl.")},
     "gpu_unavailable": {
         "wsl": ("nvidia-smi unavailable", "nvidia-smi niedostępne"),
-        "linux": ("nvidia-smi unavailable", "nvidia-smi niedostępne"),
         "darwin": ("GPU unavailable", "GPU niedostępne")},
 }
 
@@ -102,7 +88,7 @@ def hint(topic: str, system: str | None = None, **values: str) -> str:
     """The English sentence of a topic for this system (or the given one), with the values filled in."""
     by_system = TEXTS[topic]
     key = host_system() if system is None else system
-    text = (by_system.get(key) or by_system.get("linux") or next(iter(by_system.values())))[0]
+    text = (by_system.get(key) or by_system.get("wsl") or next(iter(by_system.values())))[0]
     return text.format(**values) if values else text
 
 
