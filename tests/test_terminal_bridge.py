@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import terminal_attributes
+from conftest import status_flags, terminal_attributes
 from cairnmind.config import Settings
 from cairnmind import native_worker
 from cairnmind.terminal_bridge import CONTROL_STATES, PaneStatus, RawTerminalBridge, raw_terminal, terminal_dimensions
@@ -151,14 +151,14 @@ def input_bytes(socket):
 def test_raw_context_restores_exact_terminal_state_after_exception(pty_pair):
     _, slave = pty_pair
     attributes = terminal_attributes(slave)
-    flags = fcntl.fcntl(slave, fcntl.F_GETFL)
+    flags = status_flags(slave)
     with pytest.raises(RuntimeError):
         with raw_terminal(slave, slave):
             assert not terminal_attributes(slave)[3] & termios.ISIG
             assert not os.get_blocking(slave)
             raise RuntimeError("controlled interruption")
     assert terminal_attributes(slave) == attributes
-    assert fcntl.fcntl(slave, fcntl.F_GETFL) == flags
+    assert status_flags(slave) == flags
 
 
 def test_pendin_is_left_out_of_the_comparison_on_macos_only(pty_pair):
@@ -173,6 +173,14 @@ def test_pendin_is_left_out_of_the_comparison_on_macos_only(pty_pair):
         assert terminal_attributes(slave)[3] & termios.PENDIN == 0
 
 
+def test_the_written_mark_is_left_out_of_the_flags_on_macos_only(monkeypatch):
+    # F_GETFL of a pty on macOS after its first write: O_RDWR and the kernel's written mark (#236).
+    monkeypatch.setattr(fcntl, "fcntl", lambda fd, command: os.O_RDWR | 0x10000)
+    assert status_flags(0) == os.O_RDWR | 0x10000
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert status_flags(0) == os.O_RDWR
+
+
 @pytest.mark.parametrize(("columns", "rows", "expected"), [(10, 2, (20, 5)), (600, 250, (500, 200)), (99, 31, (99, 31))])
 def test_resize_frames_always_fit_broker_bounds(pty_pair, columns, rows, expected):
     _, slave = pty_pair
@@ -185,7 +193,7 @@ async def test_raw_binary_keyboard_output_and_native_exit_restore_terminal(pty_p
     master, slave = pty_pair
     client, pane = Client(), Pane()
     original = terminal_attributes(slave)
-    flags = fcntl.fcntl(slave, fcntl.F_GETFL)
+    flags = status_flags(slave)
     handler = signal.getsignal(signal.SIGINT)
     bridge = RawTerminalBridge(client, "run-fixture", 7, input_fd=slave, output_fd=slave, pane=pane)
     task = asyncio.create_task(bridge.run())
@@ -204,7 +212,7 @@ async def test_raw_binary_keyboard_output_and_native_exit_restore_terminal(pty_p
         bridge.stopped.set()
         await asyncio.wait_for(task, 4)
     assert terminal_attributes(slave) == original
-    assert fcntl.fcntl(slave, fcntl.F_GETFL) == flags
+    assert status_flags(slave) == flags
     assert signal.getsignal(signal.SIGINT) == handler
     assert pane.states[-1] == "exited"
 
@@ -518,10 +526,13 @@ def test_full_unread_terminal_cannot_block_final_feedback_or_terminal_restoratio
             if sys.platform == 'darwin':
                 attributes[3] &= ~termios.PENDIN
             return attributes
+        def status_flags(fd):  # as in conftest: macOS marks a written descriptor and F_SETFL cannot clear it
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            return flags & ~0x10000 if sys.platform == 'darwin' else flags
         async def main():
             master, slave = os.openpty()
             original = terminal_attributes(slave)
-            flags = fcntl.fcntl(slave, fcntl.F_GETFL)
+            flags = status_flags(slave)
             try:
                 with raw_terminal(slave, slave):
                     pass
@@ -552,7 +563,7 @@ def test_full_unread_terminal_cannot_block_final_feedback_or_terminal_restoratio
                 elapsed = time.monotonic() - started
                 assert written is False and elapsed < .8 and len(ticks) >= 2
                 assert terminal_attributes(slave) == original
-                assert fcntl.fcntl(slave, fcntl.F_GETFL) == flags
+                assert status_flags(slave) == flags
                 print(json.dumps({'elapsed': elapsed, 'heartbeat_ticks': len(ticks), 'restored': True}))
             finally:
                 os.close(master)

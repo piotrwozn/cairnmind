@@ -165,7 +165,10 @@ async def test_the_server_never_sees_the_worker_environment_or_the_worktree(tmp_
     host, _ = await started(tmp_path, server())
     try:
         details = json.loads((await host.call("mcp_files_environment", {}, 10))["content"][0]["text"])
-        assert set(details["env"]) - {"LC_CTYPE"} <= {"HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER", "LOG_LEVEL"}
+        # Set inside the server's own Python: LC_CTYPE by its locale coercion, __CF_USER_TEXT_ENCODING by macOS's
+        # CoreFoundation in every process there, even one started with an empty environment.
+        own = {"LC_CTYPE", *(["__CF_USER_TEXT_ENCODING"] if sys.platform == "darwin" else [])}
+        assert set(details["env"]) - own <= {"HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER", "LOG_LEVEL"}
         assert details["env"]["LOG_LEVEL"] == "quiet"
         assert not Path(details["cwd"]).is_relative_to(tmp_path / "worktree")
         workdir = details["cwd"]

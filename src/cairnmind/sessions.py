@@ -131,7 +131,7 @@ def _managed_empty_file(relative: str, raw: bytes, settings, project: dict) -> b
 def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
     """Whether a generated MCP or hook file is exactly what `_command` would produce."""
     from .integrations import (EARLIER_SERVER, EARLIER_SESSION_ENV_VARS, EARLIER_TOML_BEGIN, EARLIER_TOML_END, SERVER,
-                               SESSION_ENV_VARS, TOML_BEGIN, TOML_END)
+                               SESSION_ENV_VARS, TOML_BEGIN, TOML_END, codex_tool_timeout)
 
     command = _command(settings, "mcp")
     server = {"command": command[0], "args": command[1:]}
@@ -148,11 +148,13 @@ def _managed_command_file(relative: str, text: str, settings, _command) -> bool:
         if isinstance(listed, list) and sorted(map(str, listed)) == sorted(SESSION_ENV_VARS):
             # A block of an earlier version converted by install lists the same names in another order.
             content["mcp_servers"][SERVER]["env_vars"] = list(SESSION_ENV_VARS)
+        # Versions up to 0.11 wrote 75 whatever the question budget was.
+        waits = {75, codex_tool_timeout(settings)}
         return any(content == {"mcp_servers": {key: {**server, "env_vars": list(forwarded),
-                                                     "startup_timeout_sec": 15, "tool_timeout_sec": 75}}}
+                                                     "startup_timeout_sec": 15, "tool_timeout_sec": wait}}}
                    and text.strip().startswith(begin) and text.strip().endswith(end)
                    and text.count(begin) == text.count(end) == 1
-                   for key, forwarded, begin, end in shapes)
+                   for key, forwarded, begin, end in shapes for wait in waits)
     client = "codex" if relative == ".codex/hooks.json" else "claude"
     hooks = {}
     for event in ("SessionStart", "PreCompact", "Stop", "SessionEnd"):

@@ -160,6 +160,15 @@ class NativeRuntime:
             raise ValueError("Native terminal supervisor rejected the operation")
         return result
 
+    def _kill_session(self, session):
+        """Kill one run's session; end the private server once it holds none. Call under _locked."""
+        self._tmux("kill-session", "-t", session, check=False)
+        # exit-empty off keeps an empty server alive (#105). Only a server that answers with no
+        # session at all is ended, so another live run's session is never touched.
+        left = self._tmux("list-sessions", "-F", "#{session_name}", check=False)
+        if left.returncode == 0 and not left.stdout.strip():
+            self._tmux("kill-server", check=False)
+
     def _pane(self, row):
         if not self.binary or not self.socket.exists():
             return None
@@ -205,7 +214,7 @@ class NativeRuntime:
             if row.get("purpose") == "auth":
                 # Device codes and OAuth URLs stay only in the operational
                 # terminal's volatile memory, which is discarded at exit.
-                self._tmux("kill-session", "-t", row["tmux_session"], check=False)
+                self._kill_session(row["tmux_session"])
         else:
             if not row.get("process_start"):
                 # The durable starting intent precedes spawn. If the browser
@@ -406,7 +415,7 @@ class NativeRuntime:
             self._save(rows)
             return dict(row)
         except BaseException:
-            self._tmux("kill-session", "-t", session, check=False)
+            self._kill_session(session)
             row.update(lifecycle="failed", state="failed", error_code="native_spawn_failed", ended_at=time.time())
             self._save(rows)
             raise
@@ -427,7 +436,8 @@ class NativeRuntime:
             # Recorded as ended before this stop: its own end (exited, failed, interrupted) stays, so it never
             # reads as stopped by a person. A dead pane kept by tmux is still cleared.
             if pane:
-                self._tmux("kill-session", "-t", row["tmux_session"], check=False)
+                with self._locked():
+                    self._kill_session(row["tmux_session"])
             return dict(row)
         if pane and not pane["dead"]:
             pid = pane["pid"]
@@ -455,9 +465,9 @@ class NativeRuntime:
                     os.killpg(group, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-        if pane:
-            self._tmux("kill-session", "-t", row["tmux_session"], check=False)
         with self._locked():
+            if pane:
+                self._kill_session(row["tmux_session"])
             rows = self._read()
             current = next(r for r in rows if r["id"] == run_id)
             current.update(lifecycle="exited", state="exited", ended_at=time.time(), stopped=True)

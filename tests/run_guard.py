@@ -20,16 +20,25 @@ Left running. After each test, what the test itself started and left running is 
 Processes that fixtures of a wider scope (module, session) start are theirs and are not touched; the
 default tmux socket, the installation's data directory and its port are never looked at. What was
 stopped is reported as a LeftRunning warning naming each process and socket.
+
+Socket directories. At the end of the run (in the xdist controller, after the workers), the workspace and
+native-run socket directories that appeared in the product's socket base during the run and hold no running
+server are removed: on macOS that base is one per user (/private/tmp/cairnmind-UID), shared with the
+installation, and the product leaves a directory behind when its server ends. What was there before the run,
+and a directory whose server still answers, are kept.
 """
 from __future__ import annotations
 
 import contextlib
 import faulthandler
+import glob
 import json
 import math
 import os
 from pathlib import Path
+import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -342,16 +351,63 @@ def stop_engines(funcargs) -> list[str]:
     return stopped
 
 
+def socket_directories() -> set[str]:
+    """The workspace and native-run socket directories now in the product's socket base (#235)."""
+    from cairnmind.runtime_sockets import KINDS, socket_directory
+    return {path for kind in KINDS for path in glob.glob(str(socket_directory(kind, "[0-9a-f]" * 16)))}
+
+
+def listening(path: str) -> bool:
+    """Whether a server answers on this socket; when that cannot be told, it is taken to answer."""
+    import socket  # here: this module names tmux sockets `socket`
+    with socket.socket(socket.AF_UNIX) as probe:
+        try:
+            probe.connect(path)
+        except (FileNotFoundError, ConnectionRefusedError):
+            return False
+        except OSError:
+            return True
+    return True
+
+
+def remove_socket_directories(before: set[str]) -> list[str]:
+    """Remove the socket directories that are not in `before`, belong to this user, are not links, have not
+    changed for SOCKET_DIRECTORY_SETTLE seconds and hold no server that answers. The age keeps a directory
+    that another run on this machine has just made and whose server does not listen yet. shortcut: such a
+    directory older than that, or one this run left in its last seconds, is still misjudged; a per-run socket
+    base in the product would end that."""
+    removed = []
+    for path in sorted(socket_directories() - before):
+        with contextlib.suppress(OSError):
+            info = os.lstat(path)
+            if (stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+                    and time.time() - info.st_mtime >= SOCKET_DIRECTORY_SETTLE
+                    and not listening(os.path.join(path, "tmux.sock"))):
+                shutil.rmtree(path)
+                removed.append(path)
+    return removed
+
+
+SOCKET_DIRECTORY_SETTLE = 10.0  # seconds without change before a left socket directory is taken as left
+SOCKETS_BEFORE: set[str] | None = None  # in the process that ends the run: the directories there before it
+
+
 def pytest_configure(config):
+    global SOCKETS_BEFORE
     config.addinivalue_line("markers", "time_limit(seconds): this test's own time limit (#236); 0 is none")
     CLOCK.default = read_limit(env_value("TEST_TIME_LIMIT") or DEFAULT_LIMIT)  # empty: the default
     CLOCK.install()
     SPAWNED.install()
+    # A serial run or the xdist controller, and not a run a test started (pytest names the running test there).
+    if not hasattr(config, "workerinput") and "PYTEST_CURRENT_TEST" not in os.environ:
+        SOCKETS_BEFORE = socket_directories()
 
 
 def pytest_unconfigure(config):
     SPAWNED.uninstall()
     CLOCK.uninstall()
+    if SOCKETS_BEFORE is not None:
+        remove_socket_directories(SOCKETS_BEFORE)
 
 
 def pytest_collection_finish(session):

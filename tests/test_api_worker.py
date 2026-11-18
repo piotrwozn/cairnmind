@@ -225,7 +225,7 @@ async def test_provider_and_tool_control_text_and_key_are_literal(tmp_path):
 
 
 @pytest.mark.parametrize("delivery", ["keys", "bracketed_paste"])
-def test_real_tmux_panel_restores_then_requires_human_command_approval(tmp_path, delivery):
+def test_real_tmux_panel_restores_then_requires_human_command_approval(tmp_path, short_tmp_path, delivery):
     """Real terminal/keyboard path, with an injected engine and no paid calls."""
     import os
     import shutil
@@ -236,7 +236,7 @@ def test_real_tmux_panel_restores_then_requires_human_command_approval(tmp_path,
     tmux = (os.environ.get("CAIRNMIND_TEST_TMUX") or os.environ.get("DEVBRAIN_TEST_TMUX")) or shutil.which("tmux")
     if not tmux:
         pytest.skip("tmux is required for the real terminal case")
-    socket = tmp_path / "agent.sock"
+    socket = short_tmp_path / "agent.sock"  # tmp_path is too long for a socket path on macOS
     marker = tmp_path / "observed.txt"
     script = tmp_path / "controlled_worker.py"
     script.write_text('''import asyncio

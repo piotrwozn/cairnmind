@@ -283,6 +283,16 @@ def test_session_gone_from_a_shared_server_is_ended_not_a_foreign_identity(nativ
     assert runtime.get_run(second['id'])['lifecycle'] == 'running'
 
 
+def test_stopping_the_last_run_ends_its_private_server(native):
+    # The server config sets exit-empty off; stopping every run once left it with 0 sessions (#105, step 10).
+    runtime, project, _ = native
+    first, second = runtime.start_project(project)['runs']
+    runtime.stop(first['id'], first['generation'])
+    assert runtime._tmux('list-sessions', '-F', '#{session_name}').stdout.split() == [second['tmux_session']]
+    runtime.stop(second['id'], second['generation'])
+    assert runtime._tmux('list-sessions', check=False).returncode != 0  # no server answers
+
+
 def test_session_answered_with_empty_fields_is_ended_too(native, monkeypatch):
     # display-message answers for a missing session with exit 0 and empty fields while the server holds
     # other runs: ended, not 'Native terminal identity does not match its registry'.

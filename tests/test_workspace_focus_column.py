@@ -16,6 +16,7 @@ import sys
 import termios
 import threading
 import time
+from types import SimpleNamespace
 import warnings
 
 import pytest
@@ -66,11 +67,22 @@ def terminal(workspace, columns, lines):
 
 
 def geometry(workspace):
-    """Role -> (left, width, height, pid, dead) of every pane of the workspace window."""
+    """Role -> (left, width, height, pid, dead) of every pane of the workspace window; pid None for a dead pane
+    whose pid tmux no longer shows (3.8 empties it, as client_runtime reads it)."""
     result = workspace.tmux("list-panes", "-t", SESSION + ":workspace", "-F",
                             "#{@cairnmind_role}\t#{pane_left}\t#{pane_width}\t#{pane_height}\t#{pane_pid}\t#{pane_dead}")
-    return {parts[0]: (int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]), parts[5] == "1")
+    return {parts[0]: (int(parts[1]), int(parts[2]), int(parts[3]),
+                       None if parts[5] == "1" and not parts[4] else int(parts[4]), parts[5] == "1")
             for line in result.stdout.splitlines() if (parts := line.split("\t"))}
+
+
+def test_a_dead_pane_without_a_pid_is_read_as_tmux_3_8_lists_it():
+    listed = SimpleNamespace(stdout="graph\t0\t80\t24\t\t1\nactivity\t81\t40\t24\t4242\t0\n")  # tmux 3.8 (#236)
+    found = geometry(SimpleNamespace(tmux=lambda *args: listed))
+    assert found == {"graph": (0, 80, 24, None, True), "activity": (81, 40, 24, 4242, False)}
+    listed.stdout = "graph\t0\t80\t24\t\t0\n"  # a live pane always has its pid
+    with pytest.raises(ValueError):
+        geometry(SimpleNamespace(tmux=lambda *args: listed))
 
 
 def window(workspace, value):
@@ -232,9 +244,12 @@ def kill_and_focus_ten_times(workspace, role):
     other = "graph" if role != "graph" else "client1"
     for _ in range(10):
         pane = workspace.activity_pane() if role == "activity" else workspace.panes()[role]
-        # A slow run can read the pid after the view has already ended; the pane is then dead all the same.
+        # A slow run can read the pid after the view has already ended (tmux 3.8 then shows none); the pane is then
+        # dead all the same.
+        pid = geometry(workspace)[role][3]
         with contextlib.suppress(ProcessLookupError):
-            os.kill(geometry(workspace)[role][3], signal.SIGKILL)
+            if pid is not None:
+                os.kill(pid, signal.SIGKILL)
         deadline = time.monotonic() + 10
         while not geometry(workspace)[role][4]:
             assert time.monotonic() < deadline
