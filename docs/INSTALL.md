@@ -71,22 +71,23 @@ brew install openjdk@21 tmux uv ollama
 brew services start ollama
 ```
 
-Homebrew's Java is on no `PATH`, and `java` on a Mac without a JDK only says that no Java Runtime is found. Cairnmind and the installer look for Java in `JAVA_HOME` first, so add it to your shell profile:
+macOS does not find Homebrew's Java on its own: `java` on a Mac without a JDK only says that no Java Runtime is found. Link it where macOS looks for Java, as Homebrew advises. Then `java` finds it in every program, also in one that a desktop app starts without reading your shell profile:
 
 ```bash
-echo 'export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"' >> ~/.zprofile
+sudo ln -sfn "$(brew --prefix openjdk@21)/libexec/openjdk.jdk" /Library/Java/JavaVirtualMachines/openjdk-21.jdk
 ```
 
-Open a new terminal, then check the versions:
+Check the versions:
 
 ```bash
-"$JAVA_HOME/bin/java" -version
+/usr/libexec/java_home -v 21+
+java -version
 tmux -V
 uv --version
 ollama --version
 ```
 
-A JDK installed from a package instead (Temurin, Zulu, Oracle) goes to `/Library/Java/JavaVirtualMachines` and is found without `JAVA_HOME`.
+A JDK installed from a package instead (Temurin, Zulu, Oracle) goes to `/Library/Java/JavaVirtualMachines` by itself and needs no link.
 
 ## 3. Get Cairnmind
 
@@ -129,7 +130,7 @@ The installer:
 
 If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal.
 
-The Java it checks is the one the engine runs: the one in `JAVA_HOME` when that has `bin/java`, otherwise `java` on `PATH`. On macOS, when `JAVA_HOME` is not set, the one that `/usr/libexec/java_home -v 21+` finds comes before `PATH`. A `java_executable` set in `config.json` of the data directory comes before all of them.
+The Java it checks is the one the engine runs: on Linux `java` on `PATH`; on macOS the one in `JAVA_HOME` when that has `bin/java`, otherwise the one that `/usr/libexec/java_home -v 21+` finds, otherwise `java` on `PATH`. A `java_executable` set in `config.json` of the data directory comes before all of them.
 
 ### Manual installation
 
@@ -220,8 +221,8 @@ This keeps your memory in the data directory that `cairnmind doctor` shows as `d
 | Symptom | Fix |
 | --- | --- |
 | `cairnmind: command not found` | Add the directory printed by the installer to `PATH`, or run `uv tool update-shell` and open a new terminal. |
-| `Java 21+ is required` | `sudo apt install openjdk-21-jre-headless`, and check that `java -version` reports 21 or newer. When the message names `JAVA_HOME`, that Java is too old: point `JAVA_HOME` at Java 21 or unset it. On macOS: `brew install openjdk@21` and the `JAVA_HOME` line of step 2. |
-| `Java not found` or `macOS answers so when no JDK is installed` on macOS | No Java 21 is found. If Homebrew's `openjdk@21` is installed, the installer prints the `export JAVA_HOME=...` line to add to `~/.zprofile`; open a new terminal after adding it. |
+| `Java 21+ is required` | `sudo apt install openjdk-21-jre-headless`, and check that `java -version` reports 21 or newer. On macOS: `brew install openjdk@21` and the `sudo ln -sfn` line of step 2; when the message names `JAVA_HOME`, that Java is too old: point `JAVA_HOME` at Java 21 or unset it. |
+| `Java not found` or `macOS answers so when no JDK is installed` on macOS | No Java 21 is found. If Homebrew's `openjdk@21` is installed, the installer prints the `sudo ln -sfn ...` line that links it where macOS finds it. |
 | `This Mac has an Intel processor` | Cairnmind runs on Apple silicon Macs only. |
 | `This shell runs under Rosetta` | The terminal app is set to open using Rosetta: turn that off in its Get Info window, or run `arch -arm64 /bin/bash scripts/install-wsl.sh`. |
 | `Version 3.4+ is required` for tmux | Ubuntu 24.04 ships tmux 3.4. On older releases, upgrade Ubuntu or build tmux 3.4. On macOS: `brew upgrade tmux`. |

@@ -131,15 +131,18 @@ def test_without_any_java_a_mac_gets_the_homebrew_hint(mac):
     assert "apt" not in result.stderr
 
 
-def test_a_homebrew_jdk_that_nothing_finds_gets_the_exact_java_home_line(mac):
+def test_a_homebrew_jdk_that_nothing_finds_gets_the_exact_link_line(mac):
+    # A link in /Library/Java/JavaVirtualMachines, not a JAVA_HOME in ~/.zprofile: a process that a desktop app
+    # starts reads no shell profile, and it starts the engine too.
     run, state, bin_dir, tmp_path = mac
     prefix = tmp_path / "homebrew" / "opt" / "openjdk@21"
     jdk(prefix / "libexec" / "openjdk.jdk" / "Contents" / "Home", 21)
     tool(bin_dir / "brew", f"[ \"$1 $2\" = '--prefix openjdk@21' ] && echo '{prefix}'")
     result = run()
     assert result.returncode == 1
-    assert f'export JAVA_HOME="{prefix}/libexec/openjdk.jdk/Contents/Home"' in result.stderr
-    assert "~/.zprofile" in result.stderr
+    assert (f'sudo ln -sfn "{prefix}/libexec/openjdk.jdk" /Library/Java/JavaVirtualMachines/openjdk-21.jdk'
+            in result.stderr)
+    assert "JAVA_HOME" not in result.stderr
 
 
 def test_an_intel_mac_is_refused_in_one_sentence(mac):
@@ -231,13 +234,14 @@ def test_linux_keeps_its_apt_hints(mac):
     assert result.stderr == "Found Java 17. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n"
 
 
-def test_on_linux_the_java_in_java_home_is_the_one_checked(mac):
-    """The engine runs JAVA_HOME's Java before the one on PATH, so that is the one the installer checks."""
+def test_on_linux_java_home_does_not_replace_the_java_on_path(mac):
+    """On Linux the engine runs java on PATH whatever JAVA_HOME says, so that is the one the installer checks."""
     run, state, bin_dir, tmp_path = mac
     state.update(system="Linux", machine="x86_64")
     java(bin_dir / "java", 21)
     result = run(JAVA_HOME=str(jdk(tmp_path / "jdk17", 17)))
-    assert result.returncode == 1 and "Found Java 17" in result.stderr and "JAVA_HOME" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
 
 
 def test_a_java_that_does_not_run_is_said_not_left_silent(mac):
@@ -259,10 +263,12 @@ def test_the_macos_guide_says_what_the_script_does():
     guide, script = (ROOT / "docs" / "INSTALL.md").read_text(), SCRIPT.read_text()
     section = guide[guide.index("### macOS"):guide.index("## 3. Get Cairnmind")]
     assert "brew install openjdk@21 tmux uv ollama" in section
-    # The JAVA_HOME of the guide is the folder the script looks for in Homebrew's openjdk@21.
-    assert '$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home' in section
-    assert 'brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk/Contents/Home' in script
-    assert "~/.zprofile" in section and "~/.zprofile" in script
+    # The link of the guide is the one the script prints for Homebrew's openjdk@21.
+    assert ('sudo ln -sfn "$(brew --prefix openjdk@21)/libexec/openjdk.jdk" '
+            '/Library/Java/JavaVirtualMachines/openjdk-21.jdk') in section
+    assert 'brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk"' in script
+    assert "sudo ln -sfn \"%s\" /Library/Java/JavaVirtualMachines/openjdk-21.jdk" in script
+    assert "~/.zprofile" not in section
     for hint in ("brew install openjdk@21", "brew install tmux", "brew install uv", "/usr/libexec/java_home -v 21+"):
         assert hint in script
     assert "/usr/libexec/java_home -v 21+" in guide

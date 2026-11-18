@@ -67,28 +67,29 @@ connect_url="${CAIRNMIND_ARCADE_CONNECT_URL:-${DEVBRAIN_ARCADE_CONNECT_URL:-}}"
 if [[ -z "$connect_url" ]]; then
     java_hint='sudo apt install openjdk-21-jre-headless'
     if [[ "${system:-}" == Darwin ]]; then
-        java_hint='brew install openjdk@21, then set JAVA_HOME as docs/INSTALL.md shows for macOS'
+        java_hint='brew install openjdk@21, then link it as docs/INSTALL.md shows for macOS'
     fi
 
-    # $1: what is wrong. Homebrew's openjdk@21 is found by nothing on its own; when it is there, the line that fixes it.
+    # $1: what is wrong. macOS finds Homebrew's openjdk@21 only once it is linked into /Library/Java/JavaVirtualMachines
+    # (Homebrew's own advice); then every process finds it, also one that a desktop app starts without ~/.zprofile.
     refuse_java() {
         local brew_jdk
         printf '%s\n' "$1" >&2
         if [[ "${system:-}" == Darwin ]] && command -v brew >/dev/null 2>&1 \
-            && brew_jdk="$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk/Contents/Home" \
-            && [[ -x "$brew_jdk/bin/java" ]]; then
-            printf "Homebrew's openjdk@21 is installed. Add this line to ~/.zprofile, open a new terminal and run the installer again:\n" >&2
-            printf '  export JAVA_HOME="%s"\n' "$brew_jdk" >&2
+            && brew_jdk="$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk" \
+            && [[ -x "$brew_jdk/Contents/Home/bin/java" ]]; then
+            printf "Homebrew's openjdk@21 is installed, but macOS does not find it. Link it, then run the installer again:\n" >&2
+            printf '  sudo ln -sfn "%s" /Library/Java/JavaVirtualMachines/openjdk-21.jdk\n' "$brew_jdk" >&2
         fi
         exit 1
     }
 
-    # The Java the engine runs (engine.resolve_java): JAVA_HOME's, then java on PATH. On macOS the one that
-    # /usr/libexec/java_home finds comes between: /usr/bin/java starts the newest of the same JDKs, and without
-    # any JDK it is a stand-in that only fails.
+    # The Java the engine runs (engine.resolve_java): on macOS JAVA_HOME's, then the one /usr/libexec/java_home finds
+    # (/usr/bin/java starts the newest of the same JDKs, and without any JDK it is a stand-in that only fails), then
+    # java on PATH. On Linux only java on PATH.
     java_bin=""
     java_source=""
-    if [[ -n "${JAVA_HOME:-}" ]]; then
+    if [[ -n "${JAVA_HOME:-}" && "${system:-}" == Darwin ]]; then
         if [[ "$JAVA_HOME" == /* && -f "$JAVA_HOME/bin/java" && -x "$JAVA_HOME/bin/java" ]]; then
             java_bin="$JAVA_HOME/bin/java"
             java_source=" (JAVA_HOME=$JAVA_HOME)"
