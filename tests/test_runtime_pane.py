@@ -35,7 +35,13 @@ def pane_runtime(tmp_path, monkeypatch, request):
 
     def tmux(*args, check=True):
         calls.append(args)
-        assert args[0] in {'display-message', 'kill-session'}, 'No terminal output capture is permitted'
+        assert args[0] in {'display-message', 'kill-session', 'list-sessions', 'kill-server'}, \
+            'No terminal output capture is permitted'
+        if args[0] == 'list-sessions':
+            assert args[1:] == ('-F', '#{session_name}')
+            return subprocess.CompletedProcess(args, 0, '', '')  # its only session was just killed
+        if args[0] == 'kill-server':
+            return subprocess.CompletedProcess(args, 0, '', '')
         if args[0] == 'kill-session':
             assert args[1:] == ('-t', row['tmux_session'])
             metadata['exists'] = False
@@ -89,6 +95,7 @@ def test_stop_dead_pane_without_pid_only_removes_its_owned_session(pane_runtime)
     assert result['stopped'] and result['lifecycle'] == 'exited'
     assert result['pid'] == 4242 and result['pgid'] == 4242
     assert [call for call in calls if call[0] == 'kill-session'] == [('kill-session', '-t', row['tmux_session'])]
+    assert calls[-1] == ('kill-server',)  # the private server held nothing else (#105)
 
 
 @pytest.mark.parametrize('pid', ['', '0', '-3', '+42', ' 42', '42 ', 'invalid', '１２', '2.3'])
