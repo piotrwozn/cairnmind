@@ -1,8 +1,11 @@
 """Exited tmux panes retain run ownership without inventing a process PID."""
 import json
+from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -14,8 +17,8 @@ from cairnmind.config import Settings
 @pytest.fixture
 def pane_runtime(tmp_path, monkeypatch):
     runtime = NativeRuntime(Settings(tmp_path / 'home'), tmux_binary=sys.executable)
-    runtime.socket_directory = tmp_path / 'socket'
-    runtime.socket_directory.mkdir(mode=0o700)
+    # Short and owner-only: tmp_path on macOS (/private/var/folders/...) is longer than a socket path may be.
+    runtime.socket_directory = Path(tempfile.mkdtemp(prefix='cm-', dir='/tmp'))
     runtime.socket = runtime.socket_directory / 'tmux.sock'
     listener = socket.socket(socket.AF_UNIX)
     listener.bind(str(runtime.socket))
@@ -52,6 +55,7 @@ def pane_runtime(tmp_path, monkeypatch):
         yield runtime, row, metadata, calls
     finally:
         listener.close()
+        shutil.rmtree(runtime.socket_directory, ignore_errors=True)
 
 
 @pytest.mark.parametrize(('exit_status', 'lifecycle', 'code'), [('0', 'exited', 0), ('9', 'failed', 9), ('', 'failed', None)])
