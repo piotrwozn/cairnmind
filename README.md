@@ -469,6 +469,7 @@ An external MCP session (Cursor, Cline, Zed) has no archived conversation to quo
 ## Development
 
 ```bash
+# .python-version pins Python 3.12, the version the lock file and CI cover
 uv sync --locked --extra dev
 uv run ruff check src tests
 uv run pytest -m "not arcade and not tmux"   # fast tier, no database or tmux
