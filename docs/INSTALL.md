@@ -71,6 +71,12 @@ brew install openjdk@21 tmux uv ollama
 brew services start ollama
 ```
 
+Homebrew's programs (tmux, uv) are found only in a shell that has `/opt/homebrew/bin` on its PATH. If `tmux -V` says the command is not found, add Homebrew to your shell as its installer advises, then open a new Terminal window:
+
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+```
+
 macOS does not find Homebrew's Java on its own: `java` on a Mac without a JDK only says that no Java Runtime is found. Link it where macOS looks for Java, as Homebrew advises. Then `java` finds it in every program, also in one that a desktop app starts without reading your shell profile:
 
 ```bash
