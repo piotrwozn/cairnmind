@@ -91,10 +91,10 @@ def _sysctl(name: str) -> str | None:
 def mac_chip() -> dict | None:
     """{'chip', 'memory_gib', 'note'} of a Mac from two sysctl reads (unified memory); None if either is unusable."""
     chip, size = _sysctl("machdep.cpu.brand_string"), _sysctl("hw.memsize")
-    if not chip or not size or not size.isascii() or not size.isdigit() or int(size) <= 0:
-        return None
+    if not chip or not size or len(size) > 20 or not size.isascii() or not size.isdigit() or int(size) <= 0:
+        return None  # 20 digits hold any 64-bit byte count; longer would hit int()'s digit limit
     chip = " ".join(chip.split())  # the output is untrusted text: printable and short, or not used
-    if len(chip) > 64 or not chip.isprintable():
+    if len(chip) > 64 or not chip.isprintable() or not chip.startswith("Apple "):  # Intel: memory is not unified
         return None
     gib = round(int(size) / 2**30, 1)
     gib = int(gib) if gib == int(gib) else gib

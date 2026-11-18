@@ -74,7 +74,9 @@ def test_doctor_on_a_mac_names_the_chip_and_its_unified_memory(settings, monkeyp
 @pytest.mark.parametrize("values", [
     {"hw.memsize": "38654705664"}, {"machdep.cpu.brand_string": "Apple M3 Pro"},
     {**CHIP, "hw.memsize": "lots"}, {**CHIP, "hw.memsize": "0"}, {**CHIP, "hw.memsize": "-5"},
-    {**CHIP, "machdep.cpu.brand_string": "x" * 200}, {**CHIP, "machdep.cpu.brand_string": "M3\x1b[31m"}, {}])
+    {**CHIP, "machdep.cpu.brand_string": "x" * 200}, {**CHIP, "machdep.cpu.brand_string": "Apple M3\x1b[31m"},
+    {**CHIP, "hw.memsize": "9" * 5000}, {**CHIP, "machdep.cpu.brand_string": "Intel(R) Core(TM) i9-9980HK CPU @ 2.40GHz"},
+    {}])
 def test_a_failed_or_garbage_sysctl_keeps_the_old_note_on_a_mac(settings, monkeypatch, values):
     fake_sysctl(monkeypatch, values)
     assert quiet_doctor(settings, monkeypatch, "darwin")["gpu"] == {"note": "The GPU is not checked on macOS."}
