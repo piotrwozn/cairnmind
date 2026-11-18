@@ -112,14 +112,11 @@ OK_SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "requi
              "additionalProperties": False}
 
 
-def _no_structured_output(settings, *, reply='{"ok": true}', status=501, body=MLX_REFUSAL, digest="d" * 64):
+def _no_structured_output(settings, *, reply='{"ok": true}', status=501, body=MLX_REFUSAL):
     """A fake Ollama that refuses `format` and answers the same request without it."""
     requests = []
 
     def respond(request):
-        if request.url.path == "/api/tags":
-            requests.append(("tags", None))
-            return httpx.Response(200, json={"models": [{"name": settings.chat_model, "digest": digest}]})
         payload = json.loads(request.content)
         requests.append(("chat", payload))
         if "format" in payload or "response_format" in payload:
@@ -131,16 +128,8 @@ def _no_structured_output(settings, *, reply='{"ok": true}', status=501, body=ML
     return respond, requests
 
 
-@pytest.fixture
-def fresh_capabilities():
+async def test_a_server_without_structured_output_is_asked_again_with_the_schema_in_the_prompt(tmp_path):
     from cairnmind import structured_output
-    structured_output.forget()
-    yield structured_output
-    structured_output.forget()
-
-
-async def test_a_server_without_structured_output_is_asked_again_with_the_schema_in_the_prompt(
-        tmp_path, fresh_capabilities):
     settings = Settings(data_dir=tmp_path)
     respond, requests = _no_structured_output(settings)
     messages = [{"role": "system", "content": "Reply with JSON only."}, {"role": "user", "content": "Return ok."}]
@@ -154,31 +143,17 @@ async def test_a_server_without_structured_output_is_asked_again_with_the_schema
         assert json.dumps(OK_SCHEMA, sort_keys=True) in chats[1]["messages"][0]["content"]
         assert chats[1]["messages"][1:] == messages[1:]
         assert messages[0]["content"] == "Reply with JSON only."  # the caller's list is not changed
-        # Remembered for this server, model and digest: the next request does not try `format` again.
+        # Nothing is cached: the next request tries `format` again.
         requests.clear()
         await ollama.chat(messages, format=dict(OK_SCHEMA))
-        assert [payload for kind, payload in requests if kind == "chat" and "format" in payload] == []
-        assert len([kind for kind, _ in requests if kind == "chat"]) == 1
-    note = fresh_capabilities.doctor_note(tmp_path, settings.ollama_url, settings.chat_model, "d" * 64)
+        assert ["format" in payload for _, payload in requests] == [True, False]
+    note = structured_output.doctor_note(tmp_path, settings.ollama_url, settings.chat_model)
     assert note["refused"] is True and note["text"] == "structured output: unavailable on this server"
 
 
-async def test_a_new_digest_of_the_model_tries_structured_output_again(tmp_path, fresh_capabilities):
-    settings = Settings(data_dir=tmp_path)
-    first, _ = _no_structured_output(settings, digest="a" * 64)
-    async with httpx.AsyncClient(base_url=settings.ollama_url, transport=httpx.MockTransport(first)) as client:
-        await Ollama(settings, client).chat([{"role": "user", "content": "x"}], format=dict(OK_SCHEMA))
-    second, requests = _no_structured_output(settings, digest="b" * 64)
-    async with httpx.AsyncClient(base_url=settings.ollama_url, transport=httpx.MockTransport(second)) as client:
-        await Ollama(settings, client).chat([{"role": "user", "content": "x"}], format=dict(OK_SCHEMA))
-    assert "format" in [payload for kind, payload in requests if kind == "chat"][0]
-
-
-async def test_a_fenced_json_reply_without_format_is_unwrapped_and_nothing_else_is_changed(
-        tmp_path, fresh_capabilities):
+async def test_a_fenced_json_reply_without_format_is_unwrapped_and_nothing_else_is_changed(tmp_path):
     settings = Settings(data_dir=tmp_path)
     for reply, content in (('```json\n{"ok": true}\n```', '{"ok": true}'), ("not JSON", "not JSON")):
-        fresh_capabilities.forget()
         respond, _ = _no_structured_output(settings, reply=reply)
         async with httpx.AsyncClient(base_url=settings.ollama_url, transport=httpx.MockTransport(respond)) as client:
             result = await Ollama(settings, client).chat([{"role": "user", "content": "x"}], format=dict(OK_SCHEMA))
@@ -190,8 +165,8 @@ async def test_a_fenced_json_reply_without_format_is_unwrapped_and_nothing_else_
     (500, MLX_REFUSAL, "http_error"),
     (400, {"error": "invalid format"}, "invalid_request"),
 ])
-async def test_other_refusals_of_a_structured_request_are_still_unavailable(tmp_path, fresh_capabilities,
-                                                                             status, body, code):
+async def test_other_refusals_of_a_structured_request_are_still_unavailable(tmp_path, status, body, code):
+    from cairnmind import structured_output
     settings = Settings(data_dir=tmp_path)
     respond, requests = _no_structured_output(settings, status=status, body=body)
     async with httpx.AsyncClient(base_url=settings.ollama_url, transport=httpx.MockTransport(respond)) as client:
@@ -199,10 +174,10 @@ async def test_other_refusals_of_a_structured_request_are_still_unavailable(tmp_
             await Ollama(settings, client).chat([{"role": "user", "content": "x"}], format=dict(OK_SCHEMA))
     assert caught.value.error_code == code
     assert [kind for kind, _ in requests] == ["chat"]  # no retry without format
-    assert fresh_capabilities.doctor_note(tmp_path, settings.ollama_url, settings.chat_model, "d" * 64) is None
+    assert structured_output.doctor_note(tmp_path, settings.ollama_url, settings.chat_model) is None
 
 
-async def test_the_refusal_of_a_request_without_format_is_not_retried(tmp_path, fresh_capabilities):
+async def test_the_refusal_of_a_request_without_format_is_not_retried(tmp_path):
     settings = Settings(data_dir=tmp_path)
     requests = []
 
@@ -215,8 +190,7 @@ async def test_the_refusal_of_a_request_without_format_is_not_retried(tmp_path, 
     assert caught.value.error_code == "structured_output_unavailable" and len(requests) == 1
 
 
-async def test_an_openai_compatible_server_without_structured_output_gets_the_schema_in_the_prompt(
-        tmp_path, fresh_capabilities):
+async def test_an_openai_compatible_server_without_structured_output_gets_the_schema_in_the_prompt(tmp_path):
     from cairnmind.memory_openai import OpenAICompatible
     settings = Settings(data_dir=tmp_path)
     respond, requests = _no_structured_output(settings, body={"error": {"message": "Structured output is unavailable"}})
@@ -228,7 +202,6 @@ async def test_an_openai_compatible_server_without_structured_output_gets_the_sc
     chats = [payload for kind, payload in requests if kind == "chat"]
     assert "response_format" in chats[0] and "response_format" not in chats[1]
     assert chats[1]["messages"][0]["role"] == "system"
-    assert [kind for kind, _ in requests].count("tags") == 0  # such a server lists no digest; none is asked
 
 
 async def test_diagnostic_endpoint_omits_query_strings_and_unrecognized_paths(tmp_path):

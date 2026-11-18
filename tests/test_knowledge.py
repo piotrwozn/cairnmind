@@ -666,8 +666,6 @@ def _without_structured_output(settings, answers, refusal=None):
     requests = []
 
     def respond(request):
-        if request.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": [{"name": settings.chat_model, "digest": "e" * 64}]})
         payload = json.loads(request.content)
         requests.append(payload)
         if "format" in payload:
@@ -681,17 +679,9 @@ def _without_structured_output(settings, answers, refusal=None):
     return httpx.MockTransport(respond), requests
 
 
-@pytest.fixture
-def no_capabilities_remembered():
-    from cairnmind import structured_output
-    structured_output.forget()
-    yield
-    structured_output.forget()
-
-
 @pytest.mark.parametrize("corrected,complete", [("valid", True), ("invalid_quote", False), ("not_json", False)])
 async def test_a_server_without_structured_output_still_corrects_and_validates_the_answer(
-        workspace, no_capabilities_remembered, corrected, complete):
+        workspace, corrected, complete):
     store, project, settings = workspace
     source, _ = document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
     reply = {"valid": final(source["id"], SUPPORTED_QUOTE, "Five attempts."),
@@ -711,12 +701,11 @@ async def test_a_server_without_structured_output_still_corrects_and_validates_t
         assert result["status"] == "partial" and "Six attempts." not in result["answer"]
         assert result["diagnostics"]["repair_outcome"] == "failed"
     assert not any("unavailable" in gap for gap in result.get("unknowns", []))
-    # One refused request: the correction. The support check knows already and asks without `format`.
-    assert len([payload for payload in requests if "format" in payload]) == 1
+    # Nothing is cached: the correction, and the support check of a complete answer, each try `format` first.
+    assert len([payload for payload in requests if "format" in payload]) == (2 if complete else 1)
 
 
-async def test_a_501_for_another_reason_while_correcting_is_still_reported_as_unavailable(
-        workspace, no_capabilities_remembered):
+async def test_a_501_for_another_reason_while_correcting_is_still_reported_as_unavailable(workspace):
     store, project, settings = workspace
     document(store, project, SUPPORTED_QUOTE, uri="notes://retry")
     transport, requests = _without_structured_output(settings, ["not JSON"], {"error": "not implemented"})
@@ -1016,8 +1005,7 @@ async def test_extraction_requires_quote_and_keeps_records_proposed(workspace):
     assert records[0]["metadata"]["evidence"] == "We decided to use auth.py."
 
 
-async def test_extraction_on_a_server_without_structured_output_keeps_its_quote_check(
-        workspace, no_capabilities_remembered):
+async def test_extraction_on_a_server_without_structured_output_keeps_its_quote_check(workspace):
     store, project, settings = workspace
     text = "We decided to use auth.py.\nImplement secure cookies."
     source = store.snapshot(project["id"], "transcript://example", json.dumps({"text": text}),

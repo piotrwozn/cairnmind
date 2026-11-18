@@ -10,11 +10,9 @@ accepted on the server's word, and an answer that fails validation stays partial
 Only that refusal counts: HTTP 501 and an error that says structured output is unavailable. Any other
 error of a structured request is reported as before.
 
-What was refused is remembered per server, model and digest for the life of the process, so a question
-does not first send a request that is refused. The decision is not kept across processes: a newer
-server may offer structured output for the same digest, and one refused request per process finds out.
-What was seen is also written to models.capabilities.json in the data directory, only so that
-``doctor`` (another process, which sends no model requests) can name it.
+Every structured request is sent with ``format`` first. A refusal is written, per server and model, to
+models.capabilities.json in the data directory only so that ``doctor`` (another process, which sends no
+model requests) can name it; nothing reads it to skip ``format``.
 """
 from __future__ import annotations
 
@@ -38,43 +36,20 @@ INSTRUCTION = ("This server cannot enforce the response format. Return only one 
                "and no code fence, that is valid under this JSON schema: ")
 _FENCE = re.compile(r"\A```(?:json)?[ \t]*\n(.*)\n```\Z", re.S)
 
-_refused: set[tuple[str, str, str | None]] = set()
+def _name(server: str, model: str) -> str:
+    return f"{str(server).rstrip('/')}|{model}"
 
 
-def _key(server: str, model: str, digest: str | None) -> tuple[str, str, str | None]:
-    return str(server).rstrip("/"), str(model), digest
-
-
-def _name(server: str, model: str, digest: str | None) -> str:
-    return "|".join(item or "-" for item in _key(server, model, digest))
-
-
-def forget() -> None:
-    """Forget what this process has seen (tests)."""
-    _refused.clear()
-
-
-def seen_for(server: str, model: str) -> bool:
-    """Whether any digest of this model on this server refused structured output in this process."""
-    server, model, _ = _key(server, model, None)
-    return any(key[:2] == (server, model) for key in _refused)
-
-
-def refused(server: str, model: str, digest: str | None) -> bool:
-    return _key(server, model, digest) in _refused
-
-
-def remember(data_dir, server: str, model: str, digest: str | None) -> None:
-    """Remember the refusal for this process, and note it for doctor. A note that cannot be written is
-    left out: it only informs doctor, and the answer must not fail because of it."""
-    _refused.add(_key(server, model, digest))
+def remember(data_dir, server: str, model: str) -> None:
+    """Note the refusal for doctor. A note that cannot be written is left out: it only informs doctor,
+    and the answer must not fail because of it."""
     try:
         path = Path(data_dir)
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         with (path / LOCK).open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             records = dict(_read(path))
-            records[_name(server, model, digest)] = {
+            records[_name(server, model)] = {
                 "structured_output": False, "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
             if len(records) > MAX_RECORDS:  # the oldest observations go first
                 records = dict(sorted(records.items(), key=lambda item: item[1]["observed_at"])[-MAX_RECORDS:])
@@ -97,9 +72,9 @@ def _read(data_dir) -> dict:
             and isinstance(row.get("observed_at"), str)}
 
 
-def doctor_note(data_dir, server: str, model: str, digest: str | None) -> dict | None:
-    """Read-only, for doctor: what was seen of this server, model and digest, or None."""
-    record = _read(data_dir).get(_name(server, model, digest))
+def doctor_note(data_dir, server: str, model: str) -> dict | None:
+    """Read-only, for doctor: the last refusal seen from this server and model, or None."""
+    record = _read(data_dir).get(_name(server, model))
     if record is None:
         return None
     return {"refused": True, "text": DOCTOR_TEXT, "observed_at": record["observed_at"][:32],

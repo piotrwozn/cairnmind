@@ -197,30 +197,16 @@ class Ollama:
         """One chat request. A server that refuses ``format`` as unavailable is asked once more without it,
         the schema in the prompt; the caller validates the JSON as before (structured_output.py, #231)."""
         schema = kwargs.get("format")
-        if schema is None:
+        try:
             return await self._chat(messages, tools, **kwargs)
-        model = self.settings.chat_model
-        known = structured_output.seen_for(self.base_url, model)
-        digest = await self._capability_digest(model) if known else None
-        if not (known and structured_output.refused(self.base_url, model, digest)):
-            try:
-                return await self._chat(messages, tools, **kwargs)
-            except OllamaUnavailable as exc:
-                if exc.error_code != structured_output.REFUSED:
-                    raise
-            if not known:
-                digest = await self._capability_digest(model)
-            await asyncio.to_thread(structured_output.remember, self.settings.data_dir, self.base_url, model, digest)
+        except OllamaUnavailable as exc:
+            if schema is None or exc.error_code != structured_output.REFUSED:
+                raise
+        await asyncio.to_thread(structured_output.remember, self.settings.data_dir, self.base_url,
+                                self.settings.chat_model)
         plain = {key: value for key, value in kwargs.items() if key != "format"}
         reply = await self._chat(structured_output.prompted_messages(messages, schema), tools, **plain)
         return structured_output.unwrap(reply)
-
-    async def _capability_digest(self, model: str) -> str | None:
-        """The digest that names what a refusal is remembered for; None when the list cannot tell."""
-        try:
-            return await self.model_digest(model)
-        except OllamaUnavailable:
-            return None
 
     async def _chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
         options = {
