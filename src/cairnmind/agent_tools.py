@@ -15,13 +15,14 @@ from pathlib import Path, PurePosixPath
 import re
 import signal
 import stat
+import sys
 from uuid import uuid4
 
 from .agent_journal import AgentJournal, JournalError
 from .agent_write_guard import ChangeLedger, change_of, change_preview, configures_execution
 from .config import ENV_PREFIXES
-from .native_worker import process_start
 from .path_spelling import entry_identity, identity, is_alias
+from .process_identity import group_running, recorded, start as process_start
 
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -39,6 +40,17 @@ _SECRET_ENV = re.compile(r"(?:TOKEN|PASSWORD|SECRET|API_?KEY|AUTHORIZATION|CREDE
 _FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _MEMORY_NAMES = ("cairnmind", "devbrain", "cairnmind-published")
 _MEMORY_PAIRS = tuple((".memory", name) for name in _MEMORY_NAMES)
+# A command's first step: enter the verified directory by its descriptor, close
+# it, then become the shell. A /proc/self/fd/N path does not exist on macOS and
+# /dev/fd/N is no working directory there (#227). os.fchdir in a preexec_fn
+# would do the same, but the parent runs threads (asyncio.to_thread) and Python
+# documents preexec_fn as unsafe with threads; this keeps subprocess's own
+# fork/exec. -I -S: no environment, site or current directory reaches it.
+# Python starts with SIGPIPE and SIGXFSZ ignored and exec keeps that, so the
+# step restores their defaults, as subprocess does before a direct exec.
+_ENTER_DIRECTORY = ("import os,sys,signal as s;d=int(sys.argv[1]);os.fchdir(d);os.close(d);"
+                    "s.signal(s.SIGPIPE,s.SIG_DFL);s.signal(s.SIGXFSZ,s.SIG_DFL);"
+                    "os.execv(sys.argv[2],sys.argv[2:])")
 
 
 def _tool(name, description, properties, required):
@@ -144,39 +156,15 @@ def _group_running(pgid):
     It reads every process of the machine, so callers run it off the event loop."""
     if not _group_exists(pgid):
         return False
-    try:
-        names = os.listdir("/proc")
-    except OSError:
-        return True  # cannot tell, so never claim the group has ended
-    group = str(pgid).encode()
-    for name in names:
-        if not name.isdigit():
-            continue
-        try:
-            # comm is arbitrary bytes (cut at 15, maybe inside a letter) and may
-            # contain spaces and closing parentheses; state, ppid, pgrp follow it.
-            fields = Path(f"/proc/{name}/stat").read_bytes().rsplit(b")", 1)[1].split()
-        except (OSError, IndexError):
-            continue
-        if len(fields) <= 2 or fields[2] != group:
-            continue
-        if fields[0] not in {b"Z", b"X"}:
-            return True
-        # /proc lists thread groups: the stat of one whose main thread has
-        # exited says Z while its other threads still run.
-        try:
-            if len(os.listdir(f"/proc/{name}/task")) > 1:
-                return True
-        except OSError:
-            continue
-    return False
+    # Cannot tell (None), so never claim the group has ended.
+    return group_running(pgid) is not False
 
 
 async def _group_ended(pgid, seconds):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + seconds
     delay = .002
-    # The /proc scan runs in a thread so that a machine with many processes
+    # The process scan runs in a thread so that a machine with many processes
     # does not freeze the loop (and the UI on it) during a stop.
     while await asyncio.to_thread(_group_running, pgid):
         now = loop.time()
@@ -576,7 +564,7 @@ class ToolExecutor:
     @staticmethod
     def _kill_group(process, birth):
         try:  # best effort, unless the leader id now names another process
-            if process_start(process.pid) in (None, birth):
+            if recorded(process.pid, birth) is True:
                 os.killpg(process.pid, signal.SIGKILL)
         except Exception:
             pass
@@ -593,20 +581,21 @@ class ToolExecutor:
                 pass  # a member we may not signal (setuid): the wait below decides
             return True
 
-        current = process_start(pgid)
         # A still-owned leader proves the group. After it has been reaped, an
         # existing group remains reserved by its children until they exit, so
         # a reused leader id means the group had already ended, and a missing
         # leader (reaped, whether or not asyncio has recorded it yet) leaves
-        # the id naming only what remains of this group.
-        if current is not None and current != birth:
-            return True
+        # the id naming only what remains of this group. When the leader's
+        # identity cannot be read, nothing is signalled and nothing confirmed.
+        owned = recorded(pgid, birth)
+        if owned is not True:
+            return owned is False
         if not send(signal.SIGTERM):
             return True
         await _group_ended(pgid, TERM_GRACE_SECONDS)
-        current = process_start(pgid)
-        if current is not None and current != birth:
-            return True
+        owned = recorded(pgid, birth)
+        if owned is not True:
+            return owned is False
         # Whatever the scan saw, SIGKILL what is left of the group: harmless
         # to zombies, and it ends a member the scan could misjudge.
         if not send(signal.SIGKILL):
@@ -655,6 +644,8 @@ class ToolExecutor:
                 or type(requested) not in (int, float) or not 0.1 <= requested <= 3600):
             raise ToolError("invalid_arguments", "Command timeout must be between 0.1 and 3600 seconds")
         timeout = min(configured, requested)
+        if not sys.executable:
+            raise ToolError("command_unavailable", "No interpreter is known to start the command in its directory")
         with self._directory(parts) as directory:
             cwd = str(self.worktree.joinpath(*parts))
             request = {"action_id": action_id, "command": command, "cwd": cwd,
@@ -678,8 +669,9 @@ class ToolExecutor:
             # The host supplies the callback; model arguments cannot grant this.
             self.journal.append("action_started", self._action(action_id, "run_command", args, call_id))
             spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+                sys.executable, "-I", "-S", "-c", _ENTER_DIRECTORY, str(directory),
                 "/bin/bash", "--noprofile", "--norc", "-c", command,
-                cwd=f"/proc/self/fd/{directory}", pass_fds=(directory,), env=environment,
+                pass_fds=(directory,), env=environment,
                 stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True))
             self._starting[action_id] = spawn

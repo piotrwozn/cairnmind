@@ -18,6 +18,7 @@ import time
 from urllib.parse import urlparse
 import urllib.request
 
+from . import process_identity
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
 from .database_mode import (address, connect_only, describe, is_managed_url, refusal, server_version,  # noqa: F401
@@ -129,11 +130,11 @@ def managed_java_executable(settings: Settings) -> str | None:
         pid = int(record["pid"])
         if pid <= 0:
             return None
-        command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
-        if (b"com.arcadedb.server.ArcadeDBServer" not in command
-                or f"-Darcadedb.server.rootPath={state}".encode() not in command):
+        command = process_identity.command_line(pid) or []
+        if ("com.arcadedb.server.ArcadeDBServer" not in command
+                or f"-Darcadedb.server.rootPath={state}" not in command):
             return None
-        return str(Path(f"/proc/{pid}/exe").resolve(strict=True))
+        return process_identity.executable(pid)
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -390,14 +391,18 @@ def stop_engine(settings: Settings) -> dict:
         return {"stopping": False, "reason": "No managed process for this data directory"}
     info = json.loads(file.read_text())
     pid = int(info["pid"])
-    # Linux/WSL /proc identity check prevents killing an unrelated reused PID.
+    # The command line proves the process is this directory's engine: an unrelated reused PID is never killed,
+    # and one whose command line cannot be read is not either (#226). A process that is gone is already stopped.
     try:
-        command = Path(f"/proc/{pid}/cmdline").read_bytes()
-        if b"com.arcadedb.server.ArcadeDBServer" not in command or str(state).encode() not in command:
+        argv = process_identity.command_line(pid)
+        if argv is None and not process_identity.alive(pid):
+            raise ProcessLookupError
+        command = "\0".join(argv or [])
+        if "com.arcadedb.server.ArcadeDBServer" not in command or str(state) not in command:
             raise ArcadeError("Managed ArcadeDB PID no longer belongs to this environment")
         os.kill(pid, signal.SIGTERM)
         for _ in range(100):
-            if not Path(f"/proc/{pid}").exists() or not engine_status(settings)["available"]:
+            if not process_identity.alive(pid) or not engine_status(settings)["available"]:
                 break
             time.sleep(0.1)
     except ProcessLookupError:

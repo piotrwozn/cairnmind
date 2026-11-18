@@ -16,7 +16,7 @@ from cairnmind.agent_tools import ToolExecutor
 from cairnmind.config import Settings
 
 # The child ignores SIGTERM, so only SIGKILL ends it.
-CHILD_IGNORING_TERM = "(trap '' TERM; echo $BASHPID > child.pid; exec sleep 30) & wait"
+CHILD_IGNORING_TERM = "(trap '' TERM; exec sh -c 'echo $$ > child.pid; exec sleep 30') & wait"
 
 
 @pytest.fixture

@@ -28,8 +28,9 @@ from uuid import uuid4
 import httpx
 
 from .config import ENV_PREFIXES, Settings
-from .native_worker import process_start
+from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
+from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
 
 LIVE = {"starting", "running", "stopping"}
 
@@ -72,7 +73,7 @@ class NativeRuntime:
         self.settings = settings
         self.directory = settings.data_dir / "runtime"
         namespace = hashlib.sha256(str(settings.data_dir.resolve()).encode()).hexdigest()[:16]
-        self.socket_directory = Path(tempfile.gettempdir()) / f"cairnmind-native-{os.getuid()}-{namespace}"
+        self.socket_directory = socket_directory("native", namespace)
         self.socket = self.socket_directory / "tmux.sock"
         self.registry = self.directory / "runs.json"
         self.config = self.directory / "tmux.conf"
@@ -107,11 +108,12 @@ class NativeRuntime:
         info = self.directory.lstat()
         if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError("Native runtime directory must be owner-only")
+        prepare_socket_base()
         self.socket_directory.mkdir(exist_ok=True, mode=0o700)
         info = self.socket_directory.lstat()
         if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError("Native terminal socket directory must be owner-only")
-        if len(os.fsencode(self.socket)) > 100:
+        if len(os.fsencode(self.socket)) > MAX_SOCKET_PATH:
             raise ValueError("Native runtime Unix socket path is too long")
         if self.config.is_symlink():
             raise ValueError("Native runtime configuration cannot be a symlink")
@@ -428,7 +430,7 @@ class NativeRuntime:
             return dict(row)
         if pane and not pane["dead"]:
             pid = pane["pid"]
-            # Pane ownership plus Linux process start identity prevents PID reuse
+            # Pane ownership plus the process start identity prevents PID reuse
             # from turning an old run's stop button into an unrelated signal.
             if row.get("pid") != pid or not row.get("process_start") or process_start(pid) != row["process_start"]:
                 raise ValueError("Native process identity changed; stop refused")
