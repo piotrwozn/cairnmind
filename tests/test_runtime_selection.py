@@ -54,6 +54,39 @@ def test_empty_java_setting_keeps_path_behavior(tmp_path, monkeypatch):
     assert engine.resolve_java(Settings(tmp_path)) is None
 
 
+def test_java_home_comes_before_path_and_after_the_setting(tmp_path, monkeypatch):
+    # A JDK from Homebrew is on no PATH; JAVA_HOME is how macOS and its tools name it (#232).
+    home = tmp_path / "openjdk.jdk" / "Contents" / "Home"
+    binary = executable(tmp_path)
+    (home / "bin").mkdir(parents=True)
+    (home / "bin" / "java").symlink_to(binary)
+    monkeypatch.setenv("JAVA_HOME", str(home))
+    monkeypatch.setattr(engine.shutil, "which", lambda name: pytest.fail("PATH was searched before JAVA_HOME"))
+    assert engine.resolve_java(Settings(tmp_path)) == str(binary.resolve())
+    configured = tmp_path / "configured" / "java"
+    configured.parent.mkdir()
+    configured.write_text("#!/bin/sh\nexit 0\n")
+    configured.chmod(0o700)
+    assert engine.resolve_java(Settings(tmp_path, java_executable=str(configured))) == str(configured.resolve())
+
+
+@pytest.mark.parametrize("value", ["", "relative/jdk", "/missing/jdk", "no-java"])
+def test_a_java_home_without_a_java_leaves_path_as_it_was(tmp_path, monkeypatch, value):
+    if value == "no-java":
+        (tmp_path / "jdk" / "bin").mkdir(parents=True)
+        (tmp_path / "jdk" / "bin" / "java").write_text("not executable")
+        value = str(tmp_path / "jdk")
+    monkeypatch.setenv("JAVA_HOME", value)
+    binary = executable(tmp_path)
+    monkeypatch.setattr(engine.shutil, "which", lambda name: str(binary))
+    assert engine.resolve_java(Settings(tmp_path)) == str(binary)
+
+
+def test_tests_start_without_the_java_home_of_the_shell():
+    import os
+    assert "JAVA_HOME" not in os.environ
+
+
 def test_java_config_roundtrip_and_environment_override_are_local(tmp_path, monkeypatch):
     monkeypatch.delenv("DEVBRAIN_JAVA_EXECUTABLE", raising=False)
     settings = Settings(tmp_path, java_executable="/private/jdk/bin/java")

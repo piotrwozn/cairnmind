@@ -118,6 +118,13 @@ def resolve_java(settings: Settings) -> str | None:
         if not candidate.is_file() or not os.access(candidate, os.X_OK):
             raise ArcadeError("Configured java_executable is unavailable or not executable")
         return str(candidate.resolve())
+    # JAVA_HOME before PATH (#232): a JDK from Homebrew on macOS is on no PATH. One without bin/java is passed over,
+    # so the search ends where it did before.
+    home = os.environ.get("JAVA_HOME", "")
+    if home and Path(home).is_absolute():
+        candidate = Path(home) / "bin" / "java"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate.resolve())
     candidate = shutil.which("java")
     return str(Path(candidate).resolve()) if candidate else None
 

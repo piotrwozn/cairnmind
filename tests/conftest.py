@@ -60,6 +60,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_workspace_state", "test_workspace_ux080", "test_workspace_focus_column", "test_shards",
     "test_run_guard", "test_process_identity", "test_machine_identity", "test_socket_base", "test_python_pin",
     "test_ci_macos_job",
+    "test_install_macos",
 })
 
 TMUX_MODULES = frozenset({
@@ -336,6 +337,9 @@ def no_inherited_session():
     """
     removed = {key: os.environ.pop(key) for name in (*SESSION_NAMES, "HOME", "JAVA_EXECUTABLE", "TMUX_EXECUTABLE")
                for key in env_names(name) if key in os.environ}
+    # The engine looks for Java in JAVA_HOME first (#232); a test chooses its Java itself.
+    if "JAVA_HOME" in os.environ:
+        removed["JAVA_HOME"] = os.environ.pop("JAVA_HOME")
     yield
     os.environ.update(removed)
 
