@@ -31,6 +31,12 @@ def digest(value):
 
 
 def live(pid):
+    if sys.platform != "linux":  # no /proc: a zombie counts as live here, which the tests below do not leave
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
     try:
         return Path(f"/proc/{pid}/stat").read_text(errors="replace").rsplit(")", 1)[1].split()[0] not in {"Z", "X"}
     except (OSError, IndexError):
@@ -438,7 +444,8 @@ async def test_processes_still_running_after_the_kill_bound_are_reported(executo
     monkeypatch.setattr(agent_tools, "KILL_WAIT_SECONDS", .1)
     executor.approve = lambda request: True
     executor.command_timeout_seconds = .2 if operation == "timeout" else 30
-    command = "(trap '' TERM; echo $BASHPID > child.pid; exec sleep 30) & wait"
+    # $BASHPID is missing from the bash 3.2 of macOS; the ignored TERM survives the exec into sh.
+    command = "(trap '' TERM; exec sh -c 'echo $$ > child.pid; exec sleep 30') & wait"
     task = asyncio.create_task(executor.execute("run_command", {"command": command}))
     await wait_for(executor.worktree / "child.pid")
     started = time.monotonic()

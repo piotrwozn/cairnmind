@@ -229,17 +229,12 @@ def test_managed_java_requires_process_identity(tmp_path, monkeypatch, owned):
     state = tmp_path / "arcade"
     state.mkdir()
     (state / "process.json").write_text(json.dumps({"pid": 4321}))
-    read = Path.read_bytes
-    resolve = Path.resolve
-    def read_bytes(path):
-        if str(path) == "/proc/4321/cmdline":
-            return (f"java\0-Darcadedb.server.rootPath={state}\0com.arcadedb.server.ArcadeDBServer\0".encode()
-                    if owned else b"unrelated\0")
-        return read(path)
-    def resolved(path, **kwargs):
-        return Path("/actual/jdk/bin/java") if str(path) == "/proc/4321/exe" else resolve(path, **kwargs)
-    monkeypatch.setattr(Path, "read_bytes", read_bytes)
-    monkeypatch.setattr(Path, "resolve", resolved)
+    command = (["java", f"-Darcadedb.server.rootPath={state}", "com.arcadedb.server.ArcadeDBServer"]
+               if owned else ["unrelated"])
+    # The process is asked through process_identity, the same on Linux and macOS (#226).
+    monkeypatch.setattr(engine.process_identity, "command_line", lambda pid: command if pid == 4321 else None)
+    monkeypatch.setattr(engine.process_identity, "executable",
+                        lambda pid: "/actual/jdk/bin/java" if pid == 4321 else None)
     assert engine.managed_java_executable(settings) == ("/actual/jdk/bin/java" if owned else None)
 
 

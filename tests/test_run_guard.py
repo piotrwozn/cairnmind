@@ -9,6 +9,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -115,7 +116,8 @@ def test_a_test_sets_its_own_limit(tmp_path):
     """)
     assert "1 failed, 1 passed" in result.stdout, result.stdout
     assert "FAILED tests/test_shards.py::test_shorter_than_the_default" in result.stdout
-    assert "took longer than 1 s" in result.stdout
+    # The limit is doubled while coverage measures the run (run_guard.py).
+    assert re.search(r"took longer than [12] s", result.stdout), result.stdout
     assert took < 60
 
 
