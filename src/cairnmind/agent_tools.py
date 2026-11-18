@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 import re
 import signal
 import stat
+import sys
 from uuid import uuid4
 
 from .agent_journal import AgentJournal, JournalError
@@ -39,6 +40,14 @@ _SECRET_ENV = re.compile(r"(?:TOKEN|PASSWORD|SECRET|API_?KEY|AUTHORIZATION|CREDE
 _FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _MEMORY_NAMES = ("cairnmind", "devbrain", "cairnmind-published")
 _MEMORY_PAIRS = tuple((".memory", name) for name in _MEMORY_NAMES)
+# A command's first step: enter the verified directory by its descriptor, close
+# it, then become the shell. A /proc/self/fd/N path does not exist on macOS and
+# /dev/fd/N is no working directory there (#227). os.fchdir in a preexec_fn
+# would do the same, but the parent runs threads (asyncio.to_thread) and Python
+# documents preexec_fn as unsafe with threads; this keeps subprocess's own
+# fork/exec. -I -S: no environment, site or current directory reaches it.
+_ENTER_DIRECTORY = ("import os,sys;d=int(sys.argv[1]);os.fchdir(d);os.close(d);"
+                    "os.execv(sys.argv[2],sys.argv[2:])")
 
 
 def _tool(name, description, properties, required):
@@ -655,6 +664,8 @@ class ToolExecutor:
                 or type(requested) not in (int, float) or not 0.1 <= requested <= 3600):
             raise ToolError("invalid_arguments", "Command timeout must be between 0.1 and 3600 seconds")
         timeout = min(configured, requested)
+        if not sys.executable:
+            raise ToolError("command_unavailable", "No interpreter is known to start the command in its directory")
         with self._directory(parts) as directory:
             cwd = str(self.worktree.joinpath(*parts))
             request = {"action_id": action_id, "command": command, "cwd": cwd,
@@ -678,8 +689,9 @@ class ToolExecutor:
             # The host supplies the callback; model arguments cannot grant this.
             self.journal.append("action_started", self._action(action_id, "run_command", args, call_id))
             spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+                sys.executable, "-I", "-S", "-c", _ENTER_DIRECTORY, str(directory),
                 "/bin/bash", "--noprofile", "--norc", "-c", command,
-                cwd=f"/proc/self/fd/{directory}", pass_fds=(directory,), env=environment,
+                pass_fds=(directory,), env=environment,
                 stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True))
             self._starting[action_id] = spawn
