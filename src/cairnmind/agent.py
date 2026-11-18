@@ -994,11 +994,13 @@ class KnowledgeAgent:
         try:
             result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
             in_part = diagnostics.pop("_hits_in_part", 0)
-            spent = time.monotonic() - started
-            left = self.settings.ask_timeout - spent
-            # The second look reads at least as much as the first pass did: with less time left than
-            # that pass took it cannot finish, and would only hold the model (#231).
-            if (in_part and answer_schema is None and left > max(SECOND_LOOK_MIN_SECONDS, spent)
+            now = time.monotonic()
+            left = self.settings.ask_timeout - (now - started)
+            # The second look makes the calls the first pass made from its last discovery call on (that
+            # call, a repair, the support check), over more text: with less time left than those took it
+            # cannot finish, and would only hold the model (#231). Earlier tool steps are not counted.
+            final = now - diagnostics.pop("_last_call_at", now)
+            if (in_part and answer_schema is None and left > max(SECOND_LOOK_MIN_SECONDS, final)
                     and result.get("status") == "partial"
                     and result.get("diagnostics", {}).get("code") in SECOND_LOOK_CODES):
                 # The model found no answer in the excerpts. A hit shows 900 characters of a chunk of up
@@ -1010,6 +1012,7 @@ class KnowledgeAgent:
                 second = await self._ask_impl(project_id, question, worktree, answer_schema, again,
                                               whole=True, timeout=left)
                 again.pop("_hits_in_part", None)
+                again.pop("_last_call_at", None)
                 if second.get("status") == "complete":
                     diagnostics.update(again, second_look="answered")
                     result = {**second, "elapsed_seconds": round(time.monotonic() - started, 3)}
@@ -1189,6 +1192,7 @@ class KnowledgeAgent:
                                             code="context_budget")
                     # The second look fills the context with whole chunks: a search on top of them
                     # would end in the context guard, so that pass answers from what it is shown.
+                    diagnostics["_last_call_at"] = time.monotonic()
                     response = await self.ollama.chat(messages, tools=None if whole else TOOLS)
                     diagnostics["model_calls"] = [*diagnostics["model_calls"][-1:],
                                                   _model_diagnostics(response, "discovery")]

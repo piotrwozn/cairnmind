@@ -3,8 +3,8 @@
 On an Apple M3 Pro with an MLX build of the default model one discovery call took about 43 seconds;
 a complete answer needs that call, the support check and, when citations fail, a repair. The model
 server here is a fake that sleeps for the time each call took there, scaled down by SCALE, and the
-budget of the question is scaled the same way. The texts are about a pottery kiln on purpose: this
-file is indexed by `cairnmind eval repository` (see test_second_look.py).
+budget of the question is scaled the same way. This file names default budgets, so `cairnmind eval
+repository` never indexes it (NOT_INDEXED in repository_evaluation.py).
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from test_knowledge import FakeOllama, document, final, workspace  # noqa: F401  (workspace is a fixture)
-from test_second_look import QUESTION, UNKNOWN, long_chunk
+from test_knowledge import FakeOllama, calls, document, final, workspace  # noqa: F401  (workspace is a fixture)
+from test_second_look import ANSWER, QUESTION, UNKNOWN, long_chunk
 
 from cairnmind import agent as agent_module
 from cairnmind import config
@@ -82,3 +82,29 @@ async def test_no_second_look_starts_with_less_time_left_than_the_first_pass_too
     assert result["status"] == "partial" and result["diagnostics"]["code"] == "missing_evidence"
     assert "second_look" not in result["diagnostics"] and len(model.calls) == 2
     assert result["diagnostics"]["budget"]["elapsed_seconds"] < settings.ask_timeout - 0.3
+
+
+class StepModel(FakeOllama):
+    """FakeOllama whose n-th chat call takes ``delays[n]`` seconds."""
+
+    def __init__(self, replies, delays):
+        super().__init__(replies)
+        self.delays = list(delays)
+
+    async def chat(self, messages, tools=None, **kwargs):
+        await asyncio.sleep(self.delays.pop(0) if self.delays else 0.0)
+        return await super().chat(messages, tools, **kwargs)
+
+
+async def test_slow_tool_steps_of_the_first_pass_do_not_hold_back_a_second_look(workspace, monkeypatch):  # noqa: F811
+    store, project, settings = workspace
+    source, _ = document(store, project, long_chunk(), uri="notes://kiln")
+    monkeypatch.setattr(agent_module, "SECOND_LOOK_MIN_SECONDS", 0.0)
+    settings.ask_timeout = 2.0
+    # A 1.1 s search step, then an answer and its repair in 0.2 s: 0.7 s is left, less than the first pass
+    # took, but more than the calls a second look repeats (the second look makes no tool steps).
+    model = StepModel([calls(("search", {"query": "kiln glaze"})), UNKNOWN, UNKNOWN,
+                       final(source["id"], ANSWER, "384 g.")], [1.1, 0.1, 0.1, 0.1])
+    result = await KnowledgeAgent(store, settings, model).ask(project["id"], QUESTION)
+    assert result["status"] == "complete", json.dumps(result["diagnostics"])
+    assert result["diagnostics"]["second_look"] == "answered" and "_last_call_at" not in result["diagnostics"]
