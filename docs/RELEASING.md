@@ -6,7 +6,7 @@ One gate, then a short list of steps. Nothing here is automated except CI; every
 
 A release needs all four, on the release commit.
 
-1. **Green CI.** The required checks are `lint`, `fast-tests` and `full-tests` (`.github/workflows/ci.yml`). `full-tests` runs the whole suite against the pinned ArcadeDB on Java 21 with tmux. The `coverage` job is informational and is not part of the gate. To run the same checks yourself: `uv run ruff check src tests`, `uv run pytest -m "not arcade and not tmux"` and `uv run pytest` (see [CONTRIBUTING.md](../CONTRIBUTING.md#running-checks)). The result is the CI run on the merge commit.
+1. **Green CI.** The required checks are `lint`, `fast-tests`, `macos-fast-tests` and `full-tests` (`.github/workflows/ci.yml`). `macos-fast-tests` runs the fast tier on an Apple silicon macOS runner. `full-tests` runs the whole suite against the pinned ArcadeDB on Java 21 with tmux, on Linux only. The `coverage` job is informational and is not part of the gate. To run the same checks yourself: `uv run ruff check src tests`, `uv run pytest -m "not arcade and not tmux"` and `uv run pytest` (see [CONTRIBUTING.md](../CONTRIBUTING.md#running-checks)). The result is the CI run on the merge commit.
 2. **Evaluations, when the release changes the knowledge agent, retrieval or extraction.** Run by hand with the local models; they are not part of CI ([EVALUATION.md](EVALUATION.md)):
 
    ```bash

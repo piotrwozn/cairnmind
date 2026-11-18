@@ -2,37 +2,44 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
-## Unreleased
+## 0.12.0
 
-### macOS
+### macOS on Apple silicon
 
-- macOS on Apple silicon is supported: README says so, the package lists macOS among its operating systems, and the macOS job of CI fails the workflow like the Linux tiers (#237).
-- On macOS, Cairnmind now identifies its own processes (the cockpit broker, native runs, the database engine and its Java, check runs, agent commands and MCP servers) without /proc, so it can find and stop them there as on Linux (#226).
-- A stop or signal is still refused when a process id now belongs to another process, or when the process's identity cannot be read (#226).
-- `engine stop` now clears the record of a process that has already exited, instead of failing with a missing /proc file (#226).
-- The built-in agent's approved commands now start in their verified directory without relying on /proc, so they run on macOS, and the shell no longer inherits the directory's descriptor (#227).
-- The development environment is pinned to Python 3.12 with a .python-version file, so uv sync --locked --extra dev no longer picks a newer Python that lacks wheels for some dependencies (#228).
-- On macOS, an installation is now identified by the Mac's hardware UUID (IOPlatformUUID) rather than its host name, so a change of network or host name no longer makes the installation a reader of its own store (#234).
-- On macOS the workspace and coding-session sockets live in one short private folder per user under /tmp, so a workspace started in a terminal app is found from an ssh session or launchd, and socket paths stay well under the system limit (#235).
-- Every test now has a time limit (300 s by default, set per test with @pytest.mark.time_limit or for the run with CAIRNMIND_TEST_TIME_LIMIT), so a hanging test fails instead of blocking the whole run, also under pytest-xdist at the exclusive-test gate (#236).
-- After each test, the child processes, tmux servers and test engines it started and left running are stopped (SIGTERM, then SIGKILL) and reported as a LeftRunning warning, without touching anything the test did not start (#236).
-- CI now runs the fast test tier on an Apple silicon macOS runner for every pull request and push to main, as a non-blocking job with a 30 minute limit that keeps the pytest output and JUnit report as an artifact (#237).
-- On macOS, memory packages, a published-memory checkout and the preview's data directory can now be under /tmp or /var, which are links of the system; any other symbolic link on the way is still refused (#229).
-- Portable recall no longer loses a project's files when one path was recorded as /var/folders/... and another as /private/var/folders/... on macOS (#229).
-- On a model server that refuses structured output (Ollama with an MLX build on Apple silicon), answers, their correction, the support check and extraction ask again without a response format and validate the JSON themselves, so ask no longer ends partial with the model reported as unavailable (#231).
-- cairnmind doctor shows "structured output: unavailable on this server" for the chat model once the service has seen that refusal (#231).
+- macOS on Apple silicon is supported: README says so and the package lists macOS among its operating systems (#237).
 - The installer runs on macOS with the bash that macOS ships. It finds Java 21 through JAVA_HOME, /usr/libexec/java_home or PATH, says when the java of macOS has no JDK behind it, and gives Homebrew hints, including the link that lets macOS find Homebrew's openjdk@21 (#232).
 - On macOS the engine looks for Java in JAVA_HOME before PATH; a java_executable in config.json still comes first. On Linux and WSL the engine and the installer use java on PATH as before, whatever JAVA_HOME says (#232).
-- docs/INSTALL.md describes installing on macOS with Homebrew (#232).
+- docs/INSTALL.md describes installing on macOS with Homebrew, including how to put Homebrew on the shell's PATH, without which tmux is installed but not found (#232).
 - On a Mac, `doctor` names the Apple chip and its unified memory (for example Apple M3 Pro, 36 GiB) from two `sysctl` reads instead of an nvidia-smi and WSL note, and keeps a short note when a read fails or the Mac has an Intel processor; install hints for tmux, Java and the AI clients name Homebrew, in English and Polish; Linux and WSL keep their wording unchanged (#233).
-- The test suite no longer assumes Linux in its process checks, socket paths, terminal state comparisons, test certificates and file system expectations, so more of it runs on macOS (#236).
-- Stopping the last coding-session run now also stops its private terminal server, which was left running with no sessions after `workspace stop --clients` (#105).
+- On macOS, an installation is identified by the Mac's hardware UUID (IOPlatformUUID) rather than its host name, so a change of network or host name no longer makes the installation a reader of its own store (#234).
+- On macOS the workspace and coding-session sockets live in one short private folder per user under /tmp, so a workspace started in a terminal app is found from an ssh session or launchd, and socket paths stay well under the system limit. Linux and WSL keep the earlier place (#235).
+- On macOS, memory packages, a published-memory checkout and the preview's data directory can be under /tmp or /var, which are links of the system; any other symbolic link on the way is still refused (#229).
+- Portable recall no longer loses a project's files when one path was recorded as /var/folders/... and another as /private/var/folders/... on macOS (#229).
+
+### Processes and stopping
+
+- On macOS, Cairnmind identifies its own processes (the cockpit broker, native runs, the database engine and its Java, check runs, agent commands and MCP servers) without /proc, so it can find and stop them there as on Linux (#226).
+- A stop or signal is still refused when a process id now belongs to another process, or when the process's identity cannot be read (#226).
+- `engine stop` clears the record of a process that has already exited, instead of failing with a missing /proc file (#226).
+- The built-in agent's approved commands start in their verified directory without relying on /proc, so they run on macOS, and the shell no longer inherits the directory's descriptor (#227).
+- Stopping the last coding-session run also stops its private terminal server, which was left running with no sessions after `workspace stop --clients` (#105).
+
+### Answers on a slower or more limited model server
+
+- On a model server that refuses structured output (Ollama with an MLX build on Apple silicon), answers, their correction, the support check and extraction ask again without a response format and validate the JSON themselves, so ask no longer ends partial with the model reported as unavailable (#231).
+- `cairnmind doctor` shows "structured output: unavailable on this server" for the chat model once the service has seen that refusal (#231).
 - On macOS a new installation gives each question 120 seconds instead of 60, so an answer from a slow local model on Apple silicon can finish its citation and support checks. Linux keeps 60, and a value already in config.json is kept (#231).
-- Codex now waits for a Cairnmind tool for the question budget plus 15 seconds, never less than the earlier 75, so it no longer cuts a longer question on macOS (#231).
+- Codex waits for a Cairnmind tool for the question budget plus 15 seconds, never less than the earlier 75; `cairnmind install` writes this as `tool_timeout_sec` in `.codex/config.toml`, so Codex no longer cuts a longer question on macOS (#231).
 - A question no longer starts a second reading of whole passages when the time left is shorter than the calls that reading repeats (the answer, its repair and the support check). It ends sooner instead of holding the model for a pass that cannot finish (#231).
-- The test suite no longer fails on macOS where temporary paths are long, /tmp is /private/tmp, CoreFoundation adds an environment variable, a pty keeps a written mark or is revoked, and tmux 3.8 shows no pid for a dead pane (#236).
+
+### Development and CI
+
+- The development environment is pinned to Python 3.12 with a .python-version file, so uv sync --locked --extra dev no longer picks a newer Python that lacks wheels for some dependencies (#228).
+- Every test has a time limit (300 s by default, set per test with @pytest.mark.time_limit or for the run with CAIRNMIND_TEST_TIME_LIMIT), so a hanging test fails instead of blocking the whole run, also under pytest-xdist at the exclusive-test gate (#236).
+- After each test, the child processes, tmux servers and test engines it started and left running are stopped (SIGTERM, then SIGKILL) and reported as a LeftRunning warning, without touching anything the test did not start (#236).
+- The test suite no longer assumes Linux in its process checks, socket paths, terminal state comparisons, test certificates and file system expectations, and no longer fails on macOS where temporary paths are long, /tmp is /private/tmp, CoreFoundation adds an environment variable, a pty keeps a written mark or is revoked, and tmux 3.8 shows no pid for a dead pane (#236).
 - A test run removes the socket directories it left in the per-user socket folder, and keeps any whose server still answers or that another run has just made (#236).
-- docs/INSTALL.md says how to put Homebrew on the shell's PATH on macOS, without which tmux is installed but not found (#232).
+- CI runs the fast test tier on an Apple silicon macOS runner (`macos-fast-tests`, macos-15) for every pull request and push to main, with a 30 minute limit, and keeps the pytest output and JUnit report as an artifact. The job fails the workflow like the Linux tiers and is a required check (#237).
 
 ## 0.11.0
 

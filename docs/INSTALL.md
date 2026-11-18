@@ -103,9 +103,9 @@ Choose one option.
 
 ```bash
 mkdir -p ~/src && cd ~/src
-curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.11.0/cairnmind-0.11.0.tar.gz
-tar -xzf cairnmind-0.11.0.tar.gz
-cd cairnmind-0.11.0
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.12.0/cairnmind-0.12.0.tar.gz
+tar -xzf cairnmind-0.12.0.tar.gz
+cd cairnmind-0.12.0
 ```
 
 **From source.** Clone the repository to follow the latest `main`:
