@@ -6,6 +6,7 @@ now names another process is refused on both paths; when the identity cannot be 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ import struct
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +23,7 @@ from cairnmind import cockpit, engine, process_identity, verification
 from cairnmind.agent_tools import ToolExecutor
 from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
+from cairnmind.mcp_host import McpServer
 
 linux = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="procfs is read on Linux only")
 RUNNING, ZOMBIE = 2, 5  # SRUN, SZOMB of <sys/proc.h>
@@ -110,13 +113,15 @@ def test_linux_a_zombie_has_a_birth_but_does_not_run():
 
 
 @pytest.mark.parametrize("system", ["darwin", sys.platform])
-@pytest.mark.parametrize("pid", [0, -1, None, True, "1", 1.0])
+@pytest.mark.parametrize("pid", [0, -1, None, True, "1", 1.0, 2**31, 2**32 + 1, 2**63])
 def test_an_id_that_names_no_single_process_has_no_identity(pid, system, mac, monkeypatch):
-    mac.births.update({0: (100,), 1: (100,)})  # 0 is the kernel on a Mac, -1 every process
+    # 0 is the kernel on a Mac, -1 every process; 2**32 + 1 would reach process 1 through a C int.
+    mac.births.update({0: (100,), 1: (100,)})
+    mac.argv[1] = ["/sbin/launchd"]
     monkeypatch.setattr(process_identity, "_platform", lambda: system)
     assert process_identity.start(pid) is None and process_identity.command_line(pid) is None
     assert process_identity.executable(pid) is None and not process_identity.alive(pid)
-    assert process_identity.group_running(pid) is None
+    assert process_identity.group_running(pid) is None and process_identity.recorded(pid, "100.000000") is None
 
 
 def test_another_system_establishes_no_identity(monkeypatch, sleeper):
@@ -233,6 +238,44 @@ def test_a_command_group_whose_leader_id_was_reused_is_not_killed(system, monkey
     ToolExecutor._kill_group(sleeper, birth + "0")  # the id now names a process born at another time
     assert not ended(sleeper, .3)
     ToolExecutor._kill_group(sleeper, birth)
+    assert ended(sleeper) and sleeper.returncode == -signal.SIGKILL
+
+
+def test_mac_a_command_or_mcp_group_is_not_signalled_while_its_leader_cannot_be_identified(monkeypatch, sleeper):
+    # sysctl fails (libSystem not loaded, another struct size): the leader runs, but its birth cannot be read.
+    monkeypatch.setattr(process_identity, "_platform", lambda: "darwin")
+    monkeypatch.setattr(process_identity, "_darwin_kinfo", lambda pid: None)
+    birth = "1763400000.000042"
+    assert process_identity.recorded(sleeper.pid, birth) is None
+    assert process_identity.recorded(sleeper.pid, None) is None
+    ToolExecutor._kill_group(sleeper, birth)
+    assert asyncio.run(ToolExecutor._signal_group(sleeper.pid, sleeper, birth)) is False  # not confirmed
+    McpServer._signal(SimpleNamespace(birth=birth), sleeper, signal.SIGKILL)
+    assert not ended(sleeper, .3)
+
+
+def test_the_group_of_a_leader_that_is_gone_is_still_its_own(monkeypatch):
+    # The kernel affirms that no process has the id: what is left of the group may be signalled.
+    monkeypatch.setattr(process_identity, "_platform", lambda: "darwin")
+    monkeypatch.setattr(process_identity, "_darwin_kinfo", lambda pid: None)
+    process = subprocess.Popen(["true"])
+    process.wait()
+    assert process_identity.recorded(process.pid, "1763400000.000042") is True
+
+
+@pytest.mark.parametrize("system", ["linux", "darwin"])
+def test_a_leader_is_its_own_only_with_the_recorded_birth(system, monkeypatch, sleeper):
+    if system == "linux" and not sys.platform.startswith("linux"):
+        pytest.skip("procfs is read on Linux only")
+    if system == "darwin":
+        Mac(monkeypatch).births[sleeper.pid] = (1_763_400_500, 42)
+    birth = process_identity.start(sleeper.pid)
+    assert process_identity.recorded(sleeper.pid, birth) is True
+    assert process_identity.recorded(sleeper.pid, birth + "0") is False
+    assert process_identity.recorded(sleeper.pid, None) is False  # no birth was recorded at the spawn
+    McpServer._signal(SimpleNamespace(birth=birth + "0"), sleeper, signal.SIGKILL)
+    assert not ended(sleeper, .3)
+    McpServer._signal(SimpleNamespace(birth=birth), sleeper, signal.SIGKILL)
     assert ended(sleeper) and sleeper.returncode == -signal.SIGKILL
 
 

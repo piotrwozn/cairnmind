@@ -29,9 +29,13 @@ def _platform() -> str:
     return sys.platform
 
 
+_PID_MAX = 2**31 - 1  # pid_t is a 32-bit int on Linux and macOS
+
+
 def _pid(pid) -> int | None:
-    # 0 and negative ids name the kernel or a group on macOS, never one process.
-    return pid if type(pid) is int and pid > 0 else None
+    # 0 and negative ids name the kernel or a group on macOS, never one process; a larger one would be
+    # masked to another id by a C int.
+    return pid if type(pid) is int and 0 < pid <= _PID_MAX else None
 
 
 def start(pid, *, running: bool = False) -> str | None:
@@ -90,6 +94,21 @@ def executable(pid) -> str | None:
     if system == "darwin":
         return _darwin_path(pid)
     return None
+
+
+def recorded(pid, birth) -> bool | None:
+    """Whether pid may still be signalled as the process recorded with birth.
+
+    True when it still has that birth or no process has that id any more (what is left of its group is still
+    its own), False when the id names another process, None when that cannot be told: callers then refuse.
+    """
+    current = start(pid)
+    if current is not None:
+        return birth is not None and current == birth
+    if _pid(pid) is None:
+        return None
+    # No birth: either the process is gone, which the kernel affirms, or its identity cannot be read.
+    return None if alive(pid) else True
 
 
 def alive(pid) -> bool:

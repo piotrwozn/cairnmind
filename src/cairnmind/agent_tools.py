@@ -21,7 +21,7 @@ from .agent_journal import AgentJournal, JournalError
 from .agent_write_guard import ChangeLedger, change_of, change_preview, configures_execution
 from .config import ENV_PREFIXES
 from .path_spelling import entry_identity, identity, is_alias
-from .process_identity import group_running, start as process_start
+from .process_identity import group_running, recorded, start as process_start
 
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -552,7 +552,7 @@ class ToolExecutor:
     @staticmethod
     def _kill_group(process, birth):
         try:  # best effort, unless the leader id now names another process
-            if process_start(process.pid) in (None, birth):
+            if recorded(process.pid, birth) is True:
                 os.killpg(process.pid, signal.SIGKILL)
         except Exception:
             pass
@@ -569,20 +569,21 @@ class ToolExecutor:
                 pass  # a member we may not signal (setuid): the wait below decides
             return True
 
-        current = process_start(pgid)
         # A still-owned leader proves the group. After it has been reaped, an
         # existing group remains reserved by its children until they exit, so
         # a reused leader id means the group had already ended, and a missing
         # leader (reaped, whether or not asyncio has recorded it yet) leaves
-        # the id naming only what remains of this group.
-        if current is not None and current != birth:
-            return True
+        # the id naming only what remains of this group. When the leader's
+        # identity cannot be read, nothing is signalled and nothing confirmed.
+        owned = recorded(pgid, birth)
+        if owned is not True:
+            return owned is False
         if not send(signal.SIGTERM):
             return True
         await _group_ended(pgid, TERM_GRACE_SECONDS)
-        current = process_start(pgid)
-        if current is not None and current != birth:
-            return True
+        owned = recorded(pgid, birth)
+        if owned is not True:
+            return owned is False
         # Whatever the scan saw, SIGKILL what is left of the group: harmless
         # to zombies, and it ends a member the scan could misjudge.
         if not send(signal.SIGKILL):
