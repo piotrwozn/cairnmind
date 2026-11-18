@@ -35,6 +35,7 @@ uv run pytest -n 4                           # the same full suite in 4 parallel
 - Tests that need the real engine are marked `arcade`. New test modules get the marker by default. Add a module to `NO_ARCADE_MODULES` in `tests/conftest.py` only after it passes with no engine running.
 - Tests that drive a real tmux server are listed in `TMUX_MODULES` in the same file.
 - Keyboard latency budgets target a developer workstation. On slow or shared machines, set `CAIRNMIND_LATENCY_SCALE`, as CI does.
+- Every test has a time limit, 300 s by default (doubled under coverage): a test that hangs fails and the run goes on. A test that needs longer says so with `@pytest.mark.time_limit(seconds)`; `CAIRNMIND_TEST_TIME_LIMIT=0` turns the limit off, for example under a debugger. What a test started and left running (child processes, a tmux server on a socket it created, an engine in its `tmp_path`) is stopped after it and reported as a `LeftRunning` warning. See `tests/run_guard.py`.
 
 ### Coverage
 
