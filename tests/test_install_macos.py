@@ -255,6 +255,24 @@ def test_other_systems_are_refused(mac):
     assert result.returncode == 1 and "macOS on Apple silicon" in result.stderr
 
 
+def test_the_macos_guide_says_what_the_script_does():
+    guide, script = (ROOT / "docs" / "INSTALL.md").read_text(), SCRIPT.read_text()
+    section = guide[guide.index("### macOS"):guide.index("## 3. Get Cairnmind")]
+    assert "brew install openjdk@21 tmux uv ollama" in section
+    # The JAVA_HOME of the guide is the folder the script looks for in Homebrew's openjdk@21.
+    assert '$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home' in section
+    assert 'brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk/Contents/Home' in script
+    assert "~/.zprofile" in section and "~/.zprofile" in script
+    for hint in ("brew install openjdk@21", "brew install tmux", "brew install uv", "/usr/libexec/java_home -v 21+"):
+        assert hint in script
+    assert "/usr/libexec/java_home -v 21+" in guide
+    # Every message the troubleshooting table quotes is one the script prints.
+    table = guide[guide.index("## Troubleshooting"):]
+    for message in ("Java not found", "macOS answers so when no JDK is installed", "This Mac has an Intel processor",
+                    "This shell runs under Rosetta", "Version 3.4+ is required", "Java 21+ is required"):
+        assert message in table and message in script, message
+
+
 # --- bash 3.2 ------------------------------------------------------------------------------------------------------
 
 # What bash 3.2, the bash of macOS, does not have: case changes, associative arrays and namerefs, mapfile and
