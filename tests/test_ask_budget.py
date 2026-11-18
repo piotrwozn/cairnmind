@@ -27,6 +27,9 @@ SCALE = 0.05
 # estimated from their size, not measured.
 MAC_SECONDS = {"discovery": 43.0, "repair": 20.0, "support": 10.0}
 KILN = "The pottery kiln gets 384 g of glaze per firing."
+# The two second-look tests below keep their proportions at this many times their first values, so the
+# fixed overhead of retrieval and the store (about 0.35 s under coverage on CI) cannot tip them.
+STRETCH = 3.0
 
 
 class SlowModel(FakeOllama):
@@ -75,13 +78,14 @@ async def test_no_second_look_starts_with_less_time_left_than_the_first_pass_too
     store, project, settings = workspace
     document(store, project, long_chunk(), uri="notes://kiln")
     monkeypatch.setattr(agent_module, "SECOND_LOOK_MIN_SECONDS", 0.0)
-    settings.ask_timeout = 2.0
-    # The first pass (an answer and its repair) takes 1.4 s of 2: a second pass of the same calls cannot finish.
-    model = SlowModel([UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN], {"discovery": 0.7, "repair": 0.7, "support": 0.0})
+    settings.ask_timeout = 2.0 * STRETCH
+    # The first pass (an answer and its repair) takes 70% of the budget: a second pass of the same calls cannot finish.
+    model = SlowModel([UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN],
+                      {"discovery": 0.7 * STRETCH, "repair": 0.7 * STRETCH, "support": 0.0})
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], QUESTION)
     assert result["status"] == "partial" and result["diagnostics"]["code"] == "missing_evidence"
     assert "second_look" not in result["diagnostics"] and len(model.calls) == 2
-    assert result["diagnostics"]["budget"]["elapsed_seconds"] < settings.ask_timeout - 0.3
+    assert result["diagnostics"]["budget"]["elapsed_seconds"] < settings.ask_timeout - 0.3 * STRETCH
 
 
 class StepModel(FakeOllama):
@@ -100,11 +104,11 @@ async def test_slow_tool_steps_of_the_first_pass_do_not_hold_back_a_second_look(
     store, project, settings = workspace
     source, _ = document(store, project, long_chunk(), uri="notes://kiln")
     monkeypatch.setattr(agent_module, "SECOND_LOOK_MIN_SECONDS", 0.0)
-    settings.ask_timeout = 2.0
-    # A 1.1 s search step, then an answer and its repair in 0.2 s: 0.7 s is left, less than the first pass
-    # took, but more than the calls a second look repeats (the second look makes no tool steps).
+    settings.ask_timeout = 2.0 * STRETCH
+    # A long search step (55% of the budget), then an answer and its repair (10%): what is left is less than
+    # the first pass took, but more than the calls a second look repeats (the second look makes no tool steps).
     model = StepModel([calls(("search", {"query": "kiln glaze"})), UNKNOWN, UNKNOWN,
-                       final(source["id"], ANSWER, "384 g.")], [1.1, 0.1, 0.1, 0.1])
+                       final(source["id"], ANSWER, "384 g.")], [1.1 * STRETCH, 0.1 * STRETCH, 0.1 * STRETCH, 0.1 * STRETCH])
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], QUESTION)
     assert result["status"] == "complete", json.dumps(result["diagnostics"])
     assert result["diagnostics"]["second_look"] == "answered" and "_last_call_at" not in result["diagnostics"]
