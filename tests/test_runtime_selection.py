@@ -1,6 +1,5 @@
 """Explicit Java selection stays local and diagnostics describe the actual binary."""
 import json
-from pathlib import Path
 import subprocess
 import time
 from types import SimpleNamespace
@@ -196,7 +195,7 @@ def test_a_server_that_does_not_come_up_is_gone_before_start_engine_fails(tmp_pa
     with pytest.raises(ArcadeError, match="startup timed out"):
         engine.start_engine(settings)
     # The server ignored the first SIGTERM for 1.5 s; start_engine must have waited for it.
-    assert not Path(f"/proc/{int(pid_file.read_text())}").exists()
+    assert not engine.process_identity.alive(int(pid_file.read_text()))
     assert not (tmp_path / "arcade" / "process.json").exists()
 
 

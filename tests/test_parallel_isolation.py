@@ -13,6 +13,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 import conftest
 from conftest import mcp_fixture_processes
 
@@ -25,14 +27,36 @@ def start(script: Path, *modes: str) -> subprocess.Popen:
 
 def group_of(process: subprocess.Popen) -> set[int]:
     members = set()
-    for entry in Path("/proc").iterdir():
-        if entry.name.isdigit():
-            try:
-                if os.getpgid(int(entry.name)) == process.pid:
-                    members.add(int(entry.name))
-            except OSError:
-                pass
+    for pid in conftest.process_ids():
+        try:
+            if os.getpgid(pid) == process.pid:
+                members.add(pid)
+        except OSError:
+            pass
     return members
+
+
+def test_the_processes_of_the_machine_are_listed_without_procfs():
+    # The ps(1) path of macOS, taken here on Linux too: it sees this process and a new one.
+    with subprocess.Popen(["sleep", "30"]) as sleeper:
+        try:
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(conftest.sys, "platform", "darwin")
+                listed = conftest.process_ids()
+        finally:
+            sleeper.kill()
+    assert {os.getpid(), sleeper.pid} <= set(listed)
+
+
+def test_an_engine_owner_whose_command_line_cannot_be_read_counts_as_alive(monkeypatch):
+    # The orphan reaper must not stop the engine of a live run it cannot identify.
+    monkeypatch.setattr(conftest.process_identity, "command_line", lambda pid: None)
+    with subprocess.Popen(["sleep", "30"]) as sleeper:
+        try:
+            assert conftest._pytest_alive(sleeper.pid)
+        finally:
+            sleeper.kill()
+    assert not conftest._pytest_alive(sleeper.pid)
 
 
 def test_the_fixture_servers_of_another_worker_are_not_this_workers(tmp_path):
