@@ -33,11 +33,15 @@ def test_macos_job_is_not_blocking_and_is_bounded():
     assert minutes and 0 < int(minutes.group(1)) <= 45
 
 
-def test_macos_job_keeps_its_report_even_when_tests_fail():
+def test_macos_job_keeps_its_report_even_when_tests_fail_or_hang():
     block = job_block(JOB)
     assert "--junitxml" in block
     upload = block[block.index("actions/upload-artifact@"):]
-    assert "if: ${{ !cancelled() }}" in upload.split("with:")[0]
+    assert "if: ${{ always() }}" in upload.split("with:")[0]
+    # The test step stops before the job does, so a hang still leaves time to keep the report.
+    job_minutes = int(re.search(r"^    timeout-minutes: (\d+)$", block, re.M).group(1))
+    step_minutes = re.search(r"^        timeout-minutes: (\d+)$", block, re.M)
+    assert step_minutes and int(step_minutes.group(1)) < job_minutes
 
 
 def test_required_checks_do_not_depend_on_the_macos_job():

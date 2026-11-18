@@ -52,15 +52,16 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked --extra dev
-      # The hosted macOS runner has 3 cores. No per-test time limit yet: the job timeout above is
-      # the bound until pytest-timeout is a dev dependency.
+      # The hosted macOS runner has 3 cores. Every test has its own time limit (tests/run_guard.py,
+      # 300 s by default); the step stops five minutes before the job so the report below is still kept.
       - name: Fast tier
         shell: bash
+        timeout-minutes: 25
         run: |
           set -o pipefail
           uv run pytest -n 3 -m "not arcade and not tmux" -q -ra --junitxml=macos-junit.xml 2>&1 | tee macos-pytest.txt
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
           name: macos-fast-tests-report
           path: |

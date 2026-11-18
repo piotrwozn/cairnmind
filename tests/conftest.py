@@ -58,7 +58,8 @@ NO_ARCADE_MODULES = frozenset({
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
     "test_terminal_ux080", "test_usage", "test_workspace","test_workspace_cli", "test_workspace_locale",
     "test_workspace_state", "test_workspace_ux080", "test_workspace_focus_column", "test_shards",
-    "test_run_guard",
+    "test_run_guard", "test_process_identity", "test_machine_identity", "test_socket_base", "test_python_pin",
+    "test_ci_macos_job",
 })
 
 TMUX_MODULES = frozenset({
