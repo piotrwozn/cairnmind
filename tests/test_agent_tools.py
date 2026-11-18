@@ -275,6 +275,16 @@ async def test_command_enters_its_directory_without_a_proc_path(executor, monkey
     assert not cwd.startswith(("/proc/", "/dev/fd/")), cwd
 
 
+async def test_command_gets_default_pipe_and_file_size_signals(executor):
+    # The step into the directory is Python, which ignores SIGPIPE and SIGXFSZ;
+    # the shell must get them back at their defaults, as with a direct exec.
+    executor.approve = lambda request: True
+    result = await executor.execute("run_command", {"cwd": ".", "command":
+        'yes | head -n1 >/dev/null; echo "${PIPESTATUS[*]}"; (ulimit -f 0; echo x > big); echo $?'})
+    assert result["ok"], result
+    assert result["stdout"] == f"{128 + signal.SIGPIPE} 0\n{128 + signal.SIGXFSZ}\n", result
+
+
 async def test_command_runs_in_the_verified_directory_after_its_path_is_swapped(executor, tmp_path):
     # The path is swapped while the person approves, after the check: the
     # command still runs in the directory that was verified, never outside.

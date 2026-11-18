@@ -46,7 +46,10 @@ _MEMORY_PAIRS = tuple((".memory", name) for name in _MEMORY_NAMES)
 # would do the same, but the parent runs threads (asyncio.to_thread) and Python
 # documents preexec_fn as unsafe with threads; this keeps subprocess's own
 # fork/exec. -I -S: no environment, site or current directory reaches it.
-_ENTER_DIRECTORY = ("import os,sys;d=int(sys.argv[1]);os.fchdir(d);os.close(d);"
+# Python starts with SIGPIPE and SIGXFSZ ignored and exec keeps that, so the
+# step restores their defaults, as subprocess does before a direct exec.
+_ENTER_DIRECTORY = ("import os,sys,signal as s;d=int(sys.argv[1]);os.fchdir(d);os.close(d);"
+                    "s.signal(s.SIGPIPE,s.SIG_DFL);s.signal(s.SIGXFSZ,s.SIG_DFL);"
                     "os.execv(sys.argv[2],sys.argv[2:])")
 
 
