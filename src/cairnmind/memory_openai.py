@@ -118,7 +118,11 @@ class OpenAICompatible(Ollama):
         # Where the stored answer lives: the installation's data directory (memory_models._client).
         self.fingerprint_dir = Path(settings.data_dir)
 
-    async def chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
+    async def _capability_digest(self, model: str) -> str | None:
+        return None  # such a server lists no digest (models below); a refusal is remembered by name
+
+    async def _chat(self, messages: list[dict], tools: list[dict] | None = None, **kwargs: Any) -> dict:
+        """One request; Ollama.chat around it handles a server that refuses structured output (#231)."""
         options = {"num_predict": self.settings.answer_tokens, "temperature": 0}
         options.update(kwargs.pop("options", {}))
         schema = kwargs.pop("format", None)
