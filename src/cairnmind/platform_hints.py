@@ -1,16 +1,12 @@
-"""Which system this is, the install hint that fits it, and the GPU an Apple Mac reports (#233).
+"""Which system this is, and the install hint that fits it (#233).
 
 Linux and WSL keep the sentences they always had (TEXTS has no 'linux' entries: Linux reads the 'wsl'
 ones); a Mac gets Homebrew and no mention of WSL or apt. The hint texts are fixed English sentences with a Polish
-translation in MESSAGES, which the terminal catalog merges. Everything read from the machine is data: the
-Darwin probes run without a shell, with a timeout and from the system's own folders, and fail soft.
+translation in MESSAGES, which the terminal catalog merges.
 """
 from __future__ import annotations
 
-import json
 import platform
-import re
-import subprocess
 import sys
 
 SYSTEMS = ("darwin", "wsl", "linux")
@@ -71,13 +67,8 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
                    "Zainstaluj Javę 21 lub nowszą, na przykład poleceniem: brew install openjdk@21")},
     "gpu_missing": {
         "wsl": ("nvidia-smi not found; verify Windows NVIDIA driver and WSL GPU access.",
-                "Nie znaleziono nvidia-smi; sprawdź sterownik NVIDIA w Windows i dostęp WSL do GPU.")},
-    "gpu_unreadable": {
-        "darwin": ("The GPU could not be read from system_profiler or sysctl.",
-                   "Nie udało się odczytać GPU przez system_profiler ani sysctl.")},
-    "gpu_unavailable": {
-        "wsl": ("nvidia-smi unavailable", "nvidia-smi niedostępne"),
-        "darwin": ("GPU unavailable", "GPU niedostępne")},
+                "Nie znaleziono nvidia-smi; sprawdź sterownik NVIDIA w Windows i dostęp WSL do GPU."),
+        "darwin": ("The GPU is not checked on macOS.", "Na macOS GPU nie jest sprawdzane.")},
 }
 
 # English -> Polish, for the terminal catalog. Texts with {client} are formatted by the caller's translate.
@@ -90,116 +81,3 @@ def hint(topic: str, system: str | None = None, **values: str) -> str:
     key = host_system() if system is None else system
     text = (by_system.get(key) or by_system.get("wsl") or next(iter(by_system.values())))[0]
     return text.format(**values) if values else text
-
-
-# --- the GPU of a Mac -------------------------------------------------------------------------------------
-
-SYSTEM_PROFILER = "/usr/sbin/system_profiler"
-SYSCTL = "/usr/sbin/sysctl"
-PROBE_SECONDS = 8
-OUTPUT_LIMIT = 2_000_000
-
-
-def _text(value: object, limit: int = 80) -> str | None:
-    """A short printable label from something the machine reported; anything else is dropped."""
-    if not isinstance(value, (str, int)) or isinstance(value, bool):
-        return None
-    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value)).strip()[:limit]
-    return text or None
-
-
-def _probe(argv: list[str], run) -> str | None:
-    """One read-only command, no shell, bounded in time and size; None when it fails in any way."""
-    try:
-        done = (run or subprocess.run)(argv, capture_output=True, text=True, timeout=PROBE_SECONDS, check=False,
-                                       stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-    out = done.stdout if isinstance(done.stdout, str) else ""
-    return out[:OUTPUT_LIMIT] if done.returncode == 0 else None
-
-
-def _metal(value: object) -> str | None:
-    """'spdisplays_metal4' -> 'Metal 4'; a plain 'supported' -> 'Metal'; unsupported or unknown -> None."""
-    if not isinstance(value, str):
-        return None
-    word = value.removeprefix("spdisplays_").lower()
-    numbered = re.fullmatch(r"metal(\d+)", word)
-    if numbered:
-        return f"Metal {numbered.group(1)}"
-    return "Metal" if word in {"supported", "metal"} else None
-
-
-def _gib(size: int) -> str:
-    value = size / 2**30
-    return str(round(value)) if abs(value - round(value)) < 0.05 else f"{value:.1f}"
-
-
-def _profiled(text: str | None) -> list[dict]:
-    try:
-        rows = json.loads(text or "").get("SPDisplaysDataType")
-    except (ValueError, AttributeError):
-        return []
-    found = []
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict):
-            continue
-        name = _text(row.get("sppci_model")) or _text(row.get("_name"))
-        if name:
-            found.append({"name": name, "cores": _text(row.get("sppci_cores"), 8),
-                          "metal": _metal(row.get("spdisplays_mtlgpufamilysupport")
-                                          or row.get("spdisplays_metal")),
-                          "vram": _text(row.get("spdisplays_vram"), 24)})
-    return found
-
-
-def apple_gpu(run=None) -> dict:
-    """What `doctor` reports for the GPU on a Mac: the chipset, Metal support and the unified memory.
-
-    From `system_profiler SPDisplaysDataType -json`; when that gives nothing, from the CPU brand string of
-    `sysctl` (Apple silicon is one chip with the GPU). Memory is `hw.memsize`, shared with the GPU on Apple
-    silicon only. Never raises: a machine that answers nothing yields available False and a note.
-    """
-    devices = _profiled(_probe([SYSTEM_PROFILER, "SPDisplaysDataType", "-json"], run))
-    brand = _text(_probe([SYSCTL, "-n", "machdep.cpu.brand_string"], run))
-    if not devices and brand and brand.startswith("Apple"):
-        devices = [{"name": brand, "cores": None, "metal": None, "vram": None}]
-    memory = _probe([SYSCTL, "-n", "hw.memsize"], run)
-    size = int(memory.strip()) if memory and memory.strip().isdigit() else None
-    if not devices:
-        return {"available": False, "note": hint("gpu_unreadable", "darwin")}
-    lines = []
-    for device in devices:
-        unified = device["name"].startswith("Apple")
-        parts = [device["name"]]
-        if device["cores"]:
-            parts.append(f"{device['cores']} GPU cores")
-        if unified and size:
-            parts.append(f"{_gib(size)} GiB unified memory")
-        elif device["vram"]:
-            parts.append(f"{device['vram']} video memory")
-        if device["metal"]:
-            parts.append(device["metal"])
-        lines.append(", ".join(parts))
-    report = {"available": True, "api": "Metal", "devices": lines}
-    if size and any(d["name"].startswith("Apple") for d in devices):
-        report["unified_memory_bytes"] = size
-    return report
-
-
-def apple_gpu_line(run=None) -> str:
-    """The same, as the one line `benchmark` prints."""
-    report = apple_gpu(run)
-    return "; ".join(report["devices"]) if report["available"] else hint("gpu_unavailable", "darwin")
-
-
-def benchmark_gpu(system: str | None = None, run=None) -> str:
-    """The GPU line of `benchmark`: the Mac's chip, or what nvidia-smi says (unchanged on Linux and WSL)."""
-    if (host_system() if system is None else system) == "darwin":
-        return apple_gpu_line(run)
-    try:
-        return (run or subprocess.run)(
-            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=5, check=False).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return hint("gpu_unavailable", "linux")

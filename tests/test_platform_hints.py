@@ -1,7 +1,7 @@
-"""doctor, benchmark and the install hints know the system they run on (#233).
+"""doctor and the install hints know the system they run on (#233).
 
-No Mac is needed: a test selects Darwin, WSL or plain Linux explicitly and fakes what system_profiler and
-sysctl print. The WSL texts are pinned word for word, because the output on Linux and WSL must not change.
+No Mac is needed: a test selects Darwin, WSL or plain Linux explicitly. The WSL texts are pinned word for word,
+because the output on Linux and WSL must not change.
 """
 from __future__ import annotations
 
@@ -27,29 +27,6 @@ def settings(tmp_path, monkeypatch):
     return Settings.load(tmp_path / "memory", create=True)
 
 
-PROFILE = json.dumps({"SPDisplaysDataType": [{
-    "_name": "kHW_AppleM3ProItem", "spdisplays_mtlgpufamilysupport": "spdisplays_metal4",
-    "spdisplays_vendor": "sppci_vendor_Apple", "sppci_bus": "spdisplays_builtin",
-    "sppci_cores": "18", "sppci_model": "Apple M3 Pro"}]})
-
-
-def fake_mac(profile=PROFILE, brand="Apple M3 Pro", memory=str(36 * 2**30), fail=()):
-    """A run() that answers like system_profiler and sysctl on a Mac; commands in `fail` break."""
-    calls = []
-
-    def run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        assert isinstance(argv, list) and "shell" not in kwargs and kwargs["timeout"] > 0
-        name = argv[0].rsplit("/", 1)[-1]
-        key = name if name == "system_profiler" else argv[-1]
-        if key in fail:
-            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
-        out = {"system_profiler": profile, "machdep.cpu.brand_string": brand, "hw.memsize": memory}[key]
-        return types.SimpleNamespace(returncode=0, stdout=out + "\n", stderr="")
-    run.calls = calls
-    return run
-
-
 # --- which system -------------------------------------------------------------------------------------------
 
 def test_the_system_is_told_from_the_platform_and_the_kernel_release():
@@ -59,58 +36,15 @@ def test_the_system_is_told_from_the_platform_and_the_kernel_release():
     assert platform_hints.is_wsl("5.15-Microsoft-standard") and not platform_hints.is_wsl("6.8.0-generic")
 
 
-# --- the Mac's GPU ------------------------------------------------------------------------------------------
-
-def test_the_gpu_of_a_mac_is_the_chip_with_its_unified_memory_and_metal():
-    run = fake_mac()
-    report = platform_hints.apple_gpu(run)
-    assert report == {"available": True, "api": "Metal", "unified_memory_bytes": 36 * 2**30,
-                      "devices": ["Apple M3 Pro, 18 GPU cores, 36 GiB unified memory, Metal 4"]}
-    assert all(isinstance(argv, list) for argv, _ in run.calls)
-    assert platform_hints.apple_gpu_line(run) == report["devices"][0]
-
-
-def test_without_a_profile_the_cpu_brand_stands_in_for_the_apple_gpu():
-    report = platform_hints.apple_gpu(fake_mac(profile="not json"))
-    assert report["available"] and report["devices"] == ["Apple M3 Pro, 36 GiB unified memory"]
-
-
-def test_an_intel_mac_has_video_memory_not_unified_memory():
-    profile = json.dumps({"SPDisplaysDataType": [{"sppci_model": "AMD Radeon Pro 5500M", "spdisplays_vram": "8 GB",
-                                                  "spdisplays_mtlgpufamilysupport": "spdisplays_metal3"}]})
-    report = platform_hints.apple_gpu(fake_mac(profile=profile, brand="Intel(R) Core(TM) i9"))
-    assert report["devices"] == ["AMD Radeon Pro 5500M, 8 GB video memory, Metal 3"]
-    assert "unified_memory_bytes" not in report
-
-
-@pytest.mark.parametrize("fail", [("system_profiler", "machdep.cpu.brand_string"),
-                                  ("system_profiler", "machdep.cpu.brand_string", "hw.memsize")])
-def test_a_mac_that_answers_nothing_reports_no_gpu_and_does_not_raise(fail):
-    report = platform_hints.apple_gpu(fake_mac(fail=fail))
-    assert report == {"available": False, "note": "The GPU could not be read from system_profiler or sysctl."}
-    assert platform_hints.apple_gpu_line(fake_mac(fail=fail)) == "GPU unavailable"
-
-
-def test_a_missing_tool_and_odd_output_are_not_trusted():
-    def gone(argv, **kwargs):
-        raise FileNotFoundError(argv[0])
-    assert platform_hints.apple_gpu(gone)["available"] is False
-    odd = json.dumps({"SPDisplaysDataType": [None, 3, {"sppci_model": "Evil\x1b[31m\nname" + "x" * 500}]})
-    device = platform_hints.apple_gpu(fake_mac(profile=odd, brand="", memory="garbage"))["devices"][0]
-    assert "\x1b" not in device and "\n" not in device and len(device) <= 80
-
-
 # --- doctor -------------------------------------------------------------------------------------------------
 
-def quiet_doctor(settings, monkeypatch, system, run=None):
+def quiet_doctor(settings, monkeypatch, system):
     monkeypatch.setattr(settings, "java_executable", "")
     monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: system)
     monkeypatch.setattr(integrations, "_probe_cli", lambda client, *a, **k: integrations_probe(client))
     monkeypatch.setattr(integrations.shutil, "which", lambda *a, **k: None)
     from cairnmind import runtime_selection
     monkeypatch.setattr(runtime_selection.shutil, "which", lambda *a, **k: None)
-    if run is not None:
-        monkeypatch.setattr(subprocess, "run", run)
     real_client = httpx.Client
     monkeypatch.setattr(integrations.httpx, "Client", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(lambda request: httpx.Response(503))))
@@ -121,10 +55,9 @@ def integrations_probe(client):
     return {"installed": False, "notes": [platform_hints.hint("client_note", client=client)]}
 
 
-def test_doctor_on_a_mac_names_the_gpu_and_has_no_wsl_or_apt_text(settings, monkeypatch):
-    result = quiet_doctor(settings, monkeypatch, "darwin", fake_mac())
-    assert result["gpu"]["available"] and result["gpu"]["devices"] == [
-        "Apple M3 Pro, 18 GPU cores, 36 GiB unified memory, Metal 4"]
+def test_doctor_on_a_mac_has_no_wsl_apt_or_nvidia_text(settings, monkeypatch):
+    result = quiet_doctor(settings, monkeypatch, "darwin")
+    assert result["gpu"] == {"note": "The GPU is not checked on macOS."}
     assert result["tmux"]["action"] == "Install tmux >= 3.4, for example with: brew install tmux"
     assert "wsl" not in result
     shown = json.dumps({k: v for k, v in result.items() if k not in {"data_dir", "python_executable"}})
@@ -160,21 +93,6 @@ def test_doctor_reads_nvidia_smi_as_before_on_linux(settings, monkeypatch):
     monkeypatch.setattr(integrations.httpx, "Client", lambda **kwargs: real_client(
         **kwargs, transport=httpx.MockTransport(lambda request: httpx.Response(503))))
     assert integrations.doctor(settings)["gpu"] == {"available": True, "devices": ["RTX 4090, 24564 MiB, 555.42"]}
-
-
-# --- benchmark ----------------------------------------------------------------------------------------------
-
-def test_benchmark_names_the_apple_gpu_on_a_mac_and_nvidia_smi_elsewhere():
-    assert platform_hints.benchmark_gpu("darwin", fake_mac()) == "Apple M3 Pro, 18 GPU cores, 36 GiB unified memory, Metal 4"
-
-    def nvidia(argv, **kwargs):
-        assert argv[0] == "nvidia-smi"
-        return types.SimpleNamespace(returncode=0, stdout="RTX 4090, 1 MiB, 24564 MiB\n")
-
-    def absent(argv, **kwargs):
-        raise FileNotFoundError(argv[0])
-    assert platform_hints.benchmark_gpu("wsl", nvidia) == "RTX 4090, 1 MiB, 24564 MiB"
-    assert platform_hints.benchmark_gpu("linux", absent) == "nvidia-smi unavailable"
 
 
 # --- the hints, at the places that print them ---------------------------------------------------------------
