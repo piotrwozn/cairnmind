@@ -278,7 +278,8 @@ def question_excerpt(text: str, query: str, size: int = EXCERPT_CHARS) -> tuple[
 
 # The second look (``KnowledgeAgent.ask``): a chunk is shown whole, up to the size ingest cuts
 # chunks to; the room kept free in the context guard for the reply and one repair; the short
-# catalog beside whole passages; the results that ask for it; the time that must be left.
+# catalog beside whole passages; the results that ask for it; the least time that must be left
+# (and never less than the first pass took).
 WHOLE_PASSAGE_CHARS = 6000
 WHOLE_RESERVE_CHARS = 4000
 WHOLE_CATALOG_CHARS = 1500
@@ -993,8 +994,11 @@ class KnowledgeAgent:
         try:
             result = await self._ask_impl(project_id, question, worktree, answer_schema, diagnostics)
             in_part = diagnostics.pop("_hits_in_part", 0)
-            left = self.settings.ask_timeout - (time.monotonic() - started)
-            if (in_part and answer_schema is None and left > SECOND_LOOK_MIN_SECONDS
+            spent = time.monotonic() - started
+            left = self.settings.ask_timeout - spent
+            # The second look reads at least as much as the first pass did: with less time left than
+            # that pass took it cannot finish, and would only hold the model (#231).
+            if (in_part and answer_schema is None and left > max(SECOND_LOOK_MIN_SECONDS, spent)
                     and result.get("status") == "partial"
                     and result.get("diagnostics", {}).get("code") in SECOND_LOOK_CODES):
                 # The model found no answer in the excerpts. A hit shows 900 characters of a chunk of up
