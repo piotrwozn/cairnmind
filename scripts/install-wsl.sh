@@ -33,35 +33,98 @@ for argument in "$@"; do
     esac
 done
 
-if [[ "$(uname -s)" != Linux ]]; then
-    printf 'Run the installer in Ubuntu on WSL2 or another Linux system.\n' >&2
-    exit 1
-fi
+# --- the checks before installing (kept between these two lines for the tests) ---
+# This file runs on macOS too, whose bash is 3.2: no ${x,,}, associative arrays, mapfile or &>> (#232).
+system="$(uname -s)"
+tmux_hint='sudo apt install tmux'
+uv_hint='https://docs.astral.sh/uv/getting-started/installation/'
+case "$system" in
+    Linux) ;;
+    Darwin)
+        tmux_hint='brew install tmux'
+        uv_hint='brew install uv'
+        # hw.optional.arm64 is 1 on Apple silicon, also in a shell that Rosetta translates; an Intel Mac has none.
+        # Intel Macs are refused: no one has run Cairnmind there, and the local models would run on the processor.
+        if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" != 1 ]]; then
+            printf 'This Mac has an Intel processor. Cairnmind supports macOS on Apple silicon (M1 or later) only.\n' >&2
+            exit 1
+        fi
+        if [[ "$(uname -m)" != arm64 ]]; then
+            printf 'This shell runs under Rosetta (x86_64). Open a native arm64 terminal and run the installer again.\n' >&2
+            exit 1
+        fi
+        ;;
+    *)
+        printf 'Run the installer in Ubuntu on WSL2, another Linux system or macOS on Apple silicon.\n' >&2
+        exit 1
+        ;;
+esac
 
 # Connect-only: the database runs elsewhere and this installation never starts an engine, so Java is
 # needed only for the engine Cairnmind manages itself.
 connect_url="${CAIRNMIND_ARCADE_CONNECT_URL:-${DEVBRAIN_ARCADE_CONNECT_URL:-}}"
 
 if [[ -z "$connect_url" ]]; then
-    if ! command -v java >/dev/null 2>&1; then
-        printf 'Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n' >&2
-        exit 1
+    java_hint='sudo apt install openjdk-21-jre-headless'
+    if [[ "${system:-}" == Darwin ]]; then
+        java_hint='brew install openjdk@21, then link it as docs/INSTALL.md shows for macOS'
     fi
-    java_version_output="$(java -version 2>&1)"
+
+    # $1: what is wrong. macOS finds Homebrew's openjdk@21 only once it is linked into /Library/Java/JavaVirtualMachines
+    # (Homebrew's own advice); then every process finds it, also one that a desktop app starts without ~/.zprofile.
+    refuse_java() {
+        local brew_jdk
+        printf '%s\n' "$1" >&2
+        if [[ "${system:-}" == Darwin ]] && command -v brew >/dev/null 2>&1 \
+            && brew_jdk="$(brew --prefix openjdk@21 2>/dev/null)/libexec/openjdk.jdk" \
+            && [[ -x "$brew_jdk/Contents/Home/bin/java" ]]; then
+            printf "Homebrew's openjdk@21 is installed, but macOS does not find it. Link it, then run the installer again:\n" >&2
+            printf '  sudo ln -sfn "%s" /Library/Java/JavaVirtualMachines/openjdk-21.jdk\n' "$brew_jdk" >&2
+        fi
+        exit 1
+    }
+
+    # The Java the engine runs (engine.resolve_java): on macOS JAVA_HOME's, then the one /usr/libexec/java_home finds
+    # (/usr/bin/java starts the newest of the same JDKs, and without any JDK it is a stand-in that only fails), then
+    # java on PATH. On Linux only java on PATH.
+    java_bin=""
+    java_source=""
+    if [[ -n "${JAVA_HOME:-}" && "${system:-}" == Darwin ]]; then
+        if [[ "$JAVA_HOME" == /* && -f "$JAVA_HOME/bin/java" && -x "$JAVA_HOME/bin/java" ]]; then
+            java_bin="$JAVA_HOME/bin/java"
+            java_source=" (JAVA_HOME=$JAVA_HOME)"
+        else
+            printf 'JAVA_HOME is set to %s, which has no bin/java; it is ignored.\n' "$JAVA_HOME" >&2
+        fi
+    fi
+    if [[ -z "$java_bin" && "${system:-}" == Darwin ]] \
+        && java_home_found="$(/usr/libexec/java_home -v 21+ 2>/dev/null)" && [[ -x "$java_home_found/bin/java" ]]; then
+        java_bin="$java_home_found/bin/java"
+        java_source=" ($java_home_found)"
+        # The rest of this installation runs exactly the Java checked here.
+        export JAVA_HOME="$java_home_found"
+    fi
+    if [[ -z "$java_bin" ]] && ! java_bin="$(command -v java)"; then
+        refuse_java "Java not found. Install Java 21+: $java_hint"
+    fi
+    if ! java_version_output="$("$java_bin" -version 2>&1)"; then
+        if [[ "${system:-}" == Darwin ]]; then
+            refuse_java "$java_bin did not run: macOS answers so when no JDK is installed. Install Java 21+: $java_hint"
+        fi
+        refuse_java "$java_bin -version did not run. Java 21+ is required: $java_hint"
+    fi
     java_version_pattern='version "([0-9]+)'
     if [[ ! "$java_version_output" =~ $java_version_pattern ]]; then
-        printf 'Cannot detect the Java version. Check java -version; Java 21+ is required.\n' >&2
-        exit 1
+        refuse_java 'Cannot detect the Java version. Check java -version; Java 21+ is required.'
     fi
     java_major="${BASH_REMATCH[1]}"
     if (( java_major < 21 )); then
-        printf 'Found Java %s. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n' "$java_major" >&2
-        exit 1
+        refuse_java "Found Java $java_major$java_source. Java 21+ is required: $java_hint"
     fi
 fi
 
 if ! command -v tmux >/dev/null 2>&1; then
-    printf 'tmux not found. Install it: sudo apt install tmux (version 3.4+ required).\n' >&2
+    printf 'tmux not found. Install it: %s (version 3.4+ required).\n' "$tmux_hint" >&2
     exit 1
 fi
 tmux_version_output="$(tmux -V)"
@@ -73,22 +136,24 @@ fi
 tmux_major="${BASH_REMATCH[1]}"
 tmux_minor="${BASH_REMATCH[2]}"
 if (( tmux_major < 3 || (tmux_major == 3 && tmux_minor < 4) )); then
-    printf 'Found tmux %s.%s. Version 3.4+ is required: sudo apt install tmux\n' "$tmux_major" "$tmux_minor" >&2
+    printf 'Found tmux %s.%s. Version 3.4+ is required: %s\n' "$tmux_major" "$tmux_minor" "$tmux_hint" >&2
     exit 1
 fi
 
-kernel_release="$(uname -r)"
-if [[ "${kernel_release,,}" == *microsoft* ]]; then
+if [[ "$system" == Darwin ]]; then
+    printf 'Detected macOS on Apple silicon. Ollama runs the models on the built-in GPU.\n'
+elif [[ "$(uname -r | tr '[:upper:]' '[:lower:]')" == *microsoft* ]]; then
     printf 'Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux.\n'
 else
     printf 'Detected Linux outside WSL. The package is supported; check local GPU access.\n'
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
-    printf 'uv not found on PATH. Install uv: https://docs.astral.sh/uv/getting-started/installation/\n' >&2
+    printf 'uv not found on PATH. Install uv: %s\n' "$uv_hint" >&2
     printf 'See docs/INSTALL.md for the full installation guide.\n' >&2
     exit 1
 fi
+# --- end of the checks ---
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd -- "$script_dir/.." && pwd)"
@@ -111,7 +176,9 @@ uv export --directory "$package_dir" --locked --no-dev --no-emit-project \
 live_terminals() {
     local socket
     command -v tmux >/dev/null 2>&1 || return 0
-    for socket in "${TMPDIR:-/tmp}"/{cairnmind,devbrain}-{ui,native}-"$(id -u)"-*/tmux.sock; do
+    # On macOS they live in one folder per user under /private/tmp (runtime_sockets.py, #235).
+    for socket in "${TMPDIR:-/tmp}"/{cairnmind,devbrain}-{ui,native}-"$(id -u)"-*/tmux.sock \
+        /private/tmp/cairnmind-"$(id -u)"/{ui,native}-*/tmux.sock; do
         if [[ -S "$socket" && -O "$socket" ]] && tmux -S "$socket" list-sessions >/dev/null 2>&1; then
             printf '%s\n' "$socket"
         fi
