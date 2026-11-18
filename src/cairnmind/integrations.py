@@ -283,7 +283,7 @@ def doctor(settings: Settings) -> dict[str, Any]:
             result["service"]["error"] = type(exc).__name__
     nvidia = shutil.which("nvidia-smi")
     if on_a_mac:  # Ollama uses Metal on a Mac; nvidia-smi and the WSL advice do not apply (#233).
-        result["gpu"] = {"note": platform_hints.hint("gpu_missing")}
+        result["gpu"] = platform_hints.mac_chip() or {"note": platform_hints.hint("gpu_missing")}
     elif nvidia:
         try:
             probe = subprocess.run([nvidia, "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"],

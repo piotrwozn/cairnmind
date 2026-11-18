@@ -7,6 +7,7 @@ translation in MESSAGES, which the terminal catalog merges.
 from __future__ import annotations
 
 import platform
+import subprocess
 import sys
 
 SYSTEMS = ("darwin", "wsl", "linux")
@@ -69,10 +70,35 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
         "wsl": ("nvidia-smi not found; verify Windows NVIDIA driver and WSL GPU access.",
                 "Nie znaleziono nvidia-smi; sprawdź sterownik NVIDIA w Windows i dostęp WSL do GPU."),
         "darwin": ("The GPU is not checked on macOS.", "Na macOS GPU nie jest sprawdzane.")},
+    "gpu_chip": {
+        "darwin": ("{chip}, {gib} GiB unified memory shared with the models",
+                   "{chip}, {gib} GiB pamięci współdzielonej z modelami")},
 }
 
 # English -> Polish, for the terminal catalog. Texts with {client} are formatted by the caller's translate.
 MESSAGES = {english: polish for by_system in TEXTS.values() for english, polish in by_system.values()}
+
+
+def _sysctl(name: str) -> str | None:
+    """`sysctl -n name` run without a shell from its fixed path; None when it fails or prints nothing."""
+    try:
+        done = subprocess.run(["/usr/sbin/sysctl", "-n", name], capture_output=True, text=True, timeout=3, check=False)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else None
+
+
+def mac_chip() -> dict | None:
+    """{'chip', 'memory_gib', 'note'} of a Mac from two sysctl reads (unified memory); None if either is unusable."""
+    chip, size = _sysctl("machdep.cpu.brand_string"), _sysctl("hw.memsize")
+    if not chip or not size or len(size) > 20 or not size.isascii() or not size.isdigit() or int(size) <= 0:
+        return None  # 20 digits hold any 64-bit byte count; longer would hit int()'s digit limit
+    chip = " ".join(chip.split())  # the output is untrusted text: printable and short, or not used
+    if len(chip) > 64 or not chip.isprintable() or not chip.startswith("Apple "):  # Intel: memory is not unified
+        return None
+    gib = round(int(size) / 2**30, 1)
+    gib = int(gib) if gib == int(gib) else gib
+    return {"chip": chip, "memory_gib": gib, "note": hint("gpu_chip", "darwin", chip=chip, gib=gib)}
 
 
 def hint(topic: str, system: str | None = None, **values: str) -> str:

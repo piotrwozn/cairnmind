@@ -55,7 +55,60 @@ def integrations_probe(client):
     return {"installed": False, "notes": [platform_hints.hint("client_note", client=client)]}
 
 
+def fake_sysctl(monkeypatch, values):
+    """Answers of the two reads by name; a missing name fails like a failed sysctl."""
+    monkeypatch.setattr(platform_hints, "_sysctl", lambda name: values.get(name))
+
+
+CHIP = {"machdep.cpu.brand_string": "Apple M3 Pro", "hw.memsize": "38654705664"}
+
+
+def test_doctor_on_a_mac_names_the_chip_and_its_unified_memory(settings, monkeypatch):
+    fake_sysctl(monkeypatch, CHIP)
+    gpu = quiet_doctor(settings, monkeypatch, "darwin")["gpu"]
+    assert gpu == {"chip": "Apple M3 Pro", "memory_gib": 36,
+                   "note": "Apple M3 Pro, 36 GiB unified memory shared with the models"}
+    assert tr("{chip}, {gib} GiB unified memory shared with the models", "pl").endswith("z modelami")
+
+
+@pytest.mark.parametrize("values", [
+    {"hw.memsize": "38654705664"}, {"machdep.cpu.brand_string": "Apple M3 Pro"},
+    {**CHIP, "hw.memsize": "lots"}, {**CHIP, "hw.memsize": "0"}, {**CHIP, "hw.memsize": "-5"},
+    {**CHIP, "machdep.cpu.brand_string": "x" * 200}, {**CHIP, "machdep.cpu.brand_string": "Apple M3\x1b[31m"},
+    {**CHIP, "hw.memsize": "9" * 5000}, {**CHIP, "machdep.cpu.brand_string": "Intel(R) Core(TM) i9-9980HK CPU @ 2.40GHz"},
+    {}])
+def test_a_failed_or_garbage_sysctl_keeps_the_old_note_on_a_mac(settings, monkeypatch, values):
+    fake_sysctl(monkeypatch, values)
+    assert quiet_doctor(settings, monkeypatch, "darwin")["gpu"] == {"note": "The GPU is not checked on macOS."}
+
+
+def test_sysctl_is_run_without_a_shell_from_its_fixed_path(monkeypatch):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout="Apple M3 Pro\n")
+    monkeypatch.setattr(platform_hints.subprocess, "run", run)
+    assert platform_hints._sysctl("machdep.cpu.brand_string") == "Apple M3 Pro"
+    assert calls[0][0] == ["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"]
+    assert calls[0][1]["timeout"] and not calls[0][1].get("shell")
+    monkeypatch.setattr(platform_hints.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="x"))
+    assert platform_hints._sysctl("hw.memsize") is None
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired("sysctl", 3)
+    monkeypatch.setattr(platform_hints.subprocess, "run", boom)
+    assert platform_hints._sysctl("hw.memsize") is None
+
+
+@pytest.mark.parametrize("name", ["linux", "wsl"])
+def test_linux_and_wsl_never_read_sysctl(settings, monkeypatch, name):
+    monkeypatch.setattr(platform_hints, "_sysctl", lambda name: pytest.fail("sysctl read off a Mac"))
+    assert "chip" not in quiet_doctor(settings, monkeypatch, name)["gpu"]
+
+
 def test_doctor_on_a_mac_has_no_wsl_apt_or_nvidia_text(settings, monkeypatch):
+    fake_sysctl(monkeypatch, {})
     result = quiet_doctor(settings, monkeypatch, "darwin")
     assert result["gpu"] == {"note": "The GPU is not checked on macOS."}
     assert result["tmux"]["action"] == "Install tmux >= 3.4, for example with: brew install tmux"
