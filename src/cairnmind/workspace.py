@@ -22,7 +22,7 @@ from rich.cells import cell_len
 
 from .cockpit_state import CockpitState, _atomic, _private_directory, _private_lock
 from .config import SESSION_NAMES, Settings, drop_env
-from .native_worker import process_start
+from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 from . import workspace_activity as column
 from . import workspace_border as border

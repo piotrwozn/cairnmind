@@ -25,6 +25,7 @@ from .check_profile_messages import unknown_profile_message
 from .sql import clean_row, insert_document, json_text, unregistered_root, utc_now
 from .memory_paths import git_pathspec, is_reserved_below, is_reserved_memory, nested_reserved
 from .path_spelling import lies_in
+from .process_identity import start as process_start
 
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 # Check profiles are declared in the first file. The second is where versions up to 0.9.0 looked.
@@ -488,13 +489,8 @@ def _cleanup_run_artifacts(settings, active):
 
 
 def _process_identity(pid):
-    """Linux/WSL process birth token prevents treating a reused PID as the runner."""
-    try:
-        # comm may contain spaces and parentheses; the suffix starts at field 3.
-        fields = Path(f"/proc/{pid}/stat").read_text(errors="replace").rsplit(")", 1)[1].split()
-        return fields[19] if fields[0] != "Z" else None
-    except (OSError, IndexError):
-        return None
+    """The birth of a running process: a reused PID is never taken for the runner, and an ended one has none."""
+    return process_start(pid, running=True)
 
 
 def _write_active(path, state):

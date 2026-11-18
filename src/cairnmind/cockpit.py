@@ -26,6 +26,7 @@ import httpx
 from . import __version__
 from .config import BROKER_NAMES, SESSION_NAMES, drop_env
 from .path_spelling import lies_in
+from .process_identity import start as process_start
 from .cockpit_state import (CockpitState, ProjectDiscovery, _atomic, _private_directory, _private_lock, _snapshot,
                             normalize_path)
 
@@ -47,8 +48,8 @@ def instance_id(settings):
 
 def _birth(pid):
     try:
-        return Path(f"/proc/{int(pid)}/stat").read_text(errors="replace").rpartition(")")[2].split()[19]
-    except (OSError, ValueError, IndexError, TypeError):
+        return process_start(int(pid))
+    except (ValueError, TypeError):
         return None
 
 

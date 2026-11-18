@@ -14,15 +14,8 @@ import termios
 import tempfile
 
 from .config import Settings
+from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
-
-
-def process_start(pid: int) -> str | None:
-    try:
-        # comm may contain spaces and closing parentheses.
-        return Path(f"/proc/{pid}/stat").read_text(errors="replace").rsplit(")", 1)[1].split()[19]
-    except (OSError, IndexError):
-        return None
 
 
 def main():

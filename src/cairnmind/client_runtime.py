@@ -28,7 +28,7 @@ from uuid import uuid4
 import httpx
 
 from .config import ENV_PREFIXES, Settings
-from .native_worker import process_start
+from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 
 LIVE = {"starting", "running", "stopping"}
@@ -428,7 +428,7 @@ class NativeRuntime:
             return dict(row)
         if pane and not pane["dead"]:
             pid = pane["pid"]
-            # Pane ownership plus Linux process start identity prevents PID reuse
+            # Pane ownership plus the process start identity prevents PID reuse
             # from turning an old run's stop button into an unrelated signal.
             if row.get("pid") != pid or not row.get("process_start") or process_start(pid) != row["process_start"]:
                 raise ValueError("Native process identity changed; stop refused")
