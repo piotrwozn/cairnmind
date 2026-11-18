@@ -1,9 +1,12 @@
 """Portable knowledge snapshots on real ArcadeDB, with isolated Git fixtures."""
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -336,14 +339,23 @@ def test_auto_tick_of_unchanged_committed_memory_does_not_republish(origin):
     assert manager.status(project["id"])["auto"]["enabled"] is False
 
 
+def directory_path(descriptor):
+    """The path of an open directory, None for anything else: /proc on Linux, F_GETPATH on macOS."""
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        return None
+    if sys.platform.startswith("linux"):
+        return os.readlink(f"/proc/self/fd/{descriptor}")
+    return os.fsdecode(fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
+
+
 def test_the_objects_of_a_snapshot_share_one_directory_sync_before_the_manifest(origin, monkeypatch):
     # #158: a snapshot of a large project synced the objects directory once per object.
     manager, project = origin["manager"], origin["project"]
     synced, real = [], portable.os.fsync
 
     def fsync(descriptor):
-        if portable.os.path.isdir(f"/proc/self/fd/{descriptor}"):
-            synced.append(portable.os.readlink(f"/proc/self/fd/{descriptor}"))
+        if path := directory_path(descriptor):
+            synced.append(path)
         return real(descriptor)
 
     monkeypatch.setattr(portable.os, "fsync", fsync)
@@ -374,8 +386,8 @@ def test_objects_left_by_a_killed_attempt_are_synced_before_the_manifest_that_na
     synced = []
 
     def fsync(descriptor):
-        if portable.os.path.isdir(f"/proc/self/fd/{descriptor}"):
-            synced.append(portable.os.readlink(f"/proc/self/fd/{descriptor}"))
+        if path := directory_path(descriptor):
+            synced.append(path)
         return real_fsync(descriptor)
 
     monkeypatch.setattr(portable.os, "fsync", fsync)
