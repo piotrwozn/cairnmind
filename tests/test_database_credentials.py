@@ -403,11 +403,16 @@ def certificate_authority(folder: Path, address: str = "127.0.0.1") -> Path:
     if not shutil.which("openssl"):
         pytest.skip("the openssl command is needed to make a local certificate authority")
     folder.mkdir()
-    _openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2",
+    # A config of our own, so the system one adds nothing: the openssl of macOS (LibreSSL) appends the v3_ca
+    # extensions of /etc/ssl/openssl.cnf next to -addext, and OpenSSL 3 refuses an authority whose
+    # basicConstraints is there twice.
+    (folder / "req.cnf").write_text("[req]\ndistinguished_name = dn\n[dn]\n")
+    _openssl("req", "-config", "req.cnf", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
+             "-out", "ca.pem", "-days", "2",
              "-subj", "/CN=Cairnmind test authority", "-addext", "basicConstraints=critical,CA:TRUE",
              "-addext", "keyUsage=critical,keyCertSign,cRLSign", cwd=folder)
-    _openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr",
-             "-subj", "/CN=localhost", cwd=folder)
+    _openssl("req", "-config", "req.cnf", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key",
+             "-out", "server.csr", "-subj", "/CN=localhost", cwd=folder)
     (folder / "server.ext").write_text(f"subjectAltName=IP:{address},DNS:localhost\nbasicConstraints=CA:FALSE\n"
                                        "keyUsage=critical,digitalSignature,keyEncipherment\n"
                                        "extendedKeyUsage=serverAuth\n")
