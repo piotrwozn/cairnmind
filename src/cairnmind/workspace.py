@@ -13,7 +13,6 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import unicodedata
 from uuid import uuid4
@@ -24,6 +23,7 @@ from .cockpit_state import CockpitState, _atomic, _private_directory, _private_l
 from .config import SESSION_NAMES, Settings, drop_env
 from .native_worker import process_start
 from .runtime_selection import resolve_tmux
+from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
 from . import workspace_activity as column
 from . import workspace_border as border
 from .terminal_theme import TMUX
@@ -210,7 +210,7 @@ class WorkspaceManager:
         self.state = WorkspaceState(settings, workspace_id)
         self.directory = self.state.directory
         namespace = hashlib.sha256((str(settings.data_dir.resolve()) + ":" + workspace_id).encode()).hexdigest()[:16]
-        self.socket_directory = Path(tempfile.gettempdir()) / f"cairnmind-ui-{os.getuid()}-{namespace}"
+        self.socket_directory = socket_directory("ui", namespace)
         self.socket = self.socket_directory / "tmux.sock"
         self.config = self.directory / "tmux.conf"
         self.binary = resolve_tmux(settings, override=tmux_binary)
@@ -247,8 +247,9 @@ class WorkspaceManager:
             raise ValueError("Install tmux >= 3.4 in the same WSL distribution as Cairnmind.")
         _private_directory(self.directory.parent)
         _private_directory(self.directory)
+        prepare_socket_base()
         _private_directory(self.socket_directory)
-        if len(os.fsencode(self.socket)) > 100:
+        if len(os.fsencode(self.socket)) > MAX_SOCKET_PATH:
             raise ValueError("The workspace socket path is too long.")
         if self.config.is_symlink():
             raise ValueError("The workspace configuration must not be a link.")
