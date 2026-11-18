@@ -2,7 +2,8 @@
 
 Bindings change a local scope view, never the archived source or record itself.
 Foreign paths are normalized lexically: resolving them on this machine could
-follow an unrelated host's symlink and would change their provenance.
+follow an unrelated host's symlink and would change their provenance. Only the
+system's own links (/tmp and /var on macOS, see system_links) are spelled out.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from pathlib import Path
 import subprocess
 
 from .path_spelling import relative_on_disk
+from .system_links import system_spelling
 
 
 # Snapshots are written to the first directory. The second is where versions up to 0.9.0 wrote
@@ -130,16 +132,19 @@ def snapshot_directory(root: str | Path) -> Path | None:
 
 def is_memory_path(path: str | Path, root: str | Path) -> bool:
     """Match the exact reserved subtree without following foreign symlinks."""
-    path, root = Path(path), Path(os.path.abspath(root))
-    path = Path(os.path.abspath(path if path.is_absolute() else root / path))
+    path, root = Path(path), system_spelling(os.path.abspath(root))
+    path = system_spelling(os.path.abspath(path if path.is_absolute() else root / path))
     return path.is_relative_to(root) and is_reserved_memory(path.relative_to(root))
 
 
 def _absolute(value):
+    """A recorded absolute path, normalized and spelled through the system's own links, so that a path
+    recorded as /var/folders/... and one recorded as /private/var/folders/... on macOS compare equal (#229).
+    No other link is followed: those of an unrelated host would change the path's provenance."""
     if not isinstance(value, str) or not value or "\0" in value:
         return None
     path = Path(value)
-    return Path(os.path.normpath(value)) if path.is_absolute() else None
+    return system_spelling(os.path.normpath(value)) if path.is_absolute() else None
 
 
 def memory_bindings(store, project_id: str) -> list[tuple[Path, Path]]:
@@ -180,6 +185,7 @@ def bound_metadata(store, project_id: str, metadata, *, bindings=None) -> dict:
         if path is None:
             continue
         for origin, local in mappings:
+            origin = system_spelling(origin)
             if path.is_relative_to(origin):
                 result[field] = str(local / path.relative_to(origin))
                 break
