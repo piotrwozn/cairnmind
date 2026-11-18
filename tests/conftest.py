@@ -28,6 +28,7 @@ import re
 from pathlib import Path
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 from urllib.parse import quote
@@ -36,6 +37,7 @@ import zlib
 
 import pytest
 
+from cairnmind import process_identity
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
@@ -226,10 +228,7 @@ def file_lock(path: Path):
 
 
 def _pytest_alive(pid: int) -> bool:
-    try:
-        return b"pytest" in Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return False
+    return any("pytest" in argument for argument in process_identity.command_line(pid) or [])
 
 
 def reap_orphan_engines(runs_root: Path) -> None:
@@ -351,19 +350,22 @@ MCP_MODULES = frozenset({"test_mcp_host", "test_mcp_agent", "test_mcp_sources", 
                          "test_mcp_round2"})
 
 
+def process_ids() -> list[int]:
+    """Every process id of the machine: procfs on Linux, ps(1) where there is none (macOS)."""
+    if sys.platform.startswith("linux"):
+        return [int(name) for name in os.listdir("/proc") if name.isdigit()]
+    listed = subprocess.run(["ps", "-A", "-o", "pid="], capture_output=True, text=True, check=True, timeout=30)
+    return [int(pid) for pid in listed.stdout.split()]
+
+
 def mcp_fixture_processes() -> list[int]:
     """Live processes of this checkout's fixture MCP server, and the children it marks with its path."""
     found = []
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit() or int(entry.name) == os.getpid():
-            continue
-        try:
-            arguments = (entry / "cmdline").read_bytes().split(b"\0")
-            state = (entry / "stat").read_text(errors="replace").rsplit(")", 1)[1].split()[0]
-        except (OSError, IndexError):
-            continue
-        if state != "Z" and any(MCP_FIXTURE.encode() in argument for argument in arguments):
-            found.append(int(entry.name))
+    for pid in process_ids():
+        if pid == os.getpid() or process_identity.start(pid, running=True) is None:
+            continue  # gone, a zombie, or unreadable
+        if any(MCP_FIXTURE in argument for argument in process_identity.command_line(pid) or []):
+            found.append(pid)
     return found
 
 
@@ -375,7 +377,7 @@ def no_mcp_server_outlives_its_test(request):
     """
     module = Path(str(request.node.fspath)).stem
     yield
-    if module not in MCP_MODULES or not Path("/proc").is_dir():
+    if module not in MCP_MODULES:
         return
     import signal
     import time

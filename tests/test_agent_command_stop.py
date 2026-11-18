@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from cairnmind import agent_tools
+from cairnmind import agent_tools, process_identity
 from cairnmind.agent_journal import AgentJournal
 from cairnmind.agent_tools import ToolExecutor
 from cairnmind.config import Settings
@@ -32,6 +32,8 @@ def executor(tmp_path):
 
 def running(pid):
     """Whether any thread of process pid runs (a zombie main thread does not count alone)."""
+    if not sys.platform.startswith("linux"):  # no /proc: the kernel says whether it is a zombie
+        return process_identity.start(pid, running=True) is not None
     try:
         state = Path(f"/proc/{pid}/stat").read_bytes().rsplit(b")", 1)[1].split()[0]
         return state not in {b"Z", b"X"} or len(os.listdir(f"/proc/{pid}/task")) > 1
@@ -70,7 +72,9 @@ async def started_child(executor, command=CHILD_IGNORING_TERM):
 def odd_name_process():
     # An unrelated process whose name is not valid UTF-8: 15 bytes cut inside
     # a two-byte letter, as the kernel cuts a long name.
-    code = ("import ctypes, sys, time; ctypes.CDLL(None).prctl(15, 'przetwarzaniżż'.encode()[:15], 0, 0, 0); "
+    if not sys.platform.startswith("linux"):
+        pytest.skip("prctl(PR_SET_NAME) and the name cut into /proc/<pid>/stat exist on Linux only")
+    code =("import ctypes, sys, time; ctypes.CDLL(None).prctl(15, 'przetwarzaniżż'.encode()[:15], 0, 0, 0); "
             "print(flush=True); time.sleep(60)")
     process = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE)
     process.stdout.readline()
@@ -99,6 +103,8 @@ async def test_a_process_name_that_is_not_utf8_does_not_break_the_stop(executor,
         kill(pid)
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"),
+                    reason="a process shown as a zombie while another of its threads runs is a view of Linux's /proc")
 async def test_a_process_whose_main_thread_exited_is_still_killed(executor):
     # /proc/<pid>/stat says Z once the main thread has exited, while another
     # thread of the process still runs and SIGTERM is ignored.

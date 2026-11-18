@@ -11,7 +11,7 @@ import pytest
 
 import conftest
 
-from cairnmind import mcp_host
+from cairnmind import mcp_host, process_identity
 from cairnmind.mcp_host import MAX_DESCRIPTION, McpHost
 
 FIXTURE = conftest.MCP_FIXTURE  # this pytest process's own copy (see conftest)
@@ -23,11 +23,7 @@ def server(*modes, identifier="files", **extra):
 
 
 def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return Path(f"/proc/{pid}/stat").exists() and Path(f"/proc/{pid}/stat").read_text(errors="replace").split(")")[-1].split()[0] != "Z"
+    return process_identity.start(pid, running=True) is not None  # exists and is no zombie
 
 
 async def started(tmp_path, *definitions, **options):
