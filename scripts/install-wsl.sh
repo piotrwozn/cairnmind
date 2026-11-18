@@ -43,19 +43,9 @@ case "$system" in
     Darwin)
         tmux_hint='brew install tmux'
         uv_hint='brew install uv'
-        # hw.optional.arm64 is 1 on Apple silicon, also in a shell that Rosetta translates; an Intel Mac has none.
-        # Intel Macs are refused: no one has run Cairnmind there, and the local models would run on the processor.
-        if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" != 1 ]]; then
-            printf 'This Mac has an Intel processor. Cairnmind supports macOS on Apple silicon (M1 or later) only.\n' >&2
-            exit 1
-        fi
-        if [[ "$(uname -m)" != arm64 ]]; then
-            printf 'This shell runs under Rosetta (x86_64). Open a native arm64 terminal and run the installer again.\n' >&2
-            exit 1
-        fi
         ;;
     *)
-        printf 'Run the installer in Ubuntu on WSL2, another Linux system or macOS on Apple silicon.\n' >&2
+        printf 'Run the installer in Ubuntu on WSL2, another Linux system or macOS.\n' >&2
         exit 1
         ;;
 esac
@@ -141,7 +131,7 @@ if (( tmux_major < 3 || (tmux_major == 3 && tmux_minor < 4) )); then
 fi
 
 if [[ "$system" == Darwin ]]; then
-    printf 'Detected macOS on Apple silicon. Ollama runs the models on the built-in GPU.\n'
+    printf 'Detected macOS.\n'
 elif [[ "$(uname -r | tr '[:upper:]' '[:lower:]')" == *microsoft* ]]; then
     printf 'Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux.\n'
 else

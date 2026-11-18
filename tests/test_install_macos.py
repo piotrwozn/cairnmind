@@ -1,4 +1,4 @@
-"""The installer's checks on macOS and on Linux, with stand-ins for uname, sysctl, java_home and the tools (#232).
+"""The installer's checks on macOS and on Linux, with stand-ins for uname, java_home and the tools (#232).
 
 The checks are cut out of scripts/install-wsl.sh between two marker lines and run with a PATH of stand-ins only, so
 a Mac is imitated on Linux. On macOS (the CI job) /bin/bash is the bash 3.2 that macOS ships, and it runs them too.
@@ -46,17 +46,12 @@ def jdk(root: Path, major: int) -> Path:
 
 @pytest.fixture
 def mac(tmp_path):
-    """Stand-ins for an Apple silicon Mac with tmux 3.5 and uv and no Java; each test changes what it needs."""
+    """Stand-ins for a Mac with tmux 3.5 and uv and no Java; each test changes what it needs."""
     bin_dir = tmp_path / "bin"
-    state = {"system": "Darwin", "machine": "arm64", "release": "25.0.0", "arm64": "1", "java_home": None}
+    state = {"system": "Darwin", "release": "25.0.0", "java_home": None}
 
     def write():
-        tool(bin_dir / "uname", f"case \"$1\" in -s) echo {state['system']} ;; -m) echo {state['machine']} ;; "
-                                f"-r) echo {state['release']} ;; esac")
-        # hw.optional.arm64 does not exist on an Intel Mac: sysctl says so and fails.
-        tool(bin_dir / "sysctl", "[ \"$1 $2\" = '-n hw.optional.arm64' ] || exit 1\n"
-                                 + (f"echo {state['arm64']}" if state["arm64"] else
-                                    "echo 'sysctl: unknown oid' >&2; exit 1"))
+        tool(bin_dir / "uname", f"case \"$1\" in -s) echo {state['system']} ;; -r) echo {state['release']} ;; esac")
         found = state["java_home"]
         tool(tmp_path / "java_home", f"echo '{found}'" if found else
              "echo 'Unable to find any JVMs matching version \"21+\".' >&2; exit 1")
@@ -77,13 +72,13 @@ def mac(tmp_path):
     return run, state, bin_dir, tmp_path
 
 
-def test_the_checks_accept_an_apple_silicon_mac_with_java_through_java_home(mac):
+def test_the_checks_accept_a_mac_with_java_through_java_home(mac):
     run, state, bin_dir, tmp_path = mac
     state["java_home"] = str(jdk(tmp_path / "Temurin-21.jdk" / "Contents" / "Home", 21))
     result = run()
     assert result.returncode == 0, result.stderr
     assert f"passed JAVA_HOME={state['java_home']}" in result.stdout
-    assert "Detected macOS on Apple silicon" in result.stdout
+    assert "Detected macOS." in result.stdout
     assert "apt" not in result.stdout + result.stderr
 
 
@@ -145,21 +140,6 @@ def test_a_homebrew_jdk_that_nothing_finds_gets_the_exact_link_line(mac):
     assert "JAVA_HOME" not in result.stderr
 
 
-def test_an_intel_mac_is_refused_in_one_sentence(mac):
-    run, state, bin_dir, tmp_path = mac
-    state.update(machine="x86_64", arm64="")
-    result = run()
-    assert result.returncode == 1 and "passed" not in result.stdout
-    assert "Intel" in result.stderr and "Apple silicon" in result.stderr
-
-
-def test_a_shell_under_rosetta_is_refused(mac):
-    run, state, bin_dir, tmp_path = mac
-    state.update(machine="x86_64", arm64="1")
-    result = run()
-    assert result.returncode == 1 and "Rosetta" in result.stderr
-
-
 @pytest.mark.parametrize("missing,hint", [("tmux", "brew install tmux"), ("uv", "brew install uv")])
 def test_missing_tools_on_a_mac_get_homebrew_hints(mac, missing, hint):
     run, state, bin_dir, tmp_path = mac
@@ -215,7 +195,7 @@ def test_an_upgrade_finds_a_workspace_in_the_macos_socket_folder(tmp_path):
     ("6.8.0-48-generic", "Detected Linux outside WSL. The package is supported; check local GPU access.")])
 def test_linux_output_is_unchanged(mac, release, line):
     run, state, bin_dir, tmp_path = mac
-    state.update(system="Linux", machine="x86_64", release=release)
+    state.update(system="Linux", release=release)
     java(bin_dir / "java", 21)
     result = run()
     assert result.returncode == 0, result.stderr
@@ -225,7 +205,7 @@ def test_linux_output_is_unchanged(mac, release, line):
 
 def test_linux_keeps_its_apt_hints(mac):
     run, state, bin_dir, tmp_path = mac
-    state.update(system="Linux", machine="x86_64")
+    state.update(system="Linux")
     result = run()
     assert result.returncode == 1
     assert result.stderr == "Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n"
@@ -237,7 +217,7 @@ def test_linux_keeps_its_apt_hints(mac):
 def test_on_linux_java_home_does_not_replace_the_java_on_path(mac):
     """On Linux the engine runs java on PATH whatever JAVA_HOME says, so that is the one the installer checks."""
     run, state, bin_dir, tmp_path = mac
-    state.update(system="Linux", machine="x86_64")
+    state.update(system="Linux")
     java(bin_dir / "java", 21)
     result = run(JAVA_HOME=str(jdk(tmp_path / "jdk17", 17)))
     assert result.returncode == 0, result.stderr
@@ -246,7 +226,7 @@ def test_on_linux_java_home_does_not_replace_the_java_on_path(mac):
 
 def test_a_java_that_does_not_run_is_said_not_left_silent(mac):
     run, state, bin_dir, tmp_path = mac
-    state.update(system="Linux", machine="x86_64")
+    state.update(system="Linux")
     tool(bin_dir / "java", "exit 1")
     result = run()
     assert result.returncode == 1 and "did not run" in result.stderr
@@ -256,7 +236,7 @@ def test_other_systems_are_refused(mac):
     run, state, bin_dir, tmp_path = mac
     state.update(system="FreeBSD")
     result = run()
-    assert result.returncode == 1 and "macOS on Apple silicon" in result.stderr
+    assert result.returncode == 1 and "or macOS." in result.stderr
 
 
 def test_the_macos_guide_says_what_the_script_does():
@@ -274,8 +254,8 @@ def test_the_macos_guide_says_what_the_script_does():
     assert "/usr/libexec/java_home -v 21+" in guide
     # Every message the troubleshooting table quotes is one the script prints.
     table = guide[guide.index("## Troubleshooting"):]
-    for message in ("Java not found", "macOS answers so when no JDK is installed", "This Mac has an Intel processor",
-                    "This shell runs under Rosetta", "Version 3.4+ is required", "Java 21+ is required"):
+    for message in ("Java not found", "macOS answers so when no JDK is installed", "Version 3.4+ is required",
+                    "Java 21+ is required"):
         assert message in table and message in script, message
 
 

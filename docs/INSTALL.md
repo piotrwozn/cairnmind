@@ -2,7 +2,7 @@
 
 This guide takes you from a clean machine to a working Cairnmind workspace. It takes about 15 minutes plus the model download.
 
-Cairnmind runs on Linux and on macOS on Apple silicon. On Windows it runs inside WSL2 Ubuntu, together with Ollama and the coding clients you use with it. On a Mac, follow the macOS parts of steps 2 and 4.
+Cairnmind runs on Linux and on macOS. On Windows it runs inside WSL2 Ubuntu, together with Ollama and the coding clients you use with it. On a Mac, follow the macOS parts of steps 2 and 4.
 
 ## What gets installed
 
@@ -20,7 +20,7 @@ The installer never changes your Codex or Claude Code configuration, never downl
 | Requirement | Version | Notes |
 | --- | --- | --- |
 | Linux, or Windows 11 with WSL2 Ubuntu | Ubuntu 24.04 tested | Commands below run inside Ubuntu |
-| or macOS on Apple silicon | M1 or later | Intel Macs are not supported; the commands run in Terminal |
+| or macOS | | The commands run in Terminal |
 | Java | 21 or newer | Runs the ArcadeDB engine |
 | tmux | 3.4 or newer | Hosts the terminal workspace |
 | uv | current | Installs Cairnmind with Python 3.12 |
@@ -123,7 +123,7 @@ The same script installs on macOS, with the bash that macOS ships.
 
 The installer:
 
-1. checks Java and tmux versions; on macOS it first checks that the Mac has Apple silicon and that the terminal does not run under Rosetta;
+1. checks Java and tmux versions;
 2. installs Cairnmind as a `uv` tool, with dependency versions pinned by `uv.lock`;
 3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it);
 4. runs `cairnmind doctor` and prints anything that still needs attention.
@@ -223,8 +223,6 @@ This keeps your memory in the data directory that `cairnmind doctor` shows as `d
 | `cairnmind: command not found` | Add the directory printed by the installer to `PATH`, or run `uv tool update-shell` and open a new terminal. |
 | `Java 21+ is required` | `sudo apt install openjdk-21-jre-headless`, and check that `java -version` reports 21 or newer. On macOS: `brew install openjdk@21` and the `sudo ln -sfn` line of step 2; when the message names `JAVA_HOME`, that Java is too old: point `JAVA_HOME` at Java 21 or unset it. |
 | `Java not found` or `macOS answers so when no JDK is installed` on macOS | No Java 21 is found. If Homebrew's `openjdk@21` is installed, the installer prints the `sudo ln -sfn ...` line that links it where macOS finds it. |
-| `This Mac has an Intel processor` | Cairnmind runs on Apple silicon Macs only. |
-| `This shell runs under Rosetta` | The terminal app is set to open using Rosetta: turn that off in its Get Info window, or run `arch -arm64 /bin/bash scripts/install-wsl.sh`. |
 | `Version 3.4+ is required` for tmux | Ubuntu 24.04 ships tmux 3.4. On older releases, upgrade Ubuntu or build tmux 3.4. On macOS: `brew upgrade tmux`. |
 | `Cannot reach Ollama` | Start `ollama serve`, then run `cairnmind models pull` again. |
 | `cairnmind` exits with code 2 | It needs an interactive terminal. Run it directly in Windows Terminal or another terminal, not through a pipe. |
