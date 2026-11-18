@@ -74,6 +74,13 @@ def test_an_entry_that_fails_a_check_is_left_out(tmp_path):
     assert verified_links([(link, tmp_path / "linked-target")], always) == ()  # A target that is a link.
     assert verified_links([(tmp_path / "missing", target)], always) == ()
     assert verified_links([("relative", target)], always) == ()
+    hop, chained = tmp_path / "hop", tmp_path / "chained"
+    hop.symlink_to(target, target_is_directory=True)
+    chained.symlink_to(hop, target_is_directory=True)
+    assert verified_links([(chained, target)], always) == ()  # Reaches it through another link.
+    relative = tmp_path / "relative-link"
+    relative.symlink_to("private", target_is_directory=True)  # As macOS spells /tmp -> private/tmp.
+    assert verified_links([(relative, target)], always) == ((relative, target),)
 
 
 def test_only_the_start_of_a_path_is_replaced_and_a_planted_link_is_still_refused(tmp_path, monkeypatch):

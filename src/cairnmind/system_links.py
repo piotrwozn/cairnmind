@@ -6,7 +6,7 @@ a checkout or a data directory under /tmp could not be used. Every such rule ask
 
 One rule: a link counts as the system's only when it is in the fixed table of the running platform below,
 the path starts with it, and, checked once on this machine, it is owned by root, sits in a
-directory owned by root that nobody else can write (`/`), and leads to the target the table names, itself
+directory owned by root that nobody else can write (`/`), and leads in one step to the target the table names, itself
 free of links. A table entry that fails any check is not accepted at all.
 
 Why this does not reopen what those rules close: they refuse a link a user could have planted, in a
@@ -52,9 +52,12 @@ def verified_links(table: Iterable[tuple[str | os.PathLike, str | os.PathLike]],
             continue
         try:
             leads_to = Path(os.path.realpath(link, strict=True))
+            # One hop straight to the target: a chain through another link could later be redirected.
+            one_hop = Path(os.path.normpath(link.parent / os.readlink(link)))
         except (OSError, RuntimeError):
             continue
-        if owned(link) and leads_to == target and Path(os.path.realpath(target)) == target and target.is_dir():
+        if (owned(link) and leads_to == one_hop == target and Path(os.path.realpath(target)) == target
+                and target.is_dir()):
             found.append((link, target))
     return tuple(found)
 
