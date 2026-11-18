@@ -176,6 +176,7 @@ def test_pendin_is_left_out_of_the_comparison_on_macos_only(pty_pair):
 def test_the_written_mark_is_left_out_of_the_flags_on_macos_only(monkeypatch):
     # F_GETFL of a pty on macOS after its first write: O_RDWR and the kernel's written mark (#236).
     monkeypatch.setattr(fcntl, "fcntl", lambda fd, command: os.O_RDWR | 0x10000)
+    monkeypatch.setattr(sys, "platform", "linux")  # set both ways, so the test does not depend on the system it runs on
     assert status_flags(0) == os.O_RDWR | 0x10000
     monkeypatch.setattr(sys, "platform", "darwin")
     assert status_flags(0) == os.O_RDWR

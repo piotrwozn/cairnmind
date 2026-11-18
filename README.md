@@ -32,7 +32,7 @@ Shared memory for a team works through Git ([Team memory](#team-memory)). Planne
 
 ## Who it is for
 
-Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux or WSL2 with a local model through Ollama. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
+Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux, WSL2 or macOS with a local model through Ollama. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
 
 ## What it guarantees, and what it does not
 
@@ -109,7 +109,7 @@ The full system needs Java, tmux, Ollama and several gigabytes of models. To see
 
 ## Quick start
 
-Cairnmind runs on Linux, and on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform). macOS is planned for 0.12.0; native Windows is not supported. It needs Java 21+, tmux 3.4+, uv and Ollama. With those in place:
+Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform), and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew). Native Windows is not supported. It needs Java 21+, tmux 3.4+, uv and Ollama. With those in place:
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
