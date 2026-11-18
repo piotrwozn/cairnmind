@@ -32,7 +32,7 @@ import httpx
 from .api_profiles import MODEL_ID, _credential_ref, normalize_base_url
 from .config import Settings
 from .memory_openai import OpenAICompatible, server_tag
-from .ollama import Ollama, OllamaUnavailable
+from .ollama import MODEL_DIGEST, Ollama, OllamaUnavailable
 
 ROLES = ("chat", "embedding")
 PROVIDERS = ("ollama", "openai_compatible")
@@ -387,10 +387,12 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
     if not isinstance(rows, list):  # a server outside Cairnmind's control: reported, never trusted
         entry.update(error="invalid_response", model_available=False)
         return entry
+    digest = None
     if row["provider"] == "ollama":
         listed = [m for m in rows if isinstance(m, dict) and model in (m.get("name"), m.get("model"))]
         if listed and isinstance(listed[0].get("digest"), str) and listed[0]["digest"]:
             entry["identity"] = f"{model}@{listed[0]['digest']}"
+            digest = listed[0]["digest"] if MODEL_DIGEST.fullmatch(listed[0]["digest"]) else None
     else:
         listed = [m for m in rows if isinstance(m, dict) and m.get("id") == model]
         if listed:
@@ -401,6 +403,11 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
                 else:
                     entry["identity"] = fingerprinted
     entry["model_available"] = bool(listed)
+    if role == "chat" and listed:
+        # What the service saw (#231); doctor itself sends no model request, so nothing seen is not "available".
+        from .structured_output import doctor_note
+        entry["structured_output"] = doctor_note(settings.data_dir, row["base_url"], model, digest) or {
+            "refused": False, "text": "structured output: no refusal seen"}
     return entry
 
 
@@ -438,6 +445,9 @@ async def _check(settings: Settings, role: str) -> tuple[dict, str]:
         if not isinstance(document, dict) or not isinstance(document.get("ok"), bool):
             raise ValueError("The chat model did not return structured JSON output for a JSON schema; extraction "
                              "and answer repair need it. Nothing was saved.")
+        if reply.get("structured_output") == "prompted":  # the server refused `format`; the JSON was checked (#231)
+            from .structured_output import DOCTOR_TEXT
+            return {"structured_output": False, "note": DOCTOR_TEXT}, identity
         return {"structured_output": True}, identity
     finally:
         await client.aclose()
