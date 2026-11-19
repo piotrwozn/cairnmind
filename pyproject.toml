@@ -1,6 +1,6 @@
 [project]
 name = "cairnmind"
-version = "0.11.0"
+version = "0.12.0"
 description = "Verified project memory for coding agents: every answer cites a checked source"
 readme = "README.md"
 license = "Apache-2.0"

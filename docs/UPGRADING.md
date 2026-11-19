@@ -5,6 +5,7 @@ New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing
 - [From DevBrain 0.8.0 to Cairnmind 0.9.0](#from-devbrain-080-to-cairnmind-090)
 - [From 0.9.0 to 0.10.0](#from-090-to-0100)
 - [From 0.10.0 to 0.11.0](#from-0100-to-0110)
+- [From 0.11.0 to 0.12.0](#from-0110-to-0120)
 - [From 0.7.2 to 0.8.0](#from-072-to-080)
 
 A direct upgrade from 0.7.2 to 0.9.0 was not tested. Upgrade a 0.7.2 installation to 0.8.0 first.
@@ -189,6 +190,77 @@ From 0.11.0 only a person can store a record as confirmed. The rule and its limi
 4. Run `cairnmind install <project>` for each project, so its hooks and MCP entries are the ones 0.10.0 writes.
 
 The confirmation rule needs no step of its own: 0.10.0 ignores the `confirmation` field of a record.
+
+## From 0.11.0 to 0.12.0
+
+0.12.0 adds macOS on Apple silicon. On Linux and WSL it changes no data, no configuration and no path; what changes there are a few fixes, listed below.
+
+### 1. Make a backup with 0.11.0
+
+```bash
+cairnmind backup ~/cairnmind-backup-0.11.0.cairnmind.json.gz
+```
+
+### 2. Close the workspace and coding sessions
+
+```bash
+cairnmind workspace stop --clients
+cairnmind cockpit stop
+cairnmind stop
+```
+
+### 3. Get 0.12.0 and run the installer
+
+```bash
+mkdir -p ~/src && cd ~/src
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.12.0/cairnmind-0.12.0.tar.gz
+tar -xzf cairnmind-0.12.0.tar.gz
+cd cairnmind-0.12.0
+bash scripts/install-wsl.sh
+```
+
+The same script installs on macOS ([INSTALL.md](INSTALL.md)).
+
+### 4. Reconnect your projects
+
+Run `cairnmind install <project>` for each project, before you start Codex or Claude Code in it.
+
+### 5. Check
+
+```bash
+cairnmind version
+cairnmind doctor
+```
+
+### What the upgrade does to a store
+
+- **Schema.** The schema stays at version 4 and the backup file format is unchanged, so 0.12.0 restores a backup of 0.11.0 and 0.11.0 restores one of 0.12.0. No one-time step runs, and no record, source or acknowledgement is rewritten.
+- **Writer.** On Linux and WSL an installation is identified as before (`/etc/machine-id`, its data directory), so it stays the writer of its store. On macOS it is now identified by the Mac's hardware UUID instead of its host name (below).
+
+### What changes on Linux and WSL
+
+Nothing in the data directory, `config.json`, the socket paths or the files `cairnmind install` writes changes with the default settings. The question budget stays 60 seconds, the engine and the installer still take `java` from `PATH` whatever `JAVA_HOME` says, and the private tmux sockets stay where 0.11.0 put them. These fixes apply on every system:
+
+- **Codex tool timeout.** `cairnmind install` writes `tool_timeout_sec` into the Cairnmind entry of `.codex/config.toml` as the question budget plus 15 seconds, never less than 75. With the default budget of 60 that is 75, as before. If you raised `ask_timeout` in `config.json`, the next `cairnmind install` writes the larger value.
+- **Stopping.** `cairnmind workspace stop --clients` also stops the private terminal server of the last coding-session run, which 0.11.0 left running. `cairnmind engine stop` clears the record of an engine that has already exited instead of failing.
+- **Questions.** A question no longer starts a second reading of whole passages when the time left is shorter than the calls it repeats, so it can end sooner with what it has. A model server that refuses structured output is asked again without it, and `cairnmind doctor` says so; the refusal was seen with an MLX build of Ollama on Apple silicon.
+
+### What changes on macOS
+
+macOS was not supported before 0.12.0, so most Macs get a new installation from [INSTALL.md](INSTALL.md). If a data directory on a Mac was already used by 0.11.0 or by a build of `main` before 0.12.0:
+
+- **Writer.** A Mac is identified by its hardware UUID (IOPlatformUUID) from 0.12.0, and before #259 it was identified by its host name. Such a data directory therefore no longer matches its own identity: it gets a new installation identifier and reads its store only. `cairnmind store writer` shows this; run `cairnmind store takeover --yes` once to write again. From then on a change of the host name or network does not change the identity.
+- **Question budget.** A new installation on macOS gives each question 120 seconds. A data directory created before #264 keeps the 60 its `config.json` holds, which can be too short for a local model on Apple silicon. To use 120, stop the service (`cairnmind stop`), set `"ask_timeout": 120` in `config.json` of the data directory, and run `cairnmind install <project>` again for each project, so Codex waits 135 seconds for a Cairnmind tool.
+- **Sockets.** The workspace and coding-session sockets live in `/tmp/cairnmind-<uid>/`, a folder only you can use, instead of under `$TMPDIR`. A workspace started before the upgrade is not found after it; that is why step 2 stops it.
+- **Java.** On macOS the engine takes Java from `JAVA_HOME` before `PATH`; a `java_executable` in `config.json` still comes first.
+
+### Going back to 0.11.0
+
+1. Close the workspace and coding sessions, then stop everything with the installed version: `cairnmind workspace stop --clients`, `cairnmind cockpit stop`, `cairnmind stop`.
+2. Run `bash scripts/install-wsl.sh` from the unpacked 0.11.0 release archive.
+3. Run `cairnmind install <project>` for each project.
+
+The store needs no restore: 0.11.0 reads what 0.12.0 wrote. On Linux and WSL the installation stays the writer. Going back is for Linux and WSL: 0.11.0 does not support macOS.
 
 ## From 0.7.2 to 0.8.0
 

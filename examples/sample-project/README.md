@@ -6,7 +6,7 @@ The project, Trail Notes, is a few lines of Python that store hiking notes as fi
 
 ## What you need
 
-- Linux, or Windows with WSL2. Cairnmind does not run on native Windows, and macOS is untested.
+- Linux, macOS with Apple silicon, or Windows with WSL2. Cairnmind does not run on native Windows.
 - [uv](https://docs.astral.sh/uv/). It fetches Python 3.12 if you do not have it.
 - This repository.
 

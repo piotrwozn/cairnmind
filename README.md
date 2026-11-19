@@ -32,7 +32,7 @@ Shared memory for a team works through Git ([Team memory](#team-memory)). Planne
 
 ## Who it is for
 
-Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux, WSL2 or macOS with a local model through Ollama. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
+Cairnmind suits developers who work with Codex CLI or Claude Code every day, switch between assistants or return to projects after a break, and are comfortable running Linux, WSL2 or macOS on Apple silicon, with a local model through Ollama. It is a local tool for one person; a team shares the records it agreed on through Git ([Team memory](#team-memory)), and the database and the models can run on another computer you control. If you only want a lighter notes file for one assistant, a `CLAUDE.md` is simpler.
 
 ## What it guarantees, and what it does not
 
@@ -89,7 +89,7 @@ The coding assistants it works with, Codex CLI and Claude Code among them, are n
 
 ## Measured results
 
-Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in isolated databases: on release 0.8.0 on 9 November 2026, and on the code of 0.11.0 on 16 November 2026 (one run of each command for the release, and three runs of the repository questions before it). Recall, portable memory and extraction use synthetic fixtures; the repository questions use Cairnmind's own repository. None of them is proof of behaviour on every real project.
+Measured with `qwen3.5:9b` and `qwen3-embedding:0.6b` on an RTX 4080 Super, in isolated databases: on release 0.8.0 on 9 November 2026, and on the code of 0.11.0 on 16 November 2026 (one run of each command for the release, and three runs of the repository questions before it). The figures below are 0.11.0's; the release gate of 0.12.0, run on 18 November 2026, gave the same recall, memory and extraction results and 19 of 20 on the repository questions, none wrong (see [docs/EVALUATION.md](docs/EVALUATION.md#results-for-0120)). Recall, portable memory and extraction use synthetic fixtures; the repository questions use Cairnmind's own repository. None of them is proof of behaviour on every real project.
 
 | Evaluation | Result |
 |---|---|
@@ -449,7 +449,7 @@ An external MCP session (Cursor, Cline, Zed) has no archived conversation to quo
 - [docs/API.md](docs/API.md): API, Ollama and Copilot connections and permissions.
 - [docs/WORKFLOW.md](docs/WORKFLOW.md): plan format, check profiles, evidence states and MCP calls.
 - [docs/MEMORY_CONTRACTS.md](docs/MEMORY_CONTRACTS.md): the portable memory format and import rules.
-- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the results for 0.11.0 and 0.8.0 and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
+- [docs/EVALUATION.md](docs/EVALUATION.md): the explicit evaluations, the results for 0.12.0, 0.11.0 and 0.8.0 and, in [evaluation/RESULTS.md](docs/evaluation/RESULTS.md), the results on Cairnmind's own repository.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): the database in a container, on a server or in Kubernetes, and connect-only installations.
 - [docs/UPGRADING.md](docs/UPGRADING.md): upgrading an existing installation.
 - [docs/CONTRACTS.md](docs/CONTRACTS.md): implementation contracts for the backend and its components, and the [extension surfaces](docs/CONTRACTS.md#extension-surfaces): what can be added (checks, reactions to events, MCP clients, model connections), what is planned, and why there are no plugins.
@@ -477,11 +477,11 @@ uv run pytest                                # full suite, needs Java 21 and tmu
 uv run pytest -n 4                           # the full suite in 4 parallel processes
 ```
 
-The automated tests need no Ollama, no models and no signed-in coding clients; those are used only by the explicit evaluations. Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier and the full suite on every pull request and on every push to `main`.
+The automated tests need no Ollama, no models and no signed-in coding clients; those are used only by the explicit evaluations. Test modules that need the real ArcadeDB engine are marked `arcade`, and those that drive a real tmux server are marked `tmux`. CI runs lint, the fast tier on Linux and on macOS, and the full suite on every pull request and on every push to `main`.
 
 ## Status and roadmap
 
-Version 0.11.0 is the current release; 0.9.0 was the first under the name Cairnmind. See the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from 0.10.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Each of these is in [docs/UPGRADING.md](docs/UPGRADING.md).
+Version 0.12.0 is the current release, the first that runs on macOS with Apple silicon; 0.9.0 was the first under the name Cairnmind. See the [changelog](CHANGELOG.md). New installations use the installer directly. Upgrading from 0.11.0 is a backup, the installer and one `cairnmind install` per project; on Linux and WSL it changes no data or configuration. Upgrading from 0.10.0 to 0.11.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Each of these is in [docs/UPGRADING.md](docs/UPGRADING.md).
 
 Planned work is tracked in [issues](https://github.com/piotrwozn/cairnmind/issues?q=is%3Aissue+label%3Aroadmap).
 

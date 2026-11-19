@@ -25,7 +25,7 @@ permissions:
 env:
   MEMORY_DIR: .memory/cairnmind-published
   # Pin the Cairnmind release whose format the published files use.
-  CAIRNMIND_REF: v0.11.0
+  CAIRNMIND_REF: v0.12.0
 
 jobs:
   check:

@@ -2,7 +2,7 @@
 
 This guide takes you from a clean machine to a working Cairnmind workspace. It takes about 15 minutes plus the model download.
 
-Cairnmind runs on Linux and on macOS. On Windows it runs inside WSL2 Ubuntu, together with Ollama and the coding clients you use with it. On a Mac, follow the macOS parts of steps 2 and 4.
+Cairnmind runs on Linux and on macOS with Apple silicon (tested on an M3 Pro with macOS 27). On Windows it runs inside WSL2 Ubuntu, together with Ollama and the coding clients you use with it. On a Mac, follow the macOS parts of steps 2 and 4.
 
 ## What gets installed
 
@@ -20,7 +20,7 @@ The installer never changes your Codex or Claude Code configuration, never downl
 | Requirement | Version | Notes |
 | --- | --- | --- |
 | Linux, or Windows 11 with WSL2 Ubuntu | Ubuntu 24.04 tested | Commands below run inside Ubuntu |
-| or macOS | | The commands run in Terminal |
+| or macOS on Apple silicon | macOS 27 tested | The commands run in Terminal |
 | Java | 21 or newer | Runs the ArcadeDB engine |
 | tmux | 3.4 or newer | Hosts the terminal workspace |
 | uv | current | Installs Cairnmind with Python 3.12 |
@@ -103,9 +103,9 @@ Choose one option.
 
 ```bash
 mkdir -p ~/src && cd ~/src
-curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.11.0/cairnmind-0.11.0.tar.gz
-tar -xzf cairnmind-0.11.0.tar.gz
-cd cairnmind-0.11.0
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.12.0/cairnmind-0.12.0.tar.gz
+tar -xzf cairnmind-0.12.0.tar.gz
+cd cairnmind-0.12.0
 ```
 
 **From source.** Clone the repository to follow the latest `main`:
