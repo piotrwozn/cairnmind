@@ -8,6 +8,7 @@ from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
+from .topology import MESSAGES as TOPOLOGY_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
 
@@ -638,6 +639,7 @@ CATALOG.update(CHECK_PROFILE_MESSAGES)  # a check profile the worktree does not 
 CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 CATALOG.update(ENGINE_DOCKER_MESSAGES)  # the engine in Docker (#272)
 CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service started for MCP (#273, #258)
+CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 
