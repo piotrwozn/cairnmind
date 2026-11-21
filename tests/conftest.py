@@ -67,7 +67,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_ci_macos_job",
     "test_system_links",
     "test_install_macos",
-    "test_engine_docker", "test_tmux_optional", "test_external_mcp_start",
+    "test_engine_docker", "test_tmux_optional", "test_external_mcp_start", "test_knowledge_mode",
 })
 
 TMUX_MODULES = frozenset({
@@ -380,6 +380,20 @@ def no_inherited_session():
         removed["JAVA_HOME"] = os.environ.pop("JAVA_HOME")
     yield
     os.environ.update(removed)
+
+
+@pytest.fixture(autouse=True)
+def models_found_at_init():
+    """`cairnmind init` asks the model server whether it has the models (#274). No test asks a real one: here the
+    models are found, as every installation before 0.13.0 counted them, unless a test installs another answer.
+
+    Done by hand and not with monkeypatch, for the reason given at no_inherited_session.
+    """
+    from cairnmind import knowledge_mode
+    original = knowledge_mode.missing_models
+    knowledge_mode.missing_models = lambda settings: []
+    yield
+    knowledge_mode.missing_models = original
 
 
 @pytest.fixture(autouse=True)

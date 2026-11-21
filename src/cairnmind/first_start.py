@@ -3,6 +3,8 @@
 tmux 3.4+ is needed only by the terminal workspace: `cairnmind`, `cairnmind tui` and `cairnmind workspace
 takeover`. Every other command works without it, and doctor reports the workspace as unavailable instead of
 Cairnmind as broken. The English sentences are the source; MESSAGES is their Polish for the terminal catalog.
+#274 adds what Cairnmind says without models: the knowledge agent's stored choice (knowledge_mode.py), init's
+choice, the answer without models with its full-text matches and doctor's information line.
 """
 from __future__ import annotations
 
@@ -20,6 +22,36 @@ COCKPIT_OLD = "unavailable (tmux 3.4+ not found; found {version})"
 COCKPIT_OTHER = "unavailable (tmux 3.4+ not found; {code})"
 SERVICE_NOT_STARTED = ("The Cairnmind service is not running and could not be started: {reason} Start it with "
                        "`{command}`, then call the tool again.")
+KNOWLEDGE_DISABLED = "disabled (deterministic-only mode)"
+MODELS_NOT_CONFIGURED = "not configured (deterministic-only mode)"
+GET_MODELS = ("To use models: `cairnmind models pull` downloads the local models into Ollama (about 7 GB); "
+              "`cairnmind models set` chooses a model server.")
+SERVER_DOWN = "the model server {url} does not answer"
+MODEL_MISSING = "the model server {url} does not have {model}"
+CHOSE_ENABLED = ("Knowledge agent: enabled. The model server answers and has the models {chat} and {embedding}. "
+                 "Saved as knowledge_agent in {config}.")
+CHOSE_DISABLED = ("Knowledge agent: disabled (deterministic-only mode), because {reason}. Plans, tasks, checks, "
+                  "brief, impact, memory and file indexing work without models; cairnmind ask is a full-text "
+                  "search of the project's memory and makes no answer. Saved as knowledge_agent in {config}.")
+TURNED_ON = ("Knowledge agent: enabled, saved as knowledge_agent in {config}. Restart the knowledge service "
+             "(cairnmind stop, then start Cairnmind again) so that it uses the models. To turn it off again, set "
+             "knowledge_agent to disabled in that file and restart the service.")
+ASK_OFF = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+           "The passages listed match words of the question: they are search results, not verified evidence.")
+ASK_NO_MATCH = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+                "No passage matches words of the question.")
+ASK_LEFT_OUT = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+                "Passages match words of the question, but none could be shown; the reasons are listed with the result.")
+ASK_TIMED_OUT = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+                 "The search did not finish in time, so no passages are listed.")
+MATCHES_HEADING = "Full-text matches (search results, not an answer)"
+MATCHES_HELD_BACK = ("Some matching passages were left out because of their sensitivity class, as answers leave them "
+                     "out for the remote model server (memory_remote_classes).")
+NEEDS_MODELS = ("{command} needs the knowledge agent's models, and the knowledge agent is disabled "
+                "(deterministic-only mode).")
+KNOWLEDGE_INVALID = "knowledge_agent in config.json is {value}; it must be enabled or disabled."
+RESTART_FOR_MODELS = ("knowledge_agent is enabled in config.json, but this service started without models. Restart "
+                      "the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses them.")
 
 MESSAGES = {
     WORKSPACE_NEEDS: "Środowisko terminalowe wymaga tmux 3.4 lub nowszego.",
@@ -33,6 +65,38 @@ MESSAGES = {
     COCKPIT_OTHER: "niedostępny (nie znaleziono tmux 3.4+; {code})",
     SERVICE_NOT_STARTED: ("Usługa Cairnmind nie działa i nie udało się jej uruchomić: {reason} Uruchom ją "
                           "poleceniem `{command}`, a potem wywołaj narzędzie ponownie."),
+    KNOWLEDGE_DISABLED: "wyłączony (tryb tylko deterministyczny)",
+    MODELS_NOT_CONFIGURED: "nieskonfigurowane (tryb tylko deterministyczny)",
+    GET_MODELS: ("Aby używać modeli: `cairnmind models pull` pobiera lokalne modele do Ollamy (około 7 GB); "
+                 "`cairnmind models set` wybiera serwer modeli."),
+    SERVER_DOWN: "serwer modeli {url} nie odpowiada",
+    MODEL_MISSING: "serwer modeli {url} nie ma modelu {model}",
+    CHOSE_ENABLED: ("Agent wiedzy: włączony. Serwer modeli odpowiada i ma modele {chat} i {embedding}. "
+                    "Zapisano jako knowledge_agent w {config}."),
+    CHOSE_DISABLED: ("Agent wiedzy: wyłączony (tryb tylko deterministyczny), ponieważ {reason}. Plany, zadania, "
+                     "kontrole, brief, impact, pamięć i indeksowanie plików działają bez modeli; cairnmind ask "
+                     "jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                     "Zapisano jako knowledge_agent w {config}."),
+    TURNED_ON: ("Agent wiedzy: włączony, zapisano jako knowledge_agent w {config}. Uruchom ponownie usługę wiedzy "
+                "(cairnmind stop, a potem ponownie uruchom Cairnmind), aby używała modeli. Aby go znowu wyłączyć, "
+                "ustaw knowledge_agent na disabled w tym pliku i uruchom usługę ponownie."),
+    ASK_OFF: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+              "Wymienione fragmenty pasują do słów pytania: to wyniki wyszukiwania, a nie zweryfikowane dowody."),
+    ASK_NO_MATCH: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                   "Żaden fragment nie pasuje do słów pytania."),
+    ASK_LEFT_OUT: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                   "Są fragmenty pasujące do słów pytania, ale żadnego nie dało się pokazać; powody są wymienione przy wyniku."),
+    ASK_TIMED_OUT: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                    "Wyszukiwanie nie zakończyło się w czasie, więc nie wymieniono żadnych fragmentów."),
+    MATCHES_HEADING: "Dopasowania pełnotekstowe (wyniki wyszukiwania, nie odpowiedź)",
+    MATCHES_HELD_BACK: ("Część pasujących fragmentów pominięto ze względu na ich klasę wrażliwości, tak jak "
+                        "odpowiedzi pomijają je dla zdalnego serwera modeli (memory_remote_classes)."),
+    NEEDS_MODELS: ("{command} wymaga modeli agenta wiedzy, a agent wiedzy jest wyłączony "
+                   "(tryb tylko deterministyczny)."),
+    KNOWLEDGE_INVALID: "knowledge_agent w config.json ma wartość {value}; musi to być enabled albo disabled.",
+    RESTART_FOR_MODELS: ("knowledge_agent jest włączony w config.json, ale ta usługa wystartowała bez modeli. "
+                         "Uruchom ponownie usługę wiedzy (cairnmind stop, a potem ponownie uruchom Cairnmind), aby "
+                         "używała modeli."),
 }
 
 

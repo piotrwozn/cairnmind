@@ -187,6 +187,9 @@ class Settings:
     # With engine_mode "docker": run the image built on this machine (`engine start --docker --build`), not the
     # published one. Set only by `engine start --docker`.
     engine_docker_build: bool = False
+    # Whether the knowledge agent has models (#274): "enabled", or "disabled" (deterministic-only mode). "" until
+    # `cairnmind init` chooses, which counts as enabled; a config.json from before 0.13.0 has none and is enabled.
+    knowledge_agent: str = ""
     tmux_executable: str = ""
     # Database access outside this machine (#72): a private file holding the password, and the PEM file of
     # a private certificate authority. Both are absolute paths; see database_credentials.
@@ -251,6 +254,8 @@ class Settings:
         values = json.loads(path.read_text()) if path.exists() else {}
         values.pop("data_dir", None)
         values = {k: v for k, v in values.items() if k in cls.__dataclass_fields__ and not k.startswith("_")}
+        if path.exists():
+            values.setdefault("knowledge_agent", "enabled")  # written before 0.13.0: its models count as configured
         if sys.platform == "darwin":  # only where config.json names none: a stored budget is the user's
             values.setdefault("ask_timeout", DARWIN_ASK_TIMEOUT)
         stored = dict(values)
