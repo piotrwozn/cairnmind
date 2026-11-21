@@ -21,6 +21,7 @@ from rich.cells import cell_len
 
 from .cockpit_state import CockpitState, _atomic, _private_directory, _private_lock
 from .config import SESSION_NAMES, Settings, drop_env
+from .first_start import workspace_refusal
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
@@ -953,8 +954,9 @@ def launch_workspace(settings, takeover=False):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise ValueError("Cairnmind needs an interactive terminal. Use `cairnmind workspace status` to diagnose.")
     manager = WorkspaceManager(settings)
-    if not manager.diagnostics()["available"]:
-        raise ValueError(platform_hints.hint("tmux_launch"))
+    found = manager.diagnostics()
+    if not found["available"]:
+        raise ValueError(workspace_refusal(found))
     manager.broker.ensure()
     manager.create()
     inherited = os.environ.get("TMUX", "").split(",", 1)[0]

@@ -63,7 +63,8 @@ def mac(tmp_path):
     def run(show_flag=False, **environment):
         write()
         text = checks().replace(JAVA_HOME_TOOL, str(tmp_path / "java_home"))
-        flag = '\necho "engine_in_docker=${engine_in_docker:-unset}"' if show_flag else ""
+        flag = ('\necho "engine_in_docker=${engine_in_docker:-unset}"\necho "workspace_ready=${workspace_ready:-unset}"'
+                if show_flag else "")
         result = subprocess.run(
             [BASH, "-c", "set -euo pipefail\n" + text + '\necho "passed JAVA_HOME=${JAVA_HOME:-}"' + flag],
             env={"PATH": str(bin_dir), "HOME": str(tmp_path), **environment}, capture_output=True, text=True,
@@ -141,21 +142,55 @@ def test_a_homebrew_jdk_that_nothing_finds_gets_the_exact_link_line(mac):
     assert "JAVA_HOME" not in result.stderr
 
 
-@pytest.mark.parametrize("missing,hint", [("tmux", "brew install tmux"), ("uv", "brew install uv")])
-def test_missing_tools_on_a_mac_get_homebrew_hints(mac, missing, hint):
+def test_a_missing_uv_on_a_mac_gets_the_homebrew_hint(mac):
     run, state, bin_dir, tmp_path = mac
     state["java_home"] = str(jdk(tmp_path / "Temurin-21.jdk", 21))
-    (bin_dir / missing).unlink()
+    (bin_dir / "uv").unlink()
     result = run()
-    assert result.returncode == 1 and hint in result.stderr and "apt" not in result.stderr
+    assert result.returncode == 1 and "brew install uv" in result.stderr and "apt" not in result.stderr
 
 
-def test_an_old_tmux_on_a_mac_gets_the_homebrew_hint(mac):
+def test_an_old_tmux_on_a_mac_gets_the_homebrew_hint_and_the_installer_goes_on(mac):
     run, state, bin_dir, tmp_path = mac
     state["java_home"] = str(jdk(tmp_path / "Temurin-21.jdk", 21))
     tool(bin_dir / "tmux", "echo 'tmux 3.3a'")
-    result = run()
-    assert result.returncode == 1 and "Found tmux 3.3" in result.stderr and "brew" in result.stderr
+    result = run(show_flag=True)
+    assert result.returncode == 0 and "passed" in result.stdout, result.stderr
+    assert "Found tmux 3.3. Version 3.4+ is required for the terminal workspace" in result.stderr
+    assert "brew install tmux" in result.stderr and "apt" not in result.stderr
+    assert "workspace_ready=false" in result.stdout
+
+
+@pytest.mark.parametrize("system,hint", [("Darwin", "brew install tmux"), ("Linux", "sudo apt install tmux")])
+def test_without_tmux_the_installer_says_the_workspace_is_unavailable_and_goes_on(mac, system, hint):
+    run, state, bin_dir, tmp_path = mac
+    state.update(system=system, java_home=str(jdk(tmp_path / "Temurin-21.jdk", 21)))
+    java(bin_dir / "java", 21)
+    (bin_dir / "tmux").unlink()
+    result = run(show_flag=True)
+    assert result.returncode == 0, result.stderr
+    assert "passed" in result.stdout and "workspace_ready=false" in result.stdout
+    assert result.stderr == ("tmux not found, so the terminal workspace is unavailable; the installation goes on. "
+                             f"For the workspace, install tmux 3.4+: {hint}\n")
+
+
+def test_a_tmux_that_reports_no_version_does_not_stop_the_installer(mac):
+    run, state, bin_dir, tmp_path = mac
+    state.update(system="Linux")
+    java(bin_dir / "java", 21)
+    tool(bin_dir / "tmux", "exit 1")
+    result = run(show_flag=True)
+    assert result.returncode == 0, result.stderr
+    assert "Cannot detect the tmux version" in result.stderr and "workspace_ready=false" in result.stdout
+
+
+def test_the_installer_ends_with_the_workspace_line_only_when_tmux_is_ready():
+    script = SCRIPT.read_text()
+    ready = script.index('if [[ "$workspace_ready" == true ]]; then\n    printf \'Open the terminal workspace: cairnmind\\n\'')
+    ending = script[ready:]
+    assert ending.index("\nelse\n") < ending.index("without it these commands work: cairnmind serve, cairnmind run, "
+                                                   "cairnmind mcp, cairnmind brief.")
+    assert ending.count("Open the terminal workspace") == 1
 
 
 def test_a_connect_only_mac_needs_no_java(mac):
@@ -181,6 +216,31 @@ def test_an_upgrade_finds_a_workspace_in_the_macos_socket_folder(tmp_path):
         result = subprocess.run([BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_terminals"],
                                 env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}",
                                      "TMPDIR": str(tmp_path)}, capture_output=True, text=True, timeout=30)
+        server.close()
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == [str(folder / "tmux.sock")]
+    finally:
+        shutil.rmtree(system_temp, ignore_errors=True)
+
+
+def test_an_upgrade_without_tmux_counts_a_server_it_cannot_ask_as_live(tmp_path):
+    import socket
+    import tempfile
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
+    try:
+        functions = script[start:script.index("# --- end ---", start)]
+        folder = system_temp / f"cairnmind-ui-{os.getuid()}-0123456789abcdef"
+        folder.mkdir()
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(str(folder / "tmux.sock"))
+        bin_dir = tmp_path / "bin"  # `id` only: no tmux on PATH
+        bin_dir.mkdir()
+        (bin_dir / "id").symlink_to(shutil.which("id"))
+        result = subprocess.run([BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_terminals"],
+                                env={"PATH": str(bin_dir), "TMPDIR": str(system_temp)},
+                                capture_output=True, text=True, timeout=30)
         server.close()
         assert result.returncode == 0, result.stderr
         assert result.stdout.splitlines() == [str(folder / "tmux.sock")]

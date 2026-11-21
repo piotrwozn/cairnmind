@@ -160,6 +160,7 @@ rejects request session mismatch. Direct CLI workflow reads inherit the same wor
 `cairnmind mcp --client external [--project P] [--worktree W]` binds nothing at start;
 its first resume_context prepares one external session for the process (refused when
 launcher session/packet variables are set), later calls refresh that session.
+When a request finds nothing listening (a refused connection), the external bridge starts the installation's service as `ask` does and sends the request once more; when the service cannot start, the tool error says why and names `cairnmind serve`. On an installation that only reads the store nothing is started and the error gives the reader reason (#258).
 The answer cache includes complete code fingerprints, normalized profile hashes and
 explicit ignored check inputs; unknown code state prevents cache reuse.
 No arbitrary execution endpoint/MCP tool.

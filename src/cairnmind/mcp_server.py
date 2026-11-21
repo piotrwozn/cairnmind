@@ -123,6 +123,31 @@ def _written_as_path(value: str) -> bool:
     return value.startswith((".", "~")) or "/" in value or os.sep in value
 
 
+UNAVAILABLE = "Cairnmind service is unavailable ({error}); start `cairnmind serve` or use the launcher."
+
+
+def start_service(settings: Settings) -> None:
+    """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
+    external client, which no launcher started it for (#258). Prints nothing: stdout belongs to MCP."""
+    import shlex
+    from .cli import _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service
+    from .first_start import SERVICE_NOT_STARTED
+    from .store_writer import inspect
+    try:
+        role = inspect(settings).get("role")
+    except Exception:  # noqa: BLE001 - the role only decides whether to start; a start is tried either way
+        role = None
+    if role in {"reader", "lost"}:
+        # A reader never runs the service (#70): nothing is spawned, and it is not told to start one (#244).
+        raise RuntimeError(_service_unavailable(settings))
+    try:
+        ensure_service(settings)
+    except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
+        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
+        reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."
+        raise RuntimeError(SERVICE_NOT_STARTED.format(reason=reason, command=command)) from None
+
+
 class ServiceClient:
     WRITES = {"/remember", "/checkpoint", "/plans/save"}
     BOOTSTRAP = {"/sessions/context", "/sessions/ack"}
@@ -149,6 +174,7 @@ class ServiceClient:
             self.external = {"project": project, "worktree": worktree}
             self.session_id = self.packet_id = None
             self._starting = asyncio.Lock()
+            self._service_start = asyncio.Lock()  # parallel tool calls wait for one start; _starting is held by _send's caller
             return
         # Two spellings that disagree leave the server unbound: every write then asks for a verified resume.
         try:
@@ -236,7 +262,8 @@ class ServiceClient:
         return await self._send(method, endpoint, body, query, adopt=endpoint == "/sessions/context")
 
     async def _send(self, method: str, endpoint: str, body: dict[str, Any] | None,
-                    query: dict[str, Any], *, adopt: bool = False, allow_list: bool = False) -> dict[str, Any]:
+                    query: dict[str, Any], *, adopt: bool = False, allow_list: bool = False,
+                    started: bool = False) -> dict[str, Any]:
         timeout = (self.settings.ask_timeout + 15 if endpoint == "/ask" else
                    45 if endpoint in {"/sessions/context", "/sessions/prepare"} else 15)
         try:
@@ -264,8 +291,16 @@ class ServiceClient:
             except ValueError:
                 pass
             raise RuntimeError(f"Cairnmind service rejected the request ({code}): {detail}") from None
+        except httpx.ConnectError:
+            # Nothing listens: the request never reached a service, so sending it again cannot repeat a write.
+            if self.external is None or started:
+                raise RuntimeError(UNAVAILABLE.format(error="ConnectError")) from None
         except (httpx.HTTPError, ValueError) as exc:
-            raise RuntimeError(f"Cairnmind service is unavailable ({type(exc).__name__}); start `cairnmind serve` or use the launcher.") from None
+            raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None
+        # An external client has no launcher that started the service: start it as `ask` does (#258).
+        async with self._service_start:
+            await asyncio.to_thread(start_service, self.settings)  # returns at once when another call started it
+        return await self._send(method, endpoint, body, query, adopt=adopt, allow_list=allow_list, started=True)
 
 
 EXTERNAL_INSTRUCTIONS = (

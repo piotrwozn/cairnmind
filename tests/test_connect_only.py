@@ -444,7 +444,7 @@ def test_a_refused_sign_in_names_the_step_that_creates_the_user(tmp_path, test_e
 def test_the_installer_asks_for_java_and_installs_an_engine_only_when_it_will_run_one(tmp_path):
     script = (ROOT / "scripts" / "install-wsl.sh").read_text()
     start = script.index("# Connect-only: the database runs elsewhere")
-    check = script[start:script.index("if ! command -v tmux", start)]
+    check = script[start:script.index("# tmux 3.4+ is needed only by the terminal workspace", start)]
     empty = tmp_path / "no-tools"
     empty.mkdir()
 
