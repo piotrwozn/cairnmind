@@ -19,7 +19,7 @@ from cairnmind.terminal_i18n import tr
 NEW_SENTENCES = [first_start.KNOWLEDGE_DISABLED, first_start.MODELS_NOT_CONFIGURED, first_start.GET_MODELS,
                  first_start.SERVER_DOWN, first_start.MODEL_MISSING, first_start.CHOSE_ENABLED,
                  first_start.CHOSE_DISABLED, first_start.TURNED_ON, first_start.ASK_OFF, first_start.NEEDS_MODELS,
-                 first_start.KNOWLEDGE_INVALID]
+                 first_start.KNOWLEDGE_INVALID, first_start.RESTART_FOR_MODELS]
 
 
 def test_a_config_from_before_0_13_counts_as_enabled_and_a_new_one_waits_for_init(tmp_path):
@@ -50,6 +50,27 @@ def test_the_unavailable_answer_and_the_status_fields():
                 "other": {"pending": 9, "running": 9, "completed": 0, "failed": 0}}
     assert knowledge_mode.status_fields(pipeline) == {
         "models": "not configured (deterministic-only mode)", "jobs_held": 6, "get_models": first_start.GET_MODELS}
+
+
+def test_status_tells_a_running_disabled_service_to_restart_once_config_says_enabled(tmp_path):
+    pipeline = {group: {"pending": 1, "running": 0, "completed": 0, "failed": 0}
+                for group in ("indexing", "extraction")}
+    settings = Settings.load(tmp_path, create=True)
+    settings.knowledge_agent = "disabled"
+    settings.save()
+    assert knowledge_mode.status_fields(pipeline, settings)["get_models"] == first_start.GET_MODELS
+    knowledge_mode.turn_on(settings)  # `models pull` ran while the service kept running
+    fields = knowledge_mode.status_fields(pipeline, settings)
+    assert fields["get_models"] == first_start.RESTART_FOR_MODELS and fields["models"].startswith("not configured")
+
+
+def test_the_service_refuses_to_start_on_a_knowledge_agent_value_it_does_not_know(tmp_path):
+    from dataclasses import replace
+    from cairnmind.service import create_app
+    settings = replace(Settings.load(tmp_path, create=True), knowledge_agent="on",
+                       arcade_url="http://127.0.0.1:1", ollama_url="http://127.0.0.1:1")
+    with pytest.raises(ValueError, match="knowledge_agent in config.json"):
+        create_app(settings)  # refused before the store is opened
 
 
 def test_the_ask_panel_shows_the_answer_in_polish_and_every_new_sentence_has_polish():
@@ -165,6 +186,18 @@ def test_init_refuses_a_knowledge_agent_value_it_does_not_know(monkeypatch, tmp_
     assert str(result.exception) == "knowledge_agent in config.json is 'maybe'; it must be enabled or disabled."
 
 
+def test_init_refuses_a_configured_but_invalid_model_profile_instead_of_storing_disabled(monkeypatch, tmp_path):
+    seen = _server(monkeypatch, _down)
+    data = tmp_path / "memory"
+    data.mkdir()
+    (data / "config.json").write_text(json.dumps({"port": 1, "knowledge_agent": "", "memory_chat": {
+        "provider": "openai_compatible", "base_url": "https://models.example.invalid/v1"}}))  # no consent to send out
+    path, result = _init(monkeypatch, tmp_path)
+    assert isinstance(result.exception, ValueError) and "Invalid profile" in str(result.exception)
+    assert Settings.load(data).knowledge_agent == ""  # nothing chosen: the person fixes the profile first
+    assert ("POST", "/chat/completions") not in seen and all(call[0] == "GET" for call in seen)  # nothing was sent
+
+
 def _disabled(tmp_path):
     data = tmp_path / "memory"
     data.mkdir()
@@ -190,6 +223,20 @@ def test_models_pull_turns_the_agent_on_and_says_how_to_turn_it_off(monkeypatch,
     assert "set knowledge_agent to disabled in that file and restart the service" in said
     assert Settings.load(data).knowledge_agent == "enabled"
     assert [call for call in seen if call[1] == "/api/pull"] == [("POST", "/api/pull")] * 2
+
+
+def test_models_pull_says_the_agent_is_on_even_when_the_store_step_fails(monkeypatch, tmp_path):
+    _server(monkeypatch, lambda request: httpx.Response(200, content=b'{"status":"success"}\n')
+            if request.url.path == "/api/pull" else httpx.Response(200, json=TAGS))
+
+    def broken(settings, **kw):
+        raise ValueError("the engine cannot be started")
+    monkeypatch.setattr(cli, "store_for", broken)
+    data = _disabled(tmp_path)
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "pull"])
+    assert result.exit_code != 0
+    assert Settings.load(data).knowledge_agent == "enabled"  # the models are here, so it is on ...
+    assert first_start.TURNED_ON.format(config=data / "config.json") in " ".join(result.stderr.split())  # ... and said
 
 
 def test_a_failed_models_pull_leaves_the_agent_disabled(monkeypatch, tmp_path):

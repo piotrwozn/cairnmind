@@ -13,8 +13,8 @@ import fcntl
 
 from . import config
 from .first_start import (ASK_OFF, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
-                          KNOWLEDGE_INVALID, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS, SERVER_DOWN,
-                          TURNED_ON)
+                          KNOWLEDGE_INVALID, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS,
+                          RESTART_FOR_MODELS, SERVER_DOWN, TURNED_ON)
 
 UNAVAILABLE_CODE = "models_not_configured"
 
@@ -54,7 +54,9 @@ def missing_models(settings) -> list[str]:
     reasons = []
     for role in ROLES:
         entry = found[role]
-        url = entry.get("base_url") or settings.ollama_url
+        if str(entry.get("error", "")).startswith("Invalid profile"):
+            raise ValueError(entry["error"])  # a configured but broken profile is not "no models": the person fixes it
+        url =entry.get("base_url") or settings.ollama_url
         if not entry.get("reachable"):
             reason = SERVER_DOWN.format(url=url) if entry.get("base_url") else str(entry.get("error"))
         elif not entry.get("model_available"):
@@ -101,10 +103,14 @@ def unavailable_answer() -> dict:
             "diagnostics": {"stage": "ask", "code": UNAVAILABLE_CODE}}
 
 
-def status_fields(pipeline: dict) -> dict:
-    """What /status adds in deterministic-only mode; pipeline is store.job_summary."""
+def status_fields(pipeline: dict, settings=None) -> dict:
+    """What /status adds in deterministic-only mode; pipeline is store.job_summary. When config.json says enabled
+    by now (models pull or set ran) the running service only reports that it must restart; it never switches."""
     held = sum(pipeline[group][state] for group in ("indexing", "extraction") for state in ("pending", "running"))
-    return {"models": MODELS_NOT_CONFIGURED, "jobs_held": held, "get_models": GET_MODELS}
+    advice = GET_MODELS
+    if settings is not None and config.Settings.load(settings.data_dir).knowledge_agent == "enabled":
+        advice = RESTART_FOR_MODELS
+    return {"models": MODELS_NOT_CONFIGURED, "jobs_held": held, "get_models": advice}
 
 
 def doctor_fields(settings) -> dict:

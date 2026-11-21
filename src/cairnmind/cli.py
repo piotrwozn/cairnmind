@@ -1946,6 +1946,8 @@ def model_pull(ctx: typer.Context):
     (settings.data_dir / "models.lock.json").write_text(json.dumps(lock, indent=2), encoding="utf-8")
     from cairnmind.knowledge_mode import turn_on
     said = turn_on(settings)  # the models are here: the knowledge agent is on from the service's next start (#274)
+    if said:
+        typer.echo(f"Cairnmind: {said}", err=True)  # said now: the store steps below may still fail
     store = store_for(settings)
     from cairnmind.service import schedule_embeddings
     for item in models.get("models", []):

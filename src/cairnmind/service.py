@@ -712,7 +712,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                   "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                   "recent_job_errors": error_rows}
         if not models_on:
-            report.update(knowledge_mode.status_fields(pipeline))
+            report.update(knowledge_mode.status_fields(pipeline, settings))
         return report
 
     def selected_memory_scope(pid: str, requested: str | None, scope: str | None):

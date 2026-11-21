@@ -40,6 +40,8 @@ ASK_OFF = "The knowledge agent is disabled (deterministic-only mode), so no answ
 NEEDS_MODELS = ("{command} needs the knowledge agent's models, and the knowledge agent is disabled "
                 "(deterministic-only mode).")
 KNOWLEDGE_INVALID = "knowledge_agent in config.json is {value}; it must be enabled or disabled."
+RESTART_FOR_MODELS = ("knowledge_agent is enabled in config.json, but this service started without models. Restart "
+                      "the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses them.")
 
 MESSAGES = {
     WORKSPACE_NEEDS: "Środowisko terminalowe wymaga tmux 3.4 lub nowszego.",
@@ -71,6 +73,9 @@ MESSAGES = {
     NEEDS_MODELS: ("{command} wymaga modeli agenta wiedzy, a agent wiedzy jest wyłączony "
                    "(tryb tylko deterministyczny)."),
     KNOWLEDGE_INVALID: "knowledge_agent w config.json ma wartość {value}; musi to być enabled albo disabled.",
+    RESTART_FOR_MODELS: ("knowledge_agent jest włączony w config.json, ale ta usługa wystartowała bez modeli. "
+                         "Uruchom ponownie usługę wiedzy (cairnmind stop, a potem ponownie uruchom Cairnmind), aby "
+                         "używała modeli."),
 }
 
 

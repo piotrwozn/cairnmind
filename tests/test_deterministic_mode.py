@@ -1,8 +1,10 @@
 """Deterministic-only mode on a real store (#274): `knowledge_agent: disabled` in config.json.
 
-No model server exists in these tests. The client given to the service is either Untouched, which records every
+No model server exists in these tests. The client given to the service in-process is Untouched, which records every
 attribute anything asks of it (a test then checks the list is empty), or a counting stand-in once models are
-configured. The configured-but-down case is here too, as the guard of what must not change.
+configured. The tests that run a real service (local_service) use NoGeneration: its models() answers, and embed
+and chat raise, so a model call fails the test. The configured-but-down case is here too, as the guard of what
+must not change.
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import json
 import logging
 import subprocess
 import sys
+from types import SimpleNamespace
 import time
 
 from fastapi.testclient import TestClient
@@ -146,10 +149,15 @@ def test_held_jobs_run_once_after_models_are_configured_and_a_restart_changes_no
     source = store.snapshot(project["id"], "conversation://1", TRANSCRIPT, "transcript")
     store.enqueue("extract", project["id"], {"source_id": source["id"]}, "extract:" + source["id"])
     for start in (1, 2):  # the second start is a restart in the same mode
-        with TestClient(create_app(settings, ollama=Untouched())) as client:
+        model = Untouched()
+        with TestClient(create_app(settings, ollama=model)) as client:
             wait_for(lambda: status_of(client, settings)["jobs_held"], "the held jobs")
             wait_for(lambda: status_of(client, settings)["background"].get("last_scan_at"), "a scan")
             time.sleep(0.6)
+            report = status_of(client, settings)
+        # no jobs loop ran: the model was not asked, no fault was recorded, no worker is claimed
+        assert model.touched == [] and report["background"]["model_error"] is None
+        assert report["background"]["inference"]["worker_running"] is False
         held = jobs(store)
         if start == 1:
             first = held
@@ -171,6 +179,25 @@ def test_held_jobs_run_once_after_models_are_configured_and_a_restart_changes_no
     assert store.query("SELECT count(*) AS n FROM embeddings")[0]["n"] == len(texts)
     assert source["id"] in models.extracted and len(models.extracted) == len(set(models.extracted))  # once each
     assert "models" not in report and report["background"]["inference"]["worker_running"] is True
+
+
+def test_the_embedding_fingerprint_is_not_requested_without_models(workspace, monkeypatch):
+    from cairnmind import memory_fingerprint
+    settings, store, project, root = workspace
+    asked = []
+
+    async def check(client, **kwargs):
+        asked.append(client)
+        return {"status": "ok"}
+    monkeypatch.setattr(memory_fingerprint, "client_of", lambda models: SimpleNamespace())
+    monkeypatch.setattr(memory_fingerprint, "check", check)
+    with TestClient(create_app(settings, ollama=Untouched())) as client:  # disabled
+        wait_for(lambda: status_of(client, settings)["background"].get("last_scan_at"), "a scan")
+        time.sleep(0.4)
+        report = status_of(client, settings)
+    assert asked == [] and "embedding_fingerprint" not in report["background"]
+    with TestClient(create_app(replace(settings, knowledge_agent="enabled"), ollama=Down())) as client:
+        wait_for(lambda: asked, "the fingerprint request of a configured installation")  # the stand-in does work
 
 
 @pytest.mark.parametrize("stored", ["", "enabled"])
@@ -280,9 +307,12 @@ def test_each_deterministic_command_works_without_models(workspace):
     assert "Brief for demo" in run("brief", "demo", text=True)
     run("impact", "demo", "--since", "HEAD", text=True)
     assert run("task", "list", "demo")
+    assert any("Amounts are kept in cents" in json.dumps(row) for row in run("records", "demo"))
     with local_service(settings):  # the service: the memory commands and the session context go through it
         snapshot = run("memory", "snapshot", "demo")
         shown = run("memory", "show", snapshot["path"], text=True)
+        previewed = run("memory", "publish", "demo", "--worktree", str(root), "--preview")
+        assert previewed  # a preview of the confirmed records: nothing written, no model asked
         context = httpx.get(f"{settings.url}/context", params={"project": "demo"},
                             headers={"Authorization": f"Bearer {settings.token}"}, timeout=30)
     assert "Amounts are kept in cents" in shown
