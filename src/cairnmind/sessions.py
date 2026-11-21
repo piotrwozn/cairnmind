@@ -85,24 +85,20 @@ def _scope_contains(root: str, cwd: Any) -> bool:
         return False
 
 
-def _own_extraction(session: dict, record: dict, sources_by_id: dict) -> bool:
-    """Whether ``record`` is a proposal the extraction worker made from one archived message of this very
-    own-agent session, untouched since (#168).
+def _automatic_proposal(record: dict, sources_by_id: dict) -> bool:
+    """Whether ``record`` is a proposal the extraction worker wrote and nobody has touched since (#256).
 
-    Decided from host-written fields only: the store's extraction mark, which a client can neither set nor
-    keep and any later write drops, and the archive's session metadata on the cited source. A confirmed,
-    disputed or edited record, one with another source, and anything cited from another session's or a
-    third party's text all stay in the acknowledged state.
+    Such a proposal is not part of the state an ACK is given for: the packet shows it, labelled, but does
+    not promise it. Decided only from what the store wrote itself: the extraction mark, which only the
+    worker's own write sets, a client can neither set nor keep, any later write drops and a memory package
+    never carries in. The origin label is a client's to write and plays no part. A confirmed, disputed,
+    edited, superseded or imported record, and every write of a person or a session, is not one.
     """
-    if session.get("client") not in AGENT_CLIENTS:
-        return False
     metadata = record.get("metadata")
     mark = metadata.get(EXTRACTION_MARK) if isinstance(metadata, dict) else None
-    source = sources_by_id.get(mark) if isinstance(mark, str) else None
-    return bool(source and record.get("status") == "proposed" and record.get("version") == 1
-                and record.get("source_ids") == [mark] and source.get("project_id") == session["project_id"]
-                and source.get("kind") == "agent_transcript" and source.get("agent_session") == session["id"]
-                and source.get("origin_evidence") is None)
+    return bool(isinstance(mark, str) and record.get("status") == "proposed" and record.get("version") == 1
+                and record.get("source_ids") == [mark]
+                and sources_by_id.get(mark, {}).get("project_id") == record.get("project_id"))
 
 
 def _code_identity(code: dict) -> dict:
@@ -408,9 +404,9 @@ class SessionManager:
         sources_by_id = {row["id"]: row for row in source_rows}
         missing_sources = [source_id for source_id in all_source_ids
                            if sources_by_id.get(source_id, {}).get("project_id") != project_id]
-        # The session's own words restated by extraction are not a change it has to read again (#168);
-        # they stay in the packet, and in the state of every other session.
-        acknowledged = [row for row in relevant if not _own_extraction(session, row, sources_by_id)]
+        # A proposal the extraction worker wrote and nobody touched since stays in the packet but not in the
+        # state an ACK is given for (#256): only its arrival is not a change; any write to it is.
+        acknowledged = [row for row in relevant if not _automatic_proposal(row, sources_by_id)]
         source_ids = sorted({source_id for row in [*acknowledged, *current_items]
                              for source_id in row.get("source_ids", [])})
         state_unknowns = [f"A current plan/task/memory reference has no scoped durable source: {value}"
