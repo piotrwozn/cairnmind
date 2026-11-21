@@ -10,6 +10,8 @@ New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing
 
 A direct upgrade from 0.7.2 to 0.9.0 was not tested. Upgrade a 0.7.2 installation to 0.8.0 first.
 
+Upgrading from 0.11.0 is a backup, the installer and one `cairnmind install` per project; on Linux and WSL it changes no data or configuration. Upgrading from 0.10.0 to 0.11.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Each has its section below.
+
 ## From DevBrain 0.8.0 to Cairnmind 0.9.0
 
 0.9.0 is the first release under the name Cairnmind. The command is `cairnmind` and the Python module is `cairnmind`; `devbrain` remains as a command alias and, for one release, as an import alias. Your memory stays where it is: the data directory `~/.local/share/devbrain`, the `DEVBRAIN_*` variables, `.memory/devbrain` and `.devbrain/checks.toml` keep their names in this release.

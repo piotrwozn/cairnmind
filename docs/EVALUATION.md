@@ -14,6 +14,27 @@ Exit codes are 0 for passed, 1 for failed and 3 when a required model or client 
 
 The evaluations use the models the knowledge agent is configured with, on their servers (`cairnmind models set`, see [API.md](API.md#the-knowledge-agents-models)). A passing `eval run`, `eval memory` or `eval repository` is recorded in `models.evaluated.json` in the data directory, for exactly the pair of model identities and the setup it ran with: each role's server, the chat context window and the reasoning effort (`"models_evaluation_recorded": true` in its output). The `eval memory` report says `"inference": "local_ollama"` with the default local Ollama, and otherwise `"configured_model_servers"` with `model_servers`, which names each role's kind of server and whether its content left this computer. A pair counts as evaluated once `eval run` and `eval memory` have both passed with it; `cairnmind doctor` shows the record, and answers given with other models than the release's are labelled `unevaluated` until then. After changing only the chat model, run both again; after changing the embedding model, run `rebuild-vectors` first.
 
+## Running the evaluations
+
+```bash
+cairnmind eval run
+cairnmind eval run --clients
+cairnmind eval run --clients --skip-claude
+cairnmind benchmark my-app "Where do we handle login errors?"
+```
+
+`eval run` exercises 20 scenarios against a real Ollama in a temporary repository and a separate ArcadeDB database. The optional `--clients` flag starts a fresh Codex, then Claude, then Codex again, using existing logins and consuming their quotas. A missing model, client or login yields `not_run`. The report gives accuracy, state errors, latency, the local model's context size, and token counts only when the provider actually reports them.
+
+`--clients --skip-claude` checks only two fresh Codex sessions and does not start a Claude process. The report labels this as a partial test and does not count it as a full cross-client handoff. Codex tool approvals cover only the four operations of the `cairnmind_eval` server against the temporary database; the sandbox stays `read-only`.
+
+`benchmark` times the first answer to a question against the cached repeat. It measures latency only and does not replace a quality evaluation.
+
+```bash
+cairnmind eval memory
+```
+
+This is an explicit test against a real Ollama: extraction of a fact, a decision and a task, transfer between two isolated databases, and reconstruction of a sourced answer. It requires all expected findings; an empty extraction result fails the scenario. It does not start Codex or Claude. Exit codes: `0` success, `1` failure, `3` required models missing.
+
 ## Results for 0.12.0
 
 The evaluations of the release gate, run once each on 18 November 2026 on the code of the release (b20a79f, with the version set to 0.12.0), with `qwen3.5:9b` (digest 56671c2a…) and `qwen3-embedding:0.6b` (digest ac6da0df…), the same models as 0.11.0, on an NVIDIA RTX 4080 Super under WSL2 with Python 3.12.3 and the ArcadeDB 26.11.1 engine of the distribution, default settings (`ask_timeout` 60). Each command had its own temporary data directory and engine, never an installation. The hand-off with real clients (`eval run --clients`) was not run. `eval repository` indexed a clone of b20a79f. Unlike the 0.11.0 runs, the GPU was shared with a running Cairnmind service.
