@@ -57,12 +57,14 @@ def is_loopback(url: str) -> bool:
 REMOTE_OLLAMA = ("{setting} names {host}, a server on another computer. A model server there receives memory "
                  "content (your questions and the text of the classes in memory_remote_classes), and nothing was "
                  "agreed to that, so nothing is sent to it. To use it, give your consent with `cairnmind models set "
-                 "--provider ollama --base-url URL --allow-remote` (the address needs HTTPS); to use the Ollama on "
+                 "--role chat|embedding --provider ollama --model NAME --base-url URL --allow-remote`, once for "
+                 "chat and once for embedding (the address needs HTTPS); to use the Ollama on "
                  "this computer, set ollama_url to http://127.0.0.1:11434.")
 MESSAGES = {REMOTE_OLLAMA: ("{setting} wskazuje {host}, serwer na innym komputerze. Serwer modeli tam dostaje treść "
                             "pamięci (twoje pytania i tekst klas z memory_remote_classes), a na to nie wyrażono zgody, "
                             "więc nic do niego nie jest wysyłane. Aby go używać, wyraź zgodę poleceniem `cairnmind "
-                            "models set --provider ollama --base-url URL --allow-remote` (adres musi używać HTTPS); "
+                            "models set --role chat|embedding --provider ollama --model NAME --base-url URL "
+                            "--allow-remote`, osobno dla chat i dla embedding (adres musi używać HTTPS); "
                             "aby używać Ollamy na tym komputerze, ustaw ollama_url na http://127.0.0.1:11434.")}
 
 
@@ -73,14 +75,18 @@ class RemoteServerRefused(ValueError):
 def local_server(settings: Settings) -> str:
     """The address of the local Ollama of the settings, or RemoteServerRefused: a role without a profile
     never reaches another computer, from config.json or from the environment."""
-    if is_loopback(settings.ollama_url):
-        return settings.ollama_url
+    try:
+        if is_loopback(settings.ollama_url):
+            return settings.ollama_url
+        host = urlsplit(settings.ollama_url).hostname
+    except ValueError:  # an address urlsplit cannot read is not the local one
+        host = None
     from .config import env_names
     variable = next((key for key in env_names("OLLAMA_URL") if os.environ.get(key)), None)
     from_environment = "ollama_url" in (settings._origin or {}).get("kept", {})
     setting = f"ollama_url ({variable})" if from_environment and variable else "ollama_url"
     raise RemoteServerRefused(REMOTE_OLLAMA.format(
-        setting=setting, host=urlsplit(settings.ollama_url).hostname or "an unreadable address"))
+        setting=setting, host=host or settings.ollama_url))
 
 
 def normalize_memory_model(row: Any, role: str) -> dict:

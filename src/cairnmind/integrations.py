@@ -284,7 +284,7 @@ def doctor(settings: Settings) -> dict[str, Any]:
             except (httpx.HTTPError, ValueError, AttributeError, TypeError):
                 pass
         except RemoteServerRefused as exc:
-            result["ollama"]["error"] = str(exc)
+            result["ollama"].update(error=str(exc), refused=True)
         except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:  # a reply of another shape
             result["ollama"]["error"] = type(exc).__name__
         # The address asked, so a reader of the report can tell a model server at the same address (#244).

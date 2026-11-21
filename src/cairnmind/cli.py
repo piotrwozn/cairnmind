@@ -1956,7 +1956,7 @@ def model_pull(ctx: typer.Context):
     try:
         local_server(settings)
     except ValueError as exc:  # another computer: nothing is downloaded there or asked (#288)
-        raise typer.BadParameter(str(exc)) from None
+        refuse(str(exc))
     with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900)) as client:
         for name in local:
             typer.echo(f"Downloading {name}…", err=True)

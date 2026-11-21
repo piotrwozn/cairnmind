@@ -120,6 +120,35 @@ def test_a_loopback_address_and_every_profile_behave_as_before(tmp_path, url):
     assert memory_models.server(profiled, "chat")["base_url"] == "https://models.example/v1"  # the profile decides
 
 
+def test_the_installer_summary_prints_the_refusal_once_and_not_a_server_that_does_not_answer(tmp_path):
+    from cairnmind import doctor_attention
+    settings = Settings(data_dir=tmp_path, ollama_url=REMOTE)
+    sentence = [memory_models._doctor_role(settings, role, None) for role in ("chat", "embedding")]
+    report = {"ollama": {"available": False, "error": sentence[0]["error"], "refused": True, "url": REMOTE},
+              "memory_models": dict(zip(("chat", "embedding"), sentence))}
+    lines = doctor_attention.attention(report)
+    assert len(lines) == 1 and "--allow-remote" in lines[0] and lines[0].endswith("11434.")
+    assert "does not answer" not in lines[0]
+    report["memory_models"] = {}  # both roles hold a consent: a leftover address is not a fault to report
+    assert doctor_attention.attention(report) == []
+
+
+def test_the_command_in_the_refusal_runs_for_each_role_and_an_unreadable_address_is_refused(tmp_path):
+    assert "--role chat|embedding" in memory_models.REMOTE_OLLAMA and "--model NAME" in memory_models.REMOTE_OLLAMA
+    for url in ("http://[::1]@evil.example", "http://[127.0.0.1]:11434", "evil.example:11434"):
+        with pytest.raises(RemoteServerRefused, match="ollama_url names"):
+            memory_models.local_server(Settings(data_dir=tmp_path, ollama_url=url))
+
+
+def test_models_pull_shows_the_refusal_without_a_usage_box(tmp_path, monkeypatch, seen):
+    data = tmp_path / "memory"
+    data.mkdir()
+    (data / "config.json").write_text(json.dumps({"port": 1, "knowledge_agent": "enabled", "ollama_url": REMOTE}))
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "pull"])
+    assert result.exit_code == 2 and "Invalid value" not in result.output and "Usage" not in result.output
+    assert "--allow-remote" in " ".join(result.output.split())
+
+
 def test_the_refusal_has_a_polish_sentence():
     assert tr(memory_models.REMOTE_OLLAMA, "pl") == memory_models.MESSAGES[memory_models.REMOTE_OLLAMA]
     assert memory_models.MESSAGES[memory_models.REMOTE_OLLAMA] != memory_models.REMOTE_OLLAMA
