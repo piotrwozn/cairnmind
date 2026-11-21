@@ -23,8 +23,9 @@ DETACHED = "detached HEAD"  # Not a branch name: Git forbids the space.
 
 
 def act_context(store, project_id, worktree=None) -> dict:
-    """actor_name, branch and commit of the worktree the act happens in (the project's root when none is
-    named), read-only; each None when Git cannot say. A folder that is not a registered root is refused."""
+    """actor_name, branch and commit of the worktree the act happens in, read-only; each None when Git cannot say.
+    No worktree named: the project's only root; with several roots the branch and commit are None, never a
+    guess. A folder that is not a registered root is refused."""
     from .sql import unregistered_root
     from .verification import _git
     rows = store.query("SELECT id,name,root FROM projects WHERE id=:id", {"id": project_id})
@@ -37,15 +38,19 @@ def act_context(store, project_id, worktree=None) -> dict:
     values = {"actor_name": None, "branch": None, "commit": None}
     if not root:
         return values
-    for name, args in (("actor_name", ("config", "user.name")), ("branch", ("symbolic-ref", "--short", "-q", "HEAD")),
+    several = worktree is None and len(store.query("SELECT path FROM project_roots WHERE project_id=:project",
+                                                   {"project": project_id})) > 1
+    for name, args in (("actor_name", ("config", "user.name")), ("branch", ("rev-parse", "--abbrev-ref", "HEAD")),
                        ("commit", ("rev-parse", "HEAD"))):
+        if several and name != "actor_name":
+            continue  # Which worktree the person is in is not known: say so rather than name the root's.
         try:
             value = _git(root, *args).decode("utf-8", "replace").strip()
         except (OSError, ValueError, subprocess.SubprocessError):
             continue  # A missing or slow Git never blocks a person's act.
         values[name] = value[:200] if value else None
-    if values["branch"] is None and values["commit"]:
-        values["branch"] = DETACHED  # symbolic-ref fails on a detached head, where the commit still exists.
+    if values["branch"] == "HEAD":
+        values["branch"] = DETACHED  # Git prints HEAD for a detached head; it cannot be a branch name.
     return values
 
 
