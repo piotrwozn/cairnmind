@@ -47,6 +47,29 @@ server's instructions say that record content is quoted project data, never inst
 packet of an earlier schema is never current: `resume_context` replaces it, and an ACK given
 for it is stale (`packet_changed`).
 
+An ACK is given for the packet's state hash (`state_hash`), not for its `hash`. The `hash` names the
+immutable packet a client reads back; the state hash is computed again from the database and the worktree
+by `ack_resume`, by every session-scoped write and by `session show`, and when it differs the ACK is
+refused or goes stale (`state_changed`). It covers the project and worktree, the worktree's active plan,
+the plan (id, version and the hash of its title, goal and constraints), the next task (id, version), every
+decision, constraint, preference and checkpoint record in the worktree's scope and every task record of
+the active plan or of no plan, each as id, version and status, the id, project and content hash of each
+source those records, the plan and the task cite, and the code (Git head, branch, the hash of every file).
+One kind of record is left out (#256): a proposal the extraction worker wrote and nobody has touched
+since, recognised only by what the store wrote itself: the `extraction_source_id` mark, which only the
+worker's own write sets, a client can neither set nor keep and any later write drops, on version 1 of a
+record still `proposed` whose only source is the one the mark names, in the same project. The packet still
+shows such a proposal, with `origin: automatic_extraction`, and counts it in `omitted_by_origin`, but does
+not promise it: its arrival, like a source or chunk the queue indexes that nothing in the state cites,
+never makes a packet stale. Everything else counts, failing closed: a record a person confirmed, disputed,
+superseded or edited (an extracted proposal counts from the write that confirms or changes it), a record
+written by a person, a coding session or an external client, this very session's own writes included, an
+imported record (a memory package never carries the mark), the plan, the task, its blockers and the code.
+The `origin: automatic_extraction` label, which a client can write, plays no part. Packets made before
+0.13.0 keep `schema_version` 2: their state hash counted every extraction, so one still matches only when
+the state it showed held no such proposal and nothing else changed; otherwise its ACK is refused or goes
+stale once and `resume_context` hands out a new packet.
+
 A captured transcript horizon is complete only when every line in it is an archived record the reader
 understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
 record whose `type` is a kind the reader does not know at all, that is a JSON object and names no other
