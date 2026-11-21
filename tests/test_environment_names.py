@@ -64,6 +64,30 @@ def test_load_records_the_spelling_each_variable_value_came_from(monkeypatch, tm
     assert created._origin["environment"]["port"] == "CAIRNMIND_PORT"
 
 
+def test_a_variable_that_repeats_config_json_supplies_nothing(monkeypatch, tmp_path):
+    root = tmp_path / "data"
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example:2490")
+    monkeypatch.setenv("CAIRNMIND_PORT", "9101")
+    monkeypatch.setenv("CAIRNMIND_ARCADE_USER", "cairnmind")
+    first = Settings.load(root, create=True)
+    assert first._origin["environment"] == {"port": "CAIRNMIND_PORT", "arcade_user": "CAIRNMIND_ARCADE_USER"}
+    # Every command loads with create=True: the saved address, still in the variable, is config.json's now.
+    again = Settings.load(root, create=True)
+    assert again._origin["environment"] == first._origin["environment"]
+    stored = json.loads((root / "config.json").read_text())
+    (root / "config.json").write_text(json.dumps({**stored, "port": 9101}))  # config.json names the port the variable gives
+    assert "port" not in Settings.load(root, create=True)._origin["environment"]
+
+
+def test_an_empty_connect_variable_does_not_make_a_connect_only_installation_managed(monkeypatch, tmp_path):
+    root = tmp_path / "data"
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example:2490")
+    Settings.load(root, create=True)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "")  # a project file can forward an empty variable
+    for settings in (Settings.load(root), Settings.load(root, create=True)):
+        assert settings.arcade_connect_url == "https://db.example:2490"
+        assert "arcade_connect_url" not in settings._origin["environment"]
+
 def test_the_database_name_of_an_existing_store_does_not_change(monkeypatch, tmp_path):
     before = Settings.load(tmp_path / "data").arcade_database
     assert before.startswith("devbrain_")  # the default prefix is part of every existing database name

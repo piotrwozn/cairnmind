@@ -275,8 +275,9 @@ class Settings:
                                ("cockpit_port", "COCKPIT_PORT"),
                                ("ollama_url", "OLLAMA_URL")):
             spelling = ENV_PREFIXES[0] + variable
-            if name in ("port", "cockpit_port", "ollama_url"):
-                # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty
+            if name in ("port", "cockpit_port", "ollama_url", "arcade_connect_url"):
+                # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty;
+                # for the connect address it must not turn a connect-only installation into a managed one
                 spelling = next((key for key in env_names(variable) if os.environ.get(key)), None)
                 override = os.environ[spelling] if spelling else None
             else:
@@ -293,7 +294,8 @@ class Settings:
                     raise ValueError(f"{spelling} must be a port number from 1 to 65535.") from None
             values[name] = override
             kept[name] = (stored.get(name), override)
-            environment[name] = spelling
+            if override != stored.get(name):  # a variable that repeats config.json supplies nothing
+                environment[name] = spelling
         # Connect-only (#68): arcade_connect_url is the address. The stored arcade_url stays as it is in
         # config.json, so that removing the setting brings the managed engine back.
         connect, conflict = values.get("arcade_connect_url") or "", None

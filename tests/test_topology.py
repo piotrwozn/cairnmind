@@ -23,7 +23,8 @@ from cairnmind.database_mode import MODE_INVALID
 from cairnmind.first_start import KNOWLEDGE_INVALID
 from cairnmind.terminal_safe import safe_text
 from cairnmind.topology import (
-    CHANGE_HINT, EVALUATED_NOT, EVALUATED_NOT_CHECKED, EVALUATED_PASSED, EVALUATED_RELEASE, EVALUATED_UNKNOWN, FROM_VARIABLE,
+    CHANGE_HINT, EVALUATED_NOT, EVALUATED_NOT_CHECKED, EVALUATED_PASSED, EVALUATED_RELEASE, EVALUATED_UNKNOWN, EVALUATED_UNREACHABLE,
+    FROM_VARIABLE,
     ITEM_DATABASE_HERE, ITEM_ENGINE_DOCKER, ITEM_MODELS_EMBEDDING, ITEM_NO_SERVICE, ITEM_SERVICE_VARIABLE,
     MODELS_DISABLED, MODELS_INVALID, OLLAMA_FROM_VARIABLE, STORAGE_CONNECT_HERE, STORAGE_CONNECT_REMOTE, STORAGE_DOCKER,
     STORAGE_PROBLEM, lines, status_words, topology)
@@ -96,7 +97,7 @@ def test_an_invalid_engine_mode_is_named_and_not_read_as_native(tmp_path, offlin
     assert MODE_INVALID.format(value="'dokker'") in place["lines"][0]
     assert place["storage"]["engine"] == "unknown" and "native engine" not in place["lines"][0]
     assert "cannot be used" in place["lines"][2]
-    assert status_words(place)[0] == ("invalid", True)
+    assert status_words(place)[0] == ("error", True)
 
 
 def test_a_remote_store_and_a_reader_role(tmp_path, offline):
@@ -194,7 +195,9 @@ def test_split_roles_are_shown_each_on_its_server(tmp_path, offline):
     ({"chat_model": "other:4b"}, {"evaluated": False, "chat": {"identity": "a@1"}, "embedding": {"identity": "b@1"}},
      "not evaluated", EVALUATED_NOT),
     ({"chat_model": "other:4b"}, {"evaluated": False, "chat": {"identity": "a@1"}, "embedding": {"error": "Timeout"}},
-     "unknown", EVALUATED_UNKNOWN)])
+     "unknown", EVALUATED_UNKNOWN),
+    ({"chat_model": "other:4b"}, {"evaluated": False, "chat": {"reachable": False, "error": "ConnectError"},
+                                  "embedding": {"identity": "b@1"}}, "unreachable", EVALUATED_UNREACHABLE)])
 def test_evaluation_states(tmp_path, offline, fields, models, word, sentence):
     place = topology(make(tmp_path, **fields), models=models)
     assert place["models"]["evaluated"] == word
@@ -207,19 +210,34 @@ def test_an_invalid_profile_or_knowledge_agent_is_a_named_problem(tmp_path, offl
     assert place["models"]["problem"] == "chat: " + message and place["models"]["chat"]["problem"].endswith(message)
     assert place["lines"][1] == MODELS_INVALID.format(problem="chat: " + message)
     assert place["models"]["evaluated"] is None and "Ollama at" not in place["lines"][2]
-    assert status_words(place)[1] == ("invalid", True)
+    assert status_words(place)[1] == ("error", True)
 
     other = topology(make(tmp_path, memory_chat=None, knowledge_agent="maybe"))
     said = KNOWLEDGE_INVALID.format(value="'maybe'")
     assert other["models"]["knowledge_agent"] == "invalid" and other["lines"][1] == MODELS_INVALID.format(problem=said)
-    assert "chat" not in other["models"] and status_words(other)[1] == ("invalid", True)
+    assert "chat" not in other["models"] and status_words(other)[1] == ("error", True)
 
 
 def test_an_ollama_url_that_is_not_an_address_is_a_named_problem(tmp_path, offline):
     place = topology(make(tmp_path, ollama_url="http://[::1"))
     assert place["models"]["problem"] == "chat: ollama_url is not a valid address."
-    assert status_words(place)[1] == ("invalid", True)
+    assert status_words(place)[1] == ("error", True)
 
+
+def test_a_writer_row_that_the_journal_head_contradicts_is_not_called_the_writer(tmp_path, offline):
+    problem = "the journal head names another installation; run cairnmind store takeover --yes"
+    place = topology(make(tmp_path), writer={"role": "writer", "head_writer": "other", "problem": problem})
+    assert place["lines"][0].endswith(" " + problem) and "This installation writes it." not in place["lines"][0]
+    assert place["storage"]["writer"]["problem"] == problem
+    assert status_words(place)[0] == ("local", True)
+
+
+def test_setup_names_an_ollama_url_that_is_not_an_address(tmp_path, monkeypatch):
+    make(tmp_path, ollama_url="http://[::1")
+    monkeypatch.setattr(store_writer, "inspect", lambda settings: {"role": "writer"})
+    result = invoke(tmp_path, "setup")
+    assert result.exit_code == 0, result.output
+    assert "ollama_url is not a valid address." in result.output
 
 def test_the_topology_reads_only(tmp_path, offline):
     settings = remote_store(tmp_path, memory_chat=REMOTE)

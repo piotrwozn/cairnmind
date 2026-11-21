@@ -45,6 +45,7 @@ EVALUATED_RELEASE = "These are the release's models, evaluated for this release.
 EVALUATED_PASSED = "Evaluated with these models: cairnmind eval run and cairnmind eval memory passed."
 EVALUATED_NOT = "Not evaluated with these models: run cairnmind eval run and cairnmind eval memory."
 EVALUATED_UNKNOWN = "Whether they were evaluated is unknown: a model server did not name its model."
+EVALUATED_UNREACHABLE = "Whether they were evaluated is unknown: a model server did not answer."
 EVALUATED_NOT_CHECKED = "Whether they were evaluated is not checked here; cairnmind doctor checks it."
 
 THIS_MACHINE = "On this machine: {items}."
@@ -72,7 +73,7 @@ WORD_CONNECT_HERE = "local (connect-only)"
 WORD_REMOTE = "remote"
 WORD_MIXED = "mixed"
 WORD_OFF = "off"
-WORD_INVALID = "invalid"
+WORD_INVALID = "error"
 
 MESSAGES = {
     STORAGE_NATIVE: "Baza: ArcadeDB na tym komputerze pod adresem {url}, uruchamiana i zatrzymywana przez Cairnmind (silnik natywny, Java 21).",
@@ -97,6 +98,7 @@ MESSAGES = {
     EVALUATED_PASSED: "Ocenione z tymi modelami: cairnmind eval run i cairnmind eval memory przeszły.",
     EVALUATED_NOT: "Nieocenione z tymi modelami: uruchom cairnmind eval run i cairnmind eval memory.",
     EVALUATED_UNKNOWN: "Nie wiadomo, czy zostały ocenione: serwer modeli nie podał nazwy swojego modelu.",
+    EVALUATED_UNREACHABLE: "Nie wiadomo, czy zostały ocenione: serwer modeli nie odpowiedział.",
     EVALUATED_NOT_CHECKED: "Tutaj nie sprawdzono, czy zostały ocenione; sprawdza to cairnmind doctor.",
     THIS_MACHINE: "Na tym komputerze: {items}.",
     ITEM_SERVICE: "usługa wiedzy pod adresem {url}",
@@ -118,7 +120,7 @@ MESSAGES = {
     WORD_REMOTE: "zdalnie",
     WORD_MIXED: "mieszane",
     WORD_OFF: "wyłączone",
-    WORD_INVALID: "nieprawidłowe",
+    WORD_INVALID: "błąd",
 }
 
 
@@ -159,6 +161,8 @@ def _evaluated(settings, models: dict | None, roles: dict) -> str:
         return "passed"
     if all(isinstance(models.get(role), dict) and models[role].get("identity") for role in roles):
         return "not evaluated"
+    if any(isinstance(models.get(role), dict) and models[role].get("reachable") is False for role in roles):
+        return "unreachable"
     return "unknown"
 
 
@@ -178,7 +182,7 @@ def topology(settings, *, models: dict | None = None, writer: dict | None = None
     if reason:
         storage["problem"] = reason
     if writer is not None:
-        storage["writer"] = {key: writer[key] for key in ("role", "reason") if key in writer}
+        storage["writer"] = {key: writer[key] for key in ("role", "reason", "problem") if key in writer}
 
     chosen: dict = {}
     try:
@@ -267,7 +271,9 @@ def _storage_line(place: dict, language: str) -> str:
     writer = storage.get("writer")
     if writer:
         reason = _safe(writer.get("reason", ""), 400)
-        if writer["role"] == "writer":
+        if writer.get("problem"):  # a writer row that the journal head contradicts: never "this installation writes it"
+            parts.append(_safe(writer["problem"], 400))
+        elif writer["role"] == "writer":
             parts.append(_say(WRITER_YES, language))
         elif writer["role"] == "unknown":
             parts.append(_say(WRITER_UNKNOWN, language, reason=reason))
@@ -291,7 +297,7 @@ def _place(block: dict, language: str) -> str:
 
 
 EVALUATION_SENTENCES = {"release": EVALUATED_RELEASE, "passed": EVALUATED_PASSED, "not evaluated": EVALUATED_NOT,
-                        "unknown": EVALUATED_UNKNOWN, "not checked": EVALUATED_NOT_CHECKED}
+                        "unknown": EVALUATED_UNKNOWN, "unreachable": EVALUATED_UNREACHABLE, "not checked": EVALUATED_NOT_CHECKED}
 
 
 def _models_line(place: dict, language: str) -> str:
@@ -345,7 +351,7 @@ def status_words(place: dict) -> tuple[tuple[str, bool], tuple[str, bool]]:
         word = {"native": WORD_LOCAL, "docker": WORD_LOCAL_DOCKER}.get(storage["engine"], WORD_INVALID)
     else:
         word = WORD_CONNECT_HERE if storage["on_this_machine"] else storage["host"]  # a host is not translated
-    stored = (word, word == WORD_INVALID or "problem" in storage)
+    stored = (word, word == WORD_INVALID or "problem" in storage or bool(storage.get("writer", {}).get("problem")))
 
     models = place["models"]
     if models["knowledge_agent"] == "disabled":
