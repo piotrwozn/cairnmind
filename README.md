@@ -32,7 +32,7 @@ The columns are kinds of tools, not products; a particular tool may do more than
 
 Shared memory for a team works through Git ([Team memory](docs/MEMORY.md#team-memory)). Planned, not there yet: read-only views above a single project. The steps are on the [features board](https://github.com/users/piotrwozn/projects/2).
 
-## Quick start (2 minutes)
+## Quick start
 
 Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform), and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew). Native Windows is not supported. This path needs no Java, no tmux and no model download. It needs git, [uv](https://docs.astral.sh/uv/) (it fetches Python 3.12 if you do not have it) and Docker running on this machine, which then runs the database engine; with Java 21+ instead, the engine runs natively. On macOS the engine in Docker has not been tested; the tested setup there uses Java 21.
 
@@ -47,7 +47,7 @@ cairnmind ask my-app "Where do we handle login errors?"   # without models: matc
 cairnmind run my-app claude                  # or codex: starts the client bound to this project's memory
 ```
 
-If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal. The installer says which engine it chose. Without Ollama, `cairnmind init`, which the installer runs, saves deterministic-only mode and says so: plans, tasks, the acknowledgement gate, checks, `brief`, `impact`, memory and file indexing work as usual; extraction and embedding jobs wait until models are configured; and `ask` is a full-text search of the project's memory that makes no answer: it reports `unavailable` and lists up to 8 passages that match words of the question, as search results, not as evidence. `run` needs the client installed and signed in, and a project with existing code needs a Git repository and a first commit.
+If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal. The installer says which engine it chose. Without Ollama and its models (or when a configured model server does not answer), `cairnmind init`, which the installer runs, saves deterministic-only mode and names the reason; `cairnmind models pull` or `cairnmind models set` turns the knowledge agent on later. In that mode: plans, tasks, the acknowledgement gate, checks, `brief`, `impact`, memory and file indexing work as usual; extraction and embedding jobs wait until models are configured; and `ask` is a full-text search of the project's memory that makes no answer: it reports `unavailable` and lists up to 8 passages that match words of the question, as search results, not as evidence. `run` needs the client installed and signed in, and a project with existing code needs a Git repository and a first commit.
 
 Cursor, Cline, Zed and other MCP clients use the same memory through `cairnmind mcp --client external`, in a session that is never counted as verified: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
 
@@ -79,7 +79,7 @@ cairnmind stop                   # the service reads the choice when it starts; 
 | What an external MCP client writes through its tools is marked `origin_evidence: degraded` and never shown or counted as verified | That what it reports is true; a `cairnmind` command its agent runs in a shell has no session and is stored unmarked |
 | Without models, `ask` makes no answer: it reports `unavailable` and lists full-text matches as search results | That a listed passage answers the question: no citation is made or checked |
 
-Local memory reduces how much history an assistant must carry, but it does not remove the context limits or the cost of the assistants themselves. Portable snapshots can contain full conversation text; review them before sharing. The full rules and their edge cases (what the citation check tolerates, what the support check misses, transcript record kinds a newer client writes, the limits of the analysis) are in [docs/CONTRACTS.md](docs/CONTRACTS.md#what-it-guarantees-and-what-it-does-not).
+Local memory reduces how much history an assistant must carry, but it does not remove the context limits or the cost of the assistants themselves. Portable snapshots can contain full conversation text; review them before sharing. The full rules and their edge cases (what the citation check tolerates, what the support check misses, transcript record kinds a newer client writes, the limits of the analysis) are in [docs/CONTRACTS.md](docs/CONTRACTS.md#what-it-guarantees-and-what-it-does-not) and [Limits](docs/CONTRACTS.md#limits).
 
 ## Measured results
 

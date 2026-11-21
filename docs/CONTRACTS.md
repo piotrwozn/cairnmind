@@ -88,6 +88,8 @@ Cairnmind checks things a program can check:
 | A session acknowledged the exact packet, plan and task versions before writing | That the model understood what it acknowledged |
 | A test run passed for this task definition, check profile and code fingerprint, and whether it is still fresh | That passing tests mean every acceptance criterion is met, or that a review happened |
 | Where a stored finding came from, and when its evidence existed | That the finding is true |
+| What an external MCP client writes through its tools is marked `origin_evidence: degraded` and never shown or counted as verified ([External clients](EXTERNAL_CLIENTS.md)) | That what it reports is true; a `cairnmind` command its agent runs in a shell has no session and is stored unmarked |
+| Without models, `ask` makes no answer: it reports `unavailable` and lists full-text matches as search results ([deterministic-only mode](TERMINAL.md)) | That a listed passage answers the question: no citation is made or checked |
 
 Local memory reduces how much history an assistant must carry, but it does not remove the context limits or the cost of the assistants themselves. Portable snapshots can contain full conversation text; review them before sharing.
 

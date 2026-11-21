@@ -7,10 +7,10 @@ Terminal: tmux + Textual ──► Codex CLI / Claude Code / API agent / Copilot
                            │ MCP: resume / ACK / ask / plans
                            ▼
                  Local Cairnmind service
-                  │                   │
+                  │                             │
        knowledge agent (Ollama, optional)    independent archiving
-                  │                   │
-          Hybrid RAG + GraphRAG ◄─────┘
+                  │                             │
+          Hybrid RAG + GraphRAG ◄───────────────┘
                   │
        ArcadeDB: sources, vectors, graph, decisions, tasks
 ```
