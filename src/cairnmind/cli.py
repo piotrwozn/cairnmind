@@ -245,7 +245,7 @@ def last_log_line(path: Path) -> str:
     return "".join(char if char.isprintable() else "?" for char in text)[:500]
 
 
-_PORT_ADVICE = "Give this data directory its own port: `port` in {}/config.json, or CAIRNMIND_PORT for one command."
+from cairnmind.service_token import PORT_ADVICE as _PORT_ADVICE, foreign_service_text, refused_token  # noqa: E402
 
 
 def _bind_failed(log: Path, since: int) -> bool:
@@ -421,9 +421,8 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
                 detail = response.text
             # Only where the service was not started or matched by instance id here: after that match a 401 is this
             # directory's own service with a changed token, not another directory's.
-            if not start_service and response.status_code == 401 and "Invalid local service token" in str(detail):
-                detail = (f"The service at {settings.url} does not accept the token of {settings.data_dir}, so it "
-                          f"most likely belongs to another data directory. {_PORT_ADVICE.format(settings.data_dir)}")
+            if not start_service and refused_token(response.status_code, detail):
+                detail = foreign_service_text(settings)
             # The service's answer, not a wrong argument; shown as it is, without control characters.
             from cairnmind.terminal_safe import safe_text
             if raise_refusal:
@@ -927,8 +926,9 @@ def usage(ctx: typer.Context, project: ProjectArg,
 @app.command()
 def status(ctx: typer.Context, project: str | None = None):
     """Ask the running service for its queue, store and model state. Starts nothing."""
-    output(request(ctx.obj, "GET", "/status", start_service=False,
-                   params={"project": project} if project else {}))
+    result = request(ctx.obj, "GET", "/status", start_service=False, params={"project": project} if project else {})
+    # The address that was asked, so a report from another directory's service is recognised as such.
+    output({"service_url": ctx.obj.url, **result} if isinstance(result, dict) else result)
 
 
 @store_app.command("size")
