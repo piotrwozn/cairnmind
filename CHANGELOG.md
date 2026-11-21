@@ -20,6 +20,11 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A confirmation, review or conflict decision made in a second worktree now records that worktree's branch and commit in its audit instead of the project root's; `cairnmind memory confirm-plan` accepts `--worktree`, and a worktree that is not a registered root of the project is refused (#247).
 - An audit made on a detached head now says `detached HEAD` with its commit instead of the branch `HEAD`; a confirmation that cannot name its worktree in a project with several worktrees records no branch or commit instead of the project root's (#247).
 - A resume packet's instruction for accepting an unknown transcript record kind is no longer cut off when the transcript's archive path is long, in the packet or in the refusal an agent gets from ack (#263).
+- `CAIRNMIND_PORT`, `CAIRNMIND_COCKPIT_PORT` and `CAIRNMIND_OLLAMA_URL` are now read from the environment like the database address (used by that process, never written to `config.json`), so a second data directory can have its own ports and `cairnmind init` takes the model server address from the environment. `cairnmind doctor` shows the service URL and says when a value in force comes from the environment (#267).
+- A command that reaches a service that does not accept its token now says that the service most likely belongs to another data directory and names the port setting, instead of "Invalid local service token" alone; a service that cannot bind its port reports the port and the setting in the command that started it (#267).
+- The workspace process now ends with exit code 0 when you stop it with `cairnmind workspace stop`, and keeps a non-zero code when the tmux server is killed from outside (#269).
+- The approval dialog of the built-in agent now starts with focus on Cancel when the request fits on screen, so a stray Enter refuses and approving needs a deliberate key press; a longer request starts on its text, and the hint names Tab to reach the buttons (#268).
+- Each chunk is now queued for embedding once instead of twice, which halves the number of pending jobs shown while a new project is indexed; a failed embedding job still gets a fresh job on the next repair or model change (#262).
 
 ### Development and CI
 
