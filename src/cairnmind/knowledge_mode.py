@@ -146,11 +146,12 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
             "elapsed_seconds": round(time.monotonic() - started, 3)}
 
 
-def unavailable_answer(found: dict, index_errors=()) -> dict:
+def unavailable_answer(found: dict, index_errors=(), notes=()) -> dict:
     """What /ask returns in deterministic-only mode: no answer (status unavailable, no source), and the passages
-    text_matches found, in their own key, said by the answer sentence to be search results and not an answer."""
+    text_matches found, in their own key, said by the answer sentence to be search results and not an answer.
+    `notes` are fixed sentences for the unknowns, such as that the code graph is not built yet (#286)."""
     errors = [str(error)[:240] for error in list(index_errors)[:5]]
-    unknowns = [GET_MODELS, *([MATCHES_HELD_BACK] if found["held_back"] else []), *errors]
+    unknowns = [GET_MODELS, *([MATCHES_HELD_BACK] if found["held_back"] else []), *notes, *errors]
     diagnostics = {"stage": "ask", "code": UNAVAILABLE_CODE}
     if found["held_back"]:
         diagnostics["held_back"] = found["held_back"]

@@ -16,6 +16,7 @@ from jsonschema import Draft202012Validator
 
 from .answer_contract import answer_contract_errors, prepare_answer_schema
 from .citation_match import locate_quote, quote_weight
+from .code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from .config import Settings
 from .definitions import MAX_DEFINITION_ATTEMPTS, MAX_DEFINITIONS, definition_lines, find_definitions
 from .extraction_input import EXTRACTION_SCHEMA, EXTRACTION_TOKENS, REPAIR_TOKENS, extraction_request, extractor_stamp
@@ -1025,12 +1026,22 @@ class KnowledgeAgent:
             diagnostics["held_back"] = held
             if result.get("status") != "complete":  # the answer may lack sources for that reason
                 result = {**result, "unknowns": [HELD_BACK_UNKNOWN, *result.get("unknowns", [])][:8]}
+        for note in self.code_graph_notes(project_id):
+            # Said, without making a verified answer partial; a partial one lists it among its unknowns too (#286).
+            fresh = result.get("freshness") or {}
+            result = {**result, "freshness": {**fresh, "warnings": [*fresh.get("warnings", []), note][-8:]}}
+            if result.get("status") != "complete":
+                result["unknowns"] = [note, *result.get("unknowns", [])][:8]
         diagnostics["code"] = result.get("diagnostics", {}).get("code", "unavailable")
         label = await answer_label(self.settings, self.ollama)  # None with the release's models
         if label:
             diagnostics["model_evaluation"] = label
         diagnostics["budget"]["elapsed_seconds"] = round(time.monotonic() - started, 3)
         return {**result, "diagnostics": diagnostics}
+
+    def code_graph_notes(self, project_id: str) -> list[str]:
+        """The note that the project's code graph is not built yet, while that is so; else nothing (#286)."""
+        return [CODE_GRAPH_NOT_BUILT] if code_graph_pending(self.store.resolve_project(project_id)) else []
 
     async def _support_gate(self, project_id: str, question: str, result: dict, evidence: dict, started: float,
                             diagnostics: dict, *, plain: bool = True) -> dict:

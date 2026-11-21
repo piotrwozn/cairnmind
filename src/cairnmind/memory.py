@@ -19,6 +19,7 @@ import re
 import tempfile
 from uuid import UUID, uuid4
 
+from .code_graph import code_graph_pending
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
 from .memory_size import WARN_FRACTION, package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
@@ -824,7 +825,7 @@ class MemoryManager:
                 authorize()
             current = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id}, False)
             # A package never carries the code graph (#261): it is built from the project's files by indexing.
-            result["code_graph"] = {"state": "built_here" if current and current.get("graph_fingerprint") else "not_built"}
+            result["code_graph"] = {"state": "not_built" if code_graph_pending(current) else "built_here"}
             conflicts = tx.query("SELECT id FROM projects WHERE (name=:name OR root=:root) AND id!=:id",
                                  {"name": chosen_name, "root": str(root), "id": project_id})
             roots = tx.query("SELECT project_id FROM project_roots WHERE path=:path", {"path": str(root)})
@@ -1092,7 +1093,7 @@ class MemoryManager:
         def count(table):
             rows = self.store.query(f"SELECT count(*) AS total FROM {table} WHERE project_id=:project", {"project": project_id})
             return int(rows[0].get("total", 0)) if rows else 0
-        result["rebuilding"] = {"code_index_pending": not bool(project.get("graph_fingerprint")),
+        result["rebuilding"] = {"code_index_pending": code_graph_pending(project),
                                 "chunks": count("chunks"), "embedding_rows": count("embeddings"),
                                 "model_required_to_read_memory": False}
         imported = one_row(self.store, "SELECT snapshot_id,imported_at,origin_root,local_root FROM memory_imports "
