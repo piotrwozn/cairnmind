@@ -474,6 +474,10 @@ CONFIRMATION_MESSAGES = {
         "Paczka (szacunek): {rows} z {row_limit} wierszy, {size} z {size_limit}",
     "Near the publication limit ({names}). Publishing stops at the limit.":
         "Blisko limitu publikacji ({names}). Publikacja zatrzymuje się na limicie.",
+    "Over the publication limit ({names}). A snapshot would be refused.":
+        "Powyżej limitu publikacji ({names}). Migawka zostałaby odrzucona.",
+    "The code graph is not built yet: indexing builds it from the project's files, a snapshot does not carry it.":
+        "Graf kodu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, migawka go nie zawiera.",
     "rows": "wiersze", "bytes": "bajty", "manifest bytes": "bajty manifestu",
     "object bytes": "bajty największego obiektu",
     "Package size: not measured (the store could not be read for it).":

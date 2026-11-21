@@ -3,7 +3,9 @@
 `memory status` shows the package that a snapshot would write now against each limit it enforces: the rows
 of the package, its bytes, the bytes of its manifest and its largest single object. From WARN_FRACTION of
 any one of them it says so, before ``MemoryManager.snapshot`` refuses to publish. The refusal itself is not
-changed here.
+changed here. The code graph is not part of a package (#261): ``only`` limits the nodes and edges that are
+counted to the ones a snapshot writes (a code node that a record links to is left out of the count, so the
+figure can be one row or a few below the real one; it is an estimate).
 
 What it costs. Nothing is exported and no row is read into this process:
 
@@ -130,13 +132,23 @@ def _sum_of(collection, label, group, pattern):
     return total
 
 
-def _measure(store, project_id, tables, max_object_bytes):
+def _scoped(store, table, project_id, only):
+    """The collection of one table of a project, limited to the rows ``only`` names for it: (condition, parameters)."""
+    from .store_size import _Collection
+    collection = _Collection(store, table, project_id)
+    if table in only:
+        collection.where += f" AND {only[table][0]}"
+        collection.params.update(only[table][1])
+    return collection
+
+
+def _measure(store, project_id, tables, max_object_bytes, only):
     """Rows, bytes, whether the bytes are exact, the largest row and the source figures of one project."""
-    from .store_size import _LENGTH, _Collection
+    from .store_size import _LENGTH
     rows, size, largest, exact = 0, 0, 0, True
     sources = {"current": 0, "replaced": 0, "transcripts": 0}
     for table in tables:
-        collection = _Collection(store, table, project_id)
+        collection = _scoped(store, table, project_id, only)
         group = " GROUP BY kind, is_current" if table == "sources" else ""
         label = "kind, is_current, " if table == "sources" else ""
         found = collection.query(f"{label}count(*) AS n, sum({_LENGTH}) AS b, max({_LENGTH}) AS m", tail=group)
@@ -162,7 +174,7 @@ def _measure(store, project_id, tables, max_object_bytes):
     if largest > floor:
         try:
             for table in tables:
-                found = _Collection(store, table, project_id).query(
+                found = _scoped(store, table, project_id, only).query(
                     f"max({_bytes_expression()}) AS m", where=f"{_LENGTH} > :floor", params={"floor": floor})
                 if found and found[0].get("m") is not None:
                     largest = max(largest, int(found[0]["m"]))
@@ -179,9 +191,9 @@ class _Job:
         self.result = None
 
 
-def _build(store, project_id, tables, limits, now):
+def _build(store, project_id, tables, limits, now, only):
     max_rows, max_bytes, max_manifest_bytes, max_object_bytes = limits
-    rows, size, exact, largest, sources = _measure(store, project_id, tables, max_object_bytes)
+    rows, size, exact, largest, sources = _measure(store, project_id, tables, max_object_bytes, only)
     manifest = MANIFEST_BASE + rows * MANIFEST_LINE
     figures = {"rows": _entry(rows, max_rows), "bytes": _entry(size + manifest, max_bytes),
                "manifest_bytes": _entry(manifest, max_manifest_bytes),
@@ -191,10 +203,10 @@ def _build(store, project_id, tables, limits, now):
             "sources_bytes": sources, "warning": near or None}
 
 
-def _run(job, key, store, project_id, tables, limits, now):
+def _run(job, key, store, project_id, tables, limits, now, only):
     started = now()
     try:
-        result = _build(store, project_id, tables, limits, now)
+        result = _build(store, project_id, tables, limits, now, only)
         with _lock:
             _cache[key] = (started, limits, result, max(CACHE_SECONDS, CACHE_FACTOR * (now() - started)))
             if len(_cache) > 64:
@@ -209,7 +221,7 @@ def _run(job, key, store, project_id, tables, limits, now):
 
 
 def package_size(store, project_id, tables, *, max_rows, max_bytes, max_manifest_bytes, max_object_bytes,
-                 fresh=False, wait=WAIT_SECONDS, now=time.monotonic):
+                 fresh=False, wait=WAIT_SECONDS, now=time.monotonic, only=None):
     """The package against its limits, with a warning from WARN_FRACTION of any of them; None when it cannot be measured.
 
     A measurement of a large project takes longer than a request may (the terminal waits 20 seconds for a
@@ -227,7 +239,7 @@ def package_size(store, project_id, tables, *, max_rows, max_bytes, max_manifest
         job = _running.get(key)
         if job is None:
             job = _running[key] = _Job()
-            threading.Thread(target=_run, args=(job, key, store, project_id, tables, limits, now),
+            threading.Thread(target=_run, args=(job, key, store, project_id, tables, limits, now, only or {}),
                              daemon=True, name="package-size").start()
     if job.done.wait(wait):
         return None if job.result is None else {**job.result, "age_seconds": 0}
