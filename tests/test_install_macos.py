@@ -214,6 +214,35 @@ def test_linux_keeps_its_apt_hints(mac):
     assert result.stderr == "Found Java 17. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n"
 
 
+def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker_answers(mac):
+    """Without Java 21 the installer goes on when Docker answers (#272), says so, and still names the Java problem."""
+    run, state, bin_dir, tmp_path = mac
+    state.update(system="Linux")
+    hint = "sudo apt install openjdk-21-jre-headless"
+    tool(bin_dir / "docker", 'case "$1" in version) echo 27.3.1 ;; *) exit 9 ;; esac')
+    result = run()
+    assert result.returncode == 0, result.stderr
+    assert "Docker answers, so the engine will run in Docker and Java is not needed." in result.stdout
+    assert result.stderr == f"Java not found. Install Java 21+: {hint}\n" and "passed" in result.stdout
+    java(bin_dir / "java", 17)
+    result = run()
+    assert result.returncode == 0 and result.stderr == f"Found Java 17. Java 21+ is required: {hint}\n"
+    java(bin_dir / "java", 21)  # Java 21 is used when there is one: no word of Docker
+    result = run()
+    assert result.returncode == 0 and "Docker" not in result.stdout + result.stderr
+    # A Docker that does not answer changes nothing: the Java message is the end.
+    (bin_dir / "java").unlink()
+    tool(bin_dir / "docker", "echo 'Cannot connect to the Docker daemon' >&2; exit 1")
+    result = run()
+    assert result.returncode == 1 and "Docker" not in result.stdout and "passed" not in result.stdout
+    assert result.stderr == f"Java not found. Install Java 21+: {hint}\n"
+    # With Docker, the install branch runs init and does not download an engine.
+    script = SCRIPT.read_text()
+    branch = script.index('elif [[ "$engine_in_docker" == true ]]; then')
+    body = script[branch:script.index("\nelse\n", branch)]
+    assert '"$cairnmind_bin" init' in body and "engine install" not in body
+
+
 def test_on_linux_java_home_does_not_replace_the_java_on_path(mac):
     """On Linux the engine runs java on PATH whatever JAVA_HOME says, so that is the one the installer checks."""
     run, state, bin_dir, tmp_path = mac

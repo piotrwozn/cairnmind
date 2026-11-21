@@ -8,7 +8,7 @@ Usage: bash scripts/install-wsl.sh [--pull-models]
 
 Installs Cairnmind as a uv tool together with ArcadeDB 26.11.1 (about 86 MB,
 archive verified with SHA-256), starts the engine and initialises local memory.
-Requires Java 21+ and tmux 3.4+. Does not change Codex or Claude Code configuration.
+Requires Java 21+ (or Docker, which then runs the engine) and tmux 3.4+. Does not change Codex or Claude Code configuration.
 
 With CAIRNMIND_ARCADE_CONNECT_URL set, the installation only connects to a database
 that runs elsewhere (docs/DEPLOYMENT.md): no ArcadeDB is downloaded, no engine is
@@ -53,6 +53,7 @@ esac
 # Connect-only: the database runs elsewhere and this installation never starts an engine, so Java is
 # needed only for the engine Cairnmind manages itself.
 connect_url="${CAIRNMIND_ARCADE_CONNECT_URL:-${DEVBRAIN_ARCADE_CONNECT_URL:-}}"
+engine_in_docker=false
 
 if [[ -z "$connect_url" ]]; then
     java_hint='sudo apt install openjdk-21-jre-headless'
@@ -71,45 +72,58 @@ if [[ -z "$connect_url" ]]; then
             printf "Homebrew's openjdk@21 is installed, but macOS does not find it. Link it, then run the installer again:\n" >&2
             printf '  sudo ln -sfn "%s" /Library/Java/JavaVirtualMachines/openjdk-21.jdk\n' "$brew_jdk" >&2
         fi
-        exit 1
+        return 1
     }
 
     # The Java the engine runs (engine.resolve_java): on macOS JAVA_HOME's, then the one /usr/libexec/java_home finds
     # (/usr/bin/java starts the newest of the same JDKs, and without any JDK it is a stand-in that only fails), then
-    # java on PATH. On Linux only java on PATH.
-    java_bin=""
-    java_source=""
-    if [[ -n "${JAVA_HOME:-}" && "${system:-}" == Darwin ]]; then
-        if [[ "$JAVA_HOME" == /* && -f "$JAVA_HOME/bin/java" && -x "$JAVA_HOME/bin/java" ]]; then
-            java_bin="$JAVA_HOME/bin/java"
-            java_source=" (JAVA_HOME=$JAVA_HOME)"
+    # java on PATH. On Linux only java on PATH. Returns 1 after saying what is wrong.
+    check_java() {
+        java_bin=""
+        java_source=""
+        if [[ -n "${JAVA_HOME:-}" && "${system:-}" == Darwin ]]; then
+            if [[ "$JAVA_HOME" == /* && -f "$JAVA_HOME/bin/java" && -x "$JAVA_HOME/bin/java" ]]; then
+                java_bin="$JAVA_HOME/bin/java"
+                java_source=" (JAVA_HOME=$JAVA_HOME)"
+            else
+                printf 'JAVA_HOME is set to %s, which has no bin/java; it is ignored.\n' "$JAVA_HOME" >&2
+            fi
+        fi
+        if [[ -z "$java_bin" && "${system:-}" == Darwin ]] \
+            && java_home_found="$(/usr/libexec/java_home -v 21+ 2>/dev/null)" && [[ -x "$java_home_found/bin/java" ]]; then
+            java_bin="$java_home_found/bin/java"
+            java_source=" ($java_home_found)"
+            # The rest of this installation runs exactly the Java checked here.
+            export JAVA_HOME="$java_home_found"
+        fi
+        if [[ -z "$java_bin" ]] && ! java_bin="$(command -v java)"; then
+            refuse_java "Java not found. Install Java 21+: $java_hint" || return 1
+        fi
+        if ! java_version_output="$("$java_bin" -version 2>&1)"; then
+            if [[ "${system:-}" == Darwin ]]; then
+                refuse_java "$java_bin did not run: macOS answers so when no JDK is installed. Install Java 21+: $java_hint" || return 1
+            fi
+            refuse_java "$java_bin -version did not run. Java 21+ is required: $java_hint" || return 1
+        fi
+        java_version_pattern='version "([0-9]+)'
+        if [[ ! "$java_version_output" =~ $java_version_pattern ]]; then
+            refuse_java 'Cannot detect the Java version. Check java -version; Java 21+ is required.' || return 1
+        fi
+        java_major="${BASH_REMATCH[1]}"
+        if (( java_major < 21 )); then
+            refuse_java "Found Java $java_major$java_source. Java 21+ is required: $java_hint" || return 1
+        fi
+    }
+
+    # Without Java 21 the engine can run in Docker (#272): said once, and the installer goes on. Without a Docker
+    # that answers, the Java message above is the end.
+    if ! check_java; then
+        if command -v docker >/dev/null 2>&1 && docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+            printf 'Docker answers, so the engine will run in Docker and Java is not needed.\n'
+            engine_in_docker=true
         else
-            printf 'JAVA_HOME is set to %s, which has no bin/java; it is ignored.\n' "$JAVA_HOME" >&2
+            exit 1
         fi
-    fi
-    if [[ -z "$java_bin" && "${system:-}" == Darwin ]] \
-        && java_home_found="$(/usr/libexec/java_home -v 21+ 2>/dev/null)" && [[ -x "$java_home_found/bin/java" ]]; then
-        java_bin="$java_home_found/bin/java"
-        java_source=" ($java_home_found)"
-        # The rest of this installation runs exactly the Java checked here.
-        export JAVA_HOME="$java_home_found"
-    fi
-    if [[ -z "$java_bin" ]] && ! java_bin="$(command -v java)"; then
-        refuse_java "Java not found. Install Java 21+: $java_hint"
-    fi
-    if ! java_version_output="$("$java_bin" -version 2>&1)"; then
-        if [[ "${system:-}" == Darwin ]]; then
-            refuse_java "$java_bin did not run: macOS answers so when no JDK is installed. Install Java 21+: $java_hint"
-        fi
-        refuse_java "$java_bin -version did not run. Java 21+ is required: $java_hint"
-    fi
-    java_version_pattern='version "([0-9]+)'
-    if [[ ! "$java_version_output" =~ $java_version_pattern ]]; then
-        refuse_java 'Cannot detect the Java version. Check java -version; Java 21+ is required.'
-    fi
-    java_major="${BASH_REMATCH[1]}"
-    if (( java_major < 21 )); then
-        refuse_java "Found Java $java_major$java_source. Java 21+ is required: $java_hint"
     fi
 fi
 
@@ -252,6 +266,10 @@ if [[ -n "$connect_url" ]]; then
         printf '\nThe database is not ready for this installation yet. Follow docs/DEPLOYMENT.md,\n' >&2
         printf '"Connect-only installations", then run: cairnmind init\n' >&2
     fi
+elif [[ "$engine_in_docker" == true ]]; then
+    printf '\nThe engine runs in Docker: no ArcadeDB is downloaded here; cairnmind init downloads its image.\n'
+    "$cairnmind_bin" init
+    "$cairnmind_bin" engine status
 else
     printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
     arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
