@@ -20,7 +20,7 @@ import tempfile
 from uuid import UUID, uuid4
 
 from .memory_paths import EARLIER_MEMORY_RELATIVE, MEMORY_RELATIVE, snapshot_directory
-from .memory_size import package_size
+from .memory_size import WARN_FRACTION, package_size
 from .store import (EXTRACTION_MARK, EXTRACTOR_STAMP, KINDS, STATUSES, TASK_STATES, validate_criterion_links,
                     validate_extractor_stamp)
 from .system_links import passes_planted_link
@@ -44,6 +44,21 @@ _GLOBAL_NODES = KINDS | {"plan", "source"}
 _LOCAL_SOURCE_KINDS = {"code", "document", "file", "check_output", "check_profile"}
 
 
+def _without_rebuilt_graph(payload):
+    """The package's rows without the code graph, which indexing rebuilds from the files (#261).
+
+    Left out: the edges indexing derives from files (_CODE_EDGES) and the nodes it makes (files, symbols,
+    external modules, unresolved references), 150,000 rows in a repository of 450 files. Kept: the nodes of
+    records, plans and sources, their supported_by, depends_on, supersedes and has_step edges, and a relates_to
+    link from a record to a code node with that node, so that the link has its end. Applied to what is
+    captured and to what is read, so a package of 0.12.0, which carries the graph, is read as one without it.
+    """
+    edges = [row for row in payload["edges"] if row.get("kind") not in _CODE_EDGES]
+    linked = {row.get(end) for row in edges for end in ("from_id", "to_id")}
+    nodes = [row for row in payload["nodes"] if row.get("kind") in _GLOBAL_NODES or row.get("id") in linked]
+    return {**payload, "nodes": nodes, "edges": edges}
+
+
 class MemoryConflict(ValueError):
     """Identity, ancestry, local edits or publication require explicit resolution."""
 
@@ -60,11 +75,32 @@ def _manifest_id(manifest):
     return _digest({key: value for key, value in manifest.items() if key != "snapshot_id"})
 
 
+_LABELS = {"rows": "rows", "manifest_bytes": "manifest bytes", "bytes": "total bytes", "object_bytes": "object bytes"}
+
+
+def _descriptors(payload):
+    objects = {}
+    for table, rows in payload.items():
+        objects[table] = []
+        for row in rows:
+            data, digest = _bytes(row), _digest(row)
+            objects[table].append({"id": row["id"], "sha256": digest, "path": f"objects/{digest}.json", "bytes": len(data)})
+    return objects
+
+
+def _budget(objects, manifest_bytes):
+    """What a package of these objects is against each limit a snapshot keeps: {name: (used, limit)} (#261)."""
+    listed = [d for rows in objects.values() for d in rows]
+    return {"rows": (len(listed), MAX_ROWS), "manifest_bytes": (manifest_bytes, MAX_MANIFEST_BYTES),
+            "bytes": (manifest_bytes + sum(d["bytes"] for d in listed), MAX_TOTAL_BYTES),
+            "object_bytes": (max((d["bytes"] for d in listed), default=0), MAX_OBJECT_BYTES)}
+
+
 def _without_local_mark(record):
     """A record without the local extraction worker's mark (#168).
 
-    The mark lets this machine's own api session keep its ACK. A package never carries it
-    in or out, so an imported record always counts as somebody else's write. An extractor stamp (#192)
+    The mark leaves an untouched extraction proposal out of every session's ACK state (#256).
+    A package never carries it in or out, so an imported record always counts as somebody else's write. An extractor stamp (#192)
     travels, but only one the store would accept on an extracted record (_carried_stamp).
     """
     metadata = record.get("metadata")
@@ -171,8 +207,11 @@ def _validate(payload, project_id, active_plan_id=None, *, graph=True):
     maps = {}
     for table in TABLES:
         rows = payload.get(table)
-        if not isinstance(rows, list) or len(rows) > MAX_ROWS:
+        if not isinstance(rows, list):
             raise ValueError("Invalid memory collection")
+        if len(rows) > MAX_ROWS:
+            raise ValueError("Memory package exceeds its publication byte or row budget: "
+                             f"rows {len(rows):,} over the limit of {MAX_ROWS:,} in {table}")
         mapping = {}
         for row in rows:
             if not isinstance(row, dict):
@@ -470,7 +509,7 @@ def _load_snapshot_impl(path):
         raise ValueError("Memory portable-state checksum mismatch")
     if manifest.get("counts") != {table: len(payload[table]) for table in TABLES}:
         raise ValueError("Memory manifest counts do not match objects")
-    return path, raw, manifest, payload
+    return path, raw, manifest, _without_rebuilt_graph(payload)
 
 
 def _load_snapshot(path):
@@ -611,9 +650,9 @@ class MemoryManager:
         if authorize is not None:
             authorize()
         project, root = self._scope(project_id, worktree, reader)
-        payload = {table: sorted([_logical(table, r) for r in reader.query(
+        payload = _without_rebuilt_graph({table: sorted([_logical(table, r) for r in reader.query(
             f"SELECT FROM {table} WHERE project_id=:project", {"project": project_id})], key=lambda r: r["id"])
-                   for table in TABLES}
+                   for table in TABLES})
         focus = one_row(reader, "SELECT active_plan_id FROM worktree_states WHERE project_id=:project AND worktree=:root",
                      {"project": project_id, "root": str(root)}, False)
         active = focus.get("active_plan_id") if focus else None
@@ -635,8 +674,24 @@ class MemoryManager:
 
     def preview(self, project_id, worktree=None):
         captured, payload = self._capture(project_id, worktree)
+        objects = _descriptors(payload)
+        # The manifest as snapshot() would write it, with the parent and ancestry of the tip (an earlier file
+        # without a receipt makes snapshot() refuse, so the tip is the only parent that matters).
+        tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
+                      {"project": project_id}, False)
+        parent = tip["snapshot_id"] if tip else None
+        ancestors = list(dict.fromkeys([parent, *tip.get("ancestors", [])]))[:4096] if tip else []
+        manifest = len(_bytes({"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,
+                               "created_at": utc_now(), "parent_id": parent, "ancestors": ancestors,
+                               "content_hash": "0" * 64, "snapshot_id": "0" * 64}))
+        figures = {name: {"used": used, "limit": limit, "fraction": round(used / limit, 4)}
+                   for name, (used, limit) in _budget(objects, manifest).items()}
+        near = [name for name, figure in figures.items() if figure["fraction"] >= WARN_FRACTION]
+        over = [name for name, figure in figures.items() if figure["used"] > figure["limit"]]
+        size = {"measured": "exact", "warn_at": WARN_FRACTION, **figures, "warning": near or None, "over": over or None}
         return {"status": "preview", **captured, "path": str(self._path(Path(captured["origin_root"]))),
-                "worktree": captured["origin_root"], "bytes": sum(len(_bytes(r)) for rows in payload.values() for r in rows),
+                "package_size": size, "worktree": captured["origin_root"],
+                "bytes": sum(d["bytes"] for rows in objects.values() for d in rows),
                 "contains_raw_sources": bool(payload["sources"]), "model_calls": 0}
 
     def _known_manifest(self, project_id, path):
@@ -681,15 +736,7 @@ class MemoryManager:
                         or earlier["project"]["id"] != project_id):
                     raise MemoryConflict(f"The memory package in {EARLIER_MEMORY_RELATIVE} was not published or imported "
                                          "by this store; inspect/import it before publishing")
-            objects = {}
-            for table, rows in payload.items():
-                objects[table] = []
-                for row in rows:
-                    data, digest = _bytes(row), _digest(row)
-                    if len(data) > MAX_OBJECT_BYTES:
-                        raise ValueError("Memory object exceeds its byte budget")
-                    objects[table].append({"id": row["id"], "sha256": digest,
-                                           "path": f"objects/{digest}.json", "bytes": len(data)})
+            objects = _descriptors(payload)
             content_hash = _digest({**{k: v for k, v in captured.items() if k not in {"processing", "completeness"}},
                                     "objects": objects})
             tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -711,9 +758,10 @@ class MemoryManager:
                         "content_hash": content_hash}
             manifest["snapshot_id"] = _manifest_id(manifest)
             raw = _bytes(manifest)
-            if (len(raw) > MAX_MANIFEST_BYTES or sum(len(rows) for rows in objects.values()) > MAX_ROWS
-                    or len(raw) + sum(d["bytes"] for rows in objects.values() for d in rows) > MAX_TOTAL_BYTES):
-                raise ValueError("Memory package exceeds its publication byte or row budget")
+            over = [f"{_LABELS[name]} {used:,} over the limit of {limit:,}"
+                    for name, (used, limit) in _budget(objects, len(raw)).items() if used > limit]
+            if over:  # which limit, with both numbers (#261)
+                raise ValueError("Memory package exceeds its publication byte or row budget: " + "; ".join(over))
             for table, rows in payload.items():
                 for descriptor, row in zip(objects[table], rows, strict=True):
                     target = path.parent / descriptor["path"]
@@ -775,6 +823,8 @@ class MemoryManager:
             if authorize is not None:
                 authorize()
             current = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id}, False)
+            # A package never carries the code graph (#261): it is built from the project's files by indexing.
+            result["code_graph"] = {"state": "built_here" if current and current.get("graph_fingerprint") else "not_built"}
             conflicts = tx.query("SELECT id FROM projects WHERE (name=:name OR root=:root) AND id!=:id",
                                  {"name": chosen_name, "root": str(root), "id": project_id})
             roots = tx.query("SELECT project_id FROM project_roots WHERE path=:path", {"path": str(root)})
@@ -1052,7 +1102,9 @@ class MemoryManager:
         # Against the limits of publication (#191); the behaviour at the limit is in snapshot() and is unchanged.
         result["package_size"] = package_size(self.store, project_id, TABLES, max_rows=MAX_ROWS,
                                               max_bytes=MAX_TOTAL_BYTES, max_manifest_bytes=MAX_MANIFEST_BYTES,
-                                              max_object_bytes=MAX_OBJECT_BYTES)
+                                              max_object_bytes=MAX_OBJECT_BYTES, only={
+                                                  "nodes": ("kind IN :kept_nodes", {"kept_nodes": sorted(_GLOBAL_NODES)}),
+                                                  "edges": ("kind NOT IN :code_edges", {"code_edges": sorted(_CODE_EDGES)})})
         if path.exists() or path.is_symlink():
             try:
                 result["latest"] = manifest_summary(path)

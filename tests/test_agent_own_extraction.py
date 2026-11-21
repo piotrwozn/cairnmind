@@ -2,8 +2,9 @@
 
 The engine archives its journal in the middle of a turn (a large tool result, a third-party result), and
 the archive queues the turn's messages for extraction. Proposed records extracted from that same session's
-messages are its own words restated: they must not make the ACK it just gave stale. Everything else that
-moves the acknowledged state still does.
+messages are its own words restated: they must not make the ACK it just gave stale, and since #256 no
+proposal the worker writes makes any session's ACK stale. Everything else that moves the acknowledged state
+still does.
 """
 from __future__ import annotations
 
@@ -111,7 +112,7 @@ async def test_extraction_of_the_sessions_own_turn_mid_turn_keeps_its_ack(worksp
     manager.require_ack(sid)
     status = manager.status(sid)
     assert status["acknowledged"] is True and status["stale"] is False
-    # Another session of the project still has to read them: they are in its state, and in a new packet.
+    # Another session of the project sees them in its new packet, labelled.
     other = manager.prepare(project["id"], "claude", timeout=0)
     assert {row["id"] for row in written} <= {row["id"] for row in other["packet"]["records"]}
     # Reading the context again hands back the packet it acknowledged, not a new one to acknowledge.
@@ -120,13 +121,17 @@ async def test_extraction_of_the_sessions_own_turn_mid_turn_keeps_its_ack(worksp
 
 
 @pytest.mark.parametrize("client", ["external", "claude", "api"])
-async def test_records_extracted_from_another_sessions_turn_still_make_the_ack_stale(workspace, client):
+async def test_records_extracted_from_another_sessions_turn_keep_every_ack(workspace, client):
     store, project, _, manager = workspace
     reader = acknowledged(manager, project, client)
     writer = manager.prepare(project["id"], "api", timeout=0)["session_id"]
     mid_turn_archive(store, manager, writer)
-    assert len(await extract_queued(store, [decision()])) == 1
-    with pytest.raises(ValueError, match="resume_required"):
+    [written] = await extract_queued(store, [decision()])
+    manager.require_ack(reader)
+    assert manager.status(reader)["acknowledged"] is True
+    # Shown to the reader in its next packet, labelled; a person's confirmation then counts (#256).
+    Inspector(store).review(project["id"], written["id"], "confirm", 1)
+    with pytest.raises(ValueError, match="changed since the acknowledged packet"):
         manager.require_ack(reader)
 
 

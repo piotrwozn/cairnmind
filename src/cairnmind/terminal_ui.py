@@ -95,7 +95,10 @@ def package_size_lines(size, language="en"):
         return [tr("Package size: still being measured, ask again in a minute.", language)]
     try:
         rows, data = size["rows"], size["bytes"]
-        lines = [tr("Package (estimate): {rows} of {row_limit} rows, {size} of {size_limit}", language,
+        # A status estimates; a preview (#261) measured the package it would write.
+        first = "Package: {rows} of {row_limit} rows, {size} of {size_limit}" if size.get("measured") == "exact" \
+            else "Package (estimate): {rows} of {row_limit} rows, {size} of {size_limit}"
+        lines = [tr(first, language,
                     rows=int(rows["used"]), row_limit=int(rows["limit"]),
                     size=f"{int(data['used']) / 1048576:.1f} MB", size_limit=f"{int(data['limit']) / 1048576:.0f} MB")]
         largest = size.get("object_bytes")
@@ -112,7 +115,18 @@ def package_size_lines(size, language="en"):
                  if name in {"rows", "bytes", "manifest_bytes", "object_bytes"}]
     except (KeyError, TypeError, ValueError, AttributeError):
         return []
-    if names:
+    over = [tr(name.replace("_", " "), language) for name in size.get("over") or []
+            if name in {"rows", "bytes", "manifest_bytes", "object_bytes"}]
+    if "manifest_bytes" in (size.get("over") or []) + (size.get("warning") or []):  # the figure behind the name (#261)
+        try:
+            manifest = size["manifest_bytes"]
+            lines.append(tr("Manifest: {size} of {size_limit} bytes", language,
+                            size=f"{int(manifest['used']):,}", size_limit=f"{int(manifest['limit']):,}"))
+        except (KeyError, TypeError, ValueError):
+            pass
+    if over:  # a preview knows the exact size (#261)
+        lines.append(tr("Over the publication limit ({names}). A snapshot would be refused.", language, names=", ".join(over)))
+    elif names:
         lines.append(tr("Near the publication limit ({names}). Publishing stops at the limit.", language,
                         names=", ".join(names)))
     return lines
@@ -139,6 +153,10 @@ def summary_text(value, language="en"):
             lines.append(" · ".join(entries))
     if "package_size" in value:
         lines.extend(package_size_lines(value["package_size"], language))
+    graph = value.get("code_graph")
+    if isinstance(graph, dict) and graph.get("state") == "not_built":
+        lines.append(tr("The code graph is not built yet: indexing builds it from the project's files, a snapshot does not carry it.",
+                        language))
     brought = value.get("confirmed_records")
     if isinstance(brought, dict) and type(brought.get("total")) is int and brought["total"] > 0:
         # What an import brings as confirmed (#177), before the person agrees to it. The names are the
