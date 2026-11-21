@@ -736,6 +736,68 @@ def test_init_never_passes_over_a_configured_java_for_docker(init_run, monkeypat
     assert stored(docker.settings)["engine_mode"] == "" and docker.calls == []
 
 
+# --- doctor ----------------------------------------------------------------------------------------------------
+
+def quiet_settings(tmp_path, name="data", **values) -> Settings:
+    """A data directory whose service, database and model server are on ports nothing listens on, so a report
+    asks nobody on this machine."""
+    import socket
+    ports = []
+    for _ in range(3):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            ports.append(sock.getsockname()[1])
+    return settings_with(tmp_path, name, port=ports[0], arcade_url=f"http://127.0.0.1:{ports[1]}",
+                         ollama_url=f"http://127.0.0.1:{ports[2]}", **values)
+
+
+@pytest.fixture
+def doctor_cli(docker, monkeypatch):
+    from cairnmind import cli, integrations, store_writer
+    monkeypatch.setattr(integrations, "_probe_cli", lambda name: {
+        "installed": False, "version": None, "verified_resume": False, "checks": {}, "notes": []})
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(store_writer, "inspect", lambda settings: {"role": "writer"})
+    monkeypatch.setattr(cli, "store_for_read", lambda settings: (_ for _ in ()).throw(ArcadeError("no store")))
+
+    def report(settings):
+        result = cli_(settings)
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    def cli_(settings):
+        return runner.invoke(app, ["--data-dir", str(settings.data_dir), "doctor"])
+
+    return report
+
+
+def test_doctor_in_docker_mode_needs_no_java_names_the_mode_and_exits_0(docker, doctor_cli, tmp_path, monkeypatch):
+    from cairnmind.doctor_attention import attention
+    native = doctor_cli(quiet_settings(tmp_path, "native"))
+    assert native["arcadedb"]["engine"] == "native" and "docker" not in native
+    assert set(native["java"]) >= {"on_path", "minimum_major"}
+    monkeypatch.setattr(engine, "resolve_java", lambda settings: pytest.fail("Java was looked for"))
+    settings = quiet_settings(tmp_path, engine_mode="docker")
+    report = doctor_cli(settings)
+    assert report["java"] == {"needed": False, "reason": engine_docker.JAVA_NOT_NEEDED}
+    assert report["arcadedb"]["engine"] == "docker"
+    assert report["docker"] == {"available": True, "server_version": "27.3.1",
+                                "container": {"name": container_name(settings), "state": "absent"}}
+    assert not any("Java" in line or "Docker" in line for line in attention(report))
+    docker.up = False
+    report = doctor_cli(settings)
+    assert report["docker"]["available"] is False and "container" not in report["docker"]
+    assert engine_docker.DOCKER_ATTENTION.format(error=report["docker"]["error"]) in attention(report)
+
+
+def test_doctor_names_a_wrong_engine_mode_and_still_exits_0(docker, doctor_cli, tmp_path):
+    from cairnmind.doctor_attention import attention
+    report = doctor_cli(quiet_settings(tmp_path, engine_mode="dokker"))
+    assert report["arcadedb"]["engine"] == "unknown"
+    assert report["arcadedb"]["engine_problem"] == MODE_INVALID.format(value="'dokker'")
+    assert MODE_INVALID.format(value="'dokker'") in attention(report) and "docker" not in report
+
+
 # --- Words ---------------------------------------------------------------------------------------------------
 
 def test_every_engine_docker_message_has_a_polish_translation_with_the_same_placeholders():

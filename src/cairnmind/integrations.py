@@ -220,16 +220,25 @@ def doctor(settings: Settings) -> dict[str, Any]:
         del result["wsl"]  # a flag that can only be False here, and the word the report should not carry
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
     result["tmux"] = NativeRuntime(settings).diagnostics()
-    from .database_mode import connect_only
+    from .database_mode import connect_only, engine_mode
     try:
-        # Connect-only (#68): no engine runs here, so Java is neither needed nor run to ask its version.
-        java = None if connect_only(settings) else resolve_java(settings)
+        in_docker = not connect_only(settings) and engine_mode(settings) == "docker"
+    except ValueError:
+        in_docker = False  # arcadedb.engine_problem names the wrong value
+    try:
+        # Connect-only (#68) or the engine in Docker (#272): no Java engine runs here, so Java is neither needed
+        # nor run to ask its version.
+        java = None if connect_only(settings) or in_docker else resolve_java(settings)
     except ArcadeError as exc:
         java = None
         result["java"].update(compatible=False, error=str(exc))
     if connect_only(settings):
         result["java"] = {"needed": False, "reason": "This installation only connects to its database; no engine "
                                                      "runs on this machine."}
+    elif in_docker:
+        from .engine_docker import JAVA_NOT_NEEDED, doctor_block as docker_block
+        result["java"] = {"needed": False, "reason": JAVA_NOT_NEEDED}
+        result["docker"] = docker_block(settings)
     elif settings.java_executable:
         result["java"]["configured_executable"] = settings.java_executable
     managed_java = managed_java_executable(settings)
