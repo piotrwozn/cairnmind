@@ -125,7 +125,8 @@ if [[ -z "$connect_url" ]]; then
             printf 'Java 21 was not found and Docker answers, so cairnmind init can run the engine in Docker; it says which mode it chose.\n'
             engine_in_docker=true
         else
-            # What docker said is untrusted text: its first line, printable characters only, cut short.
+            # What docker said is untrusted text: its first non-blank line, printable characters only, cut short.
+            docker_said="${docker_said#"${docker_said%%[![:space:]]*}"}" # real docker starts with an empty line
             docker_said="${docker_said%%$'\n'*}"
             docker_said="${docker_said//[^[:print:]]/}"
             docker_said="${docker_said:0:200}"
