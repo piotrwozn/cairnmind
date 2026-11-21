@@ -22,7 +22,7 @@ The installer never changes your Codex or Claude Code configuration, never downl
 | Linux, or Windows 11 with WSL2 Ubuntu | Ubuntu 24.04 tested | Commands below run inside Ubuntu |
 | or macOS on Apple silicon | macOS 27 tested | The commands run in Terminal |
 | Java | 21 or newer, or Docker | Runs the ArcadeDB engine; without Java 21, the engine runs in Docker |
-| tmux | 3.4 or newer | Hosts the terminal workspace |
+| tmux | 3.4 or newer, optional | Only for the terminal workspace (`cairnmind`); the service, `run`, `mcp`, `brief` and the other commands work without it |
 | uv | current | Installs Cairnmind with Python 3.12 |
 | Ollama | current | Runs the local knowledge agent |
 | GPU | optional | The 9B model needs roughly 7 GB of GPU memory; on CPU it works, but answers are slow |
@@ -129,7 +129,7 @@ The same script installs on macOS, with the bash that macOS ships.
 
 The installer:
 
-1. checks Java and tmux versions; without Java 21 it goes on when Docker answers;
+1. checks Java and tmux versions; without Java 21 it goes on when Docker answers, and without tmux 3.4+ it says the terminal workspace is unavailable and goes on;
 2. installs Cairnmind as a `uv` tool, with dependency versions pinned by `uv.lock`;
 3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it); with Docker, the ArcadeDB archive is not downloaded; `cairnmind init` downloads Cairnmind's engine image instead;
 4. runs `cairnmind doctor` and prints anything that still needs attention.
@@ -168,7 +168,7 @@ cairnmind models pull
 cairnmind doctor
 ```
 
-`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB (and the engine mode), Ollama and coding-client state. It is read-only: no logins, downloads or model sessions.
+`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB (and the engine mode), Ollama and coding-client state. It is read-only: no logins, downloads or model sessions. Without tmux 3.4+ it reports `cockpit: unavailable (tmux 3.4+ not found)` and still exits 0.
 
 ## 6. Connect your coding assistants
 
@@ -231,7 +231,7 @@ This keeps your memory in the data directory that `cairnmind doctor` shows as `d
 | `cairnmind: command not found` | Add the directory printed by the installer to `PATH`, or run `uv tool update-shell` and open a new terminal. |
 | `Java 21+ is required` | `sudo apt install openjdk-21-jre-headless`, and check that `java -version` reports 21 or newer. On macOS: `brew install openjdk@21` and the `sudo ln -sfn` line of step 2; when the message names `JAVA_HOME`, that Java is too old: point `JAVA_HOME` at Java 21 or unset it. |
 | `Java not found` or `macOS answers so when no JDK is installed` on macOS | No Java 21 is found. If Homebrew's `openjdk@21` is installed, the installer prints the `sudo ln -sfn ...` line that links it where macOS finds it. |
-| `Version 3.4+ is required` for tmux | Ubuntu 24.04 ships tmux 3.4. On older releases, upgrade Ubuntu or build tmux 3.4. On macOS: `brew upgrade tmux`. |
+| `Version 3.4+ is required` for tmux, or `The terminal workspace needs tmux 3.4 or newer` | Only the terminal workspace needs tmux 3.4+; `cairnmind serve`, `run`, `mcp` and `brief` work without it. Ubuntu 24.04 ships tmux 3.4. On older releases, upgrade Ubuntu or build tmux 3.4. On macOS: `brew upgrade tmux`. |
 | `Cannot reach Ollama` | Start `ollama serve`, then run `cairnmind models pull` again. |
 | `cairnmind` exits with code 2 | It needs an interactive terminal. Run it directly in Windows Terminal or another terminal, not through a pipe. |
 | A client is not launched | Run `cairnmind doctor --contract`; the failing check names the missing capability. |

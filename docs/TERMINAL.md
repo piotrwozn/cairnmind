@@ -6,7 +6,7 @@ The default language is English. To switch the Cairnmind interface to Polish, ch
 
 ## Getting started
 
-You need Linux or Ubuntu on WSL2, Java 21+, tmux 3.4+, an installed Cairnmind and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
+You need Linux or Ubuntu on WSL2, Java 21+, tmux 3.4+ (only the workspace needs it), an installed Cairnmind and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
 
 In Windows Terminal, open Ubuntu, or enter it from PowerShell:
 
@@ -216,7 +216,7 @@ tmux -V
 locale charmap
 ```
 
-If tmux is missing, install it in Ubuntu with `sudo apt install tmux`. If the screen is too small or the graph shows unreadable characters, check the window size, the font and UTF-8. Read memory, model, archive-scope and sign-in errors separately; a message about an exhausted client limit does not by itself mean memory was lost.
+If tmux is missing or older than 3.4, `cairnmind` says so, names the version it found and exits with code 1; install it in Ubuntu with `sudo apt install tmux`. If the screen is too small or the graph shows unreadable characters, check the window size, the font and UTF-8. Read memory, model, archive-scope and sign-in errors separately; a message about an exhausted client limit does not by itself mean memory was lost.
 
 Developer tests may use real tmux and ArcadeDB together with controlled CLI stand-ins. They do not measure paid APIs or Codex/Claude/Copilot accounts and do not confirm behavior on the user's physical WSL machine. Such results require a separate run in the target environment.
 
