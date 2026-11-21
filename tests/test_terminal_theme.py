@@ -93,7 +93,8 @@ def test_converted_modules_hold_no_colour_literal(name):
 
 def test_dialog_hints_exist_in_both_languages():
     for text in ("Enter: select · Esc: back", "Ctrl+S: save · Esc: cancel", "PgUp/PgDn: scroll · Esc: close",
-                 "PgUp/PgDn: scroll · Esc: cancel", "No matching commands."):
+                 "PgUp/PgDn: scroll · Esc: cancel", "Tab: switch · Enter: press · Esc: cancel",
+                 "PgUp/PgDn: scroll · Tab: switch · Enter: press · Esc: cancel", "No matching commands."):
         assert text in CATALOG and tr(text, "pl") != text
 
 

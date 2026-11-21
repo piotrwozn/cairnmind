@@ -261,7 +261,7 @@ async def test_graph_key_footer_fits_and_hidden_keys_still_work(panel, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_routine_confirmation_starts_on_cancel_and_consent_on_its_text(tmp_path, monkeypatch):
+async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypatch):
     from textual.widgets import Button
     from cairnmind.terminal_panels import ConfirmModal
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
@@ -281,10 +281,19 @@ async def test_routine_confirmation_starts_on_cancel_and_consent_on_its_text(tmp
                         results.append)
         await pilot.pause()
         await pilot.pause()
-        assert "cm-dialog-body" in app.focused.classes  # a consent request: no key decides it
+        # A consent request starts on Cancel too (#268): a stray Enter refuses, approving needs a deliberate key.
+        assert isinstance(app.focused, Button) and app.focused.id == "confirm-no"
+        assert "Enter: press" in str(app.screen.query_one(".cm-hint").render())
         await pilot.press("enter")
         await pilot.pause()
-        assert results == [False] and isinstance(app.screen, ConfirmModal)
+        assert results == [False, False] and not isinstance(app.screen, ConfirmModal)
+        app.push_screen(ConfirmModal("Run a paid model test?", "A real request.", approve="Run", consent=True),
+                        results.append)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.press("shift+tab", "enter")
+        await pilot.pause()
+        assert results == [False, False, True]
 
 
 @pytest.mark.asyncio
