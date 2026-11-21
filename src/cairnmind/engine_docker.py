@@ -370,7 +370,7 @@ def _wait(settings, name: str) -> dict:
 
 
 def _start_locked(settings, image: str, local_image: bool, context: Path | None, pull: bool) -> dict:
-    from .engine import engine_status, native_engine_pid, write_root_password
+    from .engine import native_engine_pid, write_root_password
     pid = native_engine_pid(settings)
     if pid is not None:
         raise ArcadeError(NATIVE_RUNS.format(pid=pid))

@@ -312,6 +312,8 @@ def start_engine(settings: Settings) -> dict:
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "engine.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        from .engine_docker import refuse_if_container_runs
+        refuse_if_container_runs(settings)  # never two engines on one data directory (#272)
         existing = engine_status(settings)
         if existing["available"]:
             if not existing.get("version_matches"):
@@ -414,7 +416,11 @@ def ensure_engine(settings: Settings) -> None:
     if status["available"] and not status.get("version_matches"):
         raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
     if not status["available"]:
-        start_engine(settings)
+        if engine_mode(settings) == "docker":
+            from .engine_docker import start_docker_engine
+            start_docker_engine(settings)  # the stored image; never builds, never pulls
+        else:
+            start_engine(settings)
 
 
 def local_process_recorded(settings: Settings) -> bool:
@@ -428,6 +434,9 @@ def stop_engine(settings: Settings) -> dict:
     Also in connect-only mode, where an engine started before the installation was switched may still
     run: it is this data directory's own process. With none, the command says that nothing is managed here.
     """
+    from .engine_docker import container_recorded, stop_docker_engine
+    if container_recorded(settings) or (not connect_only(settings) and engine_mode(settings) == "docker"):
+        return stop_docker_engine(settings)
     state = settings.data_dir / "arcade"
     file = state / "process.json"
     if not local_process_recorded(settings):

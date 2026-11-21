@@ -8,8 +8,10 @@ import string
 import subprocess
 
 import pytest
+from typer.testing import CliRunner
 
 from cairnmind import config, engine, engine_docker
+from cairnmind.cli import app
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 from cairnmind.database_mode import MODE_INVALID, describe, engine_mode
@@ -18,6 +20,7 @@ from cairnmind.engine_docker import (CONTAINER_RUNS, EXITED, IMAGE_FILES_MISSING
                                      TIMED_OUT, UNPUBLISHED, container_name, labels, start_docker_engine,
                                      stop_docker_engine)
 
+runner = CliRunner()
 DIGEST = "sha256:" + "ab" * 32
 PUBLISHED = f"ghcr.io/piotrwozn/cairnmind-arcadedb@{DIGEST}"
 
@@ -336,6 +339,155 @@ def test_docker_mode_refuses_root_an_unsafe_path_and_a_short_password(docker, tm
         start_docker_engine(settings)
     assert str(short.value) == SHORT_PASSWORD
     assert docker.calls == []
+
+
+# --- The engine in each mode -----------------------------------------------------------------------------------
+
+def test_engine_status_in_docker_mode_names_the_container_and_looks_for_no_java(docker, tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, "resolve_java", lambda settings: pytest.fail("Java was looked for"))
+    monkeypatch.setattr(engine, "managed_java_executable", lambda settings: pytest.fail("Java was looked for"))
+    settings = started(docker, tmp_path, engine_mode="docker")
+    name = container_name(settings)
+
+    def asked():
+        status = engine.engine_status(settings)
+        shown = runner.invoke(app, ["--data-dir", str(settings.data_dir), "engine", "status"])
+        assert shown.exit_code == 0, shown.output
+        assert json.loads(shown.stdout)["container"] == status["container"]
+        return status
+
+    docker.add(settings)
+    running = asked()
+    assert running["engine"] == "docker" and running["available"] and running["version_matches"]
+    assert running["container"] == {"name": name, "state": "running"} and running["image"] == PUBLISHED
+    docker.containers.clear()
+    docker.answers = False
+    absent = asked()
+    assert absent["available"] is False and absent["container"] == {"name": name, "state": "absent"}
+    assert absent["error"] == "Local ArcadeDB is not running; start it with `cairnmind engine start`."
+    docker.add(settings, ours=False)
+    foreign = asked()
+    assert foreign["container"] == {"name": name, "state": "not ours", "error": NOT_OURS.format(name=name)}
+    docker.up = False
+    unknown = asked()["container"]
+    assert unknown["state"] == "unknown" and unknown["error"].startswith(
+        f"Docker cannot be asked about the engine container {name}: ")
+    docker.up, docker.odd_reply = True, True
+    assert asked()["container"]["state"] == "unknown"
+
+
+def test_a_stored_docker_mode_without_docker_is_an_error_naming_docker_never_a_native_start(docker, tmp_path,
+                                                                                            monkeypatch):
+    def missing(arguments, **options):
+        raise ArcadeError(engine_docker.DOCKER_NOT_FOUND)
+
+    monkeypatch.setattr(engine_docker, "run_docker", missing)
+    monkeypatch.setattr(engine, "start_engine", lambda settings: pytest.fail("the native engine was started"))
+    settings = started(docker, tmp_path, engine_mode="docker")
+    docker.answers = False
+    with pytest.raises(ArcadeError) as refused:
+        engine.ensure_engine(settings)
+    assert "docker was not found on PATH." in str(refused.value) and "cairnmind engine start --native" in str(
+        refused.value)
+
+
+def test_ensure_engine_never_downloads_an_image_and_starts_the_container_of_the_stored_image(docker, tmp_path,
+                                                                                            monkeypatch):
+    settings = started(docker, tmp_path, engine_mode="docker")
+    docker.answers = False
+    docker.images.clear()
+    with pytest.raises(ArcadeError, match="is not on this machine"):
+        engine.ensure_engine(settings)
+    assert docker.verbs("pull", "build", "run") == []
+    docker.images.add(PUBLISHED)
+    docker.answers = True
+    engine.ensure_engine(settings)  # answers: nothing to start
+    assert docker.verbs("run") == []
+    docker.answers = False
+    docker.state_after_run = "running"
+
+    def answers_once_started(*_):
+        if docker.verbs("run"):
+            return {"version": "26.11.1"}
+        raise ArcadeError("Local ArcadeDB is unavailable (ConnectError); start it")
+
+    monkeypatch.setattr(ArcadeClient, "server_info", answers_once_started)
+    engine.ensure_engine(settings)
+    assert len(docker.verbs("run")) == 1
+
+
+def test_the_native_engine_is_told_from_its_record_and_the_check_fails_closed(tmp_path, monkeypatch):
+    settings = settings_with(tmp_path)
+    state = settings.data_dir / "arcade"
+    assert engine.native_engine_pid(settings) is None
+    state.mkdir()
+    record = state / "process.json"
+    record.write_text("not json")
+    with pytest.raises(ArcadeError, match="command line cannot be read"):
+        engine.native_engine_pid(settings)
+    record.write_text(json.dumps({"pid": 4242}))
+    command, alive = {"value": None}, {"value": True}
+    monkeypatch.setattr(engine.process_identity, "command_line", lambda pid: command["value"])
+    monkeypatch.setattr(engine.process_identity, "alive", lambda pid: alive["value"])
+    with pytest.raises(ArcadeError) as unknown:
+        engine.native_engine_pid(settings)
+    assert str(unknown.value) == engine_docker.NATIVE_UNKNOWN.format(pid=4242)
+    alive["value"] = False
+    assert engine.native_engine_pid(settings) is None
+    command["value"] = ["bash", "-c", "something else"]
+    assert engine.native_engine_pid(settings) is None  # the id was reused by another process
+    command["value"] = ["java", f"-Darcadedb.server.rootPath={state}", "com.arcadedb.server.ArcadeDBServer"]
+    assert engine.native_engine_pid(settings) == 4242
+    command["value"] = ["java", "-Darcadedb.server.rootPath=/elsewhere", "com.arcadedb.server.ArcadeDBServer"]
+    assert engine.native_engine_pid(settings) is None  # another data directory's engine
+
+
+def native_harness(settings, monkeypatch):
+    """start_engine up to the point where it would start Java: the process is not started, the call is captured."""
+    (engine.runtime_dir(settings) / "lib").mkdir(parents=True)
+    monkeypatch.setattr(engine, "engine_status", lambda settings: {"available": False})
+    monkeypatch.setattr(engine, "resolve_java", lambda settings: "/usr/bin/java")
+    monkeypatch.setattr(engine, "probe_java", lambda java: subprocess.CompletedProcess(
+        [java], 0, "", 'openjdk version "21.0.1"'))
+
+    class Started(Exception):
+        pass
+
+    def popen(command, **options):
+        raise Started
+
+    monkeypatch.setattr(engine.subprocess, "Popen", popen)
+    return Started
+
+
+def test_the_native_start_is_refused_while_a_recorded_container_runs_and_when_docker_cannot_be_asked(
+        docker, tmp_path, monkeypatch):
+    settings = started(docker, tmp_path)
+    started_error = native_harness(settings, monkeypatch)
+    with pytest.raises(started_error):  # no record: Docker is never asked
+        engine.start_engine(settings)
+    assert docker.calls == []
+    record = settings.data_dir / "arcade" / "container.json"
+    name = docker.add(settings)
+    record.write_text(json.dumps({"name": name}))
+    with pytest.raises(ArcadeError) as running:
+        engine.start_engine(settings)
+    assert str(running.value) == CONTAINER_RUNS.format(name=name) and record.exists()
+    docker.up = False
+    with pytest.raises(ArcadeError, match="Nothing was started or stopped") as unknown:
+        engine.start_engine(settings)
+    assert "Docker cannot be asked" in str(unknown.value) and record.exists()
+    docker.up = True
+    docker.containers.clear()
+    docker.add(settings, state="exited")
+    with pytest.raises(started_error):  # an exited container does not hold the directory
+        engine.start_engine(settings)
+    assert not record.exists()
+    docker.containers.clear()
+    docker.add(settings, ours=False)
+    record.write_text(json.dumps({"name": name}))
+    with pytest.raises(ArcadeError, match="does not touch it"):
+        engine.start_engine(settings)
 
 
 # --- Words ---------------------------------------------------------------------------------------------------
