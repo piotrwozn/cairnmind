@@ -146,6 +146,12 @@ def data_dir_note() -> str | None:
     return None
 
 
+# The engine image of `cairnmind engine start --docker` (#272): deploy/arcadedb, published by the release job for
+# linux/amd64 and linux/arm64 and pinned by the digest of its index. It must hold arcade_version's ArcadeDB.
+ARCADE_IMAGE = "ghcr.io/piotrwozn/cairnmind-arcadedb"
+ARCADE_IMAGE_DIGEST = "sha256:" + "0" * 64  # filled in when the image of this release is published
+
+
 @dataclass
 class Settings:
     data_dir: Path
@@ -174,6 +180,12 @@ class Settings:
     arcade_database: str = ""
     arcade_version: str = "26.11.1"
     java_executable: str = ""
+    # Where the managed engine runs (#272): "native" (Java 21 on this machine) or "docker" (Cairnmind's image).
+    # "" until `cairnmind init` chooses: every config.json before 0.13.0 has none, and those engines are native.
+    engine_mode: str = ""
+    # With engine_mode "docker": run the image built on this machine (`engine start --docker --build`), not the
+    # published one. Set only by `engine start --docker`.
+    engine_docker_build: bool = False
     tmux_executable: str = ""
     # Database access outside this machine (#72): a private file holding the password, and the PEM file of
     # a private certificate authority. Both are absolute paths; see database_credentials.

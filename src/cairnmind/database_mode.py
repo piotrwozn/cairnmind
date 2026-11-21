@@ -161,10 +161,30 @@ def sign_in_refused(settings) -> str:
             "password: if this worked before, wait and try again.")
 
 
+ENGINE_MODES = ("native", "docker")
+MODE_INVALID = "engine_mode in config.json is {value}; it must be native or docker."
+
+
+def engine_mode(settings) -> str:
+    """'native' or 'docker' for a managed installation (#272). Empty, as every config.json before 0.13.0 has it,
+    is native: those installations run the native engine. Any other value is refused, never guessed."""
+    value = getattr(settings, "engine_mode", "")
+    if value == "":
+        return "native"
+    if value in ENGINE_MODES:
+        return value
+    raise ValueError(MODE_INVALID.format(value=repr(value)[:80]))
+
+
 def describe(settings) -> dict:
     """What `engine status`, `status` and `doctor` say about where storage runs."""
     result = {"mode": mode(settings), "host": host(settings)}
     if result["mode"] == "connect":
         result["reason"] = why(settings)
         result["engine"] = "not managed by this installation: never installed, started or stopped here"
+    else:
+        try:
+            result["engine"] = engine_mode(settings)
+        except ValueError as exc:
+            result["engine"], result["engine_problem"] = "unknown", str(exc)
     return result
