@@ -14,6 +14,19 @@ record revisions, plans, plan revisions, and logical graph relationships retain
 their identities. Foreign code graphs and file snapshots do not establish the
 state of the current local checkout.
 
+The code graph is not in a package (#261): it follows from the files, so indexing rebuilds it. Not written:
+the nodes indexing makes (`file`, `symbol`, `external_module`, `unresolved_reference`) and the edges it
+derives (`imports`, `defines`, `calls`, `references`, `test_imports`, `snapshot_of`). Written, because they are
+memory: the nodes of records, plans and sources, their `supported_by`, `depends_on`, `supersedes` and
+`has_step` edges, and a `relates_to` link from a record to a code node, together with that node (so that the
+link has both ends; on another machine, where the file lies elsewhere, the node stays as imported and is not
+current). The format number stays 1: a reader of 0.12.0 reads a package without these rows, because they were
+never required, and a package of 0.12.0 that carries them is read by this version with the graph rows left
+out (the earlier import already stored them as not current, so nothing a reader saw changes). An import
+says `code_graph: not_built` until indexing has built the graph, as `memory status` does with
+`rebuilding.code_index_pending`; a package written before this version names its graph rows in `counts`,
+and the first snapshot after the upgrade is a new one with the same `state_hash`.
+
 Only committed, project-assigned rows are captured. Pending import, extraction,
 or embedding work is reported rather than represented as finished. The package
 does not contain environment configuration, credential files, embeddings,
@@ -419,8 +432,11 @@ another computer is the setting `memory_remote_classes` (see [API.md](API.md#the
 
 Version 1 limits an individual JSON object to 16 MiB, a manifest to 32 MiB, and a
 complete package to 512 MiB and one million object descriptors. A package exceeding
-these limits fails explicitly before replacing the current manifest; data is
-never silently truncated. Source text is not sent to a model by export or import.
+these limits fails explicitly before replacing the current manifest, and the error names each limit that
+was hit with the size and the limit (`manifest bytes 38,000,000 over the limit of 33,554,432`); data is
+never silently truncated. `memory snapshot --preview` reports the same figures exactly (`package_size`,
+with `over` and `warning` naming the limits) before anything is written; it leaves the ancestry of earlier
+snapshots out of the manifest size. Source text is not sent to a model by export or import.
 
 `cairnmind memory status` shows the package a snapshot would write now against these limits
 (`package_size`: rows, bytes, manifest bytes and the largest object, each with its limit and fraction) and
@@ -434,7 +450,8 @@ seconds to a minute (about 0.05 to 0.15 s per MB of text), so it runs in a threa
 shows the last figure with its age, or says the size is still being measured. The result is kept for a
 minute, or 30 times as long as it took, so rows written meanwhile are not counted until it expires; the
 terminal shows the age from 10 seconds. The manifest has its own, much smaller, limit: at about 240 bytes per
-object descriptor it is reached near 130,000 rows, long before the one million. Status also splits the
+object descriptor it is reached near 130,000 rows, long before the one million; the graph rows that made a
+repository of 450 files reach it (152,092 rows) are no longer in a package. Status also splits the
 bytes of the sources into current versions, replaced versions and agent transcripts.
 
 Open question for the owner: should the package carry replaced source versions and agent transcripts at all?
