@@ -20,6 +20,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `cairnmind models pull` (after a successful download) and `cairnmind models set` (after its check) set `knowledge_agent: enabled` and say so at once, with how to turn it off; a running service that started without models tells you to restart it; installations from before 0.13.0 keep their models and a configured server that is down is still reported as a fault (#274).
 - `README.md` is a short start page: the pitch, the comparison, a quick start without Java, tmux or models, the optional models and workspace, what is guaranteed, the measured results and an index. The rest moved into `docs/`: new `ARCHITECTURE.md`, `EXTERNAL_CLIENTS.md`, `MEMORY.md` and `STORAGE_AND_MAINTENANCE.md`, and new sections of `CONTRACTS.md`, `WORKFLOW.md`, `EVALUATION.md`, `TERMINAL.md`, `API.md`, `INSTALL.md` and `UPGRADING.md`. The moved text is the same except where it had become untrue, above all what a first start needs (#275).
 - The documentation of external MCP clients no longer says to start the service first: their first tool call starts it (#258, #275).
+- `cairnmind setup` shows where storage and the memory models run and what runs on this machine, in three lines (`--json` for the structured form). It changes no setting of an initialized installation; choosing a profile comes in a later step (#74).
+- `cairnmind doctor` and `cairnmind status` start with `topology`: the same three lines, the variable a value came from when it was not `config.json`, whether the models were evaluated, and the writer role with its problem. The workspace status row shows Storage and Models when the terminal is wide enough (#74).
+- An empty `CAIRNMIND_ARCADE_CONNECT_URL` no longer turns a connect-only installation into a managed one; it counts as unset, like the port and Ollama variables (#74).
 
 ### Fixes
 
