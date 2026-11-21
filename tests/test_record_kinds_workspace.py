@@ -142,7 +142,7 @@ async def test_a_view_that_read_only_part_of_the_records_never_says_there_is_not
         app.record_kinds()
         await wait_until(pilot, lambda: "Only the first 20000" in notice_of(app))
         notice = notice_of(app)
-    assert "No unknown transcript record kinds" not in notice and "cairnmind record-kind accept" in notice
+    assert "No unknown transcript record kinds" not in notice and "where a person accepts it" in notice
     assert broker.sent == []
 
 

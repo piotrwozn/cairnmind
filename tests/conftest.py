@@ -148,27 +148,74 @@ def plain_words(text: str) -> str:
     return " ".join(_BOX.sub(" ", _ANSI.sub("", text)).split())
 
 
-def as_person(store, project_id, record, sources=None):
-    """Store `record` the way a person does on the command line in their own terminal (#177).
+@contextlib.contextmanager
+def person_proven():
+    """The test-only door of a person's act (#214): the store counts an open act as the person's while it is set.
 
-    This helper stands for a person: it calls the function `cairnmind remember --confirmed` calls after
-    it has found a terminal and no coding session. A test that needs a confirmed record and is not about
-    how it was confirmed uses this instead of asking the store for the status, which only a person's
-    route may do.
+    In production the only thing that sets `person_proof._PROVEN` is `person_proof.require`, after the open
+    workspace's key was checked. A test sets it itself around a store it built in its own process; a program
+    that can import Cairnmind and do the same can equally write the database, which the document names. Tests
+    of a route do not use it: they send the proof (`workspace_person`) and the route sets it.
+    """
+    from cairnmind import person_proof
+    token = person_proof._PROVEN.set(True)
+    try:
+        yield
+    finally:
+        try:
+            person_proof._PROVEN.reset(token)
+        except ValueError:  # the token was made in another context (an async test): set the default again
+            person_proof._PROVEN.set(False)
+
+
+@pytest.fixture(autouse=True)
+def person_door(request):
+    """Every test is a person's own process unless it is marked `unproven`: the tests of the store's gate."""
+    if request.node.get_closest_marker("unproven"):
+        yield
+        return
+    with person_proven():
+        yield
+
+
+TEST_KEY = "ab" * 32
+TEST_SOCKET = "/tmp/cairnmind-ui-test/tmux.sock"
+
+
+@pytest.fixture
+def workspace_person(monkeypatch):
+    """The open workspace of a test: the proof its panels send, with the tmux check answered as it would be.
+
+    Returns the two headers for a request to a route. Without them the same request is a token holder's.
+    """
+    from cairnmind import person_proof
+    monkeypatch.setattr(person_proof, "_tmux", lambda settings: "tmux")
+    monkeypatch.setattr(person_proof, "read_key", lambda *args, **kwargs: ("key", TEST_KEY))
+    monkeypatch.setattr(person_proof, "workspace_socket",
+                        lambda settings, value: Path(value) if value == TEST_SOCKET else None)
+    return {person_proof.KEY_HEADER: TEST_KEY, person_proof.SOCKET_HEADER: TEST_SOCKET}
+
+
+def as_person(store, project_id, record, sources=None):
+    """Store `record` as confirmed under a person's act, in a test process that stands for the person (#177).
+
+    The command line no longer does this (#214). A test that needs a confirmed record and is not about how it
+    was confirmed uses this instead of asking the store for the status, which only a person's route may do.
     """
     from cairnmind.confirmation import remember_as_person
-    return remember_as_person(store, project_id, {"status": "confirmed", **record}, sources)
+    with person_proven():
+        return remember_as_person(store, project_id, {"status": "confirmed", **record}, sources)
 
 
 def person_edit(store, project_id, record, sources):
     """Write `record` as a person's own act that confirms nothing (#177).
 
     Once a person confirmed a record, only a person changes or replaces it. This helper stands for that
-    person: it opens the act the command line opens for `cairnmind plan save` in a person's terminal. A
-    changed record is stored as proposed, without a lapsed mark, until the person confirms it again.
+    person (the act a person's route opens). A changed record is stored as proposed, without a lapsed mark,
+    until the person confirms it again.
     """
     from cairnmind.confirmation import person_source
-    with store.transaction():
+    with person_proven(), store.transaction():
         note = person_source(store, project_id, "edit", action="person_edit")
         with store.person_act("cli", note["id"]):
             return store.remember(project_id, record, sources)
@@ -206,6 +253,7 @@ def pytest_configure(config):
     global MCP_FIXTURE
     config.addinivalue_line("markers", "arcade: needs the real pinned ArcadeDB engine (Java 21)")
     config.addinivalue_line("markers", "tmux: drives a real tmux server")
+    config.addinivalue_line("markers", "unproven: a person's act is not proven, as a token holder's request is (#214)")
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
     config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
     # A worker's base directory is its own (<run root>/popen-gwN); a serial run's is the run root.

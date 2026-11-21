@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from cairnmind import __version__
+from cairnmind import __version__, person_proof
 from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
 from cairnmind.store_backup import stale_temporaries
 
@@ -799,7 +799,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         return result
 
     @app.post("/memory/import", dependencies=auth)
-    async def memory_import(body: MemoryImportBody):
+    async def memory_import(body: MemoryImportBody, request: Request):
+        if body.replace_confirmed and not body.dry_run and not body.session_id:
+            # A request that names a session is refused below with its own sentence; it never carries the proof.
+            await person_proof.require(request, settings, person_proof.IMPORT_REPLACE)
         # Bind authorization to the exact fully validated package. The importer
         # rechecks this identity, so swapping a manifest cannot change scope.
         inspected = await asyncio.to_thread(inspect_snapshot, body.path)
@@ -847,7 +850,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         return await asyncio.to_thread(configure, store, pid, body.kind, body.path, worktree)
 
     @app.post("/memory/import-published", dependencies=auth)
-    async def memory_import_published(body: MemoryImportPublishedBody):
+    async def memory_import_published(body: MemoryImportPublishedBody, request: Request):
+        if body.replace_confirmed and not body.dry_run and not body.session_id:
+            # A request that names a session is refused below with its own sentence; it never carries the proof.
+            await person_proof.require(request, settings, person_proof.IMPORT_REPLACE)
         from cairnmind.memory_published_import import PublishedImporter
         pid = project(body.project)["id"]
         authorize = None
@@ -871,7 +877,10 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         return result
 
     @app.post("/memory/import-commit", dependencies=auth)
-    async def memory_import_commit(body: MemoryImportCommitBody):
+    async def memory_import_commit(body: MemoryImportCommitBody, request: Request):
+        if body.replace_confirmed and not body.dry_run and not body.session_id:
+            # A request that names a session is refused below with its own sentence; it never carries the proof.
+            await person_proof.require(request, settings, person_proof.IMPORT_REPLACE)
         # The main-branch import (#172): a commit's published memory, re-checked against that commit's code.
         from cairnmind.memory_published_main import import_commit
         pid = project(body.project)["id"]
@@ -1190,13 +1199,17 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         return result
 
     @app.post("/findings", dependencies=auth)
-    async def finding(body: FindingBody):
+    async def finding(body: FindingBody, request: Request):
         """A finding with a source created here, so it cannot claim another origin's id.
 
         Without a session it is a person's own write (origin workspace_form); with one, it is the
         session's (origin session_finding), after the same resume gate as /remember.
         """
         from cairnmind.findings import finding_error, key_error, save_finding
+        if not body.session_id:
+            # The workspace form is a person's act (#214): it needs the open workspace's key, and nothing is written
+            # without it, a proposed finding included.
+            await person_proof.require(request, settings)
         selected = project(body.project)
         pid = selected["id"]
         error = finding_error(body.content, body.kind, body.status) or key_error(body.key)

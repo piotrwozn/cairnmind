@@ -77,7 +77,7 @@ def test_a_confirmed_record_no_person_covered_can_be_confirmed_again_but_not_twi
     assert inspector.review(pid, record["id"], "confirm", edited["version"])["record"]["status"] == "confirmed"
 
 
-def test_confirm_plan_confirms_the_definition_and_every_step_in_one_act(workspace, tmp_path):
+def test_confirm_plan_confirms_the_definition_and_every_step_in_one_act(workspace, tmp_path, workspace_person):
     store, pid, root, commit = workspace
     saved = PlanManager(store).save(pid, {"title": "Ship", "goal": "Ship it", "constraints": ["Small"]},
                                     [{"key": "one", "content": "Step one"},
@@ -101,7 +101,7 @@ def test_confirm_plan_confirms_the_definition_and_every_step_in_one_act(workspac
     app = FastAPI()
     attach_inspector_routes(app, store, store.settings)
     client = TestClient(app)
-    headers = {"Authorization": "Bearer " + store.settings.token}
+    headers = {"Authorization": "Bearer " + store.settings.token, **workspace_person}
     stale = client.post(f"/inspector/plans/{saved['plan']['id']}/confirm", headers=headers,
                         json={"project": pid, "expected_plan_version": 1})
     assert stale.status_code == 409 and "plan version conflict" in stale.json()["detail"]

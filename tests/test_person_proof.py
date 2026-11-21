@@ -210,6 +210,7 @@ def test_only_a_persons_post_paths_carry_the_proof():
         assert not person_proof.PERSON_BROKER_PATH.fullmatch(path), path
 
 
+@pytest.mark.unproven
 def test_the_proof_is_not_present_until_require_passes(settings, workspace_socket, tmp_path):
     import asyncio
     from types import SimpleNamespace

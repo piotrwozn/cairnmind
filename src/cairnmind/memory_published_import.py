@@ -141,6 +141,12 @@ class PublishedImporter:
                     # A verdict a person gave here is never replaced by a file without that person's choice (#177).
                     from .confirmation import replaces_refusal
                     raise MemoryConflict(replaces_refusal(replaced))
+                if replaced and not dry_run:
+                    # And it is the person's choice, made in the workspace (#214).
+                    from .confirmation import ConfirmationRefused
+                    from .person_proof import IMPORT_REPLACE, present
+                    if not present():
+                        raise ConfirmationRefused(IMPORT_REPLACE)
                 if after is not None:
                     after(tx, tree, result)
                 if dry_run:

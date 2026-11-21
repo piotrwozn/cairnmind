@@ -15,7 +15,8 @@ from cairnmind.terminal_i18n_messages import broker_error_text
 from test_published_memory_acts import workspace  # noqa: F401 (a fixture)
 
 
-def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conflict(workspace):  # noqa: F811
+def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conflict(workspace,  # noqa: F811
+                                                                                       workspace_person):
     store, pid, _, _ = workspace
     source = store.snapshot(pid, "note://twice", "Use cookies.", "note")
     record = store.remember(pid, {"kind": "decision", "content": "Use cookies."}, [source["id"]])
@@ -38,12 +39,11 @@ def test_confirming_a_record_already_confirmed_here_says_so_and_not_version_conf
     # Over HTTP it is a refusal (400), not a conflict to read again and retry (409); the panel shows it in Polish.
     app = FastAPI()
     attach_inspector_routes(app, store, store.settings)
-    response = TestClient(app).post(f"/inspector/records/{replacement['id']}/review",
-                                    headers={"Authorization": "Bearer " + store.settings.token},
+    headers = {"Authorization": "Bearer " + store.settings.token, **workspace_person}
+    response = TestClient(app).post(f"/inspector/records/{replacement['id']}/review", headers=headers,
                                     json={"project": pid, "action": "confirm", "expected_version": 1})
     assert response.status_code == 200
-    again = TestClient(app).post(f"/inspector/records/{replacement['id']}/review",
-                                 headers={"Authorization": "Bearer " + store.settings.token},
+    again = TestClient(app).post(f"/inspector/records/{replacement['id']}/review", headers=headers,
                                  json={"project": pid, "action": "confirm", "expected_version": 2})
     assert again.status_code == 400 and again.json()["detail"].startswith("Already confirmed by a person here")
     error = SimpleNamespace(detail=again.json()["detail"], status_code=400)

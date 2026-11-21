@@ -15,7 +15,7 @@ from cairnmind.store import Store
 
 
 @pytest.fixture
-def workspace(tmp_path):
+def workspace(tmp_path, workspace_person):
     root = tmp_path / "project"
     other_root = tmp_path / "other"
     root.mkdir()
@@ -29,7 +29,8 @@ def workspace(tmp_path):
     private_record = store.remember(private["id"], {"kind": "fact", "content": "OTHER_PROJECT_INSPECTOR_CANARY"}, [private_source["id"]])
     app = FastAPI()
     attach_inspector_routes(app, store, store.settings)
-    headers = {"Authorization": "Bearer " + store.settings.token}
+    # The token and the open workspace's proof (#214): a person's routes (review) need both.
+    headers = {"Authorization": "Bearer " + store.settings.token, **workspace_person}
     return store, project, root, private, private_record, source, record, TestClient(app), headers
 
 

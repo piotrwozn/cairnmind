@@ -898,6 +898,12 @@ class MemoryManager:
                 return result
             if replaced and not replace_confirmed:
                 raise MemoryConflict(replaces_refusal(sorted(replaced)))
+            if replaced:
+                # Putting a package over a verdict given here is the person's choice, made in the workspace (#214).
+                from .confirmation import ConfirmationRefused
+                from .person_proof import IMPORT_REPLACE, present
+                if not present():
+                    raise ConfirmationRefused(IMPORT_REPLACE)
             from .journal import Journal
             Journal.reset(tx, reason="memory_import")
             if not current:

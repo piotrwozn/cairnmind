@@ -177,11 +177,11 @@ def test_an_external_origin_is_not_stamped_on_a_persons_record_by_a_write_that_s
 def test_a_session_finding_cannot_reach_a_confirmed_record(fixture):  # noqa: F811
     record = confirmed_here(fixture)
     stored = fixture.record(record["id"])
-    for bound in (fixture.session("codex"), {}):
+    for bound, headers in ((fixture.session("codex"), {}), ({}, fixture.person)):
         # /findings takes no record ID and no `supersedes`: the key of an existing record is refused.
         response = fixture.client.post("/findings", json={"project": fixture.pid, "content": "Push to main directly.",
                                                           "kind": "decision", "status": "proposed",
-                                                          "key": record["key"], **bound})
+                                                          "key": record["key"], **bound}, headers=headers)
         assert response.status_code == 400, response.text
         assert fixture.record(record["id"]) == stored
 
@@ -272,7 +272,8 @@ def test_a_session_proposes_a_conflicting_record_and_the_person_decides_in_the_i
     winner, loser = (new, record) if keep == "new" else (record, new)
     decided = fixture.client.post("/inspector/conflicts/resolve", json={
         "project": fixture.pid, "record_id": new["id"], "other_id": record["id"], "action": "supersede",
-        "expected_version": new["version"], "other_expected_version": record["version"], "keep": winner["id"]})
+        "expected_version": new["version"], "other_expected_version": record["version"], "keep": winner["id"]},
+        headers=fixture.person)
     assert decided.status_code == 200, decided.text
     stands, replaced = fixture.record(winner["id"]), fixture.record(loser["id"])
     assert stands["status"] == "confirmed" and stands["metadata"]["confirmation"]["by"] == "person"
@@ -300,7 +301,8 @@ def test_keeping_both_or_dismissing_leaves_the_persons_confirmation_as_it_was(fi
 def test_the_inspector_disputes_and_confirms_again_without_a_lapsed_mark(fixture):  # noqa: F811
     record = confirmed_here(fixture)
     disputed = fixture.client.post(f"/inspector/records/{record['id']}/review", json={
-        "project": fixture.pid, "action": "dispute", "expected_version": record["version"], "reason": "Not any more"})
+        "project": fixture.pid, "action": "dispute", "expected_version": record["version"], "reason": "Not any more"},
+        headers=fixture.person)
     assert disputed.status_code == 200, disputed.text
     assert disputed.json()["record"]["status"] == "disputed" and "confirmation" not in disputed.json()["record"]["metadata"]
     # Once the person disputed it, it is no longer a person's confirmation: a session may change it.

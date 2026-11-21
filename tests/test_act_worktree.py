@@ -122,12 +122,12 @@ def test_a_review_names_the_worktree_the_inspector_is_bound_to(two_worktrees):
     assert (unknown["branch"], unknown["commit"]) == (None, None)
 
 
-def test_the_inspector_routes_pass_the_worktree_to_every_confirmation(two_worktrees):
+def test_the_inspector_routes_pass_the_worktree_to_every_confirmation(two_worktrees, workspace_person):
     store, pid, root, other = two_worktrees
     app = FastAPI()
     attach_inspector_routes(app, store, store.settings)
     client = TestClient(app)
-    headers = {"Authorization": "Bearer " + store.settings.token}
+    headers = {"Authorization": "Bearer " + store.settings.token, **workspace_person}
     git(other, "checkout", "-q", "--detach")
     commit = git(other, "rev-parse", "HEAD")
     expected = ("detached HEAD", commit)
@@ -177,7 +177,7 @@ def test_a_conflict_decision_a_form_and_a_plan_confirmation_name_the_worktree(tw
     assert audit_of(store, done["audit_source_id"])["branch"] == "feat-b"
 
 
-def test_the_conflict_route_and_the_findings_route_pass_the_worktree(two_worktrees):
+def test_the_conflict_route_and_the_findings_route_pass_the_worktree(two_worktrees, workspace_person):
     store, pid, root, other = two_worktrees
     commit = git(other, "rev-parse", "HEAD")
     first = store.snapshot(pid, "transcript://old", "Sessions last a day.", "transcript")
@@ -189,7 +189,7 @@ def test_the_conflict_route_and_the_findings_route_pass_the_worktree(two_worktre
                                [second["id"]])
     app = FastAPI()
     attach_inspector_routes(app, store, store.settings)
-    headers = {"Authorization": "Bearer " + store.settings.token}
+    headers = {"Authorization": "Bearer " + store.settings.token, **workspace_person}
     decided = TestClient(app).post("/inspector/conflicts/resolve", headers=headers, json={
         "project": pid, "record_id": candidate["id"], "other_id": existing["id"], "action": "supersede",
         "expected_version": 1, "other_expected_version": 1, "keep": candidate["id"], "worktree": str(other)})

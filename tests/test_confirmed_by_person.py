@@ -75,8 +75,9 @@ class Fixture:
 
 
 @pytest.fixture
-def fixture(tmp_path):
+def fixture(tmp_path, workspace_person):
     value = Fixture(tmp_path)
+    value.person = workspace_person  # what the open workspace sends with a person's request (#214)
     with TestClient(create_app(value.settings, start_worker=False, ollama=object()),
                     headers={"Authorization": f"Bearer {value.settings.token}"}) as client:
         value.client = client
@@ -211,7 +212,13 @@ def test_a_session_finding_is_refused_and_the_persons_form_confirms(fixture):
     assert not fixture.store.query("SELECT id FROM records WHERE `key`=:key", {"key": key})
     proposed = fixture.client.post("/findings", json={**body, "status": "proposed", "key": key, **bound})
     assert proposed.status_code == 200 and proposed.json()["record"]["status"] == "proposed"
-    form = fixture.client.post("/findings", json={**body, "key": str(uuid4())})
+    # The form is the person's: without the open workspace's key the same request writes nothing, not even a proposed one.
+    sources = fixture.store.query("SELECT count(*) AS n FROM sources")[0]["n"]
+    for status in ("confirmed", "proposed"):
+        token_only = fixture.client.post("/findings", json={**body, "status": status, "key": str(uuid4())})
+        assert token_only.status_code == 403, token_only.text
+    assert fixture.store.query("SELECT count(*) AS n FROM sources")[0]["n"] == sources
+    form = fixture.client.post("/findings", json={**body, "key": str(uuid4())}, headers=fixture.person)
     assert form.status_code == 200, form.text
     record = form.json()["record"]
     mark = record["metadata"]["confirmation"]
@@ -232,7 +239,7 @@ def test_the_origin_field_a_client_sends_does_not_count_as_the_persons_form(fixt
 def test_the_inspector_and_a_plan_confirmation_are_a_persons_acts(fixture):
     saved = fixture.proposed()
     response = fixture.client.post(f"/inspector/records/{saved['id']}/review", json={
-        "project": fixture.pid, "action": "confirm", "expected_version": 1})
+        "project": fixture.pid, "action": "confirm", "expected_version": 1}, headers=fixture.person)
     assert response.status_code == 200, response.text
     record = response.json()["record"]
     mark = record["metadata"]["confirmation"]
@@ -242,7 +249,8 @@ def test_the_inspector_and_a_plan_confirmation_are_a_persons_acts(fixture):
     assert covered_by_local_act(fixture.store, fixture.record(saved["id"]))
     # A review names no session: the body has no such field.
     named = fixture.client.post(f"/inspector/records/{saved['id']}/review", json={
-        "project": fixture.pid, "action": "dispute", "expected_version": 2, "reason": "x", "session_id": "s"})
+        "project": fixture.pid, "action": "dispute", "expected_version": 2, "reason": "x", "session_id": "s"},
+                                headers=fixture.person)
     assert named.status_code == 422
 
 

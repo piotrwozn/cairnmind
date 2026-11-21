@@ -276,10 +276,10 @@ def test_the_store_refuses_an_acceptance_that_is_not_a_persons_act(fixture):
     assert fixture.standing() == set()
 
 
-def test_the_inspector_route_accepts_and_a_request_that_names_a_session_is_refused(fixture):
+def test_the_inspector_route_accepts_and_a_request_that_names_a_session_is_refused(fixture, workspace_person):
     fixture.transcript(fixture.pid, MODE, FUTURE)
     with TestClient(create_app(fixture.settings, start_worker=False, ollama=object()),
-                    headers={"Authorization": f"Bearer {fixture.settings.token}"}) as client:
+                    headers={"Authorization": f"Bearer {fixture.settings.token}", **workspace_person}) as client:
         body = {"project": fixture.pid, "client": "claude", "kind": "future-claude-record", "note": "Bookkeeping"}
         for extra in ({"session_id": "s"}, {"packet_id": "p"}):
             response = client.post("/inspector/record-kinds/accept", json={**body, **extra})
