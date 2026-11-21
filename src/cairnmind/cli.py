@@ -517,7 +517,12 @@ def init(ctx: typer.Context):
     if not connect_only(ctx.obj) and engine_mode(ctx.obj) == "docker":
         start_docker_engine(ctx.obj, pull=True)  # the first start downloads the image; ensure_engine never does
     store = store_for(ctx.obj)
+    from cairnmind.knowledge_mode import choose, enabled
+    said = choose(ctx.obj)  # the first run chooses whether the knowledge agent has models, and says which (#274)
+    if said:
+        typer.echo(f"Cairnmind: {said}", err=True)
     result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
+    result["knowledge_agent"] = "enabled" if enabled(ctx.obj) else "disabled"
     if not connect_only(ctx.obj):
         result["engine_mode"] = engine_mode(ctx.obj)
     if getattr(store, "not_writer", None):
@@ -1884,6 +1889,10 @@ def model_set(ctx: typer.Context,
             context_window=context_window, reasoning_effort=reasoning_effort, allow_remote=allow_remote))
     except (ValueError, OllamaUnavailable) as exc:
         raise typer.BadParameter(str(exc)) from None
+    from cairnmind.knowledge_mode import turn_on
+    said = turn_on(ctx.obj)  # its check passed: the knowledge agent is on from the service's next start (#274)
+    if said:
+        result["knowledge_agent"] = said
     output(result)
 
 
@@ -1919,12 +1928,14 @@ def model_pull(ctx: typer.Context):
     lock = {"chat_model": settings.chat_model, "embedding_model": settings.embedding_model,
             "models": models.get("models", []), "locked_at": time.time()}
     (settings.data_dir / "models.lock.json").write_text(json.dumps(lock, indent=2), encoding="utf-8")
+    from cairnmind.knowledge_mode import turn_on
+    said = turn_on(settings)  # the models are here: the knowledge agent is on from the service's next start (#274)
     store = store_for(settings)
     from cairnmind.service import schedule_embeddings
     for item in models.get("models", []):
         if item.get("name") == settings.embedding_model and item.get("digest") and settings.embedding_model in local:
             schedule_embeddings(store, f"{settings.embedding_model}@{item['digest']}")
-    output({"models": local, "digests_saved": True})
+    output({"models": local, "digests_saved": True, **({"knowledge_agent": said} if said else {})})
 
 
 def _retry_jobs(store):
