@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import httpx
 import pytest
@@ -42,6 +43,20 @@ def test_client_redacts_password_in_backend_error(tmp_path):
         client.query("SELECT 1")
     assert settings.arcade_password not in str(error.value)
     assert "[redacted]" in str(error.value)
+
+
+def test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for(tmp_path, capsys):
+    """The report of a timeout (#221) names the statement, the wait and the engine's log, and the error is unchanged."""
+    def silent(request):
+        if request.url.path.startswith("/api/v1/command/"):
+            time.sleep(5.1)  # the wait that makes the report worth printing
+        raise httpx.ReadTimeout("no answer", request=request)
+    client = ArcadeClient(Settings.load(tmp_path, create=True), transport=httpx.MockTransport(silent))
+    with pytest.raises(ArcadeError, match=r"^Local ArcadeDB is unavailable \(ReadTimeout\); run cairnmind engine"):
+        client.command("CREATE PROPERTY probe.name IF NOT EXISTS STRING")
+    shown = capsys.readouterr().err
+    assert "ENGINE UNAVAILABLE after " in shown and "CREATE PROPERTY probe.name" in shown
+    assert "load average" in shown and "engine.log ends:" in shown
 
 
 def test_native_transaction_rolls_back_and_query_rejects_writes(tmp_path):

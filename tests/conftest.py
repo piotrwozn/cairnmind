@@ -33,6 +33,7 @@ import sys
 import tempfile
 import termios
 import threading
+import time
 from urllib.parse import quote
 import uuid
 import zlib
@@ -544,6 +545,33 @@ class SchemaTemplate:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
 
+def explained_when_unavailable(settings: Settings, original):
+    """A request the test engine does not answer says, in the failing test's captured stderr, what it waited for (#221).
+
+    One CREATE PROPERTY once got no answer in 30 s and nothing in the report showed whether the engine was busy,
+    stuck or gone. Costs nothing unless a request fails with "unavailable" after more than 5 s (a refused
+    connection is instant and says nothing here); the error itself is raised unchanged.
+    """
+    def request(client, method, path, **kwargs):
+        started = time.monotonic()
+        try:
+            return original(client, method, path, **kwargs)
+        except ArcadeError as exc:
+            if "unavailable" in str(exc) and time.monotonic() - started > 5:  # a stall: not a refused connection
+                statement = str((kwargs.get("json") or {}).get("command", ""))[:200]
+                try:
+                    open_databases = len(original(client, "GET", "/api/v1/databases", timeout=2).json().get("result", []))
+                except ArcadeError as probe:
+                    open_databases = f"no answer to the next request either ({probe})"
+                log = settings.data_dir / "arcade" / "engine.log"
+                tail = log.read_text(errors="replace").splitlines()[-15:] if log.exists() else []
+                print(f"ENGINE UNAVAILABLE after {time.monotonic() - started:.1f}s: {method} {path} {statement!r}; "
+                      f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
+                      f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
+            raise
+    return request
+
+
 @pytest.fixture(scope="session")
 def arcade_test_engine(tmp_path_factory, request):
     # Both spellings: a developer's exported earlier name must not reach the test engine either.
@@ -576,7 +604,8 @@ def arcade_test_engine(tmp_path_factory, request):
                "CAIRNMIND_ARCADE_PASSWORD": settings.arcade_password,
                "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
     os.environ.update(changes)
-    original_ensure = ArcadeClient.ensure_database
+    original_ensure, original_request = ArcadeClient.ensure_database, ArcadeClient._request
+    ArcadeClient._request = explained_when_unavailable(settings, original_request)
     template = None
     try:
         # Built inside the try: a schema that fails to initialise must still stop the engine and restore the environment.
@@ -584,7 +613,7 @@ def arcade_test_engine(tmp_path_factory, request):
         ArcadeClient.ensure_database = template.ensure_database(original_ensure)
         yield settings, prefix, template
     finally:
-        ArcadeClient.ensure_database = original_ensure
+        ArcadeClient.ensure_database, ArcadeClient._request = original_ensure, original_request
         if template is not None:
             template.remove()
         for name in changes:
