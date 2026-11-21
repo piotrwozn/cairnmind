@@ -201,6 +201,14 @@ async def test_run_next_stage_records_a_launch_problem_once_per_press(tmp_path, 
         assert sum(entry.count for entry in same) == 1, [(e.text, e.count) for e in app.notice_history.entries]
 
 
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_a_partial_resume_names_where_to_accept_the_record_kind(language):
+    from cairnmind.terminal_connection_hints import connection_hint
+    text = connection_hint(["resume_partial"], lambda value: tr(value, language))
+    assert tr("Transcript record kinds", language) in text
+    assert ("Operation needs attention" not in text) and "Connections" not in text
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_run_next_stage_says_what_to_do_about_a_key_the_launch_refused(tmp_path, monkeypatch, language):

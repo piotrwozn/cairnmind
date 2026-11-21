@@ -13,6 +13,8 @@ HINTS = {
                           "connection, then Set API key, or correct its environment variable.",
     "credential_unavailable": "The API key of this connection cannot be read. Open Connections, choose the "
                               "connection, then Set API key.",
+    "resume_partial": "The memory of this project is partial: a transcript may hold a record kind unknown to this "
+                      "release. Look at it and accept it under More → Transcript record kinds.",
 }
 MESSAGES = {
     NOT_STARTED: "Asystent nie został uruchomiony.",
@@ -22,6 +24,8 @@ MESSAGES = {
                                  "połączenie, a potem Ustaw klucz API, albo popraw jego zmienną środowiskową.",
     HINTS["credential_unavailable"]: "Nie można odczytać klucza API tego połączenia. Otwórz Połączenia, wybierz "
                                      "połączenie, a potem Ustaw klucz API.",
+    HINTS["resume_partial"]: "Pamięć tego projektu jest częściowa: transkrypcja może zawierać rodzaj rekordu "
+                             "nieznany tej wersji. Obejrzyj go i zaakceptuj w Więcej → Rodzaje rekordów transkrypcji.",
 }
 
 

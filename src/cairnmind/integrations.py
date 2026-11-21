@@ -796,7 +796,9 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     prepared = _prepare_session(settings, project, client, root, args)
     if prepared.get("status") != "ready":
         unknowns = "; ".join(str(value) for value in prepared.get("unknowns", []))
-        raise ValueError(f"Verified resume is {prepared.get('status', 'unavailable')}; native launch blocked. {unknowns}")
+        # A partial packet carries a stable code the workspace maps to the record-kind hint (#246).
+        code = "resume_partial: " if prepared.get("status") == "partial" else ""
+        raise ValueError(f"{code}Verified resume is {prepared.get('status', 'unavailable')}; native launch blocked. {unknowns}")
     context_path = _packet_file(settings, prepared, project, client, root)
     packet = prepared["packet"]
     command = [binary]
