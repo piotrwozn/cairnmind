@@ -184,12 +184,13 @@ uv export --directory "$package_dir" --locked --no-dev --no-emit-project \
 # and the coding sessions started from it, under the current and the earlier names. A later
 # version does not find what an earlier one started, so nothing of it may be left behind unseen.
 live_terminals() {
-    local socket
-    command -v tmux >/dev/null 2>&1 || return 0
+    local socket have_tmux=1
+    command -v tmux >/dev/null 2>&1 || have_tmux=0
     # On macOS they live in one folder per user under /private/tmp (runtime_sockets.py, #235).
     for socket in "${TMPDIR:-/tmp}"/{cairnmind,devbrain}-{ui,native}-"$(id -u)"-*/tmux.sock \
         /private/tmp/cairnmind-"$(id -u)"/{ui,native}-*/tmux.sock; do
-        if [[ -S "$socket" && -O "$socket" ]] && tmux -S "$socket" list-sessions >/dev/null 2>&1; then
+        # Without a tmux client here a server cannot be asked, so one that owns a socket counts as live.
+        if [[ -S "$socket" && -O "$socket" ]] && { ((! have_tmux)) || tmux -S "$socket" list-sessions >/dev/null 2>&1; }; then
             printf '%s\n' "$socket"
         fi
     done

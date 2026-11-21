@@ -223,6 +223,31 @@ def test_an_upgrade_finds_a_workspace_in_the_macos_socket_folder(tmp_path):
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+def test_an_upgrade_without_tmux_counts_a_server_it_cannot_ask_as_live(tmp_path):
+    import socket
+    import tempfile
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
+    try:
+        functions = script[start:script.index("# --- end ---", start)]
+        folder = system_temp / f"cairnmind-ui-{os.getuid()}-0123456789abcdef"
+        folder.mkdir()
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(str(folder / "tmux.sock"))
+        bin_dir = tmp_path / "bin"  # `id` only: no tmux on PATH
+        bin_dir.mkdir()
+        (bin_dir / "id").symlink_to(shutil.which("id"))
+        result = subprocess.run([BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_terminals"],
+                                env={"PATH": str(bin_dir), "TMPDIR": str(system_temp)},
+                                capture_output=True, text=True, timeout=30)
+        server.close()
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == [str(folder / "tmux.sock")]
+    finally:
+        shutil.rmtree(system_temp, ignore_errors=True)
+
+
 # --- Linux: what it printed before stays as it was -----------------------------------------------------------------
 
 @pytest.mark.parametrize("release,line", [
