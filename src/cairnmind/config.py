@@ -266,16 +266,22 @@ class Settings:
                                ("port", "PORT"),
                                ("cockpit_port", "COCKPIT_PORT"),
                                ("ollama_url", "OLLAMA_URL")):
-            override = env_value(variable)
-            if override is None or (name in ("port", "cockpit_port", "ollama_url") and not override):
-                continue  # for these three an empty variable (a project file can forward one) names nothing
+            spelling = ENV_PREFIXES[0] + variable
+            if name in ("port", "cockpit_port", "ollama_url"):
+                # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty
+                spelling = next((key for key in env_names(variable) if os.environ.get(key)), None)
+                override = os.environ[spelling] if spelling else None
+            else:
+                override = env_value(variable)
+            if override is None:
+                continue
             if name in ("port", "cockpit_port"):
                 try:
                     override = int(override)
                     if not 0 < override < 65536:
                         raise ValueError
                 except ValueError:
-                    raise ValueError(f"{ENV_PREFIXES[0]}{variable} must be a port number from 1 to 65535.") from None
+                    raise ValueError(f"{spelling} must be a port number from 1 to 65535.") from None
             values[name] = override
             kept[name] = (stored.get(name), override)
         # Connect-only (#68): arcade_connect_url is the address. The stored arcade_url stays as it is in

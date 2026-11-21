@@ -419,7 +419,9 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
-            if response.status_code == 401 and "Invalid local service token" in str(detail):
+            # Only where the service was not started or matched by instance id here: after that match a 401 is this
+            # directory's own service with a changed token, not another directory's.
+            if not start_service and response.status_code == 401 and "Invalid local service token" in str(detail):
                 detail = (f"The service at {settings.url} does not accept the token of {settings.data_dir}, so it "
                           f"most likely belongs to another data directory. {_PORT_ADVICE.format(settings.data_dir)}")
             # The service's answer, not a wrong argument; shown as it is, without control characters.
@@ -668,7 +670,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result = inspect(ctx.obj)
     result["service_running"] = service_alive(ctx.obj)
     result["data_dir"] = str(ctx.obj.data_dir)
-    from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, session_conflicts
+    result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
+    from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
@@ -676,6 +679,12 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
         for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
+    for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
+        if name in ctx.obj._origin.get("kept", {}):
+            stored, used = ctx.obj._origin["kept"][name]
+            spelling = next(key for key in env_names(variable) if os.environ.get(key))
+            result["environment_notes"].append(
+                f"{spelling} is used by this process: {name} is {used} here, and {stored} in config.json.")
     from cairnmind.engine import log_settings_problems
     # The same lines `engine start` prints, so a mistyped log setting is not seen only at start (#238).
     result["environment_notes"] += [line.removeprefix("cairnmind: ") for line in log_settings_problems(ctx.obj)]

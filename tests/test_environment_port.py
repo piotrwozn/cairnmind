@@ -75,6 +75,44 @@ def test_a_start_that_cannot_bind_names_the_port_and_the_setting(monkeypatch, tm
     assert f"{settings.data_dir}/config.json" in said and "CAIRNMIND_PORT" in said
 
 
+def test_the_spelling_that_is_set_is_the_one_read_and_named(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAIRNMIND_PORT", "")
+    monkeypatch.setenv("DEVBRAIN_PORT", "9101")
+    assert Settings.load(tmp_path / "data").port == 9101  # an empty current spelling does not hide the earlier one
+    monkeypatch.setenv("DEVBRAIN_PORT", "abc")
+    with pytest.raises(ValueError, match="DEVBRAIN_PORT must be a port number"):
+        Settings.load(tmp_path / "data")
+
+
+def test_doctor_names_a_port_and_a_model_server_taken_from_the_environment(monkeypatch, tmp_path):
+    from cairnmind import integrations
+    Settings.load(tmp_path / "data", create=True)
+    monkeypatch.setattr(integrations, "doctor", lambda settings: {})
+    monkeypatch.setenv("CAIRNMIND_PORT", "9101")
+    monkeypatch.setenv("DEVBRAIN_OLLAMA_URL", "http://127.0.0.1:9103")
+    report = json.loads(runner.invoke(cli.app, ["--data-dir", str(tmp_path / "data"), "doctor"]).output)
+    assert report["service_url"] == "http://127.0.0.1:9101"
+    notes = report["environment_notes"]
+    assert any("CAIRNMIND_PORT" in note and "9101" in note and "8765" in note and "config.json" in note for note in notes), notes
+    assert any("DEVBRAIN_OLLAMA_URL" in note and "9103" in note for note in notes), notes
+    assert not any("COCKPIT" in note for note in notes)
+
+
+async def test_back_to_ollama_says_when_the_address_checked_came_from_the_environment(monkeypatch, tmp_path):
+    from cairnmind import memory_models
+
+    async def check(settings, role):
+        return {"structured_output": True}, "c@1"
+    monkeypatch.setattr(memory_models, "_check", check)
+    monkeypatch.setenv("CAIRNMIND_OLLAMA_URL", "http://127.0.0.1:9103")
+    settings = Settings.load(tmp_path / "data", create=True)
+    report = await memory_models.configure_role(settings, "chat", provider="ollama", model="other:4b")
+    assert any("http://127.0.0.1:9103" in step and "environment" in step for step in report["next"])
+    monkeypatch.delenv("CAIRNMIND_OLLAMA_URL")
+    plain = await memory_models.configure_role(Settings.load(tmp_path / "data"), "chat", provider="ollama", model="other:4b")
+    assert not any("environment" in step for step in plain["next"])
+
+
 def test_a_service_of_another_data_directory_is_named_and_the_token_is_not_printed(monkeypatch, tmp_path):
     settings = Settings.load(tmp_path / "second", create=True)
 
@@ -92,7 +130,10 @@ def test_a_service_of_another_data_directory_is_named_and_the_token_is_not_print
             return httpx.Response(401, json={"detail": "Invalid local service token"}, request=httpx.Request(method, url))
 
     monkeypatch.setattr(cli.httpx, "Client", Foreign)
-    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
-    result = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stop"])
+    result = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "status"])
     assert result.exit_code == 2 and "most likely belongs to another data directory" in result.output
     assert "port" in result.output and settings.token not in result.output
+    # a command that started or matched the service by instance id does not claim it is another directory's
+    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
+    again = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "stop"])
+    assert "another data directory" not in again.output and "Invalid local service token" in again.output

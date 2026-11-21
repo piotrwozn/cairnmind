@@ -477,8 +477,10 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
         raise ValueError("The role is chat or embedding.")
     if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
         raise ValueError("Invalid model identifier.")
+    from_environment = False
     if provider == "ollama" and base_url is None:
         base_url = settings.ollama_url  # "back to the local Ollama" means the one the settings name
+        from_environment = "ollama_url" in (settings._origin or {}).get("kept", {})
     row: dict[str, Any] = {"provider": provider}
     for key, value in (("base_url", base_url), ("credential_ref", credential_ref),
                        ("context_window", context_window), ("reasoning_effort", reasoning_effort)):
@@ -503,6 +505,10 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
               **_destination(row, role), **describe(candidate, role), "checked": checked, "identity": identity,
               "saved": True}
     steps = ["Restart the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses this model."]
+    if from_environment and local_default:
+        steps.append(f"The model was checked on {settings.ollama_url}, taken from the environment for this command. The "
+                     "saved setting means the Ollama at ollama_url, so a service started without that variable uses "
+                     "ollama_url from config.json, where it was not checked.")
     if role == "embedding":
         report["embedding_changed"] = previous != identity
         if report["embedding_changed"]:
