@@ -21,7 +21,7 @@ The installer never changes your Codex or Claude Code configuration, never downl
 | --- | --- | --- |
 | Linux, or Windows 11 with WSL2 Ubuntu | Ubuntu 24.04 tested | Commands below run inside Ubuntu |
 | or macOS on Apple silicon | macOS 27 tested | The commands run in Terminal |
-| Java | 21 or newer | Runs the ArcadeDB engine |
+| Java | 21 or newer, or Docker | Runs the ArcadeDB engine; without Java 21, the engine runs in Docker |
 | tmux | 3.4 or newer | Hosts the terminal workspace |
 | uv | current | Installs Cairnmind with Python 3.12 |
 | Ollama | current | Runs the local knowledge agent |
@@ -129,9 +129,9 @@ The same script installs on macOS, with the bash that macOS ships.
 
 The installer:
 
-1. checks Java and tmux versions;
+1. checks Java and tmux versions; without Java 21 it goes on when Docker answers;
 2. installs Cairnmind as a `uv` tool, with dependency versions pinned by `uv.lock`;
-3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it);
+3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it); with Docker, nothing of ArcadeDB is downloaded and `cairnmind init` runs Cairnmind's engine image;
 4. runs `cairnmind doctor` and prints anything that still needs attention.
 
 If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal.
@@ -153,6 +153,8 @@ This simpler form lets `uv` resolve dependency versions itself; the installer ad
 
 ### Running the database in a container instead
 
+**The engine in Docker, started by Cairnmind.** With Docker and without Java 21, the installer and `cairnmind init` choose Docker and say so: `cairnmind engine start` then runs Cairnmind's image (`ghcr.io/piotrwozn/cairnmind-arcadedb`, pinned by digest) on `127.0.0.1:2480`, with the data directory mounted and its files owned by you. Choose it yourself with `cairnmind engine start --docker` (or `--docker --build` to build the image on this machine), and go back with `cairnmind engine start --native`. The choice is saved as `engine_mode` in `config.json`; the two engines never run on one data directory at once.
+
 To run ArcadeDB yourself in a container, on a server or on a laptop for development, see [DEPLOYMENT.md](DEPLOYMENT.md). It also covers backups, restores and upgrading the database.
 
 An installation that uses such a database is connect-only: it never installs, starts or stops an engine and needs no Java. Set `CAIRNMIND_ARCADE_CONNECT_URL` to the database address before you run the installer, and it skips the Java check and the ArcadeDB download; then follow [Connect-only installations](DEPLOYMENT.md#connect-only-installations) to create the database user and the store. The rest of this page (models, coding assistants, the first project) is the same.
@@ -166,7 +168,7 @@ cairnmind models pull
 cairnmind doctor
 ```
 
-`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB, Ollama and coding-client state. It is read-only: no logins, downloads or model sessions.
+`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB (and the engine mode), Ollama and coding-client state. It is read-only: no logins, downloads or model sessions.
 
 ## 6. Connect your coding assistants
 
