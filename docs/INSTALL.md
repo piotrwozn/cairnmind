@@ -131,7 +131,7 @@ The installer:
 
 1. checks Java and tmux versions; without Java 21 it goes on when Docker answers;
 2. installs Cairnmind as a `uv` tool, with dependency versions pinned by `uv.lock`;
-3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it); with Docker, nothing of ArcadeDB is downloaded and `cairnmind init` runs Cairnmind's engine image;
+3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it); with Docker, the ArcadeDB archive is not downloaded; `cairnmind init` downloads Cairnmind's engine image instead;
 4. runs `cairnmind doctor` and prints anything that still needs attention.
 
 If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal.
@@ -153,7 +153,7 @@ This simpler form lets `uv` resolve dependency versions itself; the installer ad
 
 ### Running the database in a container instead
 
-**The engine in Docker, started by Cairnmind.** With Docker and without Java 21, the installer and `cairnmind init` choose Docker and say so: `cairnmind engine start` then runs Cairnmind's image (`ghcr.io/piotrwozn/cairnmind-arcadedb`, pinned by digest) on `127.0.0.1:2480`, with the data directory mounted and its files owned by you. Choose it yourself with `cairnmind engine start --docker` (or `--docker --build` to build the image on this machine), and go back with `cairnmind engine start --native`. The choice is saved as `engine_mode` in `config.json`; the two engines never run on one data directory at once.
+**The engine in Docker, started by Cairnmind.** With Docker and without Java 21, the installer and `cairnmind init` choose Docker and say so: `cairnmind engine start` then runs Cairnmind's image (`ghcr.io/piotrwozn/cairnmind-arcadedb`, pinned by digest) on `127.0.0.1:2480`, with the data directory mounted and its files owned by you. Choose it yourself with `cairnmind engine start --docker` (or `--docker --build` to build the image on this machine), and go back with `cairnmind engine start --native`. The choice is saved as `engine_mode` in `config.json`; the two engines never run on one data directory at once. A data directory that already holds a native engine stays native until you choose Docker. Docker must run on this machine: a remote `DOCKER_HOST` or docker context, rootless Docker and Podman are not supported.
 
 To run ArcadeDB yourself in a container, on a server or on a laptop for development, see [DEPLOYMENT.md](DEPLOYMENT.md). It also covers backups, restores and upgrading the database.
 

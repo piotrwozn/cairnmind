@@ -119,7 +119,7 @@ if [[ -z "$connect_url" ]]; then
     # that answers, the Java message above is the end.
     if ! check_java; then
         if command -v docker >/dev/null 2>&1 && docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
-            printf 'Docker answers, so the engine will run in Docker and Java is not needed.\n'
+            printf 'Java 21 was not found and Docker answers, so cairnmind init can run the engine in Docker; it says which mode it chose.\n'
             engine_in_docker=true
         else
             exit 1
