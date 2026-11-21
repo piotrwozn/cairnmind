@@ -280,15 +280,42 @@ def test_embedding_digest_rebuild_preserves_sources(workspace):
     before = store.query("SELECT count(*) AS n FROM sources")[0]["n"]
     assert schedule_embeddings(store, "embed@new") > 0
     assert schedule_embeddings(store, "embed@new") > 0  # Queue IDs dedupe, missing vectors still reported.
-    jobs = store.query("SELECT FROM jobs WHERE dedupe_key LIKE :pattern",
-                       {"pattern": "embedding-namespace:embed@new:%"})
+    jobs = store.query("SELECT FROM jobs WHERE kind='embed'")
+    # One job per chunk, whoever queued it (#262): indexing and the repair share the key.
     assert len(jobs) == store.query("SELECT count(*) AS n FROM chunks")[0]["n"]
     assert store.query("SELECT count(*) AS n FROM sources")[0]["n"] == before
-    store.command("UPDATE jobs SET state='completed' WHERE dedupe_key LIKE :pattern",
-                  {"pattern": "embedding-namespace:embed@new:%"})
+    store.command("UPDATE jobs SET state='completed' WHERE kind='embed'")
     schedule_embeddings(store, "embed@new")
-    assert store.query("SELECT count(*) AS n FROM jobs WHERE state='completed' AND dedupe_key LIKE :pattern",
-                       {"pattern": "embedding-namespace:embed@new:%"})[0]["n"] == 0
+    assert store.query("SELECT count(*) AS n FROM jobs WHERE state='completed' AND kind='embed'")[0]["n"] == 0
+    assert store.query("SELECT count(*) AS n FROM jobs WHERE kind='embed'")[0]["n"] == len(jobs)
+
+
+@pytest.mark.asyncio
+async def test_jobs_of_the_earlier_embedding_key_embed_nothing_twice(workspace):
+    """An installation upgraded from 0.12.0 may hold both keys per chunk: neither is lost, one embeds."""
+    from cairnmind.ingest import index_project
+    from cairnmind.retrieval import Retriever
+    settings, store, project, root = workspace
+    index_project(store, project["id"])
+    chunk = store.query("SELECT id FROM chunks LIMIT 1")[0]["id"]
+    store.enqueue("embed", project["id"], {"chunk_id": chunk}, f"embedding-namespace:embed@new:{chunk}")
+    model = LocalModelFixture()
+    embedded = []
+    plain = model.embed
+
+    async def counting(texts):
+        embedded.extend(texts)
+        return await plain(texts)
+
+    model.embed = counting
+    retriever = Retriever(store, settings, ollama=model)
+    jobs = store.query("SELECT FROM jobs WHERE kind='embed'")
+    assert len(jobs) == store.query("SELECT count(*) AS n FROM chunks")[0]["n"] + 1
+    for job in jobs:
+        await retriever.embed_pending(job)
+    chunks = store.query("SELECT count(*) AS n FROM chunks")[0]["n"]
+    assert store.query("SELECT count(*) AS n FROM embeddings")[0]["n"] == chunks
+    assert len(embedded) == chunks
 
 
 @pytest.mark.asyncio

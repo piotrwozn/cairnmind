@@ -125,9 +125,9 @@ def test_empty_claim_filter_never_consumes_any_project_and_scoped_repair_stays_s
     before = store.query("SELECT id FROM jobs")
     assert schedule_embeddings(store, "empty-filter", project_ids=[]) == 0
     assert store.query("SELECT id FROM jobs") == before
+    before = store.query("SELECT id FROM jobs WHERE project_id=:p", {"p": b["id"]})
     schedule_embeddings(store, "only-a", project_ids=[a["id"]])
-    assert not store.query("SELECT id FROM jobs WHERE project_id=:p AND dedupe_key LIKE :key",
-                           {"p": b["id"], "key": "embedding-namespace:only-a:%"})
+    assert store.query("SELECT id FROM jobs WHERE project_id=:p", {"p": b["id"]}) == before
 
 
 def test_enable_requires_auth_registered_scope_and_current_ack_but_ack_alone_does_not_enable(memory):
