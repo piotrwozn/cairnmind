@@ -1362,11 +1362,13 @@ class KnowledgeAgent:
         except asyncio.CancelledError:
             diagnostics.update(code="cancelled", repair_outcome="cancelled" if diagnostics["repair_attempted"] else "not_needed")
             diagnostics["counts"]["written_records"] = 0
+            diagnostics["counts"].pop("superseded_records", None)  # rolled back with the rest
             save()
             raise
         except TimeoutError:
             diagnostics.update(code="timeout", repair_outcome="budget_exhausted" if diagnostics["repair_attempted"] else "not_needed")
             diagnostics["counts"]["written_records"] = 0
+            diagnostics["counts"].pop("superseded_records", None)  # rolled back with the rest
             save()
             raise
         except OllamaUnavailable:
@@ -1374,6 +1376,7 @@ class KnowledgeAgent:
             if diagnostics["repair_attempted"]:
                 diagnostics["repair_outcome"] = "unavailable"
             diagnostics["counts"]["written_records"] = 0
+            diagnostics["counts"].pop("superseded_records", None)  # rolled back with the rest
             save()
             raise ValueError("Extraction local model was unavailable; no proposals committed") from None
         except Exception as error:
@@ -1381,6 +1384,7 @@ class KnowledgeAgent:
                 diagnostics["code"] = "persistence_failed"
                 diagnostics["failure_reason"] = _extraction_failure_reason(error)
             diagnostics["counts"]["written_records"] = 0
+            diagnostics["counts"].pop("superseded_records", None)  # rolled back with the rest
             save()
             raise ValueError("Extraction failed safely (" + diagnostics["code"] + "); no proposals committed") from None
 
@@ -1582,8 +1586,10 @@ class KnowledgeAgent:
                 "kind": kind, "content": content, "key": key,
                 "status": "proposed", "metadata": item_metadata,
             }
-            twin = next((r for r in older if r["id"] in older_ids and r["kind"] == kind and (
-                r["key"] == key or r["content"].strip().casefold() == content.strip().casefold())), None)
+            # The holder of the key first: superseding another old proposal that says the same would leave the key taken.
+            same = [r for r in older if r["id"] in older_ids and r["kind"] == kind]
+            twin = next((r for r in same if r["key"] == key), None) or next(
+                (r for r in same if r["content"].strip().casefold() == content.strip().casefold()), None)
             if twin:
                 candidate["supersedes"] = twin["id"]  # one write: the old proposal is superseded by this record
                 older_ids.discard(twin["id"])
@@ -1601,6 +1607,7 @@ class KnowledgeAgent:
                     diagnostics["counts"]["skipped_records"] += 1
                     continue
                 conflicts = [r["id"] for r in latest if r["key"] == key]
+                candidate.pop("supersedes", None)  # the failed write already superseded the twin in this transaction
                 candidate["metadata"]["possible_conflicts"] = conflicts
                 candidate["key"] = f"{key[:150]}~{suffix}"
                 record = self.store.remember(project_id, candidate, [source["id"]], extracted_from=source["id"],
@@ -1627,10 +1634,12 @@ class KnowledgeAgent:
                         "kind": "relates_to", "source_id": source["id"], "status": "proposed",
                     })
         diagnostics["persistence_stage"] = "supersede_records"
-        for old in older:  # no new record says the same: superseded all the same, and kept in its history
-            if old["id"] in older_ids:
-                self._extraction_deadline(deadline)
-                self.store.remember(project_id, {"id": old["id"], "expected_version": old["version"],
-                                                 "status": "superseded"}, old["source_ids"])
-        if older:
-            diagnostics["counts"]["superseded_records"] = len(older)
+        if diagnostics["counts"]["written_records"]:  # answers that wrote nothing erase nothing
+            for old in older:  # no new record says the same: superseded all the same, and kept in its history
+                if old["id"] in older_ids:
+                    self._extraction_deadline(deadline)
+                    self.store.remember(project_id, {"id": old["id"], "expected_version": old["version"],
+                                                     "status": "superseded"}, old["source_ids"])
+                    older_ids.discard(old["id"])
+        if len(older) > len(older_ids):
+            diagnostics["counts"]["superseded_records"] = len(older) - len(older_ids)

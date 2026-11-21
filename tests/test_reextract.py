@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
+import uuid
 
 import pytest
 from typer.testing import CliRunner
 
 from cairnmind import cli
+from cairnmind import store as store_module
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.inspector import Inspector
 from cairnmind.reextract import plan, queue
@@ -50,11 +53,15 @@ def old(f, src, content, key, version=1):
                             extracted_from=src["id"], extractor=stamp(version) if version else None)
 
 
-def run(f, records, model=None):
-    job = f.store.claim_job("reextract-worker", lease_seconds=120, kinds=["extract"])
+def run(f, records, model=None, agent=None):
+    job = f.job = f.store.claim_job("reextract-worker", lease_seconds=120, kinds=["extract"])
     assert job
-    asyncio.run(KnowledgeAgent(f.store, f.settings, model or Model(records)).extract(job))
+    asyncio.run((agent or KnowledgeAgent(f.store, f.settings, model or Model(records))).extract(job))
     return job
+
+
+def counts(f):
+    return f.store.job_status(f.project["id"], f.job["id"])["diagnostics"]["counts"]
 
 
 def record(f, record_id):
@@ -105,6 +112,77 @@ def test_a_commit_supersedes_the_untouched_older_proposals_and_nothing_else(fixt
         assert history[0]["content"] == gone["content"]
     assert record(f, confirmed["id"]) == confirmed and record(f, disputed["id"]) == disputed
     assert plan(f.store, pid, VERSION, VERSION)["would_queue"] == []
+    assert counts(f)["superseded_records"] == 2
+
+
+def test_the_holder_of_the_key_is_replaced_first_whatever_the_order_of_ids(fixture, monkeypatch):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = source(f)
+    ids = itertools.count(1)
+    with monkeypatch.context() as patched:
+        patched.setattr(store_module, "uuid4", lambda: uuid.UUID(int=next(ids)))
+        same_text = old(f, a, NEW["content"], "cache-policy")  # sorts first and says what the new record says
+        holder = old(f, a, "The build takes an hour.", "cache")  # holds the new record's key
+    assert same_text["id"] < holder["id"]
+    queue(f.store, pid, VERSION, VERSION)
+    run(f, [NEW])
+    [new] = [r for r in f.store.list_records(pid) if r["metadata"].get("extractor") == stamp_of(f)]
+    assert new["key"] == "cache" and new["supersedes"] == holder["id"]
+    assert record(f, holder["id"])["status"] == record(f, same_text["id"])["status"] == "superseded"
+    assert counts(f)["superseded_records"] == 2
+
+
+def test_a_failure_after_the_supersession_rolls_all_of_it_back(fixture):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = source(f)
+    twin = old(f, a, NEW["content"], "old-cache")
+    other = old(f, a, "The build takes an hour.", "build")
+    queue(f.store, pid, VERSION, VERSION)
+    agent = KnowledgeAgent(f.store, f.settings, Model([NEW]))
+    committed, real = [], agent._commit_extraction
+
+    def commit(*args):
+        real(*args)
+        committed.append(True)
+
+    def deadline(_):
+        if committed:  # the commit wrote and superseded everything; now the time is up
+            raise TimeoutError
+
+    agent._commit_extraction, agent._extraction_deadline = commit, deadline
+    with pytest.raises(TimeoutError):
+        run(f, None, agent=agent)
+    assert committed
+    for kept in (twin, other):
+        assert record(f, kept["id"])["status"] == "proposed" and record(f, kept["id"])["version"] == 1
+        assert len(f.store.record_history(kept["id"])) == 1
+    assert not [r for r in f.store.list_records(pid) if r["metadata"].get("extractor", {}).get("version") == VERSION]
+    assert counts(f)["written_records"] == 0 and "superseded_records" not in counts(f)
+
+
+def test_an_answer_that_writes_nothing_supersedes_nothing(fixture):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = source(f)
+    kept = old(f, a, "The build takes an hour.", "build")
+    confirmed = old(f, a, NEW["content"], "said", VERSION)
+    Inspector(f.store).review(pid, confirmed["id"], "confirm", 1)
+    queue(f.store, pid, VERSION, VERSION)
+    run(f, [NEW])  # its only record says what the confirmed one says: skipped
+    assert counts(f)["written_records"] == 0 and "superseded_records" not in counts(f)
+    assert record(f, kept["id"])["status"] == "proposed"
+
+
+def test_an_old_task_whose_dependency_was_retired_is_still_superseded(fixture):  # noqa: F811
+    f, pid = fixture, fixture.project["id"]
+    a = source(f)
+    needed = f.store.remember(pid, {"kind": "task", "content": "Prepare the build.", "key": "prepare"}, [a["id"]])
+    task = f.store.remember(pid, {"kind": "task", "content": "Run the build.", "key": "run",
+                                  "metadata": {"depends_on": [needed["id"]]}}, [a["id"]],
+                            extracted_from=a["id"], extractor=stamp(1))
+    f.store.remember(pid, {"id": needed["id"], "expected_version": 1, "status": "superseded"}, [a["id"]])
+    queue(f.store, pid, VERSION, VERSION)
+    run(f, [NEW])
+    assert record(f, task["id"])["status"] == "superseded" and counts(f)["superseded_records"] == 1
 
 
 def stamp_of(f):
@@ -137,10 +215,11 @@ def test_an_extraction_that_proposes_nothing_supersedes_nothing(fixture):  # noq
 def test_superseding_untouched_proposals_does_not_make_an_acknowledgement_stale(fixture):  # noqa: F811
     f, pid = fixture, fixture.project["id"]
     a = source(f)
-    old(f, a, "The build takes an hour.", "build")
+    gone = old(f, a, "The build takes an hour.", "build")
     bound = f.session("external")  # the packet shows the proposal; the ACK does not promise it (#256)
     queue(f.store, pid, VERSION, VERSION)
     run(f, [NEW])
+    assert record(f, gone["id"])["status"] == "superseded"
     view = f.client.get(f"/sessions/{bound['session_id']}").json()
     assert view["acknowledged"] is True and view["stale"] is False, view
 
