@@ -123,3 +123,55 @@ def test_every_new_sentence_has_polish_in_the_catalog():
         assert english != polish
         assert tr(english, "pl") == polish
         assert tr(english, "en") == english
+
+
+def _quiet_doctor(monkeypatch):
+    """Doctor with no client, engine, model server or store to ask: only tmux differs between the runs."""
+    import httpx
+    from cairnmind import api_runtime, database_credentials, engine, integrations, store_writer
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(integrations, "_probe_cli", lambda name: {"installed": False})
+    monkeypatch.setattr(database_credentials, "doctor_block", lambda settings: {"available": False})
+    monkeypatch.setattr(engine, "resolve_java", lambda settings: None)
+    monkeypatch.setattr(store_writer, "inspect", lambda settings: {"role": "writer"})
+    monkeypatch.setattr(api_runtime, "coding_profiles_status", lambda settings: [])
+
+    def unreadable(settings):
+        raise ValueError("no store in this test")
+    monkeypatch.setattr(cli, "store_for_read", unreadable)
+    real = httpx.Client
+    monkeypatch.setattr(integrations.httpx, "Client", lambda **kw: real(
+        transport=httpx.MockTransport(lambda request: httpx.Response(503)), **kw))
+
+
+def test_doctor_reports_the_cockpit_as_a_warning_and_exits_0(monkeypatch, data, tmux):
+    from typer.testing import CliRunner
+    _quiet_doctor(monkeypatch)
+    reports = {}
+    for state in STATES:
+        tmux(state)
+        result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "doctor"])
+        assert result.exit_code == 0, result.output
+        reports[state] = json.loads(result.output)
+    assert reports["missing"]["cockpit"] == "unavailable (tmux 3.4+ not found)"
+    assert reports["3.3a"]["cockpit"] == "unavailable (tmux 3.4+ not found; found tmux 3.3a)"
+    assert "cockpit" not in reports["3.5a"] and reports["3.5a"]["tmux"]["code"] == "ready"
+    stripped = [{key: value for key, value in report.items() if key not in ("tmux", "cockpit")}
+                for report in reports.values()]
+    assert stripped[0] == stripped[1] == stripped[2]  # nothing else turns unhealthy
+
+
+def test_the_installer_view_of_doctor_says_cockpit_unavailable():
+    from cairnmind import doctor_attention
+    healthy = {"python": "3.12.3", "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": True},
+               "arcadedb": {"available": True, "database_available": True},
+               "ollama": {"available": True, "chat_model_installed": True, "embedding_model_installed": True},
+               "memory_models": {"chat": {"reachable": True}}, "service": {"available": False},
+               "environment_notes": [], "data_dir": "/d", "store_writer": {"role": "writer"}}
+
+    def lines(tmux):
+        return doctor_attention.attention({**healthy, "tmux": tmux})
+    assert lines({"code": "tmux_missing"}) == ["cockpit: unavailable (tmux 3.4+ not found)"]
+    assert lines({"code": "tmux_unsupported", "version": "tmux 3.3a"}) == [
+        "cockpit: unavailable (tmux 3.4+ not found; found tmux 3.3a)"]
+    assert lines({"code": "ready"}) == []

@@ -10,6 +10,7 @@ import json
 import sys
 
 from .engine_docker import DOCKER_ATTENTION
+from .first_start import cockpit_status
 from .terminal_safe import safe_text
 
 FULL_REPORT = "The full report: cairnmind doctor"
@@ -48,9 +49,9 @@ def attention(report: dict) -> list[str]:
     elif (docker.get("container") or {}).get("state") in ("not ours", "unknown"):
         lines.append(_line(docker["container"].get("error") or "The engine container cannot be identified"))
     tmux = report.get("tmux") or {}
-    if tmux and tmux.get("code") != "ready":
-        lines.append(_line(f"tmux is not ready ({tmux.get('code') or 'unknown'}); the workspace needs tmux "
-                           f"{tmux.get('minimum_version') or ''}".rstrip()))
+    cockpit = cockpit_status(tmux) if tmux else None  # the same words as doctor's own "cockpit" key
+    if cockpit:
+        lines.append(_line(f"cockpit: {cockpit}"))
     arcade = report.get("arcadedb") or {}
     if arcade.get("engine_problem"):
         lines.append(_line(arcade["engine_problem"]))

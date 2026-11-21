@@ -220,6 +220,9 @@ def doctor(settings: Settings) -> dict[str, Any]:
         del result["wsl"]  # a flag that can only be False here, and the word the report should not carry
     result["java"] = {"on_path": bool(shutil.which("java")), "minimum_major": 21}
     result["tmux"] = NativeRuntime(settings).diagnostics()
+    from .first_start import cockpit_status
+    if cockpit := cockpit_status(result["tmux"]):
+        result["cockpit"] = cockpit  # only the workspace needs tmux (#273): a warning, never a failure
     from .database_mode import connect_only, engine_mode
     try:
         in_docker = not connect_only(settings) and engine_mode(settings) == "docker"

@@ -474,7 +474,7 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
               "store_writer": {"role": "reader", "reason": "This installation only reads this store.\x1b[31m"}}
     lines = doctor_attention.attention(broken)
     assert lines[0] == "CAIRNMIND_X and DEVBRAIN_X are both set and differ."
-    assert any("tmux is not ready (too_old)" in line for line in lines)
+    assert any("cockpit: unavailable (tmux 3.4+ not found; too_old)" in line for line in lines)
     assert any("chat model is not downloaded" in line for line in lines)
     assert any("codex is installed but its contract checks fail" in line for line in lines)
     assert any(line.startswith("Store writer: reader.") and "\x1b" not in line for line in lines)
