@@ -45,6 +45,8 @@ def attention(report: dict) -> list[str]:
     docker = report.get("docker") or {}
     if docker.get("available") is False:
         lines.append(_line(DOCKER_ATTENTION.format(error=docker.get("error") or "unknown")))
+    elif (docker.get("container") or {}).get("state") in ("not ours", "unknown"):
+        lines.append(_line(docker["container"].get("error") or "The engine container cannot be identified"))
     tmux = report.get("tmux") or {}
     if tmux and tmux.get("code") != "ready":
         lines.append(_line(f"tmux is not ready ({tmux.get('code') or 'unknown'}); the workspace needs tmux "

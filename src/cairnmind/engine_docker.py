@@ -10,6 +10,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 from dataclasses import replace
 from pathlib import Path
 import subprocess
@@ -51,9 +52,13 @@ NOT_OURS = ("A container named {name} exists, but it does not carry this install
             "touch it. Remove or rename it yourself if nothing uses it.")
 CANNOT_ASK = ("Docker cannot be asked about the engine container {name}: {problem} Nothing was started or "
               "stopped.")
+CANNOT_ASK_NATIVE = ("Docker cannot be asked about the engine container {name}: {problem} Nothing was started. If "
+                     "Docker is no longer used on this machine and no engine container uses this data directory, "
+                     "remove {record} and start again.")
 RECORD_NOT_OURS = ("arcade/container.json names the container {recorded}, but this installation's container is "
                    "{name}: the data directory was copied or moved. Cairnmind does not touch {recorded}; stop it "
-                   "with docker yourself if it is yours.")
+                   "with docker yourself if it is yours. When no container uses this data directory, remove "
+                   "{record} and try again.")
 NATIVE_RUNS = ("The native engine (Java, process {pid}) runs on this data directory. Stop it with `cairnmind engine "
                "stop` first: the two engines must not use one data directory at the same time.")
 NATIVE_UNKNOWN = ("This data directory records a native engine (process {pid}) whose command line cannot be read, so "
@@ -111,9 +116,13 @@ MESSAGES = {
                "Usuń go lub zmień jego nazwę samodzielnie, jeśli nic go nie używa."),
     CANNOT_ASK: ("Nie można zapytać Dockera o kontener silnika {name}: {problem} Nic nie zostało uruchomione ani "
                  "zatrzymane."),
+    CANNOT_ASK_NATIVE: ("Nie można zapytać Dockera o kontener silnika {name}: {problem} Nic nie zostało "
+                        "uruchomione. Jeśli Docker nie jest już używany na tym komputerze i żaden kontener silnika "
+                        "nie używa tego katalogu danych, usuń {record} i uruchom ponownie."),
     RECORD_NOT_OURS: ("arcade/container.json wskazuje kontener {recorded}, ale kontener tej instalacji to {name}: "
                       "katalog danych skopiowano lub przeniesiono. Cairnmind nie rusza {recorded}; zatrzymaj go "
-                      "samodzielnie dockerem, jeśli jest twój."),
+                      "samodzielnie dockerem, jeśli jest twój. Gdy żaden kontener nie używa tego katalogu danych, "
+                      "usuń {record} i spróbuj ponownie."),
     NATIVE_RUNS: ("Na tym katalogu danych działa natywny silnik (Java, proces {pid}). Najpierw zatrzymaj go "
                   "poleceniem `cairnmind engine stop`: dwa silniki nie mogą jednocześnie używać jednego katalogu "
                   "danych."),
@@ -199,25 +208,38 @@ def labels(settings) -> dict[str, str]:
     return {LABEL_INSTALLATION: installation(settings.data_dir).id, LABEL_DATA_DIR: str(settings.data_dir)}
 
 
-def inspect_container(settings) -> dict | None:
+def _shaped(info) -> bool:
+    """Whether Docker's description has the shape the code reads: its Id, Config (Labels a mapping or null), State."""
+    return (isinstance(info, dict) and isinstance(info.get("Config"), dict) and isinstance(info.get("State"), dict)
+            and isinstance(info["Config"].get("Labels"), (dict, type(None)))
+            and isinstance(info.get("Id"), str) and re.fullmatch(r"[0-9a-f]{64}", info["Id"]) is not None)
+
+
+def inspect_container(settings, *, way_out: bool = False) -> dict | None:
     """The container of this installation's name as Docker describes it; None when there is none.
 
-    Fails closed: Docker not answering, a timeout or a reply of another shape raise CANNOT_ASK."""
+    Fails closed: Docker not answering, a timeout or a reply of another shape raise CANNOT_ASK (way_out: the
+    sentence of the native start, which also says how to remove the record of a container)."""
     name = container_name(settings)
+
+    def cannot(problem):
+        return ArcadeError((CANNOT_ASK_NATIVE if way_out else CANNOT_ASK).format(
+            name=name, problem=problem, record=_state(settings) / "container.json"))
+
     try:
         done = run_docker(["container", "inspect", name])
     except ArcadeError as exc:
-        raise ArcadeError(CANNOT_ASK.format(name=name, problem=str(exc))) from None
+        raise cannot(str(exc)) from None
     if done.returncode != 0:
         if "no such container" in (done.stderr or "").casefold():
             return None
-        raise ArcadeError(CANNOT_ASK.format(name=name, problem=_detail(done)))
+        raise cannot(_detail(done))
     try:
         found = json.loads(done.stdout)
     except ValueError:
         found = None
-    if not (isinstance(found, list) and len(found) == 1 and isinstance(found[0], dict)):
-        raise ArcadeError(CANNOT_ASK.format(name=name, problem="its answer was not what was asked for."))
+    if not (isinstance(found, list) and len(found) == 1 and _shaped(found[0])):
+        raise cannot("its answer was not what was asked for.")
     return found[0]
 
 
@@ -278,7 +300,8 @@ def _check_record(settings, name: str) -> None:
     except (OSError, ValueError, AttributeError):
         recorded = None
     if recorded != name:
-        raise ArcadeError(RECORD_NOT_OURS.format(recorded=safe_text(recorded or "unknown", limit=80), name=name))
+        raise ArcadeError(RECORD_NOT_OURS.format(recorded=safe_text(recorded or "unknown", limit=80), name=name,
+                                                 record=path))
 
 
 def refuse_if_container_runs(settings) -> None:
@@ -288,7 +311,7 @@ def refuse_if_container_runs(settings) -> None:
         return
     name = container_name(settings)
     _check_record(settings, name)
-    info = inspect_container(settings)
+    info = inspect_container(settings, way_out=True)
     if info is not None:
         if not is_ours(info, settings):
             raise ArcadeError(NOT_OURS.format(name=name))
@@ -297,11 +320,16 @@ def refuse_if_container_runs(settings) -> None:
     (_state(settings) / "container.json").unlink(missing_ok=True)
 
 
-def status_fields(settings) -> dict:
-    """What `engine status` says of an engine in Docker, before the server is asked; no Java is looked for."""
-    return {"mode": "managed", "engine": "docker", "available": False, "url": settings.arcade_url,
-            "expected_version": settings.arcade_version, "image": image_reference(settings),
-            "container": container_state(settings)}
+def status_fields(settings, container: bool = True) -> dict:
+    """What `engine status` says of an engine in Docker, before the server is asked; no Java is looked for.
+
+    container False leaves Docker unasked (the start of a command that finds the server answering needs no
+    `docker container inspect`)."""
+    result = {"mode": "managed", "engine": "docker", "available": False, "url": settings.arcade_url,
+              "expected_version": settings.arcade_version, "image": image_reference(settings)}
+    if container:
+        result["container"] = container_state(settings)
+    return result
 
 
 def doctor_block(settings) -> dict:
@@ -311,8 +339,9 @@ def doctor_block(settings) -> dict:
     return {"available": True, "server_version": version, "container": container_state(settings)}
 
 
-def _remove(name: str) -> None:
-    done = run_docker(["rm", name], timeout=60)
+def _remove(ident: str, name: str) -> None:
+    """Docker is told the container's Id, the one that was inspected, never the name that may be another one by now."""
+    done = run_docker(["rm", ident], timeout=60)
     if done.returncode != 0:
         raise ArcadeError(REMOVE_FAILED.format(name=name, detail=_detail(done)))
 
@@ -352,9 +381,10 @@ def start_docker_engine(settings, *, local: bool | None = None, build: bool = Fa
         return _start_locked(settings, image, local_image, context, pull)
 
 
-def _wait(settings, name: str) -> dict:
+def _wait(settings, name: str, ident: str) -> dict:
     from .engine import engine_status
-    for _ in range(WAIT_ROUNDS):
+    deadline = time.monotonic() + WAIT_ROUNDS * WAIT_STEP  # a clock, not a count: a hung docker must not stretch it
+    while time.monotonic() < deadline:
         status = engine_status(settings)
         if status["available"]:
             if not status.get("version_matches"):
@@ -363,7 +393,7 @@ def _wait(settings, name: str) -> dict:
         if (status.get("container") or {}).get("state") not in ("running", "created", "restarting", "unknown"):
             raise ArcadeError(EXITED.format(name=name))
         time.sleep(WAIT_STEP)
-    stopped = run_docker(["stop", "--time", str(STOP_SECONDS), name], timeout=STOP_SECONDS + 30)
+    stopped = run_docker(["stop", "--time", str(STOP_SECONDS), ident], timeout=STOP_SECONDS + 30)
     if stopped.returncode != 0:
         raise ArcadeError(STOP_FAILED.format(name=name, detail=_detail(stopped)))
     raise ArcadeError(TIMED_OUT.format(name=name, seconds=int(WAIT_ROUNDS * WAIT_STEP)))
@@ -374,6 +404,9 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
     pid = native_engine_pid(settings)
     if pid is not None:
         raise ArcadeError(NATIVE_RUNS.format(pid=pid))
+    name = container_name(settings)
+    if container_recorded(settings):  # a record of another container: its engine may still run on these files
+        _check_record(settings, name)
     version, problem = docker_answers()
     if problem:
         raise ArcadeError(DOCKER_UNUSABLE.format(problem=problem))
@@ -381,7 +414,6 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
         done = run_docker(["build", "--tag", image, str(context)], timeout=None, show=True)
         if done.returncode != 0:
             raise ArcadeError(BUILD_FAILED.format(code=done.returncode))
-    name = container_name(settings)
     info = inspect_container(settings)
     if info is not None:
         if not is_ours(info, settings):
@@ -390,8 +422,8 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
             running = str((info.get("Config") or {}).get("Image", ""))
             if running != image:
                 raise ArcadeError(OTHER_IMAGE.format(name=name, running=safe_text(running, limit=200), wanted=image))
-            return _wait(settings, name)
-        _remove(name)
+            return _wait(settings, name, info["Id"])
+        _remove(info["Id"], name)
     if run_docker(["image", "inspect", "--format", "{{.Id}}", image]).returncode != 0:
         if local_image:
             raise ArcadeError(LOCAL_IMAGE_MISSING.format(image=image))
@@ -424,7 +456,12 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
                        "--env", JAVA_OPTIONS, "--pull", "never", image], timeout=120)
     if done.returncode != 0:
         raise ArcadeError(RUN_FAILED.format(detail=_detail(done)))
-    return _wait(settings, name)
+    started = inspect_container(settings)  # its Id, and the labels it really got
+    if started is None:
+        raise ArcadeError(EXITED.format(name=name))
+    if not is_ours(started, settings):
+        raise ArcadeError(NOT_OURS.format(name=name))
+    return _wait(settings, name, started["Id"])
 
 
 def stop_docker_engine(settings) -> dict:
@@ -440,10 +477,10 @@ def stop_docker_engine(settings) -> dict:
     if not is_ours(info, settings):
         raise ArcadeError(NOT_OURS.format(name=name))
     if _running(info):
-        done = run_docker(["stop", "--time", str(STOP_SECONDS), name], timeout=STOP_SECONDS + 30)
+        done = run_docker(["stop", "--time", str(STOP_SECONDS), info["Id"]], timeout=STOP_SECONDS + 30)
         if done.returncode != 0:
             raise ArcadeError(STOP_FAILED.format(name=name, detail=_detail(done)))
-    _remove(name)
+    _remove(info["Id"], name)
     record.unlink(missing_ok=True)
     return {"stopping": True, "container": name}
 

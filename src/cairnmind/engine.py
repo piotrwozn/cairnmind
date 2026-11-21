@@ -196,7 +196,7 @@ def install_engine(settings: Settings, distribution: Path | None = None) -> Path
     return destination
 
 
-def engine_status(settings: Settings) -> dict:
+def engine_status(settings: Settings, ask_docker: bool = True) -> dict:
     """Whether the database server answers and which version it runs; starts and changes nothing.
 
     In connect-only mode (#68) nothing local is probed: no Java, no installed engine. The result says
@@ -213,7 +213,7 @@ def engine_status(settings: Settings) -> dict:
                                       "machine and is not used; `cairnmind engine stop` stops it.")
     elif engine_mode(settings) == "docker":  # a wrong value raises, naming it (#272)
         from .engine_docker import status_fields
-        result = status_fields(settings)  # no Java is looked for
+        result = status_fields(settings, ask_docker)  # no Java is looked for
     else:
         result = {"mode": "managed", "engine": "native", "installed": (runtime_dir(settings) / "lib").is_dir(),
                   "available": False, "url": settings.arcade_url, "expected_version": settings.arcade_version,
@@ -431,11 +431,13 @@ def ensure_engine(settings: Settings) -> None:
         if refused:
             raise ArcadeError(refused)
         return
-    status = engine_status(settings)
+    docker = engine_mode(settings) == "docker"
+    # An engine in Docker that answers needs no `docker container inspect` on every command.
+    status = engine_status(settings, ask_docker=False) if docker else engine_status(settings)
     if status["available"] and not status.get("version_matches"):
         raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
     if not status["available"]:
-        if engine_mode(settings) == "docker":
+        if docker:
             from .engine_docker import start_docker_engine
             start_docker_engine(settings)  # the stored image; never builds, never pulls
         else:

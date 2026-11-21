@@ -1,6 +1,7 @@
 """The database engine in Docker (#272): every Docker call is replaced here, no daemon is needed."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -38,6 +39,11 @@ def done(code=0, out="", err=""):
     return subprocess.CompletedProcess([], code, out, err)
 
 
+def identity(name: str) -> str:
+    """A container Id as Docker prints it: 64 hexadecimal digits."""
+    return hashlib.sha256(name.encode()).hexdigest()
+
+
 class FakeDocker:
     """A scripted stand-in for run_docker: containers by name, images, and every call recorded."""
 
@@ -52,9 +58,13 @@ class FakeDocker:
     def add(self, settings, *, state="running", image=PUBLISHED, ours=True, name=None, labelled=None):
         name = name or container_name(settings)
         held = (labelled if labelled is not None else labels(settings)) if ours else {}
-        self.containers[name] = {"Name": "/" + name, "Config": {"Labels": held, "Image": image},
+        self.containers[name] = {"Id": identity(name), "Name": "/" + name, "Config": {"Labels": held, "Image": image},
                                  "State": {"Status": state, "Running": state == "running"}}
         return name
+
+    def find(self, reference):
+        """Docker takes a container by name or by Id; the code under test must use the Id."""
+        return next(name for name, info in self.containers.items() if reference in (name, info["Id"]))
 
     def server_info(self, *_):
         if not self.answers:
@@ -86,15 +96,17 @@ class FakeDocker:
             state = self.settings.data_dir / "arcade"
             self.state_at_run = {path.name: oct(path.stat().st_mode & 0o777) for path in state.iterdir()}
             held = dict(item.split("=", 1) for i, item in enumerate(arguments) if arguments[i - 1] == "--label")
-            self.containers[name] = {"Name": "/" + name, "Config": {"Labels": held, "Image": image},
+            self.containers[name] = {"Id": identity(name), "Name": "/" + name,
+                                     "Config": {"Labels": held, "Image": image},
                                      "State": {"Status": self.state_after_run, "Running": self.state_after_run == "running"}}
-            return done(0, "0123456789abcdef\n")
+            return done(0, identity(name) + "\n")
         if verb == "stop":
-            info = self.containers[arguments[-1]]
+            info = self.containers[self.find(arguments[-1])]
             info["State"] = {"Status": "exited", "Running": False}
             return done(0)
         if verb == "rm":
-            return done(0) if self.containers.pop(arguments[1], None) else done(1, err="Error: No such container")
+            return done(0) if self.containers.pop(self.find(arguments[1]), None) else done(
+                1, err="Error: No such container")
         raise AssertionError(f"unexpected docker call {arguments}")
 
 
@@ -275,7 +287,8 @@ def test_stop_stops_and_removes_this_installations_container_and_its_record(dock
     record.parent.mkdir(exist_ok=True)
     record.write_text(json.dumps({"name": name}))
     assert stop_docker_engine(settings) == {"stopping": True, "container": name}
-    assert docker.verbs("stop", "rm") == [["stop", "--time", "60", name], ["rm", name]]
+    # Docker is told the Id that was inspected, never the name, which may be another container by then.
+    assert docker.verbs("stop", "rm") == [["stop", "--time", "60", identity(name)], ["rm", identity(name)]]
     assert not record.exists() and name not in docker.containers
     record.write_text(json.dumps({"name": name}))
     result = stop_docker_engine(settings)  # now absent
@@ -290,8 +303,21 @@ def test_a_record_of_another_installation_is_refused(docker, tmp_path):
     with pytest.raises(ArcadeError) as refused:
         stop_docker_engine(settings)
     assert str(refused.value) == RECORD_NOT_OURS.format(recorded="cairnmind-arcadedb-000000000000",
-                                                        name=container_name(settings))
+                                                        name=container_name(settings), record=record)
+    assert f"remove {record}" in str(refused.value)  # the way out
     assert docker.calls == [] and record.exists()
+
+
+def test_a_record_of_another_container_stops_the_docker_start_and_is_kept(docker, tmp_path):
+    # The installation id was renewed (the directory was moved): the old container may still run on these files.
+    settings = started(docker, tmp_path)
+    other = docker.add(settings, name="cairnmind-arcadedb-000000000000")
+    record = settings.data_dir / "arcade" / "container.json"
+    record.parent.mkdir(exist_ok=True)
+    record.write_text(json.dumps({"name": other}))
+    with pytest.raises(ArcadeError, match="does not touch cairnmind-arcadedb-000000000000"):
+        start_docker_engine(settings)
+    assert docker.calls == [] and json.loads(record.read_text()) == {"name": other} and other in docker.containers
 
 
 def test_the_docker_start_is_refused_while_the_native_engine_runs(docker, tmp_path, monkeypatch):
@@ -338,7 +364,7 @@ def test_a_container_that_stops_or_never_answers_during_startup(docker, tmp_path
     with pytest.raises(ArcadeError) as late:
         start_docker_engine(settings)
     name = container_name(settings)
-    assert docker.verbs("stop") == [["stop", "--time", "60", name]]
+    assert docker.verbs("stop") == [["stop", "--time", "60", identity(name)]]
     assert str(late.value) == TIMED_OUT.format(name=name, seconds=0)
 
 
@@ -493,9 +519,10 @@ def test_the_native_start_is_refused_while_a_recorded_container_runs_and_when_do
         engine.start_engine(settings)
     assert str(running.value) == CONTAINER_RUNS.format(name=name) and record.exists()
     docker.up = False
-    with pytest.raises(ArcadeError, match="Nothing was started or stopped") as unknown:
+    with pytest.raises(ArcadeError, match="Nothing was started") as unknown:
         engine.start_engine(settings)
     assert "Docker cannot be asked" in str(unknown.value) and record.exists()
+    assert f"remove {record} and start again" in str(unknown.value)  # the way out
     docker.up = True
     docker.containers.clear()
     docker.add(settings, state="exited")
@@ -614,7 +641,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
     settings = settings_with(tmp_path)
     name = container_name(settings)
     (work / "inspect.json").write_text(json.dumps([{
-        "Name": "/" + name, "Config": {"Labels": labels(settings), "Image": PUBLISHED},
+        "Id": identity(name), "Name": "/" + name, "Config": {"Labels": labels(settings), "Image": PUBLISHED},
         "State": {"Status": "running", "Running": True}}]))
     started_engine = cli(settings, "engine", "start", "--docker")
     assert started_engine.exit_code == 0, started_engine.output
@@ -624,7 +651,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
     held = labels(settings)
     log = (work / "log").read_text().splitlines()
     assert log[0].startswith("version") and sum(line.startswith("run ") for line in log) == 1
-    assert log[-2:] == [f"stop --time 60 {name}", f"rm {name}"] and not (state / "container.json").exists()
+    assert log[-2:] == [f"stop --time 60 {identity(name)}", f"rm {identity(name)}"] and not (state / "container.json").exists()
     assert next(line for line in log if line.startswith("run ")) == (
         f"run --detach --name {name} --label io.cairnmind.installation={held['io.cairnmind.installation']} "
         f"--label io.cairnmind.data-dir={settings.data_dir} --user {os.getuid()}:{os.getgid()} "
@@ -820,6 +847,58 @@ def test_every_engine_docker_message_has_a_polish_translation_with_the_same_plac
 
 
 # --- The container's identity ----------------------------------------------------------------------------------
+
+def test_a_reply_of_another_shape_means_the_identity_cannot_be_established(docker, tmp_path):
+    settings = started(docker, tmp_path)
+    name = docker.add(settings)
+    record = settings.data_dir / "arcade" / "container.json"
+    record.parent.mkdir(exist_ok=True)
+    record.write_text(json.dumps({"name": name}))
+    for key, value in (("Config", []), ("State", "running"), ("Id", "abc"), ("Id", None)):
+        docker.add(settings)
+        docker.containers[name][key] = value
+        assert engine_docker.container_state(settings)["state"] == "unknown"
+        with pytest.raises(ArcadeError, match="its answer was not what was asked for"):
+            stop_docker_engine(settings)
+        with pytest.raises(ArcadeError, match="its answer was not what was asked for"):
+            start_docker_engine(settings)
+        assert docker.verbs("stop", "rm", "run") == [] and record.exists()
+    docker.add(settings)
+    docker.containers[name]["Config"]["Labels"] = None  # no labels at all is a shape, and not ours
+    assert engine_docker.container_state(settings)["state"] == "not ours"
+
+
+def test_an_engine_that_answers_is_used_without_asking_docker_about_the_container(docker, tmp_path):
+    settings = started(docker, tmp_path, engine_mode="docker")
+    docker.add(settings)
+    engine.ensure_engine(settings)
+    assert docker.calls == []  # not even `docker container inspect`
+
+
+def test_the_recorded_container_of_a_connect_only_installation_is_stopped_by_engine_stop(docker, tmp_path):
+    settings = quiet_settings(tmp_path)
+    docker.settings = settings
+    settings.arcade_connect_url = "http://127.0.0.1:2999"
+    settings.save()
+    name = docker.add(settings)
+    record = settings.data_dir / "arcade" / "container.json"
+    record.parent.mkdir(exist_ok=True)
+    record.write_text(json.dumps({"name": name}))
+    stopped = cli(settings, "engine", "stop")
+    assert stopped.exit_code == 0, stopped.output
+    assert json.loads(stopped.stdout) == {"stopping": True, "container": name} and not record.exists()
+    assert docker.verbs("stop", "rm") == [["stop", "--time", "60", identity(name)], ["rm", identity(name)]]
+
+
+def test_doctor_attention_names_a_container_that_is_not_ours_or_unknown():
+    from cairnmind.doctor_attention import attention
+    base = {"environment_notes": [], "data_dir": "x", "store_writer": {}}
+    for state in ("not ours", "unknown"):
+        report = {**base, "docker": {"available": True, "container": {"state": state, "error": f"problem {state}"}}}
+        assert attention(report) == [f"problem {state}"]
+    for state in ("running", "absent", "exited"):
+        assert attention({**base, "docker": {"available": True, "container": {"state": state}}}) == []
+
 
 def test_a_container_is_named_and_labelled_from_the_installation(tmp_path):
     first, second = settings_with(tmp_path, "one"), settings_with(tmp_path, "two")
