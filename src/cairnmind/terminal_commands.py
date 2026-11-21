@@ -12,6 +12,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
 from .cockpit_state import CockpitState
+from .first_start import MATCHES_HEADING
 from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
@@ -211,8 +212,20 @@ def help_text(value):
     return terminal_theme.assemble(parts)
 
 
+def _passages(items, text_key) -> list[str]:
+    """One line per source or match: where it is, its lines, and its text on one line (240 characters)."""
+    lines = []
+    for item in items:
+        where = str(item.get("uri", item.get("id", "")))
+        if item.get("line_start"):
+            where += f" ({item['line_start']}-{item.get('line_end', item['line_start'])})"
+        text = " ".join(str(item.get(text_key, "")).split())
+        lines.append(f"- {where}" + (f': "{text[:240]}"' if text else ""))
+    return lines
+
+
 def ask_summary(result, translate) -> str:
-    """Readable view of an /ask result: answer, cited quotes, unknowns and coverage."""
+    """Readable view of an /ask result: answer, cited quotes, full-text matches, unknowns and coverage."""
     if not isinstance(result, dict):
         return translate("The memory service returned no answer.")
     status = str(result.get("status", "unknown"))
@@ -224,13 +237,10 @@ def ask_summary(result, translate) -> str:
     lines = [translate("Status") + ": " + translate(ASK_STATUS.get(status, status)), "", answer]
     sources = [source for source in result.get("sources", []) if isinstance(source, dict)][:8]
     if sources:
-        lines += ["", translate("Sources") + ":"]
-        for source in sources:
-            where = str(source.get("uri", source.get("id", "")))
-            if source.get("line_start"):
-                where += f" ({source['line_start']}-{source.get('line_end', source['line_start'])})"
-            quote = " ".join(str(source.get("quote", "")).split())
-            lines.append(f"- {where}" + (f': "{quote[:240]}"' if quote else ""))
+        lines += ["", translate("Sources") + ":", *_passages(sources, "quote")]
+    matches = [match for match in result.get("full_text_matches", []) if isinstance(match, dict)][:8]
+    if matches:  # search results without models (#274): their own heading, never "Sources"
+        lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt")]
     unknowns = [fixed_message(item, translate) for item in result.get("unknowns", [])][:8]
     if unknowns:
         lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]
