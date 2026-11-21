@@ -1056,8 +1056,16 @@ def stop_workspace(settings, stop_clients=False):
     running = manager.exists()
     if running:
         # tmux ends its clients with code 1 when the server goes; this tells the attached launcher the person asked.
-        (manager.directory / STOP_ASKED).write_text("1")
-        manager.tmux("kill-server")
+        marker = manager.directory / STOP_ASKED
+        try:  # without the marker the attached process just reports tmux's code 1, so a failed write must not block the stop
+            os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600))
+        except OSError:
+            pass
+        try:
+            manager.tmux("kill-server")
+        except BaseException:  # the server lives on: a later real failure must not read as a stop
+            marker.unlink(missing_ok=True)
+            raise
     info = manager._supervisor_info()
     if info:
         try:

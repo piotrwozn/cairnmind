@@ -45,10 +45,32 @@ def _attached(workspace):
     return process, master, slave
 
 
-@pytest.mark.parametrize("by_person, expected", [(True, 0), (False, 1)])
-def test_stop_asked_for_by_the_person_ends_the_attached_process_with_zero(manager, by_person, expected):
+def test_a_failed_kill_server_leaves_no_stop_marker(manager, monkeypatch):
     workspace, _, _ = manager
     workspace.create(start_supervisor=False)
+    real = module.WorkspaceManager.tmux
+
+    def tmux(self, *args, **kwargs):
+        if args[:1] == ("kill-server",):
+            raise subprocess.TimeoutExpired("tmux", 8)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(module.WorkspaceManager, "tmux", tmux)
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            module.stop_workspace(workspace.settings)
+        assert not (workspace.directory / module.STOP_ASKED).exists()
+    finally:
+        monkeypatch.undo()
+        workspace.tmux("kill-server")
+
+
+@pytest.mark.parametrize("by_person, expected, stale", [(True, 0, False), (False, 1, False), (False, 1, True)])
+def test_stop_asked_for_by_the_person_ends_the_attached_process_with_zero(manager, by_person, expected, stale):
+    workspace, _, _ = manager
+    workspace.create(start_supervisor=False)
+    if stale:  # a marker left by an earlier stop must not turn this attach's real failure into 0
+        (workspace.directory / module.STOP_ASKED).write_text("1")
     process, master, slave = _attached(workspace)
     try:
         if by_person:
