@@ -52,6 +52,15 @@ NOT_OURS = ("A container named {name} exists, but it does not carry this install
             "touch it. Remove or rename it yourself if nothing uses it.")
 CANNOT_ASK = ("Docker cannot be asked about the engine container {name}: {problem} Nothing was started or "
               "stopped.")
+CANNOT_ASK_RUN = "Docker cannot be asked about the engine container {name}: {problem}"  # after docker run
+AFTER_RUN_REMOVED = ("The engine container {name} was started, but it could not be confirmed as this installation's: "
+                     "{problem} Cairnmind stopped and removed the container this start created ({id}).")
+AFTER_RUN_LEFT = ("The engine container {name} was started, but it could not be confirmed as this installation's: "
+                  "{problem} Cairnmind could not remove the container this start created ({id}); it may still be "
+                  "running. Remove it yourself with `docker rm --force {id}`.")
+AFTER_RUN_UNKNOWN = ("The engine container {name} was started, but it could not be confirmed as this installation's: "
+                     "{problem} docker run did not print a container id, so Cairnmind removed nothing. If the "
+                     "container {name} is running and nothing uses it, remove it yourself with docker.")
 CANNOT_ASK_NATIVE = ("Docker cannot be asked about the engine container {name}: {problem} Nothing was started. If "
                      "Docker is no longer used on this machine and no engine container uses this data directory, "
                      "remove {record} and start again.")
@@ -116,6 +125,17 @@ MESSAGES = {
                "Usuń go lub zmień jego nazwę samodzielnie, jeśli nic go nie używa."),
     CANNOT_ASK: ("Nie można zapytać Dockera o kontener silnika {name}: {problem} Nic nie zostało uruchomione ani "
                  "zatrzymane."),
+    CANNOT_ASK_RUN: "Nie można zapytać Dockera o kontener silnika {name}: {problem}",
+    AFTER_RUN_REMOVED: ("Kontener silnika {name} został uruchomiony, ale nie dało się potwierdzić, że należy do tej "
+                        "instalacji: {problem} Cairnmind zatrzymał i usunął kontener utworzony przez to uruchomienie "
+                        "({id})."),
+    AFTER_RUN_LEFT: ("Kontener silnika {name} został uruchomiony, ale nie dało się potwierdzić, że należy do tej "
+                     "instalacji: {problem} Cairnmind nie zdołał usunąć kontenera utworzonego przez to uruchomienie "
+                     "({id}); może nadal działać. Usuń go samodzielnie poleceniem `docker rm --force {id}`."),
+    AFTER_RUN_UNKNOWN: ("Kontener silnika {name} został uruchomiony, ale nie dało się potwierdzić, że należy do tej "
+                        "instalacji: {problem} docker run nie wypisał identyfikatora kontenera, więc Cairnmind "
+                        "niczego nie usunął. Jeśli kontener {name} działa i nic go nie używa, usuń go samodzielnie "
+                        "dockerem."),
     CANNOT_ASK_NATIVE: ("Nie można zapytać Dockera o kontener silnika {name}: {problem} Nic nie zostało "
                         "uruchomione. Jeśli Docker nie jest już używany na tym komputerze i żaden kontener silnika "
                         "nie używa tego katalogu danych, usuń {record} i uruchom ponownie."),
@@ -215,15 +235,16 @@ def _shaped(info) -> bool:
             and isinstance(info.get("Id"), str) and re.fullmatch(r"[0-9a-f]{64}", info["Id"]) is not None)
 
 
-def inspect_container(settings, *, way_out: bool = False) -> dict | None:
+def inspect_container(settings, *, way_out: bool = False, after_run: bool = False) -> dict | None:
     """The container of this installation's name as Docker describes it; None when there is none.
 
     Fails closed: Docker not answering, a timeout or a reply of another shape raise CANNOT_ASK (way_out: the
-    sentence of the native start, which also says how to remove the record of a container)."""
+    sentence of the native start, which also says how to remove the record of a container; after_run: without
+    its claim that nothing was started, which is false once docker run has run)."""
     name = container_name(settings)
 
     def cannot(problem):
-        return ArcadeError((CANNOT_ASK_NATIVE if way_out else CANNOT_ASK).format(
+        return ArcadeError((CANNOT_ASK_NATIVE if way_out else CANNOT_ASK_RUN if after_run else CANNOT_ASK).format(
             name=name, problem=problem, record=_state(settings) / "container.json"))
 
     try:
@@ -458,19 +479,33 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
         raise ArcadeError(RUN_FAILED.format(detail=_detail(done)))
     created = (done.stdout or "").strip()  # the Id of the container THIS start created
     try:
-        started = inspect_container(settings)  # its Id, and the labels it really got
-        if started is None:
-            raise ArcadeError(EXITED.format(name=name))
-        if not is_ours(started, settings) or started["Id"] != created:
-            raise ArcadeError(NOT_OURS.format(name=name))
-    except ArcadeError:
-        if re.fullmatch(r"[0-9a-f]{64}", created):  # anything else is unknown: remove nothing
-            try:
-                run_docker(["rm", "--force", created], timeout=60)
-            except ArcadeError:
-                pass  # the error of the check is the one to report
-        raise
+        started = inspect_container(settings, after_run=True)  # its Id, and the labels it really got
+    except ArcadeError as exc:
+        raise _abandon(created, name, str(exc)) from None
+    if started is None:
+        raise ArcadeError(EXITED.format(name=name))  # nothing left to remove
+    if not is_ours(started, settings):
+        raise _abandon(created, name, "it does not carry this installation's labels.")
+    if started["Id"] != created:
+        raise _abandon(created, name, "it is not the container docker run reported.")
     return _wait(settings, name, started["Id"])
+
+
+def _abandon(created: str, name: str, problem: str) -> ArcadeError:
+    """The check after docker run failed: stop and remove the container this start created, by the Id docker run
+    printed (anything that is not an Id: remove nothing), and say what became of it."""
+    if re.fullmatch(r"[0-9a-f]{64}", created) is None:
+        return ArcadeError(AFTER_RUN_UNKNOWN.format(name=name, problem=problem))
+    removed = False
+    try:
+        run_docker(["stop", "--time", str(STOP_SECONDS), created], timeout=STOP_SECONDS + 30)
+    except ArcadeError:
+        pass  # the removal below says whether the container is gone
+    try:
+        removed = run_docker(["rm", created], timeout=60).returncode == 0
+    except ArcadeError:
+        pass
+    return ArcadeError((AFTER_RUN_REMOVED if removed else AFTER_RUN_LEFT).format(name=name, id=created, problem=problem))
 
 
 def stop_docker_engine(settings) -> dict:
