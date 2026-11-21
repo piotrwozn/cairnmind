@@ -1354,6 +1354,7 @@ class KnowledgeAgent:
                         # A re-extraction (#297) of a source the extractor now skips: its old untouched proposals go.
                         from .extraction_input import EXTRACTOR_VERSION
                         from .reextract import supersede_unextracted
+                        diagnostics["persistence_stage"] = "supersede_records"
                         gone = supersede_unextracted(self.store, project_id, source, EXTRACTOR_VERSION,
                                                      lambda: self._extraction_deadline(deadline))
                         if gone:
