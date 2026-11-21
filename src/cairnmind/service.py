@@ -1208,7 +1208,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                                {"project": pid, "root": root}):
                 raise ValueError("A finding needs a registered project worktree")
             return save_finding(store, pid, body.key, body.content, body.kind, body.status,
-                                session_id=body.session_id or None)
+                                session_id=body.session_id or None, worktree=root)
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
         cache.clear()
         return result

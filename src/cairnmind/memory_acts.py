@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from uuid import uuid4
 
 from .memory_published_format import (J, audit_covers, evidence_hash, identity_hash, plan_hash, row_definition_hash,
@@ -18,21 +19,38 @@ from .memory_published_format import (J, audit_covers, evidence_hash, identity_h
 from .sql import clean_row, one_row, utc_now
 
 
-def act_context(store, project_id) -> dict:
-    """actor_name, branch and commit of the project's root, read-only; each None when Git cannot say."""
+DETACHED = "detached HEAD"  # Not a branch name: Git forbids the space.
+
+
+def act_context(store, project_id, worktree=None) -> dict:
+    """actor_name, branch and commit of the worktree the act happens in, read-only; each None when Git cannot say.
+    No worktree named: the project's only root; with several roots the branch and commit are None, never a
+    guess. A folder that is not a registered root is refused."""
+    from .sql import unregistered_root
     from .verification import _git
-    rows = store.query("SELECT root FROM projects WHERE id=:id", {"id": project_id})
+    rows = store.query("SELECT id,name,root FROM projects WHERE id=:id", {"id": project_id})
     root = rows[0].get("root") if rows else None
+    if worktree is not None and rows:
+        root = str(Path(worktree).expanduser().resolve())
+        if not store.query("SELECT path FROM project_roots WHERE project_id=:project AND path=:root",
+                           {"project": project_id, "root": root}):
+            raise ValueError(unregistered_root(root, rows[0]))
     values = {"actor_name": None, "branch": None, "commit": None}
     if not root:
         return values
+    several = worktree is None and len(store.query("SELECT path FROM project_roots WHERE project_id=:project",
+                                                   {"project": project_id})) > 1
     for name, args in (("actor_name", ("config", "user.name")), ("branch", ("rev-parse", "--abbrev-ref", "HEAD")),
                        ("commit", ("rev-parse", "HEAD"))):
+        if several and name != "actor_name":
+            continue  # Which worktree the person is in is not known: say so rather than name the root's.
         try:
             value = _git(root, *args).decode("utf-8", "replace").strip()
         except (OSError, ValueError, subprocess.SubprocessError):
             continue  # A missing or slow Git never blocks a person's act.
         values[name] = value[:200] if value else None
+    if values["branch"] == "HEAD":
+        values["branch"] = DETACHED  # Git prints HEAD for a detached head; it cannot be a branch name.
     return values
 
 
@@ -90,23 +108,24 @@ def covered_by_local_act(tx, record) -> bool:
     return False
 
 
-def confirm(inspector, project, plan_id, expected_plan_version, *, reason=None):
+def confirm(inspector, project, plan_id, expected_plan_version, *, reason=None, worktree=None):
     """The inspector's action: confirm_plan for a project the inspector names."""
     from .inspector import InspectorNotFound
     try:
-        return confirm_plan(inspector.store, inspector._project(project)["id"], plan_id, expected_plan_version, reason)
+        return confirm_plan(inspector.store, inspector._project(project)["id"], plan_id, expected_plan_version, reason,
+                            worktree)
     except LookupError as exc:
         raise InspectorNotFound(str(exc)) from None
 
 
-def confirm_plan(store, project_id, plan_id, expected_plan_version, reason=None):
+def confirm_plan(store, project_id, plan_id, expected_plan_version, reason=None, worktree=None):
     """Confirm a plan's definition and every active step in one transaction, with one audit source."""
     from .plans import _tasks
     if type(expected_plan_version) is not int or expected_plan_version < 1:
         raise ValueError("Confirming a plan requires the exact plan version")
     if reason is not None and (not isinstance(reason, str) or len(reason) > 4000):
         raise ValueError("Review reason must be at most 4000 characters")
-    context = act_context(store, project_id)
+    context = act_context(store, project_id, worktree)
     with store.transaction() as tx:
         plan = one_row(tx, "SELECT FROM plans WHERE id=:id AND project_id=:project",
                        {"id": plan_id, "project": project_id}, False)

@@ -1255,7 +1255,7 @@ def plan_save(ctx: typer.Context,
     # Typed by a person in their own terminal, a save may change or remove a step they confirmed (#177);
     # from a coding session's shell or an agent's command the store refuses that, with the step named.
     with actor_write(store, ctx.obj, pid, worktree) as scope, \
-            confirmation.person_command(store, pid, "command_line_plan_save"):
+            confirmation.person_command(store, pid, "command_line_plan_save", scope):
         result = PlanManager(store).save(pid, document.get("plan", {}), document.get("steps", []),
             idempotency_key, expected_version if expected_version is not None else document.get("expected_version"),
             versions, scope, activate)
@@ -1329,7 +1329,7 @@ def plan_adopt(ctx: typer.Context, project: ProjectArg, group: GroupArg,
     from cairnmind import confirmation
     # Adoption gives each task a plan key: on a task a person confirmed, only a person's command does (#177).
     with actor_write(store, ctx.obj, pid, worktree) as scope, \
-            confirmation.person_command(store, pid, "command_line_plan_adopt"):
+            confirmation.person_command(store, pid, "command_line_plan_adopt", scope):
         result = PlanManager(store).adopt_legacy(pid, group, plan={"title": title} if title else None,
             idempotency_key=idempotency_key, worktree=scope, activate=activate)
     output(result)

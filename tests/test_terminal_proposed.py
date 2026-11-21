@@ -137,7 +137,7 @@ async def test_an_entry_is_reviewed_through_the_inspector_review_and_then_leaves
         await settle(app, pilot)
         assert writes(broker) == [("POST", "/api/inspector/records/record-a/review",
                                    {"project": "project-a", "action": "confirm", "expected_version": 3,
-                                    "reason": "Read the transcript."})]
+                                    "reason": "Read the transcript.", "worktree": workspace.value["worktree"]})]
         await pilot.click("#entity-back")
         await settle(app, pilot)
         assert len(proposed.reads) == 2

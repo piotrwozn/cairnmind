@@ -318,7 +318,8 @@ class Inspector:
                 totals["inbox"] = int(reader.query("SELECT count(*) AS n FROM ingestion_inbox")[0]["n"])
             return {"projects": items, "totals": dict(totals), "cursor": _cursor(reader, self.store)}
 
-    def review(self, project, record_id, action, expected_version, *, expected_plan_version=None, reason=None):
+    def review(self, project, record_id, action, expected_version, *, expected_plan_version=None, reason=None,
+               worktree=None):
         if action not in {"confirm", "dispute"}:
             raise ValueError("Review action must be confirm or dispute")
         if type(expected_version) is not int or expected_version < 1:
@@ -330,7 +331,8 @@ class Inspector:
         pid = self._project(project)["id"]
         status = "confirmed" if action == "confirm" else "disputed"
         from .memory_acts import act_context, definition_fields, review_refused
-        context = act_context(self.store, pid)  # Who, on which branch and commit (#170): before the writer lock.
+        # Who, on which worktree's branch and commit (#170, #247): before the writer lock.
+        context = act_context(self.store, pid, worktree)
         with self.store.transaction() as reader:
             old = one_row(reader, "SELECT FROM records WHERE id=:id AND project_id=:project", {"id": record_id, "project": pid}, False)
             if not old:

@@ -19,9 +19,17 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `cairnmind doctor` reports `knowledge_agent: disabled (deterministic-only mode)` as information with exit 0; the evaluations report `not_run` (exit 3) and `rebuild-vectors` refuses while no models are configured (#274).
 - `cairnmind models pull` (after a successful download) and `cairnmind models set` (after its check) set `knowledge_agent: enabled` and say so at once, with how to turn it off; a running service that started without models tells you to restart it; installations from before 0.13.0 keep their models and a configured server that is down is still reported as a fault (#274).
 
+### Fixes
+
+- Two installations that first open one store at the same moment now end as one writer and one reader also when the database server runs in production mode, as the image of `deploy/arcadedb` does; before, the second one's command failed with the server's bare error (#277).
+- A confirmation, review or conflict decision made in a second worktree now records that worktree's branch and commit in its audit instead of the project root's; `cairnmind memory confirm-plan` accepts `--worktree`, and a worktree that is not a registered root of the project is refused (#247).
+- An audit made on a detached head now says `detached HEAD` with its commit instead of the branch `HEAD`; a confirmation that cannot name its worktree in a project with several worktrees records no branch or commit instead of the project root's (#247).
+- A resume packet's instruction for accepting an unknown transcript record kind is no longer cut off when the transcript's archive path is long, in the packet or in the refusal an agent gets from ack (#263).
+
 ### Development and CI
 
 - A workflow run by hand from main builds the database image of `deploy/arcadedb` for linux/amd64 and linux/arm64 and publishes it to `ghcr.io/piotrwozn/cairnmind-arcadedb`, tagged with the pinned ArcadeDB version; its summary gives the digest (#218).
+- Tests no longer reach a Cairnmind service or an Ollama running on the default ports of the machine that runs them; a test engine request that gets no answer for more than 5 s prints the statement, the wait, the load and the engine log; the stand-in pane process of the focus-column test no longer logs an older size after a newer one (#221).
 
 ## 0.12.0
 

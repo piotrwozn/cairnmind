@@ -434,7 +434,8 @@ def person_at_terminal(environ=None, stdin=None, stdout=None) -> bool:
         return False
 
 
-def person_source(store, project_id, text, *, route="cli", origin=None, action="command_line_confirm"):
+def person_source(store, project_id, text, *, route="cli", origin=None, action="command_line_confirm",
+                  worktree=None):
     """The note a person's command line confirmation leaves: who confirmed, on which branch and commit.
 
     Like a review's audit it says that a person judged the record, never why the record is true: it is
@@ -450,7 +451,7 @@ def person_source(store, project_id, text, *, route="cli", origin=None, action="
                               {"origin": SEED_SOURCE[1]})
     from .memory_acts import act_context
     prefix, source_origin = PERSON_ROUTES[route]
-    context = act_context(store, project_id)
+    context = act_context(store, project_id, worktree)
     metadata = {"origin": origin or source_origin, "role": "user", **context}
     audit = {"actor": "local_user", **context, "action": action, "text_chars": len(text)}
     return store.snapshot(project_id, f"{prefix}{uuid4()}", json.dumps(audit, ensure_ascii=False, sort_keys=True),
@@ -470,7 +471,7 @@ def remember_as_person(store, project_id, record, sources=None, *, route="cli"):
 
 
 @contextmanager
-def person_command(store, project_id, action):
+def person_command(store, project_id, action, worktree=None):
     """A command a person types in their own terminal that may change records they confirmed (a plan save).
 
     Elsewhere (a coding session's shell, an agent's command, a script) nothing is opened, and the store
@@ -480,6 +481,6 @@ def person_command(store, project_id, action):
         yield False
         return
     with store.transaction():
-        note = person_source(store, project_id, action, action=action)
+        note = person_source(store, project_id, action, action=action, worktree=worktree)
         with store.person_act("cli", note["id"]):
             yield True

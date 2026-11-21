@@ -535,7 +535,7 @@ async def test_inspector_lists_a_conflict_and_sends_the_chosen_decision(tmp_path
                 break
         await settle(app, pilot)
     assert posted == [{"project": "project-keyboard", "record_id": "new-1", "other_id": "old-1",
-                       "expected_version": 3, "other_expected_version": 5, **expected}]
+                       "expected_version": 3, "other_expected_version": 5, "worktree": workspace.value["worktree"], **expected}]
     assert offered == ["keep-first", "keep-second", "different_scopes", "dismiss"]
     assert app.rows == {}
 

@@ -301,3 +301,16 @@ def test_schema_rows_are_not_written_twice_when_another_installation_committed_t
     assert counts["schema_version"] == 1 and counts["lookup_indexes"] == 1
     assert ArcadeClient(store.settings).query("SELECT count(*) AS n FROM journal_state")[0]["n"] == 1
     assert writer_row(store)["installation_id"] == head(store)["writer"] == store.installation.id
+
+
+def test_a_refused_second_commit_is_recognised_by_the_exception_name_that_production_mode_keeps(monkeypatch):
+    # ArcadeDB in production mode answers 503 with the exception name and no detail text (#277).
+    other = {"installation_id": "other"}
+    monkeypatch.setattr(store_writer, "read_writer", lambda client: other)
+    me = type("Me", (), {"id": "me"})()
+    production = ArcadeError("ArcadeDB HTTP 503: Cannot execute command", status_code=503,
+                             exception_name="com.arcadedb.exception.ConcurrentModificationException")
+    assert store_writer.claimed_meanwhile(None, me, production, wait=0) == other
+    unrelated = ArcadeError("ArcadeDB HTTP 503: Cannot execute command", status_code=503,
+                            exception_name="com.arcadedb.exception.DatabaseIsReopening")
+    assert store_writer.claimed_meanwhile(None, me, unrelated, wait=0) is None

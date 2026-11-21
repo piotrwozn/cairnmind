@@ -205,7 +205,8 @@ async def test_managed_record_review_sends_both_versions_without_changing_task_p
         await settle(app, pilot)
         writes = [body for method, path, _, body in broker.calls if method == "POST" and path.endswith("/review")]
         assert writes == [{"project": "project-a", "action": "confirm", "expected_version": 3,
-                           "expected_plan_version": 5, "reason": "Read the source."}]
+                           "expected_plan_version": 5, "reason": "Read the source.",
+                           "worktree": workspace.value["worktree"]}]
         assert broker.record["metadata"]["state"] == "needs_review"
         assert broker.record["status"] == "confirmed"
 
