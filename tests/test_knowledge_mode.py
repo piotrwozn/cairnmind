@@ -19,7 +19,8 @@ from cairnmind.terminal_i18n import tr
 NEW_SENTENCES = [first_start.KNOWLEDGE_DISABLED, first_start.MODELS_NOT_CONFIGURED, first_start.GET_MODELS,
                  first_start.SERVER_DOWN, first_start.MODEL_MISSING, first_start.CHOSE_ENABLED,
                  first_start.CHOSE_DISABLED, first_start.TURNED_ON, first_start.ASK_OFF, first_start.NEEDS_MODELS,
-                 first_start.KNOWLEDGE_INVALID, first_start.RESTART_FOR_MODELS]
+                 first_start.KNOWLEDGE_INVALID, first_start.RESTART_FOR_MODELS, first_start.ASK_NO_MATCH,
+                 first_start.MATCHES_HEADING, first_start.MATCHES_HELD_BACK]
 
 
 def test_a_config_from_before_0_13_counts_as_enabled_and_a_new_one_waits_for_init(tmp_path):
@@ -39,9 +40,18 @@ def test_a_config_from_before_0_13_counts_as_enabled_and_a_new_one_waits_for_ini
         knowledge_mode.enabled(new)
 
 
+NOTHING_FOUND = {"matches": [], "held_back": None, "warnings": [], "elapsed_seconds": 0.0}
+
+
+def a_match(uri="notes.md", excerpt="The ledger stores amounts in cents."):
+    return {"id": "chunk-" + uri, "source_id": "source-" + uri, "uri": uri, "kind": "document", "match": "full_text",
+            "line_start": 1, "line_end": 1, "excerpt": excerpt}
+
+
 def test_the_unavailable_answer_and_the_status_fields():
-    answer = knowledge_mode.unavailable_answer()
-    assert answer["status"] == "unavailable" and answer["sources"] == [] and answer["answer"] == first_start.ASK_OFF
+    answer = knowledge_mode.unavailable_answer(NOTHING_FOUND)
+    assert answer["status"] == "unavailable" and answer["sources"] == [] and answer["full_text_matches"] == []
+    assert answer["answer"] == first_start.ASK_NO_MATCH
     assert answer["unknowns"] == [first_start.GET_MODELS]
     assert answer["diagnostics"]["code"] == "models_not_configured"
     pipeline = {"archive": {"pending": 7, "running": 0, "completed": 0, "failed": 0},
@@ -77,12 +87,90 @@ def test_the_service_refuses_to_start_on_a_knowledge_agent_value_it_does_not_kno
 
 def test_the_ask_panel_shows_the_answer_in_polish_and_every_new_sentence_has_polish():
     from cairnmind.terminal_commands import ask_summary
-    shown = ask_summary(knowledge_mode.unavailable_answer(), lambda text: tr(text, "pl"))
+    found = {**NOTHING_FOUND, "matches": [a_match()], "held_back": {"classes": ["chat"], "chunks": 1}}
+    shown = ask_summary(knowledge_mode.unavailable_answer(found), lambda text: tr(text, "pl"))
     assert first_start.MESSAGES[first_start.ASK_OFF] in shown
     assert first_start.MESSAGES[first_start.GET_MODELS] in shown
+    assert first_start.MESSAGES[first_start.MATCHES_HELD_BACK] in shown
     for english in NEW_SENTENCES:
         assert first_start.MESSAGES[english] != english
         assert tr(english, "pl") == first_start.MESSAGES[english]
+
+
+def test_the_answer_without_models_lists_matches_apart_from_sources_and_says_it_is_no_answer():
+    two = [a_match("notes.md"), a_match("other.md", "Cents again.")]
+    answer = knowledge_mode.unavailable_answer({**NOTHING_FOUND, "matches": two})
+    assert answer["answer"] == first_start.ASK_OFF and answer["sources"] == []
+    assert answer["full_text_matches"] == two and "citations" not in answer and answer["cached"] is False
+    held = knowledge_mode.unavailable_answer({**NOTHING_FOUND, "matches": two, "held_back": {"chunks": 2}},
+                                             ["x" * 500] * 7)
+    assert first_start.MATCHES_HELD_BACK in held["unknowns"] and held["diagnostics"]["held_back"] == {"chunks": 2}
+    errors = [item for item in held["unknowns"] if item == "x" * 240]
+    assert len(errors) == 1 and len(held["unknowns"]) <= 8  # equal errors count once; each is cut to 240 characters
+    varied = knowledge_mode.unavailable_answer(NOTHING_FOUND, [f"error {n}" for n in range(7)])
+    assert [item for item in varied["unknowns"] if item.startswith("error")] == [f"error {n}" for n in range(5)]
+    assert varied["freshness"]["warnings"] == [f"error {n}" for n in range(5)]
+
+
+class Search:
+    """A retriever stand-in that records how it was asked, and which gate was set while it ran."""
+
+    def __init__(self):
+        self.calls, self.warnings = [], []
+
+    def search(self, *args, **kwargs):
+        from cairnmind.memory_egress import ASK
+        self.calls.append((args, kwargs, ASK.get()))
+        return ["hit"]
+
+
+async def test_text_matches_use_the_lexical_search_of_ask_and_ask_no_model(tmp_path):
+    from types import SimpleNamespace
+    from cairnmind.agent import INITIAL_HITS
+    from cairnmind.memory_egress import ASK, Gate
+    from test_deterministic_mode import Untouched  # records every attribute asked of it
+    remote = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
+    model, seen = Untouched(), []
+
+    def hits(found, project_id, evidence, worktree, question, register, size):
+        seen.append((found, register, size))
+        shown = []
+        for number in range(12):
+            evidence[f"s{number}"] = {"uri": f"f{number}.md", "kind": "document"}
+            shown.append({"id": f"c{number}", "source_id": f"s{number}", "text": "cents", "line_start": 1})
+        shown[0]["refreshed"] = True  # a file changed since indexing: its start is not a passage with the words
+        return shown
+
+    def agent_for(settings):
+        return SimpleNamespace(settings=settings, store=object(), ollama=model, retriever=Search(), _hits=hits)
+
+    for settings, gate_type in ((Settings(data_dir=tmp_path, memory_chat=remote), Gate), (Settings(data_dir=tmp_path), type(None))):
+        agent = agent_for(settings)
+        found = await knowledge_mode.text_matches(agent, "p", "ledger cents", worktree="/w")
+        (args, kwargs, gate), = agent.retriever.calls
+        assert args == ("p", "ledger cents", INITIAL_HITS) and kwargs == {"worktree": "/w"}  # no query_vector
+        assert isinstance(gate, gate_type) and ASK.get() is None
+        assert seen[-1] == (["hit"], False, 400)
+        assert len(found["matches"]) == 8 and "c0" not in {m["id"] for m in found["matches"]}
+        assert all(m["match"] == "full_text" and m["excerpt"] == "cents" and "sha256" not in m
+                   for m in found["matches"])
+        assert found["matches"][0] == {"id": "c1", "source_id": "s1", "uri": "f1.md", "kind": "document",
+                                       "match": "full_text", "line_start": 1, "excerpt": "cents"}
+    assert model.touched == []
+
+
+def test_the_ask_panel_lists_matches_under_their_own_heading_and_never_as_sources():
+    from cairnmind.terminal_commands import ask_summary
+
+    def polish(text):
+        return tr(text, "pl")
+    shown = ask_summary(knowledge_mode.unavailable_answer({**NOTHING_FOUND, "matches": [a_match()]}), polish)
+    assert first_start.MESSAGES[first_start.ASK_OFF] in shown
+    assert polish(first_start.MATCHES_HEADING) + ":" in shown
+    assert '- notes.md (1-1): "The ledger stores amounts in cents."' in shown
+    assert polish("Sources") + ":" not in shown
+    empty = ask_summary(knowledge_mode.unavailable_answer(NOTHING_FOUND), polish)
+    assert first_start.MESSAGES[first_start.ASK_NO_MATCH] in empty and polish(first_start.MATCHES_HEADING) not in empty
 
 
 # --- init, `models pull` and `models set` -----------------------------------------------------------------------

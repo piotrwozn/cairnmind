@@ -2,18 +2,20 @@
 
 "enabled": answers, extraction and embeddings use the configured models; a model server that is down or a model
 that is missing is a fault, reported as before. "disabled": deterministic-only mode, a stated condition: no model
-is asked, extraction and embedding jobs stay pending (held), `ask` answers unavailable. "" until `cairnmind init`
+is asked, extraction and embedding jobs stay pending (held), `ask` makes no answer (unavailable) and lists full-text matches. "" until `cairnmind init`
 chooses, which counts as enabled; a config.json from before 0.13.0 has no such key and is read as enabled
 (config.Settings.load). Only init (once), `models pull`, `models set` and a person editing config.json change it,
 and the service reads it when it starts.
 """
 from __future__ import annotations
 
+import asyncio
 import fcntl
+import time
 
 from . import config
-from .first_start import (ASK_OFF, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
-                          KNOWLEDGE_INVALID, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS,
+from .first_start import (ASK_NO_MATCH, ASK_OFF, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
+                          KNOWLEDGE_INVALID, MATCHES_HELD_BACK, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS,
                           RESTART_FOR_MODELS, SERVER_DOWN, TURNED_ON)
 
 UNAVAILABLE_CODE = "models_not_configured"
@@ -96,11 +98,58 @@ def needs_models(settings, command: str) -> str | None:
     return None if enabled(settings) else NEEDS_MODELS.format(command=command) + " " + GET_MODELS
 
 
-def unavailable_answer() -> dict:
-    """What /ask returns in deterministic-only mode: the answer shape of the agent, status unavailable, no source."""
-    return {"status": "unavailable", "answer": ASK_OFF, "sources": [], "unknowns": [GET_MODELS],
-            "freshness": {}, "elapsed_seconds": 0.0, "cached": False,
-            "diagnostics": {"stage": "ask", "code": UNAVAILABLE_CODE}}
+MATCH_LIMIT = 8  # as many as an answer lists sources (agent._result)
+MATCH_EXCERPT_CHARS = 400  # the excerpt of an answer's source (agent._result)
+
+
+async def text_matches(agent, project_id: str, question: str, worktree=None) -> dict:
+    """The passages a full-text search finds for the question's words, through exactly the filters of the first,
+    lexical search of `ask` (KnowledgeAgent._ask_impl): Retriever.search without a query vector, then agent._hits,
+    with the sensitivity gate set as KnowledgeAgent.ask sets it. No model is asked. Search results, never an
+    answer: unavailable_answer presents them."""
+    from .agent import INITIAL_HITS
+    from .memory_egress import ASK, ask_gate
+    started = time.monotonic()
+    agent.retriever.warnings.clear()
+    gate = ask_gate(agent.settings, agent.store)
+    token = ASK.set(gate)
+    evidence: dict = {}
+    try:
+        hits = await asyncio.to_thread(agent.retriever.search, project_id, question, INITIAL_HITS, worktree=worktree)
+        shown = await asyncio.to_thread(agent._hits, hits, project_id, evidence, worktree, question, False,
+                                        MATCH_EXCERPT_CHARS)
+    finally:
+        ASK.reset(token)
+    matches = []
+    for item in shown:
+        if item.get("refreshed"):
+            continue  # the file changed since it was indexed: _hits shows its start, not a passage with the words
+        source = evidence[item["source_id"]]
+        match = {"id": item["id"], "source_id": item["source_id"], "uri": item.get("uri", source["uri"]),
+                 "kind": item.get("kind") or source["kind"], "match": "full_text"}
+        match.update({key: item[key] for key in ("line_start", "line_end") if key in item})
+        match["excerpt"] = item["text"]
+        match.update({key: item[key] for key in ("status", "confirmed_by", "confirmation", "metadata") if key in item})
+        matches.append(match)
+        if len(matches) == MATCH_LIMIT:
+            break
+    return {"matches": matches, "held_back": gate.summary() if gate else None,
+            "warnings": list(dict.fromkeys(w[:240] for w in agent.retriever.warnings))[-8:],
+            "elapsed_seconds": round(time.monotonic() - started, 3)}
+
+
+def unavailable_answer(found: dict, index_errors=()) -> dict:
+    """What /ask returns in deterministic-only mode: no answer (status unavailable, no source), and the passages
+    text_matches found, in their own key, said by the answer sentence to be search results and not an answer."""
+    errors = [str(error)[:240] for error in list(index_errors)[:5]]
+    unknowns = [GET_MODELS, *([MATCHES_HELD_BACK] if found["held_back"] else []), *errors]
+    diagnostics = {"stage": "ask", "code": UNAVAILABLE_CODE}
+    if found["held_back"]:
+        diagnostics["held_back"] = found["held_back"]
+    return {"status": "unavailable", "answer": ASK_OFF if found["matches"] else ASK_NO_MATCH, "sources": [],
+            "full_text_matches": found["matches"], "unknowns": list(dict.fromkeys(unknowns))[:8],
+            "freshness": {"warnings": [*found["warnings"], *errors][-8:]},
+            "elapsed_seconds": found["elapsed_seconds"], "cached": False, "diagnostics": diagnostics}
 
 
 def status_fields(pipeline: dict, settings=None) -> dict:

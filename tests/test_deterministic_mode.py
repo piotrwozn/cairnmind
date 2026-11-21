@@ -212,13 +212,18 @@ def test_a_configured_installation_with_its_server_down_is_still_a_fault(workspa
     assert {row[2] for row in jobs(store) if row[1] == "embed"} == {"pending"}  # waiting, not failed
 
 
-def test_ask_without_models_is_unavailable_through_the_api_the_cli_and_mcp(workspace):
+QUESTION = "Where are the ledger amounts stored?"
+
+
+def without_time(answer):
+    return {key: value for key, value in answer.items() if key != "elapsed_seconds"}
+
+
+def test_ask_without_models_lists_full_text_matches_through_the_api_the_cli_and_mcp(workspace):
     import anyio
     settings, store, project, root = workspace
     other = store.add_project("other", repository(root.parent / "other"))
     foreign = SessionManager(store, settings).prepare(other["id"], "codex", timeout=0)["session_id"]
-    expected = knowledge_mode.unavailable_answer()
-    assert expected["status"] == "unavailable" and expected["sources"] == []
     headers = {"Authorization": f"Bearer {settings.token}"}
 
     async def through_mcp():
@@ -229,24 +234,116 @@ def test_ask_without_models_is_unavailable_through_the_api_the_cli_and_mcp(works
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer) as client:
                 await client.initialize()
-                return tool_result(await client.call_tool("ask", {"project": project["id"],
-                                                                  "question": "What is decided?"}))
+                return tool_result(await client.call_tool("ask", {"project": project["id"], "question": QUESTION}))
 
     with local_service(settings):  # the service reads `disabled` and has a model client that fails the test
         def post(**body):
             return httpx.post(f"{settings.url}/ask", headers=headers, json={"project": "demo", **body}, timeout=30)
-        asked, logged = post(question="What is decided?"), post(question="Again?", log=True)
+        asked, logged = post(question=QUESTION), post(question=QUESTION, log=True)
+        nothing = post(question="zebra quokka")
         unknown = post(project="nothing", question="?")
         refused = post(question="?", session_id=foreign)
-        cli_result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "ask", "demo", "What is decided?"])
+        cli_result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "ask", "demo", QUESTION])
         mcp_result = anyio.run(through_mcp)
-    assert asked.status_code == 200 and asked.json() == expected
-    assert logged.status_code == 200 and logged.json() == expected
+        cached = httpx.get(f"{settings.url}/status", headers=headers, timeout=30).json()["cached_answers"]
+    assert asked.status_code == 200
+    body = asked.json()
+    assert body["status"] == "unavailable" and body["diagnostics"]["code"] == "models_not_configured"
+    assert body["sources"] == [] and body["answer"] == first_start.ASK_OFF and "citations" not in body
+    matches = body["full_text_matches"]
+    assert 1 <= len(matches) <= 8 and all(len(match["excerpt"]) <= 400 and match["match"] == "full_text"
+                                         for match in matches)
+    notes = [match for match in matches if match["uri"].endswith("notes.md")]
+    assert notes and "ledger stores amounts in cents" in notes[0]["excerpt"]
+    assert logged.status_code == 200 and without_time(logged.json()) == without_time(body)
     assert not (settings.data_dir / "answer-log").exists()  # nothing was answered, so nothing is kept
+    assert nothing.json()["full_text_matches"] == [] and nothing.json()["answer"] == first_start.ASK_NO_MATCH
+    assert nothing.json()["status"] == "unavailable" and cached == 0
     assert unknown.status_code == 404 and refused.status_code == 400  # the project and the session are still checked
     assert cli_result.exit_code == 0, cli_result.output  # the convention for every answer status
-    assert json.loads(cli_result.stdout) == expected
-    assert mcp_result == expected
+    assert without_time(json.loads(cli_result.stdout)) == without_time(body)
+    assert without_time(mcp_result) == without_time(body)
+
+
+def test_full_text_matches_stay_in_the_project_the_worktree_and_the_session(workspace):
+    settings, store, project, root = workspace
+    other_root = repository(root.parent / "other")
+    (other_root / "ledger.md").write_text("The ledger of the other project keeps cents.\n")
+    other = store.add_project("other", other_root)
+    feature = root.parent / "feature"
+    feature.mkdir()
+    (feature / "feature.md").write_text("The ledger feature keeps cents.\n")
+    store.add_project_root(project["id"], feature)
+    index_project_if_changed(store, other["id"])
+    session = SessionManager(store, settings).prepare(project["id"], "codex", worktree=str(feature), timeout=0)
+    model = Untouched()
+    headers = {"Authorization": f"Bearer {settings.token}"}
+
+    def names(client, **body):
+        reply = client.post("/ask", headers=headers, json={"project": "demo", "question": "ledger cents", **body})
+        assert reply.status_code == 200, reply.text
+        return {match["uri"].rsplit("/", 1)[-1] for match in reply.json()["full_text_matches"]}
+
+    with TestClient(create_app(settings, start_worker=False, ollama=model)) as client:  # the lifespan runs the queue
+        assert names(client, worktree=str(root)) == {"notes.md"}  # not the feature root, not the other project
+        assert names(client, worktree=str(feature)) == {"feature.md"}
+        assert names(client, session_id=session["session_id"]) == {"feature.md"}  # the session's worktree
+    assert model.touched == []
+
+
+async def test_full_text_matches_leave_out_what_ask_would_hold_back(tmp_path):
+    from uuid import uuid4
+    from cairnmind.agent import KnowledgeAgent
+    store = Store(tmp_path / "data")
+    pid = store.add_project("ledger", tmp_path)["id"]
+    remote = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
+
+    def chunked(text, kind, uri):
+        source = store.snapshot(pid, uri, text, kind)
+        store.command("INSERT INTO chunks CONTENT :doc", {"doc": {
+            "id": str(uuid4()), "project_id": pid, "source_id": source["id"], "text": text, "line_start": 1,
+            "line_end": len(text.splitlines()), "metadata": {}, "is_current": True}})
+        return source
+
+    chat = chunked(TRANSCRIPT, "transcript", "conversation://1")
+    doc = chunked("The ledger stores amounts in cents, Postgres.", "document", "notes://ledger")
+    store.remember(pid, {"kind": "decision", "content": "Postgres holds the ledger, said in chat."}, [chat["id"]])
+    store.remember(pid, {"kind": "fact", "content": "Ledger amounts are cents, says the note, Postgres."}, [doc["id"]])
+    question, model = "Which database holds the ledger Postgres?", Untouched()
+    held = Settings(data_dir=tmp_path / "data", memory_chat=remote, knowledge_agent="disabled")
+    found = await knowledge_mode.text_matches(KnowledgeAgent(store, held, ollama=model), pid, question)
+    texts = json.dumps(found["matches"])
+    assert chat["id"] not in {match["source_id"] for match in found["matches"]} and "said in chat" not in texts
+    assert doc["id"] in {match["source_id"] for match in found["matches"]}
+    assert found["held_back"]["chunks"] >= 1 and found["held_back"]["records"] >= 1
+    assert first_start.MATCHES_HELD_BACK in knowledge_mode.unavailable_answer(found)["unknowns"]
+    local = Settings(data_dir=tmp_path / "data", knowledge_agent="disabled")
+    everything = await knowledge_mode.text_matches(KnowledgeAgent(store, local, ollama=model), pid, question)
+    assert chat["id"] in {match["source_id"] for match in everything["matches"]} and everything["held_back"] is None
+    assert model.touched == []
+
+
+def test_with_models_configured_ask_never_lists_matches(workspace, monkeypatch):
+    settings, store, project, root = workspace
+
+    class ServerDown(Untouched):
+        async def chat(self, *args, **kwargs):
+            raise OllamaUnavailable("the model server is down")
+
+        embed = chat
+
+    def never(*args, **kwargs):
+        raise AssertionError("text_matches is reached only without models")
+    monkeypatch.setattr(knowledge_mode, "text_matches", never)
+    with TestClient(create_app(replace(settings, knowledge_agent="enabled", ask_timeout=20), start_worker=False,
+                               ollama=ServerDown())) as client:
+        reply = client.post("/ask", headers={"Authorization": f"Bearer {settings.token}"},
+                            json={"project": "demo", "question": QUESTION})
+    assert reply.status_code == 200, reply.text
+    body = reply.json()
+    assert body["diagnostics"]["code"] == "model_unavailable" and "full_text_matches" not in body
+    assert set(body) == {"status", "answer", "sources", "unknowns", "freshness", "elapsed_seconds", "diagnostics",
+                         "cached"}
 
 
 async def test_the_ack_gate_and_plans_work_over_mcp_without_models(workspace):

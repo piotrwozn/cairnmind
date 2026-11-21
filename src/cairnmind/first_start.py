@@ -4,7 +4,7 @@ tmux 3.4+ is needed only by the terminal workspace: `cairnmind`, `cairnmind tui`
 takeover`. Every other command works without it, and doctor reports the workspace as unavailable instead of
 Cairnmind as broken. The English sentences are the source; MESSAGES is their Polish for the terminal catalog.
 #274 adds what Cairnmind says without models: the knowledge agent's stored choice (knowledge_mode.py), init's
-choice, the unavailable answer and doctor's information line.
+choice, the answer without models with its full-text matches and doctor's information line.
 """
 from __future__ import annotations
 
@@ -31,12 +31,19 @@ MODEL_MISSING = "the model server {url} does not have {model}"
 CHOSE_ENABLED = ("Knowledge agent: enabled. The model server answers and has the models {chat} and {embedding}. "
                  "Saved as knowledge_agent in {config}.")
 CHOSE_DISABLED = ("Knowledge agent: disabled (deterministic-only mode), because {reason}. Plans, tasks, checks, "
-                  "brief, impact, memory and file indexing work without models; cairnmind ask answers "
-                  "unavailable. Saved as knowledge_agent in {config}.")
+                  "brief, impact, memory and file indexing work without models; cairnmind ask makes no "
+                  "answer and lists the passages that contain words of the question. Saved as knowledge_agent in {config}.")
 TURNED_ON = ("Knowledge agent: enabled, saved as knowledge_agent in {config}. Restart the knowledge service "
              "(cairnmind stop, then start Cairnmind again) so that it uses the models. To turn it off again, set "
              "knowledge_agent to disabled in that file and restart the service.")
-ASK_OFF = "The knowledge agent is disabled (deterministic-only mode), so no answer was made."
+ASK_OFF = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. The passages listed as "
+           "full-text matches contain words of the question: they are search results, not an answer and not "
+           "verified evidence for one.")
+ASK_NO_MATCH = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. A full-text "
+                "search found no passage that contains words of the question.")
+MATCHES_HEADING = "Full-text matches (search results, not an answer)"
+MATCHES_HELD_BACK = ("Some matching passages were left out because of their sensitivity class, as answers leave them "
+                     "out for the remote model server (memory_remote_classes).")
 NEEDS_MODELS = ("{command} needs the knowledge agent's models, and the knowledge agent is disabled "
                 "(deterministic-only mode).")
 KNOWLEDGE_INVALID = "knowledge_agent in config.json is {value}; it must be enabled or disabled."
@@ -65,11 +72,18 @@ MESSAGES = {
                     "Zapisano jako knowledge_agent w {config}."),
     CHOSE_DISABLED: ("Agent wiedzy: wyłączony (tryb tylko deterministyczny), ponieważ {reason}. Plany, zadania, "
                      "kontrole, brief, impact, pamięć i indeksowanie plików działają bez modeli; cairnmind ask "
-                     "odpowiada unavailable. Zapisano jako knowledge_agent w {config}."),
+                     "nie tworzy odpowiedzi i wymienia fragmenty zawierające słowa pytania. Zapisano jako knowledge_agent w {config}."),
     TURNED_ON: ("Agent wiedzy: włączony, zapisano jako knowledge_agent w {config}. Uruchom ponownie usługę wiedzy "
                 "(cairnmind stop, a potem ponownie uruchom Cairnmind), aby używała modeli. Aby go znowu wyłączyć, "
                 "ustaw knowledge_agent na disabled w tym pliku i uruchom usługę ponownie."),
-    ASK_OFF: "Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź.",
+    ASK_OFF: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
+              "Fragmenty wymienione jako dopasowania pełnotekstowe zawierają słowa pytania: to wyniki wyszukiwania, "
+              "a nie odpowiedź ani zweryfikowane dowody na nią."),
+    ASK_NO_MATCH: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
+                   "Wyszukiwanie pełnotekstowe nie znalazło żadnego fragmentu ze słowami pytania."),
+    MATCHES_HEADING: "Dopasowania pełnotekstowe (wyniki wyszukiwania, nie odpowiedź)",
+    MATCHES_HELD_BACK: ("Część pasujących fragmentów pominięto ze względu na ich klasę wrażliwości, tak jak "
+                        "odpowiedzi pomijają je dla zdalnego serwera modeli (memory_remote_classes)."),
     NEEDS_MODELS: ("{command} wymaga modeli agenta wiedzy, a agent wiedzy jest wyłączony "
                    "(tryb tylko deterministyczny)."),
     KNOWLEDGE_INVALID: "knowledge_agent w config.json ma wartość {value}; musi to być enabled albo disabled.",

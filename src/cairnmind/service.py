@@ -1093,8 +1093,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         answer_schema = prepare_answer_schema(body.answer_schema)
         contract_key = json.dumps(answer_schema, sort_keys=True, separators=(",", ":"))
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
-        if not models_on:  # no model is asked, and nothing is indexed, cached or logged (#274)
-            return knowledge_mode.unavailable_answer()
+        if not models_on:  # no model is asked; full-text matches, never an answer: not cached, logged or evaluated (#274)
+            indexed = await asyncio.to_thread(index_project_if_changed, store, pid)
+            pending = await asyncio.to_thread(index_pending_sources, store)
+            found = await inference.submit(lambda: knowledge_mode.text_matches(agent, pid, body.question, scope))
+            return knowledge_mode.unavailable_answer(found, [*indexed.get("errors", []), *pending.get("errors", [])])
         keep = body.log if body.log is not None else getattr(settings, "answer_log", False) is True
         code_state: dict = {}
         def code_identity():

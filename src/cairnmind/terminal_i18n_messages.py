@@ -6,7 +6,7 @@ translated: text from a model, a provider or a source is never looked up here (s
 """
 from __future__ import annotations
 
-from .first_start import ASK_OFF, GET_MODELS, MESSAGES as FIRST_START
+from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
 ASK_MESSAGES = {
@@ -77,6 +77,8 @@ ASK_MESSAGES = {
     # The answer of /ask in deterministic-only mode (knowledge_mode.unavailable_answer, #274).
     ASK_OFF: FIRST_START[ASK_OFF],
     GET_MODELS: FIRST_START[GET_MODELS],
+    ASK_NO_MATCH: FIRST_START[ASK_NO_MATCH],
+    MATCHES_HELD_BACK: FIRST_START[MATCHES_HELD_BACK],
 }
 # The support check's gap: this fixed prefix, then the judging model's own reason (untrusted, kept as is).
 ASK_UNSUPPORTED_PREFIX = "The quotes do not support the answer: "
