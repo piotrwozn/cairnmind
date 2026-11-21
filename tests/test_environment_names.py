@@ -46,6 +46,24 @@ def test_settings_take_each_override_from_either_spelling(monkeypatch, tmp_path,
     assert getattr(Settings.load(tmp_path / "data"), field) == f"value-from-{spellings[0]}"
 
 
+def test_load_records_the_spelling_each_variable_value_came_from(monkeypatch, tmp_path):
+    root = tmp_path / "data"
+    Settings.load(root, create=True)
+    assert Settings.load(root)._origin["environment"] == {}  # everything from config.json: nothing recorded
+    monkeypatch.setenv("DEVBRAIN_OLLAMA_URL", "http://127.0.0.1:9103")
+    monkeypatch.setenv("CAIRNMIND_PORT", "9101")
+    monkeypatch.setenv("DEVBRAIN_PORT", "9102")  # the current spelling is the one used, and named
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example:2490")
+    monkeypatch.setenv("DEVBRAIN_ARCADE_USER", "cairnmind")
+    assert Settings.load(root)._origin["environment"] == {
+        "ollama_url": "DEVBRAIN_OLLAMA_URL", "port": "CAIRNMIND_PORT",
+        "arcade_connect_url": "CAIRNMIND_ARCADE_CONNECT_URL", "arcade_user": "DEVBRAIN_ARCADE_USER"}
+    # The first create saves the connect address into config.json: it is no longer "from the environment".
+    created = Settings.load(tmp_path / "second", create=True)
+    assert "arcade_connect_url" not in created._origin["environment"]
+    assert created._origin["environment"]["port"] == "CAIRNMIND_PORT"
+
+
 def test_the_database_name_of_an_existing_store_does_not_change(monkeypatch, tmp_path):
     before = Settings.load(tmp_path / "data").arcade_database
     assert before.startswith("devbrain_")  # the default prefix is part of every existing database name
