@@ -236,6 +236,7 @@ This keeps your memory in the data directory that `cairnmind doctor` shows as `d
 | --- | --- |
 | `cairnmind: command not found` | Add the directory printed by the installer to `PATH`, or run `uv tool update-shell` and open a new terminal. |
 | `Java 21+ is required` | `sudo apt install openjdk-21-jre-headless`, and check that `java -version` reports 21 or newer. On macOS: `brew install openjdk@21` and the `sudo ln -sfn` line of step 2; when the message names `JAVA_HOME`, that Java is too old: point `JAVA_HOME` at Java 21 or unset it. |
+| `Docker is on the path but did not answer` | No Java 21, and `docker` is installed but its daemon does not answer (Docker Desktop stopped, or its WSL integration off). Start Docker and run the installer again, or install Java 21 as above. |
 | `Java not found` or `macOS answers so when no JDK is installed` on macOS | No Java 21 is found. If Homebrew's `openjdk@21` is installed, the installer prints the `sudo ln -sfn ...` line that links it where macOS finds it. |
 | `Version 3.4+ is required` for tmux, or `The terminal workspace needs tmux 3.4 or newer` | Only the terminal workspace needs tmux 3.4+; `cairnmind serve`, `run`, `mcp` and `brief` work without it. Ubuntu 24.04 ships tmux 3.4. On older releases, upgrade Ubuntu or build tmux 3.4. On macOS: `brew upgrade tmux`. |
 | `Cannot reach Ollama` | Start `ollama serve`, then run `cairnmind models pull` again. |

@@ -13,6 +13,7 @@ HINTS = {
                           "connection, then Set API key, or correct its environment variable.",
     "credential_unavailable": "The API key of this connection cannot be read. Open Connections, choose the "
                               "connection, then Set API key.",
+    "resume_partial": "The memory of this project is partial. `cairnmind run` names what is missing.",
 }
 MESSAGES = {
     NOT_STARTED: "Asystent nie został uruchomiony.",
@@ -22,6 +23,7 @@ MESSAGES = {
                                  "połączenie, a potem Ustaw klucz API, albo popraw jego zmienną środowiskową.",
     HINTS["credential_unavailable"]: "Nie można odczytać klucza API tego połączenia. Otwórz Połączenia, wybierz "
                                      "połączenie, a potem Ustaw klucz API.",
+    HINTS["resume_partial"]: "Pamięć tego projektu jest częściowa. `cairnmind run` podaje, czego brakuje.",
 }
 
 

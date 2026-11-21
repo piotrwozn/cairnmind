@@ -16,6 +16,7 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, DataTable, Input, Label
 
 from . import terminal_theme
+from .code_graph import CODE_GRAPH_NOT_BUILT
 from .confirmation import LIST_WORDS
 from .terminal_i18n_messages import display_word
 from .terminal_detail import BAR, evidence_parts, join_lines, joined, labelled, state_role
@@ -116,7 +117,7 @@ def list_summary(result, since, pending, translate):
     if documents:
         text += " " + translate("{count} documentation pages mention a changed definition (cairnmind impact "
                                 "lists them).", count=len(documents))
-    return text
+    return text + "".join(" " + translate(warning) for warning in result.get("warnings") or [] if warning == CODE_GRAPH_NOT_BUILT)
 
 
 def _settle(task):

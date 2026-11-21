@@ -1781,6 +1781,37 @@ def memory_extraction_stats(ctx: typer.Context, project: ProjectArg,
         typer.echo(render(stats))
 
 
+@memory_app.command("reextract")
+@initialized
+def memory_reextract(ctx: typer.Context, project: ProjectArg,
+                     below_version: Annotated[int | None, typer.Option(
+                         "--below-version", min=1, help="Extractor version; default is this build's.")] = None,
+                     dry_run: Annotated[bool, typer.Option(
+                         "--dry-run", help="Print the counts per extractor version and queue nothing.")] = False):
+    """Extract again the sources whose untouched proposals come from an older extractor. Queues one extract job
+    per source; when it commits, that source's untouched proposals of an older extractor version are superseded
+    in the same transaction. Confirmed, disputed and edited records are never changed.
+    """
+    from cairnmind.extraction_input import EXTRACTOR_VERSION
+    from cairnmind.reextract import plan, queue
+    below = EXTRACTOR_VERSION if below_version is None else below_version
+    if below > EXTRACTOR_VERSION:
+        raise typer.BadParameter(f"This build's extractor is version {EXTRACTOR_VERSION}.", param_hint="--below-version")
+    if not dry_run:
+        if session_value("SESSION_ID"):
+            raise typer.BadParameter("A model session cannot queue extraction; a person runs this command.")
+        from cairnmind.knowledge_mode import needs_models
+        why = needs_models(ctx.obj, "cairnmind memory reextract")
+        if why:
+            refuse(why)  # as rebuild-vectors: the jobs loop does not run without models, nothing is queued (#274)
+    store = store_for(ctx.obj)
+    if not dry_run and getattr(store, "not_writer", None):
+        from cairnmind.store_writer import StoreNotWriter
+        raise StoreNotWriter(store.not_writer)
+    pid = store.resolve_project(project)["id"]
+    output((plan if dry_run else queue)(store, pid, below, EXTRACTOR_VERSION))
+
+
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: SnapshotArg,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
