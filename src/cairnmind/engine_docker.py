@@ -456,11 +456,20 @@ def _start_locked(settings, image: str, local_image: bool, context: Path | None,
                        "--env", JAVA_OPTIONS, "--pull", "never", image], timeout=120)
     if done.returncode != 0:
         raise ArcadeError(RUN_FAILED.format(detail=_detail(done)))
-    started = inspect_container(settings)  # its Id, and the labels it really got
-    if started is None:
-        raise ArcadeError(EXITED.format(name=name))
-    if not is_ours(started, settings):
-        raise ArcadeError(NOT_OURS.format(name=name))
+    created = (done.stdout or "").strip()  # the Id of the container THIS start created
+    try:
+        started = inspect_container(settings)  # its Id, and the labels it really got
+        if started is None:
+            raise ArcadeError(EXITED.format(name=name))
+        if not is_ours(started, settings) or started["Id"] != created:
+            raise ArcadeError(NOT_OURS.format(name=name))
+    except ArcadeError:
+        if re.fullmatch(r"[0-9a-f]{64}", created):  # anything else is unknown: remove nothing
+            try:
+                run_docker(["rm", "--force", created], timeout=60)
+            except ArcadeError:
+                pass  # the error of the check is the one to report
+        raise
     return _wait(settings, name, started["Id"])
 
 
