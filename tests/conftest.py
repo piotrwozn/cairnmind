@@ -381,6 +381,32 @@ def no_inherited_session():
     os.environ.update(removed)
 
 
+@pytest.fixture(autouse=True)
+def no_foreign_service():
+    """No test in this process reaches whatever listens on the default service or cockpit port (#221).
+
+    A test whose data directory names no port of its own would otherwise ask the Cairnmind installed on the
+    machine that runs the tests (its own token is refused: "Invalid local service token"). Such a connection
+    now fails as it does when nothing listens there. By hand, not monkeypatch, for the reason above.
+    """
+    defaults = Settings(data_dir=Path("."))
+    foreign = {defaults.port, defaults.cockpit_port}
+    connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
+
+    def refused(original):
+        def guarded(self, address):
+            if isinstance(address, tuple) and len(address) > 1 and address[1] in foreign:
+                if original is connect_ex:
+                    return 111  # ECONNREFUSED
+                raise ConnectionRefusedError(111, f"the test never connects to the default port {address[1]}")
+            return original(self, address)
+        return guarded
+
+    socket.socket.connect, socket.socket.connect_ex = refused(connect), refused(connect_ex)
+    yield
+    socket.socket.connect, socket.socket.connect_ex = connect, connect_ex
+
+
 MCP_FIXTURE_SOURCE = Path(__file__).parent / "fixtures" / "mcp_fixture_server.py"
 # The path every test starts the fixture server by. pytest_configure replaces it with this pytest
 # process's own copy, so that the servers and children of one xdist worker can be told from those of
