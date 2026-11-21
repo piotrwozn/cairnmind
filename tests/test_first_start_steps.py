@@ -142,6 +142,43 @@ def test_install_with_a_client_says_which_files_and_the_next_command(tmp_path, r
     assert "nothing new (the files were up to date)" in told[0]
 
 
+# --- nothing starts in the background without a word --------------------------------------------------------------
+
+def test_the_service_is_announced_when_a_command_starts_it_and_not_when_it_already_runs(tmp_path, monkeypatch, capsys):
+    from cairnmind.config import Settings
+    settings = Settings.load(tmp_path / "data", create=True)
+    commands = []
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda command, **kwargs: commands.append(command) or io.StringIO())
+    alive = iter([False, True])
+    monkeypatch.setattr(cli, "service_alive", lambda _: next(alive))
+    assert cli.ensure_service(settings) is True
+    alive = iter([False, True])
+    cli._ensure_service_or_refuse(settings)
+    said = capsys.readouterr().err
+    assert said == f"Cairnmind: {first_start.SERVICE_STARTED.format(url=settings.url, data_dir=settings.data_dir)}\n"
+    monkeypatch.setattr(cli, "service_alive", lambda _: True)
+    assert cli.ensure_service(settings) is False
+    cli._ensure_service_or_refuse(settings)
+    assert capsys.readouterr().err == "" and len(commands) == 2
+
+
+def test_the_engine_is_announced_before_a_command_starts_it_and_not_when_it_answers(tmp_path, monkeypatch, capsys):
+    from cairnmind import engine
+    from cairnmind.config import Settings
+    settings = Settings.load(tmp_path / "data", create=True)
+    started = []
+    monkeypatch.setattr(engine, "engine_mode", lambda _: "native")
+    monkeypatch.setattr(engine, "connect_only", lambda _: False)
+    monkeypatch.setattr(engine, "engine_status", lambda *a, **k: {"available": True, "version_matches": True})
+    monkeypatch.setattr(engine, "start_engine", lambda _: started.append(capsys.readouterr().err))
+    engine.ensure_engine(settings)
+    assert started == [] and capsys.readouterr().err == ""
+    monkeypatch.setattr(engine, "engine_status", lambda *a, **k: {"available": False})
+    engine.ensure_engine(settings)
+    assert started == ["cairnmind: " + first_start.ENGINE_STARTING.format(mode="native", data_dir=settings.data_dir)
+                       + "\n"]  # printed before start_engine ran
+
+
 def test_the_brief_of_an_empty_project_says_how_to_start_and_of_a_proposal_how_it_is_reviewed(
         tmp_path, run, told, person_terminal):
     run("init")

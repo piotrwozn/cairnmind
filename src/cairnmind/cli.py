@@ -269,9 +269,10 @@ def _bind_failed(log: Path, since: int) -> bool:
         return False
 
 
-def ensure_service(settings: Settings, *, background_inference: bool = True) -> None:
+def ensure_service(settings: Settings, *, background_inference: bool = True) -> bool:
+    """True when this call started the service process, False when one already answered."""
     if service_alive(settings):
-        return
+        return False
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log = settings.data_dir / "service.log"
     with log.open("ab") as handle:
@@ -286,7 +287,7 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
                                    stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
     for _ in range(300):
         if service_alive(settings):
-            return
+            return True
         if getattr(process, "poll", lambda: None)() is not None:
             # It stopped instead of starting, for example on an installation that only reads the store (#70).
             # One that met a service starting at the same moment is waited for, as before.
@@ -310,9 +311,12 @@ class ServiceDidNotStart(ValueError):
 
 def _ensure_service_or_refuse(settings: Settings) -> None:
     try:
-        ensure_service(settings)
+        started = ensure_service(settings)
     except ServiceDidNotStart as exc:
         refuse(str(exc))
+    if started:  # nothing starts in the background unannounced (#287): said whether or not this is a terminal
+        from cairnmind.first_start import SERVICE_STARTED
+        typer.echo(f"Cairnmind: {SERVICE_STARTED.format(url=settings.url, data_dir=settings.data_dir)}", err=True)
 
 
 def refuse(message: str, code: int = 2):
