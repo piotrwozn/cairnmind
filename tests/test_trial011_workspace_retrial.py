@@ -202,11 +202,13 @@ async def test_run_next_stage_records_a_launch_problem_once_per_press(tmp_path, 
 
 
 @pytest.mark.parametrize("language", ["en", "pl"])
-def test_a_partial_resume_names_where_to_accept_the_record_kind(language):
-    from cairnmind.terminal_connection_hints import connection_hint
-    text = connection_hint(["resume_partial"], lambda value: tr(value, language))
-    assert tr("Transcript record kinds", language) in text
-    assert ("Operation needs attention" not in text) and "Connections" not in text
+def test_a_partial_resume_is_said_as_such_not_as_a_general_problem(tmp_path, monkeypatch, language):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    text = app.launch_notice({"launch_errors": [{"slot_id": "slot", "client": "claude", "code": "resume_partial"}]})
+    assert tr("The memory of this project is partial. `cairnmind run` names what is missing.", language) in text
+    assert "Connections" not in text and "Operation needs attention" not in text
 
 
 @pytest.mark.asyncio
