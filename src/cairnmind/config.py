@@ -149,7 +149,8 @@ def data_dir_note() -> str | None:
 # The engine image of `cairnmind engine start --docker` (#272): deploy/arcadedb, published by the release job for
 # linux/amd64 and linux/arm64 and pinned by the digest of its index. It must hold arcade_version's ArcadeDB.
 ARCADE_IMAGE = "ghcr.io/piotrwozn/cairnmind-arcadedb"
-ARCADE_IMAGE_DIGEST = "sha256:" + "0" * 64  # filled in when the image of this release is published
+# Published from 477159d by the workflow "Database image" (docs/RELEASING.md); "sha256:" and 64 zeros means unpublished.
+ARCADE_IMAGE_DIGEST = "sha256:25de89aff7ece566802b6eea7e4271b5a8540524c0c2ffc773e9be07c92b609c"
 
 
 @dataclass
