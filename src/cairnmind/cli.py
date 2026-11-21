@@ -715,7 +715,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
 @app.command()
 @initialized
 def setup(ctx: typer.Context, as_json: Annotated[bool, typer.Option("--json", help="Print the topology as JSON.")] = False):
-    """Show where storage and the memory models run, and what runs on this machine. Changes no setting."""
+    """Show where storage and the memory models run, and what runs on this machine. Changes no setting of an initialized installation."""
     from cairnmind.topology import CHANGE_HINT, probe
     place = probe(ctx.obj)
     if as_json:
