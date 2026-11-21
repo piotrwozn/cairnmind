@@ -52,6 +52,9 @@ NEEDS_MODELS = ("{command} needs the knowledge agent's models, and the knowledge
 KNOWLEDGE_INVALID = "knowledge_agent in config.json is {value}; it must be enabled or disabled."
 RESTART_FOR_MODELS = ("knowledge_agent is enabled in config.json, but this service started without models. Restart "
                       "the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses them.")
+MODE_HEADING = "Deterministic-only mode (no models)"
+PROCESS_OFF = ("No models are configured (deterministic-only mode), so memory is not processed in the background. "
+               + GET_MODELS)
 
 MESSAGES = {
     WORKSPACE_NEEDS: "Środowisko terminalowe wymaga tmux 3.4 lub nowszego.",
@@ -97,7 +100,10 @@ MESSAGES = {
     RESTART_FOR_MODELS: ("knowledge_agent jest włączony w config.json, ale ta usługa wystartowała bez modeli. "
                          "Uruchom ponownie usługę wiedzy (cairnmind stop, a potem ponownie uruchom Cairnmind), aby "
                          "używała modeli."),
+    MODE_HEADING: "Tryb tylko deterministyczny (brak modeli)",
 }
+MESSAGES[PROCESS_OFF] = ("Nie skonfigurowano modeli (tryb tylko deterministyczny), więc pamięć nie jest przetwarzana "
+                         "w tle. " + MESSAGES[GET_MODELS])
 
 
 def _version(found: dict) -> str:

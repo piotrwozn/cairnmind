@@ -737,7 +737,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 raise ValueError("Background processing requires a registered project worktree")
 
         await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, authorize_enable)
-        return enable_background(pid)
+        from cairnmind.first_start import PROCESS_OFF
+        return {**enable_background(pid), **({} if models_on else {"notice": PROCESS_OFF})}  # the panel shows it
 
     def person_imports(body):
         """A memory import writes records that count as confirmed and can move on what a person confirmed
