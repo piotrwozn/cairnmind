@@ -136,11 +136,13 @@ def tmux_chrome(language="en"):
     ]
 
 
-def workspace_status_lines(selected, cached, slot, control, language="en"):
+def workspace_status_lines(selected, cached, slot, control, language="en", place=None):
     """Two persistent rows fit 80 columns, including Polish and wide names.
 
     Connection describes cached local readiness, never an inferred provider
     connection. Only allowlisted scalars enter the display, not raw diagnostics.
+    ``place`` (topology.topology) adds Storage and Models to the first row for the terminals wide enough to
+    hold them: tmux evaluates the width for each attached client, so the narrow rows stay as they are (#74).
     """
     from .terminal_i18n import tr
 
@@ -160,6 +162,12 @@ def workspace_status_lines(selected, cached, slot, control, language="en"):
         session = " ".join((_status_text(slot.get("client"), 7), _status_text(run_id, 8), session))
     session_color = good if lifecycle == "running" else problem if lifecycle in {"failed", "interrupted"} else attention
     first = " " + chip("Project", project, neutral) + separator + chip("Session", session, session_color)
+    if place is not None:
+        from .topology import STATUS_MODELS, STATUS_STORAGE, status_words
+        chips = "".join(separator + chip(label, _hint(tr(word, language)), problem if bad else neutral)
+                        for label, (word, bad) in zip((STATUS_STORAGE, STATUS_MODELS), status_words(place)))
+        width = cell_len(re.sub(r"#\[[^]]*\]", "", first + chips))
+        first += "#{?#{e|>=:#{client_width}," + str(width) + "}," + chips + ",}"
 
     memory = slot.get("memory") or {}
     if selected.get("broker_available") is False or cached.get("memory_available") is False:
@@ -629,7 +637,10 @@ class WorkspaceManager:
             # The key hint in the border follows a language switch like the status rows do (#161).
             self.tmux("set-option", "-gq", "pane-border-format", dict(tmux_chrome(language))["pane-border-format"])
             self._border_language = language
-        formats = workspace_status_lines(selected, self._broker_state or {}, slot, control, language)
+        from .topology import topology
+        # What this workspace's processes loaded at start: a change made since shows after the next restart.
+        formats = workspace_status_lines(selected, self._broker_state or {}, slot, control, language,
+                                         place=topology(self.settings))
         if formats != self._last_status:
             for index, value in enumerate(formats):
                 self.tmux("set-option", "-g", f"status-format[{index}]", value)

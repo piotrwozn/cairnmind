@@ -199,7 +199,8 @@ class Settings:
     # installs, starts or stops. When set it is the address used, in place of arcade_url; see database_mode.
     arcade_connect_url: str = ""
     # Set by load and never saved: where the password came from ("password"), why it cannot be used
-    # ("problem"), and the values load put in place of the stored ones ("kept": field -> (stored, loaded)).
+    # ("problem"), the values load put in place of the stored ones ("kept": field -> (stored, loaded)) and the
+    # variable each of them came from ("environment": field -> spelling).
     _origin: dict = field(default_factory=dict, repr=False, compare=False)
     # Keep every answer of `ask` in the project's answer log (answer_log.py); off unless set to true.
     answer_log: bool = False
@@ -241,6 +242,7 @@ class Settings:
                 if (seen and not seen[0] and obj.arcade_connect_url == seen[1] and savable(seen[1])
                         and not obj._origin.get("connect_problem")):
                     del obj._origin["kept"]["arcade_connect_url"]
+                    obj._origin["environment"].pop("arcade_connect_url", None)  # config.json holds it from now on
                     obj._origin["connect_saved"] = True
                     changed = True
                 if obj._origin.get("password") == "none" and not connect_only(obj):
@@ -260,6 +262,7 @@ class Settings:
             values.setdefault("ask_timeout", DARWIN_ASK_TIMEOUT)
         stored = dict(values)
         kept = {}
+        environment = {}  # field -> the spelling of the variable that supplied it (topology.py names it)
         for name, variable in (("arcade_url", "ARCADE_URL"),
                                ("arcade_user", "ARCADE_USER"),
                                ("arcade_database", "ARCADE_DATABASE"),
@@ -272,12 +275,14 @@ class Settings:
                                ("cockpit_port", "COCKPIT_PORT"),
                                ("ollama_url", "OLLAMA_URL")):
             spelling = ENV_PREFIXES[0] + variable
-            if name in ("port", "cockpit_port", "ollama_url"):
-                # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty
+            if name in ("port", "cockpit_port", "ollama_url", "arcade_connect_url"):
+                # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty;
+                # for the connect address it must not turn a connect-only installation into a managed one
                 spelling = next((key for key in env_names(variable) if os.environ.get(key)), None)
                 override = os.environ[spelling] if spelling else None
             else:
                 override = env_value(variable)
+                spelling = next((key for key in env_names(variable) if key in os.environ), None)
             if override is None:
                 continue
             if name in ("port", "cockpit_port"):
@@ -289,6 +294,8 @@ class Settings:
                     raise ValueError(f"{spelling} must be a port number from 1 to 65535.") from None
             values[name] = override
             kept[name] = (stored.get(name), override)
+            if override != stored.get(name):  # a variable that repeats config.json supplies nothing
+                environment[name] = spelling
         # Connect-only (#68): arcade_connect_url is the address. The stored arcade_url stays as it is in
         # config.json, so that removing the setting brings the managed engine back.
         connect, conflict = values.get("arcade_connect_url") or "", None
@@ -322,7 +329,7 @@ class Settings:
         # config.json counts as the default; only the environment sets it on purpose.
         named_user = "configured" if "arcade_user" in kept or values.get("arcade_user", "root") != "root" else "default"
         obj = cls(data_dir=root, **values, _origin={"password": source, "problem": problem, "kept": kept,
-                                                    "database": named_database, "connect_problem": conflict,
+                                                    "environment": environment, "database": named_database, "connect_problem": conflict,
                                                     "user": named_user})
         return obj
 

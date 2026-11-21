@@ -355,8 +355,11 @@ def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
     except ValueError as exc:
         return {"model": model, "reachable": False, "error": f"Invalid profile: {exc}"}
     from .memory_egress import describe
-    entry = {"provider": row["provider"], "base_url": row["base_url"], "model": model, **_destination(row, role),
-             **describe(settings, role), "reachable": False}
+    try:
+        where = {**_destination(row, role), **describe(settings, role)}
+    except ValueError:  # an ollama_url that is not an address
+        return {"model": model, "reachable": False, "error": "ollama_url is not a valid address."}
+    entry = {"provider": row["provider"], "base_url": row["base_url"], "model": model, **where, "reachable": False}
     fingerprinted = None
     if role == "embedding" and row["provider"] != "ollama":
         # Other weights behind the same name (#212): the stored mark holds embeddings in every process,
