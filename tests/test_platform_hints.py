@@ -208,7 +208,7 @@ def test_the_places_that_print_a_hint_ask_for_the_system_they_run_on(settings, m
         diagnostics=lambda: {"available": False}))
     with pytest.raises(ValueError) as caught:
         workspace.launch_workspace(settings)
-    assert str(caught.value) == platform_hints.hint("tmux_launch", name)
+    assert platform_hints.hint("tmux_launch", name).rstrip(".") + "." in str(caught.value)
 
 
 def test_a_missing_client_and_a_missing_java_ask_for_the_system_they_run_on(settings, monkeypatch, tmp_path):

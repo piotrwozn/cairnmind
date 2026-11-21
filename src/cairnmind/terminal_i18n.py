@@ -4,6 +4,7 @@ from __future__ import annotations
 from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
 from .check_profile_messages import MESSAGES as CHECK_PROFILE_MESSAGES
 from .engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
+from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
@@ -634,6 +635,7 @@ CATALOG.update(CONNECTION_HINT_MESSAGES)  # a connection key that is missing or 
 CATALOG.update(CHECK_PROFILE_MESSAGES)  # a check profile the worktree does not declare (#243)
 CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 CATALOG.update(ENGINE_DOCKER_MESSAGES)  # the engine in Docker (#272)
+CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service started for MCP (#273, #258)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

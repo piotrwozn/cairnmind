@@ -1,0 +1,125 @@
+"""tmux 3.4+ is needed only to open the terminal workspace (#273); every other command works without it.
+
+No test runs a real tmux server, the bare `cairnmind` command, the owner's data directory or port 8765: tmux is a
+stand-in script on a PATH of its own that records its calls, and the data directory sets port 1, so a connection
+a test forgot to fake is refused at once.
+"""
+import json
+import stat
+import sys
+import types
+
+import pytest
+
+from cairnmind import cli, first_start, platform_hints
+from cairnmind.config import Settings
+from cairnmind.terminal_i18n import tr
+
+STATES = ["missing", "3.3a", "3.5a"]
+SENTENCE_TAIL = "Without it, these commands work: cairnmind serve, cairnmind run, cairnmind mcp and cairnmind brief."
+
+
+@pytest.fixture
+def data(tmp_path):
+    directory = tmp_path / "memory"
+    directory.mkdir()
+    (directory / "config.json").write_text(json.dumps({"port": 1, "arcade_url": "http://127.0.0.1:1"}))
+    Settings.load(directory, create=True)
+    return directory
+
+
+@pytest.fixture
+def tmux(tmp_path, monkeypatch):
+    """Put one tmux state on a PATH of its own; returns a function that installs a state and one that lists calls."""
+    calls = tmp_path / "calls"
+
+    def install(state):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        stand_in = bin_dir / "tmux"
+        stand_in.unlink(missing_ok=True)
+        if state != "missing":
+            stand_in.write_text(f"#!/bin/sh\necho \"$*\" >> \"$TMUX_STAND_IN_CALLS\"\necho 'tmux {state}'\n")
+            stand_in.chmod(stand_in.stat().st_mode | stat.S_IXUSR)
+        monkeypatch.setenv("PATH", str(bin_dir))
+        monkeypatch.setenv("TMUX_STAND_IN_CALLS", str(calls))
+        for name in ("CAIRNMIND_TMUX_EXECUTABLE", "DEVBRAIN_TMUX_EXECUTABLE", "CAIRNMIND_SESSION_ID",
+                     "CAIRNMIND_PACKET_ID", "DEVBRAIN_SESSION_ID", "DEVBRAIN_PACKET_ID"):
+            monkeypatch.delenv(name, raising=False)
+
+    install.calls = lambda: calls.read_text().splitlines() if calls.exists() else []
+    return install
+
+
+def test_cockpit_status_words_each_state():
+    status = first_start.cockpit_status
+    assert status({"code": "ready", "version": "tmux 3.5a"}) is None
+    assert status({"code": "tmux_missing"}) == "unavailable (tmux 3.4+ not found)"
+    assert status({"code": "tmux_unsupported", "version": "tmux 3.3a\n"}) == (
+        "unavailable (tmux 3.4+ not found; found tmux 3.3a)")
+    assert status({"code": "tmux_unavailable"}) == "unavailable (tmux 3.4+ not found; tmux_unavailable)"
+    assert status({"code": "tmux_invalid_executable", "error": "x"}) == (
+        "unavailable (tmux 3.4+ not found; tmux_invalid_executable)")
+    assert status({}) == "unavailable (tmux 3.4+ not found; unknown)"
+
+
+@pytest.mark.parametrize("system, hint", [("wsl", "Install tmux >= 3.4 in Ubuntu: sudo apt install tmux."),
+                                          ("darwin", "Install tmux >= 3.4, for example with: brew install tmux.")])
+def test_workspace_refusal_names_the_need_the_version_the_hint_and_what_works(monkeypatch, system, hint):
+    monkeypatch.setattr(platform_hints, "host_system", lambda *a, **k: system)
+    refusal = first_start.workspace_refusal
+    need = "The terminal workspace needs tmux 3.4 or newer."
+    assert refusal({"available": False, "code": "tmux_missing"}) == f"{need} tmux was not found. {hint} {SENTENCE_TAIL}"
+    assert refusal({"available": False, "code": "tmux_unsupported", "version": "tmux 3.3a"}) == (
+        f"{need} Found tmux 3.3a. {hint} {SENTENCE_TAIL}")
+    assert refusal({"available": False, "code": "tmux_unavailable"}) == (
+        f"{need} tmux did not report its version. {hint} {SENTENCE_TAIL}")
+    escaped = refusal({"available": False, "code": "tmux_unsupported", "version": "tmux 3.3\x1b[31m"})
+    assert "\x1b" not in escaped and "\\x1b" in escaped
+
+
+class Reached(Exception):
+    pass
+
+
+def _terminal(monkeypatch, data, tail):
+    interactive = types.SimpleNamespace(isatty=lambda: True)
+    monkeypatch.setattr(sys, "stdin", interactive)
+    monkeypatch.setattr(sys, "stdout", interactive)
+    monkeypatch.setattr(sys, "argv", ["cairnmind", "--data-dir", str(data), *tail])
+
+
+@pytest.mark.parametrize("tail", [[], ["tui"], ["workspace", "takeover"]])
+@pytest.mark.parametrize("state", ["missing", "3.3a"])
+def test_opening_the_workspace_without_tmux_prints_one_message(monkeypatch, capfd, data, tmux, state, tail):
+    tmux(state)
+    _terminal(monkeypatch, data, tail)
+
+    def broker(*args, **kwargs):
+        raise AssertionError("the broker must not start without tmux 3.4+")
+    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", broker)
+    with pytest.raises(SystemExit) as caught:
+        cli.entrypoint()
+    assert caught.value.code == 1
+    found = {"available": False, "code": "tmux_missing"} if state == "missing" else {
+        "available": False, "code": "tmux_unsupported", "version": f"tmux {state}"}
+    assert capfd.readouterr().err == "Cairnmind: " + first_start.workspace_refusal(found) + "\n"
+    assert tmux.calls() in ([], ["-V"])  # asked its version, never started a server
+
+
+def test_with_tmux_3_4_the_workspace_goes_past_the_check(monkeypatch, data, tmux):
+    tmux("3.5a")
+    _terminal(monkeypatch, data, [])
+
+    def broker(*args, **kwargs):
+        raise Reached
+    monkeypatch.setattr("cairnmind.terminal_client.BrokerClient", broker)
+    with pytest.raises(Reached):
+        cli.entrypoint()
+
+
+def test_every_new_sentence_has_polish_in_the_catalog():
+    for english, polish in first_start.MESSAGES.items():
+        assert english != polish
+        assert tr(english, "pl") == polish
+        assert tr(english, "en") == english
