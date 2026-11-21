@@ -675,9 +675,14 @@ class MemoryManager:
     def preview(self, project_id, worktree=None):
         captured, payload = self._capture(project_id, worktree)
         objects = _descriptors(payload)
-        # The manifest as snapshot() would write it, without the ancestry of an earlier snapshot (a few KB per ancestor).
+        # The manifest as snapshot() would write it, with the parent and ancestry of the tip (an earlier file
+        # without a receipt makes snapshot() refuse, so the tip is the only parent that matters).
+        tip = one_row(self.store, "SELECT FROM memory_snapshots WHERE project_id=:project ORDER BY created_at DESC,id DESC LIMIT 1",
+                      {"project": project_id}, False)
+        parent = tip["snapshot_id"] if tip else None
+        ancestors = list(dict.fromkeys([parent, *tip.get("ancestors", [])]))[:4096] if tip else []
         manifest = len(_bytes({"format": FORMAT, "format_version": VERSION, **captured, "objects": objects,
-                               "created_at": utc_now(), "parent_id": None, "ancestors": [],
+                               "created_at": utc_now(), "parent_id": parent, "ancestors": ancestors,
                                "content_hash": "0" * 64, "snapshot_id": "0" * 64}))
         figures = {name: {"used": used, "limit": limit, "fraction": round(used / limit, 4)}
                    for name, (used, limit) in _budget(objects, manifest).items()}

@@ -435,8 +435,7 @@ complete package to 512 MiB and one million object descriptors. A package exceed
 these limits fails explicitly before replacing the current manifest, and the error names each limit that
 was hit with the size and the limit (`manifest bytes 38,000,000 over the limit of 33,554,432`); data is
 never silently truncated. `memory snapshot --preview` reports the same figures exactly (`package_size`,
-with `over` and `warning` naming the limits) before anything is written; it leaves the ancestry of earlier
-snapshots out of the manifest size. Source text is not sent to a model by export or import.
+with `over` and `warning` naming the limits) before anything is written, with the parent and ancestry of the latest snapshot in the manifest size. Source text is not sent to a model by export or import.
 
 `cairnmind memory status` shows the package a snapshot would write now against these limits
 (`package_size`: rows, bytes, manifest bytes and the largest object, each with its limit and fraction) and
@@ -451,7 +450,8 @@ shows the last figure with its age, or says the size is still being measured. Th
 minute, or 30 times as long as it took, so rows written meanwhile are not counted until it expires; the
 terminal shows the age from 10 seconds. The manifest has its own, much smaller, limit: at about 240 bytes per
 object descriptor it is reached near 130,000 rows, long before the one million; the graph rows that made a
-repository of 450 files reach it (152,092 rows) are no longer in a package. Status also splits the
+repository of 450 files reach it (152,092 rows) are no longer in a package. Status does not count the code nodes that records link to (`relates_to`), which
+a snapshot does write, so its row figure is below the real one by those nodes. Status also splits the
 bytes of the sources into current versions, replaced versions and agent transcripts.
 
 Open question for the owner: should the package carry replaced source versions and agent transcripts at all?

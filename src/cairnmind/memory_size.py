@@ -4,8 +4,8 @@
 of the package, its bytes, the bytes of its manifest and its largest single object. From WARN_FRACTION of
 any one of them it says so, before ``MemoryManager.snapshot`` refuses to publish. The refusal itself is not
 changed here. The code graph is not part of a package (#261): ``only`` limits the nodes and edges that are
-counted to the ones a snapshot writes (a code node that a record links to is left out of the count, so the
-figure can be one row or a few below the real one; it is an estimate).
+counted to the ones a snapshot writes (the code nodes that records link to with relates_to are left out of the
+count, so the figure is below the real one by as many as there are; it is an estimate).
 
 What it costs. Nothing is exported and no row is read into this process:
 

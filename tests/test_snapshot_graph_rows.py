@@ -100,12 +100,23 @@ def test_preview_warns_before_the_write_with_exact_figures(origin, monkeypatch):
     english, polish = summary_text(preview, "en"), summary_text(preview, "pl")
     assert "Over the publication limit (manifest bytes)" in english
     assert "Powyżej limitu publikacji (bajty manifestu)" in polish
+    # An exact figure is not called an estimate, and the size comes with the name of the limit.
+    assert "Package: " in english and "estimate" not in english
+    assert f"Manifest: {size['manifest_bytes']['used']:,} of 10,000 bytes" in english
+    assert f"Manifest: {size['manifest_bytes']['used']:,} z 10,000 bajtów" in polish
+
+
+def test_preview_measures_the_manifest_with_the_ancestry_of_the_tip(origin):
+    before = origin["manager"].preview(origin["pid"])["package_size"]["manifest_bytes"]["used"]
+    origin["manager"].snapshot(origin["pid"])
+    after = origin["manager"].preview(origin["pid"])["package_size"]["manifest_bytes"]["used"]
+    assert after >= before + 64  # the parent id and one ancestor id, 64 hex characters each
 
 
 def test_status_counts_what_a_snapshot_would_write(origin):
     size = origin["manager"].status(origin["pid"])["package_size"]
     captured, _ = origin["manager"]._capture(origin["pid"])
-    # The linked code node is the one row that the figure leaves out (an estimate, never above the real count).
+    # The code nodes that records link to (here one) are left out of the figure (never above the real count).
     assert 0 <= sum(captured["counts"].values()) - size["rows"]["used"] <= 1
 
 
