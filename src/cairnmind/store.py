@@ -718,6 +718,10 @@ class Store:
 
     def require_safe_project_root(self, root):
         path = str(Path(root).expanduser().resolve())
+        if lies_in(path, self.data_dir):
+            # Indexing always leaves the data directory out, so such a folder would report 0 files (#295).
+            raise ValueError("Project folder cannot be inside the data directory: Cairnmind never indexes "
+                             f"it ({self.data_dir}); choose a folder outside it")
         if ((self.data_dir / "credentials" / "api-keys.json").exists()
                 and lies_in(self.data_dir, path)):
             raise ValueError("Project root cannot contain Cairnmind's private credential store")
