@@ -8,7 +8,7 @@ Usage: bash scripts/install-wsl.sh [--pull-models]
 
 Installs Cairnmind as a uv tool together with ArcadeDB 26.11.1 (about 86 MB,
 archive verified with SHA-256), starts the engine and initialises local memory.
-Requires Java 21+ (or Docker, which then runs the engine) and tmux 3.4+. Does not change Codex or Claude Code configuration.
+Requires Java 21+ (or Docker, which then runs the engine). tmux 3.4+ is needed only for the terminal workspace. Does not change Codex or Claude Code configuration.
 
 With CAIRNMIND_ARCADE_CONNECT_URL set, the installation only connects to a database
 that runs elsewhere (docs/DEPLOYMENT.md): no ArcadeDB is downloaded, no engine is
@@ -127,22 +127,28 @@ if [[ -z "$connect_url" ]]; then
     fi
 fi
 
-if ! command -v tmux >/dev/null 2>&1; then
-    printf 'tmux not found. Install it: %s (version 3.4+ required).\n' "$tmux_hint" >&2
-    exit 1
-fi
-tmux_version_output="$(tmux -V)"
-tmux_version_pattern='tmux ([0-9]+)\.([0-9]+)'
-if [[ ! "$tmux_version_output" =~ $tmux_version_pattern ]]; then
-    printf 'Cannot detect the tmux version; 3.4+ is required.\n' >&2
-    exit 1
-fi
-tmux_major="${BASH_REMATCH[1]}"
-tmux_minor="${BASH_REMATCH[2]}"
-if (( tmux_major < 3 || (tmux_major == 3 && tmux_minor < 4) )); then
-    printf 'Found tmux %s.%s. Version 3.4+ is required: %s\n' "$tmux_major" "$tmux_minor" "$tmux_hint" >&2
-    exit 1
-fi
+# tmux 3.4+ is needed only by the terminal workspace (#273): without it the installer says so and goes on.
+# Returns 1 after saying what is missing.
+check_tmux() {
+    local version_output version_pattern='tmux ([0-9]+)\.([0-9]+)' major minor
+    if ! command -v tmux >/dev/null 2>&1; then
+        printf 'tmux not found, so the terminal workspace is unavailable; the installation goes on. For the workspace, install tmux 3.4+: %s\n' "$tmux_hint" >&2
+        return 1
+    fi
+    version_output="$(tmux -V 2>/dev/null)" || version_output=""
+    if [[ ! "$version_output" =~ $version_pattern ]]; then
+        printf 'Cannot detect the tmux version, so the terminal workspace may be unavailable (it needs 3.4+); the installation goes on.\n' >&2
+        return 1
+    fi
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    if (( major < 3 || (major == 3 && minor < 4) )); then
+        printf 'Found tmux %s.%s. Version 3.4+ is required for the terminal workspace, so it is unavailable; the installation goes on. For the workspace, install tmux 3.4+: %s\n' "$major" "$minor" "$tmux_hint" >&2
+        return 1
+    fi
+}
+workspace_ready=true
+check_tmux || workspace_ready=false
 
 if [[ "$system" == Darwin ]]; then
     printf 'Detected macOS.\n'
@@ -313,7 +319,11 @@ case ":$PATH:" in
     *":$tool_bin_dir:"*) ;;
     *) printf 'Add this directory to PATH: %s\n' "$tool_bin_dir" ;;
 esac
-printf 'Open the terminal workspace: cairnmind\n'
-printf 'Projects, API/Ollama/Copilot profiles, client panes, memory and the graph are chosen in the terminal.\n'
-printf 'Copilot: Connections -> Connect GitHub account; the installer did not download its runtime.\n'
-printf 'Status without opening the workspace: cairnmind workspace status\n'
+if [[ "$workspace_ready" == true ]]; then
+    printf 'Open the terminal workspace: cairnmind\n'
+    printf 'Projects, API/Ollama/Copilot profiles, client panes, memory and the graph are chosen in the terminal.\n'
+    printf 'Copilot: Connections -> Connect GitHub account; the installer did not download its runtime.\n'
+    printf 'Status without opening the workspace: cairnmind workspace status\n'
+else
+    printf 'The terminal workspace needs tmux 3.4+; without it these commands work: cairnmind serve, cairnmind run, cairnmind mcp, cairnmind brief.\n'
+fi
