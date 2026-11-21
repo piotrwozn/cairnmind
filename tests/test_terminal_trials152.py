@@ -283,7 +283,7 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
         await pilot.pause()
         # A consent request starts on Cancel too (#268): a stray Enter refuses, approving needs a deliberate key.
         assert isinstance(app.focused, Button) and app.focused.id == "confirm-no"
-        assert "Enter: press" in str(app.screen.query_one(".cm-hint").render())
+        assert "Tab: switch" in str(app.screen.query_one(".cm-hint").render())
         await pilot.press("enter")
         await pilot.pause()
         assert results == [False, False] and not isinstance(app.screen, ConfirmModal)
@@ -294,6 +294,27 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
         await pilot.press("shift+tab", "enter")
         await pilot.pause()
         assert results == [False, False, True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+@pytest.mark.parametrize("size,text", [((60, 24), "word " * 400), ((56, 14), "word " * 400), ((100, 14), "A real request."),
+                                       ((100, 15), "A real request.")])
+async def test_consent_hint_fits_a_narrow_pane_and_focus_never_ends_on_a_text_that_fits(tmp_path, monkeypatch, language, size, text):
+    from rich.cells import cell_len
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        app.push_screen(ConfirmModal("Run a paid model test?", text, approve="Run", consent=True))
+        for _ in range(4):
+            await pilot.pause()
+        hint, body = app.screen.query_one(".cm-hint"), app.screen.query_one(".cm-dialog-body")
+        if hint.display:
+            assert cell_len(str(hint.render())) <= hint.content_region.width
+        if body.virtual_size.height <= body.scrollable_content_region.height:
+            assert app.focused.id == "confirm-no"
 
 
 @pytest.mark.asyncio

@@ -34,7 +34,7 @@ class ConfirmModal(MessageModal):
         super().__init__(title, value)
         self.approve = approve
         self.consent = consent
-        self.SCROLL_HINT, self.CLOSE_HINT = ("PgUp/PgDn: scroll · Tab: switch · Enter: press · Esc: cancel", "Tab: switch · Enter: press · Esc: cancel") if consent else (self.SCROLL_HINT, self.CLOSE_HINT)
+        self.SCROLL_HINT, self.CLOSE_HINT = ("PgUp/PgDn: scroll · Tab: switch · Esc: cancel", "Tab: switch · Esc: cancel") if consent else (self.SCROLL_HINT, self.CLOSE_HINT)
 
     def compose(self):
         # The heavy yellow frame is kept for consent (a command or third-party tool call, a paid
@@ -59,6 +59,7 @@ class ConfirmModal(MessageModal):
     def spare_hint_row(self):
         """On a short terminal the key-hint row goes to the request when that one row is what keeps
         the whole request and its note on screen at once. Nothing of the request is ever cut."""
+        self.call_after_refresh(self.start_on_cancel)  # after this row's relayout, so the fit check sees the final body
         try:
             body, hint = self.query_one(".cm-dialog-body"), self.query_one(".cm-hint")
         except Exception:
@@ -70,12 +71,9 @@ class ConfirmModal(MessageModal):
         if spare:
             body.styles.max_height = rows + 1
 
-    def on_mount(self):
-        self.call_after_refresh(self.start_on_cancel)
-
     def start_on_cancel(self):
         """A confirmation whose text fits starts on Cancel, so the focus shows and Enter cancels, even for consent.
-        A text that scrolls starts on the text, where no key decides anything; the hint names the keys."""
+        A text that scrolls starts on the text, where Enter does nothing; its hint names Tab, which reaches the buttons."""
         with suppress(Exception):
             body = self.query_one(".cm-dialog-body")
             if body.virtual_size.height <= body.scrollable_content_region.height and self.focused is body:
