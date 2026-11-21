@@ -14,6 +14,8 @@ import httpx
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
+from . import person_proof
+
 
 class BrokerError(ValueError):
     def __init__(self, status_code, detail):
@@ -126,12 +128,16 @@ class BrokerClient:
             # Optional filters are absent, not explicit empty identifiers.
             # False, zero, empty strings and JSON nulls retain their meaning.
             params = {key: value for key, value in params.items() if value is not None}
+        proof = {}
+        if method.upper() == "POST" and person_proof.PERSON_BROKER_PATH.fullmatch(path):
+            # A person's act: the workspace's key, read for this request and kept nowhere (#214).
+            proof = person_proof.workspace_headers(self.settings)
         with self._lock:
             self._ready()
             for attempt in range(2):
                 try:
                     response = self._client.request(method, path, params=params, json=json, timeout=timeout,
-                        headers={"Origin": self._url, "X-CSRF-Token": self._csrf})
+                        headers={"Origin": self._url, "X-CSRF-Token": self._csrf, **proof})
                 except httpx.HTTPError:
                     # Never retry a mutation after a transport error: its
                     # outcome may already have committed on the server.

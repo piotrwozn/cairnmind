@@ -104,13 +104,13 @@ def _tmux(settings) -> str | None:
         return None
 
 
-def read_key(settings, socket) -> tuple[str, str | None]:
+def read_key(settings, socket, binary=None) -> tuple[str, str | None]:
     """Ask the tmux server on `socket` for the key: ("key", key), ("no_key", None) or ("unavailable", None).
 
     Only a server that answers decides: no server, no tmux, a timeout or an answer of another shape is
-    `unavailable`, and nothing starts a server.
+    `unavailable`, and nothing starts a server. `binary` is the tmux that started it, when the caller knows.
     """
-    binary = _tmux(settings)
+    binary = binary or _tmux(settings)
     if not binary:
         return "unavailable", None
     environment = {name: value for name, value in os.environ.items() if name not in ("TMUX", "TMUX_PANE")}

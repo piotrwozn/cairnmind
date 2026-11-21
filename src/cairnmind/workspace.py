@@ -25,7 +25,7 @@ from .first_start import workspace_refusal
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
 from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory, workspace_namespace
-from . import platform_hints
+from . import person_proof, platform_hints
 from . import workspace_activity as column
 from . import workspace_border as border
 from .terminal_theme import TMUX
@@ -269,13 +269,20 @@ class WorkspaceManager:
         if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
             raise ValueError("The workspace configuration must be a private file of the user.")
 
-    def tmux(self, *args, check=True, timeout=8):
+    def tmux(self, *args, check=True, timeout=8, input=None):
         if not self.binary:
             raise ValueError("tmux is unavailable.")
         # Machine-readable formats require literal tabs and Unicode even when
         # the user's terminal locale is C or unset.
         return subprocess.run([self.binary, "-u", "-S", str(self.socket), "-f", str(self.config), *map(str, args)],
-                              capture_output=True, text=True, timeout=timeout, check=check, env=_clean_env())
+                              capture_output=True, text=True, timeout=timeout, check=check, env=_clean_env(),
+                              input=input)
+
+    def _ensure_person_key(self):
+        """Give this server the key a person's act needs, once: through standard input, so that it is in no
+        command line, file or environment (#214). A server that has one keeps it for its whole life."""
+        if person_proof.read_key(self.settings, self.socket, self.binary)[0] == "no_key":
+            self.tmux("source-file", "-", input=person_proof.set_key_input(person_proof.new_key()))
 
     def exists(self):
         if not self.binary or not self.socket.exists():
@@ -422,6 +429,7 @@ class WorkspaceManager:
                                    "intent": "inspect", "focus": "sidebar", "zoom": False})
                 self._bindings()
                 self._layout()
+            self._ensure_person_key()
             self._recover_ui_panels()
             self._bindings()
             # Live as well as in the config: the config file is written once and is not rewritten.
@@ -928,8 +936,10 @@ class WorkspaceManager:
         return {"closed": closed}
 
     def status(self):
+        held = {"key": "present", "no_key": "absent"}.get(
+            person_proof.read_key(self.settings, self.socket, self.binary)[0], "unavailable")
         return {"available": self.exists(), "workspace_id": self.workspace_id, "socket": str(self.socket),
-                "state": self.state.read()}
+                "person_key": held, "state": self.state.read()}
 
     def close(self):
         close = getattr(self._broker_instance, "close", None)

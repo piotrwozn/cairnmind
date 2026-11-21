@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 
-from . import __version__
+from . import __version__, person_proof
 from .config import BROKER_NAMES, SESSION_NAMES, drop_env
 from .path_spelling import lies_in
 from .process_identity import start as process_start
@@ -207,12 +207,14 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         if set(value) - set(allowed) or any(key not in value for key in required):
             raise HTTPException(422, "Invalid request fields.")
 
-    async def upstream(method, path, *, params=None, data=None):
+    async def upstream(method, path, *, params=None, data=None, person=None):
+        # `person` is the workspace's proof of a person's act, passed on as the panel sent it; the broker
+        # holds and checks nothing (person_proof, #214).
         try:
             async with httpx.AsyncClient(base_url=settings.url, transport=proxy_transport, trust_env=False,
                                        timeout=settings.ask_timeout + 120,
                                        headers={"Authorization": f"Bearer {settings.token}"}) as client:
-                return await client.request(method, path, params=params, json=data)
+                return await client.request(method, path, params=params, json=data, headers=person)
         except httpx.HTTPError:
             raise HTTPException(503, "The memory service is unavailable. Restart cairnmind.") from None
 
@@ -794,13 +796,15 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         if not re.fullmatch(r"[A-Za-z0-9_:/-]+", path) or ".." in path:
             raise HTTPException(404)
         # The person's decisions are the only writes: a review, a conflict decision, an impact verdict, and
-        # accepting or withdrawing an unknown transcript record kind (#210).
-        if request.method == "POST" and not (path.endswith("/review")
+        # accepting or withdrawing an unknown transcript record kind (#210), and confirming a plan (#214).
+        if request.method == "POST" and not (path.endswith("/review") or re.fullmatch(r"plans/[^/]+/confirm", path)
                                              or path in ("conflicts/resolve", "impact/verdict",
                                                          "record-kinds/accept", "record-kinds/withdraw")):
             raise HTTPException(405)
+        post = request.method == "POST"
         return forward(await upstream(request.method, "/inspector/" + path, params=request.query_params,
-                                      data=await body(request) if request.method == "POST" else None))
+                                      data=await body(request) if post else None,
+                                      person=person_proof.forwardable(request.headers) if post else None))
 
     @app.api_route("/api/memory/{path:path}", methods=["GET", "POST", "PATCH"])
     async def memory_proxy(request: Request, path: str):
@@ -809,7 +813,8 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         if path not in allowed[request.method]:
             raise HTTPException(404)
         return forward(await upstream(request.method, "/memory/" + path, params=request.query_params,
-                                      data=await body(request) if request.method != "GET" else None))
+                                      data=await body(request) if request.method != "GET" else None,
+                                      person=person_proof.forwardable(request.headers) if path == "import" else None))
 
     @app.get("/api/status")
     async def memory_status(request: Request):
@@ -842,7 +847,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         error = finding_error(value["content"], value["kind"], value["status"]) or key_error(value["key"])
         if error:
             raise HTTPException(422, error)
-        return forward(await upstream("POST", "/findings", data=value))
+        return forward(await upstream("POST", "/findings", data=value, person=person_proof.forwardable(request.headers)))
 
     @app.get("/api/brief")
     async def brief(request: Request):
