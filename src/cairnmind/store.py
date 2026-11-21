@@ -186,7 +186,8 @@ def job_diagnostics(value):
         result["validation_codes"] = [code for code in codes[:8]
                                       if isinstance(code, str) and _DIAGNOSTIC_CODE.fullmatch(code)]
     for group, keys in (("budget", ("timeout_seconds", "max_steps", "context_limit_chars", "elapsed_seconds")),
-                        ("counts", ("candidate_records", "accepted_records", "skipped_records", "written_records"))):
+                        ("counts", ("candidate_records", "accepted_records", "skipped_records", "written_records",
+                                    "superseded_records"))):
         original = value.get(group)
         if isinstance(original, dict):
             result[group] = {key: original[key] for key in keys if type(original.get(key)) in (int, float)
@@ -1249,7 +1250,8 @@ class Store:
                     if field not in updates:
                         metadata.pop(field, None)
             self._validate_task(tx, project_id, record_id, metadata, sources,
-                                assert_completion=explicit_completion, validate_dependencies=not managed_batch)
+                                assert_completion=explicit_completion,
+                                validate_dependencies=not managed_batch and status != "superseded")  # retiring needs none
         # Decided on the final metadata, after every field this write drops (criteria links, reported proof).
         origin = self.current_origin()
         if origin and (mark_only_changes or kept) and not outcome_changed(old, content, key, metadata):

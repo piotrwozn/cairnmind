@@ -6,6 +6,7 @@ translated: text from a model, a provider or a source is never looked up here (s
 """
 from __future__ import annotations
 
+from .code_graph import CODE_GRAPH_NOT_BUILT
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
@@ -47,6 +48,9 @@ ASK_MESSAGES = {
     "(memory_remote_classes).":
         "Część pamięci projektu nie została wysłana do zdalnego serwera modelu z powodu jej klasy "
         "wrażliwości (memory_remote_classes).",
+    CODE_GRAPH_NOT_BUILT:
+        "Graf kodu tego projektu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, więc to, "
+        "co znaleziono o kodzie, może być puste lub niepełne.",
     "The answer has no verified citations.": "Odpowiedź nie zawiera zweryfikowanych cytowań.",
     "Could not check whether the quotes support the answer.":
         "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.",
