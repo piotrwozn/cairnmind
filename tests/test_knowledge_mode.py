@@ -231,3 +231,89 @@ def test_models_set_turns_the_agent_on_only_after_its_check(monkeypatch, tmp_pat
     assert json.loads(passed.stdout)["knowledge_agent"] == first_start.TURNED_ON.format(config=data / "config.json")
     saved = Settings.load(data)
     assert saved.knowledge_agent == "enabled" and saved.memory_chat["base_url"] == "http://127.0.0.1:1234/v1"
+
+
+# --- doctor, the installer's view, the evaluations and rebuild-vectors ------------------------------------------
+
+def _quiet_doctor(monkeypatch):
+    from test_tmux_optional import _quiet_doctor as quiet
+    quiet(monkeypatch)
+
+
+def _store_choice(tmp_path, value):
+    data = tmp_path / "memory"
+    data.mkdir(exist_ok=True)
+    document = {"port": 1, "arcade_url": "http://127.0.0.1:1"}
+    if value is not None:
+        document["knowledge_agent"] = value
+    (data / "config.json").write_text(json.dumps(document))
+    return data
+
+
+def test_doctor_says_disabled_as_information_and_exits_0(monkeypatch, tmp_path):
+    _quiet_doctor(monkeypatch)
+    reports = {}
+    for value in ("disabled", "enabled", "", None, "maybe"):
+        data = _store_choice(tmp_path, value)
+        result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "doctor"])
+        assert result.exit_code == 0, result.output
+        reports[value] = json.loads(result.stdout)
+    assert reports["disabled"]["knowledge_agent"] == "disabled (deterministic-only mode)"
+    assert reports["disabled"]["get_models"] == first_start.GET_MODELS
+    assert reports["maybe"]["knowledge_agent"].startswith("knowledge_agent in config.json is 'maybe'")
+    for configured in ("enabled", "", None):  # the output of a configured installation is what it was
+        assert "knowledge_agent" not in reports[configured] and "get_models" not in reports[configured]
+    assert reports["enabled"] == reports[""] == reports[None]
+
+
+def test_the_installer_view_lists_no_model_line_in_deterministic_mode_and_keeps_the_fault():
+    from cairnmind import doctor_attention
+    healthy = {"python": "3.12.3", "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": True},
+               "arcadedb": {"available": True, "database_available": True},
+               "ollama": {"available": False, "url": "http://127.0.0.1:11434"},
+               "memory_models": {"chat": {"reachable": False, "base_url": "http://127.0.0.1:11434"},
+                                 "embedding": {"reachable": False, "base_url": "http://127.0.0.1:1234/v1"}},
+               "service": {"available": False}, "environment_notes": [], "data_dir": "/d",
+               "store_writer": {"role": "writer"}}
+    attention = doctor_attention.attention
+    off = {"knowledge_agent": first_start.KNOWLEDGE_DISABLED, "get_models": first_start.GET_MODELS}
+    assert attention({**healthy, **off}) == []  # information, said by init and by doctor itself
+    assert attention(healthy)[0] == "Ollama does not answer; local models need `ollama serve`."  # a fault, as before
+    assert len(attention(healthy)) == 2
+    invalid = "knowledge_agent in config.json is 'maybe'; it must be enabled or disabled."
+    assert attention({**healthy, "knowledge_agent": invalid})[0] == invalid
+
+
+EVALUATIONS = [(["eval", "run"], "cairnmind eval run", "cairnmind.evaluation.run_evaluation"),
+               (["eval", "memory"], "cairnmind eval memory", "cairnmind.memory_evaluation.run_memory_evaluation"),
+               (["eval", "extraction"], "cairnmind eval extraction",
+                "cairnmind.extraction_evaluation.run_extraction_evaluation"),
+               (["eval", "repository", "."], "cairnmind eval repository",
+                "cairnmind.repository_evaluation.run_repository_evaluation"),
+               (["eval", "replay", "demo"], "cairnmind eval replay", "cairnmind.answer_log.replay")]
+
+
+@pytest.mark.parametrize("arguments, command, target", EVALUATIONS)
+def test_evaluations_report_not_run_without_models(monkeypatch, tmp_path, arguments, command, target):
+    def asked(*args, **kwargs):
+        raise AssertionError("an evaluation asked a model or the service in deterministic-only mode")
+    monkeypatch.setattr(target, asked)
+    monkeypatch.setattr(cli, "request", asked)
+    monkeypatch.setattr(cli, "store_for_read", asked)
+    data = _store_choice(tmp_path, "disabled")
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(data), *arguments])
+    assert result.exit_code == 3, result.output or repr(result.exception)
+    report = json.loads(result.stdout)
+    assert report["status"] == "not_run"
+    assert report["reason"] == first_start.NEEDS_MODELS.format(command=command) + " " + first_start.GET_MODELS
+
+
+def test_rebuild_vectors_refuses_without_models(monkeypatch, tmp_path):
+    def asked(*args, **kwargs):
+        raise AssertionError("rebuild-vectors touched the store or a model in deterministic-only mode")
+    monkeypatch.setattr(cli, "store_for", asked)
+    data = _store_choice(tmp_path, "disabled")
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "rebuild-vectors", "demo"])
+    assert result.exit_code == 2, result.output
+    assert " ".join(result.stderr.split()) == "Error: " + first_start.NEEDS_MODELS.format(
+        command="cairnmind rebuild-vectors") + " " + first_start.GET_MODELS

@@ -650,6 +650,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         return
     from cairnmind.integrations import doctor as inspect
     result = inspect(ctx.obj)
+    from cairnmind.knowledge_mode import doctor_fields
+    result.update(doctor_fields(ctx.obj))  # without models: information, not a fault (#274)
     result["service_running"] = service_alive(ctx.obj)
     result["data_dir"] = str(ctx.obj.data_dir)
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, session_conflicts
@@ -1505,6 +1507,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
     from cairnmind.evaluation import run_evaluation
     if skip_claude and not clients:
         raise typer.BadParameter("--skip-claude requires --clients")
+    _not_run_without_models(ctx.obj, "cairnmind eval run")
     _managed_only(ctx.obj, "`cairnmind eval run`")
     result = run_evaluation(ctx.obj, clients=clients, report_dir=report_dir, skip_claude=skip_claude)
     _record_evaluation(ctx.obj, "recall", result)
@@ -1520,6 +1523,7 @@ def eval_run(ctx: typer.Context, clients: bool = False, report_dir: Path | None 
 def eval_memory(ctx: typer.Context, report_dir: Path | None = None):
     """Explicitly check extraction, transfer and restoration of memory with the local Ollama."""
     from cairnmind.memory_evaluation import run_memory_evaluation
+    _not_run_without_models(ctx.obj, "cairnmind eval memory")
     _managed_only(ctx.obj, "`cairnmind eval memory`")
     result = run_memory_evaluation(ctx.obj, report_dir=report_dir)
     _record_evaluation(ctx.obj, "memory", result)
@@ -1537,6 +1541,7 @@ def eval_extraction(ctx: typer.Context, transcripts: Path | None = None, runs: i
     TRANSCRIPTS defaults to docs/evaluation/extraction-transcripts.json of the current directory. Needs Ollama with the configured chat model, no engine; nothing is stored. Exits 3 without the model.
     """
     from cairnmind.extraction_evaluation import run_extraction_evaluation
+    _not_run_without_models(ctx.obj, "cairnmind eval extraction")
     path = transcripts or Path("docs") / "evaluation" / "extraction-transcripts.json"
     try:
         result = run_extraction_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
@@ -1558,6 +1563,7 @@ def eval_repository(ctx: typer.Context, root: RepositoryArg,
     QUESTIONS defaults to ROOT/docs/evaluation/repository-questions.json. Needs Ollama with the configured models and a running engine; exits 3 when the models are not available.
     """
     from cairnmind.repository_evaluation import run_repository_evaluation
+    _not_run_without_models(ctx.obj, "cairnmind eval repository")
     _managed_only(ctx.obj, "`cairnmind eval repository`")
     path = questions or Path(root) / "docs" / "evaluation" / "repository-questions.json"
     try:
@@ -1568,6 +1574,15 @@ def eval_repository(ctx: typer.Context, root: RepositoryArg,
     output(result)
     if result.get("status") != "passed":
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
+
+
+def _not_run_without_models(settings, command: str) -> None:
+    """An evaluation of the models in deterministic-only mode (#274): not run, exit 3, and nothing is asked."""
+    from cairnmind.knowledge_mode import needs_models
+    why = needs_models(settings, command)
+    if why:
+        output({"status": "not_run", "reason": why})
+        raise typer.Exit(3)
 
 
 def _record_evaluation(settings, kind: str, result: dict) -> None:
@@ -1587,6 +1602,7 @@ def eval_replay(ctx: typer.Context, project: ProjectArg,
     Compares the status and the set of cited source addresses, not the wording. Needs the service and its model; exits 1 when an answer regressed or lost sources, 3 when nothing was logged.
     """
     from cairnmind.answer_log import replay
+    _not_run_without_models(ctx.obj, "cairnmind eval replay")
     pid = store_for_read(ctx.obj).resolve_project(project)["id"]
     try:
         # Asked for the logged scope, not the session's, and a refusal is kept as its reason in the report.
@@ -1968,6 +1984,10 @@ def rebuild_vectors(ctx: typer.Context, project: ProjectArg):
     from cairnmind.memory_models import from_settings
     from cairnmind.service import schedule_embeddings
     settings = ctx.obj
+    from cairnmind.knowledge_mode import needs_models
+    why = needs_models(settings, "cairnmind rebuild-vectors")
+    if why:
+        refuse(why)  # no embedding model is configured; nothing is deleted or asked (#274)
     store = store_for(settings)
     pid = store.resolve_project(project)["id"]
     from cairnmind import memory_fingerprint

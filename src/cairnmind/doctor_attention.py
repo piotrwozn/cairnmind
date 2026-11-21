@@ -10,7 +10,7 @@ import json
 import sys
 
 from .engine_docker import DOCKER_ATTENTION
-from .first_start import cockpit_status
+from .first_start import KNOWLEDGE_DISABLED, cockpit_status
 from .terminal_safe import safe_text
 
 FULL_REPORT = "The full report: cairnmind doctor"
@@ -62,15 +62,22 @@ def attention(report: dict) -> list[str]:
         lines.append(_line(f"The database server cannot be used: {arcade['error']}"))
     elif arcade.get("database_available") is False:
         lines.append(_line(f"The database {arcade.get('database') or ''} cannot be read; see cairnmind doctor."))
+    knowledge = report.get("knowledge_agent")
+    if knowledge and knowledge != KNOWLEDGE_DISABLED:
+        lines.append(_line(knowledge))  # a stored value that is neither enabled nor disabled
     ollama = report.get("ollama") or {}
     ollama_down = ollama.get("available") is False
-    if ollama_down:
+    if knowledge == KNOWLEDGE_DISABLED:
+        pass  # no models are configured, which init said and how to get them: not a fault (#274)
+    elif ollama_down:
         lines.append("Ollama does not answer; local models need `ollama serve`.")
     else:
         for role in ("chat", "embedding"):
             if ollama.get(f"{role}_model_installed") is False:
                 lines.append(_line(f"The {role} model is not downloaded; run cairnmind models pull."))
     for role, model in sorted((report.get("memory_models") or {}).items()):
+        if knowledge == KNOWLEDGE_DISABLED:
+            break
         if not isinstance(model, dict) or model.get("reachable") is not False:
             continue
         if ollama_down and ollama.get("url") and _address(model.get("base_url")) == _address(ollama["url"]):
