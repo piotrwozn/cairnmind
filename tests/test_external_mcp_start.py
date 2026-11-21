@@ -141,3 +141,39 @@ def test_the_service_is_started_as_ask_starts_it(monkeypatch, settings, data):
     assert kwargs["start_new_session"] is True and kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["stdout"].name == str(data / "service.log")
     assert "CAIRNMIND_SESSION_ID" not in kwargs["env"]
+
+
+@pytest.mark.parametrize("role", ["reader", "lost"])
+def test_a_reader_is_not_asked_to_start_the_service_and_nothing_is_spawned(monkeypatch, settings, tmp_path, role):
+    from cairnmind import store_writer
+    Network(monkeypatch)
+    monkeypatch.setattr(store_writer, "inspect", lambda s: {"role": role, "reason": "This installation only reads."})
+
+    def never(s):
+        raise AssertionError("a reader never runs the service")
+    monkeypatch.setattr(cli, "ensure_service", never)
+    with pytest.raises(RuntimeError) as caught:
+        ask(external(settings, tmp_path))
+    text = str(caught.value)
+    assert text.startswith("This installation only reads.") and "Run `cairnmind serve`" not in text
+    assert "Start it with" not in text
+
+
+def test_parallel_calls_wait_for_one_start(monkeypatch, settings, tmp_path):
+    import time
+    network, active, worst, calls = Network(monkeypatch), [0], [0], []
+
+    def slow_start(s):
+        active[0] += 1
+        worst[0] = max(worst[0], active[0])
+        calls.append(s)
+        time.sleep(0.05)
+        network.up = True
+        active[0] -= 1
+    monkeypatch.setattr(cli, "ensure_service", slow_start)
+    bridge = external(settings, tmp_path)
+
+    async def both():
+        return await asyncio.gather(*(bridge.post("/ask", {"project": "p", "question": "q"}) for _ in range(2)))
+    assert asyncio.run(both()) == [{"answer": "yes"}] * 2
+    assert worst[0] == 1

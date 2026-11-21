@@ -130,8 +130,16 @@ def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
     external client, which no launcher started it for (#258). Prints nothing: stdout belongs to MCP."""
     import shlex
-    from .cli import _data_dir_arguments, _os_error_text, ensure_service
+    from .cli import _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service
     from .first_start import SERVICE_NOT_STARTED
+    from .store_writer import inspect
+    try:
+        role = inspect(settings).get("role")
+    except Exception:  # noqa: BLE001 - the role only decides whether to start; a start is tried either way
+        role = None
+    if role in {"reader", "lost"}:
+        # A reader never runs the service (#70): nothing is spawned, and it is not told to start one (#244).
+        raise RuntimeError(_service_unavailable(settings))
     try:
         ensure_service(settings)
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
@@ -141,7 +149,7 @@ def start_service(settings: Settings) -> None:
 
 
 class ServiceClient:
-    WRITES ={"/remember", "/checkpoint", "/plans/save"}
+    WRITES = {"/remember", "/checkpoint", "/plans/save"}
     BOOTSTRAP = {"/sessions/context", "/sessions/ack"}
     SCOPED_READS = {"/ask", "/plans/next", "/checks", "/context"}
 
@@ -166,6 +174,7 @@ class ServiceClient:
             self.external = {"project": project, "worktree": worktree}
             self.session_id = self.packet_id = None
             self._starting = asyncio.Lock()
+            self._service_start = asyncio.Lock()  # parallel tool calls wait for one start; _starting is held by _send's caller
             return
         # Two spellings that disagree leave the server unbound: every write then asks for a verified resume.
         try:
@@ -289,7 +298,8 @@ class ServiceClient:
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None
         # An external client has no launcher that started the service: start it as `ask` does (#258).
-        await asyncio.to_thread(start_service, self.settings)
+        async with self._service_start:
+            await asyncio.to_thread(start_service, self.settings)  # returns at once when another call started it
         return await self._send(method, endpoint, body, query, adopt=adopt, allow_list=allow_list, started=True)
 
 
