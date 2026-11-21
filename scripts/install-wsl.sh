@@ -117,11 +117,35 @@ if [[ -z "$connect_url" ]]; then
 
     # Without Java 21 the engine can run in Docker (#272): said once, and the installer goes on. Without a Docker
     # that answers, the Java message above is the end.
+    # Docker's answer in $docker_said; 1 when it fails or has not answered in 5 seconds. Bounded in the shell itself:
+    # macOS has no timeout command. shortcut: a docker that starts children of its own may leave them behind.
+    docker_asked() {
+        local file pid waited=0 status=0
+        file="$(mktemp "${TMPDIR:-/tmp}/cairnmind-docker.XXXXXXXX")"
+        docker version --format '{{.Server.Version}}' >"$file" 2>&1 &
+        pid=$!
+        while kill -0 "$pid" 2>/dev/null && ((waited < 50)); do
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            docker_said="no answer within 5 seconds"
+            status=1
+        else
+            wait "$pid" 2>/dev/null || status=1
+            docker_said="$(<"$file")"
+        fi
+        rm -f -- "$file"
+        return "$status"
+    }
+
     if ! check_java; then
         if ! command -v docker >/dev/null 2>&1; then
             exit 1
         fi
-        if docker_said="$(docker version --format '{{.Server.Version}}' 2>&1)"; then
+        if docker_asked; then
             printf 'Java 21 was not found and Docker answers, so cairnmind init can run the engine in Docker; it says which mode it chose.\n'
             engine_in_docker=true
         else
@@ -222,6 +246,15 @@ stop_installed() {
     fi
     if [[ -n "$terminals" ]]; then
         if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" != 1 ]]; then
+            # Sockets without a tmux client here: nothing can ask or close them, so `workspace stop` is no way out.
+            if [[ "$terminals" == /* ]] && ! command -v tmux >/dev/null 2>&1; then
+                printf '%s\n' \
+                    'Terminal server sockets of the installed version were found, but tmux is not installed here, so they could not be checked:' \
+                    "$terminals" \
+                    'Install tmux so they can be checked, or, when no terminal server runs, remove each socket file named above.' \
+                    'Then run this installer again. The installer removes nothing itself.' >&2
+                exit 1
+            fi
             printf '%s\n' \
                 'A workspace or coding sessions of the installed version are running:' \
                 "$terminals" \
@@ -270,6 +303,15 @@ if [[ ! -x "$cairnmind_bin" ]]; then
     exit 1
 fi
 
+# The engine mode this data directory stores (cairnmind init saves it), read by the installed version itself;
+# empty when it cannot say: the native engine is then installed as before, and init names what is wrong.
+stored_engine_mode() {
+    "$(uv tool dir)/cairnmind/bin/python" -I -c '
+from cairnmind.config import Settings
+from cairnmind.database_mode import engine_mode
+print(engine_mode(Settings.load()))' 2>/dev/null || true
+}
+
 if [[ -n "$connect_url" ]]; then
     # Shown without a user, a password, a query or a fragment, should the address carry one by mistake.
     shown_url="$(printf '%s' "$connect_url" | sed -E 's#^([a-zA-Z]+://)[^/@]*@#\1#; s#[?\#].*$##')"
@@ -282,7 +324,7 @@ if [[ -n "$connect_url" ]]; then
         printf '\nThe database is not ready for this installation yet. Follow docs/DEPLOYMENT.md,\n' >&2
         printf '"Connect-only installations", then run: cairnmind init\n' >&2
     fi
-elif [[ "$engine_in_docker" == true ]]; then
+elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; then
     printf '\nThe engine runs in Docker: no ArcadeDB is downloaded here; cairnmind init downloads its image.\n'
     "$cairnmind_bin" init
     "$cairnmind_bin" engine status
