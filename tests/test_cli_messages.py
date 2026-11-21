@@ -185,9 +185,10 @@ def test_status_on_a_reader_names_the_role_instead_of_cairnmind_serve(reader):
     said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(data_dir), "status"]))
     assert "only reads this store" in said and "only the writer runs" in said
     assert "cairnmind serve" not in said and "cairnmind store writer" in said
-    # The writer, whose service is simply stopped, is still told to start it.
+    # The writer, whose service is simply stopped, is told that the next command starts it (#287: not `serve`).
     stopped = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(first.data_dir), "status"]))
-    assert "Run `cairnmind serve` explicitly" in stopped
+    assert "The next command that needs it starts it" in stopped and "cairnmind doctor" in stopped
+    assert "cairnmind serve" not in stopped
 
 
 def test_store_takeover_without_yes_suggests_what_fits_the_role(reader, tmp_path, monkeypatch):
