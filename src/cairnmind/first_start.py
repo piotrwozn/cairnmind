@@ -31,21 +31,19 @@ MODEL_MISSING = "the model server {url} does not have {model}"
 CHOSE_ENABLED = ("Knowledge agent: enabled. The model server answers and has the models {chat} and {embedding}. "
                  "Saved as knowledge_agent in {config}.")
 CHOSE_DISABLED = ("Knowledge agent: disabled (deterministic-only mode), because {reason}. Plans, tasks, checks, "
-                  "brief, impact, memory and file indexing work without models; cairnmind ask makes no "
-                  "answer and lists the passages that match words of the question. Saved as knowledge_agent in {config}.")
+                  "brief, impact, memory and file indexing work without models; cairnmind ask is a full-text "
+                  "search of the project's memory and makes no answer. Saved as knowledge_agent in {config}.")
 TURNED_ON = ("Knowledge agent: enabled, saved as knowledge_agent in {config}. Restart the knowledge service "
              "(cairnmind stop, then start Cairnmind again) so that it uses the models. To turn it off again, set "
              "knowledge_agent to disabled in that file and restart the service.")
-ASK_OFF = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. The passages listed as "
-           "full-text matches match words of the question: they are search results, not an answer and not "
-           "verified evidence for one.")
-ASK_NO_MATCH = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. A full-text "
-                "search found no passage that matches words of the question.")
-ASK_LEFT_OUT = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. A full-text "
-                "search found passages that match words of the question, but none could be shown; the reasons "
-                "are listed with the result.")
-ASK_TIMED_OUT = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. The full-text "
-                 "search did not finish in time, so no passages are listed.")
+ASK_OFF = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+           "The passages listed match words of the question: they are search results, not verified evidence.")
+ASK_NO_MATCH = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+                "No passage matches words of the question.")
+ASK_LEFT_OUT = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+                "Passages match words of the question, but none could be shown; the reasons are listed with the result.")
+ASK_TIMED_OUT = ("Without models (deterministic-only mode) ask is a full-text search of the project's memory and makes no answer. "
+                 "The search did not finish in time, so no passages are listed.")
 MATCHES_HEADING = "Full-text matches (search results, not an answer)"
 MATCHES_HELD_BACK = ("Some matching passages were left out because of their sensitivity class, as answers leave them "
                      "out for the remote model server (memory_remote_classes).")
@@ -77,20 +75,19 @@ MESSAGES = {
                     "Zapisano jako knowledge_agent w {config}."),
     CHOSE_DISABLED: ("Agent wiedzy: wyłączony (tryb tylko deterministyczny), ponieważ {reason}. Plany, zadania, "
                      "kontrole, brief, impact, pamięć i indeksowanie plików działają bez modeli; cairnmind ask "
-                     "nie tworzy odpowiedzi i wymienia fragmenty pasujące do słów pytania. Zapisano jako knowledge_agent w {config}."),
+                     "jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                     "Zapisano jako knowledge_agent w {config}."),
     TURNED_ON: ("Agent wiedzy: włączony, zapisano jako knowledge_agent w {config}. Uruchom ponownie usługę wiedzy "
                 "(cairnmind stop, a potem ponownie uruchom Cairnmind), aby używała modeli. Aby go znowu wyłączyć, "
                 "ustaw knowledge_agent na disabled w tym pliku i uruchom usługę ponownie."),
-    ASK_OFF: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
-              "Fragmenty wymienione jako dopasowania pełnotekstowe pasują do słów pytania: to wyniki wyszukiwania, "
-              "a nie odpowiedź ani zweryfikowane dowody na nią."),
-    ASK_NO_MATCH: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
-                   "Wyszukiwanie pełnotekstowe nie znalazło żadnego fragmentu pasującego do słów pytania."),
-    ASK_LEFT_OUT: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
-                   "Wyszukiwanie pełnotekstowe znalazło fragmenty pasujące do słów pytania, ale żadnego nie dało się "
-                   "pokazać; powody są wymienione przy wyniku."),
-    ASK_TIMED_OUT: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
-                    "Wyszukiwanie pełnotekstowe nie zakończyło się w czasie, więc nie wymieniono żadnych fragmentów."),
+    ASK_OFF: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+              "Wymienione fragmenty pasują do słów pytania: to wyniki wyszukiwania, a nie zweryfikowane dowody."),
+    ASK_NO_MATCH: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                   "Żaden fragment nie pasuje do słów pytania."),
+    ASK_LEFT_OUT: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                   "Są fragmenty pasujące do słów pytania, ale żadnego nie dało się pokazać; powody są wymienione przy wyniku."),
+    ASK_TIMED_OUT: ("Bez modeli (tryb tylko deterministyczny) ask jest wyszukiwaniem pełnotekstowym w pamięci projektu i nie tworzy odpowiedzi. "
+                    "Wyszukiwanie nie zakończyło się w czasie, więc nie wymieniono żadnych fragmentów."),
     MATCHES_HEADING: "Dopasowania pełnotekstowe (wyniki wyszukiwania, nie odpowiedź)",
     MATCHES_HELD_BACK: ("Część pasujących fragmentów pominięto ze względu na ich klasę wrażliwości, tak jak "
                         "odpowiedzi pomijają je dla zdalnego serwera modeli (memory_remote_classes)."),
