@@ -66,7 +66,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_ci_macos_job",
     "test_system_links",
     "test_install_macos",
-    "test_engine_docker", "test_tmux_optional",
+    "test_engine_docker", "test_tmux_optional", "test_external_mcp_start",
 })
 
 TMUX_MODULES = frozenset({
