@@ -18,6 +18,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Without models, `ask` (the command, the MCP tool, `POST /ask` and the Ask memory panel) is a full-text search of the project's memory and makes no answer: the status is `unavailable` with `diagnostics.code: models_not_configured`, `sources` stays empty, and `full_text_matches` lists up to 8 passages that match words of the question, found by full-text search under the same project, worktree and sensitivity rules as an answer's evidence and said plainly to be search results, not an answer. Passages that were found but could not be shown are reported, never as "no passage"; a blank question is refused as with models; no citation is made and nothing is cached, logged or evaluated (#274).
 - `cairnmind doctor` reports `knowledge_agent: disabled (deterministic-only mode)` as information with exit 0; the evaluations report `not_run` (exit 3) and `rebuild-vectors` refuses while no models are configured (#274).
 - `cairnmind models pull` (after a successful download) and `cairnmind models set` (after its check) set `knowledge_agent: enabled` and say so at once, with how to turn it off; a running service that started without models tells you to restart it; installations from before 0.13.0 keep their models and a configured server that is down is still reported as a fault (#274).
+- `README.md` is a short start page: the pitch, the comparison, a quick start without Java, tmux or models, the optional models and workspace, what is guaranteed, the measured results and an index. The rest moved into `docs/`: new `ARCHITECTURE.md`, `EXTERNAL_CLIENTS.md`, `MEMORY.md` and `STORAGE_AND_MAINTENANCE.md`, and new sections of `CONTRACTS.md`, `WORKFLOW.md`, `EVALUATION.md`, `TERMINAL.md`, `API.md`, `INSTALL.md` and `UPGRADING.md`. The moved text is the same except where it had become untrue, above all what a first start needs (#275).
+- The documentation of external MCP clients no longer says to start the service first: their first tool call starts it (#258, #275).
 
 ### Fixes
 
@@ -35,6 +37,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 - A workflow run by hand from main builds the database image of `deploy/arcadedb` for linux/amd64 and linux/arm64 and publishes it to `ghcr.io/piotrwozn/cairnmind-arcadedb`, tagged with the pinned ArcadeDB version; its summary gives the digest (#218).
 - Tests no longer reach a Cairnmind service or an Ollama running on the default ports of the machine that runs them; a test engine request that gets no answer for more than 5 s prints the statement, the wait, the load and the engine log; the stand-in pane process of the focus-column test no longer logs an older size after a newer one (#221).
+- A fast test checks that every internal link of README.md and `docs/` names a file that exists and, with an anchor, a heading that exists (#275).
 
 ## 0.12.0
 
