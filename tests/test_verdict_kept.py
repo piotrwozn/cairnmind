@@ -386,7 +386,8 @@ def test_a_plan_save_that_changes_or_removes_a_confirmed_step_is_refused_with_th
         write = next(task for task in before["tasks"] if task["metadata"]["step_key"] == "write")
         assert "Step 'write' of this plan" in detail and write["id"] in detail and would in detail, detail
         assert name != "change" or "(text would differ from the confirmed version)" in detail, detail
-        assert KEPT in detail and "Nothing was saved" in detail and "cairnmind plan save" in detail
+        assert KEPT in detail and "Nothing was saved" in detail and "in the inspector of the workspace" in detail
+        assert "cairnmind plan save" not in detail and "own terminal" not in detail
         assert PlanManager(fixture.store).get(fixture.pid, plan["id"]) == before and fixture.count() == count
     # The person confirmed the plan with its title, goal and constraints: a session does not rewrite them
     # under the steps that say they were confirmed with their plan.
@@ -398,7 +399,8 @@ def test_a_plan_save_that_changes_or_removes_a_confirmed_step_is_refused_with_th
         assert response.status_code == 400, (name, response.text)
         detail = response.json()["detail"]
         assert f"it would change {them}." in detail and KEPT in detail and "Nothing was saved" in detail, detail
-        assert "leave them out of the request" in detail and "cairnmind plan save" in detail
+        assert "leave them out of the request" in detail and "in the inspector of the workspace" in detail
+        assert "cairnmind plan save" not in detail and "own terminal" not in detail
         assert PlanManager(fixture.store).get(fixture.pid, plan["id"]) == before and fixture.count() == count
     # A new step leaves what was confirmed as it is: that save is stored, with the plan's own fields left out.
     added = save_again(fixture, {"id": plan["id"]},
@@ -463,11 +465,12 @@ def test_a_refused_plan_save_names_the_field_that_differs(fixture):  # noqa: F81
         bound = fixture.refresh(bound)
 
 
-def test_the_command_line_saves_such_a_plan_only_in_a_persons_terminal(tmp_path, monkeypatch):
+def test_plan_save_and_adopt_in_a_person_terminal_cannot_change_a_confirmed_step(tmp_path, monkeypatch,
+                                                                                person_terminal):
+    # #214: a terminal on both ends is what a person's terminal is, and what a program can fake. No save is a
+    # person's act; the person disputes the step in the inspector first.
     from cairnmind import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
-    person = {"here": False}
-    monkeypatch.setattr(confirmation, "person_at_terminal", lambda *args, **kwargs: person["here"])
     run, data = cli(tmp_path)
     document = tmp_path / "plan.json"
 
@@ -492,60 +495,60 @@ def test_the_command_line_saves_such_a_plan_only_in_a_persons_terminal(tmp_path,
     confirm_plan(store, pid, plan_id, PlanManager(store).get(pid, plan_id)["plan"]["version"])
     before = PlanManager(store).get(pid, plan_id)
     changed = [steps[0], {"key": "write", "content": "Write the rows, and delete the old ones"}]
-    # An agent's command, a script, a coding session's shell: refused, with the step named.
     refused = save(changed, "two", plan_id)
     assert refused.exit_code != 0
     words = plain_words(refused.output + str(refused.exception or ""))
     assert "Step 'write' of this plan" in words and KEPT in words, words
     assert PlanManager(Store(data)).get(pid, plan_id) == before
-    # Progress from the same command line is stored: it changes nothing that was confirmed.
+    # A save that leaves the step as it is still works, and so does progress: neither changes what was confirmed.
+    kept = save(steps, "same", plan_id)
+    assert kept.exit_code == 0, kept.output
     task = next(task for task in before["tasks"] if task["metadata"]["step_key"] == "read")
     moved = run("task", "update", "demo", task["id"], "in_progress")
     assert moved.exit_code == 0, moved.output
     assert json.loads(moved.output)["status"] == "confirmed"
     assert json.loads(moved.output)["metadata"]["confirmation"]["route"] == "confirm_plan"
-    # The person in their own terminal: the step changes, is proposed again and carries no lapsed mark.
-    person["here"] = True
+    # Nothing the command line wrote names a person.
+    assert not [row for row in Store(data).query("SELECT uri FROM sources WHERE project_id=:p", {"p": pid})
+                if row["uri"].startswith("person://")]
+    # The person disputes the step in the inspector; then the save that changes it goes through, as proposed.
+    current = PlanManager(Store(data)).get(pid, plan_id)
+    write = next(task for task in current["tasks"] if task["metadata"]["step_key"] == "write")
+    Inspector(Store(data)).review(pid, write["id"], "dispute", write["version"],
+                                  expected_plan_version=current["plan"]["version"], reason="Start over")
     stored = save(changed, "three", plan_id)
     assert stored.exit_code == 0, stored.output
     by_key = {task["metadata"]["step_key"]: task for task in json.loads(stored.output)["tasks"]}
-    assert by_key["write"]["content"].endswith("delete the old ones") and by_key["write"]["status"] == "proposed"
-    assert "confirmation" not in by_key["write"]["metadata"]
+    assert by_key["write"]["content"].endswith("delete the old ones") and by_key["write"]["status"] != "confirmed"
     assert by_key["read"]["status"] == "confirmed"
-    note = [row for row in Store(data).query("SELECT uri,content,metadata FROM sources WHERE project_id=:p", {"p": pid})
-            if row["uri"].startswith("person://")]
-    assert len(note) == 1 and json.loads(note[0]["content"])["action"] == "command_line_plan_save"
-    # And the person removes a confirmed step the same way.
-    removed = save(changed[1:], "four", plan_id)
-    assert removed.exit_code == 0, removed.output
-    gone = Store(data).query("SELECT FROM records WHERE id=:id", {"id": by_key["read"]["id"]})[0]
-    assert gone["status"] == "superseded" and confirmation_of(gone) is None
-    assert len(json.loads(removed.output)["tasks"]) == 1
 
 
-def test_adopting_tasks_a_person_confirmed_into_a_plan_needs_the_persons_terminal(tmp_path, monkeypatch):
+def test_adopting_tasks_a_person_confirmed_into_a_plan_is_refused_until_the_person_disputes_them(
+        tmp_path, monkeypatch, person_terminal):
     from cairnmind import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
-    person = {"here": True}
-    monkeypatch.setattr(confirmation, "person_at_terminal", lambda *args, **kwargs: person["here"])
     run, data = cli(tmp_path)
-    task = json.loads(run("task", "add", "demo", "Ship the importer", "--plan", "old-group").output)
-    assert task["status"] == "confirmed" and task["metadata"]["confirmation"]["by"] == "person"
-    person["here"] = False
+    added = run("task", "add", "demo", "Ship the importer", "--plan", "old-group")
+    task = json.loads(added.stdout)
+    assert task["status"] == "proposed"  # the command line confirms nothing (#214)
+    store = Store(data)
+    pid = store.resolve_project("demo")["id"]
+    # A task confirmed before the rule (or by a person on the command line before 0.13.0) is the person's.
+    confirmed_before_rule(store, task["id"])
     refused = run("plan", "adopt", "demo", "old-group", "--idempotency-key", "adopt-1")
     words = plain_words(refused.output + str(refused.exception or ""))
     assert refused.exit_code != 0 and KEPT in words and f"(task {task['id']})" in words, words
-    # The advice is the one that can be followed: the same command in the person's terminal, not a plan save.
-    assert "The person runs `cairnmind plan adopt` in their own terminal" in words and "plan save" not in words
+    assert "The person disputes the task in the inspector of the workspace" in words, words
+    assert "own terminal" not in words and "plan save" not in words
     assert "key would differ from the confirmed version" in words, words
     stored = Store(data).query("SELECT FROM records WHERE id=:id", {"id": task["id"]})[0]
-    assert stored["version"] == task["version"] and stored["key"] == task["key"] and stored["status"] == "confirmed"
-    person["here"] = True
+    assert stored["key"] == task["key"] and stored["status"] == "confirmed"
+    # The person disputes it in the inspector; then the adoption goes through.
+    Inspector(store).review(pid, task["id"], "dispute", stored["version"], reason="Adopt it into a plan")
     adopted = run("plan", "adopt", "demo", "old-group", "--idempotency-key", "adopt-2")
     assert adopted.exit_code == 0, adopted.output + str(adopted.exception or "")
     [step] = json.loads(adopted.output)["tasks"]
-    # The person's own command: the task is now a step under a plan key, proposed until they confirm the plan.
-    assert step["id"] == task["id"] and step["status"] == "proposed" and confirmation_of(step) is None
+    assert step["id"] == task["id"] and step["status"] != "confirmed" and confirmation_of(step) is None
 
 
 # Checkpoints: the one record that is a slot, not a statement.

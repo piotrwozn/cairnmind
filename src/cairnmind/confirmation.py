@@ -4,8 +4,9 @@ The store keeps one derived field on a record, `metadata.confirmation`, which sa
 to be confirmed. A client can neither send it nor clear it. It has these forms:
 
     {"by": "person", "route", "source_id", "version", "actor_name", "at"}
-        a person's act on this machine: the inspector's confirm, a conflict decision, a plan
-        confirmation, the workspace form, or the command line run by a person in a terminal;
+        a person's act on this machine, proven by the open workspace's key (person_proof, #214): the
+        inspector's confirm, a conflict decision, a plan confirmation or the workspace form. The command
+        line confirms nothing; the mark `route: cli` is only what 0.12.0 and earlier left;
     {"by": "import", "package", "where", "confirmed_by": [...], "imported_at", "version"}
         confirmed elsewhere and brought here by a memory package; who and where are what the package
         claims, and nothing about it is verified here;
@@ -27,7 +28,6 @@ from __future__ import annotations
 
 import os
 import sys
-from contextlib import contextmanager
 
 from .config import session_value
 from .terminal_safe import safe_text
@@ -67,13 +67,16 @@ _TASK_DEFAULTS = {"depends_on": [], "acceptance_criteria": [], "requires_test": 
 CLIENT_MARKERS = ("CLAUDECODE", "CODEX_THREAD_ID")
 
 REFUSED = ("Only a person can store a record as confirmed, and this write is not a person's act. Nothing was saved. "
-           "Store the record as proposed (leave the status out); the person confirms it in the inspector, "
-           "or types `cairnmind remember --confirmed` in their own terminal.")
-CLI_REFUSED = ("Only a person can store a record as confirmed. This command runs inside a coding session, or "
-               "its input or output is not a terminal (piped or redirected), so it does not count as a person. "
-               "Nothing was saved. Run it without --confirmed to store a proposed record; the person confirms it "
-               "in the inspector, or runs this command in their own terminal, with input and output not piped or "
-               "redirected.")
+           "Store the record as proposed (leave the status out); the person confirms it in the inspector of the "
+           "workspace.")
+# The command line confirms nothing (#214): it is where a program of the same user is indistinguishable from a person.
+CLI_CONFIRM_REFUSED = ("The command line no longer confirms a record. Nothing was saved. Run it without --confirmed to "
+                       "store the record as proposed; the person confirms it in the inspector of the workspace "
+                       "(`cairnmind`).")
+CLI_TASK_PROPOSED = ("Stored as proposed: the command line no longer confirms a task. The person confirms it in the "
+                     "inspector of the workspace (`cairnmind`).")
+CLI_PLAN_REFUSED = ("The command line no longer confirms a plan. Nothing was confirmed. The person confirms it in the "
+                    "inspector of the workspace (`cairnmind`): open Plans, choose the plan, then Confirm.")
 
 
 # A person's act is open, but the request that opened it did not carry the open workspace's key (#214).
@@ -103,15 +106,13 @@ _KEPT_CHANGES = {"replace": "replace it (supersedes)", "status": "set its status
                  "change": "change what was confirmed (its text, key or a field beside it)",
                  "key": "store another statement under its key"}
 # Why a plan save is not a person's act, and where it is one (#239): a piped `plan save` is refused too.
-NOT_A_PERSON_SAVE = ("this save is not a person's act (it comes from a coding session, a tool or a script, or its "
-                     "input or output is not a terminal: piped or redirected)")
-IN_OWN_TERMINAL = "in their own terminal, with input and output not piped or redirected"
+NOT_A_PERSON_SAVE = "this save is not a person's act (no plan save is: a person changes what they confirmed in the inspector)"
 PLAN_CONTEXT_KEPT = (
     "A person confirmed this plan with its title, goal and constraints, and " + NOT_A_PERSON_SAVE + ": it "
     "would change its {them}. Only a person takes a confirmation away. Nothing was saved. Save the plan with its "
     "title, goal and constraints as they are (leave them out of the request; steps can be added and steps that "
-    "are not confirmed can change); the person changes them with `cairnmind plan save` " + IN_OWN_TERMINAL + ", "
-    "or disputes the steps they confirmed with the plan in the inspector.")
+    "are not confirmed can change); the person disputes the steps they confirmed with the plan in the inspector of "
+    "the workspace, after which the title, goal and constraints can change.")
 
 
 def _would(change, status=None, differs=()) -> str:
@@ -144,7 +145,7 @@ def kept_refusal(record, change, status=None, differs=()) -> str:
                    "inbox, where the person decides which one stands.")
     elif kind == "task":
         instead = ("report progress on it as before (state, evidence, check runs, scope), or store a new proposed "
-                   "task; the person disputes this one in the inspector, or changes it in their own terminal.")
+                   "task; the person disputes this one in the inspector.")
     elif kind == "checkpoint":
         # There is one checkpoint record per project: a second one under another key is not a way out (#239).
         instead = ("save the new state with the checkpoint tool (`checkpoint`), which replaces the checkpoint record; "
@@ -170,13 +171,13 @@ def kept_step_refusal(step_key, refusal, adoption=False, title=None) -> str:
         return (f"Task {name!r} (task {refusal.record_id}) was confirmed by a person, or before "
                 "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
                 f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
-                f"The person runs `cairnmind plan adopt` {IN_OWN_TERMINAL}; the adopted steps are then proposed "
-                "until they confirm the plan.")
+                "The person disputes the task in the inspector of the workspace; it can then be adopted, and its step "
+                "is proposed until they confirm the plan.")
     return (f"Step {str(step_key)[:200]!r} of this plan (task {refusal.record_id}) was confirmed by a person, and "
             f"{NOT_A_PERSON_SAVE}: it would {would}. Only a person takes a confirmation away. Nothing "
             "was saved. Save the plan with that step exactly as `plan show` returns it, every field included (other "
-            "steps can change and new steps can be added); the person disputes the step in the inspector, or saves "
-            f"the plan with `cairnmind plan save` {IN_OWN_TERMINAL}.")
+            "steps can change and new steps can be added); the person disputes the step in the inspector of the "
+            "workspace, after which a save may change it.")
 
 
 def said(kind, content, key, supersedes, metadata) -> tuple:
@@ -421,6 +422,9 @@ LIST_WORDS = {"import": "confirmed elsewhere", "before_rule": "confirmed before 
 def person_at_terminal(environ=None, stdin=None, stdout=None) -> bool:
     """Whether a command line is run by a person: no coding session around it, and a terminal on both ends.
 
+    Since #214 no command confirms a record on this test (`store prune-backups` still asks it): a program of
+    the same user can open a pseudo-terminal, so it cannot carry a person's confirmation.
+
     A coding client launched by Cairnmind carries the session variables, and the known clients leave their
     own marker. The built-in agent's shell has neither, but it has no terminal: its input is /dev/null and
     its output is a pipe. This tells a person from the tools handed to a model; it is not a defence against
@@ -465,28 +469,13 @@ def person_source(store, project_id, text, *, route="cli", origin=None, action="
 
 
 def remember_as_person(store, project_id, record, sources=None, *, route="cli"):
-    """Store a record as a person's own act on the command line (or as evaluation seed data).
+    """Store a record under a person's act, or as evaluation seed data (the only production caller).
 
-    The caller has established that a person is acting: the CLI by `person_at_terminal`, an evaluation by
-    being one. The note source is written here and is the one the store checks the act against.
+    The store counts the act only when the request carried the workspace's key (person_proof, #214), which
+    evaluation seed data does not need. The note source is written here and is the one the store checks the
+    act against.
     """
     with store.transaction():
         note = person_source(store, project_id, record.get("content") or "confirmed", route=route)
         with store.person_act(route, note["id"]):
             return store.remember(project_id, record, [*(sources or []), note["id"]])
-
-
-@contextmanager
-def person_command(store, project_id, action, worktree=None):
-    """A command a person types in their own terminal that may change records they confirmed (a plan save).
-
-    Elsewhere (a coding session's shell, an agent's command, a script) nothing is opened, and the store
-    refuses what would take a confirmation away. The note says who ran the command; it confirms nothing.
-    """
-    if not person_at_terminal():
-        yield False
-        return
-    with store.transaction():
-        note = person_source(store, project_id, action, action=action, worktree=worktree)
-        with store.person_act("cli", note["id"]):
-            yield True

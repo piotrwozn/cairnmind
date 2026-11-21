@@ -325,31 +325,39 @@ def test_remember_confirmed_without_a_terminal_is_refused_and_says_what_to_do(tm
     run, data = cli(tmp_path)
     result = run("remember", "demo", "Deploy without review", "--kind", "constraint", "--confirmed")
     words = plain_words(result.output)
-    assert result.exit_code == 2 and REFUSAL in words
-    assert "without --confirmed" in words and "inspector" in words and "own terminal" in words
-    assert json.loads(run("records", "demo").output) == []
+    assert result.exit_code == 2 and confirmation.CLI_CONFIRM_REFUSED in words
+    assert "without --confirmed" in words and "inspector of the workspace" in words
+    assert json.loads(run("records", "demo").output) == []  # not even a proposed record: nothing was saved
     proposed = run("remember", "demo", "Deploy without review", "--kind", "constraint")
     assert proposed.exit_code == 0 and json.loads(proposed.output)["status"] == "proposed"
     task = run("task", "add", "demo", "A task an agent added")
-    assert task.exit_code == 0 and "Stored as proposed" in plain_words(task.output)
+    assert task.exit_code == 0 and confirmation.CLI_TASK_PROPOSED in plain_words(task.output)
     assert [row["status"] for row in json.loads(run("task", "list", "demo").output)] == ["proposed"]
     plan = run("memory", "confirm-plan", "demo", str(uuid4()), "--expected-version", "1")
-    assert plan.exit_code == 2 and "Only a person confirms a plan" in plain_words(plan.output)
+    assert plan.exit_code == 2 and confirmation.CLI_PLAN_REFUSED in plain_words(plan.output)
 
 
-def test_remember_confirmed_in_a_persons_terminal_confirms(tmp_path, monkeypatch, person_terminal):
+def test_remember_confirmed_is_refused_in_a_person_terminal(tmp_path, monkeypatch, person_terminal):
     from cairnmind import ingest
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     run, data = cli(tmp_path)
     result = run("remember", "demo", "Reviews are required", "--kind", "constraint", "--confirmed")
-    assert result.exit_code == 0, result.output
-    record = json.loads(result.output)
-    assert record["status"] == "confirmed" and record["metadata"]["confirmation"]["route"] == "cli"
+    assert result.exit_code == 2 and confirmation.CLI_CONFIRM_REFUSED in plain_words(result.output)
     store = Store(data)
-    source = store.get_source(record["metadata"]["confirmation"]["source_id"])
-    assert source["uri"].startswith("person://") and source["metadata"]["origin"] == "cli_person"
-    task = json.loads(run("task", "add", "demo", "A task a person added").output)
-    assert task["status"] == "confirmed" and task["metadata"]["confirmation"]["by"] == "person"
+    assert json.loads(run("records", "demo").output) == []
+    assert not [row for row in store.query("SELECT uri FROM sources") if row["uri"].startswith("person://")]
+
+
+def test_task_add_in_a_person_terminal_stores_a_proposed_task(tmp_path, monkeypatch, person_terminal):
+    from cairnmind import ingest
+    monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
+    run, data = cli(tmp_path)
+    added = run("task", "add", "demo", "A task a person added")
+    assert added.exit_code == 0, added.output
+    task = json.loads(added.stdout)
+    assert task["status"] == "proposed" and "confirmation" not in task["metadata"]
+    assert confirmation.CLI_TASK_PROPOSED in plain_words(added.stderr)
+    assert not [row for row in Store(data).query("SELECT uri FROM sources") if row["uri"].startswith("person://")]
 
 
 # Records confirmed before the rule existed.

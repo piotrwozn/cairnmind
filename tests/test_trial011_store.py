@@ -195,20 +195,26 @@ def test_a_key_held_by_another_record_names_that_record(store, project):
 
 def test_the_command_line_key_clash_names_what_a_person_can_do(tmp_path, monkeypatch):
     from conftest import plain_words
-    from cairnmind import confirmation, ingest
+    from cairnmind import ingest
+    from cairnmind.inspector import Inspector
+    from cairnmind.store import Store
     from test_confirmed_by_person import cli
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
-    monkeypatch.setattr(confirmation, "person_at_terminal", lambda *a: True)
-    run, _ = cli(tmp_path)
-    first = run("remember", "demo", "Queue in the database", "--kind", "decision", "--key", "queue", "--confirmed")
+    run, data = cli(tmp_path)
+    first = run("remember", "demo", "Queue in the database", "--kind", "decision", "--key", "queue")
     assert first.exit_code == 0, first.output
+    # The person confirms it in the inspector (the command line confirms nothing, #214).
+    import json
+    held = json.loads(first.output)
+    store = Store(data)
+    Inspector(store).review(store.resolve_project("demo")["id"], held["id"], "confirm", held["version"])
     for extra in ([], ["--confirmed"]):
         again = run("remember", "demo", "Queue in Redis", "--kind", "decision", "--key", "queue", *extra)
         words = plain_words(again.output)
         assert again.exit_code != 0
         assert "expected_version" not in words and "--id" not in words
-        assert "another key" in words and "inspector" in words
-    import json
+        assert "another key" in words or "no longer confirms" in words
+        assert "inspector" in words
     assert [row["content"] for row in json.loads(run("records", "demo").output)] == ["Queue in the database"]
 
 

@@ -212,8 +212,8 @@ def test_a_release_names_the_worktree_it_was_made_in(two_worktrees):
     assert (audit["branch"], audit["commit"]) == ("feat-b", git(other, "rev-parse", "HEAD"))
 
 
-def test_plan_save_and_confirm_plan_on_the_command_line_name_the_worktree(two_worktrees, person_terminal, tmp_path,
-                                                                           monkeypatch):
+def test_plan_save_on_the_command_line_stores_a_plan_and_a_confirm_plan_is_refused(two_worktrees, person_terminal,
+                                                                                  tmp_path, monkeypatch):
     store, pid, root, other = two_worktrees
     from cairnmind import confirmation
     for name in ("CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", *confirmation.CLIENT_MARKERS):
@@ -224,13 +224,12 @@ def test_plan_save_and_confirm_plan_on_the_command_line_name_the_worktree(two_wo
     run = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "plan", "save", pid, str(document),
                                        "--idempotency-key", "k1", "--worktree", str(other)])
     assert run.exit_code == 0, run.output
-    notes = [json.loads(row["content"]) for row in store.query("SELECT content FROM sources WHERE project_id=:p",
-                                                               {"p": pid}) if "command_line_plan_save" in row["content"]]
-    assert [(n["branch"], n["commit"]) for n in notes] == [("feat-b", git(other, "rev-parse", "HEAD"))]
+    # A save is no person's act (#214), in a person's terminal either: no note names a person.
+    assert not [row for row in store.query("SELECT uri FROM sources WHERE project_id=:p", {"p": pid})
+                if row["uri"].startswith(("person://", "review://"))]
     sent = {}
     monkeypatch.setattr(cli, "request", lambda settings, method, path, json=None: sent.update(json) or {})
-    plan_id = str(uuid4())
-    confirmed = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "memory", "confirm-plan", pid, plan_id,
-                                             "--expected-version", "1", "--worktree", str(other)])
-    assert confirmed.exit_code == 0, confirmed.output
-    assert sent["worktree"] == str(other.resolve())
+    confirmed = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "memory", "confirm-plan", pid,
+                                             str(uuid4()), "--expected-version", "1", "--worktree", str(other)])
+    assert confirmed.exit_code == 2 and "no longer confirms a plan" in " ".join(confirmed.output.split())
+    assert sent == {}

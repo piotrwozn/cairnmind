@@ -22,34 +22,24 @@ def register(app, initialized):
         store = store_for_read(ctx.obj)
         output(record_kinds.overview(store, store.resolve_project(project)["id"]))
 
-    def act(ctx, project, client, kind, note, withdraw):
-        from cairnmind import confirmation, record_kinds
-        from cairnmind.cli import output, refuse, store_for
-        if not confirmation.person_at_terminal():
-            # A coding session's shell, the built-in agent's command or a script: not a person (#177).
-            refuse(record_kinds.CLI_REFUSED)
-        try:
-            record_kinds.check(client, kind, note, withdraw=withdraw)
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from None
-        store = store_for(ctx.obj)
-        output(record_kinds.act_as_person(store, store.resolve_project(project)["id"], client, kind, note,
-                                          route="cli", withdraw=withdraw))
+    def act():
+        from cairnmind import record_kinds
+        from cairnmind.cli import refuse
+        # The command line confirms nothing (#214). The arguments stay so that a script gets this sentence.
+        refuse(record_kinds.CLI_REFUSED)
 
     @record_kind_app.command("accept")
     @initialized
     def record_kind_accept(ctx: typer.Context, project: ProjectArg, client: KindClientArg, kind: KindArg,
                            note: Annotated[str | None, typer.Option(
                                "--note", help="Why this kind is technical; kept with the date.")] = None):
-        """Treat KIND from CLIENT (claude, codex or unknown) as technical in this project, as a person in
-        their own terminal. A malformed record of a kind the reader knows, and a transcript that fails its
-        integrity checks, still block."""
-        act(ctx, project, client, kind, note, False)
+        """Refused since 0.13.0: a person does it in the inspector of the workspace."""
+        act()
 
     @record_kind_app.command("withdraw")
     @initialized
     def record_kind_withdraw(ctx: typer.Context, project: ProjectArg, client: KindClientArg, kind: KindArg,
                              note: Annotated[str | None, typer.Option("--note", help="Why, kept with the date.")]
                              = None):
-        """Withdraw an acceptance: packets of the project are blocked by that kind again."""
-        act(ctx, project, client, kind, note, True)
+        """Refused since 0.13.0: a person does it in the inspector of the workspace."""
+        act()

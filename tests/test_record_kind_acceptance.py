@@ -84,8 +84,8 @@ def test_an_unknown_kind_says_which_kind_blocks_the_packet_and_how_to_accept_it(
     # One line per kind and transcript, not one per record.
     assert len(named) == 1, blocked["unknowns"]
     assert "'future-claude-record' from claude 2.1.400 at byte" in named[0]
-    assert f"cairnmind record-kind accept {fixture.pid} claude future-claude-record --note" in named[0]
-    assert "Transcript record kinds" in named[0]
+    # The command line accepts nothing (#214): the unknown names where a person does.
+    assert "cairnmind record-kind" not in named[0] and "in the workspace: More, then Transcript record kinds." in named[0]
     # The record's own text is not put into the packet that a coding session reads.
     assert "SYSTEM" not in " ".join(blocked["unknowns"])
     # The person's view shows the record, escaped and cut.
@@ -103,12 +103,12 @@ def test_a_long_archive_path_does_not_cut_off_how_to_accept_the_kind(fixture):
     assert len(str(fixture.transcript(fixture.pid, MODE, FUTURE, name=f"{folder}/t.jsonl"))) > 300
     packet = fixture.prepare(fixture.pid)
     [named] = kind_unknowns(packet)
-    assert "then Transcript record kinds in the workspace." in named
+    assert "More, then Transcript record kinds." in named
     # The refusal an agent gets from ack on the partial packet says it too.
     with pytest.raises(ValueError) as caught:
         sent = packet["packet"]
         fixture.manager.ack(packet["session_id"], sent["id"], sent["hash"], {"plan": None, "task": None})
-    assert "then Transcript record kinds in the workspace." in str(caught.value)
+    assert "More, then Transcript record kinds." in str(caught.value)
 
 
 def test_a_codex_kind_is_named_with_the_version_of_its_rollout(fixture):
@@ -197,7 +197,7 @@ def test_doctor_lists_what_a_person_accepted(fixture):
     fixture.accept()
     [row] = record_kinds.doctor_view(fixture.store)
     assert row["project_id"] == fixture.pid and row["accepted"][0]["kind"] == "future-claude-record"
-    assert row["withdraw"].startswith(f"cairnmind record-kind withdraw {fixture.pid}")
+    assert row["withdraw"] == "in the workspace: More, then Transcript record kinds"
 
 
 # What an acceptance never covers.
@@ -345,39 +345,24 @@ def real_terminal(monkeypatch):
     monkeypatch.setattr(confirmation, "person_at_terminal", lambda *a, **k: real(None, Terminal(), Terminal()))
 
 
-def test_the_command_line_without_a_terminal_is_refused(fixture, monkeypatch):
-    monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
-    result = cli(fixture)("record-kind", "accept", fixture.pid, "claude", "future-claude-record", "--note", "Why")
-    assert result.exit_code == 2 and "Only a person accepts or withdraws" in plain_words(result.output)
-    assert fixture.standing() == set()
-
-
-@pytest.mark.parametrize("variable", ["CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", "CLAUDECODE", "CODEX_THREAD_ID"])
-def test_the_command_line_in_a_coding_session_is_refused_even_with_a_terminal(fixture, monkeypatch, real_terminal,
-                                                                              variable):
-    monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
-    monkeypatch.setenv(variable, "1")
-    for action in (["accept", "--note", "Why"], ["withdraw"]):
-        result = cli(fixture)("record-kind", action[0], fixture.pid, "claude", "future-claude-record", *action[1:])
-        assert result.exit_code == 2 and "Only a person accepts or withdraws" in plain_words(result.output)
-    assert fixture.standing() == set()
-
-
-def test_a_person_accepts_lists_and_withdraws_on_the_command_line(fixture, monkeypatch, real_terminal):
+@pytest.mark.parametrize("variable", [None, "CAIRNMIND_SESSION_ID", "CAIRNMIND_PACKET_ID", "CLAUDECODE",
+                                      "CODEX_THREAD_ID"])
+def test_the_command_line_accepts_and_withdraws_nothing_in_any_setting(fixture, monkeypatch, real_terminal, variable):
+    # #214: with a terminal on both ends and no session around it, which is what a person's terminal is, too.
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     for name in ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID", "CAIRNMIND_PACKET_ID", "DEVBRAIN_PACKET_ID",
                  "CLAUDECODE", "CODEX_THREAD_ID"):
         monkeypatch.delenv(name, raising=False)
+    if variable:
+        monkeypatch.setenv(variable, "1")
+    for action in (["accept", "--note", "Why"], ["withdraw"]):
+        result = cli(fixture)("record-kind", action[0], fixture.pid, "claude", "future-claude-record", *action[1:])
+        assert result.exit_code == 2 and record_kinds.CLI_REFUSED in plain_words(result.output)
+    assert fixture.standing() == set()
+
+
+def test_the_command_line_still_lists_the_kinds_that_block(fixture, monkeypatch):
+    monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     fixture.transcript(fixture.pid, MODE, FUTURE)
-    run = cli(fixture)
-    listed = json.loads(run("record-kind", "list", "first").output)
-    assert listed["blocking"][0]["kind"] == "future-claude-record"
-    accepted = run("record-kind", "accept", "first", "claude", "future-claude-record", "--note", "Bookkeeping")
-    assert accepted.exit_code == 0, accepted.output
-    assert json.loads(accepted.output)["acceptance"]["route"] == "cli"
-    listed = json.loads(run("record-kind", "list", "first").output)
-    assert listed["blocking"] == [] and listed["accepted"][0]["records"] == 1
-    missing = run("record-kind", "accept", "first", "claude", "future-claude-record")
-    assert missing.exit_code != 0
-    withdrawn = run("record-kind", "withdraw", "first", "claude", "future-claude-record")
-    assert withdrawn.exit_code == 0 and json.loads(withdrawn.output)["status"] == "withdrawn"
+    listed = json.loads(cli(fixture)("record-kind", "list", "first").output)
+    assert listed["blocking"][0]["kind"] == "future-claude-record" and listed["accepted"] == []
