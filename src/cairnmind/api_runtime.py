@@ -126,7 +126,7 @@ class RuntimeSupervisor(NativeRuntime):
                            "credential_invalid", "credential_unavailable",
                            "copilot_runtime_missing", "copilot_sdk_missing", "profile_invalid",
                            "copilot_sdk_unsupported", "copilot_runtime_invalid", "agent_storage_in_project",
-                           "memory_unavailable", "agent_resume_unavailable"}
+                           "memory_unavailable", "agent_resume_unavailable", "resume_partial"}
                 errors.append({"slot_id": slot["id"], "client": slot["client"],
                                "code": code if code in allowed else "agent_launch_failed"})
         return {"runs": runs, "errors": errors, "installation": installation or {"clients": {}, "warnings": []}}

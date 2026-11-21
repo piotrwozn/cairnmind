@@ -302,7 +302,7 @@ class NativeRuntime:
                 # Classifications are fixed; raw native/auth output is never retained.
                 code = str(exc).partition(":")[0]
                 allowed = {"login_required", "client_missing", "client_unsupported", "native_resume_unavailable",
-                           "native_resume_unsupported", "tmux_missing_or_unsupported"}
+                           "native_resume_unsupported", "tmux_missing_or_unsupported", "resume_partial"}
                 errors.append({"slot_id": slot["id"], "client": slot["client"],
                                "code": code if code in allowed else "native_launch_failed"})
         return {"runs": runs, "errors": errors}

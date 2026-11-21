@@ -136,6 +136,16 @@ def test_missing_tmux_is_lazy_and_actionable(tmp_path):
     assert not runtime.directory.exists()
 
 
+def test_a_partial_packet_is_reported_by_its_code_not_as_a_general_failure(native, monkeypatch):
+    runtime, project, events = native
+    monkeypatch.setattr(integrations, '_prepare_session', lambda *a: {
+        'status': 'partial', 'unknowns': ['record kind "x" is unknown']})
+    result = runtime.start_project(project)
+    assert result['runs'] == []
+    assert [e['code'] for e in result['errors']] == ['resume_partial', 'resume_partial']
+    assert 'record kind' not in json.dumps(result)
+
+
 def test_batch_installs_before_any_packet_and_keeps_independent_same_root(native):
     runtime, project, events = native
     result = runtime.start_project(project)
