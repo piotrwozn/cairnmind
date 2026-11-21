@@ -67,6 +67,17 @@ def output(value) -> None:
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
 
 
+def _stdout_is_terminal() -> bool:
+    return sys.stdout.isatty()
+
+
+def _tell(message: str) -> None:
+    """What a command did and what comes next, for a person: standard error, and only in a terminal, so JSON on
+    standard output and an agent's shell stay as they are (#287)."""
+    if sys.stderr.isatty():
+        typer.echo(f"Cairnmind: {message}", err=True)
+
+
 def initialized(command):
     """Initialize only when an operational leaf runs, after argument/help parsing."""
     @wraps(command)
@@ -654,8 +665,11 @@ def db_create_user(ctx: typer.Context, admin_password_file: Annotated[Path, type
 def doctor(ctx: typer.Context, contract: bool = typer.Option(
         False, "--contract", help="Show only the client contract: every check with its evidence line."),
            output_format: Annotated[str, typer.Option(
-               "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json"):
-    """Report Python, Java, tmux, the engine, Ollama, the models and the coding clients. Read-only."""
+               "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json",
+           as_json: bool = typer.Option(
+               False, "--json", help="Print the full report as JSON; the default when the output is not a terminal.")):
+    """Report what Cairnmind needs and what is optional: a short summary in a terminal, the full report as JSON
+    otherwise. Read-only."""
     if output_format not in ("json", "text"):
         raise typer.BadParameter("--format must be json or text.")
     if output_format == "text" and not contract:
@@ -690,6 +704,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         if name in ctx.obj._origin.get("kept", {}):
             stored, used = ctx.obj._origin["kept"][name]
             spelling = next(key for key in env_names(variable) if os.environ.get(key))
+            stored = stored if stored not in (None, "") else "not set"
             result["environment_notes"].append(
                 f"{spelling} is used by this process: {name} is {used} here, and {stored} in config.json.")
     from cairnmind.engine import log_settings_problems
@@ -706,7 +721,11 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         result["accepted_record_kinds"] = doctor_view(store_for_read(ctx.obj))
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
         result["accepted_record_kinds"] = {"unavailable": type(exc).__name__}
-    output(result)
+    if as_json or not _stdout_is_terminal():
+        output(result)  # a pipe, a file and a script read this, as before
+    else:
+        from cairnmind.doctor_attention import summary
+        typer.echo("\n".join(summary(result)))
 
 
 @app.command()

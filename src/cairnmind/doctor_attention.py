@@ -1,22 +1,28 @@
-"""What the installer prints of `cairnmind doctor`: only the parts that need attention (#244).
+"""What `cairnmind doctor` says in a terminal, and what the installer prints of it (#244, #287).
 
 Run as ``cairnmind doctor | python -I -m cairnmind.doctor_attention``. It reads the doctor report as JSON on
-standard input and prints one line for each thing to look at, or one line saying nothing needs attention.
-The full report stays one command away.
+standard input and prints the summary: where memory is kept, what is required and present, what is required and
+missing, what is optional, and the next step. The installer prints the same summary as `cairnmind doctor` in a
+terminal; the full report is `cairnmind doctor --json`.
 """
 from __future__ import annotations
 
 import json
 import sys
 
+from . import platform_hints
 from .engine_docker import DOCKER_ATTENTION
-from .first_start import KNOWLEDGE_DISABLED, cockpit_status
+from .first_start import (
+    CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_READY, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED,
+    MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE,
+    REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WHERE_CONNECT,
+    WHERE_DOCKER, WHERE_NATIVE, WORKSPACE_OFF, WORKSPACE_ON, cockpit_status)
 from .terminal_safe import safe_text
 
-FULL_REPORT = "The full report: cairnmind doctor"
 # Keys every doctor report has; an object without all of them (`cairnmind init` prints one with data_dir alone)
 # is not a report that found nothing.
 REPORT_KEYS = frozenset({"environment_notes", "data_dir", "store_writer"})
+CLIENT_NAMES = {"codex": "Codex", "claude": "Claude Code"}
 
 
 def _line(text: object) -> str:
@@ -28,18 +34,13 @@ def _address(url: object) -> str:
 
 
 def attention(report: dict) -> list[str]:
-    """One plain line per part of the report that is missing, unusable or noted."""
+    """One plain line per part of the report that is required and missing or unusable."""
     lines = []
-    notes = report.get("environment_notes") or []
-    if not isinstance(notes, list):  # a string would be read one character at a time
-        raise ValueError("environment_notes is not a list")
-    for note in notes:
-        lines.append(_line(note))
     java = report.get("java") or {}
     if java and java.get("needed") is not False:
         if java.get("compatible") is False or not (java.get("executable") or java.get("on_path")):
             found = java.get("error") or java.get("version") or "not found"
-            lines.append(_line(f"Java 21 or newer is needed for the engine: {found}"))
+            lines.append(_line(JAVA_NEEDED.format(found=found, hint=platform_hints.hint("java"))))
         elif java.get("error"):
             # A -version that timed out or failed: Java is there, it did not answer, as after a first install.
             lines.append(_line(f"Java did not answer: {java['error']}"))
@@ -48,20 +49,17 @@ def attention(report: dict) -> list[str]:
         lines.append(_line(DOCKER_ATTENTION.format(error=docker.get("error") or "unknown")))
     elif (docker.get("container") or {}).get("state") in ("not ours", "unknown"):
         lines.append(_line(docker["container"].get("error") or "The engine container cannot be identified"))
-    tmux = report.get("tmux") or {}
-    cockpit = cockpit_status(tmux) if tmux else None  # the same words as doctor's own "cockpit" key
-    if cockpit:
-        lines.append(_line(f"cockpit: {cockpit}"))
     arcade = report.get("arcadedb") or {}
     if arcade.get("engine_problem"):
         lines.append(_line(arcade["engine_problem"]))
     if arcade.get("available") is False:
-        lines.append(_line(f"The database engine does not answer at {arcade.get('url') or 'its address'}: "
-                           f"{arcade.get('error') or arcade.get('reason') or 'start it with cairnmind engine start'}"))
+        down = ENGINE_DOWN if arcade.get("mode") != "connect" else SERVER_DOWN_CONNECT
+        lines.append(_line(down.format(url=arcade.get("url") or "its address",
+                                       error=arcade.get("error") or arcade.get("reason") or "no answer")))
     elif arcade.get("error"):
         lines.append(_line(f"The database server cannot be used: {arcade['error']}"))
     elif arcade.get("database_available") is False:
-        lines.append(_line(f"The database {arcade.get('database') or ''} cannot be read; see cairnmind doctor."))
+        lines.append(_line(f"The database {arcade.get('database') or ''} cannot be read; see cairnmind doctor --json."))
     knowledge = report.get("knowledge_agent")
     if knowledge and knowledge != KNOWLEDGE_DISABLED:
         lines.append(_line(knowledge))  # a stored value that is neither enabled nor disabled
@@ -88,7 +86,80 @@ def attention(report: dict) -> list[str]:
             lines.append(_line(f"{name} is installed but its contract checks fail; see cairnmind doctor --contract."))
     writer = report.get("store_writer") or {}
     if writer.get("role") in {"reader", "lost", "unknown"} or writer.get("problem"):
-        lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''}"))
+        lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''} "
+                           f"{writer.get('next') or ''}"))
+    return lines
+
+
+def _engine_present(report: dict) -> list[str]:
+    arcade = report.get("arcadedb") or {}
+    if not (arcade.get("available") and arcade.get("database_available")) or arcade.get("error") or arcade.get(
+            "engine_problem"):
+        return []
+    if arcade.get("mode") == "connect":
+        where = WHERE_CONNECT
+    elif arcade.get("engine") == "docker":
+        where = WHERE_DOCKER
+    else:
+        where = WHERE_NATIVE.format(major=(report.get("java") or {}).get("major") or "21 or newer")
+    return [ENGINE_READY.format(url=arcade.get("url") or "its address", where=where,
+                                database=arcade.get("database") or "")]
+
+
+def _models_on(report: dict) -> bool:
+    """Models count as on when configured and nothing about them is listed as missing."""
+    ollama = report.get("ollama") or {}
+    if report.get("knowledge_agent") or ollama.get("available") is False:
+        return False
+    if any(ollama.get(f"{role}_model_installed") is False for role in ("chat", "embedding")):
+        return False
+    return not any(isinstance(model, dict) and model.get("reachable") is False
+                   for model in (report.get("memory_models") or {}).values())
+
+
+def summary(report: dict) -> list[str]:
+    """The lines of the first check: where memory is kept, required and present, required and missing, optional
+    (off, then on), notes, the full report and the next step. Raises ValueError for a report of another shape."""
+    notes = report.get("environment_notes") or []
+    if not isinstance(notes, list):  # a string would be read one character at a time
+        raise ValueError("environment_notes is not a list")
+    missing = attention(report)
+    present = _engine_present(report)
+    present.append(SERVICE_RUNNING.format(url=report.get("service_url") or "its address")
+                   if report.get("service_running") else SERVICE_ON_DEMAND)
+    off, on = [], []
+    knowledge = report.get("knowledge_agent")
+    if knowledge == KNOWLEDGE_DISABLED:
+        off.append(MODELS_OFF)
+    elif _models_on(report):
+        on.append(MODELS_ON)
+    tmux = report.get("tmux") or {}
+    if tmux:
+        status = cockpit_status(tmux)
+        if status:
+            off.append(WORKSPACE_OFF.format(status=status, hint=platform_hints.hint("tmux_launch").rstrip(".")))
+        else:
+            on.append(WORKSPACE_ON)
+    for name, client in sorted((report.get("clients") or {}).items(), key=lambda item: (item[0] != "codex", item[0])):
+        if not isinstance(client, dict):
+            continue
+        label = CLIENT_NAMES.get(name, name)
+        if client.get("installed") and client.get("verified_resume"):
+            on.append(CLIENT_ON.format(client=label, command=name))
+        elif not client.get("installed"):
+            off.append(CLIENT_OFF.format(client=label, note=platform_hints.hint("client_note", client=name)))
+    lines = [DATA_DIR.format(data_dir=report.get("data_dir") or "its data directory"), REQUIRED_PRESENT]
+    lines += [f"  - {_line(item)}" for item in present]
+    if missing:
+        lines.append(REQUIRED_MISSING)
+        lines += [f"  - {item}" for item in missing]
+    else:
+        lines.append(NOTHING_MISSING)
+    for heading, items in ((OPTIONAL_OFF, off), (OPTIONAL_ON, on), (NOTES, notes)):
+        if items:
+            lines.append(heading)
+            lines += [f"  - {_line(item)}" for item in items]
+    lines += [FULL_REPORT, NEXT_FIX if missing else NEXT_START]
     return lines
 
 
@@ -98,17 +169,11 @@ def main() -> int:
         if not isinstance(report, dict) or not REPORT_KEYS <= report.keys():
             # Any other object, even {}, is not a report that found nothing (#244).
             raise ValueError("not a doctor report")
-        lines = attention(report)
+        lines = summary(report)
     except (ValueError, AttributeError, TypeError):  # a report of another shape: a sentence, never a traceback
-        print(f"The doctor report could not be read. {FULL_REPORT}")
+        print(f"{REPORT_UNREADABLE} {FULL_REPORT}")
         return 0
-    if lines:
-        print("Needs attention:")
-        for line in lines:
-            print(f"  - {line}")
-    else:
-        print("Nothing needs attention.")
-    print(FULL_REPORT)
+    print("\n".join(lines))
     return 0
 
 
