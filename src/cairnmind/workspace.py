@@ -36,6 +36,7 @@ SESSION = "cairnmind-ui"
 MINIMUM = (140, 42)
 DEFAULT_SIZE = (180, 55)
 _ROLES = ("sidebar", "client1", "client2", "inspector", "graph")
+STOP_ASKED = "stop-asked"
 
 
 def reusable_native_run(runs, project_id, worktree, client, slot_id):
@@ -356,6 +357,7 @@ class WorkspaceManager:
             with _private_lock(self.directory / "attach.lock"):
                 if not self.exists():
                     raise ValueError("The terminal workspace is not running.")
+                (self.directory / STOP_ASKED).unlink(missing_ok=True)
                 process = subprocess.Popen([self.binary, "-S", str(self.socket), "attach-session", "-r",
                                             "-f", "ignore-size", "-t", SESSION], env=_clean_env())
                 deadline = time.monotonic() + 8
@@ -368,7 +370,9 @@ class WorkspaceManager:
                     if process.poll() is None:
                         raise ValueError("The identity of the attaching terminal was not confirmed.")
             # No lock is held while the interactive client is attached.
-            return process.wait()
+            code = process.wait()
+            asked = (self.directory / STOP_ASKED).exists()
+            return 0 if code and asked else code
         finally:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -1051,6 +1055,8 @@ def stop_workspace(settings, stop_clients=False):
                 errors.append({"run_id": run_id, "code": "client_stop_unavailable"})
     running = manager.exists()
     if running:
+        # tmux ends its clients with code 1 when the server goes; this tells the attached launcher the person asked.
+        (manager.directory / STOP_ASKED).write_text("1")
         manager.tmux("kill-server")
     info = manager._supervisor_info()
     if info:
