@@ -1096,7 +1096,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         if not models_on:  # no model is asked; full-text matches, never an answer: not cached, logged or evaluated (#274)
             indexed = await asyncio.to_thread(index_project_if_changed, store, pid)
             pending = await asyncio.to_thread(index_pending_sources, store)
-            found = await inference.submit(lambda: knowledge_mode.text_matches(agent, pid, body.question, scope))
+            try:
+                found = await asyncio.wait_for(
+                    inference.submit(lambda: knowledge_mode.text_matches(agent, pid, body.question, scope)),
+                    timeout=settings.ask_timeout + 5)
+            except TimeoutError:  # bounded as the models path is; the timeout is said, not hidden
+                found = {"matches": [], "held_back": None, "left_out": True,
+                         "warnings": ["Waiting for the full-text search timed out."],
+                         "elapsed_seconds": settings.ask_timeout + 5}
             return knowledge_mode.unavailable_answer(found, [*indexed.get("errors", []), *pending.get("errors", [])])
         keep = body.log if body.log is not None else getattr(settings, "answer_log", False) is True
         code_state: dict = {}

@@ -14,7 +14,7 @@ import fcntl
 import time
 
 from . import config
-from .first_start import (ASK_NO_MATCH, ASK_OFF, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
+from .first_start import (ASK_LEFT_OUT, ASK_NO_MATCH, ASK_OFF, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
                           KNOWLEDGE_INVALID, MATCHES_HELD_BACK, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS,
                           RESTART_FOR_MODELS, SERVER_DOWN, TURNED_ON)
 
@@ -109,6 +109,8 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
     answer: unavailable_answer presents them."""
     from .agent import INITIAL_HITS
     from .memory_egress import ASK, ask_gate
+    if not isinstance(question, str) or not question.strip() or len(question) > 16000:
+        raise ValueError("Question must contain 1–16000 characters")  # as KnowledgeAgent._ask_impl refuses it
     started = time.monotonic()
     agent.retriever.warnings.clear()
     gate = ask_gate(agent.settings, agent.store)
@@ -121,9 +123,12 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
     finally:
         ASK.reset(token)
     matches = []
+    refreshed = 0
     for item in shown:
         if item.get("refreshed"):
-            continue  # the file changed since it was indexed: _hits shows its start, not a passage with the words
+            refreshed += 1  # the file changed since it was indexed: _hits shows its start, not a passage with the words
+            agent.retriever.warnings.append(f"Current source changed since it was indexed: {item.get('uri', '')}")
+            continue
         source = evidence[item["source_id"]]
         match = {"id": item["id"], "source_id": item["source_id"], "uri": item.get("uri", source["uri"]),
                  "kind": item.get("kind") or source["kind"], "match": "full_text"}
@@ -133,7 +138,10 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
         matches.append(match)
         if len(matches) == MATCH_LIMIT:
             break
-    return {"matches": matches, "held_back": gate.summary() if gate else None,
+    held_back = gate.summary() if gate else None
+    # Found but not shown: held by the gate, unverifiable on disk (_hits drops it) or changed since indexing.
+    left_out = bool(held_back) or len(shown) < len(hits) or refreshed > 0
+    return {"matches": matches, "held_back": held_back, "left_out": left_out,
             "warnings": list(dict.fromkeys(w[:240] for w in agent.retriever.warnings))[-8:],
             "elapsed_seconds": round(time.monotonic() - started, 3)}
 
@@ -146,7 +154,8 @@ def unavailable_answer(found: dict, index_errors=()) -> dict:
     diagnostics = {"stage": "ask", "code": UNAVAILABLE_CODE}
     if found["held_back"]:
         diagnostics["held_back"] = found["held_back"]
-    return {"status": "unavailable", "answer": ASK_OFF if found["matches"] else ASK_NO_MATCH, "sources": [],
+    answer = ASK_OFF if found["matches"] else ASK_LEFT_OUT if found["left_out"] else ASK_NO_MATCH
+    return {"status": "unavailable", "answer": answer, "sources": [],
             "full_text_matches": found["matches"], "unknowns": list(dict.fromkeys(unknowns))[:8],
             "freshness": {"warnings": [*found["warnings"], *errors][-8:]},
             "elapsed_seconds": found["elapsed_seconds"], "cached": False, "diagnostics": diagnostics}

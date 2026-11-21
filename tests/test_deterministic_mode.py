@@ -243,6 +243,7 @@ def test_ask_without_models_lists_full_text_matches_through_the_api_the_cli_and_
         nothing = post(question="zebra quokka")
         unknown = post(project="nothing", question="?")
         refused = post(question="?", session_id=foreign)
+        blank = post(question="   ")  # refused as with models, not answered "no passage"
         cli_result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), "ask", "demo", QUESTION])
         mcp_result = anyio.run(through_mcp)
         cached = httpx.get(f"{settings.url}/status", headers=headers, timeout=30).json()["cached_answers"]
@@ -260,6 +261,9 @@ def test_ask_without_models_lists_full_text_matches_through_the_api_the_cli_and_
     assert nothing.json()["full_text_matches"] == [] and nothing.json()["answer"] == first_start.ASK_NO_MATCH
     assert nothing.json()["status"] == "unavailable" and cached == 0
     assert unknown.status_code == 404 and refused.status_code == 400  # the project and the session are still checked
+    assert blank.status_code == 400 and "Question must contain" in blank.text
+    # NoGeneration.embed raises, but Retriever.asearch turns that into this warning: it would pass unseen
+    assert not any("Semantic query" in warning for warning in body["freshness"]["warnings"])
     assert cli_result.exit_code == 0, cli_result.output  # the convention for every answer status
     assert without_time(json.loads(cli_result.stdout)) == without_time(body)
     assert without_time(mcp_result) == without_time(body)
@@ -279,15 +283,17 @@ def test_full_text_matches_stay_in_the_project_the_worktree_and_the_session(work
     model = Untouched()
     headers = {"Authorization": f"Bearer {settings.token}"}
 
-    def names(client, **body):
+    def names(client, under, **body):
         reply = client.post("/ask", headers=headers, json={"project": "demo", "question": "ledger cents", **body})
         assert reply.status_code == 200, reply.text
-        return {match["uri"].rsplit("/", 1)[-1] for match in reply.json()["full_text_matches"]}
+        uris = [match["uri"] for match in reply.json()["full_text_matches"]]
+        assert all(uri.startswith(str(under)) for uri in uris), uris  # a basename alone would hide a leak
+        return {uri.rsplit("/", 1)[-1] for uri in uris}
 
     with TestClient(create_app(settings, start_worker=False, ollama=model)) as client:  # the lifespan runs the queue
-        assert names(client, worktree=str(root)) == {"notes.md"}  # not the feature root, not the other project
-        assert names(client, worktree=str(feature)) == {"feature.md"}
-        assert names(client, session_id=session["session_id"]) == {"feature.md"}  # the session's worktree
+        assert names(client, root, worktree=str(root)) == {"notes.md"}  # not the feature root, not the other project
+        assert names(client, feature, worktree=str(feature)) == {"feature.md"}
+        assert names(client, feature, session_id=session["session_id"]) == {"feature.md"}  # the session's worktree
     assert model.touched == []
 
 
@@ -298,8 +304,8 @@ async def test_full_text_matches_leave_out_what_ask_would_hold_back(tmp_path):
     pid = store.add_project("ledger", tmp_path)["id"]
     remote = {"provider": "openai_compatible", "base_url": "https://models.example/v1", "allow_remote": True}
 
-    def chunked(text, kind, uri):
-        source = store.snapshot(pid, uri, text, kind)
+    def chunked(text, kind, uri, metadata=None):
+        source = store.snapshot(pid, uri, text, kind, metadata=metadata)
         store.command("INSERT INTO chunks CONTENT :doc", {"doc": {
             "id": str(uuid4()), "project_id": pid, "source_id": source["id"], "text": text, "line_start": 1,
             "line_end": len(text.splitlines()), "metadata": {}, "is_current": True}})
@@ -317,10 +323,30 @@ async def test_full_text_matches_leave_out_what_ask_would_hold_back(tmp_path):
     assert doc["id"] in {match["source_id"] for match in found["matches"]}
     assert found["held_back"]["chunks"] >= 1 and found["held_back"]["records"] >= 1
     assert first_start.MATCHES_HELD_BACK in knowledge_mode.unavailable_answer(found)["unknowns"]
+    only_held = await knowledge_mode.text_matches(KnowledgeAgent(store, held, ollama=model), pid, "chose")
+    said = knowledge_mode.unavailable_answer(only_held)  # found, then held back: never "found no passage"
+    assert only_held["matches"] == [] and only_held["held_back"] and only_held["left_out"]
+    assert said["answer"] == first_start.ASK_LEFT_OUT and first_start.MATCHES_HELD_BACK in said["unknowns"]
+    external = chunked("An external report says the ledger is kept in Postgres.", "document", "notes://external",
+                       {"origin_evidence": "degraded", "origin_client": "external"})
     local = Settings(data_dir=tmp_path / "data", knowledge_agent="disabled")
     everything = await knowledge_mode.text_matches(KnowledgeAgent(store, local, ollama=model), pid, question)
     assert chat["id"] in {match["source_id"] for match in everything["matches"]} and everything["held_back"] is None
+    marked = [match for match in everything["matches"] if match["source_id"] == external["id"]]
+    assert marked and marked[0]["metadata"]["origin_evidence"] == "degraded"  # the mark of #177 survives
     assert model.touched == []
+
+
+async def test_a_file_changed_since_indexing_is_said_to_be_left_out(workspace):
+    from cairnmind.agent import KnowledgeAgent
+    settings, store, project, root = workspace
+    index_project_if_changed(store, project["id"])
+    (root / "notes.md").write_text("The ledger amounts are kept in cents, since the file was edited.\n")
+    found = await knowledge_mode.text_matches(KnowledgeAgent(store, settings, ollama=Untouched()), project["id"],
+                                              "ledger amounts")
+    assert found["matches"] == [] and found["left_out"]
+    assert any("changed since it was indexed" in warning and "notes.md" in warning for warning in found["warnings"])
+    assert knowledge_mode.unavailable_answer(found)["answer"] == first_start.ASK_LEFT_OUT
 
 
 def test_with_models_configured_ask_never_lists_matches(workspace, monkeypatch):

@@ -20,7 +20,7 @@ NEW_SENTENCES = [first_start.KNOWLEDGE_DISABLED, first_start.MODELS_NOT_CONFIGUR
                  first_start.SERVER_DOWN, first_start.MODEL_MISSING, first_start.CHOSE_ENABLED,
                  first_start.CHOSE_DISABLED, first_start.TURNED_ON, first_start.ASK_OFF, first_start.NEEDS_MODELS,
                  first_start.KNOWLEDGE_INVALID, first_start.RESTART_FOR_MODELS, first_start.ASK_NO_MATCH,
-                 first_start.MATCHES_HEADING, first_start.MATCHES_HELD_BACK]
+                 first_start.ASK_LEFT_OUT, first_start.MATCHES_HEADING, first_start.MATCHES_HELD_BACK]
 
 
 def test_a_config_from_before_0_13_counts_as_enabled_and_a_new_one_waits_for_init(tmp_path):
@@ -40,7 +40,17 @@ def test_a_config_from_before_0_13_counts_as_enabled_and_a_new_one_waits_for_ini
         knowledge_mode.enabled(new)
 
 
-NOTHING_FOUND = {"matches": [], "held_back": None, "warnings": [], "elapsed_seconds": 0.0}
+NOTHING_FOUND = {"matches": [], "held_back": None, "left_out": False, "warnings": [], "elapsed_seconds": 0.0}
+
+
+def test_found_but_left_out_is_never_said_to_be_nothing_found():
+    held = {**NOTHING_FOUND, "held_back": {"chunks": 1}, "left_out": True}
+    answer = knowledge_mode.unavailable_answer(held)
+    assert answer["answer"] == first_start.ASK_LEFT_OUT != first_start.ASK_NO_MATCH
+    assert first_start.MATCHES_HELD_BACK in answer["unknowns"] and answer["full_text_matches"] == []
+    dropped = knowledge_mode.unavailable_answer({**NOTHING_FOUND, "left_out": True, "warnings": ["a file changed"]})
+    assert dropped["answer"] == first_start.ASK_LEFT_OUT and dropped["freshness"]["warnings"] == ["a file changed"]
+    assert tr(first_start.ASK_LEFT_OUT, "pl") == first_start.MESSAGES[first_start.ASK_LEFT_OUT]
 
 
 def a_match(uri="notes.md", excerpt="The ledger stores amounts in cents."):
