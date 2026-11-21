@@ -18,6 +18,7 @@ from conftest import plain_words
 
 from cairnmind.config import Settings
 from cairnmind import integrations
+from cairnmind.store_writer import StoreNotWriter
 from cairnmind.mcp_server import ServiceClient, create_server
 
 TOOLS = {"ask", "remember", "checkpoint", "save_plan", "next_task", "resume_context", "ack_resume", "check_status"}
@@ -593,6 +594,18 @@ def test_partial_preflight_message_at_the_command_line_has_no_stable_code(settin
     assert str(refused.value) == "Verified resume is partial; native launch blocked. a gap"
     with pytest.raises(ValueError, match="^resume_partial: Verified resume is partial"):  # the workspace still reads the code
         integrations.prepare_client_launch(settings, project, "codex")
+
+
+def test_run_client_keeps_the_type_of_other_launch_errors(settings, project, installed, monkeypatch):
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: f"/native/{name}")
+
+    def refuse(*a):
+        raise StoreNotWriter("reader")
+
+    monkeypatch.setattr(integrations, "_prepare_session", refuse)
+    with pytest.raises(StoreNotWriter):
+        integrations.run_client(settings, project, "codex")
+
 
 def test_unverified_capability_refuses_before_preparation(settings, project, installed, monkeypatch):
     installed["verified_resume"] = False
