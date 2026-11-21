@@ -27,6 +27,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -560,6 +561,23 @@ class SchemaTemplate:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
 
+def engine_threads(log: Path, wait: float = 1.5) -> str:
+    """What the test engine's Java threads are doing right now, for the stall report (#221).
+
+    SIGQUIT makes a JVM print its threads to its output, which is engine.log, and go on running. It is sent only
+    to a process whose command line is the ArcadeDB server: for anything else SIGQUIT would be the end.
+    """
+    pid = int(json.loads((log.parent / "process.json").read_text())["pid"])
+    if not any("arcadedb" in part.lower() for part in process_identity.command_line(pid) or []):
+        return f"(none taken: process {pid} is not the engine)"
+    before = log.stat().st_size
+    os.kill(pid, signal.SIGQUIT)
+    time.sleep(wait)
+    with log.open("rb") as handle:
+        handle.seek(before)
+        return handle.read(80_000).decode(errors="replace")
+
+
 def explained_when_unavailable(settings: Settings, original):
     """A request the test engine does not answer says, in the failing test's captured stderr, what it waited for (#221).
 
@@ -585,6 +603,7 @@ def explained_when_unavailable(settings: Settings, original):
                     print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path} {statement!r}; "
                           f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
                           f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
+                    print("engine threads:\n" + engine_threads(log), file=sys.stderr)
                 except Exception as problem:
                     print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path}; the report failed: {problem!r}",
                           file=sys.stderr)

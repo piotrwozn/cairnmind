@@ -267,11 +267,28 @@ class Settings:
                                ("arcade_ca_file", "ARCADE_CA_FILE"),
                                ("arcade_connect_url", "ARCADE_CONNECT_URL"),
                                ("java_executable", "JAVA_EXECUTABLE"),
-                               ("tmux_executable", "TMUX_EXECUTABLE")):
-            override = env_value(variable)
-            if override is not None:
-                values[name] = override
-                kept[name] = (stored.get(name), override)
+                               ("tmux_executable", "TMUX_EXECUTABLE"),
+                               ("port", "PORT"),
+                               ("cockpit_port", "COCKPIT_PORT"),
+                               ("ollama_url", "OLLAMA_URL")):
+            spelling = ENV_PREFIXES[0] + variable
+            if name in ("port", "cockpit_port", "ollama_url"):
+                # an empty variable (a project file can forward one) names nothing: the first spelling that is not empty
+                spelling = next((key for key in env_names(variable) if os.environ.get(key)), None)
+                override = os.environ[spelling] if spelling else None
+            else:
+                override = env_value(variable)
+            if override is None:
+                continue
+            if name in ("port", "cockpit_port"):
+                try:
+                    override = int(override)
+                    if not 0 < override < 65536:
+                        raise ValueError
+                except ValueError:
+                    raise ValueError(f"{spelling} must be a port number from 1 to 65535.") from None
+            values[name] = override
+            kept[name] = (stored.get(name), override)
         # Connect-only (#68): arcade_connect_url is the address. The stored arcade_url stays as it is in
         # config.json, so that removing the setting brings the managed engine back.
         connect, conflict = values.get("arcade_connect_url") or "", None
