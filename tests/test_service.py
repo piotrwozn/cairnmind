@@ -290,6 +290,23 @@ def test_embedding_digest_rebuild_preserves_sources(workspace):
     assert store.query("SELECT count(*) AS n FROM jobs WHERE kind='embed'")[0]["n"] == len(jobs)
 
 
+def test_a_failed_embed_job_gets_a_fresh_job_on_repair_and_on_a_new_namespace(workspace):
+    from cairnmind.ingest import index_project
+    from cairnmind.service import schedule_embeddings
+    settings, store, project, root = workspace
+    index_project(store, project["id"])
+    chunks = store.query("SELECT count(*) AS n FROM chunks")[0]["n"]
+    for job in store.query("SELECT id FROM jobs WHERE kind='embed'"):
+        store.finish_job(job["id"], "model timed out")
+    pending = "SELECT count(*) AS n FROM jobs WHERE kind='embed' AND state='pending'"
+    assert store.query(pending)[0]["n"] == 0
+    assert schedule_embeddings(store, "embed@one") == chunks
+    assert store.query(pending)[0]["n"] == chunks
+    store.command("UPDATE jobs SET state='failed' WHERE kind='embed' AND state='pending'")
+    assert schedule_embeddings(store, "embed@two") == chunks  # A new namespace gets its own fresh job.
+    assert store.query(pending)[0]["n"] == chunks
+
+
 @pytest.mark.asyncio
 async def test_jobs_of_the_earlier_embedding_key_embed_nothing_twice(workspace):
     """An installation upgraded from 0.12.0 may hold both keys per chunk: neither is lost, one embeds."""

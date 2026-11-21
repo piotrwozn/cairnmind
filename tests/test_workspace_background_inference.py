@@ -125,9 +125,14 @@ def test_empty_claim_filter_never_consumes_any_project_and_scoped_repair_stays_s
     before = store.query("SELECT id FROM jobs")
     assert schedule_embeddings(store, "empty-filter", project_ids=[]) == 0
     assert store.query("SELECT id FROM jobs") == before
-    before = store.query("SELECT id FROM jobs WHERE project_id=:p", {"p": b["id"]})
-    schedule_embeddings(store, "only-a", project_ids=[a["id"]])
-    assert store.query("SELECT id FROM jobs WHERE project_id=:p", {"p": b["id"]}) == before
+    from cairnmind.ingest import index_project
+    index_project(store, b["id"])  # B gets chunks without vectors, whose embed jobs are done.
+    store.command("UPDATE jobs SET state='completed' WHERE kind='embed' AND project_id=:p", {"p": b["id"]})
+    rows = "SELECT id,state FROM jobs WHERE project_id=:p ORDER BY id"
+    before = store.query(rows, {"p": b["id"]})
+    assert any(row["state"] == "completed" for row in before)
+    assert schedule_embeddings(store, "only-a", project_ids=[a["id"]]) == 0
+    assert store.query(rows, {"p": b["id"]}) == before
 
 
 def test_enable_requires_auth_registered_scope_and_current_ack_but_ack_alone_does_not_enable(memory):
