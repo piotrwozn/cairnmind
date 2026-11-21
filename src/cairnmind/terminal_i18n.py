@@ -208,6 +208,8 @@ CATALOG = {
     "Ctrl+S: save · Esc: cancel": "Ctrl+S: zapisz · Esc: anuluj",
     "PgUp/PgDn: scroll · Esc: close": "PgUp/PgDn: przewiń · Esc: zamknij",
     "PgUp/PgDn: scroll · Esc: cancel": "PgUp/PgDn: przewiń · Esc: anuluj",
+    "PgUp/PgDn: scroll · Tab: switch · Esc: cancel": "PgUp/PgDn: przewiń · Tab: przełącz · Esc: anuluj",
+    "Tab: switch · Esc: cancel": "Tab: przełącz · Esc: anuluj",
     "Ctrl+S: {action} · Esc: cancel": "Ctrl+S: {action} · Esc: anuluj",
     "Esc: close": "Esc: zamknij", "Esc: cancel": "Esc: anuluj", "Dismiss menu": "Zamknij menu",
     "No matching commands.": "Brak pasujących poleceń.",
