@@ -296,12 +296,23 @@ def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker
     result = run(show_flag=True)
     assert result.returncode == 0 and "Docker" not in result.stdout + result.stderr
     assert "engine_in_docker=false" in result.stdout
-    # A Docker that does not answer changes nothing: the Java message is the end.
+    # A Docker that does not answer is not an engine: the Java message stays and names both ways (#285).
     (bin_dir / "java").unlink()
-    tool(bin_dir / "docker", "echo 'Cannot connect to the Docker daemon' >&2; exit 1")
+    # Like docker/cli: an empty line on stdout, then the error on stderr. Like the Docker Desktop stub in WSL: a bare echo first.
+    tool(bin_dir / "docker", "echo; echo 'Cannot connect to the Docker daemon' >&2; echo second line >&2; exit 1")
     result = run()
     assert result.returncode == 1 and "Docker" not in result.stdout and "passed" not in result.stdout
-    assert result.stderr == f"Java not found. Install Java 21+: {hint}\n"
+    assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
+                             "Docker is on the path but did not answer (it said: Cannot connect to the Docker daemon). "
+                             f"Either start Docker and run the installer again, so the engine runs in Docker, "
+                             f"or install Java 21+: {hint}\n")
+    tool(bin_dir / "docker", "echo; echo 'The command docker could not be found in this WSL 2 distro.'; exit 1")
+    result = run()
+    assert "(it said: The command docker could not be found in this WSL 2 distro.)" in result.stderr
+    # No docker on the path: exactly the old message.
+    (bin_dir / "docker").unlink()
+    result = run()
+    assert result.returncode == 1 and result.stderr == f"Java not found. Install Java 21+: {hint}\n"
     # With Docker, the install branch runs init and does not download an engine.
     script = SCRIPT.read_text()
     branch = script.index('elif [[ "$engine_in_docker" == true ]]; then')
@@ -350,7 +361,7 @@ def test_the_macos_guide_says_what_the_script_does():
     # Every message the troubleshooting table quotes is one the script prints.
     table = guide[guide.index("## Troubleshooting"):]
     for message in ("Java not found", "macOS answers so when no JDK is installed", "Version 3.4+ is required",
-                    "Java 21+ is required"):
+                    "Java 21+ is required", "Docker is on the path but did not answer"):
         assert message in table and message in script, message
 
 
