@@ -58,7 +58,11 @@ def address(settings) -> str:
     """The database address as a message or a report may show it: never with a user, a password, a query
     or a fragment. ArcadeClient refuses such an address and sends nothing, but what a person typed there
     by mistake must not come back in `doctor`, `engine status` or a refusal that gets pasted elsewhere."""
-    url = settings.arcade_url
+    return shown(settings.arcade_url)
+
+
+def shown(url) -> str:
+    """Any address (the database's, a model server's) as a message may show it: see address."""
     if isinstance(url, str) and not any(mark in url for mark in "@?#"):
         return url
     try:
