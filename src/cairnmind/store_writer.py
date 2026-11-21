@@ -339,9 +339,8 @@ def claimed_meanwhile(client, me: Installation, error, *, wait: float = CLAIM_WA
     in between) the caller raises ``error`` as it was, and the same command run again finishes the store.
     """
     import time
-    text = str(error)
-    if getattr(error, "status_code", None) != 503 or not (
-            "Concurrent modification" in text or "retry the operation" in text or "Duplicated key" in text):
+    # The exception name is in the body in every server mode; the detail text is only in development mode.
+    if getattr(error, "status_code", None) != 503 or "ConcurrentModification" not in getattr(error, "exception_name", ""):
         return None
     deadline = time.monotonic() + wait
     while True:

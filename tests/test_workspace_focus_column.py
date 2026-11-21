@@ -32,11 +32,14 @@ VIEWS = ("sidebar", "client1", "client2", "inspector", "graph")
 PROGRAM = """import os, signal, sys, time
 log, mark = sys.argv[1], sys.argv[2]
 def record(*_):
-    size = os.get_terminal_size(0)
-    with open(log, "a") as handle:
-        handle.write(f"{size.columns} {size.lines}\\n")
-    sys.stdout.write("\\033[2J\\033[H" + mark + "\\n")
-    sys.stdout.flush()
+    while True:  # a SIGWINCH between the read and the write runs this nested: the older size must not be written last (#221)
+        size = os.get_terminal_size(0)
+        with open(log, "a") as handle:
+            handle.write(f"{size.columns} {size.lines}\\n")
+        sys.stdout.write("\\033[2J\\033[H" + mark + "\\n")
+        sys.stdout.flush()
+        if os.get_terminal_size(0) == size:
+            return
 signal.signal(signal.SIGWINCH, record)
 record()
 while True:
@@ -200,7 +203,7 @@ def test_switching_views_keeps_the_column_every_process_and_every_coding_pane_si
         # No coding pane got a SIGWINCH while views were switched: none was resized, shown or not.
         assert settled(workspace) == logged
     assert {role: value[1:] for role, value in after.items()} == {role: value[1:] for role, value in before.items()}
-    assert logged["client1"][-1] == logged["client2"][-1] == f"{160 - ACTIVITY_WIDTH - 1} {before['client1'][2]}"
+    assert logged["client1"][-1] == logged["client2"][-1] == f"{160 - ACTIVITY_WIDTH - 1} {before['client1'][2]}", logged
 
 
 def caught_up(workspace, found, timeout=30):

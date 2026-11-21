@@ -33,7 +33,8 @@ import sys
 import tempfile
 import termios
 import threading
-from urllib.parse import quote
+import time
+from urllib.parse import quote, urlparse
 import uuid
 import zlib
 
@@ -381,6 +382,32 @@ def no_inherited_session():
     os.environ.update(removed)
 
 
+@pytest.fixture(autouse=True)
+def no_foreign_service():
+    """No test in this process reaches whatever listens on the default service, cockpit or Ollama port (#221).
+
+    A test whose data directory names no port of its own would otherwise ask the Cairnmind installed on the
+    machine that runs the tests (its own token is refused: "Invalid local service token") or its Ollama. Such a
+    connection now fails as it does when nothing listens there. By hand, not monkeypatch, for the reason above.
+    """
+    defaults = Settings(data_dir=Path("."))
+    foreign = {defaults.port, defaults.cockpit_port, urlparse(defaults.ollama_url).port}
+    connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
+
+    def refused(original):
+        def guarded(self, address):
+            if isinstance(address, tuple) and len(address) > 1 and address[1] in foreign:
+                if original is connect_ex:
+                    return 111  # ECONNREFUSED
+                raise ConnectionRefusedError(111, f"the test never connects to the default port {address[1]}")
+            return original(self, address)
+        return guarded
+
+    socket.socket.connect, socket.socket.connect_ex = refused(connect), refused(connect_ex)
+    yield
+    socket.socket.connect, socket.socket.connect_ex = connect, connect_ex
+
+
 MCP_FIXTURE_SOURCE = Path(__file__).parent / "fixtures" / "mcp_fixture_server.py"
 # The path every test starts the fixture server by. pytest_configure replaces it with this pytest
 # process's own copy, so that the servers and children of one xdist worker can be told from those of
@@ -518,6 +545,38 @@ class SchemaTemplate:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
 
+def explained_when_unavailable(settings: Settings, original):
+    """A request the test engine does not answer says, in the failing test's captured stderr, what it waited for (#221).
+
+    One CREATE PROPERTY once got no answer in 30 s and nothing in the report showed whether the engine was busy,
+    stuck or gone. Costs nothing unless a request fails with "unavailable" after more than 5 s (a refused
+    connection is instant and says nothing here); the error itself is raised unchanged.
+    """
+    def request(client, method, path, **kwargs):
+        started = time.monotonic()
+        try:
+            return original(client, method, path, **kwargs)
+        except ArcadeError as exc:
+            if "unavailable" in str(exc) and time.monotonic() - started > 5:  # a stall: not a refused connection
+                waited = time.monotonic() - started
+                try:  # a sick engine may answer badly too: nothing here may replace the error being raised
+                    statement = str((kwargs.get("json") or {}).get("command", ""))[:200]
+                    try:
+                        open_databases = len(original(client, "GET", "/api/v1/databases", timeout=2).json().get("result", []))
+                    except Exception as probe:
+                        open_databases = f"no usable answer to the next request either ({probe!r})"
+                    log = settings.data_dir / "arcade" / "engine.log"
+                    tail = log.read_text(errors="replace").splitlines()[-15:] if log.exists() else []
+                    print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path} {statement!r}; "
+                          f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
+                          f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
+                except Exception as problem:
+                    print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path}; the report failed: {problem!r}",
+                          file=sys.stderr)
+            raise
+    return request
+
+
 @pytest.fixture(scope="session")
 def arcade_test_engine(tmp_path_factory, request):
     # Both spellings: a developer's exported earlier name must not reach the test engine either.
@@ -550,7 +609,8 @@ def arcade_test_engine(tmp_path_factory, request):
                "CAIRNMIND_ARCADE_PASSWORD": settings.arcade_password,
                "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
     os.environ.update(changes)
-    original_ensure = ArcadeClient.ensure_database
+    original_ensure, original_request = ArcadeClient.ensure_database, ArcadeClient._request
+    ArcadeClient._request = explained_when_unavailable(settings, original_request)
     template = None
     try:
         # Built inside the try: a schema that fails to initialise must still stop the engine and restore the environment.
@@ -558,7 +618,7 @@ def arcade_test_engine(tmp_path_factory, request):
         ArcadeClient.ensure_database = template.ensure_database(original_ensure)
         yield settings, prefix, template
     finally:
-        ArcadeClient.ensure_database = original_ensure
+        ArcadeClient.ensure_database, ArcadeClient._request = original_ensure, original_request
         if template is not None:
             template.remove()
         for name in changes:

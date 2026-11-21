@@ -497,7 +497,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             self.notice_for(about(project_id), self.t("The project changed during review. Nothing was saved."), "warn")
             return
         payload = {"project": project_id, "action": action,
-                   "expected_version": record["version"], "reason": form["reason"]}
+                   "expected_version": record["version"], "reason": form["reason"], "worktree": self.workspace_data.get("worktree")}
         if plan_version is not None:
             payload["expected_plan_version"] = plan_version
         try:
@@ -542,7 +542,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             return
         payload = {"project": project_id, "record_id": first["id"], "other_id": second["id"], "action": action,
                    "expected_version": first["version"], "other_expected_version": second["version"],
-                   "reason": form["reason"]}
+                   "reason": form["reason"], "worktree": self.workspace_data.get("worktree")}
         if action == "supersede":
             payload["keep"] = first["id"] if choice == "keep-first" else second["id"]
         try:
