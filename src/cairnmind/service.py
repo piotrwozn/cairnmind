@@ -344,6 +344,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         raise ValueError("Cairnmind must bind to a loopback address")
     if not settings.token:
         raise ValueError("Run cairnmind init to create a local authentication token")
+    from cairnmind import knowledge_mode
+    models_on = knowledge_mode.enabled(settings)  # read once, here; an invalid value stops the start (#274)
     store = Store(settings.data_dir)
     # A caller sends a path as an absolute one; a relative one would be read from the service's directory (#238).
     store.relative_paths = False
@@ -383,8 +385,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         background_ready.set()
 
     def inference_status():
-        return {"worker_running": start_worker,
-                "mode": ("disabled" if not start_worker else "all_projects" if background_inference
+        running = start_worker and models_on  # without models nothing processes memory, so none is claimed
+        return {"worker_running": running,
+                "mode": ("disabled" if not running else "all_projects" if background_inference
                          else "selected_projects" if inference_projects else "deferred"),
                 "project_ids": sorted(inference_projects)}
 
@@ -570,11 +573,12 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         tasks = [asyncio.create_task(inference.run())]
-        if fingerprint_client is not None:
+        if fingerprint_client is not None and models_on:
             tasks.append(asyncio.create_task(fingerprint_start()))
         if start_worker:
-            tasks += [asyncio.create_task(scanner()), asyncio.create_task(jobs()),
-                      asyncio.create_task(memory_snapshots())]
+            tasks += [asyncio.create_task(scanner()), asyncio.create_task(memory_snapshots())]
+            if models_on:  # held: without models the embed and extract jobs stay pending, asked of nobody (#274)
+                tasks.append(asyncio.create_task(jobs()))
         try:
             yield
         finally:
@@ -703,10 +707,13 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pipeline = await asyncio.to_thread(store.job_summary, pid)
         writer = await asyncio.to_thread(store.writer_state)
         from cairnmind.database_mode import address, describe
-        return {**result, "writer": writer, "storage": {**describe(settings), "url": address(settings)},
-                "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
-                "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
-                "recent_job_errors": error_rows}
+        report = {**result, "writer": writer, "storage": {**describe(settings), "url": address(settings)},
+                  "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
+                  "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
+                  "recent_job_errors": error_rows}
+        if not models_on:
+            report.update(knowledge_mode.status_fields(pipeline))
+        return report
 
     def selected_memory_scope(pid: str, requested: str | None, scope: str | None):
         if scope and requested and str(Path(requested).expanduser().resolve()) != scope:
@@ -1086,6 +1093,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         answer_schema = prepare_answer_schema(body.answer_schema)
         contract_key = json.dumps(answer_schema, sort_keys=True, separators=(",", ":"))
         scope = await asyncio.to_thread(read_scope, pid, body.worktree, body.session_id)
+        if not models_on:  # no model is asked, and nothing is indexed, cached or logged (#274)
+            return knowledge_mode.unavailable_answer()
         keep = body.log if body.log is not None else getattr(settings, "answer_log", False) is True
         code_state: dict = {}
         def code_identity():
