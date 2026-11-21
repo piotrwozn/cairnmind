@@ -27,6 +27,7 @@ import tomlkit
 from tomlkit.items import Comment, Table
 
 from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
+from .first_start import CLIENT_SKIPPED, TRUST_NOTE
 
 # The name of the MCP server in client configuration, and the markers around what install manages.
 # Entries and blocks written under the earlier name are recognised and converted in place.
@@ -676,7 +677,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         except (ValueError, OSError) as exc:
             results["warnings"].append(str(exc))
         if not info["installed"]:
-            results["warnings"].append(f"{client} is not installed; MCP/hooks were not configured.")
+            results["warnings"].append(CLIENT_SKIPPED.format(client=client))
             continue
         operations = []
         if info["mcp"]:
@@ -701,7 +702,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
-    results["warnings"].append("Native project/MCP/hook trust must be reviewed in the clients; no trust is bypassed.")
+    results["warnings"].append(TRUST_NOTE)
     return results
 
 

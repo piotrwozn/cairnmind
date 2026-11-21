@@ -555,7 +555,7 @@ def init(ctx: typer.Context):
     said = choose(ctx.obj)  # the first run chooses whether the knowledge agent has models, and says which (#274)
     if said:
         typer.echo(f"Cairnmind: {said}", err=True)
-    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
+    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor, then cairnmind project add NAME FOLDER"}
     result["knowledge_agent"] = "enabled" if enabled(ctx.obj) else "disabled"
     if not connect_only(ctx.obj):
         result["engine_mode"] = engine_mode(ctx.obj)
@@ -768,6 +768,17 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg):
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
     output({"project": project, "indexed": result, "history": discovery})
+    import shlex
+    from cairnmind import first_start
+    from cairnmind.brief import _git_out
+    from cairnmind.terminal_safe import safe_text
+    shown = safe_text(str(root))
+    _tell(first_start.PROJECT_ADDED.format(project=shlex.quote(safe_text(name)), root=shown,
+                                           files=result.get("files", 0)))
+    if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
+        _tell(first_start.NOT_GIT.format(root=shown))
+    elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
+        _tell(first_start.NO_COMMIT.format(root=shown))
 
 
 @projects_app.command("list")
@@ -842,6 +853,8 @@ def brief(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None,
         output(result)
     else:
         typer.echo(result["text"])
+        if result.get("next"):
+            typer.echo(result["next"])
 
 
 @app.command()
@@ -1171,6 +1184,12 @@ def remember(ctx: typer.Context, project: ProjectArg,
         refuse(f"Record {exc.record_id} already holds the key {key!r} for a {kind}. Nothing was saved. Use "
                "another key, or dispute or decide that record in the inspector.")
     output(result)
+    if not confirmed:
+        import shlex
+        from cairnmind import first_start
+        from cairnmind.terminal_safe import safe_text
+        _tell(first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind),
+                                                   project=shlex.quote(safe_text(project))))
 
 
 @app.command()
@@ -1860,7 +1879,22 @@ def install(ctx: typer.Context, project: ProjectArg):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
     store = store_for(ctx.obj)
-    output(install_integrations(ctx.obj, store.resolve_project(project)))
+    selected = store.resolve_project(project)
+    result = install_integrations(ctx.obj, selected)
+    output(result)
+    import shlex
+    from cairnmind import first_start
+    from cairnmind.terminal_safe import safe_text
+    root = Path(selected["root"]).resolve()
+    files = ", ".join(safe_text(os.path.relpath(path, root)) for path in result["changed"]) or first_start.NOTHING_WRITTEN
+    connected = [name for name, info in result["clients"].items() if info.get("installed")]
+    name = shlex.quote(safe_text(selected["name"]))
+    if connected:
+        _tell(first_start.INSTALL_DONE.format(
+            clients=", ".join(first_start.CLIENT_NAMES.get(client, client) for client in connected), files=files,
+            project=name, command=connected[0]))
+    else:
+        _tell(first_start.INSTALL_NO_CLIENT.format(files=files, project=name))
 
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

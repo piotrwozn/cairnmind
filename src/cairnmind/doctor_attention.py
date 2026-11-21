@@ -13,7 +13,7 @@ import sys
 from . import platform_hints
 from .engine_docker import DOCKER_ATTENTION
 from .first_start import (
-    CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_READY, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED,
+    CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_READY, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED,
     MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE,
     REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WHERE_CONNECT,
     WHERE_DOCKER, WHERE_NATIVE, WORKSPACE_OFF, WORKSPACE_ON, cockpit_status)
@@ -22,7 +22,6 @@ from .terminal_safe import safe_text
 # Keys every doctor report has; an object without all of them (`cairnmind init` prints one with data_dir alone)
 # is not a report that found nothing.
 REPORT_KEYS = frozenset({"environment_notes", "data_dir", "store_writer"})
-CLIENT_NAMES = {"codex": "Codex", "claude": "Claude Code"}
 
 
 def _line(text: object) -> str:

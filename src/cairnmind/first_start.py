@@ -54,6 +54,8 @@ KNOWLEDGE_INVALID = "knowledge_agent in config.json is {value}; it must be enabl
 RESTART_FOR_MODELS = ("knowledge_agent is enabled in config.json, but this service started without models. Restart "
                       "the knowledge service (cairnmind stop, then start Cairnmind again) so that it uses them.")
 
+CLIENT_NAMES = {"codex": "Codex", "claude": "Claude Code"}  # as the first start's sentences call the clients
+
 # The doctor summary (#287): what is required and present, required and missing, optional and off.
 DATA_DIR = "Memory is kept in {data_dir}."
 REQUIRED_PRESENT = "Required and present:"
