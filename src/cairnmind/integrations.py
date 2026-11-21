@@ -27,7 +27,8 @@ import tomlkit
 from tomlkit.items import Comment, Table
 
 from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
-from .first_start import CLIENT_SKIPPED, TRUST_NOTE
+from .first_start import (CLIENT_SKIPPED, LAUNCH_REFUSED, PART_CONTRACT, PART_HOOKS, PART_INSTRUCTIONS, PART_MCP,
+                          TRUST_NOTE)
 
 # The name of the MCP server in client configuration, and the markers around what install manages.
 # Entries and blocks written under the earlier name are recognised and converted in place.
@@ -791,9 +792,11 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     for warning in installation["warnings"]:
         print(f"Cairnmind: {warning}", file=sys.stderr)
     info = installation["clients"][client]
-    if not info.get("verified_resume") or not all(info.get(key) for key in
-            ("mcp_configured", "hooks_configured", "instructions_configured")):
-        raise ValueError(f"Verified {client} launch refused: native MCP, hook, packet bootstrap and session binding must be supported and configured; run cairnmind doctor and review integration warnings")
+    parts = [label for key, label in (("verified_resume", PART_CONTRACT), ("mcp_configured", PART_MCP),
+                                      ("hooks_configured", PART_HOOKS), ("instructions_configured", PART_INSTRUCTIONS))
+             if not info.get(key)]
+    if parts:
+        raise ValueError(LAUNCH_REFUSED.format(client=client, missing=", ".join(parts)))
     prepared = _prepare_session(settings, project, client, root, args)
     if prepared.get("status") != "ready":
         unknowns = "; ".join(str(value) for value in prepared.get("unknowns", []))

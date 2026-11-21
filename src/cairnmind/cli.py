@@ -8,6 +8,7 @@ import os
 from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
+import shutil
 import subprocess
 import sys
 import time
@@ -28,7 +29,9 @@ from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
 
 app = typer.Typer(no_args_is_help=False, pretty_exceptions_enable=False,
-                  help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot.")
+                  help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot. Start: "
+                       "cairnmind doctor, then cairnmind project add NAME FOLDER, cairnmind remember NAME TEXT and "
+                       "cairnmind brief NAME.")
 projects_app = typer.Typer(help="The registry of projects and their folders.")
 tasks_app = typer.Typer(help="Shared plan steps, their states and verification evidence.")
 models_app = typer.Typer(help="The knowledge agent's models: the local Ollama, or a server you choose.")
@@ -338,8 +341,8 @@ def _service_unavailable(settings: Settings) -> str:
         return (f"{safe_text(role.get('reason') or '')} This command asks the running service, which only the "
                 "writer runs. Here `cairnmind store writer` and `cairnmind doctor` show this installation's role, "
                 "and the commands that only read the store work.").strip()
-    return ("The existing Cairnmind service is unavailable; diagnostics do not start it. "
-            "Run `cairnmind serve` explicitly.")
+    from cairnmind.first_start import STATUS_NOT_RUNNING
+    return STATUS_NOT_RUNNING
 
 
 class ServiceRefusal(Exception):
@@ -1919,7 +1922,16 @@ def run(ctx: typer.Context, project: ProjectArg, client: ClientArg, worktree: Pa
     args = list(ctx.args)
     if args[:1] == ["--"]:
         args = args[1:]
-    raise typer.Exit(run_client(ctx.obj, selected, client, args))
+    try:
+        code = run_client(ctx.obj, selected, client, args)
+    except ValueError as exc:
+        if shutil.which(client) is not None:
+            raise
+        # The client is not here: where to get it, and what works without one (the workspace words this its own way).
+        from cairnmind.first_start import RUN_NO_CLIENT
+        urls = {"codex": "https://developers.openai.com/codex/cli", "claude": "https://code.claude.com/docs/en/setup"}
+        raise ValueError(f"{str(exc).rstrip('.')}. {RUN_NO_CLIENT.format(url=urls.get(client, 'its own instructions'))}") from None
+    raise typer.Exit(code)
 
 
 @app.command()

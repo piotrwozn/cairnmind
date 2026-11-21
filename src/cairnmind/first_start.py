@@ -16,8 +16,8 @@ WORKSPACE_NEEDS = "The terminal workspace needs tmux 3.4 or newer."
 TMUX_NOT_FOUND = "tmux was not found."
 TMUX_FOUND = "Found {version}."
 TMUX_SILENT = "tmux did not report its version."
-WITHOUT_WORKSPACE = ("Without it, these commands work: cairnmind serve, cairnmind run, cairnmind mcp and "
-                     "cairnmind brief.")
+WITHOUT_WORKSPACE = ("Without it, every other command works, for example cairnmind brief, cairnmind remember, "
+                     "cairnmind ask and cairnmind run.")
 COCKPIT_MISSING = "unavailable (tmux 3.4+ not found)"
 COCKPIT_OLD = "unavailable (tmux 3.4+ not found; found {version})"
 COCKPIT_OTHER = "unavailable (tmux 3.4+ not found; {code})"
@@ -148,8 +148,8 @@ MESSAGES = {
     TMUX_NOT_FOUND: "Nie znaleziono tmux.",
     TMUX_FOUND: "Znaleziono {version}.",
     TMUX_SILENT: "tmux nie podał swojej wersji.",
-    WITHOUT_WORKSPACE: ("Bez niego działają polecenia: cairnmind serve, cairnmind run, cairnmind mcp i "
-                        "cairnmind brief."),
+    WITHOUT_WORKSPACE: ("Bez niego działają wszystkie inne polecenia, na przykład cairnmind brief, cairnmind "
+                        "remember, cairnmind ask i cairnmind run."),
     COCKPIT_MISSING: "niedostępny (nie znaleziono tmux 3.4+)",
     COCKPIT_OLD: "niedostępny (nie znaleziono tmux 3.4+; znaleziono {version})",
     COCKPIT_OTHER: "niedostępny (nie znaleziono tmux 3.4+; {code})",

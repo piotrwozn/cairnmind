@@ -17,7 +17,8 @@ from cairnmind.config import Settings
 from cairnmind.terminal_i18n import tr
 
 STATES = ["missing", "3.3a", "3.5a"]
-SENTENCE_TAIL = "Without it, these commands work: cairnmind serve, cairnmind run, cairnmind mcp and cairnmind brief."
+SENTENCE_TAIL = ("Without it, every other command works, for example cairnmind brief, cairnmind remember, "
+                 "cairnmind ask and cairnmind run.")  # #287: the commands that work, the first start's own
 
 
 @pytest.fixture
