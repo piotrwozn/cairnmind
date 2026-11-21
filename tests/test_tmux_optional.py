@@ -5,6 +5,7 @@ stand-in script on a PATH of its own that records its calls, and the data direct
 a test forgot to fake is refused at once.
 """
 import json
+import os
 import stat
 import sys
 import types
@@ -175,3 +176,119 @@ def test_the_installer_view_of_doctor_says_cockpit_unavailable():
     assert lines({"code": "tmux_unsupported", "version": "tmux 3.3a"}) == [
         "cockpit: unavailable (tmux 3.4+ not found; found tmux 3.3a)"]
     assert lines({"code": "ready"}) == []
+
+
+# --- every other command works without tmux (no gate on it exists; these keep one from appearing) -----------------
+
+class FakeStore:
+    """The part of the store these commands touch; the fast tier has no database."""
+    not_writer = None
+    confirmations_before_rule = None
+
+    def __init__(self, root):
+        self.root = root
+
+    def resolve_project(self, project):
+        return {"id": "p1", "name": "demo", "root": str(self.root)}
+
+    def transaction(self):
+        from contextlib import nullcontext
+        return nullcontext()
+
+    def read_consistently(self, read, kinds):
+        return read()[1]
+
+    def query(self, *args, **kwargs):
+        return []
+
+
+def _invoke(data, *args):
+    from typer.testing import CliRunner
+    return CliRunner().invoke(cli.app, ["--data-dir", str(data), *args])
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_init_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
+    from cairnmind import database_mode, engine_docker
+    tmux(state)
+    monkeypatch.setattr(engine_docker, "choose_engine_mode", lambda settings: None)
+    monkeypatch.setattr(database_mode, "connect_only", lambda settings: False)
+    monkeypatch.setattr(database_mode, "engine_mode", lambda settings: "native")
+    monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))
+    result = _invoke(data, "init")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["data_dir"] == str(data)
+    assert tmux.calls() == []
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_serve_starts_without_tmux(monkeypatch, data, tmux, state):
+    import uvicorn
+    from cairnmind import service
+    tmux(state)
+    monkeypatch.setattr(service, "create_app", lambda *a, **k: types.SimpleNamespace(state=types.SimpleNamespace()))
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: None)
+    result = _invoke(data, "serve")
+    assert result.exit_code == 0, result.output
+    assert tmux.calls() == []
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_run_starts_the_client_in_this_terminal_without_tmux(monkeypatch, tmp_path, data, tmux, state):
+    from cairnmind import ingest, integrations, store
+    tmux(state)
+    monkeypatch.setattr(cli, "_ensure_service_or_refuse", lambda settings: None)
+    monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))
+    launch = {"command": [sys.executable, "-c", "raise SystemExit(7)"], "cwd": str(tmp_path),
+              "env": {"PATH": os.environ["PATH"]}}
+    monkeypatch.setattr(integrations, "prepare_client_launch", lambda *a, **k: launch)
+    monkeypatch.setattr(store, "Store", lambda *a, **k: None)
+    monkeypatch.setattr(ingest, "register_default_histories", lambda *a, **k: None)
+    result = _invoke(data, "run", "demo", "codex")
+    assert result.exit_code == 7, result.output  # the client ran here and its own exit code came back
+    assert tmux.calls() == []
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_mcp_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
+    from cairnmind import mcp_server
+    tmux(state)
+    started = []
+    monkeypatch.setattr(mcp_server, "run", lambda settings, external=None: started.append(external))
+    result = _invoke(data, "mcp", "--client", "external", "--project", str(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert started == [{"project": str(tmp_path), "worktree": None}]
+    assert tmux.calls() == []
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_brief_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
+    from cairnmind import brief
+    tmux(state)
+    monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))
+    monkeypatch.setattr(brief, "build_brief", lambda *a, **k: {"text": "Where work stopped."})
+    result = _invoke(data, "brief", "demo")
+    assert result.exit_code == 0 and result.output.strip() == "Where work stopped.", result.output
+    assert tmux.calls() == []
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_check_run_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
+    from cairnmind import verification
+    tmux(state)
+    monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore(tmp_path))
+    monkeypatch.setattr(verification, "run_check", lambda *a, **k: {"passed": True})
+    result = _invoke(data, "check", "run", "demo", "unit", "--task", "t1")
+    assert result.exit_code == 0, result.output
+    assert tmux.calls() == []
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_impact_works_without_tmux(monkeypatch, tmp_path, data, tmux, state):
+    from cairnmind import impact
+    tmux(state)
+    monkeypatch.setattr(cli, "store_for_read", lambda settings: FakeStore(tmp_path))
+    monkeypatch.setattr(impact, "build_impact", lambda *a, **k: {"text": "No records are linked."})
+    result = _invoke(data, "impact", "demo", "--since", "HEAD")
+    assert result.exit_code == 0 and result.output.strip() == "No records are linked.", result.output
+    assert tmux.calls() == []
