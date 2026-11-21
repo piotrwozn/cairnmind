@@ -216,6 +216,24 @@ def test_start_refuses_when_the_docker_build_setting_is_not_a_boolean(docker, tm
         start_docker_engine(settings)
 
 
+def test_the_wheel_ships_deploy_arcadedb_as_the_build_context(tmp_path, monkeypatch):
+    import tomllib
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text())
+    shipped = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    assert shipped == {"deploy/arcadedb": "cairnmind/arcadedb_image"}
+    assert (root / "deploy" / "arcadedb" / "Dockerfile").is_file()  # what the mapping ships
+    # The context is the package's own folder: an installed wheel has it, a source checkout does not.
+    monkeypatch.setattr(engine_docker, "__file__", str(tmp_path / "package" / "engine_docker.py"))
+    with pytest.raises(ArcadeError) as missing:
+        engine_docker.build_context()
+    assert str(missing.value) == IMAGE_FILES_MISSING.format(path=tmp_path / "package" / "arcadedb_image")
+    (tmp_path / "package" / "arcadedb_image").mkdir(parents=True)
+    (tmp_path / "package" / "arcadedb_image" / "Dockerfile").write_text("FROM scratch\n")
+    assert engine_docker.build_context() == (tmp_path / "package").resolve() / "arcadedb_image"
+
+
 # --- A container that is not ours, one that cannot be asked about, stop --------------------------------------
 
 def test_stop_never_touches_a_container_without_this_installations_labels(docker, tmp_path):
