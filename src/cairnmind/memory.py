@@ -63,8 +63,8 @@ def _manifest_id(manifest):
 def _without_local_mark(record):
     """A record without the local extraction worker's mark (#168).
 
-    The mark lets this machine's own api session keep its ACK. A package never carries it
-    in or out, so an imported record always counts as somebody else's write. An extractor stamp (#192)
+    The mark leaves an untouched extraction proposal out of every session's ACK state (#256).
+    A package never carries it in or out, so an imported record always counts as somebody else's write. An extractor stamp (#192)
     travels, but only one the store would accept on an extracted record (_carried_stamp).
     """
     metadata = record.get("metadata")
