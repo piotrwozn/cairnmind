@@ -62,6 +62,8 @@ def test_status_tells_a_running_disabled_service_to_restart_once_config_says_ena
     knowledge_mode.turn_on(settings)  # `models pull` ran while the service kept running
     fields = knowledge_mode.status_fields(pipeline, settings)
     assert fields["get_models"] == first_start.RESTART_FOR_MODELS and fields["models"].startswith("not configured")
+    (tmp_path / "config.json").write_text("{ half an edit")  # a hand edit in progress must not take /status down
+    assert knowledge_mode.status_fields(pipeline, settings)["get_models"] == first_start.GET_MODELS
 
 
 def test_the_service_refuses_to_start_on_a_knowledge_agent_value_it_does_not_know(tmp_path):

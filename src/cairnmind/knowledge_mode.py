@@ -56,7 +56,7 @@ def missing_models(settings) -> list[str]:
         entry = found[role]
         if str(entry.get("error", "")).startswith("Invalid profile"):
             raise ValueError(entry["error"])  # a configured but broken profile is not "no models": the person fixes it
-        url =entry.get("base_url") or settings.ollama_url
+        url = entry.get("base_url") or settings.ollama_url
         if not entry.get("reachable"):
             reason = SERVER_DOWN.format(url=url) if entry.get("base_url") else str(entry.get("error"))
         elif not entry.get("model_available"):
@@ -108,8 +108,11 @@ def status_fields(pipeline: dict, settings=None) -> dict:
     by now (models pull or set ran) the running service only reports that it must restart; it never switches."""
     held = sum(pipeline[group][state] for group in ("indexing", "extraction") for state in ("pending", "running"))
     advice = GET_MODELS
-    if settings is not None and config.Settings.load(settings.data_dir).knowledge_agent == "enabled":
-        advice = RESTART_FOR_MODELS
+    try:
+        if settings is not None and config.Settings.load(settings.data_dir).knowledge_agent == "enabled":
+            advice = RESTART_FOR_MODELS
+    except (OSError, ValueError):  # a config.json being edited by hand must not take /status down
+        pass
     return {"models": MODELS_NOT_CONFIGURED, "jobs_held": held, "get_models": advice}
 
 
