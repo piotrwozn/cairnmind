@@ -166,13 +166,16 @@ def status_fields(pipeline: dict, settings=None) -> dict:
     """What /status adds in deterministic-only mode; pipeline is store.job_summary. When config.json says enabled
     by now (models pull or set ran) the running service only reports that it must restart; it never switches."""
     held = sum(pipeline[group][state] for group in ("indexing", "extraction") for state in ("pending", "running"))
-    advice = GET_MODELS
-    try:
-        if settings is not None and config.Settings.load(settings.data_dir).knowledge_agent == "enabled":
-            advice = RESTART_FOR_MODELS
-    except (OSError, ValueError):  # a config.json being edited by hand must not take /status down
-        pass
+    advice = RESTART_FOR_MODELS if restart_pending(settings) else GET_MODELS
     return {"models": MODELS_NOT_CONFIGURED, "jobs_held": held, "get_models": advice}
+
+
+def restart_pending(settings) -> bool:
+    """config.json says enabled although this service started without models."""
+    try:
+        return settings is not None and config.Settings.load(settings.data_dir).knowledge_agent == "enabled"
+    except (OSError, ValueError):  # a config.json being edited by hand must not take /status down
+        return False
 
 
 def doctor_fields(settings) -> dict:

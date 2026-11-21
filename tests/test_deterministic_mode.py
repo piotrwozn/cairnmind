@@ -455,9 +455,12 @@ def test_process_memory_without_models_says_why_and_with_models_is_unchanged(wor
     headers = {"Authorization": f"Bearer {settings.token}"}
     with TestClient(create_app(settings, ollama=Untouched())) as client:  # disabled
         off = client.post("/background-inference/enable", json=body, headers=headers).json()
+        # models pull ran after the start: the advice is the restart, not the command that already ran
+        (settings.data_dir / "config.json").write_text(json.dumps({"knowledge_agent": "enabled"}), encoding="utf-8")
+        restart = client.post("/background-inference/enable", json=body, headers=headers).json()
     assert off["worker_running"] is False and off["notice"] == first_start.PROCESS_OFF
-    assert first_start.GET_MODELS in off["notice"] and "deterministic-only mode" in off["notice"]
-    assert first_start.MESSAGES[first_start.PROCESS_OFF].endswith(first_start.MESSAGES[first_start.GET_MODELS])
+    assert "cairnmind models pull" in off["notice"] and "cairnmind models pull" in first_start.MESSAGES[first_start.PROCESS_OFF]
+    assert restart["notice"] == first_start.PROCESS_RESTART and "models pull" not in restart["notice"]
     with TestClient(create_app(replace(settings, knowledge_agent="enabled"), ollama=Down())) as client:
         on = client.post("/background-inference/enable", json=body, headers=headers).json()
     assert "notice" not in on
