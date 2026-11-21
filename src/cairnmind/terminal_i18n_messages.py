@@ -6,6 +6,8 @@ translated: text from a model, a provider or a source is never looked up here (s
 """
 from __future__ import annotations
 
+from .first_start import ASK_OFF, GET_MODELS, MESSAGES as FIRST_START
+
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
 ASK_MESSAGES = {
     "The verification state changed during the answer; read it again.":
@@ -72,6 +74,9 @@ ASK_MESSAGES = {
     "The local knowledge model is unavailable.": "Lokalny model wiedzy jest niedostępny.",
     "Waiting for the local agent timed out.": "Przekroczono czas oczekiwania na lokalnego agenta.",
     "The queue or the analysis exceeded the time limit.": "Kolejka lub analiza przekroczyła limit czasu.",
+    # The answer of /ask in deterministic-only mode (knowledge_mode.unavailable_answer, #274).
+    ASK_OFF: FIRST_START[ASK_OFF],
+    GET_MODELS: FIRST_START[GET_MODELS],
 }
 # The support check's gap: this fixed prefix, then the judging model's own reason (untrusted, kept as is).
 ASK_UNSUPPORTED_PREFIX = "The quotes do not support the answer: "
