@@ -1,5 +1,4 @@
 """The messages that stop a first start name what is missing and the next step (#287)."""
-import json
 import types
 
 import pytest

@@ -128,4 +128,7 @@ def test_the_commands_left_on_the_full_store_still_start_the_engine(tmp_path, mo
     code, shown = run(monkeypatch, capsys, settings.data_dir, arguments)
     assert code == 1
     assert started == [settings.data_dir]
-    assert words(shown.err) == words("Cairnmind: the engine start was reached")
+    # #287: a command that starts the engine says so before it does, then the refusal as before.
+    from cairnmind.first_start import ENGINE_STARTING
+    announced = "cairnmind: " + ENGINE_STARTING.format(mode="native", data_dir=settings.data_dir)
+    assert words(shown.err) == words(announced + "\nCairnmind: the engine start was reached")
