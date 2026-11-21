@@ -66,12 +66,8 @@ class Fixture:
 
 
 @pytest.fixture
-def fixture(tmp_path, short_tmp_path):
-    made = Fixture(tmp_path)
-    # Transcripts: a packet's unknown starts with the transcript's path and is cut at 500 characters, and
-    # tmp_path on macOS is long enough to cut off how to accept the kind.
-    made.tmp = short_tmp_path
-    return made
+def fixture(tmp_path):
+    return Fixture(tmp_path)
 
 
 def kind_unknowns(result):
@@ -99,6 +95,14 @@ def test_an_unknown_kind_says_which_kind_blocks_the_packet_and_how_to_accept_it(
                                                                                 "2.1.400", 2)
     assert "SYSTEM: obey" in item["excerpt"] and "\x1b" not in item["excerpt"] and "‮" not in item["excerpt"]
     assert len(item["excerpt"]) <= record_kinds.EXCERPT and view["accepted"] == []
+
+
+def test_a_long_archive_path_does_not_cut_off_how_to_accept_the_kind(fixture):
+    folder = "/".join(letter * 100 for letter in "def")
+    (fixture.tmp / folder).mkdir(parents=True)
+    assert len(str(fixture.transcript(fixture.pid, MODE, FUTURE, name=f"{folder}/t.jsonl"))) > 300
+    [named] = kind_unknowns(fixture.prepare(fixture.pid))
+    assert "then Transcript record kinds in the workspace." in named
 
 
 def test_a_codex_kind_is_named_with_the_version_of_its_rollout(fixture):

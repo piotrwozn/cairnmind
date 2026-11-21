@@ -1108,7 +1108,7 @@ class SessionManager:
                 else:
                     break
             for archive in archives:
-                unknowns.extend(f"{archive['path']}: {reason}" for reason in archive.get("unknowns", []))
+                unknowns.extend(f"{reason} ({archive['path']})" for reason in archive.get("unknowns", []))
         except TimeoutError as exc:
             unknowns.append(str(exc))
         state = self._state(session)
@@ -1241,7 +1241,7 @@ class SessionManager:
             # The exact current packet: say why it cannot be acknowledged instead of "does not match".
             status = "unavailable" if packet["status"] == "unavailable" else "partial"
             unknowns = [str(value) for value in packet.get("unknowns") or []]
-            reason = (unknowns[0][:300] + (f" (and {len(unknowns) - 1} more)" if len(unknowns) > 1 else "")
+            reason = (unknowns[0][:500] + (f" (and {len(unknowns) - 1} more)" if len(unknowns) > 1 else "")
                       if unknowns else "its code state cannot be checked" if status == "unavailable"
                       else "its archive is incomplete")
             raise ValueError(f"resume_required: the current packet is {status}, not ready, and cannot be acknowledged: {reason}")
