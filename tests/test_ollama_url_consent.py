@@ -120,6 +120,28 @@ def test_a_loopback_address_and_every_profile_behave_as_before(tmp_path, url):
     assert memory_models.server(profiled, "chat")["base_url"] == "https://models.example/v1"  # the profile decides
 
 
+@pytest.mark.parametrize("url", ["https://localhost:11434", "https://127.0.0.1:11434"])
+def test_an_https_address_of_this_computer_works_the_same_everywhere(tmp_path, monkeypatch, seen, url):
+    """The client speaks https, so the one rule allows it: no older message that names neither setting nor remedy (#302)."""
+    settings = Settings(data_dir=tmp_path / "x", ollama_url=url)
+    assert memory_models.local_server(settings) == url
+    assert memory_models.from_settings(settings).base_url == url  # ask, extraction, embedding, the service start
+    REAL_PROBE(settings)  # init: the probe does not refuse
+    monkeypatch.setattr(integrations, "_probe_cli", lambda *a: {"installed": False})
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: None)
+    result = integrations.doctor(settings)  # doctor
+    assert result["ollama"].get("error") is None and result["memory_models"]["chat"].get("error") is None
+    data = tmp_path / "memory"
+    data.mkdir()
+    (data / "config.json").write_text(json.dumps({"port": 1, "knowledge_agent": "enabled", "ollama_url": url}))
+    from test_knowledge_mode import FakeStore
+    monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore())
+    for command in (["models", "list"], ["models", "pull"]):
+        out = CliRunner().invoke(cli.app, ["--data-dir", str(data), *command])
+        assert "loopback HTTP" not in out.output + str(out.exception) and "--allow-remote" not in out.output
+    assert {host for host, _ in seen} <= {"localhost", "127.0.0.1"} and seen
+
+
 def test_the_installer_summary_prints_the_refusal_once_and_not_a_server_that_does_not_answer(tmp_path):
     from cairnmind import doctor_attention
     settings = Settings(data_dir=tmp_path, ollama_url=REMOTE)
