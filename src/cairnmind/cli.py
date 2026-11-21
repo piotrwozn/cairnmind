@@ -509,8 +509,17 @@ def init(ctx: typer.Context):
     """Create the store, or open the one a connect-only installation was given.
 
     Downloads no models and changes no client configuration."""
+    from cairnmind.database_mode import connect_only, engine_mode
+    from cairnmind.engine_docker import choose_engine_mode, start_docker_engine
+    chosen = choose_engine_mode(ctx.obj)  # the first run chooses where the engine runs, and says which (#272)
+    if chosen:
+        typer.echo(f"Cairnmind: {chosen}", err=True)
+    if not connect_only(ctx.obj) and engine_mode(ctx.obj) == "docker":
+        start_docker_engine(ctx.obj, pull=True)  # the first start downloads the image; ensure_engine never does
     store = store_for(ctx.obj)
     result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
+    if not connect_only(ctx.obj):
+        result["engine_mode"] = engine_mode(ctx.obj)
     if getattr(store, "not_writer", None):
         result["writer"] = store.writer_state()
     from cairnmind.confirmation_upgrade import report

@@ -632,6 +632,110 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
         f"--env ARCADEDB_JAVA_OPTS=-Darcadedb.server.mode=development --pull never {PUBLISHED}")
 
 
+# --- init chooses the mode -------------------------------------------------------------------------------------
+
+@pytest.fixture
+def init_run(docker, tmp_path, monkeypatch):
+    """`cairnmind init` with the store replaced, Java and Docker as each test sets them; records the order."""
+    import types
+    from cairnmind import cli
+    order, java = [], {"path": None, "major": None}
+
+    def resolve_java(settings):
+        order.append("java")
+        return java["path"]
+
+    monkeypatch.setattr(engine, "resolve_java", resolve_java)
+    monkeypatch.setattr(engine, "probe_java", lambda path: subprocess.CompletedProcess(
+        [path], 0, "", f'openjdk version "{java["major"]}.0.1"') if java["major"] else subprocess.CompletedProcess(
+        [path], 1, "", ""))
+    monkeypatch.setattr(cli, "store_for", lambda settings: order.append("store") or types.SimpleNamespace())
+    monkeypatch.setattr(engine_docker, "start_docker_engine",
+                        lambda settings, **options: order.append(("container", options)))
+    docker.settings = settings_with(tmp_path)
+
+    def run(settings=None):
+        return cli_run(settings or docker.settings)
+
+    def cli_run(settings):
+        return runner.invoke(app, ["--data-dir", str(settings.data_dir), "init"])
+
+    return run, order, java, docker
+
+
+def test_init_chooses_and_says_the_engine_mode(init_run, tmp_path):
+    run, order, java, docker = init_run
+    settings = docker.settings
+    where = settings.data_dir / "config.json"
+    # (a) no Java 21 and Docker answers: the container, started (and the image downloaded) before the store opens
+    done_ = run()
+    assert done_.exit_code == 0, done_.output
+    assert engine_docker.CHOSE_DOCKER.format(config=where) in done_.stderr
+    assert order == ["java", ("container", {"pull": True}), "store"]
+    assert json.loads(done_.stdout)["engine_mode"] == "docker" and stored(settings)["engine_mode"] == "docker"
+    # (e) a stored mode is not asked again: nothing probed, nothing said
+    order.clear()
+    again = run()
+    assert again.exit_code == 0 and "Engine mode" not in again.stderr and "java" not in order
+    # (b) Java 21 found: native, with the path
+    other = settings_with(tmp_path, "java")
+    java.update(path="/opt/jdk-21/bin/java", major=21)
+    native = run(other)
+    assert engine_docker.CHOSE_NATIVE.format(java="/opt/jdk-21/bin/java", config=other.data_dir / "config.json") \
+        in native.stderr
+    assert stored(other)["engine_mode"] == "native" and json.loads(native.stdout)["engine_mode"] == "native"
+    assert order[-2:] == ["java", "store"]  # no container
+    # Java 17 is older than 21: Docker is chosen, as when there is no Java
+    old = settings_with(tmp_path, "old")
+    java.update(path="/usr/bin/java", major=17)
+    assert engine_docker.CHOSE_DOCKER.format(config=old.data_dir / "config.json") in run(old).stderr
+
+
+def test_init_keeps_native_for_a_data_directory_that_already_has_an_engine_and_never_probes(init_run, tmp_path,
+                                                                                            monkeypatch):
+    run, order, java, docker = init_run
+    settings = docker.settings
+    (settings.data_dir / "arcade").mkdir()
+    monkeypatch.setattr(engine, "resolve_java", lambda settings: pytest.fail("Java was looked for"))
+    kept = run()
+    assert kept.exit_code == 0, kept.output
+    assert engine_docker.KEPT_NATIVE.format(config=settings.data_dir / "config.json") in kept.stderr
+    assert stored(settings)["engine_mode"] == "native" and docker.calls == []
+
+
+def test_init_with_neither_java_nor_docker_says_so_and_stores_nothing(init_run):
+    run, order, java, docker = init_run
+    docker.up = False
+    failed = run()
+    assert isinstance(failed.exception, ArcadeError)
+    text = str(failed.exception)
+    assert text.startswith("Neither Java 21 nor Docker can run the database engine here. Java: not found. Docker: ")
+    assert text.endswith("Install one of them, then run `cairnmind init` again.")
+    assert stored(docker.settings)["engine_mode"] == "" and "store" not in order
+
+
+def test_init_of_a_connect_only_installation_probes_neither_java_nor_docker(init_run):
+    run, order, java, docker = init_run
+    settings = docker.settings
+    settings.arcade_connect_url = "http://127.0.0.1:2999"
+    settings.save()
+    result = run()
+    assert result.exit_code == 0, result.output
+    assert "engine_mode" not in json.loads(result.stdout) and order == ["store"] and docker.calls == []
+
+
+def test_init_never_passes_over_a_configured_java_for_docker(init_run, monkeypatch):
+    run, order, java, docker = init_run
+
+    def unusable(settings):
+        raise ArcadeError("Configured java_executable is unavailable or not executable")
+
+    monkeypatch.setattr(engine, "resolve_java", unusable)
+    failed = run()
+    assert isinstance(failed.exception, ArcadeError) and "java_executable" in str(failed.exception)
+    assert stored(docker.settings)["engine_mode"] == "" and docker.calls == []
+
+
 # --- Words ---------------------------------------------------------------------------------------------------
 
 def test_every_engine_docker_message_has_a_polish_translation_with_the_same_placeholders():
