@@ -126,6 +126,30 @@ def test_each_start_leaves_one_copy_of_the_password_in_the_temporary_folder(tmp_
     assert copies[0].stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="the non-root start is checked")
+def test_the_entrypoint_runs_as_a_non_root_user_with_the_native_layout_and_development_mode_last(tmp_path):
+    # `cairnmind engine start --docker` (#272) starts the image as the host user, with data_dir/arcade mounted at
+    # /var/lib/arcadedb and ARCADEDB_JAVA_OPTS asking for development mode: no change of the entrypoint is needed.
+    bin_dir, data = tmp_path / "bin", tmp_path / "arcade"
+    bin_dir.mkdir()
+    data.mkdir(mode=0o700)
+    (bin_dir / "java").write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$JAVA_ARGUMENTS"\n')
+    (bin_dir / "java").chmod(0o755)
+    password = tmp_path / "password"
+    password.write_text("a long enough password")
+    arguments = tmp_path / "arguments"
+    subprocess.run(["sh", str(ENTRYPOINT)], check=True, env={
+        "PATH": f"{bin_dir}:/usr/bin:/bin", "TMPDIR": str(tmp_path), "ARCADEDB_HOME": str(tmp_path / "home"),
+        "ARCADEDB_DATA": str(data), "ARCADEDB_ROOT_PASSWORD_FILE": str(password), "JAVA_ARGUMENTS": str(arguments),
+        "ARCADEDB_JAVA_OPTS": "-Darcadedb.server.mode=development"})
+    for folder in ("config", "databases", "backups", "log"):  # the four folders the native engine keeps
+        assert (data / folder).is_dir() and (data / folder).stat().st_uid == os.getuid()
+    options = arguments.read_text().splitlines()
+    assert options.index("-Darcadedb.server.mode=production") < options.index("-Darcadedb.server.mode=development")
+    assert f"-Darcadedb.server.rootPath={data}" in options
+    assert f"-Darcadedb.server.databaseDirectory={data / 'databases'}" in options
+
+
 def test_no_password_is_baked_into_the_image_or_committed_in_the_compose_file():
     for path in (DOCKERFILE, ENTRYPOINT, COMPOSE):
         text = path.read_text()

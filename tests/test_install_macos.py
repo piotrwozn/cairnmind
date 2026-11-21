@@ -60,11 +60,12 @@ def mac(tmp_path):
     tool(bin_dir / "uv", "exit 0")
     os.symlink(shutil.which("tr"), bin_dir / "tr")
 
-    def run(**environment):
+    def run(show_flag=False, **environment):
         write()
         text = checks().replace(JAVA_HOME_TOOL, str(tmp_path / "java_home"))
+        flag = '\necho "engine_in_docker=${engine_in_docker:-unset}"' if show_flag else ""
         result = subprocess.run(
-            [BASH, "-c", "set -euo pipefail\n" + text + '\necho "passed JAVA_HOME=${JAVA_HOME:-}"'],
+            [BASH, "-c", "set -euo pipefail\n" + text + '\necho "passed JAVA_HOME=${JAVA_HOME:-}"' + flag],
             env={"PATH": str(bin_dir), "HOME": str(tmp_path), **environment}, capture_output=True, text=True,
             timeout=30)
         return result
@@ -212,6 +213,40 @@ def test_linux_keeps_its_apt_hints(mac):
     java(bin_dir / "java", 17)
     result = run()
     assert result.stderr == "Found Java 17. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n"
+
+
+def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker_answers(mac):
+    """Without Java 21 the installer goes on when Docker answers (#272), says so, and still names the Java problem."""
+    run, state, bin_dir, tmp_path = mac
+    state.update(system="Linux")
+    hint = "sudo apt install openjdk-21-jre-headless"
+    tool(bin_dir / "docker", 'case "$1" in version) echo 27.3.1 ;; *) exit 9 ;; esac')
+    result = run(show_flag=True)
+    assert result.returncode == 0, result.stderr
+    # It promises nothing `init` may not keep (an installation that holds a native engine stays native).
+    assert "so cairnmind init can run the engine in Docker; it says which mode it chose." in result.stdout
+    assert "Java is not needed" not in result.stdout and "will run in Docker" not in result.stdout
+    assert result.stderr == f"Java not found. Install Java 21+: {hint}\n" and "passed" in result.stdout
+    assert "engine_in_docker=true" in result.stdout  # the flag the install branch below is chosen by
+    java(bin_dir / "java", 17)
+    result = run(show_flag=True)
+    assert result.returncode == 0 and result.stderr == f"Found Java 17. Java 21+ is required: {hint}\n"
+    assert "engine_in_docker=true" in result.stdout
+    java(bin_dir / "java", 21)  # Java 21 is used when there is one: no word of Docker
+    result = run(show_flag=True)
+    assert result.returncode == 0 and "Docker" not in result.stdout + result.stderr
+    assert "engine_in_docker=false" in result.stdout
+    # A Docker that does not answer changes nothing: the Java message is the end.
+    (bin_dir / "java").unlink()
+    tool(bin_dir / "docker", "echo 'Cannot connect to the Docker daemon' >&2; exit 1")
+    result = run()
+    assert result.returncode == 1 and "Docker" not in result.stdout and "passed" not in result.stdout
+    assert result.stderr == f"Java not found. Install Java 21+: {hint}\n"
+    # With Docker, the install branch runs init and does not download an engine.
+    script = SCRIPT.read_text()
+    branch = script.index('elif [[ "$engine_in_docker" == true ]]; then')
+    body = script[branch:script.index("\nelse\n", branch)]
+    assert '"$cairnmind_bin" init' in body and "engine install" not in body
 
 
 def test_on_linux_java_home_does_not_replace_the_java_on_path(mac):

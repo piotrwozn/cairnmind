@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 
+from .engine_docker import DOCKER_ATTENTION
 from .terminal_safe import safe_text
 
 FULL_REPORT = "The full report: cairnmind doctor"
@@ -41,11 +42,18 @@ def attention(report: dict) -> list[str]:
         elif java.get("error"):
             # A -version that timed out or failed: Java is there, it did not answer, as after a first install.
             lines.append(_line(f"Java did not answer: {java['error']}"))
+    docker = report.get("docker") or {}
+    if docker.get("available") is False:
+        lines.append(_line(DOCKER_ATTENTION.format(error=docker.get("error") or "unknown")))
+    elif (docker.get("container") or {}).get("state") in ("not ours", "unknown"):
+        lines.append(_line(docker["container"].get("error") or "The engine container cannot be identified"))
     tmux = report.get("tmux") or {}
     if tmux and tmux.get("code") != "ready":
         lines.append(_line(f"tmux is not ready ({tmux.get('code') or 'unknown'}); the workspace needs tmux "
                            f"{tmux.get('minimum_version') or ''}".rstrip()))
     arcade = report.get("arcadedb") or {}
+    if arcade.get("engine_problem"):
+        lines.append(_line(arcade["engine_problem"]))
     if arcade.get("available") is False:
         lines.append(_line(f"The database engine does not answer at {arcade.get('url') or 'its address'}: "
                            f"{arcade.get('error') or arcade.get('reason') or 'start it with cairnmind engine start'}"))

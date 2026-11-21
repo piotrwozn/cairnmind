@@ -8,15 +8,15 @@ One database serves one person: one installation writes it and any number read i
 
 | File | What it is |
 | --- | --- |
-| `deploy/arcadedb/Dockerfile` | The ArcadeDB release Cairnmind pins (26.11.1) on Java 21 (Eclipse Temurin). The release archive is checked against its published SHA-256, as `cairnmind engine install` does. |
-| `deploy/arcadedb/entrypoint.sh` | Starts the server with the same JVM options and server settings as `cairnmind engine start`: 1 GB heap, the `low-ram` profile, and the vector module, plus ArcadeDB's production mode (see [What the server exposes](#what-the-server-exposes)). The server runs as user `arcadedb` (uid 10001). |
+| `deploy/arcadedb/Dockerfile` | The ArcadeDB release Cairnmind pins (26.11.1) on Java 21 (Eclipse Temurin). The release archive is checked against its published SHA-256, as `cairnmind engine install` does. It is also the image `cairnmind engine start --docker` runs. |
+| `deploy/arcadedb/entrypoint.sh` | Starts the server with the same JVM options and server settings as `cairnmind engine start`: 1 GB heap, the `low-ram` profile, and the vector module, plus ArcadeDB's production mode (see [What the server exposes](#what-the-server-exposes)); `cairnmind engine start --docker` runs it in development mode, like the native engine. The server runs as user `arcadedb` (uid 10001), or as the user the container is started with. |
 | `deploy/arcadedb/healthcheck.sh` | The container health check: `GET /api/v1/ready`. |
 | `deploy/compose.yaml` | One server with a named volume, publishing the HTTP port on `127.0.0.1` only. |
 | `deploy/kubernetes/` | Plain Kubernetes manifests (no Helm chart) for one server with TLS: see [Kubernetes](#kubernetes). |
 
 No password is built into the image or written in any of these files. The server reads the root password from a file at run time, and the Compose file takes that file's path from the environment.
 
-The image is not published to a registry. You build it from this repository.
+The image is published (by hand, from `main`) as `ghcr.io/piotrwozn/cairnmind-arcadedb` (linux/amd64 and linux/arm64), which `cairnmind engine start --docker` runs, pinned by digest. For this page you build it from this repository.
 
 ### What the server exposes
 

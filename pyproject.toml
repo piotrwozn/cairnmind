@@ -51,6 +51,10 @@ build-backend = "hatchling.build"
 # src/devbrain is the import alias of the earlier module name, kept for one release.
 packages = ["src/cairnmind", "src/devbrain"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# The files of the engine image, for `cairnmind engine start --docker --build` (#272).
+"deploy/arcadedb" = "cairnmind/arcadedb_image"
+
 [tool.hatch.build]
 exclude = ["node_modules", "frontend/dist", "frontend/test-results", "frontend/playwright-report", ".pytest_cache", ".ruff_cache", "__pycache__"]
 

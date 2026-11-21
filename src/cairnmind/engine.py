@@ -1,12 +1,14 @@
 """Pinned, checksum-verified ArcadeDB distribution and local Java process lifecycle."""
 from __future__ import annotations
 
+from dataclasses import replace
 import errno
 import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import stat
@@ -21,8 +23,8 @@ import urllib.request
 from . import process_identity
 from .arcade import ArcadeClient, ArcadeError
 from .config import Settings
-from .database_mode import (address, connect_only, describe, is_managed_url, refusal, server_version,  # noqa: F401
-                            supported_versions, version_problem)
+from .database_mode import (address, connect_only, describe, engine_mode, is_managed_url, refusal,  # noqa: F401
+                            server_version, supported_versions, version_problem)
 
 
 def runtime_dir(settings: Settings) -> Path:
@@ -194,7 +196,7 @@ def install_engine(settings: Settings, distribution: Path | None = None) -> Path
     return destination
 
 
-def engine_status(settings: Settings) -> dict:
+def engine_status(settings: Settings, ask_docker: bool = True) -> dict:
     """Whether the database server answers and which version it runs; starts and changes nothing.
 
     In connect-only mode (#68) nothing local is probed: no Java, no installed engine. The result says
@@ -209,9 +211,12 @@ def engine_status(settings: Settings) -> dict:
         if managed_java_executable(settings):
             result["local_engine"] = ("An engine this data directory started earlier is still running on this "
                                       "machine and is not used; `cairnmind engine stop` stops it.")
+    elif engine_mode(settings) == "docker":  # a wrong value raises, naming it (#272)
+        from .engine_docker import status_fields
+        result = status_fields(settings, ask_docker)  # no Java is looked for
     else:
-        result = {"mode": "managed", "installed": (runtime_dir(settings) / "lib").is_dir(), "available": False,
-                  "url": settings.arcade_url, "expected_version": settings.arcade_version,
+        result = {"mode": "managed", "engine": "native", "installed": (runtime_dir(settings) / "lib").is_dir(),
+                  "available": False, "url": settings.arcade_url, "expected_version": settings.arcade_version,
                   "java": None, "managed_java": managed_java_executable(settings)}
         try:
             result["java"] = resolve_java(settings)
@@ -261,6 +266,45 @@ def probe_java(java: str) -> subprocess.CompletedProcess:
     raise AssertionError("unreachable")
 
 
+def java_major(java: str) -> int | None:
+    """The major version `java -version` prints, or None when it fails or prints none."""
+    probe = probe_java(java)
+    found = re.search(r'version "(\d+)', probe.stderr + probe.stdout)
+    return int(found[1]) if probe.returncode == 0 and found else None
+
+
+def write_root_password(settings: Settings) -> Path:
+    """arcade/root-password, mode 0600: read by the native engine (rootPasswordPath) and mounted into the
+    container (#272)."""
+    password_file = settings.data_dir / "arcade" / "root-password"
+    fd = os.open(password_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(settings.arcade_password)
+    os.chmod(password_file, 0o600)
+    return password_file
+
+
+def native_engine_pid(settings: Settings) -> int | None:
+    """The PID of this data directory's native engine while it runs, None when none runs (#272).
+
+    Fails closed: a record that cannot be read, or a live process whose command line cannot be read, raises."""
+    from .engine_docker import NATIVE_UNKNOWN
+    state = settings.data_dir / "arcade"
+    try:
+        pid = int(json.loads((state / "process.json").read_text())["pid"])
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ArcadeError(NATIVE_UNKNOWN.format(pid="unknown")) from None
+    command = process_identity.command_line(pid)
+    if command is None:
+        if not process_identity.alive(pid):
+            return None
+        raise ArcadeError(NATIVE_UNKNOWN.format(pid=pid))
+    joined = "\0".join(command)
+    return pid if "com.arcadedb.server.ArcadeDBServer" in joined and str(state) in joined else None
+
+
 def start_engine(settings: Settings) -> dict:
     # Any address but plain http on this machine is a server someone else runs, and so is the address
     # arcade_connect_url names: never started here, its password never written to this data directory.
@@ -269,6 +313,8 @@ def start_engine(settings: Settings) -> dict:
     settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.data_dir / "engine.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        from .engine_docker import refuse_if_container_runs
+        refuse_if_container_runs(settings)  # never two engines on one data directory (#272)
         existing = engine_status(settings)
         if existing["available"]:
             if not existing.get("version_matches"):
@@ -281,10 +327,8 @@ def start_engine(settings: Settings) -> dict:
         if not java:
             from .platform_hints import hint
             raise ArcadeError(hint("java"))
-        probe = probe_java(java)
-        import re
-        version = re.search(r'version "(\d+)', probe.stderr + probe.stdout)
-        if probe.returncode != 0 or not version or int(version[1]) < 21:
+        major = java_major(java)
+        if major is None or major < 21:
             raise ArcadeError("ArcadeDB requires Java 21 or newer")
         state = settings.data_dir / "arcade"
         state.mkdir(exist_ok=True, mode=0o700)
@@ -294,11 +338,7 @@ def start_engine(settings: Settings) -> dict:
             target = state / "config" / source.name
             if source.is_file() and not target.exists():
                 shutil.copy2(source, target)
-        password_file = state / "root-password"
-        fd = os.open(password_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as handle:
-            handle.write(settings.arcade_password)
-        os.chmod(password_file, 0o600)
+        password_file = write_root_password(settings)
         parsed = urlparse(settings.arcade_url)
         if parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.scheme != "http":
             raise ValueError("ArcadeDB must bind locally")
@@ -359,6 +399,24 @@ def start_engine(settings: Settings) -> dict:
         raise ArcadeError(f"ArcadeDB startup timed out. See {state / 'engine.log'}")
 
 
+def start_command(settings: Settings, *, docker: bool = False, native: bool = False, build: bool = False) -> dict:
+    """`cairnmind engine start`: the stored mode, or the one --docker / --native names. The mode a flag names is
+    saved only after that engine answers (#272)."""
+    if connect_only(settings):
+        raise ConnectOnly(refusal(settings, "start an engine"))
+    from .engine_docker import MODE_SAVED, start_docker_engine, store_engine_mode
+    mode = "docker" if docker else "native" if native else engine_mode(settings)
+    # --docker names the image too: the published one, or with --build the one built here.
+    chosen = replace(settings, engine_mode=mode, **({"engine_docker_build": build} if docker else {}))
+    if mode == "docker":
+        status = start_docker_engine(chosen, build=build, pull=True)
+    else:
+        status = start_engine(chosen)
+    if (docker or native) and store_engine_mode(settings, mode, build=bool(docker and build)):
+        print(f"cairnmind: {MODE_SAVED.format(mode=mode, config=settings.data_dir / 'config.json')}", file=sys.stderr)
+    return status
+
+
 def ensure_engine(settings: Settings) -> None:
     """The server answers with a supported version, or an error. Only a managed engine is ever started."""
     if connect_only(settings):
@@ -373,11 +431,17 @@ def ensure_engine(settings: Settings) -> None:
         if refused:
             raise ArcadeError(refused)
         return
-    status = engine_status(settings)
+    docker = engine_mode(settings) == "docker"
+    # An engine in Docker that answers needs no `docker container inspect` on every command.
+    status = engine_status(settings, ask_docker=False) if docker else engine_status(settings)
     if status["available"] and not status.get("version_matches"):
         raise ArcadeError(f"ArcadeDB release does not match the pinned {settings.arcade_version}")
     if not status["available"]:
-        start_engine(settings)
+        if docker:
+            from .engine_docker import start_docker_engine
+            start_docker_engine(settings)  # the stored image; never builds, never pulls
+        else:
+            start_engine(settings)
 
 
 def local_process_recorded(settings: Settings) -> bool:
@@ -391,6 +455,9 @@ def stop_engine(settings: Settings) -> dict:
     Also in connect-only mode, where an engine started before the installation was switched may still
     run: it is this data directory's own process. With none, the command says that nothing is managed here.
     """
+    from .engine_docker import container_recorded, stop_docker_engine
+    if container_recorded(settings) or (not connect_only(settings) and engine_mode(settings) == "docker"):
+        return stop_docker_engine(settings)
     state = settings.data_dir / "arcade"
     file = state / "process.json"
     if not local_process_recorded(settings):
