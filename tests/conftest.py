@@ -34,7 +34,7 @@ import tempfile
 import termios
 import threading
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 import uuid
 import zlib
 
@@ -384,14 +384,14 @@ def no_inherited_session():
 
 @pytest.fixture(autouse=True)
 def no_foreign_service():
-    """No test in this process reaches whatever listens on the default service or cockpit port (#221).
+    """No test in this process reaches whatever listens on the default service, cockpit or Ollama port (#221).
 
     A test whose data directory names no port of its own would otherwise ask the Cairnmind installed on the
-    machine that runs the tests (its own token is refused: "Invalid local service token"). Such a connection
-    now fails as it does when nothing listens there. By hand, not monkeypatch, for the reason above.
+    machine that runs the tests (its own token is refused: "Invalid local service token") or its Ollama. Such a
+    connection now fails as it does when nothing listens there. By hand, not monkeypatch, for the reason above.
     """
     defaults = Settings(data_dir=Path("."))
-    foreign = {defaults.port, defaults.cockpit_port}
+    foreign = {defaults.port, defaults.cockpit_port, urlparse(defaults.ollama_url).port}
     connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
 
     def refused(original):
@@ -558,16 +558,21 @@ def explained_when_unavailable(settings: Settings, original):
             return original(client, method, path, **kwargs)
         except ArcadeError as exc:
             if "unavailable" in str(exc) and time.monotonic() - started > 5:  # a stall: not a refused connection
-                statement = str((kwargs.get("json") or {}).get("command", ""))[:200]
-                try:
-                    open_databases = len(original(client, "GET", "/api/v1/databases", timeout=2).json().get("result", []))
-                except ArcadeError as probe:
-                    open_databases = f"no answer to the next request either ({probe})"
-                log = settings.data_dir / "arcade" / "engine.log"
-                tail = log.read_text(errors="replace").splitlines()[-15:] if log.exists() else []
-                print(f"ENGINE UNAVAILABLE after {time.monotonic() - started:.1f}s: {method} {path} {statement!r}; "
-                      f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
-                      f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
+                waited = time.monotonic() - started
+                try:  # a sick engine may answer badly too: nothing here may replace the error being raised
+                    statement = str((kwargs.get("json") or {}).get("command", ""))[:200]
+                    try:
+                        open_databases = len(original(client, "GET", "/api/v1/databases", timeout=2).json().get("result", []))
+                    except Exception as probe:
+                        open_databases = f"no usable answer to the next request either ({probe!r})"
+                    log = settings.data_dir / "arcade" / "engine.log"
+                    tail = log.read_text(errors="replace").splitlines()[-15:] if log.exists() else []
+                    print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path} {statement!r}; "
+                          f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
+                          f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
+                except Exception as problem:
+                    print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path}; the report failed: {problem!r}",
+                          file=sys.stderr)
             raise
     return request
 

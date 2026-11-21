@@ -50,7 +50,8 @@ def test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for(tmp_p
     def silent(request):
         if request.url.path.startswith("/api/v1/command/"):
             time.sleep(5.1)  # the wait that makes the report worth printing
-        raise httpx.ReadTimeout("no answer", request=request)
+            raise httpx.ReadTimeout("no answer", request=request)
+        return httpx.Response(200, text="<html>not json</html>")  # the probe gets a bad answer: the report must survive it
     client = ArcadeClient(Settings.load(tmp_path, create=True), transport=httpx.MockTransport(silent))
     with pytest.raises(ArcadeError, match=r"^Local ArcadeDB is unavailable \(ReadTimeout\); run cairnmind engine"):
         client.command("CREATE PROPERTY probe.name IF NOT EXISTS STRING")
