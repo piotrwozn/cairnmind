@@ -385,8 +385,13 @@ def test_a_real_tmux_server_holds_and_answers_the_key(manager, tmp_path):
             break
         time.sleep(.1)
     assert seen.read_text().split(",")[0] == str(workspace.socket)
-    assert person_proof.workspace_headers(workspace.settings, {"TMUX": seen.read_text().strip()}) in (
-        {}, {person_proof.KEY_HEADER: key, person_proof.SOCKET_HEADER: str(workspace.socket)})
+    workspace.settings.tmux_executable = workspace.binary
+    sent = person_proof.workspace_headers(workspace.settings, {"TMUX": seen.read_text().strip()})
+    assert sent == {person_proof.KEY_HEADER: key, person_proof.SOCKET_HEADER: str(workspace.socket)}
+    person_proof.check(workspace.settings, sent)  # what the service does with it: accepted by the real server
+    with pytest.raises(person_proof.PersonProofRefused) as refused:
+        person_proof.check(workspace.settings, {**sent, person_proof.KEY_HEADER: "cd" * 32})
+    assert refused.value.message == person_proof.PROOF_REFUSED
 
 
 def test_a_server_without_the_option_and_a_missing_server_answer_no_key_and_unavailable(manager, short_tmp_path):
