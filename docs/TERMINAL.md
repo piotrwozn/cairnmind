@@ -6,7 +6,7 @@ The default language is English. To switch the Cairnmind interface to Polish, ch
 
 ## Getting started
 
-You need Linux or Ubuntu on WSL2, Java 21+, tmux 3.4+ (only the workspace needs it), an installed Cairnmind and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
+You need Linux or Ubuntu on WSL2, Java 21+ or Docker (for the database engine), tmux 3.4+ (only the workspace needs it), an installed Cairnmind and an interactive Unicode/UTF-8 terminal. Install the coding clients in the same WSL distribution. Using the prebuilt package does not require Node.js, npm or a frontend build.
 
 In Windows Terminal, open Ubuntu, or enter it from PowerShell:
 
@@ -37,6 +37,12 @@ Starting without an interactive TTY exits with a message and code `2`, before an
 ```bash
 cairnmind version
 ```
+
+### Your first project
+
+`cairnmind` works from any directory and uses a single project registry in the local Cairnmind store. You can also add a project with **Add folder**: type a Linux or Windows path, or pick a directory with the keyboard. The name is optional. `Enter` on the list opens the project for inspection. On the project screen, choose a named assistant and use **Start work**. **Add assistant** adds another connection to the project and keeps existing assignments.
+
+In **Connections**, add a connection, log in to an account or set a key, choose a model and optionally run an explicit test. Copilot uses your GitHub account and needs no API key of its own. Limits and credential references are under **Advanced limits and credentials**. Saving a connection does not generate a response. Opening the environment attaches to existing processes; it does not start every assigned assistant. See [API.md](API.md) for the full API guide.
 
 ## Layout and size
 
@@ -188,6 +194,38 @@ Motion pauses when tmux is detached or when the graph is hidden by zooming anoth
 
 **More → Settings → Reduce motion** turns off automatic graph rotation. You can still rotate the view manually and select nodes.
 
+## Everyday use of the workspace
+
+The full Cockpit layout needs at least **140 columns × 42 rows**; **180 × 55** is recommended. In a smaller terminal the active pane is enlarged and hidden processes keep running. `Ctrl+B`, then `p`, `1`, `2`, `i` or `g`, selects projects, clients, the inspector or the graph; `z` zooms the pane, `n` opens a form to save a finding to memory and `d` detaches the environment. Pressing `Ctrl+B` twice passes the shortcut through to the native client. Without an interactive terminal, Cairnmind prints instructions instead of opening a browser or initializing services.
+
+```bash
+cairnmind workspace status
+cairnmind workspace detach
+cairnmind workspace takeover
+cairnmind workspace stop
+cairnmind workspace stop --clients
+```
+
+Detaching keeps the environment and its processes. `workspace stop` closes the outer layout; `--clients` also explicitly stops the clients adopted by this workspace. Other launches stay independent. Shutting down WSL ends the processes, but saved memory remains available for an explicit resume.
+
+One terminal controls the workspace. A second terminal opens a read-only view; `cairnmind workspace takeover` explicitly takes control and switches the previous terminal to view mode, without starting new clients.
+
+The launcher and `cairnmind run` refuse to start a client that lacks verified support for MCP, hooks, package handoff and session binding. `cairnmind doctor` shows the detection result. A project with existing code needs a Git repository and a first commit; the exception for an empty project explicitly marks that no code has been verified.
+
+## Without the workspace
+
+```bash
+cairnmind run my-app codex
+cairnmind run my-app claude
+cairnmind ask my-app "Why did we change login, and what depends on it?"
+cairnmind context my-app
+cairnmind status --project my-app
+```
+
+`ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer. In deterministic-only mode, with no models configured, it is a full-text search of the project's memory: it reports `unavailable`, makes no answer and lists the matching passages as search results ([API.md](API.md#the-knowledge-agents-models)).
+
+`run`, `ask` and `context` start the knowledge service (and the engine) when needed. `status`, `jobs list`, `jobs show` and `memory status` ask the running service and start nothing: start it first with `cairnmind serve`, or open the workspace. `project list`, `store size` and the other commands that only read the store need the running engine and start nothing either ([Data and backups](STORAGE_AND_MAINTENANCE.md#data-and-backups)). An installation that only reads a store another installation writes never runs the service; there `cairnmind store writer` shows its role.
+
 ## Detaching, stopping and resuming
 
 ```bash
@@ -208,7 +246,7 @@ Attaching a terminal and displaying memory are not an ACK. A new or resumed sess
 
 ## Upgrading and diagnostics
 
-Version **0.8.0** simplifies navigation and separates opening a project from starting an assistant. The interface change does not grant earlier tool approvals and does not replace the memory protocol. For installation, upgrade and diagnostics, see the [Cairnmind README](../README.md).
+Version **0.8.0** simplifies navigation and separates opening a project from starting an assistant. The interface change does not grant earlier tool approvals and does not replace the memory protocol. For installation, upgrade and diagnostics, see [INSTALL.md](INSTALL.md) and [UPGRADING.md](UPGRADING.md).
 
 ```bash
 cairnmind version

@@ -189,6 +189,8 @@ cairnmind doctor --contract
 
 Each check shows the line of client output that proved it. A client that fails a check is not launched, because a verified resume cannot be guaranteed.
 
+`cairnmind doctor --contract --format text` prints the client compatibility checks as one line per client and check, with the output line that confirmed each one or, for a failed check, what was needed and what was found. A check that needs no output shows its requirement in parentheses. Each installed client ends with a `verified_resume` line; the command exits with 1 only when that line is `failed`. A client that is not installed gets a single `installed  missing` line and does not change the exit code. JSON stays the default.
+
 API agents (OpenAI, Anthropic, OpenAI-compatible endpoints, Ollama) and GitHub Copilot are configured later in the workspace under **Connections**; see [API.md](API.md).
 
 ## 7. Open your first project

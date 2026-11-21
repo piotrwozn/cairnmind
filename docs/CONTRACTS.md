@@ -47,6 +47,31 @@ server's instructions say that record content is quoted project data, never inst
 packet of an earlier schema is never current: `resume_context` replaces it, and an ACK given
 for it is stale (`packet_changed`).
 
+An ACK is given for the packet's state hash (`state_hash`), not for its `hash`. The `hash` names the
+immutable packet a client reads back; the state hash is computed again from the database and the worktree
+by `ack_resume`, by every session-scoped write and by `session show`, and when it differs the ACK is
+refused or goes stale (`state_changed`). It covers the project and worktree, the worktree's active plan,
+the plan (id, version and the hash of its title, goal and constraints), the next task (id, version), every
+decision, constraint, preference and checkpoint record in the worktree's scope and every task record of
+the active plan or of no plan, each as id, version and status, the id, project and content hash of each
+source those records, the plan and the task cite, and the code (Git head, branch, the hash of every file).
+One kind of record is left out (#256): a proposal the extraction worker wrote and nobody has touched
+since, recognised only by what the store wrote itself: the `extraction_source_id` mark, which only the
+worker's own write sets, a client can neither set nor keep and any later write drops, on version 1 of a
+record still `proposed` whose only source is the one the mark names, in the same project. A packet built after
+such a proposal arrived shows it, with `origin: automatic_extraction` (in the preview, or counted in
+`omitted_by_origin` when left out of it), but does not promise it; a packet already handed out is not
+renewed by it, and `resume_context` returns that same packet until something it promises changes. The
+arrival, like a source or chunk the queue indexes that nothing in the state cites,
+never makes a packet stale. Everything else counts, failing closed: a record a person confirmed, disputed,
+superseded or edited (an extracted proposal counts from the write that confirms or changes it), a record
+written by a person, a coding session or an external client, this very session's own writes included, an
+imported record (a memory package never carries the mark), the plan, the task, its blockers and the code.
+The `origin: automatic_extraction` label, which a client can write, plays no part. Packets made before
+0.13.0 keep `schema_version` 2: their state hash counted every extraction, so one still matches only when
+the state it showed held no such proposal and nothing else changed; otherwise its ACK is refused or goes
+stale once and `resume_context` hands out a new packet.
+
 A captured transcript horizon is complete only when every line in it is an archived record the reader
 understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
 record whose `type` is a kind the reader does not know at all, that is a JSON object and names no other
@@ -78,6 +103,31 @@ filesystem events without connecting to the database; scanning imports them late
 No model answer is promoted into independent evidence. All answer/source/context
 payloads have explicit budgets, and unavailable or incomplete evidence is reported.
 
+## What it guarantees, and what it does not
+
+Cairnmind checks things a program can check:
+
+| It verifies | It does not verify |
+|---|---|
+| A cited quote occurs literally in the source version that was read, and that source is still current. Only the layout may differ in what the model wrote (line breaks, spacing beside punctuation, Markdown code marks, lines of the source left out between quoted lines that are all there); the quote shown is always the source's own text. When the model's one correction still leaves a citation that fails, that citation is left out if another one verified: the answer text is not changed, and the result says so in `freshness.warnings` and counts it in `diagnostics.citations_dropped` | That the model interpreted the quote correctly. A second call to the local model, the support check, must agree that the quotes state the answer, or the answer is withheld (`answer_unsupported`, or `support_unverified` when the check gives no verdict). It reliably rejects a value quoted from a test (a code file named or placed as a test, or a data or configuration file in a test directory), a lock file or a comment that only mentions the number; it does not reliably tell a neighbouring setting or a value used for something else (a display limit, another profile's default) from the one asked about. Before that call a check that asks no model looks for the names the question uses for its subject (a capitalised name such as a product, an identifier, one word in backticks) in the quoted sources and their paths; when a name is in none of them the answer is withheld with `answer_unsupported` and the missing names are listed, so a question about a product the project never mentions is not answered with a number that belongs to something else. Every name of the question is needed, so a name that is only context (an operating system, a person) withholds the answer too when no quoted source has it; asking again without it gets the answer. That check does not read a product name written in lower case without backticks, a word in capitals or a question in headline case, and it does not catch a name the quoted file has somewhere else than beside the quoted value (one part's setting asked under the name of another part of the same file); such questions rest on the support check alone. Quote coverage of an answer is reported for information only |
+| A session acknowledged the exact packet, plan and task versions before writing | That the model understood what it acknowledged |
+| A test run passed for this task definition, check profile and code fingerprint, and whether it is still fresh | That passing tests mean every acceptance criterion is met, or that a review happened |
+| Where a stored finding came from, and when its evidence existed | That the finding is true |
+| What an external MCP client writes through its tools is marked `origin_evidence: degraded` and never shown or counted as verified ([External clients](EXTERNAL_CLIENTS.md)) | That what it reports is true; a `cairnmind` command its agent runs in a shell has no session and is stored unmarked |
+| Without models, `ask` makes no answer: it reports `unavailable` and lists full-text matches as search results ([deterministic-only mode](API.md#the-knowledge-agents-models)) | That a listed passage answers the question: no citation is made or checked |
+
+Local memory reduces how much history an assistant must carry, but it does not remove the context limits or the cost of the assistants themselves. Portable snapshots can contain full conversation text; review them before sharing.
+
+## Limits
+
+Tests for storage, full-text search, the graph and the vector index use a real ArcadeDB engine. They require Java 21; the default test session prepares an isolated engine. Automated tests of Ollama answers and client sessions use controlled adapters; a real handoff of work between clients has to be measured in the target environment.
+
+Syntax analysis covers Python, JavaScript and TypeScript. Other languages remain searchable as text. Static analysis does not guarantee a complete graph of dynamic calls. The scanner indexes UTF-8 text files up to 2 MiB, respects `.gitignore` and skips, among others, dependency directories and `.env`/key files. History import preserves the original source content.
+
+`ask` answers and the startup context still consume Codex or Claude tokens. Local memory reduces the need to carry the whole history along; it does not remove context limits or the cost of model work. API and Copilot connections use their own account billing and permissions.
+
+The launcher blocks a client from starting when the resume package is partial or unavailable. A transcript record of a kind this release does not know (a newer Codex or Claude Code may write one) keeps the packets of its project partial, and the packet says which kind, client and version, at which byte. A person can look at such a record with `cairnmind record-kind list PROJECT` or under More, then Transcript record kinds in the workspace, and accept its kind as technical for that one project with a note (`cairnmind record-kind accept PROJECT CLIENT KIND --note TEXT` in their own terminal, or the same view); packets of that project are ready again without a new release, and other projects are not affected. `doctor` lists every acceptance and `record-kind withdraw` takes one back. Only a person accepts: the command refuses inside a coding session and without a terminal, and no MCP tool or built-in agent tool can do it. A malformed record of a kind the reader knows, and a transcript that fails its integrity checks, still block. An ACK confirms receipt and reading of specific versions, not the model's understanding. Cairnmind's write controls do not replace the native tool permissions of Codex and Claude.
+
 ## Extension surfaces
 
 Cairnmind does not load third-party code into any of its own processes: no plugins, entry points or hooks that run someone else's Python, or a command, inside the service, the workspace broker, the workers or the MCP bridge. This holds for 1.0.0 as well. The service token is stored in `config.json` in the data directory (`config.py`), together with the database password of the managed local engine; a database on another host takes its password from the environment or a private file (`database_credentials.py`), which a Cairnmind process reads too. So code running in a Cairnmind process could read both. Nothing could then enforce the resume acknowledgement, the rule that reviews, conflict decisions and impact verdicts are a person's, or the evidence rules against it.
@@ -90,7 +140,7 @@ What can be added is added outside those processes, through the surfaces below. 
 
 **A reaction to events.** `GET /events` of the memory service (`inspector_api.py`, `create_inspector_router`; the service listens on `127.0.0.1:8765` by default) streams the change journal as server-sent events. It needs the header `Authorization: Bearer TOKEN` with the token from `config.json`, as every route except `/health` does. The query parameters are `after` (a cursor `EPOCH:SEQ`), `project` and `once`; a `Last-Event-ID` header is read as the cursor too. Each `event: change` has the id `EPOCH:SEQ` and a JSON `data` with only `epoch`, `seq`, `project_id`, `entity_type`, `entity_id`, `op` and `at` (`journal.py`, `Journal.read`). It says that a source, record, plan, check run, session and so on changed, never what it contains; a client that wants the content asks the service for that id. A cursor from another epoch, or older than the journal keeps, gets an `event: reset` with the current cursor, and a comment line is sent every 15 seconds. The workspace reads the same feed through its own proxy. The route exists and is tested (`tests/test_inspector.py`), but it is not documented elsewhere and is not a promised stable contract: its fields and entity types may change in a release. Cairnmind runs no command in answer to an event; whatever listens is a process of the person's own.
 
-**Another MCP client.** `cairnmind mcp --client external --project PATH` serves the memory tools to Cursor, Cline, Zed or any other client that speaks MCP over stdio. Its session is evidence-degraded: its resume packet says `history: unarchived` and `evidence: degraded`, what it writes carries an `origin_*` mark set by the service (`sessions.py`, `origin_mark`) and is never anchored or verified, and the acknowledgement is required as for any client. The command refuses to start where the launcher set `CAIRNMIND_SESSION_ID` or `CAIRNMIND_PACKET_ID` (`mcp_server.py`). The README describes it in [Cursor, Cline, Zed and other MCP clients](../README.md#cursor-cline-zed-and-other-mcp-clients).
+**Another MCP client.** `cairnmind mcp --client external --project PATH` serves the memory tools to Cursor, Cline, Zed or any other client that speaks MCP over stdio. Its session is evidence-degraded: its resume packet says `history: unarchived` and `evidence: degraded`, what it writes carries an `origin_*` mark set by the service (`sessions.py`, `origin_mark`) and is never anchored or verified, and the acknowledgement is required as for any client. The command refuses to start where the launcher set `CAIRNMIND_SESSION_ID` or `CAIRNMIND_PACKET_ID` (`mcp_server.py`). It is described in [EXTERNAL_CLIENTS.md](EXTERNAL_CLIENTS.md).
 
 **Another model for the built-in agent.** A connection profile of the API agent names a provider from a fixed list (`openai`, `anthropic`, `openai_compatible` for any server that speaks Chat Completions at a base URL of its own, and `ollama`) and a model id (`api_profiles.py`, `PROVIDERS`, `normalize_profile`). It is created in the workspace under **Connections** ([API.md](API.md)). A server that speaks one of those four protocols can be used; a fifth protocol needs a change to Cairnmind, and nothing loads one from outside.
 

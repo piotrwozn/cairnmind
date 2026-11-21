@@ -472,8 +472,15 @@ CONFIRMATION_MESSAGES = {
     # The size of the package against its publication limits (terminal_ui.summary_text, #191).
     "Package (estimate): {rows} of {row_limit} rows, {size} of {size_limit}":
         "Paczka (szacunek): {rows} z {row_limit} wierszy, {size} z {size_limit}",
+    "Package: {rows} of {row_limit} rows, {size} of {size_limit}":
+        "Paczka: {rows} z {row_limit} wierszy, {size} z {size_limit}",
+    "Manifest: {size} of {size_limit} bytes": "Manifest: {size} z {size_limit} bajtów",
     "Near the publication limit ({names}). Publishing stops at the limit.":
         "Blisko limitu publikacji ({names}). Publikacja zatrzymuje się na limicie.",
+    "Over the publication limit ({names}). A snapshot would be refused.":
+        "Powyżej limitu publikacji ({names}). Migawka zostałaby odrzucona.",
+    "The code graph is not built yet: indexing builds it from the project's files, a snapshot does not carry it.":
+        "Graf kodu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, migawka go nie zawiera.",
     "rows": "wiersze", "bytes": "bajty", "manifest bytes": "bajty manifestu",
     "object bytes": "bajty największego obiektu",
     "Package size: not measured (the store could not be read for it).":
