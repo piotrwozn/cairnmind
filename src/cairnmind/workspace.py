@@ -24,7 +24,7 @@ from .config import SESSION_NAMES, Settings, drop_env
 from .first_start import workspace_refusal
 from .process_identity import start as process_start
 from .runtime_selection import resolve_tmux
-from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory
+from .runtime_sockets import MAX_SOCKET_PATH, prepare_socket_base, socket_directory, workspace_namespace
 from . import platform_hints
 from . import workspace_activity as column
 from . import workspace_border as border
@@ -212,8 +212,7 @@ class WorkspaceManager:
         self.settings, self.workspace_id = settings, workspace_id
         self.state = WorkspaceState(settings, workspace_id)
         self.directory = self.state.directory
-        namespace = hashlib.sha256((str(settings.data_dir.resolve()) + ":" + workspace_id).encode()).hexdigest()[:16]
-        self.socket_directory = socket_directory("ui", namespace)
+        self.socket_directory = socket_directory("ui", workspace_namespace(settings.data_dir, workspace_id))
         self.socket = self.socket_directory / "tmux.sock"
         self.config = self.directory / "tmux.conf"
         self.binary = resolve_tmux(settings, override=tmux_binary)

@@ -6,7 +6,9 @@ translated: text from a model, a provider or a source is never looked up here (s
 """
 from __future__ import annotations
 
+from .confirmation import NOT_PROVEN
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
+from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
 ASK_MESSAGES = {
@@ -221,6 +223,29 @@ BROKER_MESSAGES = {
         "Już potwierdzone przez osobę na tym komputerze w tej wersji; nie ma nic do zrobienia.",
     "Already disputed at this version; nothing to do.": "Już zakwestionowane w tej wersji; nie ma nic do zrobienia.",
     "The memory service gave an invalid response.": "Niepoprawna odpowiedź usługi pamięci.",
+    # A person's act needs the open workspace's key (person_proof, confirmation.NOT_PROVEN; #214).
+    PROOF_MISSING:
+        "Czynność osoby wykonuje się w środowisku, a to żądanie z niego nie pochodzi. Niczego nie zapisano. Osoba "
+        "ocenia i rozstrzyga w inspektorze środowiska (otwórz je poleceniem `cairnmind`); sesja, skrypt lub "
+        "polecenie zapisuje to, co znalazło, jako proponowane.",
+    PROOF_REFUSED:
+        "To żądanie nie pochodzi z otwartego środowiska tej instalacji albo to środowisko zostało zamknięte. "
+        "Niczego nie zapisano. Zamknij widok i otwórz środowisko ponownie poleceniem `cairnmind`.",
+    NO_WORKSPACE_KEY:
+        "Otwarte środowisko uruchomiła wcześniejsza wersja i nie ma ono klucza dla czynności osoby. Niczego nie "
+        "zapisano. Zatrzymaj je poleceniem `cairnmind workspace stop` i otwórz ponownie poleceniem `cairnmind`.",
+    TMUX_MISSING:
+        "Usługa nie może uruchomić tmux, więc nie może sprawdzić, czy to żądanie pochodzi z otwartego środowiska. "
+        "Niczego nie zapisano. Ustaw tmux_executable w konfiguracji albo uruchom usługę ponownie z terminala, w "
+        "którym działa tmux (`cairnmind stop`, potem `cairnmind`).",
+    IMPORT_REPLACE:
+        "Zastąpienie tego, co osoba potwierdziła lub zakwestionowała na tym komputerze, wymaga środowiska osoby, a "
+        "ten import z niego nie pochodzi. Niczego nie zaimportowano. Zaimportuj pakiet z widoku pamięci w "
+        "środowisku (`cairnmind`); katalog publikacji ani commit nie mogą jeszcze zastąpić takich ustaleń.",
+    NOT_PROVEN:
+        "Tylko osoba może zapisać ustalenie jako potwierdzone, a czynność osoby wymaga jej środowiska: ta z niego "
+        "nie pochodzi. Niczego nie zapisano. Zapisz ustalenie jako proponowane; osoba potwierdzi je w inspektorze "
+        "środowiska.",
     "Invalid graph projection format.": "Niepoprawny format projekcji grafu.",
     "The project of the chosen entry is unknown.": "Nieznany projekt wskazanego wpisu.",
     "Too many pending cockpit openings.": "Zbyt wiele oczekujących otwarć kokpitu.",

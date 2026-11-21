@@ -76,6 +76,12 @@ CLI_REFUSED = ("Only a person can store a record as confirmed. This command runs
                "redirected.")
 
 
+# A person's act is open, but the request that opened it did not carry the open workspace's key (#214).
+NOT_PROVEN = ("Only a person can store a record as confirmed, and a person's act needs the person's workspace: this "
+              "one did not come from it. Nothing was saved. Store the record as proposed; the person confirms it in "
+              "the inspector of the workspace.")
+
+
 class ConfirmationRefused(ValueError):
     """A write that is not a person's act asked for the status confirmed."""
 
