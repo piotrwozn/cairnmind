@@ -56,9 +56,9 @@ nobody accepted once per transcript, with its client, version and byte, and how 
 never carries the record's text. The acceptance lives on the project's row (`accepted_record_kinds`, with
 the date, the note, who accepted and the note source of the act; withdrawals in `withdrawn_record_kinds`),
 is never part of a memory package, and is written only inside a person's act that the store checks
-(`record_kinds.py`, `Store.open_person_act`): the command line in a person's own terminal
-(`person_at_terminal`) or the inspector route `/inspector/record-kinds/accept` and `/withdraw`, which has no
-session field and is what the workspace calls. A malformed record of a known kind, a line that is not a
+(`record_kinds.py`, `Store.open_person_act`): the inspector route `/inspector/record-kinds/accept` and
+`/withdraw`, which has no session field, needs the open workspace's key and is what the workspace calls. The
+command line no longer accepts or withdraws a kind (0.13.0). A malformed record of a known kind, a line that is not a
 JSON object, and every integrity check of the horizon (hashes, offsets, rotation, the import cursor,
 capture recovery provenance) are never covered. An acceptance changes no stored source: the records stay
 `transcript_unknown`, unextracted, with their raw text indexed as before. While a transcript can be read,
