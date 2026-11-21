@@ -1,8 +1,8 @@
 """Whether a project's code graph is built: the one place that decides it (#261, #286).
 
 A snapshot does not carry the code graph; indexing builds it from the project's files and then writes the
-project's graph_fingerprint. Until then the import, `memory status` and the readers of the graph (ask, impact)
-say so.
+project's graph_fingerprint. Until then the import, `memory status` and impact (which reads the graph without
+indexing first) say so; ask indexes before it reads, so it needs no note.
 """
 from __future__ import annotations
 

@@ -1107,8 +1107,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             except TimeoutError:  # bounded as the models path is; the timeout is said, not hidden
                 found = {"matches": [], "held_back": None, "left_out": False, "timed_out": True, "warnings": [],
                          "elapsed_seconds": settings.ask_timeout + 5}
-            return knowledge_mode.unavailable_answer(found, [*indexed.get("errors", []), *pending.get("errors", [])],
-                                                     agent.code_graph_notes(pid))
+            return knowledge_mode.unavailable_answer(found, [*indexed.get("errors", []), *pending.get("errors", [])])
         keep = body.log if body.log is not None else getattr(settings, "answer_log", False) is True
         code_state: dict = {}
         def code_identity():

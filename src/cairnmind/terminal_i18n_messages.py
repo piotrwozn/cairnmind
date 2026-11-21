@@ -51,7 +51,7 @@ ASK_MESSAGES = {
     CODE_GRAPH_NOT_BUILT:
         "Graf kodu tego projektu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, więc to, "
         "co znaleziono o kodzie, może być puste lub niepełne.",
-    "The answer has no verified citations.":"Odpowiedź nie zawiera zweryfikowanych cytowań.",
+    "The answer has no verified citations.": "Odpowiedź nie zawiera zweryfikowanych cytowań.",
     "Could not check whether the quotes support the answer.":
         "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.",
     "The analysis reached the context budget; narrow the question.":

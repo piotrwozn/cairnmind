@@ -1,22 +1,24 @@
 """After an import and before indexing, the readers of the code graph say it is not built yet (#286).
 
-The state is the one the import and `memory status` report (code_graph.code_graph_pending). The three readers are
-`ask` (with models, and without them), `impact`, and the definition search that `ask` feeds the model with.
+The state is the one the import and `memory status` report (code_graph.code_graph_pending).
+Only `impact` reads the graph without indexing first: sk and the definition search run
+behind /ask, which builds it.
 """
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 
+from fastapi.testclient import TestClient
 from test_knowledge import FakeOllama
 from test_snapshot_graph_rows import origin, target_of  # noqa: F401, F811  (origin is a fixture)
 
-from cairnmind import knowledge_mode
-from cairnmind.agent import KnowledgeAgent
-from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT
+from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.config import Settings
 from cairnmind.impact import build_impact
 from cairnmind.ingest import index_project
 from cairnmind.memory import MemoryManager
+from cairnmind.service import create_app
 from cairnmind.terminal_i18n import tr
 from cairnmind.terminal_impact import list_summary
 
@@ -38,28 +40,21 @@ def commit(root):
     (root / "mod1.py").write_text("def f1():\n    return 2\n")
 
 
-async def test_ask_with_models_says_the_graph_is_not_built_until_indexing_has_built_it(tmp_path, origin):  # noqa: F811
-    store, root = imported(tmp_path, origin)
-    agent = KnowledgeAgent(store, Settings(data_dir=tmp_path / "data"), FakeOllama())
-    before = await agent.ask(origin["pid"], QUESTION)
-    assert CODE_GRAPH_NOT_BUILT in before["freshness"]["warnings"]
-    assert before["status"] != "complete" and before["unknowns"][0] == CODE_GRAPH_NOT_BUILT
-    index_project(store, origin["pid"])
-    after = await agent.ask(origin["pid"], QUESTION)
-    assert CODE_GRAPH_NOT_BUILT not in after["freshness"]["warnings"] + after["unknowns"]
-
-
-async def test_ask_without_models_lists_it_among_its_unknowns(tmp_path, origin):  # noqa: F811
-    store, root = imported(tmp_path, origin)
-    agent = KnowledgeAgent(store, Settings(data_dir=tmp_path / "data"), FakeOllama())
-    found = await knowledge_mode.text_matches(agent, origin["pid"], QUESTION)
-    # The service passes the agent's notes as it does here.
-    before = knowledge_mode.unavailable_answer(found, (), agent.code_graph_notes(origin["pid"]))
-    assert CODE_GRAPH_NOT_BUILT in before["unknowns"]
-    index_project(store, origin["pid"])
-    after = knowledge_mode.unavailable_answer(found, (), agent.code_graph_notes(origin["pid"]))
-    assert CODE_GRAPH_NOT_BUILT not in after["unknowns"]
-
+def test_ask_builds_the_graph_before_it_reads_so_it_has_no_note_of_its_own(tmp_path, origin):  # noqa: F811
+    """Every ask goes through the service's /ask, which indexes first; the definition search is reached only from
+    there. So neither needs the note: the graph is built before they read it."""
+    published = origin["manager"].snapshot(origin["pid"])
+    store, root = target_of(tmp_path, origin)
+    settings = replace(Settings.load(tmp_path / "target-database", create=True), knowledge_agent="disabled")
+    settings.save()
+    assert MemoryManager(store).import_snapshot(published["manifest_path"], root)["status"] == "imported"
+    pid = store.resolve_project("big")["id"]
+    assert code_graph_pending(store.resolve_project(pid))
+    with TestClient(create_app(settings, start_worker=False, ollama=FakeOllama())) as client:
+        reply = client.post("/ask", json={"project": "big", "question": QUESTION},
+                            headers={"Authorization": f"Bearer {settings.token}"})
+    assert reply.status_code == 200
+    assert not code_graph_pending(store.resolve_project(pid))
 
 def test_impact_says_it_in_its_text_its_json_and_the_terminal_summary_in_both_languages(tmp_path, origin):  # noqa: F811
     store, root = imported(tmp_path, origin)
@@ -73,13 +68,3 @@ def test_impact_says_it_in_its_text_its_json_and_the_terminal_summary_in_both_la
     after = build_impact(store, origin["pid"], "HEAD")
     assert "warnings" not in after and CODE_GRAPH_NOT_BUILT not in after["text"]
     assert CODE_GRAPH_NOT_BUILT not in list_summary(after, "HEAD", False, lambda text, **values: text)
-
-
-def test_the_definition_search_reads_nothing_before_indexing_and_the_note_covers_it(tmp_path, origin):  # noqa: F811
-    store, root = imported(tmp_path, origin)
-    agent = KnowledgeAgent(store, Settings(data_dir=tmp_path / "data"), FakeOllama())
-    question = "What does `f1` return?"
-    assert agent._definitions(origin["pid"], question, [], {}) == []
-    assert agent.code_graph_notes(origin["pid"]) == [CODE_GRAPH_NOT_BUILT]
-    index_project(store, origin["pid"])
-    assert agent.code_graph_notes(origin["pid"]) == []
