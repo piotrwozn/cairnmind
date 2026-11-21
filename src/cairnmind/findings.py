@@ -39,7 +39,7 @@ def key_error(key) -> str | None:
     return "Invalid finding key"
 
 
-def save_finding(store, project_id, key, content, kind, status, *, session_id=None, now=None):
+def save_finding(store, project_id, key, content, kind, status, *, session_id=None, now=None, worktree=None):
     """Store the typed text as the record's only source, then the record; once per key.
 
     Runs inside the caller's write transaction, which holds the store's writer lock, so a second
@@ -85,7 +85,7 @@ def save_finding(store, project_id, key, content, kind, status, *, session_id=No
         # Who typed it, on which branch and commit, read when it is saved: a confirmed form travels with
         # published memory (#170) under this name, never under one read at publish time.
         from .memory_acts import act_context
-        metadata.update(act_context(store, project_id))
+        metadata.update(act_context(store, project_id, worktree))
     # Indexed with its known secrets replaced (#182); the text itself is kept as typed.
     from .secret_mask import note_metadata
     source = store.snapshot(project_id, uri, content, "manual", note_metadata(store.settings, content, metadata))

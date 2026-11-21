@@ -173,7 +173,7 @@ def list_conflicts(store, project_id, scoped_records, in_scope=None):
 
 
 def resolve_conflict(store, project_id, record_id, other_id, action, expected_version, other_expected_version, *,
-                     keep=None, reason=None):
+                     keep=None, reason=None, worktree=None):
     """Apply one user decision to one pending pair, atomically and with an audit source."""
     if action not in ACTIONS:
         raise ValueError("Conflict action must be supersede, different_scopes or dismiss")
@@ -190,7 +190,7 @@ def resolve_conflict(store, project_id, record_id, other_id, action, expected_ve
     if action != "supersede" and keep is not None:
         raise ValueError("Only superseding takes a finding to keep")
     from .memory_acts import act_context, identity_hash, record_evidence, row_definition_hash
-    context = act_context(store, project_id)  # Who decided, on which branch and commit (#170).
+    context = act_context(store, project_id, worktree)  # Who decided, on which worktree's branch and commit (#170).
     with store.transaction() as tx:
         rows = {identifier: one_row(tx, "SELECT FROM records WHERE id=:id AND project_id=:project",
                                  {"id": identifier, "project": project_id}, False) for identifier in (record_id, other_id)}
@@ -280,11 +280,11 @@ def inbox(inspector, project, worktree=None):
 
 
 def resolve(inspector, project, record_id, other_id, action, expected_version, other_expected_version, *,
-            keep=None, reason=None):
+            keep=None, reason=None, worktree=None):
     from .inspector import InspectorNotFound
     project_id = inspector._project(project)["id"]
     try:
         return resolve_conflict(inspector.store, project_id, record_id, other_id, action, expected_version,
-                                other_expected_version, keep=keep, reason=reason)
+                                other_expected_version, keep=keep, reason=reason, worktree=worktree)
     except LookupError as exc:
         raise InspectorNotFound(str(exc)) from None

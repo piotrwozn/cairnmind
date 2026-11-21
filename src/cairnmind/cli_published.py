@@ -223,7 +223,7 @@ def register(memory_app, initialized):
     @initialized
     def memory_confirm_plan(ctx: typer.Context, project: ProjectArg, plan: PlanArg,
                             expected_version: Annotated[int, typer.Option("--expected-version", min=1)],
-                            reason: str | None = None):
+                            reason: str | None = None, worktree: Path | None = None):
         """Confirm a plan and all its active steps as a person, so that they can be published."""
         from cairnmind.cli import output, refuse, request
         from cairnmind.config import session_value
@@ -239,4 +239,5 @@ def register(memory_app, initialized):
         if not canonical_uuid(plan):
             raise typer.BadParameter("PLAN must be a plan ID")
         output(request(ctx.obj, "POST", f"/inspector/plans/{plan}/confirm",
-                       json={"project": project, "expected_plan_version": expected_version, "reason": reason}))
+                       json={"project": project, "expected_plan_version": expected_version, "reason": reason,
+                             "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
