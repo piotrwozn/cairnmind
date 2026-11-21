@@ -45,7 +45,7 @@ EVALUATED_RELEASE = "These are the release's models, evaluated for this release.
 EVALUATED_PASSED = "Evaluated with these models: cairnmind eval run and cairnmind eval memory passed."
 EVALUATED_NOT = "Not evaluated with these models: run cairnmind eval run and cairnmind eval memory."
 EVALUATED_UNKNOWN = "Whether they were evaluated is unknown: a model server did not name its model."
-EVALUATED_UNREACHABLE = "Whether they were evaluated is unknown: a model server did not answer."
+EVALUATED_UNREACHABLE = "Whether they were evaluated is unknown: a model server did not answer, or answered with an error."
 EVALUATED_NOT_CHECKED = "Whether they were evaluated is not checked here; cairnmind doctor checks it."
 
 THIS_MACHINE = "On this machine: {items}."
@@ -98,7 +98,7 @@ MESSAGES = {
     EVALUATED_PASSED: "Ocenione z tymi modelami: cairnmind eval run i cairnmind eval memory przeszły.",
     EVALUATED_NOT: "Nieocenione z tymi modelami: uruchom cairnmind eval run i cairnmind eval memory.",
     EVALUATED_UNKNOWN: "Nie wiadomo, czy zostały ocenione: serwer modeli nie podał nazwy swojego modelu.",
-    EVALUATED_UNREACHABLE: "Nie wiadomo, czy zostały ocenione: serwer modeli nie odpowiedział.",
+    EVALUATED_UNREACHABLE: "Nie wiadomo, czy zostały ocenione: serwer modeli nie odpowiedział albo odpowiedział błędem.",
     EVALUATED_NOT_CHECKED: "Tutaj nie sprawdzono, czy zostały ocenione; sprawdza to cairnmind doctor.",
     THIS_MACHINE: "Na tym komputerze: {items}.",
     ITEM_SERVICE: "usługa wiedzy pod adresem {url}",
