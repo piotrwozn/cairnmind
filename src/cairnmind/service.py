@@ -711,7 +711,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         pipeline = await asyncio.to_thread(store.job_summary, pid)
         writer = await asyncio.to_thread(store.writer_state)
         from cairnmind.database_mode import address, describe
+        from cairnmind.topology import topology
+        # The service's own settings, loaded when it started; its model servers are not asked here, so the
+        # evaluation reads "not checked" (cairnmind doctor checks it).
         report = {**result, "writer": writer, "storage": {**describe(settings), "url": address(settings)},
+                  "topology": topology(settings, writer=writer),
                   "background": {**background_status, "inference": inference_status()}, "pipeline_jobs": pipeline,
                   "inference_queue": inference.queue.qsize(), "cached_answers": len(cache),
                   "recent_job_errors": error_rows}

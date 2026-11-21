@@ -13,6 +13,9 @@ import subprocess
 import httpx
 import pytest
 
+from typer.testing import CliRunner
+
+from cairnmind import cli, integrations, memory_models, store_writer
 from cairnmind import topology as topology_module
 from cairnmind.config import Settings, is_own_variable
 from cairnmind.database_credentials import problem as database_problem
@@ -20,7 +23,7 @@ from cairnmind.database_mode import MODE_INVALID
 from cairnmind.first_start import KNOWLEDGE_INVALID
 from cairnmind.terminal_safe import safe_text
 from cairnmind.topology import (
-    EVALUATED_NOT, EVALUATED_NOT_CHECKED, EVALUATED_PASSED, EVALUATED_RELEASE, EVALUATED_UNKNOWN, FROM_VARIABLE,
+    CHANGE_HINT, EVALUATED_NOT, EVALUATED_NOT_CHECKED, EVALUATED_PASSED, EVALUATED_RELEASE, EVALUATED_UNKNOWN, FROM_VARIABLE,
     ITEM_DATABASE_HERE, ITEM_ENGINE_DOCKER, ITEM_MODELS_EMBEDDING, ITEM_NO_SERVICE, ITEM_SERVICE_VARIABLE,
     MODELS_DISABLED, MODELS_INVALID, OLLAMA_FROM_VARIABLE, STORAGE_CONNECT_HERE, STORAGE_CONNECT_REMOTE, STORAGE_DOCKER,
     STORAGE_PROBLEM, lines, status_words, topology)
@@ -259,6 +262,60 @@ def test_every_topology_sentence_has_polish_with_the_same_placeholders():
             return {name for _, name, _, _ in string.Formatter().parse(text) if name}
         assert polish != english and holes(polish) == holes(english), english
         assert tr(english, "pl") == polish and tr(english, "en") == english
+
+
+def invoke(tmp_path, *arguments):
+    return CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "data"), *arguments])
+
+
+@pytest.fixture
+def requests_replaced(monkeypatch):
+    """What `setup` and `doctor` ask of model servers and of the store, as hand-made answers."""
+    found = {"evaluated": True, "chat": {"identity": "custom@1"}, "embedding": {"identity": "emb@1"}}
+    monkeypatch.setattr(memory_models, "doctor_models", lambda settings, http: found)
+    monkeypatch.setattr(store_writer, "inspect", lambda settings: {"role": "writer"})
+    return found
+
+
+def test_setup_shows_three_lines_and_how_to_change_them(tmp_path, requests_replaced):
+    make(tmp_path, chat_model="custom:1")
+    result = invoke(tmp_path, "setup")
+    assert result.exit_code == 0, result.output
+    expected = topology(Settings.load(tmp_path / "data"), models=requests_replaced, writer=WRITER)["lines"]
+    assert result.output == "\n".join([*expected, "", CHANGE_HINT]) + "\n"
+    assert expected[1].endswith(" " + EVALUATED_PASSED) and expected[0].endswith("This installation writes it.")
+    assert "cairnmind engine start --docker" in CHANGE_HINT and "cairnmind models set" in CHANGE_HINT
+
+
+def test_setup_json_and_changes_nothing(tmp_path, requests_replaced):
+    make(tmp_path)
+    config = (tmp_path / "data" / "config.json").read_bytes()
+    first = invoke(tmp_path, "setup", "--json")
+    second = invoke(tmp_path, "setup")
+    assert first.exit_code == second.exit_code == 0, first.output
+    place = json.loads(first.output)
+    assert list(place) == ["lines", "storage", "models", "this_machine"] and place["storage"]["writer"] == WRITER
+    assert place["models"]["evaluated"] == "release" and "\n".join(place["lines"]) in second.output
+    assert (tmp_path / "data" / "config.json").read_bytes() == config
+
+
+def test_doctor_starts_with_the_topology_of_what_it_found(monkeypatch, tmp_path):
+    make(tmp_path, chat_model="custom:1")
+    found = {"evaluated": True, "chat": {"identity": "custom@1"}, "embedding": {"identity": "emb@1"}}
+    monkeypatch.setattr(integrations, "doctor", lambda settings: {"memory_models": found})
+    monkeypatch.setattr(store_writer, "inspect", lambda settings: {"role": "reader", "reason": "Another one writes."})
+
+    def unreadable(settings):
+        raise RuntimeError("no store here")
+    monkeypatch.setattr(cli, "store_for_read", unreadable)
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    result = invoke(tmp_path, "doctor")
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert list(report)[0] == "topology" and report["store_writer"]["role"] == "reader"
+    shown = report["topology"]["lines"]
+    assert shown[0].endswith("Another one writes.") and shown[1].endswith(" " + EVALUATED_PASSED)
+    assert shown[2].startswith("On this machine: " + ITEM_NO_SERVICE + "; the ArcadeDB engine (native, Java 21)")
 
 
 def test_lines_in_polish(tmp_path, offline):
