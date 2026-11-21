@@ -31,7 +31,7 @@ def test_the_workspace_names_a_service_of_another_data_directory(tmp_path):
     client = _workspace_client(settings, matched=False)
     client._authenticate = lambda: None
     with pytest.raises(BrokerError) as raised:
-        client.request("GET", "/api/projects")
+        client.request("GET", "/api/status")
     english = broker_error_text(raised.value, lambda text: tr(text, "en"))
     _checked(english, settings)
     assert "most likely belongs to another data directory" in english
@@ -42,7 +42,7 @@ def test_the_workspace_names_a_service_of_another_data_directory(tmp_path):
     own = _workspace_client(settings, matched=True)
     own._authenticate = lambda: None
     with pytest.raises(BrokerError) as raised:
-        own.request("GET", "/api/projects")
+        own.request("GET", "/api/status")
     assert "another data directory" not in str(raised.value) and "Invalid local service token" in str(raised.value)
 
 
@@ -70,8 +70,13 @@ def test_the_mcp_bridge_names_a_service_of_another_data_directory(monkeypatch, t
         asyncio.run(external._send("GET", "/projects", None, {}))
     _checked(str(raised.value), settings)
     assert "most likely belongs to another data directory" in str(raised.value)
-    # the launcher's own native client talks to the service the launcher started: no claim about another directory
+    # the native client's service was matched by the launcher, not here: if another directory's service took the port since, it says so too
     native = mcp_server.ServiceClient(settings)
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(native._send("GET", "/projects", None, {}))
+    _checked(str(raised.value), settings)
+    # a client that started or matched the service itself keeps the service's own 401
+    native._matched = True
     with pytest.raises(RuntimeError) as raised:
         asyncio.run(native._send("GET", "/projects", None, {}))
     assert "another data directory" not in str(raised.value) and "Invalid local service token" in str(raised.value)

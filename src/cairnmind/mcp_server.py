@@ -157,8 +157,9 @@ class ServiceClient:
     def __init__(self, settings: Settings, session_id: str | None = None,
                  packet_id: str | None = None, *, external: dict[str, str | None] | None = None):
         self.settings = settings
-        # A native client's service is the launcher's; an external client's is matched only when it starts one.
-        self._matched = external is None
+        # Matched only when this process itself started or matched the service: the launcher's earlier match
+        # does not hold if another directory's service took the port since (the workspace panels follow the same rule).
+        self._matched = False
         # {"project": id, name or path, "worktree": path or None} for an external client; None for a native one.
         self.external = external
         if external is not None:
