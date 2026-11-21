@@ -1,0 +1,65 @@
+name: Database image
+
+# Builds deploy/arcadedb for linux/amd64 and linux/arm64 and publishes it to the GitHub Container Registry
+# as ghcr.io/<owner>/cairnmind-arcadedb:<ArcadeDB version> (#218). Run by hand, from main, when the pinned
+# ArcadeDB version or anything under deploy/arcadedb changes; the job summary gives the digest that the code
+# pins. A push with the same tag moves the tag; the code refers to an image by digest, never by tag.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Only from main
+        if: ${{ github.ref != 'refs/heads/main' }}
+        run: |
+          echo "The published image is built from main only; this run is on $GITHUB_REF."
+          exit 1
+      - uses: actions/checkout@v7
+      - name: Read the pinned ArcadeDB version
+        id: version
+        run: |
+          version=$(sed -n 's/^ARG ARCADEDB_VERSION=//p' deploy/arcadedb/Dockerfile)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - name: Sign in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/cairnmind-arcadedb
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker buildx build deploy/arcadedb \
+            --platform linux/amd64,linux/arm64 \
+            --tag "$IMAGE:$VERSION" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --metadata-file "$RUNNER_TEMP/image.json" \
+            --push
+          digest=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['containerimage.digest'])" "$RUNNER_TEMP/image.json")
+          test "${#digest}" -eq 71
+          {
+            echo "Published \`$IMAGE:$VERSION\` from $GITHUB_SHA."
+            echo
+            echo "Pin it in the code as:"
+            echo
+            echo "    $IMAGE@$digest"
+          } >> "$GITHUB_STEP_SUMMARY"

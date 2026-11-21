@@ -2,6 +2,12 @@
 
 All notable changes are listed here, newest first. Releases up to 0.8.0 were published as DevBrain.
 
+## Unreleased
+
+### Development and CI
+
+- A workflow run by hand from main builds the database image of `deploy/arcadedb` for linux/amd64 and linux/arm64 and publishes it to `ghcr.io/piotrwozn/cairnmind-arcadedb`, tagged with the pinned ArcadeDB version; its summary gives the digest (#218).
+
 ## 0.12.0
 
 ### macOS on Apple silicon

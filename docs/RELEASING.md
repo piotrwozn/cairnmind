@@ -49,6 +49,16 @@ As done for 0.9.0 (#66, which changed `pyproject.toml`, `src/cairnmind/__init__.
 
    The v0.9.0 release has exactly these three assets. Downloads are verified with `sha256sum -c SHA256SUMS`.
 
+## The database image
+
+The image of `deploy/arcadedb` is published to `ghcr.io/piotrwozn/cairnmind-arcadedb` by the workflow `Database image` (`.github/workflows/database-image.yml`), for linux/amd64 and linux/arm64, tagged with the pinned ArcadeDB version. It is run by hand, from main only, when the pinned ArcadeDB version or anything under `deploy/arcadedb` changes:
+
+```bash
+gh workflow run database-image.yml --repo piotrwozn/cairnmind --ref main
+```
+
+The summary of the run gives the digest (`sha256:...`). A later run with the same tag moves the tag, so anything that must name one exact image names it by digest. The first run creates the package as private; the owner makes it public once, in the package's settings on GitHub.
+
 ## Upgrades
 
 Since 0.8.0 an upgrade is a backup, the installer and `cairnmind install` for each project ([UPGRADING.md](UPGRADING.md)). The host runtime gate exists only in the frozen 0.7.2 to 0.8.0 updater attached to the v0.8.0 release; its tooling is not in this repository. No host qualification is part of the gate.
