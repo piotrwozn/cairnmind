@@ -584,6 +584,16 @@ def test_unready_preflight_blocks_native_process(settings, project, installed, p
     assert not (settings.data_dir / "contexts").exists()
 
 
+def test_partial_preflight_message_at_the_command_line_has_no_stable_code(settings, project, installed, prepared, monkeypatch):
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: f"/native/{name}")
+    prepared.update(status="partial", unknowns=["a gap"])
+    monkeypatch.setattr(integrations, "_prepare_session", lambda *a: prepared)
+    with pytest.raises(ValueError) as refused:
+        integrations.run_client(settings, project, "codex")
+    assert str(refused.value) == "Verified resume is partial; native launch blocked. a gap"
+    with pytest.raises(ValueError, match="^resume_partial: Verified resume is partial"):  # the workspace still reads the code
+        integrations.prepare_client_launch(settings, project, "codex")
+
 def test_unverified_capability_refuses_before_preparation(settings, project, installed, monkeypatch):
     installed["verified_resume"] = False
     installed["packet_passing"] = False
