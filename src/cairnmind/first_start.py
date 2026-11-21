@@ -42,8 +42,10 @@ ASK_OFF = ("The knowledge agent is disabled (deterministic-only mode), so no ans
 ASK_NO_MATCH = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. A full-text "
                 "search found no passage that matches words of the question.")
 ASK_LEFT_OUT = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. A full-text "
-                "search found passages that match words of the question, but none could be shown; see unknowns "
-                "and freshness.")
+                "search found passages that match words of the question, but none could be shown; the reasons "
+                "are listed with the result.")
+ASK_TIMED_OUT = ("The knowledge agent is disabled (deterministic-only mode), so no answer was made. The full-text "
+                 "search did not finish in time, so no passages are listed.")
 MATCHES_HEADING = "Full-text matches (search results, not an answer)"
 MATCHES_HELD_BACK = ("Some matching passages were left out because of their sensitivity class, as answers leave them "
                      "out for the remote model server (memory_remote_classes).")
@@ -86,7 +88,9 @@ MESSAGES = {
                    "Wyszukiwanie pełnotekstowe nie znalazło żadnego fragmentu pasującego do słów pytania."),
     ASK_LEFT_OUT: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
                    "Wyszukiwanie pełnotekstowe znalazło fragmenty pasujące do słów pytania, ale żadnego nie dało się "
-                   "pokazać; zobacz unknowns i freshness."),
+                   "pokazać; powody są wymienione przy wyniku."),
+    ASK_TIMED_OUT: ("Agent wiedzy jest wyłączony (tryb tylko deterministyczny), więc nie powstała żadna odpowiedź. "
+                    "Wyszukiwanie pełnotekstowe nie zakończyło się w czasie, więc nie wymieniono żadnych fragmentów."),
     MATCHES_HEADING: "Dopasowania pełnotekstowe (wyniki wyszukiwania, nie odpowiedź)",
     MATCHES_HELD_BACK: ("Część pasujących fragmentów pominięto ze względu na ich klasę wrażliwości, tak jak "
                         "odpowiedzi pomijają je dla zdalnego serwera modeli (memory_remote_classes)."),

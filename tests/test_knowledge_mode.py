@@ -51,6 +51,10 @@ def test_found_but_left_out_is_never_said_to_be_nothing_found():
     dropped = knowledge_mode.unavailable_answer({**NOTHING_FOUND, "left_out": True, "warnings": ["a file changed"]})
     assert dropped["answer"] == first_start.ASK_LEFT_OUT and dropped["freshness"]["warnings"] == ["a file changed"]
     assert tr(first_start.ASK_LEFT_OUT, "pl") == first_start.MESSAGES[first_start.ASK_LEFT_OUT]
+    # A search that did not finish knows nothing: it says neither "found" nor "found none".
+    late = knowledge_mode.unavailable_answer({**NOTHING_FOUND, "timed_out": True})
+    assert late["answer"] == first_start.ASK_TIMED_OUT and late["full_text_matches"] == []
+    assert tr(first_start.ASK_TIMED_OUT, "pl") == first_start.MESSAGES[first_start.ASK_TIMED_OUT]
 
 
 def a_match(uri="notes.md", excerpt="The ledger stores amounts in cents."):

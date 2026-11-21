@@ -14,7 +14,7 @@ import fcntl
 import time
 
 from . import config
-from .first_start import (ASK_LEFT_OUT, ASK_NO_MATCH, ASK_OFF, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
+from .first_start import (ASK_LEFT_OUT, ASK_NO_MATCH, ASK_OFF, ASK_TIMED_OUT, CHOSE_DISABLED, CHOSE_ENABLED, GET_MODELS, KNOWLEDGE_DISABLED,
                           KNOWLEDGE_INVALID, MATCHES_HELD_BACK, MODEL_MISSING, MODELS_NOT_CONFIGURED, NEEDS_MODELS,
                           RESTART_FOR_MODELS, SERVER_DOWN, TURNED_ON)
 
@@ -154,7 +154,8 @@ def unavailable_answer(found: dict, index_errors=()) -> dict:
     diagnostics = {"stage": "ask", "code": UNAVAILABLE_CODE}
     if found["held_back"]:
         diagnostics["held_back"] = found["held_back"]
-    answer = ASK_OFF if found["matches"] else ASK_LEFT_OUT if found["left_out"] else ASK_NO_MATCH
+    answer = (ASK_OFF if found["matches"] else ASK_TIMED_OUT if found.get("timed_out")
+              else ASK_LEFT_OUT if found["left_out"] else ASK_NO_MATCH)
     return {"status": "unavailable", "answer": answer, "sources": [],
             "full_text_matches": found["matches"], "unknowns": list(dict.fromkeys(unknowns))[:8],
             "freshness": {"warnings": [*found["warnings"], *errors][-8:]},
