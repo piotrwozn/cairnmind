@@ -56,7 +56,7 @@ def missing_models(settings) -> list[str]:
     reasons = []
     for role in ROLES:
         entry = found[role]
-        if str(entry.get("error", "")).startswith("Invalid profile"):
+        if entry.get("refused") or str(entry.get("error", "")).startswith("Invalid profile"):
             raise ValueError(entry["error"])  # a configured but broken profile is not "no models": the person fixes it
         url = entry.get("base_url") or settings.ollama_url
         if not entry.get("reachable"):

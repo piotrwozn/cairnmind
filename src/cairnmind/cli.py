@@ -1952,6 +1952,11 @@ def model_pull(ctx: typer.Context):
              if profile(settings, role) is None]
     if not local:
         raise typer.BadParameter("Neither memory model runs on the local Ollama; install them on their own server.")
+    from cairnmind.memory_models import local_server
+    try:
+        local_server(settings)
+    except ValueError as exc:  # another computer: nothing is downloaded there or asked (#288)
+        raise typer.BadParameter(str(exc)) from None
     with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900)) as client:
         for name in local:
             typer.echo(f"Downloading {name}…", err=True)
