@@ -4,6 +4,12 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 
 ## Unreleased
 
+### A lighter first start
+
+- The database engine can run in Docker, so Java 21 on the host is optional: `cairnmind engine start --docker` (also `engine up --docker`) runs Cairnmind's ArcadeDB image (`ghcr.io/piotrwozn/cairnmind-arcadedb`, pinned by digest) with the data directory mounted, as your own user, on `127.0.0.1` only; `--build` builds the same image on this machine from the files shipped with Cairnmind. `engine stop` acts only on the container carrying this installation's labels and refuses when it cannot tell; `engine status` reports the container as unknown then (#272).
+- `cairnmind init` chooses the engine mode once, Docker when Java 21 is missing and Docker answers, says which it chose and saves it as `engine_mode` in `config.json`; a saved mode whose tool is missing is an error that names it. `engine start --native` goes back. The native engine and the engine in Docker never run on one data directory at the same time (#272).
+- `cairnmind doctor` names the engine mode (`arcadedb.engine`) and, in Docker mode, does not ask for Java and reports Docker and the container; the installer no longer stops for a missing Java when Docker answers (#272).
+
 ### Development and CI
 
 - A workflow run by hand from main builds the database image of `deploy/arcadedb` for linux/amd64 and linux/arm64 and publishes it to `ghcr.io/piotrwozn/cairnmind-arcadedb`, tagged with the pinned ArcadeDB version; its summary gives the digest (#218).
