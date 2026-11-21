@@ -118,10 +118,18 @@ if [[ -z "$connect_url" ]]; then
     # Without Java 21 the engine can run in Docker (#272): said once, and the installer goes on. Without a Docker
     # that answers, the Java message above is the end.
     if ! check_java; then
-        if command -v docker >/dev/null 2>&1 && docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+        if ! command -v docker >/dev/null 2>&1; then
+            exit 1
+        fi
+        if docker_said="$(docker version --format '{{.Server.Version}}' 2>&1)"; then
             printf 'Java 21 was not found and Docker answers, so cairnmind init can run the engine in Docker; it says which mode it chose.\n'
             engine_in_docker=true
         else
+            # What docker said is untrusted text: its first line, printable characters only, cut short.
+            docker_said="${docker_said%%$'\n'*}"
+            docker_said="${docker_said//[^[:print:]]/}"
+            docker_said="${docker_said:0:200}"
+            printf 'Docker is on the path but did not answer (it said: %s). Either start Docker and run the installer again, so the engine runs in Docker, or install Java 21+: %s\n' "${docker_said:-nothing}" "$java_hint" >&2
             exit 1
         fi
     fi
