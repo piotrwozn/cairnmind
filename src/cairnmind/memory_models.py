@@ -54,6 +54,41 @@ def is_loopback(url: str) -> bool:
         return host.casefold() == "localhost"
 
 
+REMOTE_OLLAMA = ("{setting} names {host}, a server on another computer. A model server there receives memory "
+                 "content (your questions and the text of the classes in memory_remote_classes), and nothing was "
+                 "agreed to that, so nothing is sent to it. To use it, give your consent with `cairnmind models set "
+                 "--role chat|embedding --provider ollama --model NAME --base-url URL --allow-remote`, once for "
+                 "chat and once for embedding (the address needs HTTPS); to use the Ollama on "
+                 "this computer, set ollama_url to http://127.0.0.1:11434.")
+MESSAGES = {REMOTE_OLLAMA: ("{setting} wskazuje {host}, serwer na innym komputerze. Serwer modeli tam dostaje treść "
+                            "pamięci (twoje pytania i tekst klas z memory_remote_classes), a na to nie wyrażono zgody, "
+                            "więc nic do niego nie jest wysyłane. Aby go używać, wyraź zgodę poleceniem `cairnmind "
+                            "models set --role chat|embedding --provider ollama --model NAME --base-url URL "
+                            "--allow-remote`, osobno dla chat i dla embedding (adres musi używać HTTPS); "
+                            "aby używać Ollamy na tym komputerze, ustaw ollama_url na http://127.0.0.1:11434.")}
+
+
+class RemoteServerRefused(ValueError):
+    """ollama_url names another computer and no profile records the consent (#288)."""
+
+
+def local_server(settings: Settings) -> str:
+    """The address of the local Ollama of the settings, or RemoteServerRefused: a role without a profile
+    never reaches another computer, from config.json or from the environment."""
+    try:
+        if is_loopback(settings.ollama_url):
+            return settings.ollama_url
+        host = urlsplit(settings.ollama_url).hostname
+    except ValueError:  # an address urlsplit cannot read is not the local one
+        host = None
+    from .config import env_names
+    variable = next((key for key in env_names("OLLAMA_URL") if os.environ.get(key)), None)
+    from_environment = "ollama_url" in (settings._origin or {}).get("kept", {})
+    setting = f"ollama_url ({variable})" if from_environment and variable else "ollama_url"
+    raise RemoteServerRefused(REMOTE_OLLAMA.format(
+        setting=setting, host=host or settings.ollama_url))
+
+
 def normalize_memory_model(row: Any, role: str) -> dict:
     """A canonical profile for one role, or ValueError. It never holds a key."""
     if role not in ROLES:
@@ -104,6 +139,11 @@ def profile(settings: Settings, role: str) -> dict | None:
     return None if row is None else normalize_memory_model(row, role)
 
 
+def server(settings: Settings, role: str) -> dict:
+    """Where the role's requests go: its profile, or the local Ollama of the settings (refused when not loopback)."""
+    return profile(settings, role) or {"provider": "ollama", "base_url": local_server(settings)}
+
+
 def credential_for(settings: Settings, role: str, credentials: Settings | None = None):
     """A function that reads the role's key when a request needs it, or None when it names none.
 
@@ -119,7 +159,7 @@ def credential_for(settings: Settings, role: str, credentials: Settings | None =
 
 
 def server_identity(settings: Settings, role: str) -> str:
-    row = profile(settings, role) or {"provider": "ollama", "base_url": settings.ollama_url}
+    row = server(settings, role)
     return server_tag(row["base_url"]) if row["provider"] == "openai_compatible" else "ollama:" + row["base_url"]
 
 
@@ -140,7 +180,7 @@ def setup_tag(settings: Settings) -> str:
     """What a pair of model identities does not name: each role's server, the context window, the reasoning effort."""
     rows = {}
     for role in ROLES:
-        row = profile(settings, role) or {"provider": "ollama", "base_url": settings.ollama_url}
+        row = server(settings, role)
         rows[role] = {key: value for key, value in row.items() if key != "credential_ref"}
     rows["chat"]["context_window"] = context_tokens(settings)
     return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()[:16]
@@ -150,7 +190,7 @@ def destinations(settings: Settings) -> dict:
     """Per role: which kind of server runs it and whether content leaves this computer."""
     result = {}
     for role in ROLES:
-        row = profile(settings, role) or {"provider": "ollama", "base_url": settings.ollama_url}
+        row = server(settings, role)
         result[role] = {"provider": row["provider"], "destination": _destination(row, role)["destination"]}
     return result
 
@@ -222,6 +262,8 @@ def from_settings(settings: Settings, *, credentials: Settings | None = None):
     credentials names the installation whose saved keys are read, when settings is an evaluation copy.
     """
     chat, embedding = _client(settings, "chat", credentials), _client(settings, "embedding", credentials)
+    if chat is None or embedding is None:
+        local_server(settings)  # a role without a profile: refused before a client exists (#288)
     if chat is None and embedding is None:
         return Ollama(settings)
     if chat is None or embedding is None:
@@ -351,7 +393,9 @@ def _destination(row: dict, role: str) -> dict:
 def _doctor_role(settings: Settings, role: str, http: httpx.Client) -> dict:
     model = getattr(settings, MODEL_FIELDS[role])
     try:
-        row = profile(settings, role) or {"provider": "ollama", "base_url": settings.ollama_url}
+        row = server(settings, role)
+    except RemoteServerRefused as exc:  # no request, not even this read-only one (#288)
+        return {"model": model, "reachable": False, "error": str(exc), "refused": True}
     except ValueError as exc:
         return {"model": model, "reachable": False, "error": f"Invalid profile: {exc}"}
     from .memory_egress import describe

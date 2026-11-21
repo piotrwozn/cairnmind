@@ -264,7 +264,9 @@ def doctor(settings: Settings) -> dict[str, Any]:
     with httpx.Client(timeout=1.5, trust_env=False) as client:
         # Read-only diagnostics: never construct Store, create a database, start
         # Java or install/download an engine just to report its availability.
+        from .memory_models import RemoteServerRefused, local_server
         try:
+            local_server(settings)  # another computer is not asked without consent (#288)
             response = client.get(f"{settings.ollama_url.rstrip('/')}/api/tags")
             response.raise_for_status()
             models = response.json().get("models", [])
@@ -281,6 +283,8 @@ def doctor(settings: Settings) -> dict[str, Any]:
                     for model in running.json().get("models", [])]
             except (httpx.HTTPError, ValueError, AttributeError, TypeError):
                 pass
+        except RemoteServerRefused as exc:
+            result["ollama"].update(error=str(exc), refused=True)
         except (httpx.HTTPError, ValueError, AttributeError, TypeError) as exc:  # a reply of another shape
             result["ollama"]["error"] = type(exc).__name__
         # The address asked, so a reader of the report can tell a model server at the same address (#244).
