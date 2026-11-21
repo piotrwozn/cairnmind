@@ -211,7 +211,7 @@ See [EVALUATION.md](EVALUATION.md) for what they measure.
 ## Upgrading
 
 - From DevBrain 0.8.0, or from 0.7.2 with existing data: follow [UPGRADING.md](UPGRADING.md).
-- For later releases, read the release notes first, then run the installer from the new source directory.
+- For later releases, read the release notes first, then run the installer from the new source directory. Close editors that use `cairnmind mcp --client external` first: their next tool call starts the service again, from the version being replaced.
 
 ## Uninstalling
 
@@ -221,6 +221,8 @@ cairnmind stop
 cairnmind engine stop
 uv tool uninstall cairnmind
 ```
+
+Close editors that use `cairnmind mcp --client external` before this: their next tool call starts the service again.
 
 This keeps your memory in the data directory that `cairnmind doctor` shows as `data_dir`. To remove it too, first make a backup with `cairnmind backup ~/cairnmind-backup.cairnmind.json.gz`, then delete the directory. Deleting it cannot be undone.
 
