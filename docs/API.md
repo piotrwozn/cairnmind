@@ -97,6 +97,8 @@ cairnmind models set --role chat --provider ollama --model qwen3.5:9b
 
 `cairnmind models pull` downloads only the models that run on the local Ollama.
 
+Without models (deterministic-only mode, `knowledge_agent: disabled` in `config.json`, chosen by `cairnmind init` when no model server or model was found) nothing asks a model: `ask`, through the command line, the MCP tool, `POST /ask` and the Ask memory panel, returns `status: unavailable` with `diagnostics.code: models_not_configured`, no sources and, in `unknowns`, how to get models; the evaluations report `not_run` (exit 3) and `rebuild-vectors` refuses. `cairnmind models pull` after a successful download, and `cairnmind models set` after its check, set `knowledge_agent: enabled`; the service reads it when it starts. A configured model server that is down is still reported as a fault: the answer's code is `model_unavailable` and `cairnmind status` shows `background.model_error`.
+
 ## Agent work and permissions
 
 The API/Copilot panel shows the history, the streamed response, tool calls and their results, and the memory state. **Send** or `Ctrl+Enter` starts a turn. `Ctrl+C` or **Interrupt** stops the current operation. The `Ctrl+B` workspace prefix and the panel shortcuts still work; press `Ctrl+B` twice to pass a native `Ctrl+B` through.

@@ -24,7 +24,7 @@ The installer never changes your Codex or Claude Code configuration, never downl
 | Java | 21 or newer, or Docker | Runs the ArcadeDB engine; without Java 21, the engine runs in Docker |
 | tmux | 3.4 or newer, optional | Only for the terminal workspace (`cairnmind`); the service, `run`, `mcp`, `brief` and the other commands work without it |
 | uv | current | Installs Cairnmind with Python 3.12 |
-| Ollama | current | Runs the local knowledge agent |
+| Ollama | current, optional | Runs the knowledge agent's local models; without models Cairnmind works in deterministic-only mode |
 | GPU | optional | The 9B model needs roughly 7 GB of GPU memory; on CPU it works, but answers are slow |
 | Terminal | 80 × 24 or larger | The multi-pane Cockpit layout needs 140 × 42 |
 
@@ -159,7 +159,7 @@ To run ArcadeDB yourself in a container, on a server or on a laptop for developm
 
 An installation that uses such a database is connect-only: it never installs, starts or stops an engine and needs no Java. Set `CAIRNMIND_ARCADE_CONNECT_URL` to the database address before you run the installer, and it skips the Java check and the ArcadeDB download; then follow [Connect-only installations](DEPLOYMENT.md#connect-only-installations) to create the database user and the store. The rest of this page (models, coding assistants, the first project) is the same.
 
-## 5. Download the models
+## 5. Download the models (optional)
 
 Ollama usually runs as a service after installation. If it does not, start it in a separate terminal with `ollama serve`. Then:
 
@@ -168,7 +168,9 @@ cairnmind models pull
 cairnmind doctor
 ```
 
-`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB (and the engine mode), Ollama and coding-client state. It is read-only: no logins, downloads or model sessions. Without tmux 3.4+ it reports `cockpit: unavailable (tmux 3.4+ not found)` and still exits 0.
+Models are optional. When `cairnmind init` finds no model server, or not both models, it saves `knowledge_agent: disabled` in `config.json` and says so: plans, tasks, checks, `brief`, `impact`, memory and file indexing work as usual, extraction and embedding jobs wait, `cairnmind status` shows `models: not configured (deterministic-only mode)` and how many jobs wait, and `cairnmind ask` answers `unavailable`. `cairnmind models pull` (or `cairnmind models set`) turns the knowledge agent on; restart the service afterwards and the waiting jobs run. To turn it off again, set `knowledge_agent` to `disabled` in `config.json` and restart the service. An installation from before 0.13.0 keeps its models.
+
+`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB (and the engine mode), Ollama and coding-client state. It is read-only: no logins, downloads or model sessions. Without tmux 3.4+ it reports `cockpit: unavailable (tmux 3.4+ not found)` and still exits 0. With no models configured it reports `knowledge_agent: disabled (deterministic-only mode)` as information and still exits 0.
 
 ## 6. Connect your coding assistants
 
