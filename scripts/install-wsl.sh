@@ -130,6 +130,12 @@ if [[ -z "$connect_url" ]]; then
         done
         if kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null || true
+            waited=0 # a docker that ignores SIGTERM gets one more second, then SIGKILL: the limit holds
+            while kill -0 "$pid" 2>/dev/null && ((waited < 10)); do
+                sleep 0.1
+                waited=$((waited + 1))
+            done
+            kill -KILL "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
             docker_said="no answer within 5 seconds"
             status=1
@@ -249,7 +255,7 @@ stop_installed() {
             # Sockets without a tmux client here: nothing can ask or close them, so `workspace stop` is no way out.
             if [[ "$terminals" == /* ]] && ! command -v tmux >/dev/null 2>&1; then
                 printf '%s\n' \
-                    'Terminal server sockets of the installed version were found, but tmux is not installed here, so they could not be checked:' \
+                    'Terminal server sockets of the installed version were found, but tmux is not on the PATH here, so they could not be checked:' \
                     "$terminals" \
                     'Install tmux so they can be checked, or, when no terminal server runs, remove each socket file named above.' \
                     'Then run this installer again. The installer removes nothing itself.' >&2

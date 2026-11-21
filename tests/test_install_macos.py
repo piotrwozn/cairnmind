@@ -273,7 +273,7 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
         server.close()
         assert result.returncode == 1
         assert str(folder / "tmux.sock") in result.stderr
-        assert "tmux is not installed here" in result.stderr and "Install tmux" in result.stderr
+        assert "tmux is not on the PATH here" in result.stderr and "Install tmux" in result.stderr
         assert "remove each socket file" in result.stderr and "workspace stop" not in result.stderr
         assert (folder / "tmux.sock").exists()
     finally:
@@ -357,9 +357,9 @@ def test_a_docker_that_does_not_answer_does_not_hold_the_installer(mac):
     run, state, bin_dir, tmp_path = mac
     state.update(system="Linux")
     hint = "sudo apt install openjdk-21-jre-headless"
-    tool(bin_dir / "docker", "exec sleep 60")
+    tool(bin_dir / "docker", "trap '' TERM; exec sleep 60")  # ignores SIGTERM: only SIGKILL ends it
     started = time.monotonic()
-    result = run()
+    result = run(TMPDIR=str(tmp_path))
     assert time.monotonic() - started < 15
     assert result.returncode == 1 and "passed" not in result.stdout
     assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
