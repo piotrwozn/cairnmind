@@ -245,12 +245,26 @@ def last_log_line(path: Path) -> str:
     return "".join(char if char.isprintable() else "?" for char in text)[:500]
 
 
+_PORT_ADVICE = "Give this data directory its own port: `port` in {}/config.json, or CAIRNMIND_PORT for one command."
+
+
+def _bind_failed(log: Path, since: int) -> bool:
+    """Whether what this start wrote to the log (from byte ``since``, not an earlier start's) says the port is taken."""
+    try:
+        with log.open("rb") as handle:
+            handle.seek(since)
+            return b"address already in use" in handle.read(65536).lower()
+    except OSError:
+        return False
+
+
 def ensure_service(settings: Settings, *, background_inference: bool = True) -> None:
     if service_alive(settings):
         return
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log = settings.data_dir / "service.log"
     with log.open("ab") as handle:
+        started_at = handle.tell()
         env = dict(os.environ)
         # The service is a shared system worker, not a child actor of one coding session.
         drop_env(env, "SESSION_ID", "PACKET_ID")
@@ -266,6 +280,10 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             # It stopped instead of starting, for example on an installation that only reads the store (#70).
             # One that met a service starting at the same moment is waited for, as before.
             said = last_log_line(log)
+            if _bind_failed(log, started_at):  # uvicorn's own last line is only "Application shutdown complete" (#267)
+                raise ServiceDidNotStart(f"The service stopped at start: port {settings.port} is already in use, by "
+                                         f"another program or by the service of another data directory. "
+                                         f"{_PORT_ADVICE.format(settings.data_dir)}")
             if "already running" not in said:
                 # The service's own prefix is not repeated (#244).
                 raise ServiceDidNotStart(f"The service stopped at start: {said.removeprefix('Cairnmind: ')}")
@@ -401,6 +419,11 @@ def request(settings: Settings, method: str, path: str, *, start_service: bool =
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
+            # Only where the service was not started or matched by instance id here: after that match a 401 is this
+            # directory's own service with a changed token, not another directory's.
+            if not start_service and response.status_code == 401 and "Invalid local service token" in str(detail):
+                detail = (f"The service at {settings.url} does not accept the token of {settings.data_dir}, so it "
+                          f"most likely belongs to another data directory. {_PORT_ADVICE.format(settings.data_dir)}")
             # The service's answer, not a wrong argument; shown as it is, without control characters.
             from cairnmind.terminal_safe import safe_text
             if raise_refusal:
@@ -647,7 +670,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result = inspect(ctx.obj)
     result["service_running"] = service_alive(ctx.obj)
     result["data_dir"] = str(ctx.obj.data_dir)
-    from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, session_conflicts
+    result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
+    from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
@@ -655,6 +679,12 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
         for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
+    for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
+        if name in ctx.obj._origin.get("kept", {}):
+            stored, used = ctx.obj._origin["kept"][name]
+            spelling = next(key for key in env_names(variable) if os.environ.get(key))
+            result["environment_notes"].append(
+                f"{spelling} is used by this process: {name} is {used} here, and {stored} in config.json.")
     from cairnmind.engine import log_settings_problems
     # The same lines `engine start` prints, so a mistyped log setting is not seen only at start (#238).
     result["environment_notes"] += [line.removeprefix("cairnmind: ") for line in log_settings_problems(ctx.obj)]
