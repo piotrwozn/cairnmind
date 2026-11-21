@@ -25,6 +25,7 @@ class ReviewBody(BaseModel):
     expected_version: int = Field(strict=True, ge=1)
     expected_plan_version: int | None = Field(default=None, strict=True, ge=1)
     reason: str | None = Field(default=None, max_length=4000)
+    worktree: str | None = Field(default=None, max_length=4096)  # Whose branch and commit the audit names (#247).
 
 
 class ConfirmPlanBody(BaseModel):
@@ -32,6 +33,7 @@ class ConfirmPlanBody(BaseModel):
     project: str
     expected_plan_version: int = Field(strict=True, ge=1)
     reason: str | None = Field(default=None, max_length=4000)
+    worktree: str | None = Field(default=None, max_length=4096)
 
 
 class ReleaseBody(BaseModel):
@@ -51,6 +53,7 @@ class ConflictBody(BaseModel):
     other_expected_version: int = Field(strict=True, ge=1)
     keep: str | None = Field(default=None, max_length=200)
     reason: str | None = Field(default=None, max_length=4000)
+    worktree: str | None = Field(default=None, max_length=4096)
 
 
 class ImpactVerdictBody(BaseModel):
@@ -217,7 +220,8 @@ def create_inspector_router(store, settings):
     @router.post("/inspector/conflicts/resolve")
     async def resolve_conflict(body: ConflictBody):
         return await call(conflicts.resolve, inspector, body.project, body.record_id, body.other_id, body.action,
-                          body.expected_version, body.other_expected_version, keep=body.keep, reason=body.reason)
+                          body.expected_version, body.other_expected_version, keep=body.keep, reason=body.reason,
+                          worktree=body.worktree)
 
     async def impact_call(method, *args):
         # Mapped by type, not by text: a commit name or a path in a message must not turn 400 into 409.
@@ -246,13 +250,15 @@ def create_inspector_router(store, settings):
     @router.post("/inspector/records/{record_id}/review")
     async def review(record_id: str, body: ReviewBody):
         return await call(inspector.review, body.project, record_id, body.action, body.expected_version,
-                          expected_plan_version=body.expected_plan_version, reason=body.reason)
+                          expected_plan_version=body.expected_plan_version, reason=body.reason,
+                          worktree=body.worktree)
 
     @router.post("/inspector/plans/{plan_id}/confirm")
     async def confirm_plan(plan_id: str, body: ConfirmPlanBody):
         # A person confirms a plan and its steps at once (#170); the audit lets them travel as published memory.
         from .memory_acts import confirm
-        return await call(confirm, inspector, body.project, plan_id, body.expected_plan_version, reason=body.reason)
+        return await call(confirm, inspector, body.project, plan_id, body.expected_plan_version, reason=body.reason,
+                          worktree=body.worktree)
 
     @router.post("/inspector/records/{record_id}/release")
     async def release_record(record_id: str, body: ReleaseBody):

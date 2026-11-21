@@ -165,7 +165,7 @@ def release(store, project_id, record_id, reason, worktree=None):
     if not hits:
         raise ValueError("Nothing in this record needs a release")
     released = sorted(({"field": h["field"], "kind": h["kind"], "value_sha256": h["value_sha256"]} for h in hits), key=J)
-    audit = {"action": "release", "actor": "local_user", **act_context(store, project_id), "at": utc_now(),
+    audit = {"action": "release", "actor": "local_user", **act_context(store, project_id, worktree), "at": utc_now(),
              "hits": released, "reason": reason, "record_id": record_id}
     passage = J(audit)
     problem = release_problem(passage, record_id)
