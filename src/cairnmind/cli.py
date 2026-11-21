@@ -32,7 +32,7 @@ app = typer.Typer(no_args_is_help=False, pretty_exceptions_enable=False,
 projects_app = typer.Typer(help="The registry of projects and their folders.")
 tasks_app = typer.Typer(help="Shared plan steps, their states and verification evidence.")
 models_app = typer.Typer(help="The knowledge agent's models: the local Ollama, or a server you choose.")
-engine_app = typer.Typer(help="The native ArcadeDB engine (Java 21+).")
+engine_app = typer.Typer(help="The ArcadeDB engine: native with Java 21+, or in Docker.")
 plans_app = typer.Typer(help="Versioned plans and a deterministic next step.")
 checks_app = typer.Typer(help="Named project checks and how current their evidence is.")
 stage_app = typer.Typer(help="Which assistant or check the next plan step goes to. Starts nothing.")
@@ -549,10 +549,25 @@ def engine_install(ctx: typer.Context, distribution: Path | None = None):
 
 @engine_app.command("start")
 @initialized
-def engine_start(ctx: typer.Context):
-    from cairnmind.engine import start_engine
+def engine_start(
+        ctx: typer.Context,
+        docker: Annotated[bool, typer.Option("--docker", help="Run the engine in Docker; saved as engine_mode.")] = False,
+        native: Annotated[bool, typer.Option(
+            "--native", help="Run the engine with Java 21 on this machine; saved as engine_mode.")] = False,
+        build: Annotated[bool, typer.Option(
+            "--build", help="With --docker: build the image on this machine from the files shipped with "
+                            "Cairnmind, instead of downloading it.")] = False):
+    """Start the database engine in its saved mode, or in the one --docker or --native names."""
+    if docker and native:
+        raise typer.BadParameter("Choose one of --docker and --native.")
+    if build and not docker:
+        raise typer.BadParameter("--build goes with --docker.")
+    from cairnmind.engine import start_command
     with _engine_command():
-        output(start_engine(ctx.obj))
+        output(start_command(ctx.obj, docker=docker, native=native, build=build))
+
+
+engine_app.command("up", help="The same as `cairnmind engine start`.")(engine_start)
 
 
 @engine_app.command("status")
@@ -572,10 +587,12 @@ def engine_inspect(ctx: typer.Context):
 @initialized
 def engine_stop(ctx: typer.Context):
     from cairnmind.engine import local_process_recorded, stop_engine
+    from cairnmind.engine_docker import container_recorded
     from cairnmind.database_mode import connect_only
     # A connect-only installation without an engine of its own has nothing to stop, whether or not its
     # service runs: it says so, instead of asking to stop the service first (#68).
-    nothing_here = connect_only(ctx.obj) and not local_process_recorded(ctx.obj)
+    nothing_here = (connect_only(ctx.obj) and not local_process_recorded(ctx.obj)
+                    and not container_recorded(ctx.obj))
     if not nothing_here and service_alive(ctx.obj):
         refuse("Run cairnmind stop first; the knowledge service is using ArcadeDB")
     with _engine_command():

@@ -109,8 +109,8 @@ def docker(monkeypatch, tmp_path):
     return fake
 
 
-def started(docker, tmp_path, **values):
-    settings = settings_with(tmp_path, **values)
+def started(docker, tmp_path, name="data", **values):
+    settings = settings_with(tmp_path, name, **values)
     docker.settings = settings
     return settings
 
@@ -488,6 +488,130 @@ def test_the_native_start_is_refused_while_a_recorded_container_runs_and_when_do
     record.write_text(json.dumps({"name": name}))
     with pytest.raises(ArcadeError, match="does not touch it"):
         engine.start_engine(settings)
+
+
+# --- engine start, engine up -----------------------------------------------------------------------------------
+
+def stored(settings) -> dict:
+    return json.loads((settings.data_dir / "config.json").read_text())
+
+
+def cli(settings, *arguments):
+    return runner.invoke(app, ["--data-dir", str(settings.data_dir), *arguments])
+
+
+def test_engine_start_flags_save_the_mode_only_after_the_engine_answers(docker, tmp_path, monkeypatch):
+    settings = started(docker, tmp_path)
+    docker.up = False
+    failed = cli(settings, "engine", "start", "--docker")
+    assert isinstance(failed.exception, ArcadeError) and "Docker cannot be used" in str(failed.exception)
+    assert stored(settings)["engine_mode"] == ""
+    docker.up = True
+    ok = cli(settings, "engine", "start", "--docker")
+    assert ok.exit_code == 0, ok.output
+    assert stored(settings)["engine_mode"] == "docker" and stored(settings)["engine_docker_build"] is False
+    assert f"Engine mode: docker, saved as engine_mode in {settings.data_dir / 'config.json'}." in ok.output
+    again = cli(settings, "engine", "start", "--docker")  # nothing changed: nothing said
+    assert again.exit_code == 0 and "saved as engine_mode" not in again.output
+    context = tmp_path / "image"
+    context.mkdir()
+    (context / "Dockerfile").write_text("FROM scratch\n")
+    monkeypatch.setattr(engine_docker, "build_context", lambda: context)
+    docker.containers.clear()
+    built = cli(settings, "engine", "start", "--docker", "--build")
+    assert built.exit_code == 0, built.output
+    assert stored(settings)["engine_docker_build"] is True
+    assert json.loads(built.stdout)["image"] == engine_docker.local_image_tag()
+    docker.containers.clear()
+    docker.calls.clear()
+    plain = cli(settings, "engine", "start")  # the stored mode and the stored image
+    assert plain.exit_code == 0 and docker.verbs("run")[0][-1] == engine_docker.local_image_tag()
+    monkeypatch.setattr(engine, "start_engine", lambda chosen: {"available": True, "engine": "native"})
+    native = cli(settings, "engine", "start", "--native")
+    assert native.exit_code == 0, native.output
+    assert stored(settings)["engine_mode"] == "native" and stored(settings)["engine_docker_build"] is False
+    for arguments in (("--docker", "--native"), ("--build",), ("--native", "--build")):
+        refused = cli(settings, "engine", "start", *arguments)
+        assert refused.exit_code == 2, arguments
+
+
+def test_a_stored_docker_mode_without_docker_makes_engine_start_say_so(docker, tmp_path, monkeypatch):
+    settings = started(docker, tmp_path, engine_mode="docker")
+    docker.up = False
+    monkeypatch.setattr(engine, "start_engine", lambda chosen: pytest.fail("the native engine was started"))
+    result = cli(settings, "engine", "start")
+    assert isinstance(result.exception, ArcadeError)
+    assert "Docker cannot be used" in str(result.exception) and "--native" in str(result.exception)
+    assert stored(settings)["engine_mode"] == "docker"
+
+
+def test_engine_up_is_engine_start(docker, tmp_path):
+    second = settings_with(tmp_path, "two")
+    first = started(docker, tmp_path, "one")
+    assert cli(first, "engine", "start", "--docker").exit_code == 0
+    docker.settings, start_calls = second, [call for call, _ in docker.calls]
+    docker.calls.clear()
+    assert cli(second, "engine", "up", "--docker").exit_code == 0
+    assert [call[0] for call, _ in docker.calls] == [call[0] for call in start_calls]
+    assert stored(second)["engine_mode"] == "docker"
+    assert "up" in cli(first, "engine", "--help").output
+
+
+def test_invalid_stored_values_are_refused_naming_them(docker, tmp_path):
+    settings = started(docker, tmp_path, engine_mode="dokker")
+    result = cli(settings, "engine", "status")
+    assert result.exit_code == 1 and isinstance(result.exception, ValueError)
+    assert str(result.exception) == MODE_INVALID.format(value="'dokker'")
+    settings = started(docker, tmp_path, "other", engine_mode="docker", engine_docker_build="yes")
+    result = cli(settings, "engine", "status")
+    assert isinstance(result.exception, ValueError) and "engine_docker_build in config.json is 'yes'" in str(
+        result.exception)
+
+
+def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeypatch):
+    bin_dir, work = tmp_path / "bin", tmp_path / "work"
+    bin_dir.mkdir()
+    work.mkdir()
+    (bin_dir / "docker").write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_DOCKER/log"\ncase "$1" in\n'
+        '  version) echo 27.3.1 ;;\n'
+        '  container) if [ -e "$FAKE_DOCKER/ran" ]; then cat "$FAKE_DOCKER/inspect.json";'
+        ' else echo "Error: No such container: $3" >&2; exit 1; fi ;;\n'
+        '  image) exit 0 ;;\n  run) touch "$FAKE_DOCKER/ran" ;;\n  stop) ;;\n  rm) rm -f "$FAKE_DOCKER/ran" ;;\n'
+        '  *) echo "unexpected $*" >&2; exit 9 ;;\nesac\n')
+    (bin_dir / "docker").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_DOCKER", str(work))
+    monkeypatch.setattr(config, "ARCADE_IMAGE_DIGEST", DIGEST)
+    monkeypatch.setattr(engine, "native_engine_pid", lambda settings: None)
+    monkeypatch.setattr(engine_docker.time, "sleep", lambda seconds: None)
+
+    def server_info(self):
+        if (work / "ran").exists():
+            return {"version": "26.11.1"}
+        raise ArcadeError("Local ArcadeDB is unavailable (ConnectError); start it")
+
+    monkeypatch.setattr(ArcadeClient, "server_info", server_info)
+    settings = settings_with(tmp_path)
+    name = container_name(settings)
+    (work / "inspect.json").write_text(json.dumps([{
+        "Name": "/" + name, "Config": {"Labels": labels(settings), "Image": PUBLISHED},
+        "State": {"Status": "running", "Running": True}}]))
+    started_engine = cli(settings, "engine", "start", "--docker")
+    assert started_engine.exit_code == 0, started_engine.output
+    stopped = cli(settings, "engine", "stop")
+    assert stopped.exit_code == 0 and json.loads(stopped.stdout) == {"stopping": True, "container": name}
+    state = settings.data_dir / "arcade"
+    held = labels(settings)
+    log = (work / "log").read_text().splitlines()
+    assert log[0].startswith("version") and sum(line.startswith("run ") for line in log) == 1
+    assert log[-2:] == [f"stop --time 60 {name}", f"rm {name}"] and not (state / "container.json").exists()
+    assert next(line for line in log if line.startswith("run ")) == (
+        f"run --detach --name {name} --label io.cairnmind.installation={held['io.cairnmind.installation']} "
+        f"--label io.cairnmind.data-dir={settings.data_dir} --user {os.getuid()}:{os.getgid()} "
+        f"--publish 127.0.0.1:2480:2480 --volume {state}:/var/lib/arcadedb "
+        f"--volume {state / 'root-password'}:/run/secrets/arcadedb_root_password:ro "
+        f"--env ARCADEDB_JAVA_OPTS=-Darcadedb.server.mode=development --pull never {PUBLISHED}")
 
 
 # --- Words ---------------------------------------------------------------------------------------------------

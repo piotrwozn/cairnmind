@@ -1,6 +1,7 @@
 """Pinned, checksum-verified ArcadeDB distribution and local Java process lifecycle."""
 from __future__ import annotations
 
+from dataclasses import replace
 import errno
 import fcntl
 import hashlib
@@ -396,6 +397,24 @@ def start_engine(settings: Settings) -> dict:
             process.wait()
         pid_file.unlink(missing_ok=True)
         raise ArcadeError(f"ArcadeDB startup timed out. See {state / 'engine.log'}")
+
+
+def start_command(settings: Settings, *, docker: bool = False, native: bool = False, build: bool = False) -> dict:
+    """`cairnmind engine start`: the stored mode, or the one --docker / --native names. The mode a flag names is
+    saved only after that engine answers (#272)."""
+    if connect_only(settings):
+        raise ConnectOnly(refusal(settings, "start an engine"))
+    from .engine_docker import MODE_SAVED, start_docker_engine, store_engine_mode
+    mode = "docker" if docker else "native" if native else engine_mode(settings)
+    # --docker names the image too: the published one, or with --build the one built here.
+    chosen = replace(settings, engine_mode=mode, **({"engine_docker_build": build} if docker else {}))
+    if mode == "docker":
+        status = start_docker_engine(chosen, build=build, pull=True)
+    else:
+        status = start_engine(chosen)
+    if (docker or native) and store_engine_mode(settings, mode, build=bool(docker and build)):
+        print(f"cairnmind: {MODE_SAVED.format(mode=mode, config=settings.data_dir / 'config.json')}", file=sys.stderr)
+    return status
 
 
 def ensure_engine(settings: Settings) -> None:
