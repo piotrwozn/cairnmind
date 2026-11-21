@@ -30,6 +30,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The workspace process now ends with exit code 0 when you stop it with `cairnmind workspace stop`, and keeps a non-zero code when the tmux server is killed from outside (#269).
 - The approval dialog of the built-in agent now starts with focus on Cancel when the request fits on screen, so a stray Enter refuses and approving needs a deliberate key press; a longer request starts on its text, and the hint names Tab to reach the buttons (#268).
 - Each chunk is now queued for embedding once instead of twice, which halves the number of pending jobs shown while a new project is indexed; a failed embedding job still gets a fresh job on the next repair or model change (#262).
+- An acknowledgement no longer goes stale while the queue indexes and extracts records: a proposal the extraction worker wrote and nobody has touched since is left out of the state an ACK is given for. A packet built after such a proposal arrived shows it, labelled `automatic_extraction`; confirming, disputing or editing it, any record a person or a session writes, the plan, the task and the code still make the ACK stale (#256).
+- A memory snapshot no longer carries the code graph, which indexing rebuilds from the project's files, so a snapshot of a large repository no longer exceeds the manifest limit. A snapshot written by 0.12.0 that contains graph rows still imports and shows. When a snapshot would exceed a limit, the error names the limit with the size and the limit, and `memory snapshot --preview` reports exact figures and warns before anything is written; an import says that the code graph is not built yet until indexing has built it (#261).
 
 ### Development and CI
 

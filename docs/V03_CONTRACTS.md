@@ -117,8 +117,10 @@ New epoch on resume/compact; relevant versions/scope/code change invalidates ACK
 not each technical transcriptline. Nor does, for any session, a proposal the extraction
 worker made and nobody touched since (store-set extraction_source_id, version 1, still
 proposed, its one source the marked one, in the project; #256, until 0.12.0 only one
-extracted from the same api/copilot session's own message, #168): the packet preview
-still shows it, labelled automatic_extraction, but the state hash leaves it out. A
+extracted from the same api/copilot session's own message, #168): a packet built after
+it arrived shows it (in the preview or in omitted_by_origin), labelled
+automatic_extraction; its arrival does not renew a packet already handed out, and the
+state hash leaves it out. A
 confirm, dispute, edit or supersede counts, and so does every write of a person, a
 coding session or an external client, the session's own included. The mark is local:
 a memory package never exports or imports it, so an imported record always counts.
