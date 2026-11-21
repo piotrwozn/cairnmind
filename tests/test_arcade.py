@@ -58,6 +58,8 @@ def test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for(tmp_p
     shown = capsys.readouterr().err
     assert "ENGINE UNAVAILABLE after " in shown and "CREATE PROPERTY probe.name" in shown
     assert "load average" in shown and "engine.log ends:" in shown
+    # The engine's own threads, asked of the real test engine: what it was doing is the cause when it stalls.
+    assert "engine threads:" in shown and "Full thread dump" in shown
 
 
 def test_native_transaction_rolls_back_and_query_rejects_writes(tmp_path):
