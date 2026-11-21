@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import time
 from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
@@ -71,18 +72,28 @@ class ConfirmModal(MessageModal):
         if spare:
             body.styles.max_height = rows + 1
 
+    def on_mount(self):
+        # At once, before any queued key is handled (#292). Consent also ignores an approval for the first
+        # 0.4 s: longer than a typed-ahead key waits in the queue, far shorter than reading a request.
+        self.armed_at = time.monotonic() + (0.4 if self.consent else 0)
+        if self.consent:
+            self.set_focus(self.query_one("#confirm-no", Button))
+
     def start_on_cancel(self):
         """A confirmation whose text fits starts on Cancel, so the focus shows and Enter cancels, even for consent.
         A text that scrolls starts on the text, where Enter does nothing; its hint names Tab, which reaches the buttons."""
         with suppress(Exception):
-            body = self.query_one(".cm-dialog-body")
-            if body.virtual_size.height <= body.scrollable_content_region.height and self.focused is body:
-                self.query_one("#confirm-no", Button).focus()
+            body, cancel = self.query_one(".cm-dialog-body"), self.query_one("#confirm-no", Button)
+            if self.focused in (body, cancel):
+                self.set_focus(cancel if body.virtual_size.height <= body.scrollable_content_region.height else body)
 
     @on(Button.Pressed)
     def confirm_button(self, event):
         if event.button.id in {"confirm-yes", "confirm-no"}:
             event.stop()
+            if event.button.id == "confirm-yes" and time.monotonic() < self.armed_at:
+                self.set_focus(self.query_one("#confirm-no", Button))
+                return
             self.dismiss(event.button.id == "confirm-yes")
 
     def action_close(self):

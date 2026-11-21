@@ -291,9 +291,34 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
                         results.append)
         await pilot.pause()
         await pilot.pause()
+        await pilot.pause(.5)  # past the quiet moment of a consent dialog (#292)
         await pilot.press("shift+tab", "enter")
         await pilot.pause()
         assert results == [False, False, True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["A real request.", "word " * 400])
+async def test_keys_typed_before_the_first_refresh_never_approve_a_consent_dialog(tmp_path, monkeypatch, text):
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.push_screen(ConfirmModal("Run a command?", text, approve="Run", consent=True), results.append)
+        await pilot.press("tab", "enter", "tab", "enter")  # queued before the dialog's first refresh
+        await pilot.pause()
+        assert True not in results
+        if not results:  # still open: a deliberate Tab and Enter, after the first moment, approve as before
+            await pilot.pause(.6)
+            for _ in range(3):
+                if app.focused is not None and app.focused.id == "confirm-yes":
+                    break
+                await pilot.press("tab")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert results == [True]
 
 
 @pytest.mark.asyncio
