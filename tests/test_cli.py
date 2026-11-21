@@ -36,7 +36,7 @@ def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch, person_termi
     def run(*args):
         result = runner.invoke(app, [*base, *args])
         assert result.exit_code == 0, result.output or repr(result.exception)
-        return json.loads(result.output)
+        return json.loads(result.stdout)  # `init` now says its engine mode on stderr (#272)
 
     run("init")
     run("project", "add", "demo", str(root))

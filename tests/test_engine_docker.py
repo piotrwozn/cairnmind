@@ -6,6 +6,7 @@ import os
 import re
 import string
 import subprocess
+from urllib.parse import urlparse
 
 import pytest
 from typer.testing import CliRunner
@@ -627,7 +628,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
     assert next(line for line in log if line.startswith("run ")) == (
         f"run --detach --name {name} --label io.cairnmind.installation={held['io.cairnmind.installation']} "
         f"--label io.cairnmind.data-dir={settings.data_dir} --user {os.getuid()}:{os.getgid()} "
-        f"--publish 127.0.0.1:2480:2480 --volume {state}:/var/lib/arcadedb "
+        f"--publish 127.0.0.1:{urlparse(settings.arcade_url).port}:2480 --volume {state}:/var/lib/arcadedb "
         f"--volume {state / 'root-password'}:/run/secrets/arcadedb_root_password:ro "
         f"--env ARCADEDB_JAVA_OPTS=-Darcadedb.server.mode=development --pull never {PUBLISHED}")
 

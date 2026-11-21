@@ -238,9 +238,10 @@ def test_cairnmind_init_says_what_the_step_did(old):
     old.store.command(f"DELETE FROM devbrain_meta WHERE name='{META_NAME}'")
     shown = CliRunner().invoke(app, ["--data-dir", str(old.store.data_dir), "init"])
     assert shown.exit_code == 0, shown.output
-    said = json.loads(shown.output)["confirmations_before_rule"]
+    # stdout only: `init` says its engine mode on stderr the first time (#272)
+    said = json.loads(shown.stdout)["confirmations_before_rule"]
     assert said["marked_as_a_persons"] == 1 and said["still_before_the_rule"] == 1
-    again = json.loads(CliRunner().invoke(app, ["--data-dir", str(old.store.data_dir), "init"]).output)
+    again = json.loads(CliRunner().invoke(app, ["--data-dir", str(old.store.data_dir), "init"]).stdout)
     assert "confirmations_before_rule" not in again
 
 
