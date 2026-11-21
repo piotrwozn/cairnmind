@@ -66,6 +66,12 @@ The password is read only on the first start, when ArcadeDB creates the `root` u
 
 The databases, the server configuration and the server log are in the volume `cairnmind-db_arcadedb-data`. `docker compose -f deploy/compose.yaml down` stops and removes the container and keeps the volume. `down --volumes` deletes the data, and that cannot be undone.
 
+## Two data directories on one machine
+
+Each data directory needs its own service port and cockpit port. These settings may come from the environment, like the database address: `CAIRNMIND_PORT` (`port`, default 8765), `CAIRNMIND_COCKPIT_PORT` (`cockpit_port`, default 8766) and `CAIRNMIND_OLLAMA_URL` (`ollama_url`). A variable beats `config.json` for the process that reads it and is never written to `config.json`; a variable that is empty is ignored, and a port that is not a number from 1 to 65535 is refused. A service started by a command takes the variable from that command's environment, so a later command without it looks at the port in `config.json`: for a second data directory set `port` and `cockpit_port` in its `config.json`, or export the variables in every shell that uses it. Nothing changes for an installation that sets none of the variables.
+
+When a service cannot bind its port, the command that started it says so, with the port and the setting to change. A command that reaches a service that does not accept its token says that the service most likely belongs to another data directory; the token is never printed.
+
 ## Connect-only installations
 
 A connect-only installation uses a database that runs somewhere else: the container of this page, a server, or a cluster. It never installs, starts or stops an ArcadeDB engine, never creates a database, and needs no Java. Everything else stays on your machine: the knowledge service, the terminal workspace, the coding clients, parsing of your files and, unless you moved them too to a model server as well, the models.
