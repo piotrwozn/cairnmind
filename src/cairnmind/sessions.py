@@ -398,8 +398,7 @@ class SessionManager:
         all_source_ids = sorted({source_id for row in [*relevant, *current_items]
                                  for source_id in row.get("source_ids", [])})
         source_rows = self.store.query(
-            "SELECT id,project_id,sha256,kind,metadata.agent_session_id AS agent_session,"
-            "metadata.origin_evidence AS origin_evidence FROM sources WHERE id IN :ids",
+            "SELECT id,project_id,sha256 FROM sources WHERE id IN :ids",
             {"ids": all_source_ids}) if all_source_ids else []
         sources_by_id = {row["id"]: row for row in source_rows}
         missing_sources = [source_id for source_id in all_source_ids

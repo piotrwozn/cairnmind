@@ -178,6 +178,29 @@ def test_every_promised_change_between_resume_and_ack_is_refused(fixture, name):
     assert store.query("SELECT FROM resume_acks WHERE session_id=:id", {"id": session_id}) == []
 
 
+@pytest.mark.parametrize("name", ["confirm", "dispute", "supersede", "client_update"])
+def test_a_proposal_extracted_after_resume_then_changed_before_ack_is_refused(fixture, name):  # noqa: F811
+    store, pid = fixture.store, fixture.project["id"]
+    indexed_notes(fixture)
+    result = fixture.manager.prepare(pid, "external", timeout=0)
+    assert result["status"] == "ready", result
+    packet, session_id = result["packet"], result["session_id"]
+    late = extract_one(fixture)  # never in the packet
+    assert fixture.manager._state(fixture.manager._session(session_id))["state_hash"] == packet["state_hash"]
+    if name == "supersede":
+        as_person(store, pid, {"kind": "decision", "key": "protocol-v3", "content": "Use protocol v3.",
+                               "supersedes": late["id"]}, [fixture.note["id"]])
+    elif name == "client_update":
+        store.remember(pid, {"id": late["id"], "expected_version": 1, "content": "Edited by a client.",
+                             "metadata": {"extraction_source_id": late["metadata"]["extraction_source_id"]}},
+                       late["source_ids"])
+    else:
+        Inspector(store).review(pid, late["id"], name, 1, reason="Not what we agreed.")
+    with pytest.raises(ValueError, match=STALE):
+        fixture.manager.ack(session_id, packet["id"], packet["hash"], readback(packet))
+    assert store.query("SELECT FROM resume_acks WHERE session_id=:id", {"id": session_id}) == []
+
+
 def test_an_external_sessions_own_proposal_still_makes_its_ack_stale(fixture):  # noqa: F811
     bound = fixture.session("external")
     post(fixture, "/remember", {"project": fixture.project["id"], "sources": [fixture.note["id"]], **bound,

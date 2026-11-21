@@ -58,9 +58,11 @@ source those records, the plan and the task cite, and the code (Git head, branch
 One kind of record is left out (#256): a proposal the extraction worker wrote and nobody has touched
 since, recognised only by what the store wrote itself: the `extraction_source_id` mark, which only the
 worker's own write sets, a client can neither set nor keep and any later write drops, on version 1 of a
-record still `proposed` whose only source is the one the mark names, in the same project. The packet still
-shows such a proposal, with `origin: automatic_extraction`, and counts it in `omitted_by_origin`, but does
-not promise it: its arrival, like a source or chunk the queue indexes that nothing in the state cites,
+record still `proposed` whose only source is the one the mark names, in the same project. A packet built after
+such a proposal arrived shows it, with `origin: automatic_extraction` (in the preview, or counted in
+`omitted_by_origin` when left out of it), but does not promise it; a packet already handed out is not
+renewed by it, and `resume_context` returns that same packet until something it promises changes. The
+arrival, like a source or chunk the queue indexes that nothing in the state cites,
 never makes a packet stale. Everything else counts, failing closed: a record a person confirmed, disputed,
 superseded or edited (an extracted proposal counts from the write that confirms or changes it), a record
 written by a person, a coding session or an external client, this very session's own writes included, an
