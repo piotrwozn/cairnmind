@@ -9,6 +9,69 @@
 
 Cairnmind is a local workspace for Codex CLI, Claude Code, GitHub Copilot and API-based coding agents (OpenAI, Anthropic, OpenAI-compatible endpoints and local Ollama). It keeps a durable, versioned memory of each project outside any single conversation, so the next session, or a different assistant, can pick up exactly where the last one stopped. It is not a plugin for one assistant and not a notes store that a model writes into: it is a separate local service that assistants connect to, and it does not treat a model's statement as evidence.
 
+## Quick start
+
+Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform) and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew). Native Windows is not supported. On Windows, run `wsl --install -d Ubuntu` in PowerShell first, restart when asked, and type everything below in the Ubuntu terminal.
+
+**What you need**
+
+- git and [uv](https://docs.astral.sh/uv/), which brings Python 3.12: on Ubuntu `sudo apt install -y git curl` and `curl -LsSf https://astral.sh/uv/install.sh | sh`, then open a new terminal; on macOS `brew install uv`.
+- One way to run the database engine. **Java 21** is the simplest: `sudo apt install -y openjdk-21-jre-headless` (macOS: `brew install openjdk@21`; the installer prints the one link command macOS still needs). Or **Docker**, running on this machine; the engine then runs in a container (not tested on macOS).
+
+Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are needed for the steps below. Each adds something later.
+
+**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256). Everything stays in `~/.local/share/cairnmind`.
+
+```bash
+git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
+cd ~/src/cairnmind
+bash scripts/install-wsl.sh                    # 1. installs all of the above and ends with the check of step 2
+cairnmind doctor                               # 2. what is required and present, what is missing, what is optional and off
+cairnmind project add my-app ~/src/my-app      # 3. registers your project's folder and indexes its files
+cairnmind remember my-app "Accounts lock after five failed logins."   # 4. stores a first finding, as proposed
+cairnmind brief my-app                         # 5. where work stands: your finding waits for review
+cairnmind ask my-app "When do accounts lock?"  # 6. finds it again, with the matching passages of your files
+```
+
+Each command says what it did and what comes next, and a command that stops says what is missing and what to do.
+
+- If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
+- `my-app` is any name you choose; `~/src/my-app` stands for the folder of a project you already have. A Git repository with at least one commit is best: `impact`, coding sessions and the commit list of `brief` need Git, and `project add` says when the folder has no repository or no commit.
+- What you and your assistants store is *proposed*: `brief`, `ask` and the assistants use it marked as unconfirmed, and only you confirm or dispute it, in the memory view of the terminal workspace (below).
+- Without models, `ask` is a full-text search: it reports `unavailable`, makes no answer, and lists the matching passages as search results, not as evidence. `cairnmind models pull` turns answers on (below).
+
+### Connect Codex or Claude Code
+
+With [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in, in the same system as Cairnmind:
+
+```bash
+cairnmind install my-app          # connects the installed clients to this project
+cairnmind run my-app claude       # or codex: starts the client bound to this project's memory
+```
+
+`cairnmind install` writes into your project, keeping what is there and saying what it changed: a marked Cairnmind block in `AGENTS.md` and `CLAUDE.md` (also for a client you have not installed yet), and, for each installed client, its MCP entry and hooks (`.mcp.json` and `.claude/settings.local.json`; `.codex/config.toml` and `.codex/hooks.json`). Review them before committing. On its first start in the project, each client asks you to trust Cairnmind's MCP server; Cairnmind answers no trust question for you.
+
+Cursor, Cline, Zed and other MCP clients use the same memory through `cairnmind mcp --client external`, in a session that is never counted as verified: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
+
+To see what Cairnmind keeps before you install anything, read the [sample project memory](examples/sample-project/README.md): a small project with its decisions, a plan and a check run committed next to it, and a read-only command that needs only Python and uv.
+
+**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, the engine natively or in Docker, connecting assistants, verifying, upgrading, uninstalling and troubleshooting. Node.js and a frontend build are not needed.
+
+## Optional: local AI (Ollama) and the workspace (tmux)
+
+**Local models.** With [Ollama](https://ollama.com) running ([installation, step 2](docs/INSTALL.md#2-install-system-tools)):
+
+```bash
+cairnmind models pull            # downloads qwen3.5:9b and qwen3-embedding:0.6b into Ollama (about 7 GB)
+cairnmind stop                   # the service reads the choice when it starts; the next command that needs it starts it again
+```
+
+`cairnmind models pull` turns the knowledge agent on; after the restart the waiting extraction and embedding jobs run and `ask` answers with verified quotes. `cairnmind models set` chooses another model server instead: another Ollama or a server with the OpenAI-compatible API; a server on another computer needs HTTPS and your explicit consent, and receives only the sensitivity classes you allow ([docs/API.md](docs/API.md#the-knowledge-agents-models)). The reference setup uses an RTX 4080 Super with 16 GB of VRAM; the 9B model needs roughly 7 GB of GPU memory, and on CPU it works, but answers are slow. Check memory use and latency on your own machine.
+
+**The terminal workspace.** With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). In the workspace, Ctrl+B then i opens the memory view, where you confirm or dispute proposed findings. The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. Without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
+
+## What sets it apart
+
 What sets it apart from a `CLAUDE.md` file or a generic memory layer is that Cairnmind treats memory as evidence, not as notes:
 
 - **Every answer cites its sources.** The local knowledge agent must back an `ask` answer with verbatim quotes. The service checks that each quote occurs literally in the source it read and that the source is still current, and then asks the local model once more whether the quotes state the answer; otherwise the answer is not presented as grounded. When the project does not contain the answer, the agent says `unknown`.
@@ -31,42 +94,6 @@ Cairnmind suits developers who work with Codex CLI or Claude Code every day, swi
 The columns are kinds of tools, not products; a particular tool may do more than its column says. The last row is the price: Cairnmind is the heaviest of the four to install, even without the optional parts.
 
 Shared memory for a team works through Git ([Team memory](docs/MEMORY.md#team-memory)). Planned, not there yet: read-only views above a single project. The steps are on the [features board](https://github.com/users/piotrwozn/projects/2).
-
-## Quick start
-
-Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the tested platform), and on macOS with Apple silicon (tested on an M3 Pro with macOS 27; installed with Homebrew). Native Windows is not supported. This path needs no Java, no tmux and no model download. It needs git, [uv](https://docs.astral.sh/uv/) (it fetches Python 3.12 if you do not have it) and Docker running on this machine, which then runs the database engine; with Java 21+ instead, the engine runs natively. On macOS the engine in Docker has not been tested; the tested setup there uses Java 21.
-
-```bash
-git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
-cd ~/src/cairnmind
-bash scripts/install-wsl.sh                  # installs Cairnmind and the engine (in Docker without Java 21), initialises local memory
-cairnmind project add my-app ~/src/my-app    # registers your project and indexes its files
-cairnmind install my-app                     # connects the installed Codex / Claude Code to this project
-cairnmind brief my-app                       # where work stopped, from stored data and Git; asks no model
-cairnmind ask my-app "Where do we handle login errors?"   # without models: matching passages, no answer
-cairnmind run my-app claude                  # or codex: starts the client bound to this project's memory
-```
-
-If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal. The installer says which engine it chose. Without Ollama and its models (or when a configured model server does not answer), `cairnmind init`, which the installer runs, saves deterministic-only mode and names the reason; `cairnmind models pull` or `cairnmind models set` turns the knowledge agent on later. In that mode: plans, tasks, the acknowledgement gate, checks, `brief`, `impact`, memory and file indexing work as usual; extraction and embedding jobs wait until models are configured; and `ask` is a full-text search of the project's memory that makes no answer: it reports `unavailable` and lists up to 8 passages that match words of the question, as search results, not as evidence. `run` needs the client installed and signed in, and a project with existing code needs a Git repository and a first commit.
-
-Cursor, Cline, Zed and other MCP clients use the same memory through `cairnmind mcp --client external`, in a session that is never counted as verified: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
-
-To see what Cairnmind keeps before you install anything, read the [sample project memory](examples/sample-project/README.md): a small project with its decisions, a plan and a check run committed next to it, and a read-only command that needs only Python and uv.
-
-**[Step-by-step installation guide](docs/INSTALL.md)**: preparing Windows and WSL2, installing from a release, the engine natively or in Docker, connecting assistants, verifying, upgrading, uninstalling and troubleshooting. Node.js and a frontend build are not needed.
-
-## Optional: local AI (Ollama) and the workspace (tmux)
-
-**Local models.** With [Ollama](https://ollama.com) running ([installation, step 2](docs/INSTALL.md#2-install-system-tools)):
-
-```bash
-cairnmind models pull            # downloads qwen3.5:9b and qwen3-embedding:0.6b into Ollama (about 7 GB)
-cairnmind stop                   # the service reads the choice when it starts; the next command that needs it starts it again
-```
-
-`cairnmind models pull` turns the knowledge agent on; after the restart the waiting extraction and embedding jobs run and `ask` answers with verified quotes. `cairnmind models set` chooses another model server instead: another Ollama or a server with the OpenAI-compatible API; a server on another computer needs HTTPS and your explicit consent, and receives only the sensitivity classes you allow ([docs/API.md](docs/API.md#the-knowledge-agents-models)). The reference setup uses an RTX 4080 Super with 16 GB of VRAM; the 9B model needs roughly 7 GB of GPU memory, and on CPU it works, but answers are slow. Check memory use and latency on your own machine.
-
-**The terminal workspace.** With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. Without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
 
 ## What it guarantees, and what it does not
 
