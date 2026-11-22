@@ -149,6 +149,7 @@ if [[ -z "$connect_url" ]]; then
 
     if ! check_java; then
         if ! command -v docker >/dev/null 2>&1; then
+            printf 'Or install Docker and start it; the engine then runs in a container. Then run this installer again.\n' >&2
             exit 1
         fi
         if docker_asked; then
@@ -308,7 +309,10 @@ stop_installed() {
         done <<<"$(live_terminals "$python")"
     fi
     "$installed" cockpit stop >/dev/null 2>&1 || true
-    "$installed" stop >/dev/null 2>&1 || true
+    # Said, not silent (#313): in a pipe the installed version's `stop` prints its JSON.
+    if [[ "$("$installed" stop 2>/dev/null || true)" == *'"stopping": true'* ]]; then
+        printf 'Stopped the service of the installed %s so that the new version can replace it; the next command that needs it starts it again.\n' "$name"
+    fi
 }
 # --- end ---
 
@@ -368,6 +372,15 @@ from cairnmind.database_mode import engine_mode
 print(engine_mode(Settings.load()))' 2>/dev/null || true
 }
 
+# Whether the pinned engine is already unpacked in the data directory (engine install then downloads nothing), read
+# by the installed version itself; empty when it cannot say, and the download line is printed as before.
+engine_present() {
+    "$(uv tool dir)/cairnmind/bin/python" -I -c '
+from cairnmind.config import Settings
+from cairnmind.engine import runtime_dir
+print("yes" if (runtime_dir(Settings.load()) / "lib").is_dir() else "no")' 2>/dev/null || true
+}
+
 if [[ -n "$connect_url" ]]; then
     # Shown without a user, a password, a query or a fragment, should the address carry one by mistake.
     shown_url="$(printf '%s' "$connect_url" | sed -E 's#^([a-zA-Z]+://)[^/@]*@#\1#; s#[?\#].*$##')"
@@ -385,7 +398,11 @@ elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; the
     "$cairnmind_bin" init
     "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 else
-    printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
+    if [[ "$(engine_present)" == yes ]]; then
+        printf '\nThe pinned ArcadeDB release is already installed here; nothing is downloaded.\n'
+    else
+        printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
+    fi
     arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
     if [[ -n "$arcade_dist" ]]; then
         "$cairnmind_bin" engine install --distribution "$arcade_dist" >/dev/null
@@ -430,5 +447,6 @@ if [[ "$workspace_ready" == true ]]; then
 fi
 
 # The same summary as `cairnmind doctor` in a terminal: required, optional, the next step (#244, #287).
+# Under pipefail the installer ends with doctor's exit code: 1 when something required is missing (#313).
 printf '\nChecking the installation...\n'
 "$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention
