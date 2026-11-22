@@ -189,6 +189,9 @@ ENGINE_STARTING = "Starting the engine on this machine."
 RESTORING = "Restoring {path} into the store on this machine."
 BACKUP_WRITTEN = "Backup written and checked: {path}."
 USER_CREATED = "Created on ArcadeDB at {url}: the user {user}, with rights on the database {database} only."
+DATABASE_CREATED = ("Created on ArcadeDB at {url}: the database {database}. The user {user} already existed, with "
+                    "rights on it.")
+CREATED = (USER_CREATED, DATABASE_CREATED)  # the sentences that say the server was changed
 USER_EXISTED = ("The user {user} and the database {database} already existed on ArcadeDB at {url}; nothing was created "
                 "there.")
 ENGINE_STARTED = "The engine on this machine answers ({engine})."
@@ -306,6 +309,7 @@ MESSAGES = {
     RESTORING: "Odtwarzanie {path} w bazie na tym komputerze.",
     BACKUP_WRITTEN: "Kopia zapasowa zapisana i sprawdzona: {path}.",
     USER_CREATED: "Utworzono w ArcadeDB pod adresem {url}: użytkownika {user} z uprawnieniami tylko do bazy {database}.",
+    DATABASE_CREATED: "Utworzono w ArcadeDB pod adresem {url}: bazę {database}. Użytkownik {user} już istniał i ma do niej uprawnienia.",
     USER_EXISTED: "Użytkownik {user} i baza {database} już istniały w ArcadeDB pod adresem {url}; nic tam nie utworzono.",
     ENGINE_STARTED: "Silnik na tym komputerze odpowiada ({engine}).",
     RESTORED: "Odtworzono {path} w bazie na tym komputerze; jej wcześniejsza zawartość jest w kopii bezpieczeństwa w {backups}.",
@@ -592,8 +596,8 @@ def _test_storage(plan, request, yes, result) -> None:
             created = database_credentials.create_user(candidate, admin)
         except (ValueError, ArcadeError) as exc:
             raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
-        result["done"].append((USER_CREATED if created["created"] or created["database_created"] else USER_EXISTED,
-                               named))
+        result["done"].append((USER_CREATED if created["created"] else DATABASE_CREATED if created["database_created"]
+                               else USER_EXISTED, named))
     if admin is not None and not yes:
         # The dry run signs in as the administrator, which a user that does not exist yet cannot (#365).
         try:
@@ -609,7 +613,8 @@ def _test_storage(plan, request, yes, result) -> None:
         else:
             result["tests"].append((TEST_ADMIN_OK, {"url": url, "version": found["version"]}))
             # 403 is the answer to a user that exists and has no rights, 401 to one that does not or whose password differs
-            known = found["sign_in"] == 403
+            # and 404 to one with rights on a database that does not exist yet
+            known = found["sign_in"] in (403, 404)
             create = ((NO_RIGHTS if found["database_exists"] else CREATE_DB) if known
                       else CREATE_USER if found["database_exists"] else CREATE_BOTH)
             result["tests"].append((create, named))
@@ -627,7 +632,7 @@ def _test_storage(plan, request, yes, result) -> None:
             error = (SIGN_IN_REFUSED, {"advice": database_mode.sign_in_refused(candidate)})
         else:
             error = (QUERY_FAILED, {"status": block.get("database_status")})
-        notes = [item for item in result["done"] if item[0] == USER_CREATED]  # the server was changed before the test failed
+        notes = [item for item in result["done"] if item[0] in CREATED]  # the server was changed before the test failed
         raise SetupRefused(STORAGE_REFUSED_NOTED, url=url, error=error, notes=notes)
     result["writer"] = _writer_items(store_writer.inspect(candidate), url)
 
@@ -873,15 +878,20 @@ def _apply(settings, request, plan, moves, result, say, state) -> None:
         state["step"] = (STEP_MODEL, {"role": move["role"]})
         report = asyncio.run(memory_models.configure_role(local, move["role"], **move["kwargs"]))
         _add_next(result, report["next"])
-    evaluate = (VERBATIM, {"sentence": memory_models.EVALUATE_STEP})
-    # Decided again for the pair after both saves: the release's, or one that passed both evaluations, is not labelled.
-    if evaluate in result["next"] and not asyncio.run(memory_models.unevaluated(Settings.load(settings.data_dir))):
-        result["next"] = [item for item in result["next"] if item != evaluate]
     if request.profile == "remote" and moves:
         state["step"] = (STEP_AGENT, {})
         said = knowledge_mode.turn_on(settings)
         if said:
             result["done"].append((VERBATIM, {"sentence": said}))
+    if moves:
+        # Decided once for the pair after the saves, also for a role that was not moved again: the release's pair, or
+        # one that passed both evaluations, is not labelled, and any other is.
+        evaluate = (VERBATIM, {"sentence": memory_models.EVALUATE_STEP})
+        if asyncio.run(memory_models.unevaluated(Settings.load(settings.data_dir))):
+            if evaluate not in result["next"]:
+                result["next"].append(evaluate)
+        else:
+            result["next"] = [item for item in result["next"] if item != evaluate]
     if plan and request.profile != "local":
         state["step"] = (STEP_STORAGE, {})
         save_storage(settings.data_dir, plan["fields"])
@@ -918,7 +928,7 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
     except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
         raise
     except BaseException as exc:  # Ctrl-C too: the configuration is never left half changed
-        notes = [item for item in result["done"] if item[0] == USER_CREATED]
+        notes = [item for item in result["done"] if item[0] in CREATED]
         if state["backup"]:
             notes.append((KEPT_BACKUP, {"path": state["backup"]}))
         if state["engine"]:

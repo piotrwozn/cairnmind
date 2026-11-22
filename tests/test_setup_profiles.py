@@ -648,6 +648,27 @@ def test_localhost_and_127_0_0_1_are_one_place_for_the_model_server(tmp_path, wo
     assert config(tmp_path)["memory_chat"] is None and config(tmp_path)["chat_model"] == "other:4b"
 
 
+@pytest.mark.parametrize("stored, asked, rebuilds", [
+    ("http://localhost:11434", "http://127.0.0.1:11434", False),
+    ("http://127.0.0.1:11434", "http://localhost:11434", False),
+    ("http://127.0.0.1:11434", "http://127.0.0.1:11435", True)])
+def test_the_vectors_are_rebuilt_only_when_the_embedding_model_or_its_place_changes(tmp_path, world, stored, asked,
+                                                                                    rebuilds):
+    # Another provider makes the move a change; the model and the server are the same, under two loopback names or not.
+    connect_only_installation(tmp_path, knowledge_agent="enabled",
+                              memory_embedding={"provider": "openai_compatible", "base_url": stored})
+    dry = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(url=asked))
+    assert "The embedding model: from" in said(dry), dry.output
+    assert ("To rebuild: the vectors" in said(dry)) is rebuilds, dry.output
+
+
+def test_the_evaluation_step_is_given_when_the_agent_is_turned_on_for_a_pair_that_was_not_moved(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="disabled", chat_model="other:4b")
+    result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(chat="other:4b"), "--yes")
+    assert result.exit_code == 0 and config(tmp_path)["knowledge_agent"] == "enabled", result.output
+    assert "labelled unevaluated" in said(result), result.output
+
+
 def test_going_back_without_a_choice_is_refused_and_names_both(tmp_path, world):
     connect_only_installation(tmp_path)
     before = config_bytes(tmp_path)
