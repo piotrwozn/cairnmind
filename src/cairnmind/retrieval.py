@@ -501,7 +501,9 @@ class Retriever:
                 except ArcadeError as exc:
                     self.warnings.append(f"Native vector search unavailable: {type(exc).__name__}")
             else:
-                self.warnings.append("Native vector index for the current embedding model is not ready")
+                # After a restore, which brings no vectors, this is the state until the rebuild ends (#187).
+                self.warnings.append("Vectors for the current embedding model are not ready (being built or rebuilt, "
+                                     "or models are off): this search used the text only and may miss matches")
         if words:
             # Fetch enough extra rows that a status penalty cannot pull in a record
             # that was cut off before ranking.

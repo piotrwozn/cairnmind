@@ -711,6 +711,17 @@ def test_the_report_of_confirmations_before_the_rule_is_said_after_the_restore(t
     assert "The restore marked 2 records as confirmed by a person and left 1 before the rule" in said(result)
 
 
+@pytest.mark.parametrize("agent, words", [
+    ("enabled", "3 embedding job(s) are pending again and the service rebuilds the vectors"),
+    ("disabled", "3 embedding job(s) are pending again, and they wait, as every embedding job does without models")])
+def test_the_rebuild_of_vectors_is_said_after_the_restore(tmp_path, world, monkeypatch, agent, words):
+    connect_only_installation(tmp_path, knowledge_agent=agent)
+    monkeypatch.setattr(Store, "embed_jobs_requeued", 3)  # what Store.restore sets when the backup brought no vectors (#187)
+    result = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "v.cairnmind.json.gz"), "--yes")
+    assert result.exit_code == 0, result.output
+    assert words in said(result)
+
+
 def test_an_interrupt_names_the_kept_backup_and_the_engine_before_it_goes_on(tmp_path, world):
     settings = connect_only_settings(tmp_path)
     world.restore_error = KeyboardInterrupt()
