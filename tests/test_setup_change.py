@@ -48,6 +48,7 @@ class Rig:
         self.shutdowns, self.starts = [], []
         self.stop_answer, self.ignores_stop = {"stopping": True}, False
         self.start_error = None               # a function of the config.json bytes at the start, or None
+        self.start_signal = None              # "gone": a signal ends the start and the process it spawned; "stays": not
         self.jobs, self.projects = [], []
         self.mark_during = []
         monkeypatch.setattr(cli, "service_alive", lambda settings: self.alive)
@@ -84,6 +85,9 @@ class Rig:
     def ensure(self, settings, **kwargs):
         bytes_now = (self.data / "config.json").read_bytes()
         self.starts.append((bytes_now, kwargs, setup_mark.refusal(self.data), setup_mark.mark_path(self.data).exists()))
+        if self.start_signal and json.loads(bytes_now).get("arcade_connect_url") == DB:
+            self.alive = self.ignores_stop = self.start_signal == "stays"  # a spawned service that did (not) end
+            raise KeyboardInterrupt
         if self.start_error and self.start_error(bytes_now):
             raise cli.ServiceDidNotStart("The service stopped at start: it did not like it.")
         self.alive = True
@@ -353,6 +357,84 @@ def test_a_configuration_that_cannot_be_put_back_keeps_the_copy_and_starts_nothi
     assert f"The settings from before the change are kept in {copy}" in text
     assert copy.read_bytes() == before and len(rig.starts) == 1  # nothing was started on a configuration nobody checked
     assert not (rig.data / setup_mark.MARK).exists()
+    # The mark is gone, but the copy blocks every automatic start and doctor counts it, so the panels that reconnect
+    # as the dialog closes cannot start the service on settings nobody checked.
+    assert str(setup_mark.refusal(rig.data)) == setup_mark.NOTE_COPY.format(copy=copy)
+    assert setup_mark.unchecked(rig.data) is not None
+
+
+@pytest.mark.parametrize("what", ["gone", "stays"])
+def test_a_signal_during_the_start_on_the_new_settings_leaves_no_service_on_settings_that_are_not_config_json(
+        rig, monkeypatch, what):
+    make(rig.tmp)
+    before = config_bytes(rig.tmp)
+    request = rig.request()
+    expected = rig.agreed(request)
+    rig.start_signal = what
+    monkeypatch.setattr(setup_change, "_signal", [15])
+    state, text = rig.go(request, expected=expected)
+    copy = rig.data / setup_mark.BEFORE
+    assert len(rig.starts) == 1 and json.loads(rig.starts[0][0])["arcade_connect_url"] == DB
+    if what == "gone":
+        # The spawned service is gone: config.json is put back, the outcome says so and says what was not started.
+        assert state == "interrupted" and "config.json was put back as it was" in said(text) and "interrupted (signal 15)" in said(text)
+        assert config_bytes(rig.tmp) == before and not copy.exists() and not rig.alive
+        assert not (rig.data / setup_mark.MARK).exists()
+    else:
+        # The spawned service could not be ended: config.json is not put back under it, and the copy is kept.
+        assert state == "service_down" and "could NOT be put back" in said(text) and f"kept in {copy}" in said(text)
+        assert json.loads((rig.data / "config.json").read_bytes())["arcade_connect_url"] == DB and copy.read_bytes() == before
+        assert setup_mark.refusal(rig.data) is not None  # nothing else starts a service meanwhile
+
+
+def test_an_interrupt_that_comes_where_nothing_can_be_put_back_keeps_the_copy_and_says_so(rig, monkeypatch):
+    make(rig.tmp)
+    before = config_bytes(rig.tmp)
+    request = rig.request()
+    rig.start_error = lambda data: json.loads(data).get("arcade_connect_url") == DB
+    expected = rig.agreed(request)
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt  # in the put-back itself
+    monkeypatch.setattr(setup_profiles, "put_back", interrupted)
+    state, text = rig.go(request, expected=expected)
+    copy = rig.data / setup_mark.BEFORE
+    assert state == "interrupted" and f"kept in {copy}" in said(text)
+    assert copy.read_bytes() == before and not (rig.data / setup_mark.MARK).exists()
+    assert setup_mark.refusal(rig.data) is not None  # config.json is new and unchecked: nothing starts the service
+
+
+def test_an_error_after_the_apply_is_put_back_and_said_as_what_it_is(rig, monkeypatch):
+    make(rig.tmp)
+    before = config_bytes(rig.tmp)
+    request = rig.request()
+    expected = rig.agreed(request)
+    monkeypatch.setattr(setup_profiles.topology, "topology", lambda settings: (_ for _ in ()).throw(RuntimeError("boom")))
+    state, text = rig.go(request, expected=expected)
+    assert state == "failed" and "boom" in text and "put back" in said(text) and "Nothing was changed" not in text
+    assert "The knowledge service runs again with the settings from before the change." in text
+    rig.untouched(before)  # config.json as it was, a service on it, no mark, no copy
+    assert json.loads(rig.starts[-1][0]).get("arcade_connect_url") != DB
+
+
+def test_the_service_lock_is_waited_for_and_held(rig, monkeypatch):
+    """_stop does not call the service gone while its lock is held; _apply never changes anything under a service
+    that started again (a `cairnmind serve` in a terminal does not read the mark, so the lock is the only guard)."""
+    import fcntl
+    make(rig.tmp)
+    settings = Settings.load(rig.data)
+    rig.alive = False
+    other = (rig.data / "service.lock").open("a")
+    try:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert setup_change._stop(settings) == (setup_change.STOP_TIMEOUT, {"seconds": setup_change.STOP_SECONDS})
+        before = config_bytes(rig.tmp)
+        assert setup_change._apply(settings, rig.request(), {"plan": [], "writer": []}, None) == (
+            "refused", (setup_change.SERVICE_BACK, {}))
+        assert config_bytes(rig.tmp) == before
+    finally:
+        other.close()
+    assert setup_change._stop(settings) is None
 
 
 def test_a_signal_puts_the_configuration_back_and_starts_nothing(rig, monkeypatch):
@@ -378,7 +460,7 @@ def test_an_unexpected_error_before_the_change_changes_nothing_and_the_service_c
     before = config_bytes(rig.tmp)
     monkeypatch.setattr(setup_profiles, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     state, text = rig.go(rig.request(), expected={"plan": [], "writer": []})
-    assert state == "refused" and "The change could not be made: boom Nothing was changed." in said(text)
+    assert state == "refused" and "The change could not be made: boom config.json was not changed." in said(text)
     rig.untouched(before)
 
 
@@ -417,7 +499,12 @@ def test_the_request_on_standard_input_is_validated():
            payload(request={"profile": "local", "backup": "a\0b"}), payload(request={"profile": "local", "backup": "x" * 4097}),
            payload(request={"profile": None}), payload(expected={"plan": "a", "writer": []}),
            payload(expected={"plan": ["a"] * 201, "writer": []}), payload(expected={"plan": [5], "writer": []}),
-           payload(expected={"plan": []})]
+           payload(expected={"plan": []}),
+           # the rules of the command line, which `run` does not apply itself
+           payload(request={"profile": "local", "backup": "/x", "empty": True}),
+           payload(request={"profile": "remote-db", "url": DB, "user": "u", "database": "d", "password_file": "/x",
+                            "chat_model": "m"}),
+           payload(request={"profile": "remote-db", "url": DB}), payload(request={"profile": "local", "url": DB})]
     for raw in bad:
         with pytest.raises(ValueError):
             setup_change._parsed(raw)
@@ -500,6 +587,46 @@ def test_the_helper_reports_a_refusal_through_its_progress_file(tmp_path):
     missing = subprocess.run([sys.executable, "-I", "-m", "cairnmind.setup_change", "--data-dir", str(tmp_path / "none")],
                              input=b"", capture_output=True, timeout=60, env=environment, cwd=tmp_path)
     assert missing.returncode == 2 and b"no Cairnmind configuration" in missing.stderr
+
+
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP", "SIGINT"])
+def test_a_signal_sent_to_a_real_helper_ends_it_through_the_handlers_with_status_130(tmp_path, name):
+    """What closing the terminal (SIGHUP), `kill` (SIGTERM) and Ctrl-C (SIGINT) do to the helper: the handlers turn them
+    into KeyboardInterrupt, so the change ends in its own words with the mark removed; without them the process would
+    die on the signal. The change itself is replaced by a wait (nothing is stopped or started, no engine, no service)."""
+    import signal
+    data = tmp_path / "data"
+    Settings.load(data, create=True)
+    before = (data / "config.json").read_bytes()
+    code = ("import sys, time\n"
+            "from cairnmind import setup_change, setup_profiles\n"
+            "setup_change.refusal = lambda settings: None\n"
+            "setup_change._stop = lambda settings: None\n"
+            "setup_change._runs = lambda settings: None\n"
+            "def waits(*args, **kwargs):\n"
+            "    print('ready', flush=True)\n"
+            "    time.sleep(60)\n"
+            "setup_profiles.run = waits\n"
+            "sys.exit(setup_change.main(['--data-dir', sys.argv[1]]))\n")
+    environment = {key: value for key, value in os.environ.items() if not is_own_variable(key)}
+    helper = subprocess.Popen([sys.executable, "-c", code, str(data)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              env=environment, cwd=tmp_path)
+    try:
+        helper.stdin.write(payload(request={"profile": "local"}, expected={"plan": [], "writer": []}))
+        helper.stdin.close()
+        assert helper.stdout.readline().strip() == b"ready"  # inside the change: the mark and the copy are in place
+        assert (data / setup_mark.MARK).exists() and (data / setup_mark.BEFORE).exists()
+        helper.send_signal(getattr(signal, name))
+        assert helper.wait(timeout=30) == 130
+    finally:
+        if helper.poll() is None:
+            helper.kill()
+            helper.wait()
+    found = json.loads((data / setup_change.PROGRESS).read_text())
+    assert found["state"] == "interrupted" and found["pid"] == helper.pid
+    assert f"signal {getattr(signal, name).value}" in " ".join(found["lines"])
+    assert (data / "config.json").read_bytes() == before
+    assert not (data / setup_mark.MARK).exists() and not (data / setup_mark.BEFORE).exists()
 
 
 # Sentences ----------------------------------------------------------------------------------------------------------------

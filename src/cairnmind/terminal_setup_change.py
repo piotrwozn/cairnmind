@@ -61,8 +61,9 @@ DOWNTIME = ("The knowledge service of this workspace is stopped for the change a
             "a minute; a backup and restore take longer, with the size of the store.")
 KEEP_OPEN = ("Keep the workspace open until the change has finished: the restore keeps a person's confirmations only "
              "while the workspace answers with its key.")
-GOES_ON = ("Once started, the change cannot be stopped halfway; it goes on if the workspace is closed, and `cairnmind "
-           "doctor` says how it ended.")
+GOES_ON = ("Once started, the change cannot be stopped halfway; it goes on if the workspace is closed. `cairnmind "
+           "status` shows where storage and models run afterwards, and `cairnmind doctor` names a change that did "
+           "not finish.")
 PLAN = "The plan, as `cairnmind setup` gives it:"
 PROGRESS_TITLE = "Changing where storage and models run"
 PROGRESS_HINT = "Wait: the change cannot be stopped halfway."
@@ -110,8 +111,9 @@ MESSAGES = {
                "krócej niż minutę; kopia zapasowa i odtworzenie trwają dłużej, zależnie od rozmiaru bazy."),
     KEEP_OPEN: ("Zostaw środowisko otwarte, aż zmiana się skończy: odtworzenie zachowuje potwierdzenia osoby tylko "
                 "wtedy, gdy środowisko odpowiada swoim kluczem."),
-    GOES_ON: ("Raz zaczętej zmiany nie można zatrzymać w połowie; trwa dalej także po zamknięciu środowiska, a "
-              "`cairnmind doctor` mówi, jak się skończyła."),
+    GOES_ON: ("Raz zaczętej zmiany nie można zatrzymać w połowie; trwa dalej także po zamknięciu środowiska. "
+              "`cairnmind status` pokazuje potem, gdzie działają baza i modele, a `cairnmind doctor` wskazuje zmianę, "
+              "która się nie skończyła."),
     PLAN: "Plan, jaki podaje `cairnmind setup`:",
     PROGRESS_TITLE: "Zmiana miejsca działania bazy i modeli",
     PROGRESS_HINT: "Czekaj: zmiany nie można zatrzymać w połowie.",

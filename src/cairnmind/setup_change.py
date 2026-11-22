@@ -74,7 +74,7 @@ COPY_FAILED = "The settings could not be copied before the change ({reason}), so
 PLAN_CHANGED = ("What the change would do is no longer what you agreed to (a store, a model server or this "
                 "installation's settings answered differently just now), so nothing was changed.{notes} Open the "
                 "change again to see the new plan.")
-UNEXPECTED = "The change could not be made: {error} Nothing was changed."
+UNEXPECTED = "The change could not be made: {error} config.json was not changed."
 START_FAILED_PUT_BACK = ("The change was made, but the knowledge service did not start with the new settings: {reason} "
                          "config.json was put back as it was.{notes}")
 STEP_START = "starting the knowledge service"
@@ -84,8 +84,8 @@ NEW_STORE_CLAIMED = ("The store at {url} now names this installation as its writ
 SERVICE_DOWN = ("The knowledge service could not be started again: {reason} Nothing in the workspace answers from "
                 "memory until it runs. Start it with `{command}` in a terminal, or close the workspace (`cairnmind "
                 "workspace stop`) and open it again (`cairnmind`).")
-INTERRUPTED = ("The change was interrupted (signal {signal}); config.json is as setup left it, which the lines above "
-               "say. The knowledge service was not started; the next command that needs it starts it.")
+INTERRUPTED = ("The change was interrupted (signal {signal}); the lines above say what was done and what was put "
+               "back. The knowledge service was not started by the change; the next command that needs it starts it.")
 REQUEST_INVALID = "The request for the change could not be read ({reason}); nothing was changed."
 
 MESSAGES = {
@@ -127,7 +127,7 @@ MESSAGES = {
     PLAN_CHANGED: ("To, co zrobiłaby zmiana, nie jest już tym, na co się zgodzono (baza, serwer modeli albo ustawienia "
                    "tej instalacji odpowiedziały teraz inaczej), więc nic nie zostało zmienione.{notes} Otwórz zmianę "
                    "ponownie, aby zobaczyć nowy plan."),
-    UNEXPECTED: "Nie udało się wprowadzić zmiany: {error} Nic nie zostało zmienione.",
+    UNEXPECTED: "Nie udało się wprowadzić zmiany: {error} config.json nie został zmieniony.",
     START_FAILED_PUT_BACK: ("Zmiana została wprowadzona, ale usługa wiedzy nie uruchomiła się z nowymi ustawieniami: "
                             "{reason} config.json przywrócono do poprzedniego stanu.{notes}"),
     STEP_START: "uruchamianiu usługi wiedzy",
@@ -138,9 +138,8 @@ MESSAGES = {
     SERVICE_DOWN: ("Nie udało się ponownie uruchomić usługi wiedzy: {reason} Nic w środowisku nie odpowiada z pamięci, "
                    "dopóki nie działa. Uruchom ją poleceniem `{command}` w terminalu albo zamknij środowisko "
                    "(`cairnmind workspace stop`) i otwórz je ponownie (`cairnmind`)."),
-    INTERRUPTED: ("Zmianę przerwano (sygnał {signal}); config.json jest taki, jak zostawił go setup, co mówią "
-                  "powyższe wiersze. Usługi wiedzy nie uruchomiono; następne polecenie, które jej potrzebuje, ją "
-                  "uruchomi."),
+    INTERRUPTED: ("Zmianę przerwano (sygnał {signal}); powyższe wiersze mówią, co zrobiono i co przywrócono. Zmiana "
+                  "nie uruchomiła usługi wiedzy; następne polecenie, które jej potrzebuje, ją uruchomi."),
     REQUEST_INVALID: "Nie udało się odczytać prośby o zmianę ({reason}); nic nie zostało zmienione.",
 }
 
@@ -424,7 +423,7 @@ def _apply(settings, request, expected, out) -> tuple[str, object]:
                 exc.template, exc.values)
         except KeyboardInterrupt:
             return "interrupted", None  # setup put config.json back before it let the signal go on
-        except Exception as exc:  # noqa: BLE001 - before the change: nothing changed, whatever it was
+        except Exception as exc:  # noqa: BLE001 - run puts config.json back itself once it has changed it
             return "refused", (UNEXPECTED, {"error": str(exc) or type(exc).__name__})
 
 
@@ -452,12 +451,14 @@ def _new_settings_start(data_dir: Path, path: Path, snapshot: bytes, result: dic
     """The service on the new settings. When it does not start, or the helper is interrupted meanwhile, config.json is
     put back and (unless interrupted) the service is started on the old settings. (final state, copy to keep)."""
     out.add((STARTING, {}))
-    new = Settings.load(data_dir)
-    interrupted = False
+    new, interrupted = None, False
     try:
+        new = Settings.load(data_dir)
         reason = _start(new)
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:  # ensure_service has ended the process it spawned; below waits until it is gone
         reason, interrupted = f"signal {_signal_number()}", True
+    except Exception as exc:  # noqa: BLE001 - settings that cannot be loaded are a start that failed
+        reason = str(exc) or type(exc).__name__
     if reason is None:
         shown = [item for key in ("done", "rebuild") for item in result[key]]
         out.lines.extend([*(render_one(item, out.language) for item in shown), "",
@@ -465,19 +466,26 @@ def _new_settings_start(data_dir: Path, path: Path, snapshot: bytes, result: dic
         out.add((CHANGED, {}))
         return out.finish("changed"), False
     notes = _left(result)
-    if (any(item[0] == setup_profiles.WRITER_NEW for item in result["writer"])
+    if (new is not None and any(item[0] == setup_profiles.WRITER_NEW for item in result["writer"])
             and store_writer.inspect(new).get("role") == "writer"):
         notes.append((NEW_STORE_CLAIMED, {"url": database_mode.address(new)}))  # the failed start opened a new store
-    try:
-        setup_profiles.put_back(path, snapshot, result["applied_state"], notes)
-    except OSError as failure:
-        out.add((setup_profiles.PUT_BACK_FAILED, {"step": (STEP_START, {}), "error": reason, "reason": str(failure),
+    cannot = None
+    if interrupted and new is not None:
+        still = _stop(new)  # config.json is not put back under a service that runs on the new settings
+        cannot = render_one(still, "en") if still else None
+    if cannot is None:
+        try:
+            setup_profiles.put_back(path, snapshot, result["applied_state"], notes)
+        except OSError as failure:
+            cannot = str(failure)
+    if cannot is not None:
+        out.add((setup_profiles.PUT_BACK_FAILED, {"step": (STEP_START, {}), "error": reason, "reason": cannot,
                                                   "notes": notes}), (COPY_KEPT, {"copy": data_dir / setup_mark.BEFORE}))
         return out.finish("service_down"), True
+    out.add((START_FAILED_PUT_BACK, {"reason": reason, "notes": notes}))
     if interrupted:
         out.add((INTERRUPTED, {"signal": _signal_number()}))
         return out.finish("interrupted"), False
-    out.add((START_FAILED_PUT_BACK, {"reason": reason, "notes": notes}))
     return _restart(data_dir, out, "failed"), False
 
 
@@ -506,7 +514,7 @@ def _change(data_dir: Path, request, expected: dict, out) -> str:
         return _restart(data_dir, out, "refused")
     keep = False
     try:
-        kind, payload = _apply(settings, request, expected, out)
+        kind, payload = _apply(settings, request, expected, out)  # anything that escapes keeps the copy (below)
         if kind == "changed":
             state, keep = _new_settings_start(data_dir, path, snapshot, payload, out)
             return state
@@ -519,6 +527,9 @@ def _change(data_dir: Path, request, expected: dict, out) -> str:
             out.add((COPY_KEPT, {"copy": copy}))
             return out.finish("service_down")
         return _restart(data_dir, out, kind)
+    except BaseException:
+        keep = True  # an end nobody planned for: config.json is unchecked, and the copy blocks every start until it is
+        raise
     finally:
         if not keep:
             copy.unlink(missing_ok=True)
@@ -535,8 +546,9 @@ def carry_out(data_dir: Path, request, expected: dict, language: str, report) ->
     except setup_mark.ChangeBusy:
         out.add((setup_mark.BUSY, {}))
         return out.finish("refused")
-    except KeyboardInterrupt:
-        out.add((INTERRUPTED, {"signal": _signal_number()}))
+    except KeyboardInterrupt:  # one that came where nothing could be put back: the copy, if there, is named
+        copy = data_dir / setup_mark.BEFORE
+        out.add((INTERRUPTED, {"signal": _signal_number()}), *([(COPY_KEPT, {"copy": copy})] if copy.exists() else []))
         return out.finish("interrupted")
 
 
@@ -575,7 +587,11 @@ def _parsed(raw: bytes) -> tuple[setup_profiles.Request, dict, str]:
     for key in expected:
         for text in expected[key]:
             _text(text, "expected", allow_none=False)
-    return setup_profiles.Request(**fields), expected, payload["language"]
+    request = setup_profiles.Request(**fields)
+    problem = setup_profiles.option_problem(request)  # the rules of the command line, which run does not apply itself
+    if problem:
+        raise ValueError(render_one((problem.template, problem.values)))
+    return request, expected, payload["language"]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -869,6 +869,10 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None],
                     "restored": None}
     try:
         _apply(settings, request, plan, moves, result, say, state)
+        # Not in as_json or render: what put_back needs when the caller refuses the change after it was made (#339).
+        result["applied_state"] = {key: state[key] for key in ("engine", "engine_tried", "arcade_is_new")}
+        result["topology"] = topology.topology(Settings.load(settings.data_dir))  # inside: a failure here is put back
+        result["applied"] = True
     except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
         raise
     except BaseException as exc:  # Ctrl-C too: the configuration is never left half changed
@@ -889,10 +893,6 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None],
                                        "notes": notes})))
             raise
         raise SetupFailed(PUT_BACK, step=state["step"], error=str(exc), notes=notes) from exc
-    result["applied"] = True
-    # Not in as_json or render: what put_back needs when the caller refuses the change after it was made (#339).
-    result["applied_state"] = {key: state[key] for key in ("engine", "engine_tried", "arcade_is_new")}
-    result["topology"] = topology.topology(Settings.load(settings.data_dir))
     return result
 
 
