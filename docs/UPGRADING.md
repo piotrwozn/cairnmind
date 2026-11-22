@@ -301,7 +301,7 @@ bash scripts/install-wsl.sh
 
 The installer no longer stops when tmux 3.4+ is missing: it says that the workspace is unavailable and goes on. It also no longer stops when Java 21 is missing and Docker answers; that matters for a new installation, because an installation that has a native engine keeps it (below). If Java 21 is no longer on the machine, install it, or move the engine to Docker as in the bullet "The engine in Docker" below; the installer's message that `init` can run the engine in Docker does not apply to an installation that already has a native engine.
 
-The installer now ends with the exit code of `cairnmind doctor`: 1 when something required is missing. A connect-only installation whose database user does not exist yet therefore ends with 1 until `cairnmind db create-user` has run; do not chain other commands to the installer with `&&`. It says when it stops the service of the installed version, and it no longer announces the download when the pinned engine is already unpacked. It may also print two lines about the removed `devbrain` command; see "The `devbrain` command is gone" below.
+The installer now ends with the exit code of `cairnmind doctor`: 1 when something required is missing. A connect-only installation whose database user does not exist yet therefore ends with 1 until `cairnmind db create-user` has run; do not chain other commands to the installer with `&&`. It says that it stopped the service of the installed version once that service has ended, and it no longer announces the download when the pinned engine is already unpacked. It may also print two lines about the removed `devbrain` command; see "The `devbrain` command is gone" below.
 
 The same script installs on macOS ([INSTALL.md](INSTALL.md)).
 
@@ -318,7 +318,7 @@ cairnmind doctor
 
 `cairnmind doctor` and `cairnmind status` now start with a `topology` report, and `doctor` names the engine mode (`arcadedb.engine`). A script that reads their output meets new keys. `doctor`'s JSON also has `projects` (the number of registered projects, `null` when the store cannot be read) and, for an engine that refuses this data directory's sign-in, `arcadedb.sign_in_refused: true`.
 
-`cairnmind doctor` exits 1 when something required is missing (the engine, Java or Docker for it, the store writer, a shell whose commands are refused, an invalid `knowledge_agent`) and 0 otherwise; models, tmux and coding clients never change the exit code. Models or a client that are set up and fail are listed under "Optional and not working". A script that ran `doctor` and expected 0 must accept 1 and read the report (`cairnmind doctor --json`).
+`cairnmind doctor` exits 1 when something required is missing (the engine, Java or Docker for it, the store writer, a shell whose commands are refused, an invalid `knowledge_agent`, a knowledge service of another version) and 0 otherwise; models, tmux and coding clients never change the exit code. Models or a client that are set up and fail are listed under "Optional and not working". A script that ran `doctor` and expected 0 must accept 1 and read the report (`cairnmind doctor --json`).
 
 ### What the upgrade does to a store
 
