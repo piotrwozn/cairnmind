@@ -361,3 +361,120 @@ def test_the_managed_block_is_not_chunked():
     assert list(ingest._chunks(sample)) == list(ingest._chunks(sample, "")) == list(ingest._chunks(sample, "/p/x.py"))
     crlf = text.replace("\n", "\r\n")
     assert "resume_context" not in "\n".join(c for c, _, _ in ingest._chunks(crlf, "AGENTS.md"))
+
+
+# --- review of the second round: what the first tests did not pin ------------------------------------------------------
+
+def test_text_matches_lists_a_record_and_its_note_once(monkeypatch):
+    import asyncio
+    from cairnmind import memory_egress
+    monkeypatch.setattr(memory_egress, "ask_gate", lambda settings, store: None)
+    shown = [{"id": "chunk", "source_id": "s1", "uri": "manual://note/1", "kind": "note", "text": "We deploy blue green."},
+             {"id": "rec", "source_id": "s1", "uri": "manual://note/1", "kind": "decision", "status": "proposed",
+              "text": "We deploy blue green."}]
+
+    class Retriever:
+        warnings: list = []
+
+        def search(self, *args, **kwargs):
+            return shown
+
+    class Agent:
+        settings = store = None
+        retriever = Retriever()
+
+        def _hits(self, hits, project_id, evidence, *args):
+            evidence["s1"] = {"uri": "manual://note/1", "kind": "note"}
+            return shown
+    found = asyncio.run(knowledge_mode.text_matches(Agent(), "p", "how do we deploy?"))
+    assert [match["id"] for match in found["matches"]] == ["rec"]
+
+
+def test_doctor_lists_an_engine_that_refuses_the_sign_in_once(monkeypatch, tmp_path):
+    from cairnmind import arcade, database_credentials
+    settings = Settings.load(tmp_path / "new", create=True)
+    real = ArcadeClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(401, json={"error": "User/Password not valid"}))
+    monkeypatch.setattr(arcade, "ArcadeClient", lambda settings, **kw: real(settings, transport=transport))
+    block = database_credentials.doctor_block(settings)
+    assert block["sign_in_refused"] is True and block["available"] is False
+    lines = doctor_attention.summary(healthy(arcadedb={**block, "installed": True}))
+    assert sum("does not accept the sign-in" in line for line in lines) == 1
+    assert not any("does not answer" in line for line in lines)
+
+
+def test_the_storage_line_says_the_cause_only_and_doctor_says_the_way_out_once(tmp_path):
+    from cairnmind.topology import _storage_line, topology
+    settings = Settings.load(tmp_path / "new", create=True)
+    reason = ("ArcadeDB HTTP 401: User/Password not valid. "
+              + first_start.FOREIGN_ENGINE.format(url=settings.arcade_url, data_dir=settings.data_dir))
+    place = topology(settings, writer={"role": "unknown", "reason": reason})
+    line = _storage_line(place, "en")
+    assert line.endswith("unknown: ArcadeDB HTTP 401: User/Password not valid")
+    assert "arcade_url" not in line
+
+
+def test_the_engine_of_this_data_directory_is_not_called_foreign(monkeypatch, tmp_path):
+    settings = Settings.load(tmp_path / "new", create=True)
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        401, json={"error": "Too many failed authentication attempts. Try again later."}))
+    client = lambda: ArcadeClient(settings, transport=transport)  # noqa: E731
+    with pytest.raises(ArcadeError) as nobody:
+        client().server_info()
+    assert first_start.FOREIGN_ENGINE.format(url=settings.arcade_url, data_dir=settings.data_dir) in str(nobody.value)
+    state = settings.data_dir / "arcade"
+    state.mkdir(parents=True)
+    (state / "process.json").write_text(json.dumps({"pid": 4242, "url": settings.arcade_url}))
+    monkeypatch.setattr(engine, "native_engine_pid", lambda settings: 4242)
+    with pytest.raises(ArcadeError) as own:
+        client().server_info()
+    text = str(own.value)
+    assert first_start.OWN_ENGINE_REFUSED.format(url=settings.arcade_url, data_dir=settings.data_dir) in text
+    assert "another data directory" not in text and "arcade_url" not in text
+    (state / "process.json").write_text(json.dumps({"pid": 4242, "url": "http://127.0.0.1:1"}))
+    with pytest.raises(ArcadeError, match="another data directory"):  # a record of another address proves nothing
+        client().server_info()
+    monkeypatch.setattr(engine, "native_engine_pid", lambda settings: None)  # the recorded process is not running
+    (state / "process.json").write_text(json.dumps({"pid": 4242, "url": settings.arcade_url}))
+    with pytest.raises(ArcadeError, match="another data directory"):
+        client().server_info()
+    assert first_start.MESSAGES[first_start.OWN_ENGINE_REFUSED] != first_start.OWN_ENGINE_REFUSED
+
+
+def test_ask_names_a_proposed_finding_and_the_warnings_of_the_json():
+    from cairnmind.terminal_commands import ask_summary
+    from cairnmind.terminal_i18n import tr
+    record = {**MATCH, "id": "rec", "uri": "manual://note/1", "status": "proposed", "excerpt": "We deploy blue green."}
+    answer = unavailable(record, {**MATCH, "id": "kept", "uri": "/w/b.py", "status": "confirmed"})
+    answer["freshness"]["warnings"] = ["Current source changed since it was indexed: /w/a.py"]
+    shown = ask_summary(answer, str)
+    assert 'manual://note/1 (1-3) (unconfirmed): "We deploy blue green."' in shown
+    assert "/w/b.py (1-3):" in shown  # a confirmed record carries no mark
+    assert shown.splitlines()[shown.splitlines().index("Warnings:") + 1] == (
+        "- Current source changed since it was indexed: /w/a.py")
+    assert "(niepotwierdzone)" in ask_summary(answer, lambda text: tr(text, "pl"))
+    assert "Ostrzeżenia:" in ask_summary(answer, lambda text: tr(text, "pl"))
+
+
+def test_ask_for_a_project_on_an_engine_that_refuses_this_directory_starts_no_service(monkeypatch, run):
+    started = []
+    refusal = ArcadeError("ArcadeDB HTTP 401: User/Password not valid. " + first_start.FOREIGN_ENGINE.format(
+        url="http://127.0.0.1:2480", data_dir="/d"), status_code=401)
+
+    class Store:
+        def resolve_project(self, project):
+            raise refusal
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(cli, "_ensure_service_or_refuse", lambda settings: started.append(1))
+    monkeypatch.setattr(cli, "store_for_read", lambda settings: Store())
+    result = run("ask", "p", "why?")
+    assert result.exit_code == 1 and result.exception is refusal and started == []
+
+
+def test_doctor_counts_the_registered_projects_and_ends_with_the_next_step(monkeypatch, doctor):
+    from cairnmind import record_kinds
+    store = type("S", (), {"list_projects": lambda self: [{"id": "a"}]})()
+    monkeypatch.setattr(cli, "store_for_read", lambda settings: store)
+    monkeypatch.setattr(record_kinds, "doctor_view", lambda store: {})
+    assert json.loads(doctor(terminal=False).output)["projects"] == 1
+    assert doctor().output.strip().splitlines()[-1] == first_start.NEXT_PROJECTS

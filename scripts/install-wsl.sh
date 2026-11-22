@@ -389,7 +389,7 @@ if [[ -n "$connect_url" ]]; then
     # without the variable stays connect-only instead of starting a local engine.
     # The database and its user are created once, by a person (cairnmind db create-user): until then
     # these two commands say what is missing, and the installation itself is complete.
-    if ! "$cairnmind_bin" engine status || ! "$cairnmind_bin" init; then
+    if ! "$cairnmind_bin" engine status >/dev/null || ! "$cairnmind_bin" init; then
         printf '\nThe database is not ready for this installation yet. Follow docs/DEPLOYMENT.md,\n' >&2
         printf '"Connect-only installations", then run: cairnmind init\n' >&2
     fi

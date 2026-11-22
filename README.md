@@ -32,7 +32,7 @@ cairnmind brief my-app                         # 4. where work stands: your find
 cairnmind ask my-app "When do accounts lock?"  # 5. finds it again, with the matching passages of your files
 ```
 
-These commands say in a terminal what they did and what comes next, and a command that stops says what is missing and what to do. With `--json`, or in a pipe, a file or a script, `doctor`, `project add`, `project list`, `remember`, `ask`, `install`, `stop` and `engine stop` print the full JSON, as scripts expect; `context` and the record commands print JSON always. `cairnmind doctor` repeats the installer's check at any time; it exits 1 when something required is missing.
+These commands say in a terminal what they did and what comes next, and a command that stops says what is missing and what to do. With `--json`, or in a pipe, a file or a script, `doctor`, `project add`, `project list`, `remember`, `ask`, `install`, `init`, `stop` and `engine stop` print the full JSON, as scripts expect; `context` and the record commands print JSON always. `cairnmind doctor` repeats the installer's check at any time; it exits 1 when something required is missing.
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
 - `my-app` is any name you choose; `~/src/my-app` stands for the folder of a project you already have. A Git repository with at least one commit is best: `impact`, coding sessions and the commit list of `brief` need Git, and `project add` says when the folder has no repository or no commit.

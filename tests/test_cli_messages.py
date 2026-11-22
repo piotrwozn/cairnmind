@@ -232,7 +232,8 @@ def test_a_missing_file_or_a_too_long_path_is_a_sentence(tmp_path, monkeypatch, 
     assert (code, shown.err) == (1, "Cairnmind: missing.json does not exist.\n")
     monkeypatch.setattr(cli, "store_for", lambda *args, **kwargs: pytest.fail("the store was opened"))
     code, shown = entry(monkeypatch, capsys, "--data-dir", str(data), "project", "add", "x", "/nope")
-    assert (code, shown.err) == (1, "Cairnmind: /nope does not exist.\n")
+    from cairnmind.first_start import PROJECT_FOLDER_MISSING  # the sentence of #313: how to go on
+    assert (code, shown.err) == (1, "Cairnmind: " + PROJECT_FOLDER_MISSING.format(root="/nope", quoted="/nope") + "\n")
     code, shown = entry(monkeypatch, capsys, "--data-dir", str(data), "project", "add", "x", "/tmp/" + "a" * 5000)
     # The path is resolved, and /tmp is /private/tmp on macOS.
     assert code == 1 and shown.err.startswith(f"Cairnmind: The path is too long for this system: {Path('/tmp').resolve()}/aaa")

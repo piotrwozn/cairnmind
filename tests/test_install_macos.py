@@ -197,7 +197,7 @@ def test_the_installer_ends_with_the_workspace_lines_only_when_tmux_is_ready_and
     last = script.rstrip().splitlines()[-1]
     assert last == '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention'
     assert "Models were not downloaded" not in script
-    assert script.count('engine status >/dev/null') == 2 and 'engine install >/dev/null' in script  # no engine JSON
+    assert script.count('engine status >/dev/null') == 3 and 'engine install >/dev/null' in script  # no engine JSON
 
 
 def test_a_missing_uv_on_linux_is_one_install_line_and_run_again_without_a_second_document(mac):
