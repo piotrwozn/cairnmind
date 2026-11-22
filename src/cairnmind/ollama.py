@@ -115,6 +115,7 @@ class Ollama:
         self.num_ctx = settings.num_ctx if num_ctx is None else num_ctx
         from .memory_models import is_loopback
         self.label = "Local Ollama" if is_loopback(base_url) else "Ollama"
+        self._where = "local " if is_loopback(base_url) else ""  # a server on another computer is never called local
         self._credential = credential
         self._client = client
         self._model_cache: tuple[float, dict] | None = None
@@ -157,11 +158,11 @@ class Ollama:
             if isinstance(exc, httpx.ReadTimeout):
                 code, reason = "read_timeout", "response read timed out"
             elif isinstance(exc, httpx.ConnectError):
-                code, reason = "connect_error", "could not connect to the local runtime"
+                code, reason = "connect_error", f"could not connect to the {self._where}runtime"
             elif isinstance(exc, httpx.TimeoutException):
-                code, reason = "request_timeout", "local request timed out"
+                code, reason = "request_timeout", f"{self._where}request timed out"
             else:
-                code, reason = "request_error", "local HTTP request failed"
+                code, reason = "request_error", f"{self._where}HTTP request failed"
             raise OllamaUnavailable(
                 f"{self.label} {endpoint} request failed ({type(exc).__name__}): {reason}",
                 endpoint=endpoint, error_code=code,
@@ -227,7 +228,7 @@ class Ollama:
             payload["tools"] = tools
         data = await self._request("POST", "/api/chat", json=payload, read_timeout=read_timeout)
         if not isinstance(data.get("message"), dict):
-            raise OllamaUnavailable("Local model returned no chat message")
+            raise OllamaUnavailable(f"{self.label} returned no chat message")
         return data
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -242,7 +243,7 @@ class Ollama:
     async def models(self) -> dict:
         data = await self._request("GET", "/api/tags")
         if not isinstance(data.get("models"), list):
-            raise OllamaUnavailable("Local model list is invalid")
+            raise OllamaUnavailable(f"{self.label} model list is invalid")
         self._model_cache = (time.monotonic(), data)
         return data
 
@@ -254,9 +255,9 @@ class Ollama:
             if model.get("name") == name or model.get("model") == name:
                 digest = model.get("digest")
                 if not digest:
-                    raise OllamaUnavailable("Local model has no digest; cannot version its embeddings")
+                    raise OllamaUnavailable(f"{self.label} model has no digest; cannot version its embeddings")
                 return f"{name}@{digest}"
-        raise OllamaUnavailable(f"Required local model {name!r} is not installed")
+        raise OllamaUnavailable(f"Required {self._where}model {name!r} is not installed")
 
     async def model_digest(self, name: str) -> str | None:
         """The digest the model list gives for ``name``, or None: not listed, listed without one (what a

@@ -37,8 +37,25 @@ def env_names(name: str) -> tuple[str, ...]:
 
 
 def derived_database(root: Path) -> str:
-    """The database name of a data directory that names none: the prefix and a hash of its path."""
-    return env_value("ARCADE_DB_PREFIX", "devbrain") + "_" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
+    """The database name of a data directory that names none: the prefix and a hash of its path.
+
+    A new installation takes `cairnmind_`. A directory that already is an installation keeps the earlier
+    `devbrain_` (#369): one with a config.json that names no database (written before the name was saved),
+    one that names the earlier derived name, or one whose database files already exist. An unreadable
+    config.json counts as existing."""
+    digest = hashlib.sha256(str(root).encode()).hexdigest()[:16]
+    prefix = env_value("ARCADE_DB_PREFIX")
+    if prefix is not None:
+        return prefix + "_" + digest
+    earlier = "devbrain_" + digest
+    config = root / "config.json"
+    try:
+        stored = json.loads(config.read_text()).get("arcade_database") if config.exists() else "new"
+    except (OSError, ValueError, AttributeError):
+        stored = ""
+    if not stored or stored == earlier or (root / "arcade" / "databases" / earlier).exists():
+        return earlier
+    return "cairnmind_" + digest
 
 
 def is_own_variable(name: str) -> bool:
@@ -321,8 +338,8 @@ class Settings:
         if password != stored.get("arcade_password", ""):
             kept["arcade_password"] = (stored.get("arcade_password"), password)
         values["arcade_password"] = password
-        # The default prefix is part of the name of every existing database: it does not change.
-        prefix = env_value("ARCADE_DB_PREFIX", "devbrain")
+        # An existing installation keeps its name (derived_database, #369).
+        prefix = env_value("ARCADE_DB_PREFIX", "cairnmind")
         derived = derived_database(root)
         if not values.get("arcade_database"):
             if not prefix.replace("_", "").isalnum():
