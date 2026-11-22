@@ -20,7 +20,7 @@ Cairnmind runs on Linux, on Windows inside WSL2 Ubuntu (Ubuntu 24.04 is the test
 
 Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are needed for the steps below. Each adds something later.
 
-**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256). Everything stays in `~/.local/share/cairnmind`.
+**What gets installed:** the `cairnmind` command; a small local service that starts by itself when a command needs it and keeps running in the background (`cairnmind stop` stops it); and ArcadeDB, the database your project memory is kept in (about 86 MB, checked with SHA-256). Your memory and the engine are kept in `~/.local/share/cairnmind`; the command is a uv tool, and a Docker engine lives in Docker's storage. `cairnmind stop` stops the service and `cairnmind engine stop` the engine, which also keeps running in the background once it has started.
 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
@@ -33,11 +33,11 @@ cairnmind brief my-app                         # 5. where work stands: your find
 cairnmind ask my-app "When do accounts lock?"  # 6. finds it again, with the matching passages of your files
 ```
 
-Each command says what it did and what comes next, and a command that stops says what is missing and what to do.
+The first-start commands (`doctor`, `project add`, `remember`, `brief`, `install`) say in a terminal what they did and what comes next, and a command that stops says what is missing and what to do. `ask`, `context` and the record commands print JSON, as scripts expect.
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
 - `my-app` is any name you choose; `~/src/my-app` stands for the folder of a project you already have. A Git repository with at least one commit is best: `impact`, coding sessions and the commit list of `brief` need Git, and `project add` says when the folder has no repository or no commit.
-- What you and your assistants store is *proposed*: `brief`, `ask` and the assistants use it marked as unconfirmed, and only you confirm or dispute it, in the memory view of the terminal workspace (below).
+- What you and your assistants store is *proposed*: `brief`, `ask` and the assistants use it marked as unconfirmed, and only you confirm or dispute it, in the memory inspector of the terminal workspace (below; it needs tmux 3.4+).
 - Without models, `ask` is a full-text search: it reports `unavailable`, makes no answer, and lists the matching passages as search results, not as evidence. `cairnmind models pull` turns answers on (below).
 
 ### Connect Codex or Claude Code
@@ -68,7 +68,7 @@ cairnmind stop                   # the service reads the choice when it starts; 
 
 `cairnmind models pull` turns the knowledge agent on; after the restart the waiting extraction and embedding jobs run and `ask` answers with verified quotes. `cairnmind models set` chooses another model server instead: another Ollama or a server with the OpenAI-compatible API; a server on another computer needs HTTPS and your explicit consent, and receives only the sensitivity classes you allow ([docs/API.md](docs/API.md#the-knowledge-agents-models)). The reference setup uses an RTX 4080 Super with 16 GB of VRAM; the 9B model needs roughly 7 GB of GPU memory, and on CPU it works, but answers are slow. Check memory use and latency on your own machine.
 
-**The terminal workspace.** With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). In the workspace, Ctrl+B then i opens the memory view, where you confirm or dispute proposed findings. The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. Without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
+**The terminal workspace.** With tmux 3.4+ (`sudo apt install tmux`, or `brew install tmux` on macOS), `cairnmind` opens the workspace: Codex and Claude Code run in panes beside the projects, the memory inspector and the graph ([docs/TERMINAL.md](docs/TERMINAL.md)). In the workspace, Ctrl+B then i opens the memory inspector, where you confirm or dispute proposed findings (view Proposed). The default Focus layout works at 80 × 24; the full Cockpit layout needs at least 140 × 42. Without tmux 3.4+, opening the workspace prints what is missing and the commands that work without it, and exits with code 1.
 
 ## What sets it apart
 

@@ -245,7 +245,7 @@ Nothing in the data directory, `config.json`, the socket paths or the files `cai
 
 - **Codex tool timeout.** `cairnmind install` writes `tool_timeout_sec` into the Cairnmind entry of `.codex/config.toml` as the question budget plus 15 seconds, never less than 75. With the default budget of 60 that is 75, as before. If you raised `ask_timeout` in `config.json`, the next `cairnmind install` writes the larger value.
 - **Stopping.** `cairnmind workspace stop --clients` also stops the private terminal server of the last coding-session run, which 0.11.0 left running. `cairnmind engine stop` clears the record of an engine that has already exited instead of failing.
-- **Questions.** A question no longer starts a second reading of whole passages when the time left is shorter than the calls it repeats, so it can end sooner with what it has. A model server that refuses structured output is asked again without it, and `cairnmind doctor` says so; the refusal was seen with an MLX build of Ollama on Apple silicon.
+- **Questions.** A question no longer starts a second reading of whole passages when the time left is shorter than the calls it repeats, so it can end sooner with what it has. A model server that refuses structured output is asked again without it, and `cairnmind doctor --json` says so; the refusal was seen with an MLX build of Ollama on Apple silicon.
 
 ### What changes on macOS
 

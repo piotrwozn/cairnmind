@@ -205,8 +205,8 @@ def test_a_missing_uv_on_linux_is_one_install_line_and_run_again_without_a_secon
     (bin_dir / "uv").unlink()
     result = run()
     assert result.returncode == 1
-    assert result.stderr.endswith("uv not found on PATH. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh, "
-                                  "then open a new terminal and run this installer again.\n")
+    assert result.stderr.endswith("uv not found on PATH. Install it, open a new terminal and run this installer "
+                                  "again: curl -LsSf https://astral.sh/uv/install.sh | sh\n")
     assert "docs/INSTALL.md" not in result.stderr
 
 

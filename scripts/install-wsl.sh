@@ -166,7 +166,7 @@ else
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
-    printf 'uv not found on PATH. Install uv: %s, then open a new terminal and run this installer again.\n' "$uv_hint" >&2
+    printf 'uv not found on PATH. Install it, open a new terminal and run this installer again: %s\n' "$uv_hint" >&2
     exit 1
 fi
 # --- end of the checks ---
