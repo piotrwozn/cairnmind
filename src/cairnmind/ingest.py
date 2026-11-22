@@ -1552,23 +1552,51 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     return counts
 
 
+# Per store and path, the errors of the last import of a transcript file in this process that read no line
+# (#363): what importing it again would report while nothing was appended (the reparse of old records, which
+# depends only on the code and the stored rows). While its cursor in the database stands at the end of the
+# file and the file is the one the cursor describes, the poll skips it and reports those errors again.
+_POLLED: dict[tuple[str, str], list[str]] = {}
+
+
+def _at_end(path: Path, cursor: dict) -> bool:
+    """Whether the cursor stands at the end of this very file: nothing new can be read from it."""
+    try:
+        offset = int(cursor.get("offset") or 0)
+        return path.is_file() and path.stat().st_size == offset and _fingerprint(path, offset) == cursor.get("fingerprint")
+    except (OSError, ValueError, TypeError):
+        return False  # an identity that cannot be established is imported in full
+
+
 def poll_imports(store) -> dict:
     from .project_removal import removed_ids
-    rows = store.query("SELECT path,project_id,client FROM import_cursors")
+    rows = store.query("SELECT path,project_id,client,`offset`,fingerprint FROM import_cursors")
     result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
     removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
     for row in rows:
         if row["project_id"] in removed:
             continue
+        key = (str(store.data_dir), row["path"])
+        if key in _POLLED and _at_end(Path(row["path"]), row):
+            result["errors"].extend(_POLLED[key])
+            continue
         try:
+            was_at_end = _at_end(Path(row["path"]), row)
             item = import_history(store, Path(row["path"]), row["project_id"], row["client"])
-            for key, value in item.items():
-                if key == "errors":
-                    result[key].extend(value)
+            for name, value in item.items():
+                if name == "errors":
+                    result[name].extend(value)
                 else:
-                    result[key] += value
+                    result[name] += value
+            # Only an import that had nothing to read is remembered: a line's errors are reported once, in
+            # the round that reads it; the next round imports the file at its new end and remembers that.
+            if was_at_end:
+                _POLLED[key] = list(item.get("errors", []))
+            else:
+                _POLLED.pop(key, None)
         except (OSError, ValueError) as exc:
             result["errors"].append(f"{row['path']}: {exc}")
+            _POLLED.pop(key, None)
     return result
 
 

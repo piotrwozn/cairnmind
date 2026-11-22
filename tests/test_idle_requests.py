@@ -1,6 +1,8 @@
 """What an idle knowledge service sends to the store does not grow with the rows of the store (#363)."""
 from __future__ import annotations
 
+import json
+
 from cairnmind import embed_jobs, ingest
 from cairnmind.service import schedule_embeddings
 from cairnmind.store import Store
@@ -76,6 +78,60 @@ def test_the_repair_still_queues_resets_and_replaces_jobs_as_before(tmp_path):
         "namespace": NAMESPACE, "dimension": 3, "vector": [1.0, 0.0, 0.0]}})
     embed_jobs.repair_embed_jobs(store, [rows[4]], NAMESPACE)
     assert store.query("SELECT state FROM jobs WHERE id=:id", {"id": raced})[0]["state"] == "completed"
+
+
+def transcript(root, text):
+    return json.dumps({"type": "user", "cwd": str(root), "sessionId": "s", "message": {"role": "user", "content": text}}) + "\n"
+
+
+def followed(tmp_path, content):
+    root = tmp_path / "repo"
+    root.mkdir()
+    store = Store(tmp_path / "memory")
+    pid = store.add_project("p", root)["id"]
+    history = tmp_path / "history.jsonl"
+    history.write_text(content(root) if callable(content) else content)
+    ingest.import_history(store, history, pid, "claude")
+    return store, pid, root, history
+
+
+def test_an_appended_transcript_line_is_archived_by_the_next_poll(tmp_path, monkeypatch):
+    store, pid, root, history = followed(tmp_path, lambda root: transcript(root, "hello 1"))
+    assert ingest.poll_imports(store)["archived"] == 0  # looked at in full once, then remembered
+    seen = counted(monkeypatch)
+    assert ingest.poll_imports(store) == {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
+    assert len(seen) == 2  # the cursors and the removed projects: the file is not read again
+    with history.open("a") as handle:
+        handle.write(transcript(root, "hello 2"))
+    assert ingest.poll_imports(store)["archived"] == 1
+    assert ingest.poll_imports(store)["archived"] == 0
+    # The file rewritten in place with the same size is the one the cursor no longer describes.
+    history.write_text(transcript(root, "hello 3") + transcript(root, "hello 4"))
+    assert ingest.poll_imports(store)["archived"] >= 1
+    # A file that is gone is reported by every poll.
+    history.unlink()
+    assert [error for error in ingest.poll_imports(store)["errors"] if str(history) in error]
+
+
+def test_a_skipped_transcript_reports_what_a_full_poll_reports(tmp_path, monkeypatch):
+    store, pid, root, history = followed(tmp_path, lambda root: transcript(root, "hello"))
+    monkeypatch.setattr(ingest, "_reparse_history_sources_locked", lambda *a, **k: {
+        "repaired": 0, "unchanged": 1, "errors": ["Transcript source s: original provenance or raw hash does not match"]})
+    ingest.poll_imports(store)
+    skipped = ingest.poll_imports(store)["errors"]
+    ingest._POLLED.clear()
+    assert skipped and skipped == ingest.poll_imports(store)["errors"]
+    monkeypatch.undo()
+    # The errors of a line are reported in the round that reads it, and not again.
+    other = tmp_path / "other"
+    other.mkdir()
+    store, pid, root, history = followed(other, "")
+    history.write_text('{"newSchema": true}\ninvalid-json\n')
+    assert len(ingest.poll_imports(store)["errors"]) == 2
+    assert ingest.poll_imports(store)["errors"] == []
+    assert ingest.poll_imports(store)["errors"] == []  # skipped
+    ingest._POLLED.clear()
+    assert ingest.poll_imports(store)["errors"] == []  # forced
 
 
 def test_a_new_process_reindexing_nothing_reads_the_jobs_of_a_file_at_once(tmp_path, monkeypatch):
