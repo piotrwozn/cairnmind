@@ -499,8 +499,28 @@ def broker_error_text(exc, translate) -> str:
         return f"Broker {status}: " + translate(FOREIGN_SERVICE).format(**exc.foreign)
     if isinstance(detail, str) and type(status) is int:
         text = " ".join(detail.split())
-        return f"Broker {status}: " + (translate(text) if text in _BROKER_FIXED else text)
+        return f"Broker {status}: " + (translate(text) if text in _BROKER_FIXED else _formatted(text, translate))
     return str(exc)
+
+
+def _formatted(text, translate) -> str:
+    """A refusal the service formatted from one of the known templates (a removed project's, #327), put together
+    again from the template in the panel's language; any other text as it is."""
+    import re
+    from string import Formatter
+
+    from .project_removal import BROKER_TEMPLATES
+    for template in BROKER_TEMPLATES:
+        pattern, seen = [], set()
+        for literal, field, _, _ in Formatter().parse(template):
+            pattern.append(re.escape(literal))
+            if field:
+                pattern.append(f"(?P={field})" if field in seen else f"(?P<{field}>.+?)")
+                seen.add(field)
+        found = re.fullmatch("".join(pattern), text, re.DOTALL)
+        if found:
+            return translate(template).format(**found.groupdict())
+    return text
 
 
 # Stored kinds, states and outcomes, translated where a panel shows them. The stored value itself is

@@ -391,7 +391,7 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     async def register_project(request: Request):
         session_for(request)
         value = await body(request)
-        fields(value, {"name", "root"}, {"name", "root"})
+        fields(value, {"name", "root", "fresh"}, {"name", "root"})
         value["root"] = str(normalize_path(value["root"]))
         return forward(await upstream("POST", "/projects", data=value))
 

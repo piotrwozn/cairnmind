@@ -12,6 +12,10 @@ from cairnmind.cli import app
 from cairnmind.config import Settings
 from cairnmind.store import Store
 
+# What Store.remember returns, and so what `cairnmind remember` and `task update` print in a pipe.
+STORED_RECORD_KEYS = {"id", "project_id", "kind", "key", "content", "status", "source_ids", "version", "supersedes",
+                      "metadata", "created_at", "updated_at", "active_key"}
+
 
 def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch):
     # The command line confirms nothing (#214): what it stores is proposed.
@@ -41,6 +45,7 @@ def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch):
     run("project", "add", "demo", str(root))
     note = run("remember", "demo", "Plan logowania", "--kind", "decision")
     assert note["status"] == "proposed"
+    assert set(note) == STORED_RECORD_KEYS  # the JSON of 0.9 and main: #325 adds nothing here
     task = run("task", "add", "demo", "Test logowania", "--plan", "login", "--step", "1",
                "--requires-test", "--requires-review", "--criterion", "Działa poprawne i błędne hasło")
     run("task", "update", "demo", task["id"], "needs_test")
@@ -55,7 +60,7 @@ def test_cli_task_plan_and_evidence_workflow(tmp_path, monkeypatch):
     assert verified["passed"]
     done = run("task", "update", "demo", task["id"], "done", "--check-run", verified["id"],
                "--review-passed", "--acceptance-passed", "--evidence", str(report))
-    assert done["metadata"]["state"] == "done"
+    assert done["metadata"]["state"] == "done" and set(done) == STORED_RECORD_KEYS
     assert done["metadata"]["check_run_ids"] == [verified["id"]]
     export = tmp_path / "memory.json"
     run("export", str(export), "--project", "demo")

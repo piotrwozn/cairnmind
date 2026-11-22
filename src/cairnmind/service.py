@@ -87,6 +87,9 @@ class RememberBody(BaseModel):
     sources: list[str] = Field(default_factory=list)
     session_id: str | None = None
     packet_id: str | None = None
+    # Only the MCP bridge sends it (#325): the answer then names the metadata keys this write removed. The
+    # command line and the built-in agent send nothing and get the stored record exactly as before.
+    name_dropped: bool = Field(default=False, strict=True)
 
 
 class FindingBody(BaseModel):
@@ -105,11 +108,13 @@ class CheckpointBody(BaseModel):
     state: dict
     session_id: str | None = None
     packet_id: str | None = None
+    name_dropped: bool = Field(default=False, strict=True)  # as in RememberBody (#325)
 
 
 class RegisterProjectBody(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     root: str = Field(min_length=1, max_length=4096)
+    fresh: bool = False  # a separate identity: a removed project of that name and folder is not brought back
 
 
 class PlanSaveBody(BaseModel):
@@ -156,6 +161,9 @@ class SessionContextBody(BaseModel):
     # Compatibility with startup hooks from 0.3.4 and earlier. Both spellings
     # request an exact read; they must never silently initiate a refresh.
     expected_packet_id: str | None = None
+    # The short answer of #325. Only the MCP bridge sends it; the command line, the built-in agent and the
+    # start hook send nothing and get the packet as before.
+    short: bool = Field(default=False, strict=True)
 
 
 class SessionAckBody(BaseModel):
@@ -300,6 +308,9 @@ def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=Non
     """
     rows = (store.missing_embeddings(namespace) if project_ids is None else
             [row for pid in project_ids for row in store.missing_embeddings(namespace, pid)])
+    from .project_removal import removed_ids
+    removed = removed_ids(store)  # no embedding job is queued for a removed project (#327)
+    rows = [row for row in rows if row["project_id"] not in removed]
     if settings is not None:
         from cairnmind.memory_egress import held_chunk_ids
         held = held_chunk_ids(store, settings, rows, known_held)
@@ -643,6 +654,18 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             with store.write_origin(mark), store.session_write(session_id):
                 return operation(scope)
 
+    def with_dropped(result: dict) -> dict:
+        """A copy of a write's result for the answer only (#325): the metadata keys the version before it held
+        and this one does not (reported proof, criteria links, an external checkpoint's fields). Read from the
+        immutable revision before, so the store's result, and everything stored from it, stays as it was."""
+        if result.get("version", 1) < 2:
+            return result
+        rows = store.query("SELECT snapshot FROM record_revisions WHERE id=:id",
+                           {"id": f"{result['id']}:{result['version'] - 1}"})
+        held = ((rows[0].get("snapshot") or {}).get("metadata") or {}) if rows else {}
+        dropped = sorted(name for name in held if name not in (result.get("metadata") or {}))
+        return {**result, "metadata_dropped": dropped} if dropped else result
+
     def read_scope(pid: str, requested: str | None, session_id: str | None = None) -> str | None:
         scope = str(Path(requested).expanduser().resolve()) if requested else None
         if session_id:
@@ -694,9 +717,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             raise ValueError("Project root is unavailable") from exc
         if not root.is_dir():
             raise ValueError("Project root must be an existing directory")
-        created = await asyncio.to_thread(store.add_project, body.name, root)
+        from .project_removal import add_outcome, removed_rows
+        known = {row["id"] for row in await asyncio.to_thread(store.list_projects)}
+        removed = await asyncio.to_thread(removed_rows, store)
+        created = await asyncio.to_thread(store.add_project, body.name, root, not body.fresh)
         cache.clear()
-        return {"project": created}
+        # Said, never silent (#327): a removed project that came back is not a new one, and one that keeps its
+        # memory under this name or folder was not brought back.
+        return {"project": created, **add_outcome(removed, known, created)[2]}
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):
@@ -1056,8 +1084,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             raise ValueError("resume_required: conflicting requested packet identities")
         expected = body.packet_id if body.packet_id is not None else body.expected_packet_id
         if expected is not None:
+            if body.short:
+                raise ValueError("short is only for a read of the current packet; an exact packet read "
+                                 "always returns the whole packet")
             return await asyncio.to_thread(sessions.exact_context, body.session_id, expected)
-        return await asyncio.to_thread(sessions.resume_context, body.session_id)
+        return await asyncio.to_thread(sessions.resume_context, body.session_id, body.short)
 
     @app.post("/sessions/ack", dependencies=auth)
     async def acknowledge_resume(body: SessionAckBody):
@@ -1219,7 +1250,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             return store.remember(pid, record, sources)
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
         cache.clear()
-        return result
+        return await asyncio.to_thread(with_dropped, result) if body.name_dropped else result
 
     @app.post("/findings", dependencies=auth)
     async def finding(body: FindingBody, request: Request):
@@ -1259,7 +1290,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id,
                                          lambda scope: store.checkpoint(pid, body.state))
         cache.clear()
-        return result
+        return await asyncio.to_thread(with_dropped, result) if body.name_dropped else result
 
     @app.post("/ingest", dependencies=auth)
     async def ingest(body: ProjectBody):
