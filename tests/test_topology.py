@@ -75,14 +75,27 @@ def test_everything_local_reads_as_three_lines(tmp_path, offline):
     place = topology(settings, models=models, writer=WRITER)
     assert place["lines"] == [
         "Storage: ArcadeDB on this machine at http://127.0.0.1:2480, started and stopped by Cairnmind "
-        "(native engine, Java 21). This installation is the one that writes to the store.",
+        "(native engine, Java 21 or newer). This installation is the one that writes to the store.",
         "Memory models: chat qwen3.5:9b and embedding qwen3-embedding:0.6b, both on this machine "
         "(Ollama at http://127.0.0.1:11434). These are the release's models, evaluated for this release.",
-        "On this machine: the knowledge service at http://127.0.0.1:8765; the ArcadeDB engine (native, Java 21); "
+        "On this machine: the knowledge service at http://127.0.0.1:8765; the ArcadeDB engine (native, Java 21 or newer); "
         "Ollama at http://127.0.0.1:11434 for chat and embedding."]
     assert list(place) == ["lines", "storage", "models", "this_machine"]
     assert place["storage"]["source"] == place["models"]["chat"]["source"] == "config.json"
     assert status_words(place) == (("local", False), ("local", False))
+
+
+def test_the_java_version_found_is_named_not_the_minimum(tmp_path, offline):
+    """#368: JDK 22 runs the engine, so the lines say Java 22, in both languages; 21 stays Java 21."""
+    from cairnmind.topology import lines
+    settings = make(tmp_path)
+    for major in (22, 21):
+        place = topology(settings, writer=WRITER, java_major=major)
+        assert f"(native engine, Java {major})" in place["lines"][0]
+        assert f"(native, Java {major})" in place["lines"][2] and "or newer" not in place["lines"][0]
+        assert f"Java {major})" in lines(place, "pl")[0] and f"Java {major})" in lines(place, "pl")[2]
+    assert "Java 21 lub nowsza" in lines(topology(settings, writer=WRITER), "pl")[0]
+    assert topology(make(tmp_path, engine_mode="docker"), writer=WRITER, java_major=22)["storage"].get("java_major") is None
 
 
 def test_the_engine_in_docker_is_named(tmp_path, offline):
@@ -343,7 +356,7 @@ def test_doctor_starts_with_the_topology_of_what_it_found(monkeypatch, tmp_path)
     assert list(report)[0] == "topology" and report["store_writer"]["role"] == "reader"
     shown = report["topology"]["lines"]
     assert shown[0].endswith("Another one writes.") and shown[1].endswith(" " + EVALUATED_PASSED)
-    assert shown[2].startswith("On this machine: " + ITEM_NO_SERVICE + "; the ArcadeDB engine (native, Java 21)")
+    assert shown[2].startswith("On this machine: " + ITEM_NO_SERVICE + "; the ArcadeDB engine (native, Java 21 or newer)")
 
 
 def test_lines_in_polish(tmp_path, offline):

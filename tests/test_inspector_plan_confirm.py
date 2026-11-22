@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Select, Static, TextArea
 
+from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_i18n import tr
 from cairnmind.terminal_inspector import InspectorApp
 from consent_steps import consent_drawn, form_ready
@@ -24,7 +25,7 @@ class PlanBroker(FakeBroker):
             self.calls.append((method, path, params or {}, json))
             if self.refuse:
                 self.plan_version += 1
-                raise ValueError(self.refuse)
+                raise self.refuse
             self.plan_version += 2
             return {"plan_id": "plan-a", "plan_version": self.plan_version, "tasks": []}
         return super().request(method, path, params=params, json=json, timeout=timeout)
@@ -72,7 +73,7 @@ async def test_the_inspector_confirms_a_plan(tmp_path, monkeypatch, language):
 @pytest.mark.asyncio
 async def test_a_refused_plan_confirmation_reloads_the_plan_and_says_why(tmp_path, monkeypatch):
     app, broker, _ = plan_app(tmp_path, monkeypatch, "en")
-    broker.refuse = "Broker 403: not from the workspace"
+    broker.refuse = BrokerError(403, "not from the workspace")
     async with app.run_test(size=(95, 42)) as pilot:
         await settle(app, pilot)
         app.query_one("#inspector-view", Select).value = "plans"

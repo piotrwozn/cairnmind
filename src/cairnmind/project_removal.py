@@ -57,8 +57,8 @@ NESTED = ("{root} lies inside the folder {parent} of {other}; once this project 
 BRING_BACK = "cairnmind project add {project} {root} brings back the same project with its memory."
 EXTRA_ROOTS = ("Its other folders are not added back by that; cairnmind project root {project} FOLDER adds each "
                "again: {roots}.")
-DELETE_STEP = ("Deleting its memory is a separate step: first cairnmind backup DIR/, then cairnmind forget {id} "
-               "--delete-project.")
+DELETE_STEP = ("Deleting its memory is a separate step, made in the workspace: More, then Delete project memory; take a "
+               "backup first with cairnmind backup DIR/.")
 NEXT_YES = "Next: cairnmind project remove {project} --yes removes it."
 NEXT_LIST = "Next: cairnmind project list --removed lists the removed projects."
 ROOT_DRY_RUN = ("Nothing was changed; this is what cairnmind project remove {project} --root {root} --yes would do.")
@@ -81,17 +81,15 @@ RESTORED_ROOTS = ("Its other folders were not added back; cairnmind project root
 NOT_BROUGHT_BACK = ("The project removed on {when} as {name} in {root} keeps its memory and was not brought back: "
                     "only cairnmind project add with that same name and folder brings it back.")
 NO_WAY_BACK = ("cairnmind project add cannot bring {name} back: its folder {root} lies inside the data directory, which "
-               "Cairnmind never indexes. Its memory stays in the store; deleting it takes cairnmind backup DIR/ and "
-               "then cairnmind forget {id} --delete-project.")
+               "Cairnmind never indexes. Its memory stays in the store; it is deleted in the workspace (More, then "
+               "Delete project memory), after cairnmind backup DIR/.")
 REMOVED_STUCK = ("The project {name} was removed from the registry on {when}; its memory is kept, but cairnmind project "
                  "add cannot bring it back: its folder {root} lies inside the data directory, which Cairnmind never "
-                 "indexes. Deleting its memory takes cairnmind backup DIR/ and then cairnmind forget {id} "
-                 "--delete-project.")
+                 "indexes. Its memory is deleted in the workspace (More, then Delete project memory), after cairnmind "
+                 "backup DIR/.")
 IMPORT_STUCK = ("This memory package belongs to the project {name}, which was removed from the registry on {when} and "
                 "cannot be brought back, because its folder {root} lies inside the data directory. Nothing was "
                 "imported.")
-FORGET_BY_ID = ("The project {name} was removed from the registry, so forget takes its id: first cairnmind backup "
-                "DIR/, then cairnmind forget {id} --delete-project. Nothing was deleted.")
 RESTORED_WORKSPACE = ("Brought back {project} in {root} with its memory, as it was when removed on {when}; it is not a "
                       "new project.")
 NEW_REFUSED = ("The project {name} in {root} was removed on {when} and keeps its memory; a new project with that name "
@@ -101,8 +99,8 @@ REMOVED_HEADING = "Removed projects, whose memory is kept:"
 REMOVED_ROW = "  - {name}: {root} (removed {when}; id {id})"
 REMOVED_NONE = "No removed project keeps memory in this store."
 REMOVED_NEXT = ("Next: cairnmind project add NAME FOLDER, with the name and folder shown, brings one back with its "
-                "memory; deleting its memory takes cairnmind backup DIR/ and then cairnmind forget ID "
-                "--delete-project.")
+                "memory; its memory is deleted in the workspace (More, then Delete project memory), after cairnmind "
+                "backup DIR/.")
 REMOVED_HINT = "Removed projects whose memory is kept: {count}; cairnmind project list --removed lists them."
 IMPORT_REMOVED = ("This memory package belongs to the project {name}, which was removed from the registry on {when}. "
                   "cairnmind project add {name} {root} brings it back; then import again. Nothing was imported.")
@@ -148,8 +146,8 @@ MESSAGES = {
     BRING_BACK: "cairnmind project add {project} {root} przywraca ten sam projekt wraz z jego pamięcią.",
     EXTRA_ROOTS: ("Jego pozostałe foldery nie wracają przy tym; cairnmind project root {project} FOLDER dodaje każdy "
                   "z nich ponownie: {roots}."),
-    DELETE_STEP: ("Skasowanie jego pamięci to osobny krok: najpierw cairnmind backup KATALOG/, potem cairnmind forget "
-                  "{id} --delete-project."),
+    DELETE_STEP: ("Skasowanie jego pamięci to osobny krok, wykonywany w środowisku terminalowym: Więcej, potem Skasuj "
+                  "pamięć projektu; najpierw zrób kopię zapasową poleceniem cairnmind backup KATALOG/."),
     NEXT_YES: "Dalej: cairnmind project remove {project} --yes usuwa go.",
     NEXT_LIST: "Dalej: cairnmind project list --removed wymienia usunięte projekty.",
     ROOT_DRY_RUN: ("Nic nie zostało zmienione; oto co zrobiłoby cairnmind project remove {project} --root {root} "
@@ -174,16 +172,14 @@ MESSAGES = {
     NOT_BROUGHT_BACK: ("Projekt usunięty {when} jako {name} w {root} zachowuje pamięć i nie został przywrócony: "
                        "przywraca go tylko cairnmind project add z tą samą nazwą i tym samym folderem."),
     NO_WAY_BACK: ("cairnmind project add nie przywróci {name}: jego folder {root} leży w katalogu danych, którego "
-                  "Cairnmind nigdy nie indeksuje. Pamięć zostaje w magazynie; jej skasowanie wymaga cairnmind backup "
-                  "KATALOG/, a potem cairnmind forget {id} --delete-project."),
+                  "Cairnmind nigdy nie indeksuje. Pamięć zostaje w magazynie; kasuje się ją w środowisku "
+                  "terminalowym (Więcej, potem Skasuj pamięć projektu), po cairnmind backup KATALOG/."),
     REMOVED_STUCK: ("Projekt {name} został usunięty z rejestru {when}; jego pamięć jest zachowana, ale cairnmind "
                     "project add go nie przywróci: jego folder {root} leży w katalogu danych, którego Cairnmind nigdy "
-                    "nie indeksuje. Skasowanie jego pamięci wymaga cairnmind backup KATALOG/, a potem cairnmind forget "
-                    "{id} --delete-project."),
+                    "nie indeksuje. Jego pamięć kasuje się w środowisku terminalowym (Więcej, potem Skasuj pamięć "
+                    "projektu), po cairnmind backup KATALOG/."),
     IMPORT_STUCK: ("Ten pakiet pamięci należy do projektu {name}, który został usunięty z rejestru {when} i nie da się "
                    "go przywrócić, bo jego folder {root} leży w katalogu danych. Niczego nie zaimportowano."),
-    FORGET_BY_ID: ("Projekt {name} został usunięty z rejestru, więc forget przyjmuje jego identyfikator: najpierw "
-                   "cairnmind backup KATALOG/, potem cairnmind forget {id} --delete-project. Niczego nie skasowano."),
     RESTORED_WORKSPACE: ("Przywrócono {project} w {root} wraz z pamięcią, w stanie z chwili usunięcia ({when}); to nie "
                          "jest nowy projekt."),
     NEW_REFUSED: ("Projekt {name} w {root} został usunięty {when} i zachowuje pamięć; nowy projekt o tej nazwie i tym "
@@ -193,8 +189,8 @@ MESSAGES = {
     REMOVED_ROW: "  - {name}: {root} (usunięty {when}; id {id})",
     REMOVED_NONE: "Żaden usunięty projekt nie zachowuje pamięci w tym magazynie.",
     REMOVED_NEXT: ("Dalej: cairnmind project add NAZWA FOLDER, z pokazaną nazwą i folderem, przywraca projekt wraz z "
-                   "jego pamięcią; skasowanie jego pamięci wymaga cairnmind backup KATALOG/, a potem cairnmind forget "
-                   "ID --delete-project."),
+                   "jego pamięcią; jego pamięć kasuje się w środowisku terminalowym (Więcej, potem Skasuj pamięć "
+                   "projektu), po cairnmind backup KATALOG/."),
     REMOVED_HINT: ("Usunięte projekty z zachowaną pamięcią: {count}; cairnmind project list --removed je "
                    "wymienia."),
     IMPORT_REMOVED: ("Ten pakiet pamięci należy do projektu {name}, który został usunięty z rejestru {when}. "
@@ -206,7 +202,7 @@ MESSAGES[UNKNOWN_REMOVED] = MESSAGES[UNKNOWN] + MESSAGES[PROJECT_REMOVED]
 MESSAGES[UNKNOWN_STUCK] = MESSAGES[UNKNOWN] + MESSAGES[REMOVED_STUCK]
 # Refusals the service sends the workspace as English text; the panel matches them and shows the Polish template.
 BROKER_TEMPLATES = (UNKNOWN_REMOVED, UNKNOWN_STUCK, NEW_REFUSED, SEVERAL_REMOVED, ROOT_OF_ANOTHER, IMPORT_REMOVED,
-                    IMPORT_STUCK)
+                    IMPORT_STUCK, RUNS_LIVE, RUNS_UNKNOWN, JOBS_IN_WORK)
 
 
 class Refused(ValueError):
@@ -386,7 +382,7 @@ def plan(settings, store, project: dict, root: Path | None = None) -> dict:
                                                    {"id": pid})),
             "kept": kept, "nested": nested, "bring_back": f"cairnmind project add {name} {_q(main)}",
             "no_way_back": stuck({"removed_root": main}, store.data_dir),
-            "extra_roots": roots[1:], "delete": f"cairnmind forget {pid} --delete-project"}
+            "extra_roots": roots[1:], "delete": "workspace: More, then Delete project memory"}
 
 
 def apply(store, result: dict) -> dict:
@@ -450,7 +446,7 @@ def sentences(result: dict) -> list[str]:
         lines.append(BRING_BACK.format(project=name, root=_q(result["project"]["root"])))
     if result["extra_roots"] and not result["no_way_back"]:
         lines.append(EXTRA_ROOTS.format(project=name, roots=", ".join(safe_text(p) for p in result["extra_roots"])))
-    lines.append(DELETE_STEP.format(id=result["project"]["id"]))
+    lines.append(DELETE_STEP)
     lines.append((NEXT_LIST if applied else NEXT_YES).format(project=name))
     return lines
 
@@ -520,17 +516,3 @@ def workspace_lines(translate, project: dict, root: str, result: dict) -> list[s
 def not_brought_back(row: dict) -> str:
     return NOT_BROUGHT_BACK.format(when=when(row.get("removed_at")), name=_q(row.get("removed_name")),
                                    root=safe_text(row.get("removed_root")))
-
-
-def forget_target(store, value: str) -> dict:
-    """`forget` takes a registered project, or a removed one by its id (its folder may be gone)."""
-    try:
-        return store.resolve_project(value)
-    except ValueError:
-        rows = store.query("SELECT FROM projects WHERE removed_at IS NOT NULL AND id=:id", {"id": value})
-        if not rows:
-            named = find_removed(store, value)
-            if named:
-                raise ValueError(FORGET_BY_ID.format(name=_q(value), id=named["id"])) from None
-            raise
-        return clean_row(rows[0])

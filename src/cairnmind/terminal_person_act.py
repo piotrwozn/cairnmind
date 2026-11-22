@@ -3,8 +3,9 @@
 The rule: a panel sends a request to a path of person_proof.PERSON_BROKER_PATH that writes only after `agreed`
 returned True. `agreed` shows ConfirmModal(consent=True), which counts only input made after it was drawn (#318),
 with what will be done; a form before it only collects text and its button says Continue. Not covered, on purpose:
-the quick finding popup (workspace_finding), which opens empty on 'proposed' and needs typed text but has no dialog
-and no #318 guard (an open item for the owner), and the dry run of an import, which writes nothing.
+the quick finding popup (workspace_finding), which sends without a dialog by the owner's decision of 22 November
+2026 (the person typed the text and sends it, so the form is the consent), and the dry run of an import, which
+writes nothing.
 """
 from __future__ import annotations
 
@@ -26,6 +27,13 @@ MESSAGES = {
     "Save this decision?": "Zapisać tę decyzję?",
     "Save this verdict?": "Zapisać tę ocenę?",
 }
+
+
+def refused(exc) -> bool:
+    """True only for a 4xx answer of the service. A 5xx, an answer that could not be decoded and a lost connection
+    may follow a commit, so they are unclear, never "not done" (#354)."""
+    from .terminal_client import BrokerError, BrokerUnreachable
+    return isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable) and 400 <= exc.status_code < 500
 
 
 def record_line(item) -> str:

@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from .memory_published_secrets import MAX_RELEASE_REASON
 from .terminal_notices import about
-from .terminal_person_act import RECORD, agreed, record_line, typed
+from .terminal_person_act import RECORD, agreed, record_line, refused, typed
 
 TOO_LONG = f"A reason has at most {MAX_RELEASE_REASON} characters."
 NOTE = ("Lets this record's current hits of the secrets scan be published. Your reason is published with the "
         "record. A registered secret is never released.")
+RELEASE_UNCLEAR = "The service did not confirm the release, so the record may have been released."
 REASON = "Why these hits are not secrets (published with the record)"
 MESSAGES = {
     "Release": "Przepuść",
@@ -28,6 +29,7 @@ MESSAGES = {
         "Zapisano przepuszczenie z Twoim uzasadnieniem. Przepuszczone trafienia skanu sekretów w tym ustaleniu: "
         "{count}.",
     "The record was not released.": "Ustalenie nie zostało przepuszczone.",
+    RELEASE_UNCLEAR: "Usługa nie potwierdziła przepuszczenia, więc ustalenie mogło zostać przepuszczone.",
     TOO_LONG: f"Uzasadnienie może mieć najwyżej {MAX_RELEASE_REASON} znaków.",
 }
 
@@ -59,10 +61,10 @@ async def release_record(app):
     try:
         result = await app.request("POST", f"/api/inspector/records/{record['id']}/release", json=payload)
     except (OSError, ValueError, RuntimeError) as exc:
-        if scope == app._scope_version:
-            app.notice(app.t("The record was not released.") + " " + broker_error_text(exc, app.t), "error")
+        app.tell(scope, about(project_id), app.t("The record was not released." if refused(exc) else RELEASE_UNCLEAR)
+                 + " " + broker_error_text(exc, app.t), "error")
         return
-    if scope == app._scope_version:
-        count = len(result.get("released") or []) if isinstance(result, dict) else 0
-        app.notice(app.t("Release saved with your reason. Hits of the secrets scan let through in this record: "
-                         "{count}.", count=count))
+    count = len(result.get("released") or []) if isinstance(result, dict) else 0
+    app.tell(scope, about(project_id), app.t(
+        "Release saved with your reason. Hits of the secrets scan let through in this record: {count}.",
+        count=count))

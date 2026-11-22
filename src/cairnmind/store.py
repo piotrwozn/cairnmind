@@ -1669,10 +1669,10 @@ class Store:
             # and is still called a timeout.
             (("runtime reported a context-length limit",), "model_context_length",
              "The model refused an input longer than its context length."),
-            (("response read timed out", "local request timed out"), "model_timeout",
+            (("response read timed out", "request timed out"), "model_timeout",
              "The model runtime did not answer in time."),
             (("ollama /api/", "runtime reported", "runtime rejected", "runtime returned", "embedding model returned",
-              "local model returned"), "model_runtime_error", "The model runtime refused or failed the request."),
+              "returned no chat message"), "model_runtime_error", "The model runtime refused or failed the request."),
             (("timeout", "timed out"), "job_timeout", "The job exceeded its execution budget."),
         )
         for needles, code, message in categories:
@@ -1994,6 +1994,10 @@ class Store:
         return len(ids)
 
     def forget_project(self, project_id):
+        from .confirmation import ConfirmationRefused
+        from .person_proof import FORGET_REFUSED, present
+        if not present():
+            raise ConfirmationRefused(FORGET_REFUSED)  # only the workspace's route deletes a project (#347)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
             from .journal import Journal

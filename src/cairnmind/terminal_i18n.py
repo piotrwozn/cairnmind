@@ -7,6 +7,7 @@ from .engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
 from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
+from .project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
 from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
 from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
@@ -14,6 +15,7 @@ from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_person_act import MESSAGES as PERSON_ACT_MESSAGES
+from .terminal_project_forget import MESSAGES as PROJECT_FORGET_VIEW_MESSAGES
 from .terminal_release import MESSAGES as RELEASE_MESSAGES
 from .terminal_replace import MESSAGES as REPLACE_MESSAGES
 from .terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
@@ -166,6 +168,17 @@ CATALOG = {
     "Describe the two scopes": "Opisz oba zakresy", "Save decision": "Zapisz decyzję",
     "Open a conflict first.": "Najpierw otwórz sprzeczność.",
     "Decision saved with an audit note.": "Decyzja zapisana z notatką audytową.",
+    "The decision was not saved.": "Decyzja nie została zapisana.",
+    "The review was not saved.": "Ocena nie została zapisana.",
+    "The service did not confirm the review, so it may have been saved.":
+        "Usługa nie potwierdziła oceny, więc mogła zostać zapisana.",
+    "The service did not confirm the decision, so it may have been saved.":
+        "Usługa nie potwierdziła decyzji, więc mogła zostać zapisana.",
+    "The current list was reloaded.": "Wczytano aktualną listę.",
+    "No clear answer from the memory service. The verdict may have been saved. Saving the same verdict again is "
+    "safe and stores nothing twice.":
+        "Brak jednoznacznej odpowiedzi usługi pamięci. Ocena mogła zostać zapisana. Ponowny zapis tej samej oceny "
+        "jest bezpieczny i niczego nie powtórzy.",
     "The decision was not saved. The current list was reloaded.":
         "Decyzja nie została zapisana. Wczytano aktualną listę.",
     "The decision is saved with an audit note; every source is kept.":
@@ -676,6 +689,8 @@ CATALOG.update(UPGRADE_MARK_MESSAGES)  # an upgrade in progress; an MCP server o
 CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
 CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
+CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the command line refuses (#347)
+CATALOG.update(PROJECT_FORGET_VIEW_MESSAGES)  # deleting a project's memory in the workspace (#347)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

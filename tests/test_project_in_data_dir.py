@@ -54,7 +54,8 @@ def test_a_project_registered_inside_the_data_directory_by_an_earlier_version_is
         store.add_project('old', inside)  # as predicted: the memory can never be attached to this folder again
     with pytest.raises(ValueError) as named:
         store.resolve_project('old')
-    assert 'cannot bring it back' in str(named.value) and 'cairnmind forget old --delete-project' in str(named.value)
+    assert 'cannot bring it back' in str(named.value) and 'More, then Delete project memory' in str(named.value)
+    assert 'forget' not in str(named.value)  # the command line no longer deletes (#347)
     listed = ' '.join(project_removal.removed_sentences(project_removal.removed_view(store)))
     assert 'cairnmind project add cannot bring old back' in listed
 

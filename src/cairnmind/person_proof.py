@@ -31,7 +31,7 @@ KEY_HEADER, SOCKET_HEADER = "X-Cairnmind-Person", "X-Cairnmind-Workspace"
 # The paths a panel sends to the broker for a person's act (BrokerClient adds the proof to these POSTs only).
 PERSON_BROKER_PATH = re.compile(r"/api/(inspector/(records/[^/]+/(review|release|replace)|conflicts/resolve"
                                 r"|plans/[^/]+/confirm|impact/verdict|record-kinds/(accept|withdraw)"
-                                r"|legacy-groups/adopt)"
+                                r"|legacy-groups/adopt|projects/forget)"
                                 r"|findings|memory/import(-published|-commit)?)")
 _KEY = re.compile(r"[0-9a-f]{64}")
 _HEADER_VALUE = re.compile(r"[\x20-\x7e]+")
@@ -56,6 +56,9 @@ IMPORT_REPLACE = (
     "Replacing what a person confirmed or disputed on this machine needs the person's workspace, and this import did "
     "not come from it. Nothing was imported. Import it in the memory view of the workspace (`cairnmind`): "
     "Import for an archive, Team memory for a published folder or a commit.")
+FORGET_REFUSED = (
+    "Deleting a project's memory is a person's act made in the workspace, and this request did not come from it. "
+    "Nothing was deleted. The person deletes it in the workspace (`cairnmind`): More, then Delete project memory.")
 
 
 class PersonProofRefused(Exception):
