@@ -55,6 +55,11 @@ set -g allow-passthrough off
 """
 
 
+# What the pane of an ended run says in place of tmux's "Pane is dead (status 0, ...)" (#169; tmux 3.4+).
+ENDED = "Session ended (#{?pane_dead_signal,signal #{pane_dead_signal},exit status #{pane_dead_status}}). Resume it from Sessions."
+ENDED_AUTH = "Session ended (#{?pane_dead_signal,signal #{pane_dead_signal},exit status #{pane_dead_status}})."  # a sign-in run is not resumed
+
+
 def _atomic(path: Path, data):
     fd, name = tempfile.mkstemp(prefix=".native-", dir=path.parent)
     try:
@@ -382,6 +387,7 @@ class NativeRuntime:
     def _spawn(self, rows, project, client, slot_id, launch, generation, purpose, *, run_id=None):
         if not self.diagnostics()["available"]:
             raise ValueError("tmux_missing_or_unsupported: install tmux >= 3.4")
+        from .terminal_i18n import language_for, tr
         run_id = run_id or uuid4().hex
         if not isinstance(run_id, str) or not _ID.fullmatch(run_id):
             raise ValueError("Invalid terminal run ID")
@@ -401,7 +407,10 @@ class NativeRuntime:
             self._tmux("new-session", "-d", "-x", "120", "-y", "40", "-s", session, "-c", launch["cwd"],
                        "--", sys.executable, "-I", "-m", "cairnmind.native_worker", "--spec", str(spec),
                        ";", "set-option", "-t", session, "@cairnmind_run_id", run_id,
-                       ";", "set-option", "-t", session, "@cairnmind_generation", str(generation))
+                       ";", "set-option", "-t", session, "@cairnmind_generation", str(generation),
+                       # On the pane, not -g: tmux reads it when the pane dies, so a global one would carry the latest start's language.
+                       ";", "set-option", "-p", "-t", session, "remain-on-exit-format",
+                       tr(ENDED_AUTH if purpose == "auth" else ENDED, language_for(self.settings)))
             self.socket.chmod(0o600)
             marker = spec.with_suffix(".started.json")
             deadline = time.monotonic() + 3

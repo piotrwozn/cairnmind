@@ -37,7 +37,7 @@ COMMANDS = (
     ("Cockpit view", "Multiple panes on a large terminal", "view", "cockpit"),
     ("Keyboard help", "Navigation and native client shortcuts", "help", ""),
     # New entries go last: the position of every existing command stays the same.
-    ("Run next stage", "Show the project, then start what is mapped to the next plan step", "command", "next_stage"),
+    ("Run next stage", "Show the project and move to its Run next stage button", "command", "next_stage"),
     ("Notices", "Read the notices that were replaced on the notice line", "command", "notices"),
 )
 
@@ -262,7 +262,7 @@ def ask_summary(result, translate) -> str:
     freshness = result.get("freshness")
     warnings = [str(w) for w in (freshness.get("warnings") or [])][:8] if isinstance(freshness, dict) else []
     if warnings:  # a source that changed since it was indexed, an index error: said, not only in the JSON (#313)
-        lines += ["", translate("Warnings") + ":"] + [f"- {item}" for item in warnings]
+        lines += ["", translate("Warnings") + ":"] + [f"- {fixed_message(item, translate)}" for item in warnings]
     coverage = result.get("coverage")
     if isinstance(coverage, dict) and coverage.get("answer_terms"):
         lines += ["", translate("Answer words found in quotes")

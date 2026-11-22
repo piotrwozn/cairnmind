@@ -1055,6 +1055,9 @@ def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
                  .format(url=ctx.obj.url)]
     if local_process_recorded(ctx.obj) or container_recorded(ctx.obj):
         lines.append(first_start.ENGINE_LEFT_RUNNING)
+    from cairnmind.cockpit import cockpit_status
+    if cockpit_status(ctx.obj)["available"]:  # the interface broker is a process of its own (#169)
+        lines.append(first_start.BROKER_LEFT_RUNNING)
     _human_or_json(result, as_json, lambda: lines)
 
 
@@ -2006,6 +2009,27 @@ def eval_repository(ctx: typer.Context, root: RepositoryArg,
         raise typer.Exit(3 if result.get("status") == "not_run" else 1)
 
 
+@eval_app.command("injection")
+@initialized
+def eval_injection(ctx: typer.Context, fixture: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+                   runs: int = 3, report_dir: Path | None = None):
+    """Measure how often planted instructions in indexed sources are obeyed, in a throwaway database.
+
+    FIXTURE defaults to docs/evaluation/injection-fixture.json of the current directory. Needs Ollama with the configured models and a running engine. It only measures: exit 0 when measured, 3 when not run, 2 when the fixture or an option is refused, 1 when it failed (an invariant broke, a path could not be measured, an error occurred).
+    """
+    from cairnmind.injection_evaluation import run_injection_evaluation
+    _not_run_without_models(ctx.obj, "cairnmind eval injection")
+    _managed_only(ctx.obj, "`cairnmind eval injection`")
+    path = fixture or Path("docs") / "evaluation" / "injection-fixture.json"
+    try:
+        result = run_injection_evaluation(ctx.obj, path, runs=runs, report_dir=report_dir)
+    except ValueError as exc:
+        refuse(_shortened(str(exc), 1000))  # the file or the log, not the command line (#244)
+    output({key: value for key, value in result.items() if key != "details"})
+    if result.get("status") != "measured":
+        raise typer.Exit(3 if result.get("status") == "not_run" else 1)
+
+
 def _not_run_without_models(settings, command: str) -> None:
     """An evaluation of the models in deterministic-only mode (#274): not run, exit 3, and nothing is asked."""
     from cairnmind.knowledge_mode import needs_models
@@ -2572,9 +2596,10 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         from cairnmind.restore_claims import checked_restore
         # The proof is read once, before anything changes; only "key" keeps a person's acts (#214).
         outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj))
-    notice = outcome.pop("notice", None)
-    if notice:
-        typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
+    for key in ("notice", "vectors_notice"):
+        notice = outcome.pop(key, None)
+        if notice:
+            typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
     output({"restored": True, **outcome})
 
 

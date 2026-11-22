@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 import httpx
 
+from .memory_egress import ordered
 from .sql import clean_row, json_text, one_row
 from .terminal_safe import safe_text
 
@@ -30,6 +31,9 @@ KEY_EXISTS_HINT = ("An active record of this kind already has this key. Nothing 
 UNKNOWN_SOURCE_HINT = ("No archived source of this project has this id. Nothing was read. Use a source id that "
                        "resume_context, memory_records or a tool result gave you (full_result_source_id); a "
                        "session, record or packet id is not a source id.")
+# A check_status task_id that names no task of this project, such as the text "None" for no task.
+UNKNOWN_TASK_HINT = ("No task of this project has this id. Nothing was read. Use a task id that next_task or "
+                     "memory_records gave you, or pass null, not the text \"None\", to read the checks of all tasks.")
 # After the store's refusal of a record's shape (store.RecordRefused): what a record it saves looks like.
 RECORD_SHAPE_HINT = ("Nothing was saved. A record has kind (decision, task, fact, constraint, question, preference "
                      "or checkpoint), content (nonempty text), and optionally key (nonempty text), status "
@@ -416,10 +420,12 @@ class MemoryRefusal(RuntimeError):
 
 class AgentMemoryClient:
     """Run-bound service transport; the model alone supplies ACK and readback."""
-    def __init__(self, settings, project_id, worktree, session_id, *, client="api", transport=None):
+    def __init__(self, settings, project_id, worktree, session_id, *, client="api", transport=None,
+                 held=frozenset()):
         if client not in AGENT_CLIENTS:
             raise ValueError("Own-agent memory client must be api or copilot")
         _journal_path(settings, session_id)
+        self.held = ordered(held)  # the classes a hosted run must not receive; the service holds them back (#183)
         self.settings, self.project_id = settings, project_id
         self.worktree = str(Path(worktree).expanduser().resolve())
         self.session_id, self.client = session_id, client
@@ -455,6 +461,8 @@ class AgentMemoryClient:
                     raise MemoryRefusal("key_exists", KEY_EXISTS_HINT)
                 if response.status_code == 404 and path.startswith("/inspector/sources/"):
                     raise MemoryRefusal("unknown_source", UNKNOWN_SOURCE_HINT)
+                if response.status_code == 400 and path == "/checks" and detail == "Task does not exist in this project":
+                    raise MemoryRefusal("unknown_task", UNKNOWN_TASK_HINT)
                 raise RuntimeError(f"Cairnmind service rejected the request ({response.status_code}): {detail[:500]}")
             result = response.json()
             if not isinstance(result, dict):
@@ -466,7 +474,7 @@ class AgentMemoryClient:
     async def prepare(self, reason="startup"):
         result = await self._request("POST", "/sessions/prepare", body={
             "project": self.project_id, "client": self.client, "worktree": self.worktree,
-            "session_id": self.session_id, "reason": reason})
+            "session_id": self.session_id, "reason": reason, "held_classes": self.held})
         if result.get("session_id") != self.session_id:
             raise RuntimeError("Session mismatch in prepared own-agent context")
         # Preparation/delivery is not an actual model read and cannot authorize ACK.
@@ -511,7 +519,7 @@ class AgentMemoryClient:
             return await self._request("POST", "/sessions/ack", body={**args, "session_id": self.session_id})
         common = {"project": self.project_id, "worktree": self.worktree, "session_id": self.session_id}
         if name == "ask":
-            return await self._request("POST", "/ask", body={**common, **args})
+            return await self._request("POST", "/ask", body={**common, **args, "held_classes": self.held})
         if name == "next_task":
             return await self._request("POST", "/plans/next", body={**common, **args})
         if name == "check_status":

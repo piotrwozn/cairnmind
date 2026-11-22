@@ -362,9 +362,14 @@ async def test_sessions_tell_rows_apart_offer_stop_only_while_live_and_confirm_i
         await settle(app, pilot)
         monkeypatch.setattr(app, "notice", lambda value, kind="info": notices.append(value))
         for run_id in ("aaaaaaa111", "bbbbbbb222"):
-            async def pick(screen, run_id=run_id):
+            calls = []
+
+            async def pick(screen, run_id=run_id, calls=calls):
+                calls.append(screen)
+                if len(calls) > 2:  # Esc in the actions went back to the list (#161); Esc there closes it
+                    return None
                 seen.append(screen.choices)
-                return run_id if len(seen) % 2 else "stop" if "stop" in [v for _, v in screen.choices] else None
+                return run_id if len(calls) == 1 else "stop" if "stop" in [v for _, v in screen.choices] else None
             monkeypatch.setattr(app, "push_screen_wait", pick)
             app.sessions()
             await settle(app, pilot)

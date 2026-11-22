@@ -233,6 +233,62 @@ jobs:
       - run: docker version && docker compose version
       - run: uv run python scripts/deployment_check.py
 
+  server-tests:
+    # The engine tests against a server this job does not own (#218), beside the other jobs and not a
+    # required check, like deployment-image: nothing needs it, and `full-tests` above does not wait for it.
+    # It pulls the published database image by the digest pinned in src/cairnmind/config.py (no sign-in, no
+    # secret), starts it in production mode on a free loopback port with a random root password file, and runs
+    # the tests marked `arcade` in server mode (tests/conftest.py): nothing is installed or started by the
+    # tests, which connect as a connect-only installation would. The tests left out, each with its reason, are
+    # in the job summary. Not on pull requests: a run has not been timed against a production-mode server,
+    # where every commit reaches the disk, and a long job on every push of a branch costs runner time for
+    # little. It runs on main and by hand (`gh workflow run ci.yml --ref BRANCH`), so a change to the tests or
+    # to deploy/arcadedb can be tried before it is merged.
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      # Java 21 as in the tests job: tests that set up a managed installation of their own (a backup, a move to a
+      # connect-only store and back) need it, and the pinned image runs the server, not those.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --extra dev
+      - name: Start the pinned image
+        run: |
+          image=$(uv run python -c "from cairnmind import config; print(f'{config.ARCADE_IMAGE}@{config.ARCADE_IMAGE_DIGEST}')")
+          port=$(uv run python -c "import socket; s = socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1])")
+          (umask 077; openssl rand -hex 24 > "$RUNNER_TEMP/root-password")
+          docker run -d --name cairnmind-server-tests -p "127.0.0.1:$port:2480" \
+            -v "$RUNNER_TEMP/root-password:/run/secrets/arcadedb_root_password:ro" "$image"
+          for _ in $(seq 60); do
+            test "$(docker inspect -f '{{.State.Health.Status}}' cairnmind-server-tests)" = healthy && break
+            sleep 3
+          done
+          test "$(docker inspect -f '{{.State.Health.Status}}' cairnmind-server-tests)" = healthy
+          echo "CAIRNMIND_TEST_ARCADE_SERVER_URL=http://127.0.0.1:$port" >> "$GITHUB_ENV"
+          echo "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE=$RUNNER_TEMP/root-password" >> "$GITHUB_ENV"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+      - name: Say what is tested and what is left out
+        shell: bash  # with pipefail: a failing import must not leave an empty list over a green step
+        run: |
+          {
+            echo "Engine tests against \`$IMAGE\`, production mode, connect-only. Left out, with the reason:"
+            echo
+            uv run python -c "import sys; sys.path.insert(0, 'tests'); from conftest import LEFT_OUT_ON_A_SERVER as t; [print(f'- \`{k}\`: {v}') for k, v in t.items()]"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: uv run pytest -n 4 -q -rs -m arcade
+      - name: The server's log
+        if: ${{ always() }}
+        run: docker logs --tail 200 cairnmind-server-tests
+      - name: Remove the server
+        if: ${{ always() }}
+        run: docker rm -f -v cairnmind-server-tests
+
   coverage-badge:
     # Publishes the total line coverage for the README badge, after a push to main only: never for a
     # pull request, so no pull request (from a fork or not) can write here. Not a required check.

@@ -379,7 +379,7 @@ class ActivityApp(BasePanel):
             room = width - (cell_len(hint) + 2 if hint else 0)
             head = self.t("Activity")
             tail = " · " + name if name else ""
-            if self.popup and folder:
+            if self.popup and folder and PurePath(folder).name != name:  # not "proba · proba"
                 tail += " · " + PurePath(folder).name
             self.query_one("#activity-title", Static).update(
                 assemble([("accent", head), ("stored", fit(tail, max(1, room - cell_len(head))))]))
