@@ -61,4 +61,4 @@ The summary of the run gives the digest (`sha256:...`). A later run with the sam
 
 ## Upgrades
 
-Since 0.8.0 an upgrade is a backup, the installer and `cairnmind install` for each project ([UPGRADING.md](UPGRADING.md)). The host runtime gate exists only in the frozen 0.7.2 to 0.8.0 updater attached to the v0.8.0 release; its tooling is not in this repository. No host qualification is part of the gate.
+Since 0.8.0 an upgrade is a backup and the installer, plus `cairnmind install` for each project when the files it writes into a project changed ([UPGRADING.md](UPGRADING.md)). The host runtime gate exists only in the frozen 0.7.2 to 0.8.0 updater attached to the v0.8.0 release; its tooling is not in this repository. No host qualification is part of the gate.

@@ -23,6 +23,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `cairnmind setup` shows where storage and the memory models run and what runs on this machine, in three lines (`--json` for the structured form). It changes no setting of an initialized installation; choosing a profile comes in a later step (#74).
 - `cairnmind doctor` and `cairnmind status` start with `topology`: the same three lines, the variable a value came from when it was not `config.json`, whether the models were evaluated, and the writer role with its problem. The workspace status row shows Storage and Models when the terminal is wide enough (#74).
 - An empty `CAIRNMIND_ARCADE_CONNECT_URL` no longer turns a connect-only installation into a managed one; it counts as unset, like the port and Ollama variables (#74).
+- `docs/UPGRADING.md` has a section "From 0.12.0 to 0.13.0": the steps, what the upgrade does to a store (schema and backup format unchanged, an acknowledgement that may be refused once, the first snapshot after the upgrade), what an existing `config.json` means, how to move the engine to Docker and back, the changes scripts meet, and where the README's text moved (#303).
 
 ### A person's acts need the open workspace
 
@@ -58,6 +59,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A folder inside Cairnmind's data directory is refused as a project, with the reason; before, it was registered and indexed no files. A registration of that kind made by an earlier version stays as it is (#295).
 - `cairnmind run` for a partial packet prints its sentence without the code `resume_partial:` in front; the workspace keeps the code (#296).
 - `cairnmind memory reextract` also replaces the untouched proposals of a source that the newer extraction skips, and its dry run counts such sources and records apart (#297).
+- An `https://` address of this computer in `ollama_url` now works for the local Ollama in every command, instead of being refused with an older message that named neither the setting nor the remedy (#302).
+- The acknowledgement reply and the session status now say how many automatic proposals were written after the session's packet, and `resume_context` still hands back the packet the session acknowledged, so the count never costs an ACK; the proposals are read with `ask` (MCP) or `cairnmind records` and `cairnmind ask` (#299).
 
 ### Development and CI
 
