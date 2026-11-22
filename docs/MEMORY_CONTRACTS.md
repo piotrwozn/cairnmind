@@ -436,7 +436,7 @@ Only an answer with the key keeps a person's acts: with the workspace open,
 service again. Anything else (no workspace, a closed one, one an earlier version
 started, tmux that cannot be run, a server, CI) takes the other way, and exit
 code 0 in both. Every row is still restored, in transactions of bounded size with one
-outcome (the whole backup, or the store as it was; see "How a restore writes" in
+outcome (the whole backup, or the store as it was; the mark of an unfinished restore stays when neither could be reached; see "How a restore writes" in
 STORAGE_AND_MAINTENANCE.md), so disaster recovery works with no workspace. In the other way, as each row is inserted:
 
 - a confirmed record, and each confirmed revision of it, that carries a person's
