@@ -233,7 +233,9 @@ class ServiceClient:
         # {"project": id, name or path, "worktree": path or None} for an external client; None for a native one.
         self.external = external
         if external is not None:
-            # A process the launcher started must never take a degraded session in place of its verified one.
+            # A process the launcher started must never take a degraded session in place of its verified one. An empty
+            # value counts as not set, which is how the cairnmind-recorder subagent that install writes (#376) starts
+            # its own external, degraded session inside a launched one.
             if any(os.environ.get(key) for name in ("SESSION_ID", "PACKET_ID") for key in env_names(name)):
                 raise ValueError("An external MCP session cannot start where the Cairnmind launcher set "
                                  "CAIRNMIND_SESSION_ID or CAIRNMIND_PACKET_ID; use `cairnmind mcp` without --client")

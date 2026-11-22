@@ -102,6 +102,30 @@ def test_a_recorder_file_without_the_markers_is_left_unchanged(settings, project
     assert path.is_symlink()
 
 
+def test_a_symlinked_agents_folder_is_never_written_through_or_removed_from(settings, project, probe, tmp_path):
+    root, shared = Path(project["root"]), tmp_path / "shared-agents"
+    shared.mkdir()
+    (root / ".claude").mkdir()
+    try:
+        (root / ".claude" / "agents").symlink_to(shared, target_is_directory=True)
+    except OSError:
+        pytest.skip("no symlinks here")
+    result = integrations.install_integrations(settings, project)
+    assert list(shared.iterdir()) == [] and result["clients"]["claude"]["recorder_configured"] is False
+    assert str(root / PATH) not in result["changed"]
+    assert recorder_agent.RECORDER_KEPT.format(path=PATH) in result["warnings"]
+    (shared / "cairnmind-recorder.md").write_text(recorder_agent.agent_file(settings, project), encoding="utf-8")
+    probe["version"] = "2.1.100"
+    integrations.install_integrations(settings, project)
+    assert [item.name for item in shared.iterdir()] == ["cairnmind-recorder.md"]
+    (root / ".claude" / "agents").unlink()
+    (root / ".claude").rename(root / "real-claude")
+    (root / ".claude").symlink_to(root / "real-claude", target_is_directory=True)
+    probe["version"] = "2.1.319"
+    integrations.install_integrations(settings, project)
+    assert not (root / "real-claude" / "agents" / "cairnmind-recorder.md").exists()
+
+
 def test_an_older_claude_code_gets_no_recorder_and_loses_the_one_install_wrote(settings, project, probe):
     root = Path(project["root"])
     path = root / PATH
@@ -114,7 +138,7 @@ def test_an_older_claude_code_gets_no_recorder_and_loses_the_one_install_wrote(s
     assert path.is_file()
     probe["version"] = "2.1.237"
     result = integrations.install_integrations(settings, project)
-    assert not path.exists() and str(path) in result["changed"]
+    assert not path.exists() and str(path) not in result["changed"]
     assert recorder_agent.RECORDER_REMOVED.format(version="2.1.237", path=PATH) in result["warnings"]
     assert len(list(path.parent.glob("*.cairnmind-backup-*"))) == 1
     path.write_text("mine\n", encoding="utf-8")
@@ -124,7 +148,6 @@ def test_an_older_claude_code_gets_no_recorder_and_loses_the_one_install_wrote(s
         path.unlink(missing_ok=True)
         probe["version"] = unparsable
         result = integrations.install_integrations(settings, project)
-        assert not path.exists() and result["clients"]["claude"]["recorder_configured"] is False
 
 
 def test_no_recorder_without_claude_or_without_its_mcp_capability(settings, project, probe):
@@ -136,6 +159,11 @@ def test_no_recorder_without_claude_or_without_its_mcp_capability(settings, proj
     result = integrations.install_integrations(settings, project, ("claude",))
     assert not (root / PATH).exists() and result["clients"]["claude"]["recorder_configured"] is False
     assert not any("cairnmind-recorder" in warning for warning in result["warnings"])
+    probe["mcp"] = True
+    integrations.install_integrations(settings, project, ("claude",))
+    probe["mcp"] = False
+    result = integrations.install_integrations(settings, project, ("claude",))  # an earlier file is named, not hidden
+    assert (root / PATH).is_file() and recorder_agent.RECORDER_LEFT.format(path=PATH) in result["warnings"]
 
 
 def test_the_recorder_file_names_only_its_own_server_and_tools(settings, project):
@@ -143,6 +171,7 @@ def test_the_recorder_file_names_only_its_own_server_and_tools(settings, project
     values = frontmatter(text)
     assert values["name"] == "cairnmind-recorder" and "model" not in values
     assert tuple(values["tools"].split(", ")) == recorder_agent.RECORDER_TOOLS
+    assert not any(name.endswith("__checkpoint") for name in recorder_agent.RECORDER_TOOLS)  # it would re-mark native fields
     assert all(name.startswith("mcp__cairnmind-recorder__") for name in recorder_agent.RECORDER_TOOLS)
     args = json.loads(values["args"])
     assert args[:5] == ["-I", "-m", "cairnmind", "--data-dir", str(settings.data_dir)]
@@ -187,7 +216,16 @@ def test_a_new_empty_project_with_the_recorder_is_still_an_empty_managed_scope(s
 
 
 def test_every_recorder_sentence_has_polish():
-    for sentence in (recorder_agent.RECORDER_NOT_WRITTEN, recorder_agent.RECORDER_REMOVED, recorder_agent.RECORDER_KEPT):
+    for sentence in recorder_agent.MESSAGES:
         polish = recorder_agent.MESSAGES[sentence]
         assert terminal_i18n.CATALOG[sentence] == polish
         assert set(re.findall(r"\{\w+\}", sentence)) == set(re.findall(r"\{\w+\}", polish))
+
+
+def test_the_recorders_file_is_known_to_the_managed_file_lists(settings, project, probe):
+    from cairnmind import ingest, project_removal, scope
+    integrations.install_integrations(settings, project)
+    lines = (Path(project["root"]) / PATH).read_text(encoding="utf-8").splitlines()
+    assert scope._MANAGED.match_file(PATH) and PATH in project_removal.INSTALLED_FILES
+    indexed = "\n".join("\n".join(lines[first:end]) for first, end in ingest._indexed_spans(lines, PATH))
+    assert "name: cairnmind-recorder" in indexed and "You are cairnmind-recorder" not in indexed

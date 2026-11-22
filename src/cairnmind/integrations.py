@@ -692,6 +692,10 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                                root / ".codex" / "config.toml" if client == "codex" else root / ".mcp.json"))
         else:
             results["warnings"].append(f"{client}: MCP capability could not be verified; MCP config left unchanged.")
+            if client == "claude":
+                from .recorder_agent import left_note
+                if note := left_note(root):
+                    results["warnings"].append(note)
         for operation, path in operations:
             try:
                 if operation(path, settings):
@@ -713,7 +717,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
             from .recorder_agent import RECORDER_PATH, merge_recorder
             try:
                 changed, note = merge_recorder(root, settings, project, info.get("version"))
-                if changed:
+                if changed and note is None:  # a removal is named by its own sentence, not as written
                     results["changed"].append(str(root / RECORDER_PATH))
                 if note:
                     results["warnings"].append(note)

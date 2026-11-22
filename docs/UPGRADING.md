@@ -269,7 +269,7 @@ The store needs no restore: 0.11.0 reads what 0.12.0 wrote. On Linux and WSL the
 
 0.13.0 makes the first start lighter: the database engine can run in Docker, tmux is needed only for the workspace, and Cairnmind starts without Ollama. For an existing installation none of this is switched on by itself: it stays on its native engine and its models stay enabled. The schema and the backup format do not change, and on a managed installation `cairnmind init`, which the installer runs, adds three settings to `config.json`.
 
-`cairnmind install` also writes `.claude/agents/cairnmind-recorder.md` for Claude Code 2.1.238 or newer: a subagent that records what the main conversation quotes to it, as its own external session. Claude Code asks you to trust the folder before it starts the subagent's server. The file is replaced whole at each install; to keep an edited copy, delete the two Cairnmind marker lines from it. On an older Claude Code install writes nothing and removes the file it wrote earlier, leaving a backup beside it.
+`cairnmind install` also writes `.claude/agents/cairnmind-recorder.md` for Claude Code 2.1.238 or newer: a subagent that records what the main conversation quotes to it, as its own external session. Claude Code asks you to trust the folder before it starts the subagent's server. The file is replaced whole at each install; to keep an edited copy, delete the two Cairnmind marker lines from it. On an older Claude Code, or one whose version cannot be read, install writes nothing and removes the file it wrote earlier, leaving a backup beside it. A symlinked `.claude` or `.claude/agents` is never written through.
 
 ### 1. Make a backup with 0.12.0
 
