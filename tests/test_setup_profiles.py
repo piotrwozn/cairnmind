@@ -788,6 +788,7 @@ def test_the_dry_run_of_local_starts_and_writes_nothing(tmp_path, world):
     assert [what for what, _ in world.log] == ["open_readonly", "inspect"]
     assert not target.exists() and config_bytes(tmp_path) == before
     for words in (f"Tested: the store at {DB} can be read for the backup.", "The backup: the store at",
+                  "The backup carries no vectors: after the restore the service rebuilds them",  # before --yes (#187)
                   "Nothing was changed. To make these changes"):
         assert words in said(result), (words, result.output)
 
