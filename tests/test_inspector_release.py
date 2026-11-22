@@ -100,10 +100,11 @@ async def test_release_is_offered_only_on_a_record(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["pl", "en"])
-async def test_every_review_button_keeps_its_whole_label_at_70_columns(tmp_path, monkeypatch, language):
-    # At 60 columns the fifth button leaves "Zakwestionuj" one character short; 70 shows every label whole.
+async def test_every_review_button_keeps_its_whole_label_at_80_columns(tmp_path, monkeypatch, language):
+    # Six buttons (Replace, #222): at 70 columns "Zakwestionuj" is two characters short; 80, the workspace's
+    # minimum, shows every label whole.
     app, _, _ = release_app(tmp_path, monkeypatch, language)
-    async with app.run_test(size=(70, 42)) as pilot:
+    async with app.run_test(size=(80, 42)) as pilot:
         await settle(app, pilot)
         app.open_selected("record-a")
         await settle(app, pilot)

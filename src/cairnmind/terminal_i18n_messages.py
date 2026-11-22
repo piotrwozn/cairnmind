@@ -10,6 +10,7 @@ from .code_graph import CODE_GRAPH_NOT_BUILT
 from .confirmation import GROUP_CHANGED, NOT_PROVEN, REPLACED_CHANGED
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
 from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
+from .record_replace import CHANGED as REPLACE_CHANGED, HISTORICAL as REPLACE_HISTORICAL, NOT_REPLACEABLE, SAME_TEXT
 from .service_token import FOREIGN_SERVICE
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
@@ -232,6 +233,15 @@ BROKER_MESSAGES = {
         "Już potwierdzone przez osobę na tym komputerze w tej wersji; nie ma nic do zrobienia.",
     "Already disputed at this version; nothing to do.": "Już zakwestionowane w tej wersji; nie ma nic do zrobienia.",
     "The memory service gave an invalid response.": "Niepoprawna odpowiedź usługi pamięci.",
+    # A person's replacement of a record refused by the service (#222).
+    REPLACE_HISTORICAL: "Wersji historycznej nie można zastąpić. Niczego nie zapisano. Otwórz ustalenie, które ją "
+                        "zastąpiło.",
+    REPLACE_CHANGED: "Konflikt wersji przy zastępowaniu: ustalenie zmieniło się od chwili, gdy je pokazano. Niczego "
+                     "nie zapisano. Otwórz je ponownie i przeczytaj obecną wersję.",
+    NOT_REPLACEABLE: "Tu zastępuje się tylko decyzję, fakt, ograniczenie, pytanie lub preferencję: zadanie zmienia "
+                     "się razem z planem, a punkt kontrolny z następnym punktem kontrolnym. Niczego nie zapisano.",
+    SAME_TEXT: "Nowy tekst jest taki sam jak obecny. Niczego nie zapisano. Aby zachować ten tekst, potwierdź "
+               "ustalenie.",
     # A person's act needs the open workspace's key (person_proof, confirmation.NOT_PROVEN; #214).
     PROOF_MISSING:
         "Czynność osoby wykonuje się w środowisku, a to żądanie z niego nie pochodzi. Niczego nie zapisano. Osoba "
