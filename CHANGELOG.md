@@ -174,6 +174,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The upgrade check reads a process's command line again before calling an upgrade mark stale, so a living process that cannot be read once is not called finished (#348).
 - A workspace stop that arrives while the terminal is still attaching ends the attached terminal with exit code 0, instead of sometimes 1 (#343).
 - A session that ended cleanly is no longer recorded as failed, and its pane no longer misses the Session ended line, when tmux 3.4 misses the exit of its client (#349).
+- `cairnmind doctor` no longer exits 1 on an installation that only reads a store another installation writes; it exits 0 and says so. A moved or copied data directory of the writer itself still exits 1, with the copy explained (#373).
+- The writer row's `since` and its history's `at` come from the database server's clock, so the history does not go backwards in the order of commits when the installations' clocks differ; the deployment guide describes two takeovers made at the same moment and how to see who writes (#372).
 
 ### Development and CI
 
