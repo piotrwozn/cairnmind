@@ -378,7 +378,10 @@ review them in the inspector.
 it changes anything (`cairnmind workspace status` shows `"person_key":
 "present"` when it would answer, after the same socket checks; run it in the
 same terminal environment, since `TMPDIR` can move the socket on Linux and WSL).
-It adds no secret, file or option of its own.
+It adds no secret, file or option of its own. `cairnmind setup local --backup
+FILE` restores the backup it has just taken of a store this installation only
+connects to through the same code, so everything in this section holds for it;
+its plan says which way the restore will go as far as the key answers then.
 Only an answer with the key keeps a person's acts: with the workspace open,
 `cairnmind stop`, then `cairnmind restore FILE`, then `cairnmind` to start the
 service again. Anything else (no workspace, a closed one, one an earlier version

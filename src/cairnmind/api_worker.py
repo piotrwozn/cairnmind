@@ -30,7 +30,7 @@ from .config import Settings
 from .mcp_failure_notice import reason as mcp_reason, valid_report
 from .terminal_panels import ConfirmModal
 from .terminal_safe import plain, safe_text
-from .terminal_ui import ChoiceModal, Field, FormModal
+from .terminal_ui import ChoiceModal, Field, FormModal, drop_unseen_key
 from .terminal_i18n import language_for
 from .terminal_agent_i18n import STATUS, status_text, tr
 from .terminal_i18n_messages import AGENT_MESSAGES, fixed_message
@@ -165,6 +165,9 @@ class AgentApp(App):
 
     def t(self, text, **values):
         return tr(text, self.language, **values)
+
+    def on_key(self, event):
+        drop_unseen_key(self, event)
 
     def compose(self) -> ComposeResult:
         yield Header()

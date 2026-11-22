@@ -27,7 +27,6 @@ import os
 import re
 from pathlib import Path
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -45,6 +44,7 @@ from cairnmind import process_identity
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import SESSION_NAMES, Settings, env_names, env_value
 from cairnmind.engine import install_engine, start_engine, stop_engine
+import stall_watch
 
 # A time limit for every test, and a stop for what a test left running (#236).
 pytest_plugins = ("run_guard",)
@@ -58,7 +58,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_copilot_adapter", "test_database_credentials", "test_deployment", "test_environment_names", "test_graph_raster", "test_graph_widget_rendering", "test_memory_models", "test_memory_view", "test_module_alias",
     "test_published_memory_format",
     "test_published_memory_secrets",
-    "test_published_memory_diff",
+    "test_published_memory_diff", "test_setup_profiles",
     "test_native_evaluation", "test_native_session_environment", "test_ollama", "test_parallel_isolation", "test_parsing", "test_readonly_cli",
     "test_runtime_pane", "test_runtime_selection", "test_sample_memory", "test_terminal_client", "test_terminal_commands",
     "test_terminal_graph", "test_terminal_latency080", "test_terminal_panels", "test_terminal_preview",
@@ -71,8 +71,8 @@ NO_ARCADE_MODULES = frozenset({
     "test_engine_docker", "test_tmux_optional", "test_external_mcp_start", "test_knowledge_mode",
     "test_person_proof", "test_person_key_workspace", "test_inspector_plan_confirm",
     "test_command_line_confirms_nothing",
-    "test_doc_links", "test_upgrade_mark", "test_upgrade_start", "test_restore_claims_units",
-    "test_service_version", "test_other_version",
+    "test_doc_links", "test_stall_watch", "test_restore_claims_units",
+    "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
 })
 
 TMUX_MODULES = frozenset({
@@ -635,30 +635,16 @@ class SchemaTemplate:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
 
-def engine_threads(log: Path, wait: float = 1.5) -> str:
-    """What the test engine's Java threads are doing right now, for the stall report (#221).
-
-    SIGQUIT makes a JVM print its threads to its output, which is engine.log, and go on running. It is sent only
-    to a process whose command line is the ArcadeDB server: for anything else SIGQUIT would be the end.
-    """
-    pid = int(json.loads((log.parent / "process.json").read_text())["pid"])
-    if not any("arcadedb" in part.lower() for part in process_identity.command_line(pid) or []):
-        return f"(none taken: process {pid} is not the engine)"
-    before = log.stat().st_size
-    os.kill(pid, signal.SIGQUIT)
-    time.sleep(wait)
-    with log.open("rb") as handle:
-        handle.seek(before)
-        return handle.read(80_000).decode(errors="replace")
-
-
 def explained_when_unavailable(settings: Settings, original):
     """A request the test engine does not answer says, in the failing test's captured stderr, what it waited for (#221).
 
     One CREATE PROPERTY once got no answer in 30 s and nothing in the report showed whether the engine was busy,
     stuck or gone. Costs nothing unless a request fails with "unavailable" after more than 5 s (a refused
-    connection is instant and says nothing here); the error itself is raised unchanged.
+    connection is instant and says nothing here); the error itself is raised unchanged. A request still pending
+    after 20 s is recorded by stall_watch while it waits, which includes the thread dump.
     """
+    original = stall_watch.watch(settings, original)
+
     def request(client, method, path, **kwargs):
         started = time.monotonic()
         try:
@@ -677,7 +663,8 @@ def explained_when_unavailable(settings: Settings, original):
                     print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path} {statement!r}; "
                           f"load average {os.getloadavg()}, databases of the engine: {open_databases}, "
                           f"engine.log ends:\n" + "\n".join(tail), file=sys.stderr)
-                    print("engine threads:\n" + engine_threads(log), file=sys.stderr)
+                    if waited < stall_watch.STALL_AFTER:  # later, the watch has printed the threads, while it waited
+                        print("engine threads:\n" + stall_watch.engine_threads(log), file=sys.stderr)
                 except Exception as problem:
                     print(f"ENGINE UNAVAILABLE after {waited:.1f}s: {method} {path}; the report failed: {problem!r}",
                           file=sys.stderr)
