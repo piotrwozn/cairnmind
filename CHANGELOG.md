@@ -74,6 +74,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The workspace adopts a group of old tasks into a plan: More, then Old task groups lists each group with its tasks in plan order; after the plan title, a consent dialog shows the tasks and what adopting does, and Adopt makes the group a new plan in one person's act, its steps proposed until the plan is confirmed (#305).
 - POST /inspector/legacy-groups/adopt needs the key the open workspace keeps; the service token alone is refused and nothing is written. GET /inspector/legacy-groups lists the groups (#305).
 - `cairnmind plan adopt` still adopts a group that holds nothing a person confirmed; for the other case its refusal names More, then Old task groups (#305).
+- The inspector replaces a record with a new text: open a decision, fact, constraint, question or preference and choose Replace. The form starts with the current text and asks for an optional reason; a consent dialog shows the current and the new text whole, and only its approval saves the new text as a new record confirmed by you, with an audit note, in one act. The record you opened becomes superseded and stays in its history with its sources; its view says Replaced by and the new record's id. If the record changed since you opened it, nothing is saved and it is read again (#222).
+- POST /inspector/records/{id}/replace needs the key the open workspace keeps; the service token alone is refused and nothing is written. A task, a checkpoint and a record that is already history are not replaced. When the answer of the service is lost or unreadable, the workspace says the replacement may have been saved instead of saying it was not (#222).
 
 ### What a hosted agent reads, and the names of an answer
 
