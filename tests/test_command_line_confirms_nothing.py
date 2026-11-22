@@ -81,6 +81,28 @@ def test_impact_verdict_and_release_commands_are_refused_in_a_person_terminal(
     result = CliRunner().invoke(app, ["--data-dir", str(tmp_path / "memory"), *arguments])
     assert result.exit_code == 2 and sentence in words(result.output), result.output
     assert "inspector of the workspace" in words(result.output)
+
+
+@pytest.mark.parametrize("in_a_session", [False, True])
+@pytest.mark.parametrize("arguments", [["forget", "demo", "--delete-project"], ["forget", "demo"],
+                                       ["forget", "0a1b2c3d", "--delete-project"]])
+def test_forget_is_refused_and_opens_no_store(tmp_path, monkeypatch, arguments, in_a_session):
+    from cairnmind import project_forget
+    for name in ENVIRONMENT_WITHOUT_A_SESSION:
+        monkeypatch.delenv(name, raising=False)
+    if in_a_session:
+        monkeypatch.setenv("CAIRNMIND_SESSION_ID", "logical-session")
+
+    def no_store(*_args, **_kwargs):
+        raise AssertionError("the store was opened")
+
+    monkeypatch.setattr(cli, "store_for", no_store)
+    monkeypatch.setattr(cli, "store_for_read", no_store)
+    result = CliRunner().invoke(app, ["--data-dir", str(tmp_path / "memory"), *arguments])
+    assert result.exit_code == 2 and project_forget.CLI_REFUSED in words(result.output), result.output
+    assert "More, then Delete project memory" in words(result.output) and not (tmp_path / "memory").exists()
+
+
 def test_the_command_line_refusals_name_team_memory():
     from cairnmind import person_proof
     for sentence in (confirmation.replaces_refusal(["fact/x.md"]), confirmation.REPLACES_NOTE,

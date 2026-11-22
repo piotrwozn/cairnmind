@@ -306,10 +306,10 @@ def test_an_unexpected_log_error_is_only_a_warning(workspace, monkeypatch, caplo
 
 
 def test_forgetting_a_project_deletes_its_answer_log(workspace):
-    settings, _, project, _ = workspace
+    settings, store, project, _ = workspace
     answer_log.append(settings, {**_entry(settings, "Logged?"), "project_id": project["id"]})
-    from cairnmind.cli import app
-    result = CliRunner().invoke(app, ["--data-dir", str(settings.data_dir), "forget", "demo", "--delete-project"])
-    assert result.exit_code == 0, result.output
+    from cairnmind import project_forget  # the command line refuses since #347; the workspace's route calls this
+    result = project_forget.delete(settings, store, project["id"])
+    assert result["answer_log_deleted"] is True
     assert not answer_log.log_path(settings, project["id"]).parent.exists()
     assert os.path.isdir(settings.data_dir / answer_log.DIRECTORY)

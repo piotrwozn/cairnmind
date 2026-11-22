@@ -9,6 +9,7 @@ from textual.widgets import Button, Select, Static, TextArea
 from cairnmind import memory_published_release, terminal_release
 from cairnmind.memory_published_secrets import MAX_RELEASE_REASON
 from cairnmind.person_proof import PROOF_MISSING
+from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
@@ -29,7 +30,7 @@ class ReleaseBroker(FakeBroker):
         if path == RELEASE:
             self.calls.append((method, path, params or {}, json))
             if self.refuse:
-                raise ValueError(self.refuse)
+                raise self.refuse
             return {"record_id": "record-a", "released": ["fact/record-a.md: aws access key in text"],
                     "reason": json["reason"]}
         return super().request(method, path, params=params, json=json, timeout=timeout)
@@ -145,7 +146,7 @@ async def test_replace_is_reachable_from_the_proposed_view(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_a_refused_release_says_why_and_is_not_sent_again(tmp_path, monkeypatch):
     app, broker, _ = release_app(tmp_path, monkeypatch, "en")
-    broker.refuse = "Broker 403: " + PROOF_MISSING
+    broker.refuse = BrokerError(403, PROOF_MISSING)
     async with app.run_test(size=(95, 42)) as pilot:
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = "Example."

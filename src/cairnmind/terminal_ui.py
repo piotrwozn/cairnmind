@@ -505,6 +505,14 @@ class BasePanel(App):
         finally:
             self._notice_about = None
 
+    def tell(self, scope, about, value, kind="info") -> None:
+        """The outcome of a person's act that went out under `scope` (#354): a notice on the line while that is
+        still the shown project, and one addressed to the project it belongs to after a switch, never silence."""
+        if scope == self._scope_version:
+            self.notice(value) if kind == "info" else self.notice(value, kind)
+        else:
+            self.notice_for(about, value, kind)
+
     def notice_elsewhere(self, about, value, kind="info") -> None:
         """A notice about a project that is not shown now: kept in Notices under that project, with the
         mark, and never put on the notice line over the shown project's own text."""
