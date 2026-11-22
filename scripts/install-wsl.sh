@@ -150,6 +150,7 @@ if [[ -z "$connect_url" ]]; then
     if ! check_java; then
         if ! command -v docker >/dev/null 2>&1; then
             printf 'Or install Docker and start it; the engine then runs in a container. Then run this installer again.\n' >&2
+            printf 'Nothing has been installed yet. Java is the simpler choice.\n' >&2
             exit 1
         fi
         if docker_asked; then
@@ -162,6 +163,7 @@ if [[ -z "$connect_url" ]]; then
             docker_said="${docker_said//[^[:print:]]/}"
             docker_said="${docker_said:0:200}"
             printf 'Docker is on the path but did not answer (it said: %s). Either start Docker and run the installer again, so the engine runs in Docker, or install Java 21+: %s\n' "${docker_said:-nothing}" "$java_hint" >&2
+            printf 'Nothing has been installed yet. Java is the simpler choice.\n' >&2
             exit 1
         fi
     fi
@@ -345,7 +347,16 @@ if uv tool list 2>/dev/null | grep '^cairnmind ' >/dev/null; then
 fi
 
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
-uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir"
+# uv's list of every package is shown only when the install fails (#326): then it is uv's own error.
+install_log="$(mktemp "${TMPDIR:-/tmp}/cairnmind-install.XXXXXXXX")"
+trap 'rm -f -- "$constraints_file" "$install_log"' EXIT
+install_status=0
+uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir" >"$install_log" 2>&1 || install_status=$?
+if ((install_status != 0)); then
+    while IFS= read -r install_line || [[ -n "$install_line" ]]; do printf '%s\n' "$install_line" >&2; done <"$install_log"
+    exit "$install_status"
+fi
+printf 'Installed Cairnmind and its dependencies.\n'
 
 tool_bin_dir="$(uv tool dir --bin)"
 cairnmind_bin="$tool_bin_dir/cairnmind"
@@ -382,6 +393,17 @@ from cairnmind.engine import runtime_dir
 print("yes" if (runtime_dir(Settings.load()) / "lib").is_dir() else "no")' 2>/dev/null || true
 }
 
+# What `init` prints in a terminal ends with a next step that the check at the end of this installer says again, so
+# only what the check does not say is shown: the one-time marks of confirmations (#326). Its JSON is read, not shown.
+show_init_marks() {
+    printf '%s' "$1" | "$(uv tool dir)/cairnmind/bin/python" -I -c '
+import json, sys
+from cairnmind.first_start import INIT_MARKED
+marks = json.load(sys.stdin).get("confirmations_before_rule")
+if marks:
+    print(INIT_MARKED.format(marked=marks["marked_as_a_persons"], left=marks["still_before_the_rule"]))' || true
+}
+
 if [[ -n "$connect_url" ]]; then
     # Shown without a user, a password, a query or a fragment, should the address carry one by mistake.
     shown_url="$(printf '%s' "$connect_url" | sed -E 's#^([a-zA-Z]+://)[^/@]*@#\1#; s#[?\#].*$##')"
@@ -390,13 +412,16 @@ if [[ -n "$connect_url" ]]; then
     # without the variable stays connect-only instead of starting a local engine.
     # The database and its user are created once, by a person (cairnmind db create-user): until then
     # these two commands say what is missing, and the installation itself is complete.
-    if ! "$cairnmind_bin" engine status >/dev/null || ! "$cairnmind_bin" init; then
+    if "$cairnmind_bin" engine status >/dev/null && init_said="$("$cairnmind_bin" init --json)"; then
+        show_init_marks "$init_said"
+    else
         printf '\nThe database is not ready for this installation yet. Follow docs/DEPLOYMENT.md,\n' >&2
         printf '"Connect-only installations", then run: cairnmind init\n' >&2
     fi
 elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; then
     printf '\nThe engine runs in Docker: no ArcadeDB is downloaded here; cairnmind init downloads its image.\n'
-    "$cairnmind_bin" init
+    init_said="$("$cairnmind_bin" init --json)"
+    show_init_marks "$init_said"
     "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 else
     if [[ "$(engine_present)" == yes ]]; then
@@ -410,7 +435,8 @@ else
     else
         "$cairnmind_bin" engine install >/dev/null
     fi
-    "$cairnmind_bin" init
+    init_said="$("$cairnmind_bin" init --json)"
+    show_init_marks "$init_said"
     "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 fi
 

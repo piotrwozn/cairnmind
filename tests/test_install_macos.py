@@ -403,8 +403,9 @@ def test_linux_output_is_short_and_has_the_old_sentences_with_pull_models(mac, r
 
 
 # What the installer adds when there is no Java and no Docker either: the other way, and to run it again (#313).
+NOTHING_YET = "Nothing has been installed yet. Java is the simpler choice.\n"  # #326
 NO_DOCKER = ("Or install Docker and start it; the engine then runs in a container. Then run this installer "
-             "again.\n")
+             "again.\n" + NOTHING_YET)
 
 
 def test_without_java_and_without_docker_both_ways_and_run_again_are_named(mac):
@@ -414,7 +415,7 @@ def test_without_java_and_without_docker_both_ways_and_run_again_are_named(mac):
     assert result.returncode == 1 and "passed" not in result.stdout
     assert result.stderr == ("Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n"
                              "Or install Docker and start it; the engine then runs in a container. "
-                             "Then run this installer again.\n")
+                             "Then run this installer again.\n" + NOTHING_YET)
     state.update(system="Darwin")
     on_a_mac = run()
     assert on_a_mac.returncode == 1 and "brew install openjdk@21" in on_a_mac.stderr
@@ -515,7 +516,7 @@ def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker
     assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
                              "Docker is on the path but did not answer (it said: Cannot connect to the Docker daemon). "
                              f"Either start Docker and run the installer again, so the engine runs in Docker, "
-                             f"or install Java 21+: {hint}\n")
+                             f"or install Java 21+: {hint}\n" + NOTHING_YET)
     tool(bin_dir / "docker", "echo; echo 'The command docker could not be found in this WSL 2 distro.'; exit 1")
     result = run()
     assert "(it said: The command docker could not be found in this WSL 2 distro.)" in result.stderr
@@ -543,7 +544,7 @@ def test_a_docker_that_does_not_answer_does_not_hold_the_installer(mac):
     assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
                              "Docker is on the path but did not answer (it said: no answer within 5 seconds). "
                              f"Either start Docker and run the installer again, so the engine runs in Docker, "
-                             f"or install Java 21+: {hint}\n")
+                             f"or install Java 21+: {hint}\n" + NOTHING_YET)
     assert list(tmp_path.glob("cairnmind-docker.*")) == []  # the answer file is removed too
 
 
