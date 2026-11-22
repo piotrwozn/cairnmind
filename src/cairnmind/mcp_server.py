@@ -19,6 +19,7 @@ from . import __version__
 from .config import Settings, env_names, session_value
 from . import upgrade_mark
 from .upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_UNREADABLE
+from .service_token import foreign_service_text, refused_token
 
 # store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
 ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
@@ -184,6 +185,9 @@ class ServiceClient:
     def __init__(self, settings: Settings, session_id: str | None = None,
                  packet_id: str | None = None, *, external: dict[str, str | None] | None = None):
         self.settings = settings
+        # Matched only when this process itself started or matched the service: the launcher's earlier match
+        # does not hold if another directory's service took the port since (the workspace panels follow the same rule).
+        self._matched = False
         # {"project": id, name or path, "worktree": path or None} for an external client; None for a native one.
         self.external = external
         if external is not None:
@@ -319,6 +323,8 @@ class ServiceClient:
                 detail = str(exc.response.json().get("detail", ""))[:400]
             except ValueError:
                 pass
+            if not self._matched and refused_token(code, detail):
+                raise RuntimeError(foreign_service_text(self.settings)) from None
             raise RuntimeError(f"Cairnmind service rejected the request ({code}): {detail}") from None
         except httpx.ConnectError:
             # Nothing listens: the request never reached a service, so sending it again cannot repeat a write.
@@ -332,6 +338,7 @@ class ServiceClient:
         # An external client has no launcher that started the service: start it as `ask` does (#258).
         async with self._service_start:
             await asyncio.to_thread(start_service, self.settings)  # returns at once when another call started it
+        self._matched = True  # ensure_service matched the service by instance id
         return await self._send(method, endpoint, body, query, adopt=adopt, allow_list=allow_list, started=True)
 
 

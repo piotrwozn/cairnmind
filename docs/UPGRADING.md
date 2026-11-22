@@ -6,6 +6,7 @@ New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing
 - [From 0.9.0 to 0.10.0](#from-090-to-0100)
 - [From 0.10.0 to 0.11.0](#from-0100-to-0110)
 - [From 0.11.0 to 0.12.0](#from-0110-to-0120)
+- [From 0.12.0 to 0.13.0](#from-0120-to-0130)
 - [From 0.7.2 to 0.8.0](#from-072-to-080)
 
 A direct upgrade from 0.7.2 to 0.9.0 was not tested. Upgrade a 0.7.2 installation to 0.8.0 first.
@@ -263,6 +264,14 @@ macOS was not supported before 0.12.0, so most Macs get a new installation from 
 3. Run `cairnmind install <project>` for each project.
 
 The store needs no restore: 0.11.0 reads what 0.12.0 wrote. On Linux and WSL the installation stays the writer. Going back is for Linux and WSL: 0.11.0 does not support macOS.
+
+## From 0.12.0 to 0.13.0
+
+- **A person's acts.** A review, a conflict decision, a plan confirmation, accepting or withdrawing a transcript record kind, the finding form and an import that replaces records you confirmed or disputed need a key that the open workspace keeps in its tmux server; the service token alone is refused and nothing is written. The inspector and the finding form send the key without asking you anything. Panels that 0.12.0 started do not send it: after upgrading, run `cairnmind workspace stop` and open the workspace again with `cairnmind`. `cairnmind workspace status` shows `person_key`: `present`, `absent` (a workspace an earlier version started) or `unavailable`.
+- **The command line confirms nothing.** `cairnmind remember --confirmed`, `cairnmind memory confirm-plan` and `cairnmind record-kind accept` or `withdraw` are refused with exit code 2 and say that the person does it in the inspector of the workspace; `remember --confirmed` stores nothing, not even a proposed record. `cairnmind task add` stores a proposed task and says so. A script or a document that used `--confirmed` has to store the record without it and confirm it in the inspector. Records that 0.12.0 confirmed this way keep their mark.
+- **Plans.** Confirm a plan in the inspector: open Plans, choose the plan, then Confirm. `cairnmind plan save` and `cairnmind plan adopt` can no longer change a step you confirmed, or a confirmed plan's title, goal and constraints: dispute the step in the inspector first. A group of tasks that 0.10.0 or earlier added with `task add` counts as confirmed before the rule, so dispute its tasks in the inspector before you adopt it.
+- **Imports.** `--replace-confirmed` on `memory import`, `memory import-published` and `memory import-commit` is refused by the service. Import the package from the memory view of the workspace; a published directory or a commit cannot replace records you confirmed or disputed yet.
+- **What stays possible for a program of your own user.** docs/MEMORY_CONTRACTS.md, "What the rule does not claim", lists it.
 
 ## From 0.7.2 to 0.8.0
 

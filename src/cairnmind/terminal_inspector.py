@@ -367,8 +367,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#review-actions").display = kind in {"records", "plans", "sources", "inbox"}
         self.query_one("#conflict-actions").display = kind == "conflicts"
         self.query_one("#impact-actions").display = kind == "impact"
-        for selector in ("#entity-confirm", "#entity-dispute"):
-            self.query_one(selector, Button).disabled = kind != "records"
+        self.query_one("#entity-confirm", Button).disabled = kind not in {"records", "plans"}
+        self.query_one("#entity-dispute", Button).disabled = kind != "records"
         self.query_one("#entity-history", Button).disabled = kind not in {"records", "plans"}
         self.query_one("#entity-sources", Button).label = self.t("View") if kind in {"sources", "inbox"} else self.t("Sources")
         self.query_one("#entity-more", Button).disabled = not bool(self.source_next)
@@ -477,6 +477,10 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def review(self, action):
+        if action == "confirm" and self.entity_kind == "plans" and self.entity:
+            from .terminal_plan_confirm import confirm_plan  # a person confirms a plan here (#214)
+            await confirm_plan(self)
+            return
         if self.entity_kind != "records" or not self.entity:
             self.notice(self.t("Open a record first."))
             return

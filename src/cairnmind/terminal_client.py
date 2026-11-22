@@ -14,8 +14,13 @@ import httpx
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
+from . import person_proof
+from .service_token import foreign_service, foreign_service_text, refused_token
+
 
 class BrokerError(ValueError):
+    foreign = None  # {"url", "data_dir"} when the service refused this directory's token (service_token)
+
     def __init__(self, status_code, detail):
         self.status_code = status_code
         self.detail = detail
@@ -126,12 +131,16 @@ class BrokerClient:
             # Optional filters are absent, not explicit empty identifiers.
             # False, zero, empty strings and JSON nulls retain their meaning.
             params = {key: value for key, value in params.items() if value is not None}
+        proof = {}
+        if method.upper() == "POST" and person_proof.PERSON_BROKER_PATH.fullmatch(path):
+            # A person's act: the workspace's key, read for this request and kept nowhere (#214).
+            proof = person_proof.workspace_headers(self.settings)
         with self._lock:
             self._ready()
             for attempt in range(2):
                 try:
                     response = self._client.request(method, path, params=params, json=json, timeout=timeout,
-                        headers={"Origin": self._url, "X-CSRF-Token": self._csrf})
+                        headers={"Origin": self._url, "X-CSRF-Token": self._csrf, **proof})
                 except httpx.HTTPError:
                     # Never retry a mutation after a transport error: its
                     # outcome may already have committed on the server.
@@ -139,7 +148,16 @@ class BrokerClient:
                 if response.status_code == 401 and attempt == 0:
                     self._authenticate()
                     continue
-                return self._decode(response)
+                try:
+                    return self._decode(response)
+                except BrokerError as exc:
+                    # Only a service not started or matched by instance id here (ensure): after that match a 401 is
+                    # this directory's own service with a changed token, as in the command line.
+                    if self._allow_start or not refused_token(exc.status_code, exc.detail):
+                        raise
+                    error = BrokerError(401, foreign_service_text(self.settings))
+                    error.foreign = foreign_service(self.settings)
+                    raise error from None
 
     def _session(self, renew=False):
         with self._lock:
