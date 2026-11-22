@@ -145,6 +145,166 @@ def test_a_second_change_is_refused_while_the_first_holds_the_lock(data_dir):
         os.close(descriptor)
 
 
+@pytest.fixture
+def isolated(monkeypatch):
+    monkeypatch.setenv("CAIRNMIND_PORT", "1")  # nothing here may reach the person's own service
+    for name in ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def running(data_dir, children):
+    """A change that runs in this data directory: a live process whose command line names the helper."""
+    child = children(*HELPER)
+    setup_mark.mark_path(data_dir).write_text(f"{child.pid}\n")
+    return child
+
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("a service was started")
+
+
+def test_a_running_change_blocks_an_automatic_start_and_names_it(data_dir, running, isolated, monkeypatch):
+    from cairnmind import cli
+    from cairnmind.config import Settings
+    settings = Settings.load(data_dir)
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
+    with pytest.raises(cli.SetupInProgress) as refused:
+        cli.ensure_service(settings)
+    assert isinstance(refused.value, cli.ServiceDidNotStart)
+    assert str(refused.value) == setup_mark.NOTE_RUNNING.format(pid=running.pid, path=setup_mark.mark_path(data_dir))
+    assert not (data_dir / "service.log").exists()
+
+
+def test_a_stale_mark_does_not_stop_a_start(data_dir, children, isolated, monkeypatch):
+    from types import SimpleNamespace
+
+    from cairnmind import cli
+    from cairnmind.config import Settings
+    child = children(*HELPER)
+    child.kill()
+    child.wait()
+    setup_mark.mark_path(data_dir).write_text(f"{child.pid}\n")
+    settings = Settings.load(data_dir)
+    alive = iter([False, True])
+    monkeypatch.setattr(cli, "service_alive", lambda settings: next(alive))
+    started = []
+    monkeypatch.setattr(cli.subprocess, "Popen",
+                        lambda *args, **kwargs: started.append(args) or SimpleNamespace(poll=lambda: None))
+    assert cli.ensure_service(settings) is True
+    assert len(started) == 1
+
+
+def test_a_running_service_is_still_used_during_a_change_so_the_change_can_stop_it(data_dir, running, isolated,
+                                                                                    monkeypatch):
+    from cairnmind import cli
+    from cairnmind.config import Settings
+    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
+    monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
+    monkeypatch.setattr("cairnmind.service_version.refusal", lambda settings: None)
+    assert cli.ensure_service(Settings.load(data_dir)) is False
+
+
+def test_commands_during_a_change_say_so(data_dir, running, isolated, monkeypatch):
+    from typer.testing import CliRunner
+
+    from cairnmind import cli
+    from conftest import plain_words
+    from cairnmind.config import Settings
+    Settings.load(data_dir, create=True)
+    monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
+    sentence = setup_mark.NOTE_RUNNING.format(pid=running.pid, path=setup_mark.mark_path(data_dir))
+    runner = CliRunner()
+    status = runner.invoke(cli.app, ["--data-dir", str(data_dir), "status"])
+    assert status.exit_code == 2, status.output
+    assert sentence in plain_words(status.output) and "cairnmind serve" not in status.output
+    profile = runner.invoke(cli.app, ["--data-dir", str(data_dir), "setup", "local", "--yes"])
+    assert profile.exit_code == 2, profile.output
+    assert sentence in plain_words(profile.output)
+    from cairnmind.config import Settings
+    import typer
+    with pytest.raises(typer.Exit):  # what `cairnmind restore` holds before it touches anything
+        with cli._service_stopped(Settings.load(data_dir), "held", "running"):
+            pytest.fail("a restore started during a change")
+
+
+def test_doctor_names_a_change_that_did_not_finish(data_dir, children, isolated, monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from cairnmind import cli, integrations
+    child = children(*HELPER)
+    child.kill()
+    child.wait()
+    setup_mark.mark_path(data_dir).write_text(f"{child.pid}\n")
+    monkeypatch.setattr(integrations, "doctor", lambda settings: {})
+    report = json.loads(CliRunner().invoke(cli.app, ["--data-dir", str(data_dir), "doctor"]).output)
+    notes = [" ".join(line.split()) for line in report["environment_notes"]]
+    assert " ".join(setup_mark.NOTE_STALE.format(pid=child.pid, path=setup_mark.mark_path(data_dir)).split()) in notes
+
+
+def test_the_broker_says_the_change_when_the_service_is_gone(data_dir, running, isolated):
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from cairnmind.cockpit import create_cockpit_app
+    from cairnmind.config import Settings
+    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.terminal_i18n_messages import broker_error_text
+
+    def gone(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    origin = "http://127.0.0.1:8766"
+    app = create_cockpit_app(Settings.load(data_dir, create=True), proxy_transport=httpx.MockTransport(gone))
+    sentence = setup_mark.NOTE_RUNNING.format(pid=running.pid, path=setup_mark.mark_path(data_dir))
+    with TestClient(app, base_url=origin) as client:
+        ticket = app.state.browser_sessions.ticket()
+        assert client.post("/auth/exchange", json={"ticket": ticket}, headers={"Origin": origin}).status_code == 200
+        response = client.get("/api/status")
+        assert response.status_code == 503 and response.json()["detail"] == sentence
+        setup_mark.mark_path(data_dir).unlink()  # no change in progress: the earlier sentence
+        assert client.get("/api/status").json()["detail"] == "The memory service is unavailable. Restart cairnmind."
+    error = BrokerError(503, sentence)
+    assert broker_error_text(error, lambda text: tr(text, "en")) == f"Broker 503: {sentence}"
+    assert broker_error_text(error, lambda text: tr(text, "pl")) == "Broker 503: " + setup_mark.MESSAGES[
+        setup_mark.NOTE_RUNNING].format(pid=running.pid, path=setup_mark.mark_path(data_dir))
+
+
+def test_an_mcp_tool_call_during_a_change_names_it(data_dir, running, isolated, monkeypatch):
+    from cairnmind import cli, mcp_server
+    from cairnmind.config import Settings
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
+    monkeypatch.setattr("cairnmind.store_writer.inspect", lambda settings: {"role": "writer"})
+    with pytest.raises(RuntimeError) as refused:
+        mcp_server.start_service(Settings.load(data_dir))
+    reason = setup_mark.NOTE_RUNNING.format(pid=running.pid, path=setup_mark.mark_path(data_dir))
+    assert str(refused.value) == setup_mark.BRIDGE_SETUP.format(reason=reason)
+    assert "cairnmind serve" not in str(refused.value)
+
+
+async def test_the_activity_panel_shows_the_change_instead_of_unavailable(tmp_path, monkeypatch):
+    from cairnmind.terminal_client import BrokerError
+    from test_terminal_activity import Broker, flat, make, until
+
+    sentence = setup_mark.NOTE_RUNNING.format(pid=4242, path="/data/setup-in-progress")
+
+    class Down(Broker):
+        def request(self, method, path, **kwargs):
+            raise BrokerError(503, sentence)
+
+    for language, expected in (("en", sentence), ("pl", setup_mark.MESSAGES[setup_mark.NOTE_RUNNING].format(
+            pid=4242, path="/data/setup-in-progress"))):
+        app, *_ = make(tmp_path, monkeypatch, language=language, broker=Down())
+        async with app.run_test(size=(60, 43)) as pilot:
+            await until(pilot, lambda: expected in flat(app))
+            assert "Memory service unavailable" not in flat(app)
+
+
 def test_every_mark_sentence_has_polish_with_the_same_placeholders():
     import string
     assert set(setup_mark.MESSAGES) == {setup_mark.NOTE_RUNNING, setup_mark.NOTE_STALE, setup_mark.NOTE_STALE_COPY,

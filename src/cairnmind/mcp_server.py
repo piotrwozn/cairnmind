@@ -194,9 +194,10 @@ def start_service(settings: Settings) -> None:
     external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
     standard error (#287)."""
     import shlex
-    from .cli import (ServiceOfOtherVersion, UpgradeInProgress, _data_dir_arguments, _os_error_text,
+    from .cli import (ServiceOfOtherVersion, SetupInProgress, UpgradeInProgress, _data_dir_arguments, _os_error_text,
                       _service_unavailable, ensure_service, say_service_started)
     from .first_start import SERVICE_NOT_STARTED
+    from .setup_mark import BRIDGE_SETUP
     from .store_writer import inspect
     try:
         role = inspect(settings).get("role")
@@ -213,6 +214,8 @@ def start_service(settings: Settings) -> None:
     except UpgradeInProgress as exc:
         # Not SERVICE_NOT_STARTED, whose "start it with `cairnmind serve`" would be wrong advice now (#298).
         raise RuntimeError(BRIDGE_UPGRADE.format(reason=str(exc))) from None
+    except SetupInProgress as exc:
+        raise RuntimeError(BRIDGE_SETUP.format(reason=str(exc))) from None  # a change of setup, not an upgrade (#339)
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
         reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."

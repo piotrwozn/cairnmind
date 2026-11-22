@@ -480,13 +480,25 @@ def broker_error_text(exc, translate) -> str:
 
 
 def _formatted(text, translate) -> str:
-    """A refusal the service formatted from one of the known templates (a removed project's, #327), put together
-    again from the template in the panel's language; any other text as it is."""
+    """A refusal the service formatted from one of the known templates (a removed project's, #327; a change of
+    setup that is in progress, #339), put together again from the template in the panel's language; any other text
+    as it is."""
+    from .project_removal import BROKER_TEMPLATES
+    from .setup_mark import BROKER_TEMPLATES as SETUP_TEMPLATES
+    return _from_templates(text, translate, (*BROKER_TEMPLATES, *SETUP_TEMPLATES)) or text
+
+
+def setup_mark_text(detail, translate) -> str | None:
+    """The sentence of a running change of setup in the panel's language when a broker's detail is one, else None."""
+    from .setup_mark import BROKER_TEMPLATES
+    return _from_templates(" ".join(detail.split()), translate, BROKER_TEMPLATES) if isinstance(detail, str) else None
+
+
+def _from_templates(text, translate, templates) -> str | None:
     import re
     from string import Formatter
 
-    from .project_removal import BROKER_TEMPLATES
-    for template in BROKER_TEMPLATES:
+    for template in templates:
         pattern, seen = [], set()
         for literal, field, _, _ in Formatter().parse(template):
             pattern.append(re.escape(literal))
@@ -496,7 +508,7 @@ def _formatted(text, translate) -> str:
         found = re.fullmatch("".join(pattern), text, re.DOTALL)
         if found:
             return translate(template).format(**found.groupdict())
-    return text
+    return None
 
 
 # Stored kinds, states and outcomes, translated where a panel shows them. The stored value itself is
