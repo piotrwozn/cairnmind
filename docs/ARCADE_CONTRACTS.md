@@ -229,7 +229,10 @@ Additional root-facing methods needed:
   store but a restore is refused until a restore finishes; when the mark cannot be read, nothing is put back. Python memory
   is bounded by the largest row (or the groups held: one of documents, about 4 MiB of graph rows) plus the
   index; the engine holds one bounded transaction, never the whole restore. Requests: every one waits at
-  most `REQUEST_TIMEOUT` (30 s) and a commit `COMMIT_TIMEOUT` (120 s, `arcade.py`).
+  most `REQUEST_TIMEOUT` (30 s), and so does a commit, except those of the restore and of its undo: the transactions
+  of `restore_staged` (the mark, the deletes, the staged writes, the removal of the mark) pass
+  `RESTORE_COMMIT_TIMEOUT` (120 s, `arcade.py`) to `Store.transaction(commit_timeout=...)`. `store prune-backups`
+  keeps the copy the mark names (`store_prune.named_by_a_restore`, read with `restore_staged.unfinished`).
 
 ## Ingestion (ingestion agent owns)
 

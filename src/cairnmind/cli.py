@@ -1434,9 +1434,23 @@ def store_prune_backups(
     if not person_at_terminal():
         refuse("Only a person can delete safety backups: run this command in your own terminal, outside a "
                "coding session, with input and output not piped or redirected. Nothing was deleted.")
+    said = {}
+    if any(entry["kind"] == "before_restore" for entry in plan["delete"]):
+        # A copy that the mark of an unfinished restore names is the only way back, however old it is (#362).
+        from cairnmind.store_prune import (KEPT_FOR_A_RESTORE, KEPT_FOR_AN_UNKNOWN_MARK, keep_what_a_restore_names,
+                                           named_by_a_restore)
+        from cairnmind.terminal_i18n import tr
+        from cairnmind.terminal_safe import safe_text
+        named = named_by_a_restore(ctx.obj)
+        plan, held = keep_what_a_restore_names(plan, named)
+        if held:
+            text = KEPT_FOR_AN_UNKNOWN_MARK if isinstance(named, str) else KEPT_FOR_A_RESTORE
+            values = {"names": ", ".join(safe_text(name) for name in held), "reason": safe_text(str(named))}
+            said = {"kept_for_an_unfinished_restore": held, "note": tr(text, "en", **values),
+                    "note_pl": tr(text, "pl", **values)}
     shown = {"directory": plan["directory"], "keep": keep, "delete_bytes": plan["delete_bytes"],
              "delete": [{key: entry[key] for key in ("name", "kind", "bytes", "modified")} for entry in plan["delete"]],
-             "kept": [entry["name"] for entry in plan["kept"]]}
+             "kept": [entry["name"] for entry in plan["kept"]], **said}
     if not plan["delete"]:
         output({**shown, "deleted": []})
         return
