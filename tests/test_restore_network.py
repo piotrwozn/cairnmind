@@ -93,6 +93,16 @@ def test_no_request_of_a_restore_waits_long_and_a_commit_is_waited_for_on_purpos
     print(f"\n{len(measured)} requests over a 20 ms relay; the longest took {longest[1]:.2f} s: {longest[0][:100]!r}")
     assert longest[1] < arcade.REQUEST_TIMEOUT / 2, longest  # the client gives up after 30 s on one request
     commits = [timeout for request_path, timeout in waits if request_path.startswith("/api/v1/commit/")]
-    assert commits and set(commits) == {arcade.COMMIT_TIMEOUT}
+    # The mark, the deletes, the staged writes and the removal of the mark wait 120 s. The commits at either end are
+    # not the restore's own: the read of the safety copy before it and the rule step of the person's confirmations after.
+    assert len(commits) >= 6 and set(commits[1:-1]) == {arcade.RESTORE_COMMIT_TIMEOUT}
+    assert commits[0] == commits[-1] == arcade.REQUEST_TIMEOUT
     assert {timeout for request_path, timeout in waits if not request_path.startswith("/api/v1/commit/")} == {
         arcade.REQUEST_TIMEOUT}
+    waits.clear()
+    monkeypatch.setattr(arcade.ArcadeClient, "_request", noting)
+    with store.transaction() as tx:  # an ordinary write: its commit keeps the default
+        tx.command("INSERT INTO devbrain_meta SET name='ordinary_write'")
+    monkeypatch.undo()
+    assert [timeout for request_path, timeout in waits if request_path.startswith("/api/v1/commit/")] == [
+        arcade.REQUEST_TIMEOUT]

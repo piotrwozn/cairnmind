@@ -117,10 +117,30 @@ def _restore_through_a_slow_link(store, backup, engine, monkeypatch):
           f"{longest[0][:110]!r}")  # shown by `pytest -s`; the figure the documents quote
     assert longest[1] < arcade.REQUEST_TIMEOUT / 2, longest  # the trial's clients gave up after 30 s on one request
     commits = [timeout for path, timeout in waits if path.startswith("/api/v1/commit/")]
-    assert commits and set(commits) == {arcade.COMMIT_TIMEOUT}  # a commit is waited for longer, on purpose
+    # The restore's own commits are waited for longer; the read of the safety copy first and the rule step last are not.
+    assert len(commits) >= 6 and set(commits[1:-1]) == {arcade.RESTORE_COMMIT_TIMEOUT}
+    assert commits[0] == commits[-1] == arcade.REQUEST_TIMEOUT
     assert {timeout for path, timeout in waits if not path.startswith("/api/v1/commit/")} == {arcade.REQUEST_TIMEOUT}
 
 
+def _say(engine_pid, seconds):
+    """The restore's seconds and the engine's largest resident memory (VmHWM, Linux; the Java heap itself is held to
+    1 GB by -Xmx1024m) go to the job summary of CI, and are printed for a run by hand."""
+    try:
+        peak = next(line.split(":", 1)[1].strip() for line in Path(f"/proc/{engine_pid}/status").read_text().splitlines()
+                    if line.startswith("VmHWM"))
+    except (OSError, StopIteration):
+        peak = "not readable here"
+    text = f"restore of {SOURCES} files, {NODES} vertices, {EDGES} edges: {seconds:.1f} s; engine's largest resident memory: {peak}"
+    print("\n" + text)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+            summary.write(text + "\n")
+
+
+# Not in a plain run: `python -m pytest -m slow_size tests/test_restore_size.py` runs it (the `restore-size` CI job
+# does, on main and by hand). The ordinary tier keeps the bound of rows in one transaction: tests/test_restore_staged.py.
+@pytest.mark.slow_size
 @pytest.mark.time_limit(1500)
 def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_path, monkeypatch):
     for name in (key for base in ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE", "ARCADE_DB_PREFIX",
@@ -137,7 +157,9 @@ def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_pa
         _build(store, tmp_path)
         assert _counts(store) == {"sources": SOURCES, "chunks": CHUNKS, "nodes": NODES, "edges": EDGES}
         backup = store.backup(tmp_path / "trial.cairnmind.json.gz")
+        begun = time.monotonic()
         store.restore(backup)  # before the change: ArcadeDB HTTP 500: Java heap space, after 69 to 104 s
+        _say(pid, time.monotonic() - begun)
         assert _counts(store) == {"sources": SOURCES, "chunks": CHUNKS, "nodes": NODES, "edges": EDGES}
         assert store.embed_jobs_requeued == CHUNKS  # a backup holds no vectors: every completed embed job is pending
         assert len(list((store.data_dir / "backups").glob("before-restore-*"))) == 1

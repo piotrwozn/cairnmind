@@ -31,6 +31,7 @@ import time
 from typing import NoReturn
 from uuid import uuid4
 
+from .arcade import RESTORE_COMMIT_TIMEOUT
 from .sql import utc_now
 from .store_readonly import StoreNotReady
 from .terminal_safe import safe_text
@@ -211,7 +212,7 @@ def refuse_if_unfinished(reader) -> None:
 
 def write_mark(store, mark: dict) -> None:
     from .sql import insert_document, one_row, update_document
-    with store.transaction() as tx:
+    with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
         if one_row(tx, "SELECT FROM devbrain_meta WHERE name=:name", {"name": MARK}, False):
             update_document(tx, "devbrain_meta", mark, "name=:name", {"name": MARK})
         else:
@@ -219,7 +220,7 @@ def write_mark(store, mark: dict) -> None:
 
 
 def clear_mark(store) -> None:
-    with store.transaction() as tx:
+    with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
         tx.command("DELETE FROM devbrain_meta WHERE name=:name", {"name": MARK})
 
 
@@ -237,7 +238,7 @@ class Batches:
         from .journal import Journal
         stack = ExitStack()
         try:
-            self.tx = stack.enter_context(self.store.transaction())
+            self.tx = stack.enter_context(self.store.transaction(RESTORE_COMMIT_TIMEOUT))
             Journal.reset(self.tx, reason="restore")
         except BaseException:
             stack.close()
@@ -275,7 +276,7 @@ def clear(store, types: list[str]) -> None:
     from .sql import quote_name
     types, limit = list(types), ROWS_PER_TRANSACTION
     while types:
-        with store.transaction() as tx:
+        with store.transaction(RESTORE_COMMIT_TIMEOUT) as tx:
             Journal.reset(tx, reason="restore")
             budget, opened = limit, time.monotonic()
             while types and budget:

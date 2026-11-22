@@ -22,6 +22,7 @@ from .terminal_safe import safe_text
 from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
                   quote_name, update_document, utc_now)
+from .arcade import REQUEST_TIMEOUT
 from .backup_reader import opened_backup
 from .path_spelling import lies_in
 from .store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, streamed_export, write_backup
@@ -397,7 +398,8 @@ class Store:
             return self.client.command(sql, params)
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, commit_timeout=REQUEST_TIMEOUT):
+        """``commit_timeout``: seconds the client waits for the commit (a restore's transactions ask for longer)."""
         active = getattr(self._local, "transaction", None)
         if active:
             yield active
@@ -417,7 +419,7 @@ class Store:
         recheck(self)  # one read, only while the role is lost: a person may have taken it back
         if self._writer_lost:
             raise StoreWriterLost(self._writer_lost)
-        with self._lock(), self.client.transaction() as native:
+        with self._lock(), self.client.transaction(commit_timeout=commit_timeout) as native:
             tx = JournalTransaction(native, writer=self.installation.id,
                                     check=lambda head, reader: check_head(self, head, reader))
             self._local.transaction = tx
