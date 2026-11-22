@@ -402,27 +402,29 @@ class ImpactView:
             result = await asyncio.to_thread(self.impact_request, "POST", "/api/inspector/impact/verdict",
                                              json=payload, sent=sent)
         except (OSError, ValueError, RuntimeError) as exc:
-            if scope != self._scope_version:
-                return
             from .workspace_finding import outcome_unknown
-            status = getattr(exc, "status_code", None)
-            if status in (404, 409) or outcome_unknown(exc, sent):
+            here, subject = scope == self._scope_version, about(project, worktree)  # #354: after a switch too
+            status, unknown = getattr(exc, "status_code", None), outcome_unknown(exc, sent)
+            if here and (status in (404, 409) or unknown):
                 await self.load_impact()
-            if status == 409:
+            if here and status == 409:
                 self.notice(self.t("The code or the record changed, the list was reloaded. Nothing was saved."), "warn")
-            elif status == 404:
+            elif here and status == 404:
                 self.notice(self.t("This record is no longer in the list, the list was reloaded. Nothing was saved."),
                             "warn")
-            elif outcome_unknown(exc, sent):
-                self.notice(self.t("No clear answer from the memory service. The verdict may have been saved; the "
-                                   "list was reloaded and shows it if so. Saving the same verdict again is safe "
-                                   "and stores nothing twice.") + " " + self.error_detail(exc), "warn")
+            elif unknown:
+                self.tell(scope, subject, self.t(
+                    "No clear answer from the memory service. The verdict may have been saved; the list was "
+                    "reloaded and shows it if so. Saving the same verdict again is safe and stores nothing twice."
+                    if here else
+                    "No clear answer from the memory service. The verdict may have been saved. Saving the same "
+                    "verdict again is safe and stores nothing twice.") + " " + self.error_detail(exc), "warn")
             else:
-                self.notice(self.t("The verdict was not saved.") + " " + self.error_detail(exc), "error")
+                self.tell(scope, subject, self.t("The verdict was not saved.") + " " + self.error_detail(exc), "error")
             return
         if scope == self._scope_version:
             await self.load_impact()
-            saved = isinstance(result, dict) and result.get("already_saved")
-            self.notice(self.t("This verdict was already saved." if saved else
-                               "Verdict saved: {verdict}. No record, status or task was changed.",
-                               verdict=self.t(VERDICTS[choice])))
+        saved = isinstance(result, dict) and result.get("already_saved")
+        self.tell(scope, about(project, worktree), self.t(
+            "This verdict was already saved." if saved else
+            "Verdict saved: {verdict}. No record, status or task was changed.", verdict=self.t(VERDICTS[choice])))

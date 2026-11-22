@@ -167,6 +167,12 @@ CATALOG = {
     "Describe the two scopes": "Opisz oba zakresy", "Save decision": "Zapisz decyzję",
     "Open a conflict first.": "Najpierw otwórz sprzeczność.",
     "Decision saved with an audit note.": "Decyzja zapisana z notatką audytową.",
+    "The decision was not saved.": "Decyzja nie została zapisana.",
+    "The review was not saved.": "Ocena nie została zapisana.",
+    "No clear answer from the memory service. The verdict may have been saved. Saving the same verdict again is "
+    "safe and stores nothing twice.":
+        "Brak jednoznacznej odpowiedzi usługi pamięci. Ocena mogła zostać zapisana. Ponowny zapis tej samej oceny "
+        "jest bezpieczny i niczego nie powtórzy.",
     "The decision was not saved. The current list was reloaded.":
         "Decyzja nie została zapisana. Wczytano aktualną listę.",
     "The decision is saved with an audit note; every source is kept.":

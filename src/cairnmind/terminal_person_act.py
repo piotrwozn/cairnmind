@@ -29,6 +29,13 @@ MESSAGES = {
 }
 
 
+def refused(exc) -> bool:
+    """True only for a 4xx answer of the service. A 5xx, an answer that could not be decoded and a lost connection
+    may follow a commit, so they are unclear, never "not done" (#354)."""
+    from .terminal_client import BrokerError, BrokerUnreachable
+    return isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable) and 400 <= exc.status_code < 500
+
+
 def record_line(item) -> str:
     """A record's (or a plan's) text on one line, escaped and cut, for the dialog's first line."""
     value = (item.get("content") or item.get("title") or "") if isinstance(item, dict) else ""

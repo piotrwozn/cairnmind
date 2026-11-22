@@ -59,10 +59,10 @@ async def release_record(app):
     try:
         result = await app.request("POST", f"/api/inspector/records/{record['id']}/release", json=payload)
     except (OSError, ValueError, RuntimeError) as exc:
-        if scope == app._scope_version:
-            app.notice(app.t("The record was not released.") + " " + broker_error_text(exc, app.t), "error")
+        app.tell(scope, about(project_id), app.t("The record was not released.") + " "
+                 + broker_error_text(exc, app.t), "error")
         return
-    if scope == app._scope_version:
-        count = len(result.get("released") or []) if isinstance(result, dict) else 0
-        app.notice(app.t("Release saved with your reason. Hits of the secrets scan let through in this record: "
-                         "{count}.", count=count))
+    count = len(result.get("released") or []) if isinstance(result, dict) else 0
+    app.tell(scope, about(project_id), app.t(
+        "Release saved with your reason. Hits of the secrets scan let through in this record: {count}.",
+        count=count))

@@ -523,12 +523,14 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             await self.request("POST", f"/api/inspector/records/{record['id']}/review", json=payload)
             if scope == self._scope_version:
                 await self.open_entity(record["id"], "records")
-                self.notice(self.t("Review saved with an audit note."))
+            self.tell(scope, about(project_id), self.t("Review saved with an audit note."))
         except (OSError, ValueError, RuntimeError) as exc:
-            if scope == self._scope_version:
+            reloaded = scope == self._scope_version
+            if reloaded:
                 await self.open_entity(record["id"], "records")
-                self.notice(self.t("Review was not retried. The current version was reloaded.") + " "
-                            + broker_error_text(exc, self.t), "error")
+            self.tell(scope, about(project_id), self.t(
+                "Review was not retried. The current version was reloaded." if reloaded
+                else "The review was not saved.") + " " + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def resolve_conflict(self):
@@ -572,12 +574,14 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             await self.request("POST", "/api/inspector/conflicts/resolve", json=payload)
             if scope == self._scope_version:
                 await self.load_page()
-                self.notice(self.t("Decision saved with an audit note."))
+            self.tell(scope, about(project_id), self.t("Decision saved with an audit note."))
         except (OSError, ValueError, RuntimeError) as exc:
-            if scope == self._scope_version:
+            reloaded = scope == self._scope_version
+            if reloaded:
                 await self.load_page()
-                self.notice(self.t("The decision was not saved. The current list was reloaded.") + " "
-                            + broker_error_text(exc, self.t), "error")
+            self.tell(scope, about(project_id), self.t(
+                "The decision was not saved. The current list was reloaded." if reloaded
+                else "The decision was not saved.") + " " + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
@@ -681,6 +685,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     raise ValueError(self.t("Review the current project's preview first."))
                 result = await self.request("POST", "/api/memory/" + ("snapshot" if action == "save" else "preview"), json=params)
                 if scope != self._scope_version:
+                    if action == "save":  # the snapshot is written all the same (#354)
+                        self.notice_for(about(params["project"], None, params["worktree"]), self.t("Snapshot saved."))
                     return
                 self.preview_scope = (params["project"], params["worktree"])
                 self.query_one("#memory-save", Button).disabled = False
