@@ -126,7 +126,9 @@ coding session or an external client, the session's own included. The mark is lo
 a memory package never exports or imports it, so an imported record always counts.
 The ack_resume reply and the status of an acknowledged session add
 newer_automatic_proposals (#299), the number of such proposals written after the
-packet, only when above zero; information only, never stored, never in a hash.
+packet, only when above zero; information only, never stored, never in a hash. It
+never costs the ACK: resume_context returns the same packet, and the proposals are read
+with ask (MCP) or cairnmind records / cairnmind ask (command line).
 Raw nativeCLI operations retain
 nativecontrols; no complete hardtoolgate claimed.
 

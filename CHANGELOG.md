@@ -44,7 +44,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `cairnmind memory reextract PROJECT [--below-version N] [--dry-run]` extracts again the sources whose untouched proposals come from an older extractor version; when the new extraction commits, those proposals are superseded in the same transaction, while confirmed, disputed and edited records are never changed. It needs the models; `--dry-run` works without them (#194).
 - An `ollama_url` that names another computer, in `config.json` or in `CAIRNMIND_OLLAMA_URL`, is now refused like a model profile without consent: nothing is sent to it, not even the read-only checks of `doctor` and `init` or the request of `models pull`, and the message names the setting and the full `cairnmind models set --role chat|embedding --provider ollama --model NAME --base-url URL --allow-remote` command. Before, those three asked such a server which models it has; questions and memory text were never sent to it (#288).
 - An `https://` address of this computer in `ollama_url` now works for the local Ollama in every command, instead of being refused with an older message that named neither the setting nor the remedy (#302).
-- The acknowledgement reply and the session status now say how many automatic proposals were written after the session's packet, and `resume_context` then hands out a new packet that includes them (#299).
+- The acknowledgement reply and the session status now say how many automatic proposals were written after the session's packet, and `resume_context` still hands back the packet the session acknowledged, so the count never costs an ACK; the proposals are read with `ask` (MCP) or `cairnmind records` and `cairnmind ask` (#299).
 
 ### Development and CI
 

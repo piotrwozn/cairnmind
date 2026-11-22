@@ -116,12 +116,12 @@ def test_an_ack_and_the_status_name_the_automatic_proposals_newer_than_the_packe
     assert view["acknowledged"] is True and view[NEWER] == 2
     assert all(NEWER not in row for row in fixture.store.query(
         "SELECT FROM resume_acks WHERE session_id=:id", {"id": started["session_id"]}))  # never stored
-    # Asking again is the way to them: a new packet that shows the proposals, and the count ends with it.
+    # Asking again hands back the same acknowledged packet: the count never costs the ACK (#256); the count stays.
     again = post(fixture, "/sessions/context", {"session_id": started["session_id"]})
-    assert again["packet"]["id"] != started["packet"]["id"]
-    assert sum(row["origin"] == "automatic_extraction" for row in again["packet"]["records"]) == 2
-    assert NEWER not in post(fixture, "/sessions/ack", ack_body(started, again["packet"]))
-    assert post(fixture, "/sessions/context", {"session_id": started["session_id"]})["packet"]["id"] == again["packet"]["id"]
+    assert again["packet"]["id"] == started["packet"]["id"]
+    view = session_view(fixture, started["session_id"])
+    assert view["acknowledged"] is True and view["stale"] is False and view[NEWER] == 2
+    assert fixture.client.post("/sessions/ack", json=ack_body(started)).json()[NEWER] == 2  # the ACK is still valid
     # A promised change makes the packet stale; the packet that replaces it shows the proposals, so no count.
     Inspector(fixture.store).review(fixture.project["id"], extract_one(fixture)["id"], "confirm", 1)
     renewed = post(fixture, "/sessions/context", {"session_id": started["session_id"]})

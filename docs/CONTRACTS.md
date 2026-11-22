@@ -77,9 +77,10 @@ So that a client knows what its packet does not show (#299), the reply of `ack_r
 of an acknowledged session carry `newer_automatic_proposals`: how many such proposals (the same test as above,
 never a field a client sets) were written after the packet. It is information only: it is read after the state
 hash was compared, changes no hash, readback or refusal, and is never stored with the ACK. With none the key
-is absent and the reply is as before. While the count is above zero `resume_context` builds a new packet
-(a new epoch, so a new ACK) instead of returning the same one; the new packet includes these proposals, shown
-or counted in `omitted_by_origin`, and the count ends with it. Packets show at most 20 records, automatic
+is absent and the reply is as before. The count never costs the session its ACK: `resume_context` keeps
+returning the same acknowledged packet, not a new one to acknowledge. The proposals are read with the read
+tools that exist, for an MCP client `ask`, on the command line `cairnmind records` or `cairnmind ask`; a packet
+built after them shows them, and its count is then zero. Packets show at most 20 records, automatic
 proposals last. A proposal that lands while a packet is built is counted as newer than it.
 
 A captured transcript horizon is complete only when every line in it is an archived record the reader

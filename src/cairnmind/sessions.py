@@ -1232,9 +1232,7 @@ class SessionManager:
                 if not _current_schema(packet):
                     raise ValueError("A packet made by an earlier version is never current")
                 current = self._state(session)
-                # Automatic proposals written since are not in the hash; asking again is how a client gets them (#299).
-                if (current["state_hash"] == packet["state_hash"] and not self._newer_count(current, packet)
-                        and not self._own_continuity(session)):
+                if current["state_hash"] == packet["state_hash"] and not self._own_continuity(session):
                     return self._result(session, packet)
             except (OSError, ValueError):
                 pass
