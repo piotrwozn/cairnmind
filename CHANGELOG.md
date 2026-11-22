@@ -174,7 +174,6 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The upgrade check reads a process's command line again before calling an upgrade mark stale, so a living process that cannot be read once is not called finished (#348).
 - A workspace stop that arrives while the terminal is still attaching ends the attached terminal with exit code 0, instead of sometimes 1 (#343).
 - A session that ended cleanly is no longer recorded as failed, and its pane no longer misses the Session ended line, when tmux 3.4 misses the exit of its client (#349).
-- A prefix key typed while a workspace shortcut was still running (for example Ctrl+B 1, a few letters, then Ctrl+B 2) could reach the assistant as the text Ctrl+B and 2 instead of switching panes; the workspace now turns off tmux's paste detection (#356). A paste from a terminal that brackets pastes still goes to the assistant whole; in a terminal that does not, a pasted raw Ctrl+B now acts as the prefix (#356).
 
 ### Development and CI
 
