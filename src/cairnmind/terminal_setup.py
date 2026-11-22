@@ -256,7 +256,6 @@ async def open_view(app) -> None:
     asks for the person's agreement before anything starts. After a change the service runs on the new settings and
     the screen is not shown again by itself: opening it reads the new place."""
     from .terminal_client import BrokerError
-    from .terminal_i18n import tr
     from .terminal_i18n_messages import broker_error_text
     from .terminal_setup_change import change_setup
     language = getattr(app, "language", "en")
