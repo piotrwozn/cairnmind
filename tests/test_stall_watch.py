@@ -41,6 +41,15 @@ def test_a_request_the_server_never_answers_is_captured_with_its_sockets(tmp_pat
     client.close()
 
 
+def test_statements_are_printed_without_values():
+    user = 'create user {"name": "cm", "password": "SECRET-PASSWORD", "databases": {}}'
+    assert stall_watch.statement(user, "/api/v1/server") == "create user"
+    insert = "INSERT INTO notes CONTENT {\"text\": \"SECRET-TEXT\"}"
+    assert stall_watch.statement(insert, "/api/v1/command/db") == "INSERT INTO notes"
+    assert stall_watch.statement("SELECT FROM t WHERE a = 'SECRET-TEXT' AND b = :b", "/api/v1/query/db") == \
+        "SELECT FROM t WHERE a = ? AND b = :b"
+
+
 def test_without_ss_the_proc_table_is_printed(monkeypatch, tmp_path):
     monkeypatch.setattr(stall_watch.shutil, "which", lambda name: None)
     monkeypatch.setattr(stall_watch.sys, "platform", "linux")

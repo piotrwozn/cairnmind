@@ -6,12 +6,16 @@ a timer thread of the test process writes what the request was, the sockets on t
 queues, the end of engine.log and the engine's threads, without touching the request. Unread bytes on the
 server's side mean the engine never read the request; on the client's side, that the answer was never read;
 both empty with idle workers, that a handler never answered. A request answered late is reported as slow.
+The connection is not named (httpx hides it): the header gives this worker's pid, and the request's row is the
+one of that pid in the socket table (ss shows `pid=`) whose lastsnd is about STALL_AFTER seconds, if several.
+Statements are printed without values (see statement()).
 """
 from __future__ import annotations
 
 import fcntl
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -91,12 +95,18 @@ def log_end(log: Path) -> str:
     return f"last line written {time.time() - log.stat().st_mtime:.0f}s ago, ends:\n" + "\n".join(tail)
 
 
+def statement(command, path: str) -> str:
+    """The statement without values: some carry them in the text ('create user {...password...}', 'CONTENT {...}')."""
+    if path == "/api/v1/server":  # administration commands: the verb and its object only
+        return " ".join(str(command).split()[:2])
+    return re.sub(r"'[^']*'|\"[^\"]*\"", "?", str(command).split(" CONTENT ")[0])[:500]
+
+
 def capture(settings, client, method, path, kwargs, started) -> str:
     log = settings.data_dir / "arcade" / "engine.log"
-    # Only the statement's text, never its parameters' values; the session id is an id, not a credential.
-    command = str((kwargs.get("json") or {}).get("command", ""))[:500]
+    command = statement((kwargs.get("json") or {}).get("command", ""), path)
     session = f"HTTP transaction session {client.session_id}" if client.session_id else "no HTTP transaction session"
-    parts = [f"ENGINE REQUEST PENDING {time.monotonic() - started:.0f}s: {method} {path} {command!r}, {session}"]
+    parts = [f"ENGINE REQUEST PENDING {time.monotonic() - started:.0f}s: {method} {path} {command!r}, {session}, worker pid {os.getpid()}"]
     port = urlparse(settings.arcade_url).port
     for title, take in ((f"sockets on port {port}", lambda: sockets(port)), ("engine.log", lambda: log_end(log)),
                         ("thread dump", lambda: thread_dump(log))):
