@@ -180,6 +180,7 @@ async def test_cancel_and_esc_change_nothing(ui, stage, how):
         if how == "escape":
             await pilot.press("escape")
         else:
+            await pilot.pause()  # the layout of the dialog is done before the button is clicked
             await pilot.click(cancel)
         await until(pilot, lambda: not isinstance(app.screen, kind))
         await settle(app, pilot)
@@ -449,6 +450,32 @@ def test_the_status_row_rereads_config_json_when_it_changes(tmp_path):
     assert changed is not first and changed["lines"][0] != first["lines"][0] and "db.example" in changed["lines"][0]
     (tmp_path / "data" / "config.json").unlink()
     assert WorkspaceManager._place(manager) is changed  # a file that cannot be read keeps the last answer
+
+
+def test_the_status_row_keeps_its_last_answer_while_config_json_does_not_parse(tmp_path):
+    """The call site too: what the supervisor draws each moment is built from _place, which never raises."""
+    from cairnmind.workspace import WorkspaceManager
+    make(tmp_path)
+    path = tmp_path / "data" / "config.json"
+    manager = types.SimpleNamespace(settings=Settings.load(tmp_path / "data"), panes=lambda: {}, _border_language="en",
+                                    _broker_state=None, _last_status=None,
+                                    tmux=lambda *args, **kwargs: types.SimpleNamespace(stdout=""))
+    manager._place = lambda: WorkspaceManager._place(manager)
+
+    def draw():
+        WorkspaceManager._update_status(manager, {})
+        return json.dumps(manager._last_status)
+    first = draw()
+    good = path.read_text()
+    config = json.loads(good)
+    config.update({"arcade_connect_url": DB, "arcade_user": "u", "arcade_database": "d"})
+    path.write_text(json.dumps(config))
+    moved = draw()
+    assert moved != first and "db.example" in moved  # the row follows config.json
+    path.write_text('{"arcade_connect_url": ')  # a hand edit in progress
+    assert draw() == moved
+    path.write_text(json.dumps(config) + " ")  # edited again, and valid
+    assert draw() == moved
 
 
 def test_every_dialog_sentence_has_polish_with_the_same_placeholders():

@@ -666,8 +666,11 @@ class WorkspaceManager:
             stamp = None
         cached = getattr(self, "_place_cache", None)
         if cached is None or (stamp is not None and cached[0] != stamp):
-            cached = self._place_cache = (stamp, topology(Settings.load(self.settings.data_dir)
-                                                          if stamp is not None else self.settings))
+            try:
+                found = topology(Settings.load(self.settings.data_dir) if stamp is not None else self.settings)
+            except (OSError, ValueError):  # a configuration half edited: the last answer stands, asked again next time
+                found, stamp = (cached[1], cached[0]) if cached is not None else (topology(self.settings), stamp)
+            cached = self._place_cache = (stamp, found)
         return cached[1]
 
     def _bridge_command(self, run_id, generation):

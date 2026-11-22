@@ -134,7 +134,7 @@ You have followed [Start it on one machine](#start-it-on-one-machine); the serve
    "arcade_password_file": "/home/you/.config/cairnmind-db/user-password"
    ```
 
-   Instead of editing the file, `cairnmind setup remote-db` writes those four settings and tests them first (on the command line stop the service before: it refuses while it runs; the workspace can instead make the change itself, after a consent dialog, stopping and starting the service for it and leaving `setup-in-progress` in the data directory while it runs, and `setup-before.json` if it was killed half way. The command refuses also while a variable such as `CAIRNMIND_ARCADE_CONNECT_URL` is still exported, which it names: `unset` it, the address is in `config.json` already). Create the password file as above, then:
+   Instead of editing the file, `cairnmind setup remote-db` writes those four settings and tests them first (on the command line stop the service before: it refuses while it runs; the workspace can instead make the change itself, after a consent dialog, stopping and starting the service for it and leaving `setup-in-progress` in the data directory while it runs, and keeping `setup-before.json`, which blocks every start of the service until checked, if it ended with settings nobody checked. The command refuses also while a variable such as `CAIRNMIND_ARCADE_CONNECT_URL` is still exported, which it names: `unset` it, the address is in `config.json` already). Create the password file as above, then:
 
    ```bash
    cairnmind setup remote-db --url http://127.0.0.1:2480 --user cairnmind --database cairnmind \
