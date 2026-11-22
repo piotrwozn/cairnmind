@@ -9,6 +9,7 @@ from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
+from .recorder_agent import MESSAGES as RECORDER_MESSAGES
 from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
 from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
@@ -691,6 +692,7 @@ CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not 
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
 CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the command line refuses (#347)
 CATALOG.update(PROJECT_FORGET_VIEW_MESSAGES)  # deleting a project's memory in the workspace (#347)
+CATALOG.update(RECORDER_MESSAGES)  # the recorder subagent install writes for Claude Code (#376)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

@@ -20,7 +20,7 @@ from uuid import uuid4
 
 ENDED = frozenset({"exited", "failed", "interrupted"})
 INSTALLED_FILES = ("AGENTS.md", "CLAUDE.md", ".mcp.json", ".codex/config.toml", ".codex/hooks.json",
-                   ".claude/settings.local.json")
+                   ".claude/settings.local.json", ".claude/agents/cairnmind-recorder.md")
 REMOVED_FIELDS = ("removed_at", "removed_name", "removed_root", "removed_roots")
 
 IN_SESSION = ("A coding session cannot remove a project from the registry; only a person can, outside the session. "

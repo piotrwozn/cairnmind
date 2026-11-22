@@ -674,6 +674,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         info["mcp_configured"] = False
         info["hooks_configured"] = False
         info["instructions_configured"] = False
+        info["recorder_configured"] = False
         results["clients"][client] = info
         if not info["installed"]:  # nothing is written for a client that is not here, not even its instruction block (#313)
             results["warnings"].append(CLIENT_SKIPPED.format(client=client))
@@ -708,6 +709,17 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
+        if client == "claude" and info["mcp"]:  # a subagent with its own session; Codex subagents share the parent's (#376)
+            from .recorder_agent import RECORDER_PATH, merge_recorder
+            try:
+                changed, note = merge_recorder(root, settings, project, info.get("version"))
+                if changed:
+                    results["changed"].append(str(root / RECORDER_PATH))
+                if note:
+                    results["warnings"].append(note)
+                info["recorder_configured"] = note is None
+            except (ValueError, OSError) as exc:
+                results["warnings"].append(str(exc))
     for client in clients:
         info = results["clients"][client]
         for path, entry in bare_devbrain_entries(root, client):

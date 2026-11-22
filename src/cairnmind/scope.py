@@ -46,7 +46,7 @@ _WAIT_SECONDS = 5
 # Written by Cairnmind itself, some of them on every launch: never somebody's drift.
 _MANAGED = pathspec.GitIgnoreSpec.from_lines([
     "/.cairnmind/", "/.devbrain/", "/.mcp.json", "/.codex/config.toml", "/.codex/hooks.json",
-    "/.claude/settings.local.json", "/AGENTS.md", "/CLAUDE.md", "*.cairnmind-backup-*", "*.devbrain-backup-*"])
+    "/.claude/settings.local.json", "/.claude/agents/cairnmind-recorder.md", "/AGENTS.md", "/CLAUDE.md", "*.cairnmind-backup-*", "*.devbrain-backup-*"])
 
 
 def _shown(value, limit: int = 200) -> str:
