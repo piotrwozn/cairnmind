@@ -280,8 +280,7 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
         assert results == [False]
         app.push_screen(ConfirmModal("Run a paid model test?", "A real request.", approve="Run", consent=True),
                         results.append)
-        await pilot.pause()
-        await pilot.pause()
+        await wait_until(pilot, lambda: getattr(app.screen, "drawn_at", float("inf")) < float("inf"))  # an Enter typed before the draw is no answer
         # A consent request starts on Cancel too (#268): a stray Enter refuses, approving needs a deliberate key.
         assert isinstance(app.focused, Button) and app.focused.id == "confirm-no"
         assert "Tab: switch" in str(app.screen.query_one(".cm-hint").render())
@@ -290,9 +289,8 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
         assert results == [False, False] and not isinstance(app.screen, ConfirmModal)
         app.push_screen(ConfirmModal("Run a paid model test?", "A real request.", approve="Run", consent=True),
                         results.append)
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause(.5)  # past the quiet moment of a consent dialog (#292)
+        await wait_until(pilot, lambda: getattr(app.screen, "drawn_at", float("inf")) < float("inf"))
+        await pilot.pause(ConfirmModal.QUIET + .1)  # past the quiet moment of a consent dialog (#292)
         await pilot.press("shift+tab", "enter")
         await pilot.pause()
         assert results == [False, False, True]
@@ -461,9 +459,10 @@ async def test_a_stall_before_the_first_refresh_does_not_let_queued_keys_approve
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.push_screen(ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True), results.append)
-        await pilot.press("shift+tab", "enter")  # the loop stalls longer than the quiet moment before these are handled
-        await pilot.pause()
-        assert results == []
+        for key in ("shift+tab", "enter"):  # made now, before the stall: the loop stalls longer than the quiet moment
+            app.post_message(key_of(app, key))
+        await pilot.pause(1)
+        assert results == [] and app.focused.id == "confirm-no"
 
 
 @pytest.mark.asyncio
