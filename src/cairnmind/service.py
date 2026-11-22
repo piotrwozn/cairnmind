@@ -318,14 +318,9 @@ def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=Non
         rows = [row for row in rows if row["id"] not in held]
         if report is not None:
             report["embedding_held_back"] = len(held)
-    for row in rows:
-        # The key ingest uses: a job embeds for the namespace current when it runs, so one job per chunk
-        # serves a new chunk, a changed namespace and a rebuild. Jobs of the earlier key become no-ops.
-        job_id = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]}, f"embed:{row['id']}")
-        if store.query("SELECT state FROM jobs WHERE id=:id", {"id": job_id})[0]["state"] == "failed":
-            # A failed job stays failed until retry-jobs; the chunk still gets a fresh job per namespace.
-            job_id = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]}, f"embedding-namespace:{namespace}:{row['id']}")
-        store.reset_missing_embedding_job(job_id, row["id"], namespace)
+    from .embed_jobs import repair_embed_jobs
+    # One job per chunk under the key ingest uses serves a new chunk, a changed namespace and a rebuild.
+    repair_embed_jobs(store, rows, namespace)
     return len(rows)
 
 

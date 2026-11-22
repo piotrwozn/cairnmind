@@ -261,7 +261,7 @@ The three options that were compared, with the verdict:
 | Option | What it would need | Verdict |
 | --- | --- | --- |
 | A full split: the service on a server, the laptop sends what it reads | A new authenticated, non-loopback protocol for parsed sources, fingerprints, hook events and transcript segments, with TLS and tokens; in effect a rewrite of the service's API | Not built. Large, and it contradicts one writer per store. |
-| The service stays local; the database and the models are remote (what `cairnmind setup remote-db` and `setup remote` set up) | Nothing more | The supported way. What stays on the laptop is Python parsing, `git`, hashing and the service's many small database requests; over a network the requests matter more than CPU (inferred, not measured; for context, [first indexing took](#how-long-indexing-takes-over-a-connection) 33.4 s and 80.4 s on two different machines, so those seconds do not separate requests from CPU). |
+| The service stays local; the database and the models are remote (what `cairnmind setup remote-db` and `setup remote` set up) | Nothing more | The supported way. What stays on the laptop is Python parsing, `git`, hashing and the service's many small database requests; over a network the requests matter more than CPU (inferred, not measured; for context, [first indexing took](#how-long-indexing-takes-over-a-connection) 33.4 s and 80.4 s on two different machines, so those seconds do not separate requests from CPU). What a running service costs while idle is measured in [What a running service costs over a connection](#what-a-running-service-costs-over-a-connection). |
 | A remote service with its own clone | A server that clones the project | Not built. Every answer and check status would describe the server's clone, not your work; fit only for read-only questions at a pinned commit. |
 
 A headless worker process for extraction and embedding on a server is not planned and has no issue: the models already run on a server, so it would move only the service's HTTP calls and database writes, and it needs a second writer.
@@ -342,6 +342,40 @@ Until 22 November 2026 the database on another host (the headline of 0.11.0) had
 - **`setup remote-db --admin-password-file` without `--yes` answers HTTP 401 instead of a plan** when the user does not exist yet (#365).
 
 **Not tried.** A model server on another computer (`setup remote` over HTTPS with a key); the published image from `ghcr.io` and Docker Desktop (the trial built the image and used Colima); indexing after a change of every file; the service with models on over the network (#363, about 21,000 requests every 90 s, not measured over a real network); `scripts/measure_service_spend.py`, which needs Docker on the Linux side; and more than one run of anything.
+
+### What a running service costs over a connection
+
+A running knowledge service talks to the database even when nobody works: every 10 seconds
+(`poll_seconds`) it looks for changed files, followed transcripts, hook events and archive jobs; every
+2 seconds, while no job waits, it asks for one; and every minute it checks that each passage without a
+vector has an embedding job. Until #363 that check cost 11 requests for every passage without a vector,
+and every passage lacks one after a first indexing, after `cairnmind restore` (backups carry no vectors),
+after `rebuild-vectors` and while the embedding model is slow; transcripts cost 4 requests each per look.
+Measured on 22 November 2026 with the test engine of the test suite on one machine, for a store of
+Cairnmind's own repository, on `127.0.0.1` and through the test relay `tests/database_relay.py` with
+20 ms added to every request. The "Now" column was measured on 557 files, 2,978 passages, 82,353 graph
+nodes and 102,547 edges; the "Before #363" column was measured on the same repository before the change,
+at 555 files and 2,973 passages. The seconds are from a machine shared with other work; the request counts
+are exact:
+
+| Work | Before #363 | Now |
+| --- | --- | --- |
+| The embedding check, every passage without a vector | 32,706 requests; 53 s on `127.0.0.1`; about 12 minutes with 20 ms added (computed from 200 passages measured: 2,201 requests, 49 s), longer than the minute between two checks | 9 requests; 0.1 s on `127.0.0.1`; 10 requests, 0.27 s with 20 ms added |
+| One look for changes, 40 followed transcripts | 172 requests; 4.2 s with 20 ms added | 12 requests; 0.39 s with 20 ms added |
+| Asking for a job while none waits | 4 requests | 4 requests |
+| An idle minute in all, at this repository's size | grows with passages without a vector (one request per 500 more, in the embedding check) and with transcripts | about 214 requests (computed from the rounds above: 6 looks of 12, 6 memory checks of 2, 30 asks for a job of 4, one embedding check of 10), about 5.5 s of waiting with 20 ms added |
+| `cairnmind index` with nothing changed, in a service that just started | 14,810 requests; 34 s on `127.0.0.1` | 3,485 requests; 14 s on `127.0.0.1`; 89 s with 20 ms added |
+
+While the check ran, no job of the queue ran. Now it writes nothing when every passage already has its job
+(a check that finds 1,313 finished jobs without a vector and 171 failed ones takes 251 requests, once, and
+leaves every passage with a pending job), and the requests of an idle service grow by at most one request
+per 500 passages without a vector (the jobs are read in groups of 500), not by a request per row. What is left of `index` in a new process is about 6 requests per file, once per start of the
+service. The requests of an open workspace, which asks the service for its status on its own, are not
+measured.
+
+Between two machines these figures exist only from before this change: the trial of 22 November 2026 is in [How long indexing takes over a connection](#how-long-indexing-takes-over-a-connection) (first indexing, `index` with nothing changed, `backup` and an idle service with models off, where the embedding check did not run). The figures after #363 over a real network do not exist yet: no machine has run this change over a connection, and the embedding check itself was never measured over one.
+The "Now" column above is the test engine on one machine, and its 20 ms relay is the nearest thing to a
+network that this change was measured on; it is a relay on the same machine, not a network.
 
 ### The engine tests against this server
 
