@@ -16,6 +16,7 @@ from cairnmind import person_proof, project_removal, terminal_project_forget as 
 from cairnmind.terminal_client import BrokerError, BrokerUnreachable
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
+from cairnmind.terminal_safe import safe_text
 from cairnmind.terminal_ui import ChoiceModal
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
@@ -101,7 +102,8 @@ async def test_the_list_shows_the_open_project_first_then_registered_then_remove
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         labels = [label for label, _ in app.screen.choices]
         await pilot.press("escape")
-    root = broker.listed[-1]["root"]
+    # The list shortens a long folder (the temporary folder of macOS is one); the consent dialog shows it whole.
+    root = safe_text(broker.listed[-1]["root"], limit=120)
     removed = "(removed 2026-11-22 10:30 UTC)" if language == "en" else "(usunięty 2026-11-22 10:30 UTC)"
     assert labels == [f"Keyboard project: {root}", "Other: /other", f"Old: /old {removed}"]
     assert broker.sent == []
