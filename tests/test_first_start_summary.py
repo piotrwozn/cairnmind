@@ -28,8 +28,7 @@ def test_a_healthy_deterministic_report_lists_required_then_optional_then_the_ne
     lines = SUMMARY(healthy())
     assert lines[0] == "Memory is kept in /home/me/.local/share/cairnmind."
     assert lines[1] == first_start.REQUIRED_PRESENT
-    assert lines[2] == "  - Database engine: answers at http://127.0.0.1:2480 (on this machine, with Java 21); " \
-                       "the database cairnmind can be read."
+    assert lines[2] == "  - Database engine: answers at http://127.0.0.1:2480; the database cairnmind can be read."
     assert lines[3] == "  - " + first_start.SERVICE_ON_DEMAND
     assert lines[4] == first_start.NOTHING_MISSING
     assert lines[5] == first_start.OPTIONAL_OFF
@@ -95,16 +94,18 @@ def test_a_reader_installation_is_missing_with_the_writers_own_next_step():
     assert lines[-1] == first_start.NEXT_FIX
 
 
-def test_connect_mode_names_the_host_and_a_server_that_is_down_names_the_server():
-    connect = healthy(java={"needed": False, "reason": "connect"},
+def test_where_things_run_is_the_topology_lines_and_a_server_that_is_down_names_the_server():
+    # #300's three lines are the one wording of where storage and models run; the engine line does not repeat it.
+    place = {"lines": ["Storage: ArcadeDB at https://db.example:2480 on db.example, which this installation only "
+                       "connects to; it is not installed, started or stopped here.",
+                       "Memory models: none in use; the knowledge agent is disabled (deterministic-only mode).",
+                       "On this machine: the knowledge service at http://127.0.0.1:8765."]}
+    connect = healthy(java={"needed": False, "reason": "connect"}, topology=place,
                       arcadedb={"mode": "connect", "host": "db.example", "available": True, "database_available": True,
                                 "url": "https://db.example:2480", "database": "team"})
-    assert ("answers at https://db.example:2480 (a server this installation does not manage, at db.example)"
-            in SUMMARY(connect)[2])
-    local = healthy(java={"needed": False}, arcadedb={"mode": "connect", "host": "127.0.0.1", "available": True,
-                                                       "database_available": True, "url": "http://127.0.0.1:2480",
-                                                       "database": "team"})
-    assert "at 127.0.0.1)" in SUMMARY(local)[2] and "another host" not in SUMMARY(local)[2]
+    lines = SUMMARY(connect)
+    assert lines[1:4] == place["lines"] and lines[4] == first_start.REQUIRED_PRESENT
+    assert lines[5] == "  - Database engine: answers at https://db.example:2480; the database team can be read."
     down = healthy(java={"needed": False}, arcadedb={"mode": "connect", "available": False,
                                                       "url": "https://db.example:2480", "error": "ConnectError"})
     assert ("  - The database server at https://db.example:2480 does not answer (ConnectError). Check that it "
@@ -216,6 +217,7 @@ def test_doctor_prints_the_summary_in_a_terminal_and_json_otherwise(monkeypatch,
     summary = run_doctor(quiet)
     assert summary.exit_code == 0
     assert summary.output.startswith(f"Memory is kept in {quiet}.")
+    assert summary.output.splitlines()[1].startswith("Storage: ArcadeDB")  # the report's topology lines
     assert first_start.REQUIRED_MISSING in summary.output and first_start.FULL_REPORT in summary.output
     forced = run_doctor(quiet, "--json")
     assert json.loads(forced.output)["data_dir"] == str(quiet)

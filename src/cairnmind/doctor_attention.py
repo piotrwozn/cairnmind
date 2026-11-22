@@ -15,8 +15,8 @@ from .engine_docker import DOCKER_ATTENTION
 from .first_start import (
     CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
     ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE,
-    REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WHERE_CONNECT,
-    WHERE_DOCKER, WHERE_NATIVE, WORKSPACE_OFF, WORKSPACE_ON, cockpit_status)
+    REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WORKSPACE_OFF,
+    WORKSPACE_ON, cockpit_status)
 from .terminal_safe import safe_text
 
 # Keys every doctor report has; an object without all of them (`cairnmind init` prints one with data_dir alone)
@@ -135,14 +135,8 @@ def _engine_present(report: dict) -> list[str]:
     if not (arcade.get("available") and arcade.get("database_available")) or arcade.get("error") or arcade.get(
             "engine_problem") or arcade.get("version_matches") is False:
         return []
-    if arcade.get("mode") == "connect":
-        where = WHERE_CONNECT.format(host=arcade.get("host") or "another host")
-    elif arcade.get("engine") == "docker":
-        where = WHERE_DOCKER
-    else:
-        where = WHERE_NATIVE.format(major=(report.get("java") or {}).get("major") or "21 or newer")
-    return [ENGINE_READY.format(url=arcade.get("url") or "its address", where=where,
-                                database=arcade.get("database") or "")]
+    # Where it runs is said once, by the topology lines at the top (#300).
+    return [ENGINE_READY.format(url=arcade.get("url") or "its address", database=arcade.get("database") or "")]
 
 
 def _models_on(report: dict) -> bool:
@@ -157,7 +151,7 @@ def _models_on(report: dict) -> bool:
 
 
 def summary(report: dict) -> list[str]:
-    """The lines of the first check: where memory is kept, required and present, required and missing, optional
+    """The lines of the first check: where memory is kept, the topology's three lines, required and present, required and missing, optional
     (off, then on), notes, the full report and the next step. Raises ValueError for a report of another shape."""
     notes = report.get("environment_notes") or []
     if not isinstance(notes, list):  # a string would be read one character at a time
@@ -187,7 +181,11 @@ def summary(report: dict) -> list[str]:
             on.append(CLIENT_ON.format(client=label, command=name))
         elif not client.get("installed"):
             off.append(CLIENT_OFF.format(client=label, note=platform_hints.hint("client_note", client=name)))
-    lines = [_line(DATA_DIR.format(data_dir=report.get("data_dir") or "its data directory")), REQUIRED_PRESENT]
+    lines = [_line(DATA_DIR.format(data_dir=report.get("data_dir") or "its data directory"))]
+    # Storage, memory models and what runs here: topology's own three lines, the one wording of where things run.
+    place = report.get("topology") if isinstance(report.get("topology"), dict) else {}
+    lines += [_line(text, limit=1000) for text in place.get("lines") or []]
+    lines.append(REQUIRED_PRESENT)
     lines += [f"  - {_line(item)}" for item in present]
     if missing:
         lines.append(REQUIRED_MISSING)

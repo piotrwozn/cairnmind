@@ -73,10 +73,7 @@ REPORT_UNREADABLE = "The doctor report could not be read."
 NEXT_FIX = "Next: fix what is listed under Required and missing, then run cairnmind doctor again."
 NEXT_START = ('Next: cairnmind project add NAME FOLDER registers a project; then cairnmind remember NAME "..." '
               'stores a first finding and cairnmind brief NAME shows it.')
-ENGINE_READY = "Database engine: answers at {url} ({where}); the database {database} can be read."
-WHERE_NATIVE = "on this machine, with Java {major}"
-WHERE_DOCKER = "on this machine, in Docker"
-WHERE_CONNECT = "a server this installation does not manage, at {host}"
+ENGINE_READY = "Database engine: answers at {url}; the database {database} can be read."
 SERVICE_RUNNING = "Local service: running at {url}."
 SERVICE_ON_DEMAND = ("Local service: not running now; the next command that needs it starts it "
                      "(cairnmind stop stops it).")
@@ -94,7 +91,7 @@ JAVA_NEEDED = ("Java 21 or newer is needed for the engine: {found}. {hint}; or r
                "cairnmind engine start --docker.")
 MODELS_OFF = ("Local models: off (deterministic-only mode), so ask lists matching passages and makes no answer. "
               "To turn them on: cairnmind models pull, with Ollama running (about 7 GB).")
-MODELS_ON = "Local models: on, and their servers answer."
+MODELS_ON = "Memory models: on, and their servers answer."
 WORKSPACE_OFF = "Terminal workspace: {status}. {hint}. Every other command works without it."
 WORKSPACE_ON = "Terminal workspace: ready; open it with cairnmind."
 CLIENT_OFF = "{client}: not installed; needed only for coding sessions (cairnmind run). {note}"
@@ -213,10 +210,7 @@ MESSAGES = {
     NEXT_FIX: "Dalej: usuń braki wymienione w części Wymagane i brakujące, a potem uruchom ponownie cairnmind doctor.",
     NEXT_START: ('Dalej: cairnmind project add NAZWA FOLDER rejestruje projekt; potem cairnmind remember NAZWA "..." '
                  'zapisuje pierwsze ustalenie, a cairnmind brief NAZWA je pokazuje.'),
-    ENGINE_READY: "Silnik bazy danych: odpowiada pod {url} ({where}); bazę {database} można odczytać.",
-    WHERE_NATIVE: "na tym komputerze, z Javą {major}",
-    WHERE_DOCKER: "na tym komputerze, w Dockerze",
-    WHERE_CONNECT: "serwer, którym ta instalacja nie zarządza, pod adresem {host}",
+    ENGINE_READY: "Silnik bazy danych: odpowiada pod {url}; bazę {database} można odczytać.",
     SERVICE_RUNNING: "Usługa lokalna: działa pod {url}.",
     SERVICE_ON_DEMAND: ("Usługa lokalna: teraz nie działa; uruchomi ją następne polecenie, które jej potrzebuje "
                         "(cairnmind stop ją zatrzymuje)."),
@@ -235,7 +229,7 @@ MESSAGES = {
     MODELS_OFF: ("Modele lokalne: wyłączone (tryb tylko deterministyczny), więc ask wymienia pasujące fragmenty i "
                  "nie tworzy odpowiedzi. Aby je włączyć: cairnmind models pull przy działającej Ollamie "
                  "(około 7 GB)."),
-    MODELS_ON: "Modele lokalne: włączone, a ich serwery odpowiadają.",
+    MODELS_ON: "Modele pamięci: włączone, a ich serwery odpowiadają.",
     WORKSPACE_OFF: "Środowisko terminalowe: {status}. {hint}. Wszystkie inne polecenia działają bez niego.",
     WORKSPACE_ON: "Środowisko terminalowe: gotowe; otwórz je poleceniem cairnmind.",
     CLIENT_OFF: ("{client}: nie zainstalowano; potrzebny tylko do sesji programistycznych (cairnmind run). "
