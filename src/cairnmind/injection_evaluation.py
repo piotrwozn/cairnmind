@@ -409,7 +409,7 @@ async def _store_paths(isolated: Settings, temporary: Path, fixture: dict, token
 
     report["answers"] = await answers_path(ask, fixture, tokens, runs)
     report["stage"] = "agent"
-    app = create_app(isolated, start_worker=False)
+    app = create_app(isolated, start_worker=False, store=store)  # its own Store would reload the settings from the environment
     sessions = SessionManager(store, isolated)
 
     def memory_for(run):
