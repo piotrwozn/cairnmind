@@ -2,15 +2,17 @@
 work against it (#319)."""
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import __version__, cli, integrations
+from cairnmind import __version__, cli, integrations, mcp_server
 from cairnmind.config import Settings
 from cairnmind.service_version import OTHER_VERSION, instance_id
+from test_external_mcp_start import Network
 
 runner = CliRunner()
 REAL = httpx.Client
@@ -86,6 +88,45 @@ def test_stop_and_doctor_still_reach_a_service_of_another_version(tmp_path, monk
     assert result.exit_code == 0, result.output
     assert ("POST", "/shutdown", f"Bearer {settings.token}") in seen
     assert json.loads(result.output) == {"stopping": True}
+
+
+def mcp_bridge(settings, tmp_path, kind):
+    if kind == "native":
+        return mcp_server.ServiceClient(settings)
+    return mcp_server.ServiceClient(settings, external={"project": str(tmp_path), "worktree": None})
+
+
+@pytest.mark.parametrize("kind", ["native", "external"])
+def test_an_mcp_server_sends_nothing_to_a_service_of_another_version(tmp_path, monkeypatch, kind):
+    settings = Settings.load(tmp_path / "data", create=True)
+    old_service(monkeypatch, settings)
+    network = Network(monkeypatch)
+    network.up = True
+    monkeypatch.setattr(cli, "ensure_service", forbidden)
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(mcp_bridge(settings, tmp_path, kind).post("/ask", {"project": "p", "question": "q"}))
+    assert str(caught.value) == sentence(settings)
+    assert network.seen == []
+
+
+def test_an_mcp_server_of_the_same_version_goes_on(tmp_path, monkeypatch):
+    settings = Settings.load(tmp_path / "data", create=True)
+    old_service(monkeypatch, settings, version=__version__)
+    network = Network(monkeypatch)
+    network.up = True
+    answer = asyncio.run(mcp_bridge(settings, tmp_path, "native").post("/ask", {"project": "p", "question": "q"}))
+    assert answer == {"answer": "yes"} and network.seen == ["/ask"]
+
+
+def test_an_external_server_that_starts_a_service_names_a_version_it_meets(tmp_path, monkeypatch):
+    """The start (after a refused connection) meets a service of another version: its own sentence, not
+    `cairnmind serve`."""
+    settings = Settings.load(tmp_path / "data", create=True)
+    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
+    old_service(monkeypatch, settings)
+    with pytest.raises(RuntimeError) as caught:
+        mcp_server.start_service(settings)
+    assert str(caught.value) == sentence(settings)
 
 
 def test_run_refuses_before_anything_starts(tmp_path, monkeypatch):
