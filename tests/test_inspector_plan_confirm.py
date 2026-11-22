@@ -84,7 +84,7 @@ async def test_a_refused_plan_confirmation_reloads_the_plan_and_says_why(tmp_pat
         await consent_drawn(app, pilot)
         await pilot.click("#confirm-yes")
         await settle(app, pilot)
-        shown =str(app.query_one("#panel-notice", Static).render())
+        shown = str(app.query_one("#panel-notice", Static).render())
         assert "The plan was not confirmed. The current version was reloaded." in shown and "403" in shown
         assert app.entity["version"] == 6  # not sent again
         assert len([1 for method, path, _, _ in broker.calls if method == "POST"]) == 1

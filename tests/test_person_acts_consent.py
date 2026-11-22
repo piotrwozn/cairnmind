@@ -385,6 +385,20 @@ async def test_the_dialog_fits_and_scrolls_at_80_by_24(tmp_path, monkeypatch, ac
         assert sent() == []
 
 
+@pytest.mark.asyncio
+async def test_apply_is_refused_when_the_import_check_changed_while_the_dialog_was_open(tmp_path, monkeypatch):
+    app, workspace, sent = make_apply(tmp_path, monkeypatch, "en")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await reach_apply(app, pilot, None)
+        await consent_drawn(app, pilot)
+        app.pending_import = {**app.pending_import}  # a new check replaced the one the person read
+        await pilot.click("#confirm-yes")
+        await wait_until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+        await wait_until(pilot, lambda: "Check the import with its source and destination folders first."
+                         in words(app))
+        assert sent() == []
+
+
 # --- the helper itself --------------------------------------------------------------------------------------
 
 @pytest.mark.asyncio

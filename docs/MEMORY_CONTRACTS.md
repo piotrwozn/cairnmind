@@ -285,7 +285,8 @@ In the workspace each of these acts is sent only from a consent dialog that show
 inspector, the sidebar and the memory view ask for a reason, a note or a title in a form, and the request goes
 out only from the dialog that follows, which counts only input made after it appeared (#318). A key typed before
 a form or a dialog appeared therefore never makes a person's act. The quick finding form (`Ctrl+B n`) is the one
-exception: it opens empty, a finding needs text typed into it, and the request carries only what was typed there.
+exception, and an open item for the owner: it opens empty on `proposed`, a finding needs text typed into it and
+`confirmed` needs the status chosen in the form, but it has no consent dialog and the guard of #318 does not cover it.
 
 The command line confirms nothing and makes no person's act (since 0.13.0, #214,
 #306). A program that runs as the user can open a pseudo-terminal and unset the

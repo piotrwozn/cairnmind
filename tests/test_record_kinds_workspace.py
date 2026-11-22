@@ -88,6 +88,33 @@ async def test_a_person_looks_at_the_record_and_accepts_its_kind_with_a_note(tmp
 
 
 @pytest.mark.asyncio
+async def test_a_refused_accept_is_shown_on_the_notice_line_and_the_workspace_stays_up(tmp_path, monkeypatch):
+    from cairnmind.terminal_client import BrokerError
+    app, broker, _ = ui(tmp_path, monkeypatch, {"blocking": [BLOCKING], "accepted": []})
+    plain = broker.request
+
+    def request(method, path, **kwargs):
+        if path.endswith("/accept"):
+            raise BrokerError(403, "REFUSED-BY-SERVICE")
+        return plain(method, path, **kwargs)
+
+    broker.request = request
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.record_kinds()
+        await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
+        await pilot.press("enter")
+        await wait_until(pilot, lambda: isinstance(app.screen, FormModal))
+        app.screen.query_one("#field-note", TextArea).text = "bookkeeping"
+        await pilot.press("ctrl+s")
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")
+        await wait_until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+        await wait_until(pilot, lambda: "REFUSED-BY-SERVICE" in notice_of(app))
+    assert broker.sent == []
+
+
+@pytest.mark.asyncio
 async def test_a_person_withdraws_an_acceptance_after_confirming(tmp_path, monkeypatch):
     app, broker, _ = ui(tmp_path, monkeypatch, {"blocking": [], "accepted": [ACCEPTED]})
     async with app.run_test(size=(120, 35)) as pilot:

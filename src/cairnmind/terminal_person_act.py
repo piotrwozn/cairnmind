@@ -3,8 +3,8 @@
 The rule: a panel sends a request to a path of person_proof.PERSON_BROKER_PATH that writes only after `agreed`
 returned True. `agreed` shows ConfirmModal(consent=True), which counts only input made after it was drawn (#318),
 with what will be done; a form before it only collects text and its button says Continue. Not covered, on purpose:
-the quick finding popup (workspace_finding), whose form opens empty and sends only what was typed into it, and the
-dry run of an import, which writes nothing.
+the quick finding popup (workspace_finding), which opens empty on 'proposed' and needs typed text but has no dialog
+and no #318 guard (an open item for the owner), and the dry run of an import, which writes nothing.
 """
 from __future__ import annotations
 
