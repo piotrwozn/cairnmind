@@ -180,8 +180,14 @@ class NativeRuntime:
         info = self.socket.lstat()
         if info.st_uid != os.getuid() or not stat.S_ISSOCK(info.st_mode):
             raise ValueError("Native terminal socket is not owned by this user")
-        result = self._tmux("display-message", "-p", "-t", row["tmux_session"],
-            "#{session_name}\t#{@cairnmind_run_id}\t#{@cairnmind_generation}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_dead_status}", check=False)
+        query = ("display-message", "-p", "-t", row["tmux_session"],
+            "#{session_name}\t#{@cairnmind_run_id}\t#{@cairnmind_generation}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_dead_status}")
+        result = self._tmux(*query, check=False)
+        if result.returncode == 0 and result.stdout.rstrip("\r\n").endswith("\t1\t"):
+            # Dead with no status: tmux 3.4 sometimes misses the SIGCHLD of an exited pane (a zombie, no exit
+            # status, no "Session ended" line) until another child of its server ends. A job of its own ends now.
+            self._tmux("run-shell", "true", check=False)
+            result = self._tmux(*query, check=False)
         if result.returncode:
             return None
         # tmux 3.8 clears pane_pid after exit. Preserve empty fields, including
