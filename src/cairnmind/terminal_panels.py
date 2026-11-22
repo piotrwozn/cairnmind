@@ -1170,7 +1170,7 @@ class SidebarApp(BasePanel):
         """More, then Transcript record kinds (#210): look at an unknown kind, accept or withdraw it."""
         from .terminal_record_kinds import open_view
         try:
-            await open_view(self, ConfirmModal)
+            await open_view(self)
         except (OSError, ValueError, RuntimeError) as exc:
             self.notice(exc)
 
