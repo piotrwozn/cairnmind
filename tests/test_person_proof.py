@@ -205,9 +205,10 @@ def test_only_a_persons_post_paths_carry_the_proof():
                  "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import",
                  "/api/inspector/records/r1/release", "/api/inspector/impact/verdict",
                  "/api/memory/import-published", "/api/memory/import-commit",
-                 "/api/inspector/legacy-groups/adopt"):
+                 "/api/inspector/legacy-groups/adopt", "/api/inspector/records/r1/replace"):
         assert person_proof.PERSON_BROKER_PATH.fullmatch(path), path
     for path in ("/api/ask", "/api/client-runs", "/api/inspector/records", "/api/inspector/records/r1/release/x",
+                 "/api/inspector/records/r1/replace/x",
                  "/api/inspector/impact", "/api/inspector/impact/verdicts", "/api/memory/import-publishedx",
                  "/api/memory/import/x", "/api/memory/import-commit/x", "/api/inspector/records/a/b/review",
                  "/api/inspector/legacy-groups", "/api/inspector/legacy-groups/adopt/x"):
