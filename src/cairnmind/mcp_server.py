@@ -385,6 +385,10 @@ class ServiceClient:
                 reason = upgrade_mark.refusal() if self.external is None else None
                 if reason:  # `cairnmind serve` is not what to do now: it would start the version being replaced
                     raise RuntimeError(BRIDGE_UPGRADE.format(reason=reason)) from None
+                from .setup_mark import BRIDGE_SETUP, refusal as setup_refusal
+                reason = setup_refusal(self.settings.data_dir) if self.external is None else None
+                if reason:  # a change of setup stopped the service on purpose (#339): `cairnmind serve` is not the answer
+                    raise RuntimeError(BRIDGE_SETUP.format(reason=str(reason))) from None
                 raise RuntimeError(UNAVAILABLE.format(error="ConnectError")) from None
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None

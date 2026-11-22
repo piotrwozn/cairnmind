@@ -63,8 +63,55 @@ def test_a_stale_mark_blocks_nothing_and_doctor_names_it(data_dir, children):
     assert setup_mark.refusal(data_dir) is None
     assert str(setup_mark.note(data_dir)) == setup_mark.NOTE_STALE.format(
         pid=child.pid, path=setup_mark.mark_path(data_dir))
+    assert setup_mark.unchecked(data_dir) is None  # nothing was copied: nothing is unchecked
+
+
+def test_a_kept_copy_blocks_every_start_with_or_without_a_stale_mark(data_dir, children):
+    child = children(*HELPER)
+    child.kill()
+    child.wait()
+    copy = data_dir / setup_mark.BEFORE
+    copy.write_text("{}")
+    assert setup_mark.state(data_dir) == ("none", None)  # a change that ended and left the copy: no mark
+    for expected in (setup_mark.NOTE_COPY.format(copy=copy), None):
+        reason = setup_mark.refusal(data_dir)
+        assert str(reason) == (expected or setup_mark.NOTE_STALE_COPY.format(
+            pid=child.pid, path=setup_mark.mark_path(data_dir), copy=copy))
+        assert str(setup_mark.unchecked(data_dir)) == str(reason) and str(setup_mark.note(data_dir)) == str(reason)
+        setup_mark.mark_path(data_dir).write_text(f"{child.pid}\n")  # and now the same with the dead holder's mark
+    own = setup_mark.mark_path(data_dir)
+    own.write_text(f"{os.getpid()}\n")
+    assert setup_mark.refusal(data_dir) is None  # the process that made the copy may start the service
+    copy.unlink()
+    own.unlink()
+    assert setup_mark.refusal(data_dir) is None and setup_mark.unchecked(data_dir) is None
+
+
+def test_a_running_change_is_not_unchecked_for_doctor_and_its_own_copy_does_not_block_it(data_dir, children):
     (data_dir / setup_mark.BEFORE).write_text("{}")
-    assert setup_mark.BEFORE in str(setup_mark.note(data_dir))
+    child = children(*HELPER)
+    setup_mark.mark_path(data_dir).write_text(f"{child.pid}\n")
+    assert setup_mark.unchecked(data_dir) is None and "is in progress" in str(setup_mark.refusal(data_dir))
+
+
+def test_the_holder_may_start_the_service_in_a_process_that_the_mark_identifies_as_the_change(data_dir, children):
+    """A real helper-like process: its command line names the module, so its own mark reads as running, and
+    only its own pid is exempt: the process that is not the holder is refused."""
+    code = ("import sys; from pathlib import Path; from cairnmind import setup_mark\n"
+            "d = Path(sys.argv[1])\n"
+            "with setup_mark.held(d):\n"
+            "    print(setup_mark.state(d)[0], setup_mark.refusal(d), flush=True)\n"
+            "    sys.stdin.readline()\n")
+    child = subprocess.Popen([sys.executable, "-c", code, str(data_dir), "cairnmind.setup_change"],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "running None"  # the holder is not refused by its own mark
+        assert setup_mark.state(data_dir) == ("running", child.pid)
+        assert "is in progress" in str(setup_mark.refusal(data_dir))  # this process is
+    finally:
+        child.stdin.close()
+        child.wait(timeout=20)
+    assert not setup_mark.mark_path(data_dir).exists()
 
 
 def test_a_mark_held_by_another_program_is_stale(data_dir, children):
@@ -245,6 +292,50 @@ def test_doctor_names_a_change_that_did_not_finish(data_dir, children, isolated,
     assert " ".join(setup_mark.NOTE_STALE.format(pid=child.pid, path=setup_mark.mark_path(data_dir)).split()) in notes
 
 
+def test_a_kept_copy_stops_a_start_and_doctor_counts_it_as_missing(data_dir, isolated, monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from cairnmind import cli, integrations
+    from cairnmind.config import Settings
+    from cairnmind.terminal_i18n import tr
+    (data_dir / setup_mark.BEFORE).write_text("{}")  # a change that ended, and config.json is nobody's checked
+    sentence = setup_mark.NOTE_COPY.format(copy=data_dir / setup_mark.BEFORE)
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(cli.subprocess, "Popen", forbidden)
+    with pytest.raises(cli.SetupInProgress) as refused:
+        cli.ensure_service(Settings.load(data_dir, create=True))  # what every panel and the broker do when it is gone
+    assert str(refused.value) == sentence
+    monkeypatch.setattr(integrations, "doctor", lambda settings: {})
+    report = json.loads(CliRunner().invoke(cli.app, ["--data-dir", str(data_dir), "doctor"]).output)
+    flat = lambda lines: [" ".join(line.split()) for line in lines]  # noqa: E731
+    assert flat(report["environment_blockers"]).count(" ".join(sentence.split())) == 1
+    assert flat(report["environment_notes"]).count(" ".join(sentence.split())) == 1  # once, not twice
+    from cairnmind.terminal_i18n_messages import setup_mark_text
+    assert setup_mark_text(sentence, lambda text: tr(text, "pl")) == setup_mark.MESSAGES[setup_mark.NOTE_COPY].format(
+        copy=data_dir / setup_mark.BEFORE)
+
+
+def test_an_interrupted_start_ends_the_service_it_spawned(data_dir, isolated, monkeypatch):
+    """ensure_service leaves nothing behind when a signal reaches it while it waits for the service it started."""
+    from types import SimpleNamespace
+
+    from cairnmind import cli
+    from cairnmind.config import Settings
+    ended = []
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace(
+        poll=lambda: None, terminate=lambda: ended.append("terminate")))
+
+    def interrupt(seconds):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(cli.time, "sleep", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        cli.ensure_service(Settings.load(data_dir, create=True))
+    assert ended == ["terminate"]
+
+
 def test_the_broker_says_the_change_when_the_service_is_gone(data_dir, running, isolated):
     import httpx
     from fastapi.testclient import TestClient
@@ -308,7 +399,8 @@ async def test_the_activity_panel_shows_the_change_instead_of_unavailable(tmp_pa
 def test_every_mark_sentence_has_polish_with_the_same_placeholders():
     import string
     assert set(setup_mark.MESSAGES) == {setup_mark.NOTE_RUNNING, setup_mark.NOTE_STALE, setup_mark.NOTE_STALE_COPY,
-                                        setup_mark.NOTE_UNREADABLE, setup_mark.BUSY, setup_mark.BRIDGE_SETUP}
+                                        setup_mark.NOTE_COPY, setup_mark.NOTE_UNREADABLE, setup_mark.BUSY,
+                                        setup_mark.BRIDGE_SETUP}
     for english, polish in setup_mark.MESSAGES.items():
         names = lambda text: {field for _, field, _, _ in string.Formatter().parse(text) if field}  # noqa: E731
         assert names(english) == names(polish)

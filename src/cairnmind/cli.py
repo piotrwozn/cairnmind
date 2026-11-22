@@ -351,6 +351,20 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             command.append("--defer-background-inference")
         process = subprocess.Popen(command,
                                    stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+    try:
+        return _wait_for_start(settings, process, log, started_at)
+    except KeyboardInterrupt:
+        # An interrupted start does not leave behind the service it spawned: nobody would know it runs (#339).
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        raise
+
+
+def _wait_for_start(settings: Settings, process, log: Path, started_at: int) -> bool:
+    """ensure_service's wait for the process it spawned: True when the service answers, else it raises."""
+    from cairnmind import setup_mark, upgrade_mark
     seen = None  # an installer that began at any moment of this start, even one that has ended by the time it answers
     for _ in range(300):
         seen = seen or upgrade_mark.refusal()
@@ -885,7 +899,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
     from cairnmind.service_version import refusal as other_version
-    from cairnmind.setup_mark import note as setup_note
+    from cairnmind.setup_mark import note as setup_note, unchecked as setup_unchecked
     from cairnmind.upgrade_mark import note as upgrade_note
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
@@ -896,10 +910,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     # A service of another version answers, but every command that needs it is refused: required and not working,
     # so it is a blocker too, not only a note (#319). Asked only of this data directory's service.
     blockers += [note for note in [other_version(ctx.obj) if result["service_running"] else None] if note]
+    # A change of setup that ended with settings nobody checked: nothing starts the service until they are (#339).
+    unchecked = setup_unchecked(ctx.obj.data_dir)
+    blockers += [str(unchecked)] if unchecked else []
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
         for name in env_conflicts()] + blockers + [
-            str(note) for note in [data_dir_note(), upgrade_note(), setup_note(ctx.obj.data_dir)] if note]
+            str(note) for note in [data_dir_note(), upgrade_note(),
+                                   None if unchecked else setup_note(ctx.obj.data_dir)] if note]  # not twice
     result["environment_blockers"] = blockers
     for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
         if name in ctx.obj._origin.get("kept", {}):

@@ -5,8 +5,10 @@ service on purpose, so nothing may start it again until the change has finished:
 broker, an MCP server, a command) refuses with a sentence that names the change. The mark is one file of the data
 directory holding the helper's pid, read by upgrade_mark.mark_state like the installer's mark. It is per data directory
 and not per user because the change rewrites one data directory's config.json and stops one data directory's service;
-the services of other data directories keep starting. A mark whose process is gone blocks nothing and doctor says
-the change did not finish. The helper itself may start the service (its own pid is not refused), and it holds a lock
+the services of other data directories keep starting. A mark whose process is gone blocks nothing by itself and
+doctor says the change did not finish; but while the copy of config.json from before the change is there (the change
+ended, or was killed, with settings nobody checked), nothing starts the service either, with or without the mark,
+until a person has checked config.json and removed the copy. The helper itself may start the service (its own pid is not refused), and it holds a lock
 file for its whole life, so two changes never run at once.
 The English sentences are the source; MESSAGES is their Polish for the terminal catalog.
 """
@@ -31,15 +33,19 @@ NOTE_STALE = ("A change of where storage and models run did not finish: the proc
               "hold part of the change. When you have checked it, remove {path}.")
 NOTE_STALE_COPY = ("A change of where storage and models run did not finish: the process that carried it out (process "
                    "{pid}) no longer runs. `cairnmind setup` shows where storage and models run now, and config.json "
-                   "may hold part of the change; the settings from before it are in {copy}. When you have checked "
-                   "config.json, remove {path} and {copy}.")
+                   "may hold part of the change; the settings from before it are in {copy}. The knowledge service is "
+                   "not started until you have checked config.json and removed {path} and {copy}.")
+NOTE_COPY = ("A change of where storage and models run ended with settings nobody checked: config.json may hold part "
+             "of the change, and the settings from before it are in {copy}. The knowledge service is not started "
+             "until you have checked config.json (`cairnmind setup` shows where storage and models run now) and "
+             "removed {copy}.")
 NOTE_UNREADABLE = ("The mark {path} of a change of where storage and models run cannot be read, so the knowledge "
                    "service is not started. If no change is running, remove that file.")
 BUSY = ("Another change of where storage and models run is in progress for this data directory; wait until it has "
         "finished. Nothing was changed.")
 BRIDGE_SETUP = "{reason} Call the tool again when the change has finished."
 # What a broker may send as a 503 detail while the change runs (terminal_i18n_messages translates by template).
-BROKER_TEMPLATES = (NOTE_RUNNING, NOTE_UNREADABLE)
+BROKER_TEMPLATES = (NOTE_RUNNING, NOTE_UNREADABLE, NOTE_STALE_COPY, NOTE_COPY)
 
 MESSAGES = {
     NOTE_RUNNING: ("Trwa zmiana miejsca, w którym działają pamięć i modele, dla tego katalogu danych (proces {pid}) "
@@ -51,7 +57,12 @@ MESSAGES = {
     NOTE_STALE_COPY: ("Zmiana miejsca, w którym działają pamięć i modele, nie została dokończona: proces, który ją "
                       "wykonywał (proces {pid}), już nie działa. `cairnmind setup` pokazuje, gdzie pamięć i modele "
                       "działają teraz, a config.json może zawierać część zmiany; ustawienia sprzed niej są w {copy}. "
-                      "Gdy sprawdzisz config.json, usuń {path} i {copy}."),
+                      "Usługa wiedzy nie jest uruchamiana, dopóki nie sprawdzisz config.json i nie usuniesz {path} "
+                      "oraz {copy}."),
+    NOTE_COPY: ("Zmiana miejsca, w którym działają pamięć i modele, skończyła się ustawieniami, których nikt nie "
+                "sprawdził: config.json może zawierać część zmiany, a ustawienia sprzed niej są w {copy}. Usługa "
+                "wiedzy nie jest uruchamiana, dopóki nie sprawdzisz config.json (`cairnmind setup` pokazuje, gdzie "
+                "pamięć i modele działają teraz) i nie usuniesz {copy}."),
     NOTE_UNREADABLE: ("Nie można odczytać znacznika {path} zmiany miejsca, w którym działają pamięć i modele, więc "
                       "usługa wiedzy nie jest uruchamiana. Jeśli żadna zmiana nie trwa, usuń ten plik."),
     BUSY: ("Inna zmiana miejsca, w którym działają pamięć i modele, trwa dla tego katalogu danych; poczekaj, aż się "
@@ -81,26 +92,37 @@ def _sentence(kind: str, pid: int | None, data_dir) -> Sentence | None:
         return Sentence(NOTE_RUNNING, pid=pid, path=path)
     if kind == "unreadable":
         return Sentence(NOTE_UNREADABLE, path=path)
+    copy = Path(data_dir) / BEFORE
     if kind == "stale":
-        copy = Path(data_dir) / BEFORE
         if copy.exists():
             return Sentence(NOTE_STALE_COPY, pid=pid, path=path, copy=copy)
         return Sentence(NOTE_STALE, pid=pid, path=path)
+    if copy.exists():  # no mark, but a copy: the change ended with settings nobody checked
+        return Sentence(NOTE_COPY, copy=copy)
     return None
 
 
 def note(data_dir) -> Sentence | None:
-    """doctor's line for the mark, None without one."""
+    """doctor's line for the mark or the kept copy, None without either."""
     return _sentence(*state(data_dir), data_dir)
+
+
+def unchecked(data_dir) -> Sentence | None:
+    """The note for settings nobody checked (a kept copy, no change running now): doctor counts it as missing."""
+    kind, pid = state(data_dir)
+    return note(data_dir) if kind != "running" and (Path(data_dir) / BEFORE).exists() else None
 
 
 def refusal(data_dir) -> Sentence | None:
     """Why the service of this data directory must not be started now, None when it may be. The helper that holds
-    the mark may start it."""
+    the mark may start it. A kept copy blocks like a running change: the settings it belongs to were never checked
+    (a stale mark without a copy blocks nothing: the change had touched nothing yet or had been put back)."""
     kind, pid = state(data_dir)
-    if kind not in upgrade_mark.BLOCKING or pid == os.getpid():
+    if pid == os.getpid():
         return None
-    return _sentence(kind, pid, data_dir)
+    if kind in upgrade_mark.BLOCKING or (Path(data_dir) / BEFORE).exists():
+        return _sentence(kind, pid, data_dir)
+    return None
 
 
 @contextmanager

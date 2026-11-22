@@ -219,6 +219,17 @@ def test_a_native_bridge_during_an_upgrade_does_not_advise_serve(monkeypatch, se
     assert "cairnmind serve" not in str(caught.value)
 
 
+def test_a_native_bridge_during_a_change_of_setup_names_it_and_does_not_advise_serve(monkeypatch, settings):
+    from cairnmind import setup_mark
+    Network(monkeypatch)  # nothing listens
+    monkeypatch.setattr(setup_mark, "state", lambda data_dir: ("running", 4242))
+    with pytest.raises(RuntimeError) as caught:
+        ask(mcp_server.ServiceClient(settings))
+    reason = setup_mark.NOTE_RUNNING.format(pid=4242, path=setup_mark.mark_path(settings.data_dir))
+    assert str(caught.value) == setup_mark.BRIDGE_SETUP.format(reason=reason)
+    assert "cairnmind serve" not in str(caught.value)
+
+
 def test_ask_with_a_schema_imports_nothing_of_the_new_version_in_a_replaced_bridge(monkeypatch, settings):
     from cairnmind import __version__
     from cairnmind.upgrade_mark import CODE_REPLACED
