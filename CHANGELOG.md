@@ -61,6 +61,9 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - `cairnmind memory reextract` also replaces the untouched proposals of a source that the newer extraction skips, and its dry run counts such sources and records apart (#297).
 - An `https://` address of this computer in `ollama_url` now works for the local Ollama in every command, instead of being refused with an older message that named neither the setting nor the remedy (#302).
 - The acknowledgement reply and the session status now say how many automatic proposals were written after the session's packet, and `resume_context` still hands back the packet the session acknowledged, so the count never costs an ACK; the proposals are read with `ask` (MCP) or `cairnmind records` and `cairnmind ask` (#299).
+- An external MCP server no longer starts the knowledge service while Cairnmind is being upgraded: the installer leaves a mark for the time of the upgrade, every automatic start (`ask`, `run`, `context`, the workspace, the MCP server) refuses and says why, and `doctor` and `status` say so. A service that was still starting when the upgrade began is stopped, so none runs the version being replaced (#298).
+- The installer names open `cairnmind mcp --client external` servers of the installed version by process id and stops until they are closed (#298).
+- An MCP server that was open while Cairnmind was upgraded or reinstalled says that it still runs the old code and asks to be restarted, instead of mixing old and new code (#298).
 
 ### Development and CI
 
