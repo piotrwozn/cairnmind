@@ -233,6 +233,19 @@ def service_alive(settings: Settings) -> bool:
         return False
 
 
+@contextmanager
+def _service_stopped(settings: Settings, held: str, running: str):
+    """Hold service.lock, so no service of this data directory starts meanwhile; refuse while one runs."""
+    with (settings.data_dir / "service.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            refuse(held)
+        if service_alive(settings):
+            refuse(running)
+        yield
+
+
 def last_log_line(path: Path) -> str:
     """The last line of a log, bounded and with control characters replaced: what a stopped process said."""
     try:
@@ -2142,13 +2155,8 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         help="A backup file written by `cairnmind backup`.")]):
     """Replace the store with a backup, after a safety backup of the current one. The service must be stopped."""
     # A missing path or a folder is refused while the arguments are read, before the store or engine is touched.
-    with (ctx.obj.data_dir / "service.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            refuse("Run cairnmind stop first; the service still holds the store lock")
-        if service_alive(ctx.obj):
-            refuse("Run cairnmind stop first; restoring requires a stopped service")
+    with _service_stopped(ctx.obj, "Run cairnmind stop first; the service still holds the store lock",
+                          "Run cairnmind stop first; restoring requires a stopped service"):
         store = store_for(ctx.obj)
         store.restore(source)
     from cairnmind.confirmation_upgrade import report
