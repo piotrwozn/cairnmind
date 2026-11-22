@@ -143,6 +143,12 @@ def _role(settings, role: str, environment: dict):
     except (ValueError, TypeError, AttributeError):  # an ollama_url that is not an address
         message = "ollama_url is not a valid address."
         return {"model": model, "problem": message}, message
+    if unprofiled and not local:  # #301: such an ollama_url is refused, so it receives nothing
+        from .memory_models import RemoteServerRefused, local_server
+        try:
+            local_server(settings)
+        except RemoteServerRefused as exc:
+            return {"model": model, "problem": str(exc)}, str(exc)
     block = {"model": model, "provider": row["provider"], "url": shown(row["base_url"]), "host": host,
              "on_this_machine": local, "source": "config.json"}
     if unprofiled and "ollama_url" in environment:  # the role has no profile: it uses settings.ollama_url

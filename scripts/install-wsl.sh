@@ -37,7 +37,7 @@ done
 # This file runs on macOS too, whose bash is 3.2: no ${x,,}, associative arrays, mapfile or &>> (#232).
 system="$(uname -s)"
 tmux_hint='sudo apt install tmux'
-uv_hint='https://docs.astral.sh/uv/getting-started/installation/'
+uv_hint='curl -LsSf https://astral.sh/uv/install.sh | sh'
 case "$system" in
     Linux) ;;
     Darwin)
@@ -189,17 +189,23 @@ check_tmux() {
 workspace_ready=true
 check_tmux || workspace_ready=false
 
+# GPU advice only with --pull-models: nothing else here uses a GPU (#287). The checks run alone in the tests, under set -u.
 if [[ "$system" == Darwin ]]; then
     printf 'Detected macOS.\n'
 elif [[ "$(uname -r | tr '[:upper:]' '[:lower:]')" == *microsoft* ]]; then
-    printf 'Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux.\n'
-else
+    if [[ "${pull_models:-false}" == true ]]; then
+        printf 'Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux.\n'
+    else
+        printf 'Detected Linux on WSL.\n'
+    fi
+elif [[ "${pull_models:-false}" == true ]]; then
     printf 'Detected Linux outside WSL. The package is supported; check local GPU access.\n'
+else
+    printf 'Detected Linux outside WSL.\n'
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
-    printf 'uv not found on PATH. Install uv: %s\n' "$uv_hint" >&2
-    printf 'See docs/INSTALL.md for the full installation guide.\n' >&2
+    printf 'uv not found on PATH. Install it, open a new terminal and run this installer again: %s\n' "$uv_hint" >&2
     exit 1
 fi
 # --- end of the checks ---
@@ -222,26 +228,33 @@ uv export --directory "$package_dir" --locked --no-dev --no-emit-project \
 # Terminal servers of an installed version, whatever data directory they belong to: the workspace
 # and the coding sessions started from it, under the current and the earlier names. A later
 # version does not find what an earlier one started, so nothing of it may be left behind unseen.
+# $1 (optional): the installed version's Python, which can ask a socket when there is no tmux client here.
 live_terminals() {
-    local socket have_tmux=1
+    local socket have_tmux=1 python="${1:-}"
     command -v tmux >/dev/null 2>&1 || have_tmux=0
     # On macOS they live in one folder per user under /private/tmp (runtime_sockets.py, #235).
     for socket in "${TMPDIR:-/tmp}"/{cairnmind,devbrain}-{ui,native}-"$(id -u)"-*/tmux.sock \
         /private/tmp/cairnmind-"$(id -u)"/{ui,native}-*/tmux.sock; do
-        # Without a tmux client here a server cannot be asked, so one that owns a socket counts as live.
-        if [[ -S "$socket" && -O "$socket" ]] && { ((! have_tmux)) || tmux -S "$socket" list-sessions >/dev/null 2>&1; }; then
-            printf '%s\n' "$socket"
+        [[ -S "$socket" && -O "$socket" ]] || continue
+        if ((have_tmux)); then
+            tmux -S "$socket" list-sessions >/dev/null 2>&1 || continue
+        elif [[ -x "$python" ]]; then
+            # A socket nothing listens on is left over from a server that is gone. A connect only asks.
+            "$python" -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$socket" \
+                >/dev/null 2>&1 || continue
         fi
+        # Without a tmux client or that Python here a server cannot be asked, so one that owns a socket counts as live.
+        printf '%s\n' "$socket"
     done
 }
 
-# $1: the executable of the installed version, $2: the name a user types for it.
+# $1: the executable of the installed version, $2: the name a user types for it, $3 (optional): its Python.
 # The workspace and coding sessions hold interactive work: the installer stops here unless it is
 # told to close them. The interface broker and the knowledge service hold none and are stopped.
 stop_installed() {
-    local installed="$1" name="$2" terminals status socket
+    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown
     [[ -x "$installed" ]] || return 0
-    terminals="$(live_terminals)"
+    terminals="$(live_terminals "$python")"
     # Asked as well, read whole and not through a pipe: an answer cut short must not read as "none".
     if status="$("$installed" workspace status 2>/dev/null)"; then
         if [[ "$status" == *'"available": true'* && -z "$terminals" ]]; then
@@ -251,19 +264,36 @@ stop_installed() {
         printf 'Note: %s workspace status failed, so a running workspace could not be ruled out.\n' "$name" >&2
     fi
     if [[ -n "$terminals" ]]; then
-        if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" != 1 ]]; then
-            # Sockets without a tmux client here: nothing can ask or close them, so `workspace stop` is no way out.
-            if [[ "$terminals" == /* ]] && ! command -v tmux >/dev/null 2>&1; then
-                printf '%s\n' \
-                    'Terminal server sockets of the installed version were found, but tmux is not on the PATH here, so they could not be checked:' \
-                    "$terminals" \
-                    'Install tmux so they can be checked, or, when no terminal server runs, remove each socket file named above.' \
-                    'Then run this installer again. The installer removes nothing itself.' >&2
-                exit 1
+        # A count and at most five of them: a machine can hold dozens of leftover sockets (#287).
+        # Counted in the shell: a PATH without grep or sed still gets the refusal.
+        total=0
+        shown=""
+        while IFS= read -r socket; do
+            total=$((total + 1))
+            if ((total > 1 && total <= 5)); then
+                shown="$shown"$'\n'
             fi
+            if ((total <= 5)); then
+                shown="$shown$socket"
+            fi
+        done <<< "$terminals"
+        if ((total > 5)); then
+            shown="$shown"$'\n'"and $((total - 5)) more."
+        fi
+        # Sockets without a tmux client here: nothing can ask or close them, so `workspace stop` is no way out,
+        # and neither is the permission to close them (#307).
+        if [[ "$terminals" == /* ]] && ! command -v tmux >/dev/null 2>&1; then
             printf '%s\n' \
-                'A workspace or coding sessions of the installed version are running:' \
-                "$terminals" \
+                'Terminal server sockets of the installed version were found, but tmux is not on the PATH here, so they could not be checked or closed:' \
+                "$shown" \
+                'Install tmux so they can be checked, or, when no terminal server runs, remove each socket file named above.' \
+                'Then run this installer again. The installer removes nothing itself.' >&2
+            exit 1
+        fi
+        if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" != 1 ]]; then
+            printf '%s\n' \
+                "A workspace or coding sessions of the installed version are running ($total):" \
+                "$shown" \
                 "Finish there and close them with: $name workspace stop --clients" \
                 'then run this installer again. The new version would not find them.' \
                 'To let the installer close them, set CAIRNMIND_INSTALL_STOP_WORKSPACE=1.' >&2
@@ -275,7 +305,7 @@ stop_installed() {
         # Whatever belongs to another data directory, or did not answer, is closed at its terminal server.
         while IFS= read -r socket; do
             [[ -n "$socket" ]] && tmux -S "$socket" kill-server >/dev/null 2>&1 || true
-        done <<<"$(live_terminals)"
+        done <<<"$(live_terminals "$python")"
     fi
     "$installed" cockpit stop >/dev/null 2>&1 || true
     "$installed" stop >/dev/null 2>&1 || true
@@ -289,14 +319,14 @@ if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
         "${CAIRNMIND_HOME:-${DEVBRAIN_HOME:-$HOME/.local/share/devbrain}}"
     # Stopped while the tool that started them still exists: afterwards nothing could stop them.
-    stop_installed "$(uv tool dir --bin)/devbrain" devbrain
+    stop_installed "$(uv tool dir --bin)/devbrain" devbrain "$(uv tool dir)/devbrain/bin/python"
     uv tool uninstall devbrain >/dev/null
     upgraded_from_devbrain=true
 fi
 
 # An installed Cairnmind is being replaced: the same care, with the installed version's own command.
 if uv tool list 2>/dev/null | grep '^cairnmind ' >/dev/null; then
-    stop_installed "$(uv tool dir --bin)/cairnmind" cairnmind
+    stop_installed "$(uv tool dir --bin)/cairnmind" cairnmind "$(uv tool dir)/cairnmind/bin/python"
 fi
 
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
@@ -333,21 +363,18 @@ if [[ -n "$connect_url" ]]; then
 elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; then
     printf '\nThe engine runs in Docker: no ArcadeDB is downloaded here; cairnmind init downloads its image.\n'
     "$cairnmind_bin" init
-    "$cairnmind_bin" engine status
+    "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 else
     printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
     arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
     if [[ -n "$arcade_dist" ]]; then
-        "$cairnmind_bin" engine install --distribution "$arcade_dist"
+        "$cairnmind_bin" engine install --distribution "$arcade_dist" >/dev/null
     else
-        "$cairnmind_bin" engine install
+        "$cairnmind_bin" engine install >/dev/null
     fi
     "$cairnmind_bin" init
-    "$cairnmind_bin" engine status
+    "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 fi
-# Only what needs attention is printed; `cairnmind doctor` shows the full report (#244).
-printf '\nChecking the installation...\n'
-"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention
 
 if [[ "$upgraded_from_devbrain" == true ]]; then
     # Hooks and MCP entries in existing projects name the removed interpreter.
@@ -368,20 +395,20 @@ if [[ "$pull_models" == true ]]; then
         exit 1
     fi
     "$cairnmind_bin" models pull
-else
-    printf '\nModels were not downloaded. With Ollama running, run: cairnmind models pull\n'
 fi
 
 printf '\nCairnmind installed: %s\n' "$cairnmind_bin"
 case ":$PATH:" in
     *":$tool_bin_dir:"*) ;;
-    *) printf 'Add this directory to PATH: %s\n' "$tool_bin_dir" ;;
+    *) printf 'Add this directory to PATH: %s (or run: uv tool update-shell), then open a new terminal.\n' "$tool_bin_dir" ;;
 esac
 if [[ "$workspace_ready" == true ]]; then
     printf 'Open the terminal workspace: cairnmind\n'
     printf 'Projects, API/Ollama/Copilot profiles, client panes, memory and the graph are chosen in the terminal.\n'
     printf 'Copilot: Connections -> Connect GitHub account; the installer did not download its runtime.\n'
     printf 'Status without opening the workspace: cairnmind workspace status\n'
-else
-    printf 'The terminal workspace needs tmux 3.4+; without it these commands work: cairnmind serve, cairnmind run, cairnmind mcp, cairnmind brief.\n'
 fi
+
+# The same summary as `cairnmind doctor` in a terminal: required, optional, the next step (#244, #287).
+printf '\nChecking the installation...\n'
+"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention

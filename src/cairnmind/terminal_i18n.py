@@ -7,6 +7,7 @@ from .engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
 from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
+from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
@@ -646,6 +647,7 @@ CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service
 CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)
 CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
 CATALOG.update(SETUP_PROFILE_MESSAGES)  # where storage and models run: the profiles (#74)
+CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

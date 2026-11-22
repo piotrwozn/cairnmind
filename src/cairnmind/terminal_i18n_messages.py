@@ -346,6 +346,8 @@ STATE_MESSAGES = {
     "The credential store exceeds its size limit.": "Magazyn poświadczeń przekroczył limit rozmiaru.",
     "Project folder cannot be inside the data directory: Cairnmind never indexes it; choose a folder outside it":
         "Folder projektu nie może leżeć w katalogu danych: Cairnmind go nie indeksuje; wybierz folder poza nim.",
+    "Project root cannot contain Cairnmind's private credential store":
+        "Katalog główny projektu nie może zawierać prywatnego magazynu poświadczeń Cairnmind.",
     "Choose how the key is stored.": "Wybierz sposób przechowywania klucza.",
     "Invalid credential profile.": "Niepoprawny profil poświadczeń.",
     "Invalid credential reference.": "Niepoprawne odwołanie do poświadczeń.",
@@ -501,6 +503,16 @@ CONFIRMATION_MESSAGES = {
     "the local user": "lokalny użytkownik", "time unknown": "czas nieznany",
     "an unnamed person": "osobę bez podanego imienia", "an unknown branch": "nieznanej",
     "an unknown commit": "nieznanym", "a memory package": "paczki pamięci", "an unknown day": "nieznanego",
+    "a backup": "kopii zapasowej",
+    # A confirmation a restore without the person's workspace kept as the backup's claim (restore_claims, #214).
+    "confirmed by {name}, {route}, {at}, as the backup says; restored from {where} on {day} without the "
+    "person's workspace; not verified here":
+        "potwierdzone przez {name}, {route}, {at}, według kopii zapasowej; przywrócone z {where} dnia {day} "
+        "bez środowiska osoby; niezweryfikowane tutaj",
+    "confirmed before only a person could confirm, as the backup says; restored from {where} on {day} without "
+    "the person's workspace; not verified here":
+        "potwierdzone, zanim potwierdzać mógł tylko człowiek, według kopii zapasowej; przywrócone z {where} "
+        "dnia {day} bez środowiska osoby; niezweryfikowane tutaj",
     # Beside the state in a list (confirmation.LIST_WORDS).
     "confirmed elsewhere": "potwierdzone gdzie indziej", "confirmed before the rule": "potwierdzone przed regułą",
     "confirmed by seed data": "potwierdzone przez dane testowe", "confirmation lapsed": "potwierdzenie wygasło",

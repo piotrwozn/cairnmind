@@ -8,8 +8,9 @@ to be confirmed. A client can neither send it nor clear it. It has these forms:
         inspector's confirm, a conflict decision, a plan confirmation or the workspace form. The command
         line confirms nothing; the mark `route: cli` is only what 0.12.0 and earlier left;
     {"by": "import", "package", "where", "confirmed_by": [...], "imported_at", "version"}
-        confirmed elsewhere and brought here by a memory package; who and where are what the package
-        claims, and nothing about it is verified here;
+        confirmed elsewhere and brought here by a memory package, or kept by a restore without the
+        person's workspace (`package: backup`, restore_claims); who and where are what the package or
+        backup claims, and nothing about it is verified here;
     {"by": "seed", ...}
         data an evaluation wrote for itself; never a person;
     {"by": "lapsed", "confirmed_version", "version", "status"}
@@ -358,7 +359,7 @@ _ROUTE_WORDS = {"inspector_review": "in the inspector", "conflict_decision": "by
                 "cli": "on the command line"}
 # Said in place of a value the mark does not hold. Fixed words, translated with the line.
 FALLBACK_WORDS = ("the local user", "time unknown", "an unnamed person", "an unknown branch", "an unknown commit",
-                  "a memory package", "an unknown day", "by a person's act")
+                  "a memory package", "an unknown day", "by a person's act", "a backup")
 
 
 def _or(value, fallback, limit=120):
@@ -395,6 +396,17 @@ def confirmation_parts(record):
         where = _or(found.get("where"), "a memory package", 200)
         day = _or(str(found.get("imported_at") or "")[:10], "an unknown day")
         claims = [entry for entry in found.get("confirmed_by") or [] if isinstance(entry, dict)]
+        if found.get("package") == "backup":
+            where = _or(found.get("where"), "a backup", 200)
+            tail = "restored from {where} on {day} without the person's workspace; not verified here"
+            if not claims:
+                return ("confirmed before only a person could confirm, as the backup says; " + tail,
+                        {"where": where, "day": day})
+            last = claims[-1]
+            return ("confirmed by {name}, {route}, {at}, as the backup says; " + tail,
+                    {"name": _or(last.get("name"), "an unnamed person"),
+                     "route": Fixed(_ROUTE_WORDS.get(last.get("action"), "by a person's act")),
+                     "at": _or(str(last.get("at") or "")[:10], "time unknown"), "where": where, "day": day})
         if not claims:
             return ("confirmed elsewhere, who confirmed it is not recorded; imported from {where} on {day}; "
                     "not verified here", {"where": where, "day": day})

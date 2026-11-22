@@ -4,7 +4,8 @@ The workspace puts a random key into its own tmux server when it creates it (a u
 standard input: never a file, a command line, an environment variable or a pane). The inspector and the
 finding form read it from their server when they send a person's request, the broker passes it on, and the
 service reads the same server before it lets that request count as a person's. The service token alone
-reaches no person's route.
+reaches no person's route. `cairnmind restore` asks the same server (restore_proof) to decide whether a backup's
+confirmations stay a person's.
 
 This is a bar against every documented door (a route, a command, a tool), not against a program of the same
 user that uses the workspace's tmux server: docs/MEMORY_CONTRACTS.md says what remains.
@@ -125,6 +126,20 @@ def read_key(settings, socket, binary=None) -> tuple[str, str | None]:
     if not found:
         return "no_key", None
     return ("key", found) if _KEY.fullmatch(found) else ("unavailable", None)
+
+
+def restore_proof(settings) -> str:
+    """What `cairnmind restore` finds of this installation's open workspace: "key", "no_key" or "unavailable" (#214).
+
+    The socket is the one the workspace makes for this data directory, checked as the socket of a person's
+    request is (workspace_socket), and its tmux server is asked as the service asks it (read_key). Only "key"
+    lets a restore keep a person's confirmations; nothing a caller passes (an option, a file) decides it. The
+    environment does: on Linux and WSL TMPDIR decides where the socket directory is, and any tmux server of the
+    user's own at that place that holds a well-formed key answers "key" (docs/MEMORY_CONTRACTS.md).
+    """
+    value = str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock")
+    socket = workspace_socket(settings, value)
+    return "unavailable" if socket is None else read_key(settings, socket)[0]
 
 
 def workspace_headers(settings, environ=None) -> dict:

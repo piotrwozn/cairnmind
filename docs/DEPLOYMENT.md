@@ -91,7 +91,7 @@ Setting both to different addresses is refused, naming both. `config.json` keeps
 
 The rules for reaching a database on another host are unchanged ([SECURITY.md](../SECURITY.md)): `https://` with certificate and host name verification (a private authority through `arcade_ca_file`), a dedicated user and never `root`, and the password from `CAIRNMIND_ARCADE_PASSWORD` or a private file named by `arcade_password_file`, never from `config.json`. On `127.0.0.1` plain `http://` is allowed. No password is generated for a connect-only installation: it is the one set where the server runs.
 
-Set the database name explicitly (`arcade_database`, `CAIRNMIND_ARCADE_DATABASE`). Without it the name is derived from the path of the data directory, so two machines would look for two different databases; `cairnmind doctor` says when the name is a derived one.
+Set the database name explicitly (`arcade_database`, `CAIRNMIND_ARCADE_DATABASE`). Without it the name is derived from the path of the data directory, so two machines would look for two different databases; `cairnmind doctor --json` says when the name is a derived one.
 
 ### What the commands do
 
@@ -101,12 +101,12 @@ Set the database name explicitly (`arcade_database`, `CAIRNMIND_ARCADE_DATABASE`
 | `cairnmind engine install`, `start`, `stop` | Do nothing and say so in one sentence (exit status 2), whether or not the knowledge service runs: "This installation only connects to ArcadeDB at ...; it does not start an engine." `stop` still stops an engine that this data directory started before it was switched. |
 | `cairnmind db create-user` | The one step that signs in as `root`: it creates the database and the dedicated user, after checking the server's version. Run once per database; run again for the same user and database it changes nothing, and for a user that exists without its database it creates the database. Each database gets its own user: a user that already exists and cannot use this database with the password this installation reads is refused, nothing is created, and the message says to set `arcade_user` to a new name. |
 | `cairnmind init` and every command that writes | Open the database they were given. When it does not exist they stop and name `cairnmind db create-user`; they never create it. When the server does not answer they say where they looked and that no engine is started here. |
-| `cairnmind doctor` | The `arcadedb` block says `mode`, `host`, `url`, `user`, `transport`, `password_source`, the server's `version` and `supported_versions`; `java` says it is not needed; `store_writer` says whether this installation writes the store or only reads it. `topology`, first in the report, says it in three lines (storage with the writer role, the memory models, what runs on this machine) and names the variable a value came from. |
+| `cairnmind doctor --json` | The `arcadedb` block says `mode`, `host`, `url`, `user`, `transport`, `password_source`, the server's `version` and `supported_versions`; `java` says it is not needed; `store_writer` says whether this installation writes the store or only reads it. `topology`, first in the report, says it in three lines (storage with the writer role, the memory models, what runs on this machine) and names the variable a value came from. |
 | `cairnmind status` | Asks the running service, which only the installation that writes the store runs; adds `storage` (mode, host, address) and `topology` (the three lines, with the evaluation "not checked") beside `writer`. On a reader it says so and names `cairnmind store writer` and `cairnmind doctor`, which show the role there. |
 | `cairnmind store size` | Counts rows as always; says that the database files and the server log are on the server and cannot be measured from here. |
 | `cairnmind eval run`, `eval memory`, `eval repository` | Refused: they create and drop temporary databases. Run them on an installation with the engine on this machine. |
 
-**The server's version.** Each Cairnmind release works with one ArcadeDB version, the one it pins (`supported_versions` in `engine status` and `doctor`; 26.11.1 in this release). A server of any other version is refused before anything is read or written, by every command, `cairnmind db create-user` included (it asks for the version before it signs in as `root` to create anything), with the message "ArcadeDB at ... runs version X, which this release of Cairnmind does not support. Supported: 26.11.1." Upgrade the server and Cairnmind together: [When the pinned ArcadeDB version changes](#when-the-pinned-arcadedb-version-changes).
+**The server's version.** Each Cairnmind release works with one ArcadeDB version, the one it pins (`supported_versions` in `engine status` and `doctor --json`; 26.11.1 in this release). A server of any other version is refused before anything is read or written, by every command, `cairnmind db create-user` included (it asks for the version before it signs in as `root` to create anything), with the message "ArcadeDB at ... runs version X, which this release of Cairnmind does not support. Supported: 26.11.1." Upgrade the server and Cairnmind together: [When the pinned ArcadeDB version changes](#when-the-pinned-arcadedb-version-changes).
 
 ### From nothing: the Compose server on this machine
 
@@ -163,7 +163,7 @@ You have followed [Start it on one machine](#start-it-on-one-machine); the serve
    ```bash
    cairnmind init
    cairnmind engine status   # "mode": "connect", "available": true, "version_matches": true
-   cairnmind doctor          # arcadedb: "mode": "connect", "database_available": true, "user": "cairnmind"
+   cairnmind doctor --json   # arcadedb: "mode": "connect", "database_available": true, "user": "cairnmind"
    cairnmind project add myproject ~/code/myproject
    ```
 
@@ -192,7 +192,7 @@ You have followed [Kubernetes](#kubernetes) up to [Start it](#start-it): the Sta
    export CAIRNMIND_ARCADE_CA_FILE="$HOME/cairnmind-k8s/ca.pem"
    cairnmind db create-user --admin-password-file "$HOME/cairnmind-k8s/root-password"
    cairnmind init
-   cairnmind doctor          # arcadedb: "mode": "connect", "transport": "https (certificate verification on)",
+   cairnmind doctor --json   # arcadedb: "mode": "connect", "transport": "https (certificate verification on)",
                              # "password_source": "file", "database_available": true
    ```
 
@@ -304,6 +304,8 @@ To restore it into a server, for example a new empty one:
 
 `restore` replaces everything in the database with the backup. Before it does, it writes a backup of the current contents to `backups/` in the data directory.
 
+A restore keeps the person's confirmations in the backup only when this installation's workspace is open on the machine that runs `restore` and holds its key ([MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md#a-restore-without-the-workspace)). On a server, in CI or with no workspace, every row is still restored, each confirmation becomes the backup's claim, not verified here, and accepted transcript record kinds are withdrawn; the output says which (`person_confirmations`) and how many, and the exit code is 0 either way.
+
 What the logical backup does not contain: the files of the data directory (`config.json` with the local token and the database password, client credentials and API keys, the terminal workspace state, the hook spool, logs), ArcadeDB's own server configuration and users, and model weights.
 
 ### Volume snapshot
@@ -326,7 +328,7 @@ docker run --rm --entrypoint tar -v cairnmind-db_arcadedb-data:/var/lib/arcadedb
 docker compose -f deploy/compose.yaml up -d --wait
 ```
 
-The `root` password and the dedicated user are the ones stored in the snapshot, not the ones in your files. Cairnmind finds its database by name (`CAIRNMIND_ARCADE_DATABASE`; `cairnmind doctor` shows it as `arcadedb.database`): use the same name, then run `cairnmind init`. A new data directory opens the restored database as a reader, because the snapshot still names the installation that wrote it; `cairnmind store takeover --yes` makes it the writer. What a snapshot does not cover: everything in Cairnmind's data directory (as for the logical backup), and other ArcadeDB versions: open it with the same image, or move between versions with a logical backup.
+The `root` password and the dedicated user are the ones stored in the snapshot, not the ones in your files. Cairnmind finds its database by name (`CAIRNMIND_ARCADE_DATABASE`; `cairnmind doctor --json` shows it as `arcadedb.database`): use the same name, then run `cairnmind init`. A new data directory opens the restored database as a reader, because the snapshot still names the installation that wrote it; `cairnmind store takeover --yes` makes it the writer. What a snapshot does not cover: everything in Cairnmind's data directory (as for the logical backup), and other ArcadeDB versions: open it with the same image, or move between versions with a logical backup.
 
 Both procedures are run by the `deployment-image` CI job ([`scripts/deployment_check.py`](../scripts/deployment_check.py)), with connect-only installations that sign in as the dedicated user: a project and a record are written to one server, backed up and restored into a second, empty one, and the first server's volume is archived and unpacked into a third. Each server then holds the same project and records.
 
@@ -422,7 +424,7 @@ cairnmind db create-user --admin-password-file "$HOME/cairnmind-k8s/root-passwor
 ```bash
 cairnmind engine status   # "mode": "connect", "available": true, "version_matches": true
 cairnmind init
-cairnmind doctor          # arcadedb: "mode": "connect", "database_available": true, "user": "cairnmind",
+cairnmind doctor --json   # arcadedb: "mode": "connect", "database_available": true, "user": "cairnmind",
                           # "transport": "https (certificate verification on)", "password_source": "file"
 ```
 

@@ -12,9 +12,11 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import unicodedata
 
+from cairnmind.first_start import BRIEF_REVIEW, BRIEF_START
 from cairnmind.store import DERIVED_RECORD_METADATA, degraded_origin
 from cairnmind.terminal_safe import safe_text
 
@@ -207,9 +209,20 @@ def _commits(root, saved):
     return lines
 
 
-def _proposed(records):
+def _waiting(records):
     # Tasks move through their own states and a checkpoint is not a finding, so neither waits for this review.
-    waiting = [r for r in records if r.get("status") == "proposed" and r["kind"] not in ("checkpoint", "task")]
+    return [r for r in records if r.get("status") == "proposed" and r["kind"] not in ("checkpoint", "task")]
+
+
+def _next(project, records):
+    """The next step for a person (#287): a first finding for an empty project, a review for waiting ones."""
+    if not records:
+        return BRIEF_START.format(project=shlex.quote(_line(project["name"], 60)))
+    return BRIEF_REVIEW if _waiting(records) else None
+
+
+def _proposed(records):
+    waiting = _waiting(records)
     if not waiting:
         return [("machine", "No proposed findings are waiting for review.")]
     lines = [("machine", f"{len(waiting)} proposed finding{'' if len(waiting) == 1 else 's'} waiting for review:")]
@@ -251,4 +264,5 @@ def build_brief(store, project_id, worktree=None, *, now=None):
     marked = [{"basis": basis, "text": text} for basis, text in lines]
     text = "\n".join(head + [f"{'[' + line['basis'] + ']':<10} {line['text']}" for line in marked])
     return {"project": {"id": project["id"], "name": project["name"]}, "worktree": str(root),
-            "generated_at": now.isoformat(timespec="seconds"), "lines": marked, "text": text}
+            "generated_at": now.isoformat(timespec="seconds"), "lines": marked, "text": text,
+            "next": _next(project, records)}

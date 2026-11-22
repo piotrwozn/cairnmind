@@ -16,6 +16,8 @@ import time
 from uuid import uuid4
 
 from .config import BACKUP_FORMATS, BACKUP_SUFFIXES, Settings
+from .first_start import PROJECT_NAME_TAKEN, PROJECT_ROOT_TAKEN, UNKNOWN_PROJECT_NEXT
+from .terminal_safe import safe_text
 # The sensitivity class of a source and a record (#180): derived on every read, stored nowhere.
 from .sensitivity import record_sensitivity, source_sensitivity  # noqa: F401
 from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_document, json_text, one_row, parse_utc,
@@ -754,7 +756,9 @@ class Store:
             existing = one_row(tx, "SELECT FROM projects WHERE name=:name OR root=:root", {"name": name, "root": path}, False)
             if existing:
                 if existing["name"] != name or existing["root"] != path:
-                    raise ValueError("Project name or root is already registered")
+                    if existing["name"] == name:
+                        raise ValueError(PROJECT_NAME_TAKEN.format(name=safe_text(name), root=safe_text(existing["root"])))
+                    raise ValueError(PROJECT_ROOT_TAKEN.format(name=safe_text(existing["name"]), root=safe_text(path)))
                 return existing
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
             insert_document(tx, "projects", project)
@@ -789,7 +793,7 @@ class Store:
         if project:
             return project
         if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
-            raise ValueError(f"Unknown project: {value}")
+            raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
         written = Path(value).expanduser()
         if not written.is_absolute() and (recorded or not self.relative_paths):
             raise ValueError(f"Unknown project: {value} (a relative path is not accepted here; give an absolute one)")
@@ -801,7 +805,7 @@ class Store:
         if candidates:
             selected = max(candidates, key=lambda row: len(row["path"]))
             return one_row(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
-        raise ValueError(f"Unknown project: {value}")
+        raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
 
     def _delete_old_vectors(self, tx, source_ids):
         if not source_ids:
@@ -1903,20 +1907,27 @@ class Store:
         except (OSError, EOFError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Invalid or corrupt Cairnmind backup") from exc
 
-    def restore(self, backup):
-        """Restore validated data atomically. Stop Cairnmind workers before calling."""
+    def restore(self, backup, *, claims=None):
+        """Restore validated data atomically. Stop Cairnmind workers before calling.
+
+        With `claims` (restore_claims.BackupClaims) the restore keeps no person's act of the backup: each
+        confirmation becomes the backup's claim and accepted record kinds are withdrawn (#214). Without it the
+        rows are written as they are; `cairnmind restore` decides by the open workspace's key."""
         # The file is validated in two passes over it before anything changes, and read a third time for
         # the inserts; it is never held in memory whole (#196, backup_reader).
         from .store_writer import require_writer
         with opened_backup(Path(backup).expanduser().resolve(), self._validated_backup, RESTORE_TYPES) as source:
             require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
             self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
-            self._restore_from(source)
+            self._restore_from(source, claims)
+        if claims is not None:
+            self.confirmations_before_rule = None  # nothing restored is a person's, so nothing is marked as one
+            return
         # A backup of a store before 0.11.0 brings records confirmed before the rule back (#215).
         from .confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self, force=True)
 
-    def _restore_from(self, source):
+    def _restore_from(self, source, claims=None):
         # DDL is deliberately outside the data transaction; no live data has been removed.
         for registry in source.vector_indexes:
             name, dimension = registry.get("type_name"), registry.get("dimension")
@@ -1940,7 +1951,7 @@ class Store:
                 tx.command(f"DELETE FROM {quote_name(collection)}")
             # The rows go in groups of a few hundred per request, with the checks of row by row (#219).
             from .restore_groups import write_restored
-            write_restored(self, tx, source)
+            write_restored(self, tx, source, claims)
 
     def forget_project(self, project_id):
         with self.transaction() as tx:
