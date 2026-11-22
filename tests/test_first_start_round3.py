@@ -83,7 +83,9 @@ def test_the_installer_shows_one_line_for_a_good_install_and_uvs_own_output_for_
 
     def install(uv_body):
         stand_in(bin_dir / "uv", uv_body)
-        prelude = f'set -euo pipefail\npackage_dir=/p\nconstraints_file="{tmp_path}/constraints"\n: >"$constraints_file"\n'
+        # end_upgrade is defined earlier in the script; its EXIT trap calls it (#319).
+        prelude = (f'set -euo pipefail\npackage_dir=/p\nconstraints_file="{tmp_path}/constraints"\n: >"$constraints_file"\n'
+                   'end_upgrade() { :; }\n')
         return subprocess.run([BASH, "-c", prelude + block + '\necho continued'],
                               env={"PATH": str(bin_dir), "TMPDIR": str(tmp_path)}, capture_output=True, text=True,
                               timeout=30)

@@ -27,6 +27,9 @@ NOTE_UNREADABLE = ("The upgrade mark ~/.local/state/cairnmind/upgrade-in-progres
                    "service is not started. If no installer is running, remove that file.")
 UPGRADE_STOP_FAILED = ("An upgrade of Cairnmind began while the knowledge service was starting, and the service did "
                        "not stop when asked. Stop it with `{command}`, and try again when the installer has finished.")
+BROKER_STOP_FAILED = ("An upgrade of Cairnmind began while the local broker was starting, and the broker did not stop "
+                      "when asked. Stop it with `{command}`, and open the workspace again when the installer has "
+                      "finished.")
 UPGRADE_ENDED = ("An upgrade of Cairnmind happened while the knowledge service was starting, so that start was "
                  "ended. The upgrade has finished: call again.")
 BRIDGE_UPGRADE ="{reason} Call the tool again when the installer has finished."
@@ -40,6 +43,9 @@ MESSAGES = {
     NOTE_RUNNING: ("Trwa aktualizacja Cairnmind (proces instalatora {pid}) albo ten proces nie daje się rozpoznać "
                    "jako instalator, więc usługa wiedzy nie jest uruchamiana, dopóki się nie skończy. Jeśli żaden "
                    "instalator nie działa, usuń ~/.local/state/cairnmind/upgrade-in-progress."),
+    BROKER_STOP_FAILED: ("Aktualizacja Cairnmind zaczęła się w trakcie uruchamiania lokalnego brokera, a broker nie "
+                         "zatrzymał się na wezwanie. Zatrzymaj go poleceniem `{command}` i otwórz środowisko ponownie, "
+                         "gdy instalator skończy."),
     UPGRADE_ENDED: ("Aktualizacja Cairnmind odbyła się w trakcie uruchamiania usługi wiedzy, więc to uruchomienie "
                     "zakończono. Aktualizacja się skończyła: wywołaj ponownie."),
     NOTE_STALE: ("Aktualizacja Cairnmind nie została dokończona: instalator, który ją zaczął (proces {pid}), już nie "

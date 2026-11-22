@@ -11,9 +11,10 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import plain_words
-from cairnmind import cli
+from cairnmind import __version__, cli
 from cairnmind.config import Settings
 from cairnmind.service import create_app
+from cairnmind.service_version import instance_id
 from cairnmind.sessions import SessionManager
 from cairnmind.store import Store
 
@@ -190,6 +191,9 @@ def test_memory_status_is_authenticated_scoped_read_without_start(tmp_path, monk
     monkeypatch.setenv("DEVBRAIN_SESSION_ID", "actor")
 
     def handler(request):
+        if request.url.path == "/health":  # the version check that precedes every request (#319)
+            return httpx.Response(200, json={"service": "cairnmind", "version": __version__,
+                                             "instance": instance_id(settings)})
         assert request.method == "GET" and request.url.path == "/memory/status"
         assert dict(request.url.params) == {"project": "demo", "session_id": "actor"}
         assert request.headers["Authorization"] == f"Bearer {settings.token}"
@@ -211,6 +215,9 @@ def test_cli_dry_run_uses_readonly_existing_service(memory_workspace, tmp_path, 
     calls = []
 
     def handler(request):
+        if request.url.path == "/health":  # the version check that precedes every request (#319)
+            return httpx.Response(200, json={"service": "cairnmind", "version": __version__,
+                                             "instance": instance_id(Settings.load(store.data_dir))})
         calls.append(request)
         assert request.method == "POST" and request.url.path == "/memory/import"
         body = json.loads(request.content)

@@ -468,6 +468,9 @@ _BROKER_FIXED = frozenset(sentence for catalog in (BROKER_MESSAGES, STATE_MESSAG
 def broker_error_text(exc, translate) -> str:
     """One line for an error of the local broker, with its fixed detail in the panel's language."""
     detail, status = getattr(exc, "detail", None), getattr(exc, "status_code", None)
+    sentence = exc.args[0] if getattr(exc, "args", None) else None
+    if getattr(sentence, "template", None):  # a service_version.Sentence (#319): its Polish is of the template
+        return translate(sentence.template).format(**sentence.values)
     if isinstance(getattr(exc, "foreign", None), dict) and type(status) is int:
         return f"Broker {status}: " + translate(FOREIGN_SERVICE).format(**exc.foreign)
     if isinstance(detail, str) and type(status) is int:

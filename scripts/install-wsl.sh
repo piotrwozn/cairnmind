@@ -264,6 +264,108 @@ live_bridges() {
     done
 }
 
+# Coding sessions started with `<name> run` of the installed version (#319): the arguments begin with its Python, the
+# installed command and `run`, nothing between them, so no other command is taken for one. A session started as
+# `<name> --data-dir DIR run` or `python -m cairnmind run` is not seen; docs/UPGRADING.md asks to end those first.
+# $1: that Python, $2: the installed command. Prints their process ids, one per line; fails when ps does.
+live_runs() {
+    local prefix="$1 $2 run " pid args
+    command -v ps >/dev/null 2>&1 || return 1
+    ps -A -ww -o pid= -o args= | while read -r pid args; do
+        case "$args" in
+            "$prefix"*) printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# Knowledge services the installed version started by itself, of any data directory (#319): cli.ensure_service runs
+# "<its Python> -m <name> --data-dir DIR serve", ending in --defer-background-inference for the workspace.
+# $1: that Python, $2: the module, the same as the name, $3 (optional): only the service of that data directory.
+# Prints their process ids, one per line; fails when ps does.
+live_services() {
+    local prefix="$1 -m $2 --data-dir " dir="${3:-}" pid args
+    command -v ps >/dev/null 2>&1 || return 1
+    ps -A -ww -o pid= -o args= | while read -r pid args; do
+        if [[ -n "$dir" ]]; then
+            case "$args" in
+                "$prefix$dir serve"|"$prefix$dir serve --defer-background-inference") printf '%s\n' "$pid" ;;
+            esac
+            continue
+        fi
+        case "$args" in
+            "$prefix"*" cockpit serve") ;;  # the interface broker, not a knowledge service
+            "$prefix"*" serve"|"$prefix"*" serve --defer-background-inference") printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# Runs the installed command with the arguments after $3 and says so when it fails, with the last line it printed,
+# instead of going on in silence (#319); returns 1 then, and the caller decides what follows.
+# $1: the installed command, $2: the name a user types for it, $3: what follows from the failure, a whole clause.
+# What it printed on standard output is left in stop_printed for the caller.
+stop_or_say() {
+    local installed="$1" name="$2" after="$3" both line said="" status=0
+    shift 3
+    stop_printed=""
+    # Both streams in one read, without a temporary file: each line of standard error comes back marked with \036.
+    both="$( { "$installed" "$@" 2>&1 >&4 4>&- | while IFS= read -r line || [[ -n "$line" ]]; do
+        printf '\036%s\n' "$line"; done; exit "${PIPESTATUS[0]}"; } 4>&1 )" || status=$?
+    while IFS= read -r line; do
+        if [[ "$line" == $'\036'* ]]; then
+            line="${line#?}"
+            [[ "$line" == *[![:space:]]* ]] && said="$line"  # its last line that is not blank
+        else
+            stop_printed="$stop_printed$line"$'\n'
+        fi
+    done <<< "$both"
+    ((status != 0)) || return 0
+    said="${said//[^[:print:]]/}"
+    said="${said:0:200}"
+    printf 'Note: %s %s failed (it said: %s), so %s\n' "$name" "$*" "${said:-nothing}" "$after" >&2
+    return 1
+}
+
+# After the new version is installed, a knowledge service whose stop failed is asked to stop again, by the new command
+# (it reaches a service of another version, service_version.py): while it still runs, nothing writes the store from
+# here on, because the two versions may not agree on what the store allows (#319). The stop's exit code says only that
+# a stop was asked or that nothing answered in time, so the process itself is looked for, for up to ten seconds.
+# $1: the new command, $2: the Python of the version that was replaced, $3: its name, $4: the data directory.
+# Fails when it still runs; the installer then ends, and running it again does the remaining steps.
+stop_failed_service() {
+    local said="" left="" waited=0
+    if said="$("$1" stop 2>&1 >/dev/null)"; then
+        said=""
+        if [[ -z "$2" || -z "$4" ]]; then
+            printf 'Note: the data directory or the Python of the replaced version is not known, so it could not be confirmed that its knowledge service has ended.\n' >&2
+            return 0
+        fi
+        while :; do
+            if ! left="$(live_services "$2" "$3" "$4")"; then
+                printf 'Note: ps failed, so it could not be confirmed that the knowledge service of the replaced version has ended.\n' >&2
+                return 0
+            fi
+            [[ -n "$left" ]] && ((waited < 100)) || break
+            sleep 0.1 2>/dev/null || break
+            waited=$((waited + 1))
+        done
+        [[ -n "$left" ]] || return 0
+    else
+        said="${said%"${said##*[![:space:]]}"}"
+        said="${said##*$'\n'}"
+        said="${said//[^[:print:]]/}"
+        said="${said:0:200}"
+        if [[ -n "$2" && -n "$4" ]]; then
+            left="$(live_services "$2" "$3" "$4")" || left=""
+        fi
+    fi
+    left="${left//$'\n'/ }"
+    printf '%s\n' \
+        "The knowledge service of the version that was replaced still runs${left:+, processes: $left}${said:+ (its stop said: $said)}." \
+        'The new version is installed, but the installer stops here: it would write the store beside that service.' \
+        "End that service${left:+ (kill $left)}, then run this installer again; it does the remaining steps." >&2
+    return 1
+}
+
 # While the file upgrade_mark exists, Cairnmind starts no service (upgrade_mark.py); it holds this installer's
 # process id. Set where it is used, not where it is defined.
 begin_upgrade() {
@@ -296,7 +398,7 @@ end_upgrade() {
 # The workspace and coding sessions hold interactive work: the installer stops here unless it is
 # told to close them. The interface broker and the knowledge service hold none and are stopped.
 stop_installed() {
-    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown bridges=""
+    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown bridges="" runs=""
     # First, and also when the installed command is broken: nothing has been stopped yet. Before the terminals:
     # it is a cheap read that ends the run with nothing asked of the installed command, and a refusal about
     # terminals (#290) then never hides an open MCP server that would restart the service.
@@ -311,6 +413,15 @@ stop_installed() {
             'Their next tool call would start the knowledge service again, from the version being replaced.' \
             "Close them in the editor, or end them with: kill $bridges" \
             'then run this installer again.' >&2
+        exit 1
+    elif ! runs="$(live_runs "$python" "$installed")"; then
+        printf 'Note: ps failed, so an open %s run session of the installed version could not be ruled out.\n' "$name" >&2
+    elif [[ -n "$runs" ]]; then
+        runs="${runs//$'\n'/ }"
+        printf '%s\n' \
+            "Coding sessions started with $name run of the installed version are open, processes: $runs" \
+            'They run the version being replaced: after the upgrade their MCP server refuses every call until the session starts again.' \
+            'Finish there and exit the coding client, then run this installer again.' >&2
         exit 1
     fi
     [[ -x "$installed" ]] || return 0
@@ -360,16 +471,48 @@ stop_installed() {
             exit 1
         fi
         printf 'Closing the running workspace and coding sessions, as CAIRNMIND_INSTALL_STOP_WORKSPACE=1 asks.\n'
-        "$installed" workspace stop --clients >/dev/null 2>&1 || true
-        "$installed" cockpit stop --clients >/dev/null 2>&1 || true
+        # A failure is said before the terminal servers are ended below, which is what closes the sessions then.
+        stop_or_say "$installed" "$name" 'the workspace and its coding sessions are ended at their terminal servers instead.' \
+            workspace stop --clients || true
+        stop_or_say "$installed" "$name" 'its coding sessions are ended at their terminal servers instead.' \
+            cockpit stop --clients || true
         # Whatever belongs to another data directory, or did not answer, is closed at its terminal server.
         while IFS= read -r socket; do
             [[ -n "$socket" ]] && tmux -S "$socket" kill-server >/dev/null 2>&1 || true
         done <<<"$(live_terminals "$python")"
     fi
-    "$installed" cockpit stop >/dev/null 2>&1 || true
-    # Said, not silent (#313): in a pipe the installed version's `stop` prints its JSON.
-    if [[ "$("$installed" stop 2>/dev/null || true)" == *'"stopping": true'* ]]; then
+    stop_or_say "$installed" "$name" \
+        "the interface broker may still run the version being replaced. \`$name cockpit stop\` stops it later." \
+        cockpit stop || true
+    local asked=""
+    if stop_or_say "$installed" "$name" \
+        'the knowledge service may still run the version being replaced. The new version is asked to stop it once it is installed.' \
+        stop; then
+        # In a pipe the installed version's `stop` prints its JSON (#313); said below only once the process has ended.
+        [[ "$stop_printed" == *'"stopping": true'* ]] && asked=1
+    else
+        service_stop_failed=1 failed_python="$python" failed_name="$name"  # read by the main flow
+    fi
+    [[ -n "$python" ]] || return 0  # said above: without the Python nothing of the installed version can be looked for
+    # A service told to stop takes a moment to end: what still runs after five seconds is named; nothing is stopped.
+    local waited=0 services
+    while :; do
+        if ! services="$(live_services "$python" "$name")"; then
+            printf 'Note: ps failed, so knowledge services of the installed version in other data directories could not be looked for.\n' >&2
+            return 0
+        fi
+        [[ -n "$services" ]] && ((waited < 50)) || break
+        sleep 0.1 2>/dev/null || break
+        waited=$((waited + 1))
+    done
+    if [[ -n "$services" ]]; then
+        services="${services//$'\n'/ }"
+        printf '%s\n' \
+            "Knowledge services of the installed version still run, processes: $services" \
+            "This installer stops only the default data directory's service, so they belong to other data directories (or one is the default one, if it is still ending or its stop failed above)." \
+            'Each keeps running the version being replaced, and the new version does not use it until it is stopped:' \
+            '  cairnmind --data-dir <its data directory> stop    (ps -o args= -p <process> shows the directory)' >&2
+    elif [[ -n "$asked" ]]; then  # said, not silent (#313), and true: the stop worked and no service of it is left
         printf 'Stopped the service of the installed %s so that the new version can replace it; the next command that needs it starts it again.\n' "$name"
     fi
 }
@@ -410,7 +553,7 @@ fi
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
 # uv's list of every package is shown only when the install fails (#326): then it is uv's own error.
 install_log="$(mktemp "${TMPDIR:-/tmp}/cairnmind-install.XXXXXXXX")"
-trap 'rm -f -- "$constraints_file" "$install_log"' EXIT
+trap 'rm -f -- "$constraints_file" "$install_log"; end_upgrade' EXIT  # a failed install also removes the mark
 install_status=0
 uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir" >"$install_log" 2>&1 || install_status=$?
 if ((install_status != 0)); then
@@ -426,6 +569,13 @@ if [[ ! -x "$cairnmind_bin" ]]; then
     exit 1
 fi
 end_upgrade  # the new version is in place: a service started from now on runs it
+if [[ "${service_stop_failed:-0}" == 1 ]]; then
+    # The default data directory as the new version reads it: the one whose service the installer stops.
+    data_dir="$("$(uv tool dir)/cairnmind/bin/python" -I -c '
+from cairnmind.config import Settings
+print(Settings.load().data_dir)' 2>/dev/null || true)"
+    stop_failed_service "$cairnmind_bin" "${failed_python:-}" "${failed_name:-}" "$data_dir" || exit 1
+fi
 
 # Cairnmind up to 0.12.0 also installed the command devbrain (#314). uv removes it on --reinstall; one still there is
 # named, never removed: nothing here can tell whose it is.
