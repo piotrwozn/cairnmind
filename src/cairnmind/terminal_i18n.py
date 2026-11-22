@@ -12,6 +12,7 @@ from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
+from .terminal_person_act import MESSAGES as PERSON_ACT_MESSAGES
 from .terminal_release import MESSAGES as RELEASE_MESSAGES
 from .terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
@@ -651,6 +652,7 @@ CATALOG.update(PLAN_CONFIRM_MESSAGES)  # a person confirms a plan in the inspect
 CATALOG.update(RELEASE_MESSAGES)  # a person releases a record in the inspector (#306)
 CATALOG.update(PUBLISHED_IMPORT_MESSAGES)  # team memory in the memory view (#304)
 CATALOG.update(LEGACY_GROUP_MESSAGES)  # a person adopts an old task group in the workspace (#305)
+CATALOG.update(PERSON_ACT_MESSAGES)  # the consent dialogs of a person's acts (#332)
 CATALOG.update(ENGINE_DOCKER_MESSAGES)  # the engine in Docker (#272)
 CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service started for MCP (#273, #258)
 CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)
