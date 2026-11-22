@@ -101,6 +101,16 @@ def test_the_server_job_runs_java_and_a_summary_that_cannot_hide_a_failed_import
     assert "shell: bash" in summary
 
 
+def test_the_size_test_has_a_job_of_its_own_that_no_other_job_selects():
+    """#362: the restore of a store of 81,488 vertices takes minutes, so it is marked `slow_size` and runs on main and by hand."""
+    job = WORKFLOW.split("\n  restore-size:\n", 1)[1].split("\n  coverage-badge:\n", 1)[0]
+    full = WORKFLOW.split("\n  full-tests:\n", 1)[1].split("\n  coverage-tests:\n", 1)[0]
+    assert "restore-size" not in full and "\n    needs:" not in job and "secrets." not in job
+    assert "github.event_name != 'pull_request'" in job and "actions/setup-java" in job
+    assert "CAIRNMIND_ARCADE_DIST" in job and "-m slow_size tests/test_restore_size.py" in job
+    assert "-m slow_size" not in WORKFLOW.replace(job, "")  # no other job selects it
+
+
 def test_ci_runs_the_server_tests_in_a_job_nothing_waits_for_and_that_needs_no_secret():
     job = WORKFLOW.split("\n  server-tests:\n", 1)[1].split("\n  coverage-badge:\n", 1)[0]
     full = WORKFLOW.split("\n  full-tests:\n", 1)[1].split("\n  coverage-tests:\n", 1)[0]

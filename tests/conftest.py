@@ -334,6 +334,7 @@ def pytest_configure(config):
     global MCP_FIXTURE
     config.addinivalue_line("markers", "arcade: needs the real pinned ArcadeDB engine (Java 21)")
     config.addinivalue_line("markers", "tmux: drives a real tmux server")
+    config.addinivalue_line("markers", "slow_size: minutes on an engine of its own; run only by `-m slow_size` (#362)")
     config.addinivalue_line("markers", "unproven: a person's act is not proven, as a token holder's request is (#214)")
     config.addinivalue_line("markers", "no_schema_template: every database of the test is built from nothing")
     config.addinivalue_line("markers", "exclusive: under xdist, runs while no other test of the run runs")
@@ -367,6 +368,11 @@ def in_shard(nodeid: str, index: int, count: int) -> bool:
 
 def pytest_collection_modifyitems(config, items):
     server = server_under_test()
+    if "slow_size" not in (config.getoption("markexpr") or ""):  # only `-m slow_size` runs these
+        dropped = [item for item in items if item.get_closest_marker("slow_size")]
+        if dropped:
+            items[:] = [item for item in items if item not in dropped]
+            config.hook.pytest_deselected(items=dropped)
     for item in items:
         module = Path(str(item.fspath)).stem
         reason = server and left_out_reason(module, getattr(item, "originalname", item.name))
