@@ -295,7 +295,7 @@ def _unknown_rows(reader, project_id, limit):
 def doctor_view(reader) -> list[dict]:
     """Every standing acceptance, per project, for `doctor`."""
     result = []
-    for row in reader.query(f"SELECT id,name,{FIELD} FROM projects ORDER BY name"):
+    for row in reader.query(f"SELECT id,name,{FIELD} FROM projects WHERE removed_at IS NULL ORDER BY name"):
         entries = _entries(row.get(FIELD))
         if entries:
             result.append({"project_id": row["id"], "project": row.get("name"), "accepted": entries,

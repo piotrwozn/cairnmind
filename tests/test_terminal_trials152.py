@@ -547,7 +547,9 @@ async def test_a_resize_keeps_the_focus_on_cancel_of_a_consent_dialog(tmp_path, 
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.push_screen(ConfirmModal("Run a command?", "\n".join(f"line {i}" for i in range(20)), approve="Run", consent=True))
-        await pilot.pause(.5)
+        # Drawn first: on a slow runner the first draw came after the resize, and a text that scrolls then takes the
+        # focus by design, so the test met another case than the one it names (#336).
+        await wait_until(pilot, lambda: getattr(app.screen, "drawn_at", float("inf")) < float("inf"), 10)
         assert app.focused.id == "confirm-no"
         await pilot.resize_terminal(120, 14)
         await pilot.pause(.5)
@@ -565,8 +567,8 @@ async def test_consent_hint_fits_a_narrow_pane_and_focus_never_ends_on_a_text_th
     async with app.run_test(size=size) as pilot:
         await settle(app, pilot)
         app.push_screen(ConfirmModal("Run a paid model test?", text, approve="Run", consent=True))
-        for _ in range(4):
-            await pilot.pause()
+        await wait_until(pilot, lambda: getattr(app.screen, "drawn_at", float("inf")) < float("inf"), 10)
+        await pilot.pause()
         hint, body = app.screen.query_one(".cm-hint"), app.screen.query_one(".cm-dialog-body")
         if hint.display:
             assert cell_len(str(hint.render())) <= hint.content_region.width

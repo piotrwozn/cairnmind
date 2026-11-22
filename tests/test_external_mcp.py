@@ -159,8 +159,13 @@ async def test_the_cursor_scenario_ask_packet_ack_remember(tmp_path, clean_env, 
 
                 acknowledged = tool_result(await client.call_tool("ack_resume", ack_arguments(packet)))
                 assert acknowledged["packet_id"] == packet["id"]
+                short = tool_result(await client.call_tool("resume_context", {}))  # #325
+                assert short["unchanged"] is True and short["packet_id"] == packet["id"] and "packet" not in short
+                assert (short["history"], short["evidence"]) == ("unarchived", "degraded")
                 saved = tool_result(await client.call_tool("remember", {"project": project["id"], "record": record,
                                                                         "sources": [note["id"]]}))
+    assert "content" not in saved and "metadata" not in saved and saved["origin_client"] == "external"
+    assert saved["metadata_not_stored_as_sent"] == ["origin_client", "origin_evidence"]
     stored = store.query("SELECT FROM records WHERE id=:id", {"id": saved["id"]})[0]
     assert {key: stored["metadata"][key] for key in ORIGIN_METADATA} == {
         "origin_client": "external", "origin_session_id": context["session_id"],
