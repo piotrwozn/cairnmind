@@ -100,6 +100,17 @@ async def test_transport_failures_are_distinguishable_without_private_exception_
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("url,word", [("http://127.0.0.1:11434", "local"), ("https://lan.example:11434", None)])
+async def test_only_a_server_on_this_machine_is_called_local(tmp_path, url, word):
+    def respond(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    async with httpx.AsyncClient(base_url=url, transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(OllamaUnavailable) as caught:
+            await Ollama(Settings(data_dir=tmp_path), client, base_url=url).models()
+    assert ("local" in str(caught.value)) == (word == "local"), str(caught.value)
+
+
 def test_existing_unavailable_exception_constructor_remains_compatible():
     error = OllamaUnavailable("Model is unavailable")
     assert str(error) == "Model is unavailable"

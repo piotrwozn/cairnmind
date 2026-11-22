@@ -115,6 +115,7 @@ class Ollama:
         self.num_ctx = settings.num_ctx if num_ctx is None else num_ctx
         from .memory_models import is_loopback
         self.label = "Local Ollama" if is_loopback(base_url) else "Ollama"
+        self._where = "local " if is_loopback(base_url) else ""  # a server on another computer is never called local
         self._credential = credential
         self._client = client
         self._model_cache: tuple[float, dict] | None = None
@@ -153,11 +154,11 @@ class Ollama:
             if isinstance(exc, httpx.ReadTimeout):
                 code, reason = "read_timeout", "response read timed out"
             elif isinstance(exc, httpx.ConnectError):
-                code, reason = "connect_error", "could not connect to the local runtime"
+                code, reason = "connect_error", f"could not connect to the {self._where}runtime"
             elif isinstance(exc, httpx.TimeoutException):
-                code, reason = "request_timeout", "local request timed out"
+                code, reason = "request_timeout", f"{self._where}request timed out"
             else:
-                code, reason = "request_error", "local HTTP request failed"
+                code, reason = "request_error", f"{self._where}HTTP request failed"
             raise OllamaUnavailable(
                 f"{self.label} {endpoint} request failed ({type(exc).__name__}): {reason}",
                 endpoint=endpoint, error_code=code,

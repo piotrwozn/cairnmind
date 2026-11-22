@@ -81,6 +81,10 @@ MESSAGES[LENGTH_CUT_EFFORT] = (MESSAGES[LENGTH_CUT] + " Model rozumujący może 
                                "i dodanym `--reasoning-effort none`.")
 
 
+EVALUATE_STEP = ("Run cairnmind eval run and cairnmind eval memory: answers are labelled unevaluated until both "
+                 "pass with these models.")
+
+
 class RemoteServerRefused(ValueError):
     """ollama_url names another computer and no profile records the consent (#288)."""
 
@@ -592,7 +596,7 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
         if report["embedding_changed"]:
             steps.append("Run cairnmind rebuild-vectors PROJECT for each project: vectors of the earlier model are "
                          "kept apart and never searched with this one.")
-    steps.append("Run cairnmind eval run and cairnmind eval memory: answers are labelled unevaluated until both "
-                 "pass with these models.")
+    if not is_default(candidate):  # the release's models carry no label: the release evaluation covers them
+        steps.append(EVALUATE_STEP)
     report["next"] = steps
     return report

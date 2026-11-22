@@ -563,6 +563,38 @@ def connect_only_installation(tmp_path, **fields):
     return stored
 
 
+def here_options(chat=RELEASE_CHAT, provider="ollama"):
+    return ["--models-url", "http://127.0.0.1:11434", "--provider", provider, "--chat-model", chat,
+            "--embedding-model", RELEASE_EMBEDDING]
+
+
+def test_remote_with_the_models_and_place_the_installation_already_uses_changes_nothing(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="enabled")
+    before = config_bytes(tmp_path)
+    result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(), "--yes")
+    assert result.exit_code == 0 and "nothing to change" in said(result), result.output
+    assert "model: from" not in said(result)
+    assert config_bytes(tmp_path) == before and world.log == []
+
+
+def test_remote_with_one_role_or_the_provider_different_is_still_a_change(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="enabled")
+    dry = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(chat="other:4b"))
+    assert "The chat model: from" in said(dry) and "The embedding model: from" not in said(dry), dry.output
+    other = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(provider="openai_compatible"))
+    assert "The chat model: from" in said(other) and "The embedding model: from" in said(other), other.output
+
+
+def test_the_release_models_are_not_told_they_are_unevaluated_and_the_topology_agrees(tmp_path, world):
+    make(tmp_path, knowledge_agent="disabled")
+    result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(), "--yes")
+    assert result.exit_code == 0, result.output
+    assert "labelled unevaluated" not in said(result)
+    assert "evaluated for this release" in said(result)
+    other = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(chat="other:4b"), "--yes")
+    assert "labelled unevaluated" in said(other) and "evaluated for this release" not in said(other), other.output
+
+
 def test_going_back_without_a_choice_is_refused_and_names_both(tmp_path, world):
     connect_only_installation(tmp_path)
     before = config_bytes(tmp_path)

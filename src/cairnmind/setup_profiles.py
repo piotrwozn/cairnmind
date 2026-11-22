@@ -617,7 +617,11 @@ def model_moves(settings, request) -> list[dict]:
                 raise SetupRefused(MODEL_REFUSED, role=role, model=model,
                                    url=database_mode.shown(request.models_url), error=str(exc)) from None
             try:
-                same = enabled and memory_models.profile(settings, role) == wanted and (
+                # A role without a profile runs on the Ollama of ollama_url: asking for that same server and model
+                # changes nothing (check_role saves it as no profile too).
+                current = memory_models.profile(settings, role) or {
+                    "provider": "ollama", "base_url": memory_models.normalize_base_url(settings.ollama_url)}
+                same = enabled and current == wanted and (
                     getattr(settings, memory_models.MODEL_FIELDS[role]) == model)
             except ValueError:
                 same = False  # a stored profile that cannot be read is replaced
@@ -814,6 +818,8 @@ def _apply(settings, request, plan, moves, result, say, state) -> None:
         state["step"] = (STEP_MODEL, {"role": move["role"]})
         report = asyncio.run(memory_models.configure_role(local, move["role"], **move["kwargs"]))
         _add_next(result, report["next"])
+    if moves and memory_models.is_default(Settings.load(settings.data_dir)):  # the pair after both saves is the release's
+        result["next"] = [item for item in result["next"] if item != (VERBATIM, {"sentence": memory_models.EVALUATE_STEP})]
     if request.profile == "remote" and moves:
         state["step"] = (STEP_AGENT, {})
         said = knowledge_mode.turn_on(settings)
