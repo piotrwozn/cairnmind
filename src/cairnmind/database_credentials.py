@@ -402,7 +402,7 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
     from .arcade import ArcadeClient, ArcadeError
     import json
     name, secret = _new_user(settings)
-    admin =ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
+    admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     payload = {"name": name, "password": secret, "databases": {settings.arcade_database: [group]}}
     created = database_created = False
     try:
