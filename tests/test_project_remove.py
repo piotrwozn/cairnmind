@@ -1,0 +1,156 @@
+"""A project is removed from the registry and keeps its memory; the same name and folder bring it back (#327)."""
+import pytest
+
+from cairnmind import project_removal as removal
+from cairnmind.ingest import index_project
+from cairnmind.sessions import SessionManager
+from cairnmind.sql import insert_document
+from cairnmind.store import EXPORT_TYPES, Store
+
+from conftest import as_person
+
+NOT_COUNTED = {"projects", "project_roots", "journal_state", "journal_events"}
+
+
+@pytest.fixture
+def world(tmp_path):
+    """A store with one project that owns something of every kind the issue lists."""
+    store = Store(tmp_path / "data")
+    root, extra = tmp_path / "app", tmp_path / "app-wt"
+    for folder in (root, extra):
+        folder.mkdir()
+    (root / "a.py").write_text("x = 1\n")
+    (extra / "b.py").write_text("y = 2\n")
+    project = store.add_project("app", root)
+    store.add_project_root(project["id"], extra)
+    index_project(store, project["id"])
+    pid = project["id"]
+    source = store.query("SELECT id FROM sources WHERE project_id=:p LIMIT 1", {"p": pid})[0]["id"]
+    confirmed = as_person(store, pid, {"kind": "decision", "key": "k", "content": "Use X."}, [source])
+    store.enqueue("embed", pid, {"chunk_id": "c"}, "job-1")
+    SessionManager(store, store.settings).prepare(pid, "api", timeout=0)  # a session with its resume packet
+    with store.transaction() as tx:
+        insert_document(tx, "import_cursors", {"id": "cursor-1", "project_id": pid, "path": "/nowhere.jsonl",
+                                               "client": "claude"})
+    return store, project, root, extra, confirmed
+
+
+def remove(store, project, folder=None):
+    plan = removal.plan(store.settings, store, store.resolve_project(project["id"]), folder)
+    return removal.apply(store, plan)
+
+
+def counts(store, pid):
+    return {name: store._count(name, pid) for name in EXPORT_TYPES if name not in NOT_COUNTED}
+
+
+def test_remove_keeps_every_row_and_frees_the_name_and_folder(world, tmp_path):
+    store, project, root, extra, confirmed = world
+    before = counts(store, project["id"])
+    assert before["records"] and before["sources"] and before["chunks"] and before["jobs"] and before["sessions"]
+    result = remove(store, project)
+    assert result["applied"] and result["removed_at"]
+    assert counts(store, project["id"]) == before
+    assert store.list_projects() == []
+    assert not store.query("SELECT FROM project_roots WHERE project_id=:p", {"p": project["id"]})
+    row = store.query("SELECT FROM projects WHERE id=:p", {"p": project["id"]})[0]
+    assert row["removed_name"] == "app" and row["removed_root"] == str(root) and row["removed_roots"] == [str(extra)]
+    assert "name" not in row and "root" not in row
+    for value in ("app", project["id"], str(root), str(extra / "b.py")):
+        with pytest.raises(ValueError, match=r"^Unknown project: .*was removed from the registry"):
+            store.resolve_project(value)
+    other = tmp_path / "other"
+    other.mkdir()
+    assert store.add_project("app", other)["id"] != project["id"]  # the name is free
+    assert store.add_project("another", root)["id"] != project["id"]  # the folder is free
+
+
+def test_add_with_the_same_name_and_folder_brings_back_the_same_project(world):
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    back = store.add_project("app", root)
+    assert back["id"] == project["id"] and back["name"] == "app" and back["root"] == str(root)
+    row = store.query("SELECT FROM projects WHERE id=:p", {"p": project["id"]})[0]
+    assert not any(field in row for field in removal.REMOVED_FIELDS)
+    assert [r["path"] for r in store.query("SELECT FROM project_roots WHERE project_id=:p", {"p": project["id"]})] \
+        == [str(root)]  # the extra folder is not added back
+    assert store.resolve_project("app")["id"] == project["id"]
+    assert store.query("SELECT status FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["status"] == "confirmed"
+
+
+def test_a_backup_after_removal_restores_with_the_project_still_removed(world, tmp_path):
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    target = Store(tmp_path / "target")
+    target.restore(store.backup(tmp_path / "removed.cairnmind.json.gz"))
+    assert target.list_projects() == []
+    assert [r["id"] for r in removal.removed_rows(target)] == [project["id"]]
+    assert target.query("SELECT status FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["status"] == "confirmed"
+
+
+def test_jobs_of_a_removed_project_are_not_claimed_until_it_is_back(world):
+    store, project, root, extra, confirmed = world
+    for job in store.query("SELECT id FROM jobs WHERE project_id=:p", {"p": project["id"]}):
+        store.command("UPDATE jobs SET state='completed' WHERE id=:id AND dedupe_key!=:keep",
+                      {"id": job["id"], "keep": "job-1"})
+    store.enqueue("other", None, {}, "unowned")
+    remove(store, project)
+    assert store.claim_job("w", kinds=["embed"]) is None
+    assert store.claim_job("w", kinds=["other"])["project_id"] is None  # a job of no project is still claimed
+    store.add_project("app", root)
+    assert store.claim_job("w", kinds=["embed"])["project_id"] == project["id"]
+
+
+def test_jobs_in_work_refuse_and_change_nothing(world):
+    store, project, root, extra, confirmed = world
+    plan = removal.plan(store.settings, store, store.resolve_project("app"))
+    assert store.claim_job("w", lease_seconds=300, kinds=["embed"])["project_id"] == project["id"]
+    with pytest.raises(removal.Refused, match="Jobs of app are in work now \\(embed\\)"):
+        removal.apply(store, plan)
+    assert [p["id"] for p in store.list_projects()] == [project["id"]]
+    with pytest.raises(removal.Refused, match="in work"):
+        removal._jobs_in_work(store, project)
+
+
+def test_dropping_an_extra_root_deletes_only_that_row(world):
+    store, project, root, extra, confirmed = world
+    sources = store._count("sources", project["id"])
+    result = remove(store, project, extra)
+    assert result["applied"] and "removed_at" not in result
+    assert [r["path"] for r in store.query("SELECT FROM project_roots WHERE project_id=:p", {"p": project["id"]})] \
+        == [str(root)]
+    assert store.resolve_project("app")["id"] == project["id"] and "removed_at" not in store.resolve_project("app")
+    index_project(store, project["id"])
+    current = {r["uri"]: r["is_current"] for r in store.query("SELECT uri,is_current FROM sources WHERE kind='code'")}
+    assert store._count("sources", project["id"]) == sources  # the rows stay as evidence
+    assert [uri for uri, is_current in current.items() if is_current and uri.endswith("b.py")] == []
+
+
+def test_forget_deletes_a_removed_project_by_id(world):
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    assert removal.forget_target(store, project["id"])["id"] == project["id"]
+    with pytest.raises(ValueError, match="Unknown project: app"):
+        removal.forget_target(store, "app")  # by name it stays unknown: only the id names it
+    store.forget_project(project["id"])
+    assert not store.query("SELECT FROM projects WHERE id=:p", {"p": project["id"]})
+    assert store._count("records", project["id"]) == 0
+
+
+def test_restore_refuses_when_the_folder_is_now_another_projects_root(world, tmp_path):
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    # Another project took the folder as an extra root while this one was removed.
+    taker = store.add_project("taker", tmp_path / "taker-home")
+    store.add_project_root(taker["id"], root)
+    with pytest.raises(ValueError, match="is now a folder of the project taker"):
+        store.add_project("app", root)
+    assert store.list_projects() == [store.resolve_project("taker")]
+    assert [r["id"] for r in removal.removed_rows(store)] == [project["id"]]
+
+
+def test_the_status_counts_registered_and_removed_projects(world):
+    store, project, root, extra, confirmed = world
+    assert (store.status()["projects"], store.status()["removed_projects"]) == (1, 0)
+    remove(store, project)
+    assert (store.status()["projects"], store.status()["removed_projects"]) == (0, 1)
