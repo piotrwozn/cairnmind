@@ -246,11 +246,11 @@ def _files(root: Path, excluded: tuple[Path, ...] = (), errors: list[OSError] | 
             yield path
 
 
-MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})  # where `cairnmind install` writes its block
+MANAGED_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "cairnmind-recorder.md"})  # where `cairnmind install` writes its block; the recorder subagent's body (#376)
 
 
 def _indexed_spans(lines: list[str], uri: str) -> list[tuple[int, int]]:
-    """The [first, end) line ranges that are indexed: all of a file, except, in AGENTS.md and CLAUDE.md, the lines of
+    """The [first, end) line ranges that are indexed: all of a file, except, in the managed files (AGENTS.md, CLAUDE.md and the recorder subagent's file), the lines of
     Cairnmind's own block (#313), found as extraction finds it. An unclosed block is indexed as it is."""
     if PurePosixPath(uri).name not in MANAGED_FILES:
         return [(0, len(lines))]
