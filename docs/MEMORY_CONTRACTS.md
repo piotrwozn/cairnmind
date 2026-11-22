@@ -231,11 +231,15 @@ What they can do, and what the refusal tells them:
 - **Adopting old tasks.** `cairnmind plan adopt` gives each adopted task a
   plan key, which changes what was confirmed. On a task a person confirmed, or
   one confirmed before the rule, it is refused whoever runs it (`Task '<key>'
-  (task <id>) ... The person disputes the task in the inspector of the
-  workspace`). The person disputes the task there, after which it can be
-  adopted, and its step is proposed until they confirm the plan. Up to 0.10.0
-  `task add` stored every task as confirmed, so the tasks of an old group all
-  count as confirmed before the rule.
+  (task <id>) ... The person adopts the group in the workspace`). The person
+  adopts such a group in the workspace: More, then Old task groups, choose the
+  group, read its tasks, then Adopt. That is one person's act (`POST
+  /inspector/legacy-groups/adopt`, with the open workspace's key): every task of
+  the group becomes a step of a new plan, proposed until the person confirms the
+  plan, with its progress and reported evidence kept. A group that holds nothing
+  a person confirmed is still adopted by `plan adopt`. Up to 0.10.0 `task add`
+  stored every task as confirmed, so the tasks of an old group all count as
+  confirmed before the rule.
 - **The checkpoint record** is the one exception. It is a slot that holds the
   latest reported state, not a statement, and every session writes it. If a
   person confirmed it in the inspector, the next `checkpoint` is still stored:
@@ -245,7 +249,8 @@ What they can do, and what the refusal tells them:
   refused.
 
 A person takes their own confirmation away by disputing the record in the
-inspector, by a conflict decision, or by an import run from the memory view of the
+inspector, by a conflict decision, by adopting an old task group in the
+workspace, or by an import run from the memory view of the
 workspace (Import, Team memory) that replaces what was confirmed or disputed here (`replace_confirmed`). A disputed record is no longer a
 person's confirmation, and any writer may change it, its status included: a
 session can set a record a person disputed back to `proposed`. Only a
@@ -270,6 +275,7 @@ audit note included:
 | Conflict decision (`POST /inspector/conflicts/resolve`) | Superseding by a person; the finding chosen to stand becomes confirmed. |
 | Plan confirmation (`POST /inspector/plans/{id}/confirm`) | A confirmed plan and its steps. The person confirms a plan in the inspector (Plans, then Confirm). |
 | Record kind (`POST /inspector/record-kinds/accept` and `/withdraw`) | An accepted or withdrawn transcript record kind. |
+| Old task group (`POST /inspector/legacy-groups/adopt`) | A new plan whose steps are the tasks of an old `--plan` group, each proposed until the person confirms the plan, with one audit note (`review://`, action `adopt_plan_group`). The person adopts a group in the workspace (More, then Old task groups); the body carries the task versions the person was shown, a group that changed since is refused with nothing written, and `adopt_group` itself refuses without the proof. |
 | Impact verdict (`POST /inspector/impact/verdict`) | A person's verdict on one entry of `impact`, an audit note (`review://impact/...`) that changes no record. The person gives it in the inspector (Impact, then Verdict); `record_verdict` itself refuses without the proof. |
 | Release (`POST /inspector/records/{id}/release`) | A release of one record's current hits of the secrets scan (`release://`), published with its reason. The person releases a record in the inspector (open it, then Release); `release` itself refuses without the proof. |
 | Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
@@ -284,7 +290,9 @@ say that the person does it in the inspector of the workspace;
 `remember --confirmed` stores nothing, not even a proposed record. `task add`
 stores a proposed task and says so on standard error. `plan save` and `plan
 adopt` are never a person's act: they are refused when they would change or
-remove a step a person confirmed, and any other save is stored. `memory import`,
+remove a step a person confirmed, and any other save is stored; a group of old
+tasks that holds such a step is adopted in the workspace (More, then Old task
+groups). `memory import`,
 `memory import-published` and `memory import-commit` with `--replace-confirmed`
 are refused by the service; the person runs them from the memory view (Import,
 Team memory). Records that 0.12.0 or earlier confirmed on the

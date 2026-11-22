@@ -50,6 +50,8 @@ Older `metadata.plan_id` values are plain group labels. New plans use `metadata.
 cairnmind plan adopt shop login --idempotency-key adopt-login-1 --title "Login" --activate
 ```
 
+A group that holds a task a person confirmed, which is every group that 0.10.0 or earlier stored with `task add`, is refused there: the person adopts it in the workspace, under More, then Old task groups.
+
 ## Named check profiles
 
 Declare profiles in the project repository, in `.cairnmind/checks.toml`:
