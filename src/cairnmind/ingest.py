@@ -26,6 +26,8 @@ from cairnmind.arcade import ArcadeError
 from cairnmind.embed_jobs import queue_embed_jobs
 from cairnmind.agent_memory import is_mcp_source
 from cairnmind.impact_verdicts import is_verdict_source
+from cairnmind import graph_transactions
+from cairnmind.graph_transactions import GraphTransactions, await_vertices
 from cairnmind.journal import MAX_TRANSACTION_EVENTS
 from cairnmind.memory_paths import (bound_metadata, imported_source_ids, is_memory_path, is_reserved_below,
                                     memory_bindings, nested_reserved)
@@ -1071,29 +1073,54 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         return {"nodes": int(markers[0].get("graph_nodes") or 0),
                 "edges": int(markers[0].get("graph_edges") or 0), "graph_unchanged": True}
 
-    with store.transaction() as tx:
+    # One transaction for a graph that fits in one; else bounded ones, the fingerprint cleared first (graph_transactions.py).
+    batches = GraphTransactions(store, project_id)
+    try:
+        tx = batches.tx
         if not tx.query("SELECT id FROM projects WHERE id=:project", {"project": project_id}):
             raise ValueError("Project no longer exists; graph was not rebuilt")
-        from .journal import Journal
-        Journal.touch(tx, project_id, "graph", op="reset")
-        if _graph_as_remembered(tx, project_id, remembered):
+        as_remembered = _graph_as_remembered(tx, project_id, remembered)  # reads the fingerprint: before it is cleared
+        tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:project", {"project": project_id})
+        if as_remembered:
             removed = sorted(remembered["edges"] - edges.keys())
             for offset in range(0, len(removed), 500):
-                tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
-                           {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": removed[offset:offset + 500]})
+                batches.tx.command("DELETE FROM edges WHERE project_id=:project AND kind IN :kinds AND id IN :ids",
+                                   {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS), "ids": removed[offset:offset + 500]})
+                batches.wrote(len(removed[offset:offset + 500]))
             changed_nodes = [item for identifier, item in nodes.items()
                              if remembered["nodes"].get(identifier) != digests[identifier]]
             new_edges = [item for identifier, item in edges.items() if identifier not in remembered["edges"]]
         else:
-            tx.command(
-                "DELETE FROM edges WHERE project_id=:project AND kind IN :kinds",
-                {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
-            )
+            while True:
+                deleted = batches.tx.command(
+                    f"DELETE FROM edges WHERE project_id=:project AND kind IN :kinds LIMIT {graph_transactions.ROWS_PER_TRANSACTION}",
+                    {"project": project_id, "kinds": list(GRAPH_EDGE_KINDS)},
+                )
+                count = deleted[0].get("count") if deleted and isinstance(deleted[0], dict) else None
+                if type(count) is not int:
+                    raise RuntimeError("The database did not say how many graph edges it deleted")
+                batches.wrote(count)
+                if count < graph_transactions.ROWS_PER_TRANSACTION:
+                    break
             changed_nodes, new_edges = list(nodes.values()), list(edges.values())
-        # What the upserts look up row by row is read here in a few requests; the checks stay theirs.
-        store.prefetch_graph(tx, changed_nodes, new_edges)
         # The transaction reports the graph as reset, so its rows are written in groups (issue #167).
-        store.write_graph(tx, project_id, changed_nodes, new_edges)
+        # What the upserts look up row by row is read in a few requests per group; the checks stay theirs.
+        step = min(1000, graph_transactions.ROWS_PER_TRANSACTION)
+        for offset in range(0, len(changed_nodes), step):
+            part = changed_nodes[offset:offset + step]
+            store.prefetch_graph(batches.tx, part, [])
+            store.write_graph(batches.tx, project_id, part, [])
+            batches.wrote(len(part))
+        if batches.commits and new_edges:  # the edges look their vertices up by the index of nodes.id
+            batches.commit()
+            await_vertices(store, [item["id"] for item in changed_nodes])
+            batches.open()
+        for offset in range(0, len(new_edges), step):
+            part = new_edges[offset:offset + step]
+            store.prefetch_graph(batches.tx, [], part)
+            store.write_graph(batches.tx, project_id, [], part)
+            batches.wrote(len(part))
+        tx = batches.tx
         if hasattr(tx, "known"):
             tx.known = None
         previous_nodes = tx.query(
@@ -1102,13 +1129,20 @@ def _build_graph(store, project_id: str, indexed: dict[Path, dict], remembered: 
         )
         # Knowledge-record relationships referencing a removed code node must not silently
         # become dangling: such a node is retained. The rest go in groups (issue #167).
-        store.remove_graph_nodes(tx, project_id, [row["id"] for row in previous_nodes if row["id"] not in nodes])
-        # This marker commits atomically with the native vertex/edge replacement.
-        # An interrupted/failed graph transaction can never claim completion.
-        tx.command(
+        doomed = [row["id"] for row in previous_nodes if row["id"] not in nodes]
+        for offset in range(0, len(doomed), graph_transactions.ROWS_PER_TRANSACTION):
+            store.remove_graph_nodes(batches.tx, project_id, doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION])
+            batches.wrote(len(doomed[offset:offset + graph_transactions.ROWS_PER_TRANSACTION]))
+        # This marker commits with the last of the vertex/edge replacement, and until it does the graph is not built.
+        # An interrupted/failed graph write can never claim completion.
+        batches.tx.command(
             "UPDATE projects SET graph_fingerprint=:fingerprint,graph_nodes=:nodes,graph_edges=:edges WHERE id=:project",
             {"fingerprint": fingerprint, "nodes": len(nodes), "edges": len(edges), "project": project_id},
         )
+        batches.commit()
+    except BaseException:
+        batches.abandon()
+        raise
     if state is not None:
         state.update(written)
     return {"nodes": len(nodes), "edges": len(edges), "graph_unchanged": False,
