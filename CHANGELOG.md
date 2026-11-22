@@ -222,6 +222,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The test engine client records, while a request is still waiting after 20 seconds, the request (without values), the sockets on the engine's port with their queues, the end of the engine log and the engine's thread dump, and reports a late answer as a slow request (#221).
 - `scripts/measure_snapshot.py N` times a first memory snapshot, an unchanged repeat and a repeat after one added record on a synthetic project of N records, with its own temporary local engine, and removes its temporary folder after that engine has exited; Linux or WSL only (#161).
 - The tests of the installer no longer read the tmux sockets in the machine's own /private/tmp folder, so a Mac that holds sockets of an earlier workspace no longer fails them; a test that cuts the installer's functions out itself, passes the machine's socket folder, or leaves TMPDIR unset now fails with a sentence (#364).
+- The activity panel's throttle test opens its window itself and lists the requests made, with their times, when it fails, so a slow first load no longer fails it; a new test checks that a trigger during a refresh gets one more refresh, not one per trigger (#378).
 
 ## 0.12.0
 
