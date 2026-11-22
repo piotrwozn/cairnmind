@@ -8,6 +8,19 @@
 
 This page is kept out of the copy that the evaluation indexes (see [../EVALUATION.md](../EVALUATION.md)), so that a run cannot read the results of earlier runs. It reports the questions that failed by topic, not by their answers.
 
+## The default chat model through the native path and through Ollama's `/v1` (issue #217)
+
+**NOT MEASURED YET.** Nothing below is a result. The figures need about one hour on the machine with the models: `scripts/compare_model_paths.sh` runs `cairnmind eval run` and `cairnmind eval repository` three times each on the native path, then the same through `/v1` for the chat role only (`--reasoning-effort none`, a second `ollama serve` whose context length is 16,384, because Cairnmind sends no `num_ctx` there), in a throwaway data directory with its own ports.
+
+| Path | Run | `eval run` right of 20 | `eval repository` right, complete and wrong | Model calls | Seconds | Calls cut at the length limit | Highest prompt tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| native | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
+| `/v1`, chat only | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
+
+The last two columns hold the `eval run` runs only: the `eval repository` report keeps no per-call length reason or prompt tokens, so they stay empty for it.
+
+What differed between the paths is to be written here after the run. Also to be recorded: whether the model check of `cairnmind models set --role chat --provider openai_compatible` without `--reasoning-effort` ends at the length limit on the real server.
+
 ## Questions about things the project does not have (issue #245)
 
 **With the subject check, twenty of twenty-one questions about things this repository does not have are refused, where eighteen were on the tree without it; the one that is still answered names its product in lower case, which the check does not read. No right answer was lost to the check: the twenty gave 18, 18 and 18 before, 18, 18 and 18 with its first version and 18, 18 and 18 with the version after review, with no complete and wrong answer, and the check refused none of them. Merged with the fixes after the release trial (478535d), which change what the answering model is shown, the figures are 20 of 21 again, and 19, 19 and 20 of the twenty with no complete and wrong answer, where the fixes alone gave 19 in one run; the check again refused no answer of the twenty or of the 22 further questions. The acceptance of the issue asks for every such question to be refused, so it is not met in full.**
