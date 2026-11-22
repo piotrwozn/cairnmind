@@ -349,8 +349,10 @@ def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
-def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_removed(tmp_path):
-    """#290: `workspace stop --clients` cannot reach a server without a tmux client, so it is not the advice."""
+@pytest.mark.parametrize("stop_workspace", [{}, {"CAIRNMIND_INSTALL_STOP_WORKSPACE": "1"}])
+def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_removed(tmp_path, stop_workspace):
+    """#290: `workspace stop --clients` cannot reach a server without a tmux client, so it is not the advice.
+    #307: asking the installer to close the workspace does not change that: it could close nothing."""
     import socket
     import tempfile
     script = SCRIPT.read_text()
@@ -367,14 +369,15 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
         (bin_dir / "id").symlink_to(shutil.which("id"))
         installed = tool(tmp_path / "cairnmind", "exit 1")
         result = subprocess.run([BASH, "-c", f"set -euo pipefail\n{functions}\nstop_installed {installed} cairnmind"],
-                                env={"PATH": str(bin_dir), "TMPDIR": str(system_temp)},
+                                env={"PATH": str(bin_dir), "TMPDIR": str(system_temp), **stop_workspace},
                                 capture_output=True, text=True, timeout=30)
         server.close()
         assert result.returncode == 1
         assert str(folder / "tmux.sock") in result.stderr
         assert "tmux is not on the PATH here" in result.stderr and "Install tmux" in result.stderr
+        assert "could not be checked or closed" in result.stderr
         assert "remove each socket file" in result.stderr and "workspace stop" not in result.stderr
-        assert (folder / "tmux.sock").exists()
+        assert "Closing" not in result.stdout and (folder / "tmux.sock").exists()
     finally:
         shutil.rmtree(system_temp, ignore_errors=True)
 

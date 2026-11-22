@@ -264,32 +264,33 @@ stop_installed() {
         printf 'Note: %s workspace status failed, so a running workspace could not be ruled out.\n' "$name" >&2
     fi
     if [[ -n "$terminals" ]]; then
+        # A count and at most five of them: a machine can hold dozens of leftover sockets (#287).
+        # Counted in the shell: a PATH without grep or sed still gets the refusal.
+        total=0
+        shown=""
+        while IFS= read -r socket; do
+            total=$((total + 1))
+            if ((total > 1 && total <= 5)); then
+                shown="$shown"$'\n'
+            fi
+            if ((total <= 5)); then
+                shown="$shown$socket"
+            fi
+        done <<< "$terminals"
+        if ((total > 5)); then
+            shown="$shown"$'\n'"and $((total - 5)) more."
+        fi
+        # Sockets without a tmux client here: nothing can ask or close them, so `workspace stop` is no way out,
+        # and neither is the permission to close them (#307).
+        if [[ "$terminals" == /* ]] && ! command -v tmux >/dev/null 2>&1; then
+            printf '%s\n' \
+                'Terminal server sockets of the installed version were found, but tmux is not on the PATH here, so they could not be checked or closed:' \
+                "$shown" \
+                'Install tmux so they can be checked, or, when no terminal server runs, remove each socket file named above.' \
+                'Then run this installer again. The installer removes nothing itself.' >&2
+            exit 1
+        fi
         if [[ "${CAIRNMIND_INSTALL_STOP_WORKSPACE:-}" != 1 ]]; then
-            # A count and at most five of them: a machine can hold dozens of leftover sockets (#287).
-            # Counted in the shell: a PATH without grep or sed still gets the refusal.
-            total=0
-            shown=""
-            while IFS= read -r socket; do
-                total=$((total + 1))
-                if ((total > 1 && total <= 5)); then
-                    shown="$shown"$'\n'
-                fi
-                if ((total <= 5)); then
-                    shown="$shown$socket"
-                fi
-            done <<< "$terminals"
-            if ((total > 5)); then
-                shown="$shown"$'\n'"and $((total - 5)) more."
-            fi
-            # Sockets without a tmux client here: nothing can ask or close them, so `workspace stop` is no way out.
-            if [[ "$terminals" == /* ]] && ! command -v tmux >/dev/null 2>&1; then
-                printf '%s\n' \
-                    'Terminal server sockets of the installed version were found, but tmux is not on the PATH here, so they could not be checked:' \
-                    "$shown" \
-                    'Install tmux so they can be checked, or, when no terminal server runs, remove each socket file named above.' \
-                    'Then run this installer again. The installer removes nothing itself.' >&2
-                exit 1
-            fi
             printf '%s\n' \
                 "A workspace or coding sessions of the installed version are running ($total):" \
                 "$shown" \
