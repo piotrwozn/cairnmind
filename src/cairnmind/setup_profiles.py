@@ -102,9 +102,24 @@ STORAGE_REFUSED_NOTED = "The store at {url} cannot be used: {error} Nothing was 
 # Tests, plan and result
 TEST_STORAGE_OK = ("Tested: ArcadeDB at {url} answers with version {version}, and the user {user} signs in to the "
                    "database {database}.")
-TEST_STORAGE_CREATE = ("Not tested yet: the user {user} cannot sign in to the database {database} on ArcadeDB at {url}. "
-                       "With --yes, --admin-password-file first creates them as `cairnmind db create-user` does, and "
-                       "the test runs then.")
+TEST_ADMIN_OK = ("Tested: ArcadeDB at {url} answers with version {version} and accepts the administrator; nothing was "
+                 "created.")
+ADMIN_REFUSED = ("The administrator was refused: ArcadeDB at {url} did not accept root with the password in "
+                 "--admin-password-file.")
+# ArcadeDB cannot list users and answers alike for a user that does not exist and for a wrong password.
+CREATE_BOTH = ("Not tested yet: the user {user} does not sign in to the database {database}, which does not exist. With "
+               "--yes, --admin-password-file creates the database and, if it does not exist yet, the user, with rights "
+               "on that database only. A user that exists with another password is never changed: that run is refused "
+               "and nothing is created.")
+CREATE_DB = ("Not tested yet: the user {user} exists, but the database {database} does not. With --yes, "
+             "--admin-password-file creates the database; the user is used only if it has rights on it, otherwise "
+             "nothing is created.")
+NO_RIGHTS = ("Not tested yet: the user {user} exists, but it has no rights on the database {database}. With --yes the "
+             "run is refused and nothing is created: each database gets its own user, so use a new user name.")
+CREATE_USER = ("Not tested yet: the user {user} does not sign in to the database {database}, which exists. With --yes, "
+               "--admin-password-file creates the user, if it does not exist yet, with rights on that database only. "
+               "A user that exists with another password is never changed: that run is refused and nothing is "
+               "created.")
 TEST_READABLE = "Tested: the store at {url} can be read for the backup."
 TEST_MODEL_OK = "Tested: the {role} model {model} at {url} answers."
 CHANGE_STORAGE_REMOTE = ("Storage: from {before} to ArcadeDB at {url}, which this installation only connects to: user "
@@ -233,7 +248,12 @@ MESSAGES = {
     INVALID_ROLE: "Nie można odczytać ustawień modelu {role}: {error} Popraw je poleceniem `cairnmind models set --role {role}`. Nic nie zostało zmienione.",
     REMOTE_NOT_READABLE: "Nie można odczytać bazy pod adresem {url} do kopii zapasowej: {error} Nic nie zostało zmienione.",
     TEST_STORAGE_OK: "Sprawdzono: ArcadeDB pod adresem {url} odpowiada w wersji {version}, a użytkownik {user} loguje się do bazy {database}.",
-    TEST_STORAGE_CREATE: "Jeszcze nie sprawdzono: użytkownik {user} nie może zalogować się do bazy {database} w ArcadeDB pod adresem {url}. Z --yes opcja --admin-password-file najpierw ich tworzy, tak jak `cairnmind db create-user`, i wtedy test się odbywa.",
+    TEST_ADMIN_OK: "Sprawdzono: ArcadeDB pod adresem {url} odpowiada wersją {version} i przyjmuje administratora; nic nie zostało utworzone.",
+    ADMIN_REFUSED: "Administrator został odrzucony: ArcadeDB pod adresem {url} nie przyjął konta root z hasłem z --admin-password-file.",
+    CREATE_BOTH: "Jeszcze nie sprawdzono: użytkownik {user} nie loguje się do bazy {database}, która nie istnieje. Z --yes opcja --admin-password-file tworzy bazę i, jeśli jeszcze nie istnieje, użytkownika, z uprawnieniami tylko do tej bazy. Istniejącemu użytkownikowi z innym hasłem nic się nie zmienia: taki przebieg jest odrzucany i nic nie powstaje.",
+    CREATE_DB: "Jeszcze nie sprawdzono: użytkownik {user} istnieje, ale baza {database} nie. Z --yes opcja --admin-password-file tworzy bazę; użytkownik zostaje użyty tylko wtedy, gdy ma do niej uprawnienia, w przeciwnym razie nic nie powstaje.",
+    NO_RIGHTS: "Jeszcze nie sprawdzono: użytkownik {user} istnieje, ale nie ma uprawnień do bazy {database}. Z --yes przebieg jest odrzucany i nic nie powstaje: każda baza ma własnego użytkownika, więc użyj nowej nazwy użytkownika.",
+    CREATE_USER: "Jeszcze nie sprawdzono: użytkownik {user} nie loguje się do bazy {database}, która istnieje. Z --yes opcja --admin-password-file tworzy użytkownika, jeśli jeszcze nie istnieje, z uprawnieniami tylko do tej bazy. Istniejącemu użytkownikowi z innym hasłem nic się nie zmienia: taki przebieg jest odrzucany i nic nie powstaje.",
     TEST_READABLE: "Sprawdzono: bazę pod adresem {url} można odczytać do kopii zapasowej.",
     TEST_MODEL_OK: "Sprawdzono: model {role} {model} pod adresem {url} odpowiada.",
     CHANGE_STORAGE_REMOTE: "Baza: z {before} na ArcadeDB pod adresem {url}, z którą ta instalacja tylko się łączy: użytkownik {user}, baza {database}, hasło czytane z {password_file}.",
@@ -549,7 +569,9 @@ def _writer_items(found: dict, url: str) -> list:
 
 
 def _test_storage(plan, request, yes, result) -> None:
-    """Test the candidate store without saving anything; with --admin-password-file and --yes, create its user first."""
+    """Test the candidate store without saving anything; with --admin-password-file and --yes, create its user first.
+
+    Without --yes the administrator's file only reads what can be read, and the plan says what --yes would create."""
     candidate = plan["candidate"]
     url = database_mode.address(candidate)
     named = {"url": url, "user": candidate.arcade_user, "database": candidate.arcade_database}
@@ -566,11 +588,30 @@ def _test_storage(plan, request, yes, result) -> None:
             raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
         result["done"].append((USER_CREATED if created["created"] or created["database_created"] else USER_EXISTED,
                                named))
+    if admin is not None and not yes:
+        # The dry run signs in as the administrator, which a user that does not exist yet cannot (#365).
+        try:
+            found = database_credentials.plan_user(candidate, admin)
+        except ArcadeError as exc:
+            if exc.status_code in (401, 403):
+                raise SetupRefused(STORAGE_REFUSED, url=url, error=(ADMIN_REFUSED, {"url": url})) from None
+            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+        except ValueError as exc:
+            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+        if found["sign_in"] is None:
+            result["tests"].append((TEST_STORAGE_OK, {**named, "version": found["version"]}))
+        else:
+            result["tests"].append((TEST_ADMIN_OK, {"url": url, "version": found["version"]}))
+            # 403 is the answer to a user that exists and has no rights, 401 to one that does not or whose password differs
+            known = found["sign_in"] == 403
+            create = ((NO_RIGHTS if found["database_exists"] else CREATE_DB) if known
+                      else CREATE_USER if found["database_exists"] else CREATE_BOTH)
+            result["tests"].append((create, named))
+        result["writer"] = _writer_items(store_writer.inspect(candidate), url)
+        return
     block = database_credentials.doctor_block(candidate)
     if block.get("available") is True and block.get("database_available") is True and not block.get("error"):
         result["tests"].append((TEST_STORAGE_OK, {**named, "version": block.get("version", "")}))
-    elif admin is not None and not yes and block.get("available") is True and block.get("database_available") is False:
-        result["tests"].append((TEST_STORAGE_CREATE, named))  # the server answered; the user or database is not there yet
     else:
         if block.get("error"):
             error = block["error"]

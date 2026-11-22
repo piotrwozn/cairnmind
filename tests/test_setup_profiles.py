@@ -48,6 +48,7 @@ class World:
         self.config_path = config_path
         self.block = {"available": True, "database_available": True, "version": "26.11.1"}
         self.writer = {"role": "none"}
+        self.plan = {"version": "26.11.1", "database_exists": False, "sign_in": 401}  # what the administrator finds
         self.model_errors = {}
         self.second_check_errors = {}  # role -> raised from its second check: the one configure_role makes
         self.checked = {}
@@ -62,6 +63,7 @@ class World:
         monkeypatch.setattr(engine, "start_command", self.start_command)
         monkeypatch.setattr(engine_docker, "choose_engine_mode", self.choose_engine_mode)
         monkeypatch.setattr(database_credentials, "doctor_block", self.doctor_block)
+        monkeypatch.setattr(database_credentials, "plan_user", self.plan_user)
         monkeypatch.setattr(database_credentials, "create_user", self.create_user)
         monkeypatch.setattr(store_writer, "inspect", self.inspect)
         monkeypatch.setattr(store_writer, "take_over_at", self.take_over_at)
@@ -75,6 +77,10 @@ class World:
     def doctor_block(self, candidate, **kwargs):
         self.log.append(("doctor_block", (candidate.arcade_user, candidate.arcade_database, candidate.arcade_password)))
         return dict(self.block)
+
+    def plan_user(self, candidate, admin_secret):
+        self.log.append(("plan_user", (candidate.arcade_user, candidate.arcade_database, admin_secret)))
+        return dict(self.plan)
 
     def create_user(self, candidate, admin_secret, **kwargs):
         self.log.append(("create_user", (candidate.arcade_user, candidate.arcade_database, admin_secret)))
@@ -361,10 +367,11 @@ def test_the_admin_password_file_creates_the_user_only_with_yes(tmp_path, world)
     refused(invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--admin-password-file", weak),
             "--admin-password-file names")
     assert world.log == []
-    world.block = {"available": True, "database_available": False, "database_status": 401}
     preview = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--admin-password-file", admin)
-    assert preview.exit_code == 1 and "Not tested yet: the user cairnmind cannot sign in" in said(preview)
+    assert preview.exit_code == 1 and "Not tested yet: the user cairnmind does not sign in" in said(preview)
     assert world.calls("create_user") == [] and config_bytes(tmp_path) == before
+    assert world.calls("plan_user") == [("cairnmind", "cairnmind", "PRIVATE_ADMIN_MARKER")]
+    assert "PRIVATE_ADMIN_MARKER" not in preview.output
     world.block = {"available": True, "database_available": True, "version": "26.11.1"}
     applied = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--admin-password-file", admin, "--yes")
     assert applied.exit_code == 0, applied.output

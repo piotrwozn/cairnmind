@@ -340,6 +340,39 @@ def admin_password(path: str) -> str:
     return read_private_file(path, "--admin-password-file")
 
 
+def plan_user(settings, admin_secret: str) -> dict[str, Any]:
+    """What ``create_user`` would meet, found without creating anything (the dry run of ``setup remote-db``).
+
+    Signs in as root once (a refusal is ArcadeError with its status) to read the version and whether the
+    database exists, then once as the user. ArcadeDB cannot list users: it answers 401 both for a user that does
+    not exist and for a wrong password, and 403 for a user it accepts that has no rights on the database (measured
+    on 26.11.1). ``sign_in`` is None when the user signs in, else the status of the refusal.
+    """
+    from dataclasses import replace
+    from .arcade import ArcadeClient, ArcadeError
+    from .database_mode import server_version, version_problem
+    admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
+    try:
+        info = admin.server_info()
+        refused = version_problem(settings, info)
+        if refused:
+            raise ArcadeError(refused)
+        exists = admin.database_exists()
+    except ArcadeError as exc:
+        raise ArcadeError(str(exc).replace(admin_secret, "[redacted]"), status_code=exc.status_code) from None
+    finally:
+        admin.close()
+    user = ArcadeClient(settings)
+    try:
+        user.query("SELECT 1 AS ok")
+        sign_in = None
+    except ArcadeError as exc:
+        sign_in = exc.status_code
+    finally:
+        user.close()
+    return {"version": server_version(info), "database_exists": exists, "sign_in": sign_in}
+
+
 def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[str, Any]:
     """Create the database and a user with rights on it only, signing in once as root (cairnmind db create-user).
 
