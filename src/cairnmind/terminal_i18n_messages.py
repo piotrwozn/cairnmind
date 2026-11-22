@@ -7,7 +7,7 @@ translated: text from a model, a provider or a source is never looked up here (s
 from __future__ import annotations
 
 from .code_graph import CODE_GRAPH_NOT_BUILT
-from .confirmation import NOT_PROVEN
+from .confirmation import NOT_PROVEN, REPLACED_CHANGED
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
 from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
 from .service_token import FOREIGN_SERVICE
@@ -251,6 +251,11 @@ BROKER_MESSAGES = {
         "Zastąpienie tego, co osoba potwierdziła lub zakwestionowała na tym komputerze, wymaga środowiska osoby, a "
         "ten import z niego nie pochodzi. Niczego nie zaimportowano. Zaimportuj pakiet z widoku pamięci w "
         "środowisku (`cairnmind`); katalog publikacji ani commit nie mogą jeszcze zastąpić takich ustaleń.",
+    REPLACED_CHANGED:
+        "To, co ten import zastępuje spośród rekordów potwierdzonych lub zakwestionowanych na tym komputerze, zmieniło "
+        "się od sprawdzenia. Niczego nie zaimportowano. Sprawdź import ponownie i przeczytaj nową listę.",
+    "The published memory folder must be given as a full path. Nothing was imported.":
+        "Katalog opublikowanej pamięci trzeba podać pełną ścieżką. Niczego nie zaimportowano.",
     NOT_PROVEN:
         "Tylko osoba może zapisać ustalenie jako potwierdzone, a czynność osoby wymaga jej środowiska: ta z niego "
         "nie pochodzi. Niczego nie zapisano. Zapisz ustalenie jako proponowane; osoba potwierdzi je w inspektorze "

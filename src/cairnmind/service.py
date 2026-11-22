@@ -225,6 +225,7 @@ class MemoryImportCommitBody(BaseModel):
     dry_run: bool = Field(default=False, strict=True)
     bind: bool = Field(default=False, strict=True)
     replace_confirmed: bool = Field(default=False, strict=True)
+    expected_replaced: list[str] | None = Field(default=None, max_length=100_000)  # the list a person was shown (#304)
     session_id: str | None = None
     packet_id: str | None = None
 
@@ -237,6 +238,7 @@ class MemoryImportPublishedBody(BaseModel):
     bind: bool = Field(default=False, strict=True)
     take_published: list[str] = Field(default_factory=list, max_length=1000)
     replace_confirmed: bool = Field(default=False, strict=True)
+    expected_replaced: list[str] | None = Field(default=None, max_length=100_000)  # the list a person was shown (#304)
     session_id: str | None = None
     packet_id: str | None = None
 
@@ -861,6 +863,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             # A request that names a session is refused below with its own sentence; it never carries the proof.
             await person_proof.require(request, settings, person_proof.IMPORT_REPLACE)
         from cairnmind.memory_published_import import PublishedImporter
+        if not Path(body.path).is_absolute():
+            # Never read against the service's own working directory (#304).
+            raise ValueError("The published memory folder must be given as a full path. Nothing was imported.")
         pid = project(body.project)["id"]
         authorize = None
         if (body.take_published or body.replace_confirmed) and body.session_id:
@@ -877,7 +882,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                                                    body.packet_id)
         result = await asyncio.to_thread(PublishedImporter(store).import_published, body.path, pid,
                                          dry_run=body.dry_run, bind=body.bind, take_published=body.take_published,
-                                         authorize=authorize, replace_confirmed=body.replace_confirmed)
+                                         authorize=authorize, replace_confirmed=body.replace_confirmed,
+                                         expected_replaced=body.expected_replaced)
         if not body.dry_run:
             cache.clear()
         return result
@@ -899,7 +905,8 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                                                        body.session_id, body.packet_id)
         result = await asyncio.to_thread(import_commit, store, pid, body.revision, worktree=scope,
                                          dry_run=body.dry_run, bind=body.bind, authorize=authorize,
-                                         replace_confirmed=body.replace_confirmed)
+                                         replace_confirmed=body.replace_confirmed,
+                                         expected_replaced=body.expected_replaced)
         if not body.dry_run:
             cache.clear()
         return result

@@ -242,6 +242,10 @@ IMPORT_IN_SESSION = ("A memory import is run only by a person, not inside a codi
                      "runs the import in their own terminal or in the workspace.")
 
 
+REPLACED_CHANGED = ("What this import replaces of the records confirmed or disputed on this computer changed since the "
+                    "check. Nothing was imported. Check the import again and read the new list.")
+
+
 def replaces_refusal(names) -> str:
     return (f"This import would replace {len(names)} record(s) that were confirmed or disputed on this machine: "
             + ", ".join(str(name) for name in names[:50]) + (" and more" if len(names) > 50 else "")
