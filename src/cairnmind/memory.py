@@ -804,7 +804,7 @@ class MemoryManager:
                     entry.unlink()
 
     def import_snapshot(self, path, root, name=None, dry_run=False, *, expected_snapshot_id=None, expected_project_id=None,
-                        authorize=None, replace_confirmed=False):
+                        authorize=None, replace_confirmed=False, expected_replaced=None):
         path, raw, manifest, payload = _load_snapshot(path)
         project_id, snapshot_id = manifest["project"]["id"], manifest["snapshot_id"]
         if ((expected_snapshot_id is not None and expected_snapshot_id != snapshot_id)
@@ -946,10 +946,15 @@ class MemoryManager:
                 "total": brought, "confirmed_by": sorted(names)[:50], "without_a_name": unnamed,
                 "note": "confirmed elsewhere; kept as confirmed, shown as imported, never verified here"}
             # A verdict a person gave here is never replaced by a package without that person's choice (#177).
-            result["replaces_confirmed_here"] = {"total": len(replaced), "records": sorted(replaced)[:200],
+            # Every record, none cut: the person agrees to this list and the import sends it back (#333).
+            result["replaces_confirmed_here"] = {"total": len(replaced), "records": sorted(replaced),
                                                  "note": REPLACES_NOTE}
             if dry_run:
                 return result
+            if expected_replaced is not None and sorted(expected_replaced) != sorted(replaced):
+                # The person agreed to the list their check showed; any other list is not their choice.
+                from .confirmation import REPLACED_CHANGED
+                raise MemoryConflict(REPLACED_CHANGED)
             if replaced and not replace_confirmed:
                 raise MemoryConflict(replaces_refusal(sorted(replaced)))
             if replaced:

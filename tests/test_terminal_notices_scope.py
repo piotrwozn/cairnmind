@@ -9,6 +9,7 @@ import pytest
 from cairnmind.terminal_notices import NoticeHistory
 from cairnmind.terminal_panels import SidebarApp
 from cairnmind.terminal_ui import FormModal, MessageModal
+from consent_steps import consent_drawn
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
 from test_workspace_stage import answer_stage, decision
@@ -244,6 +245,8 @@ async def test_the_inspector_import_notice_belongs_to_the_new_project_and_stays_
         await pilot.click("#form-submit")
         await settle(app, pilot)
         await pilot.click("#memory-apply")
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         await app._poll_workspace()  # what the 0.3 s interval does next
         await pilot.pause(.5)

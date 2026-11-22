@@ -9,6 +9,7 @@ from textual.widgets import Button, Checkbox, DataTable, Input, Static
 from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_i18n import tr
 from cairnmind.terminal_inspector import InspectorApp
+from cairnmind.terminal_panels import ConfirmModal
 from cairnmind.terminal_ui import ChoiceModal, FormModal
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
@@ -178,7 +179,7 @@ async def test_a_verdict_is_posted_with_the_fingerprint_shown_and_the_list_is_re
         await open_impact(app, pilot)
         # Typed but not submitted: the verdict belongs to the list shown.
         app.query_one("#impact-since", Input).value = "main"
-        offered, answers = [], iter([choice, {"note": note}])
+        offered, answers = [], iter([choice, {"note": note}, True])
 
         async def scripted(screen):
             offered.append(screen)
@@ -194,7 +195,9 @@ async def test_a_verdict_is_posted_with_the_fingerprint_shown_and_the_list_is_re
                 "record_id": "rec-rule", "fingerprint": "a" * 64, "verdict": choice}
     assert impact.posted == [{**expected, **({"note": note} if note else {})}]
     assert impact.writes() == [("POST", VERDICT)] and len(impact.reads) == 2
-    chooser, form = offered
+    chooser, form, dialog = offered
+    assert isinstance(dialog, ConfirmModal) and dialog.consent and dialog.heading == "Save this verdict?"  # #332
+    assert (note or "none given") in dialog.value
     assert isinstance(chooser, ChoiceModal) and [value for _, value in chooser.choices] == [
         "still_valid", "needs_update", "not_related"]
     assert isinstance(form, FormModal) and [(f.name, f.required) for f in form.fields] == [
@@ -214,7 +217,7 @@ async def test_needs_update_without_a_note_and_a_project_change_send_nothing(tmp
         await settle(app, pilot)
         assert "Needs update requires a note on what to update. Nothing was saved." in text(
             app.query_one("#panel-notice", Static))
-        answers = iter(["still_valid", {"note": ""}])
+        answers = iter(["still_valid", {"note": ""}, True])
 
         async def moved(screen):
             app._scope_version += 1  # what a change of project or worktree does while the form is open
@@ -272,7 +275,7 @@ async def test_a_stale_entry_reloads_the_list_and_nothing_is_retried(tmp_path, m
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await open_impact(app, pilot)
-        script(app, monkeypatch, ["still_valid", {"note": ""}], [])
+        script(app, monkeypatch, ["still_valid", {"note": ""}, True], [])
         app.query_one("#impact-verdict", Button).press()
         await wait(pilot, lambda: len(impact.reads) == 2)
         await settle(app, pilot)
@@ -289,7 +292,7 @@ async def test_another_refusal_is_shown_as_literal_text_and_keeps_the_entry(tmp_
     app = InspectorApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await open_impact(app, pilot)
-        script(app, monkeypatch, ["not_related", {"note": ""}], [])
+        script(app, monkeypatch, ["not_related", {"note": ""}, True], [])
         app.query_one("#impact-verdict", Button).press()
         await wait(pilot, lambda: impact.posted)
         await settle(app, pilot)
