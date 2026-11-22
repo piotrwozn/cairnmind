@@ -3,6 +3,7 @@ import re
 import socket
 import threading
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -50,6 +51,7 @@ def test_statements_are_printed_without_values():
         "SELECT FROM t WHERE a = ? AND b = :b"
 
 
+@pytest.mark.skipif(not Path("/proc/net/tcp").exists(), reason="the kernel's socket table is a Linux file")
 def test_without_ss_the_proc_table_is_printed(monkeypatch, tmp_path):
     monkeypatch.setattr(stall_watch.shutil, "which", lambda name: None)
     monkeypatch.setattr(stall_watch.sys, "platform", "linux")
