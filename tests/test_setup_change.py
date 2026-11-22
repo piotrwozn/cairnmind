@@ -49,6 +49,7 @@ class Rig:
         self.stop_answer, self.ignores_stop = {"stopping": True}, False
         self.start_error = None               # a function of the config.json bytes at the start, or None
         self.start_signal = None              # "gone": a signal ends the start and the process it spawned; "stays": not
+        self.start_late = None                # "gone"/"stays": the start on the new settings times out, its process lives
         self.jobs, self.projects = [], []
         self.mark_during = []
         monkeypatch.setattr(cli, "service_alive", lambda settings: self.alive)
@@ -88,6 +89,9 @@ class Rig:
         if self.start_signal and json.loads(bytes_now).get("arcade_connect_url") == DB:
             self.alive = self.ignores_stop = self.start_signal == "stays"  # a spawned service that did (not) end
             raise KeyboardInterrupt
+        if self.start_late and json.loads(bytes_now).get("arcade_connect_url") == DB:
+            self.alive, self.ignores_stop = True, self.start_late == "stays"  # a start that timed out, its process left
+            raise cli.ServiceDidNotStart("The service did not start. Check service.log; port 1 may be in use.")
         if self.start_error and self.start_error(bytes_now):
             raise cli.ServiceDidNotStart("The service stopped at start: it did not like it.")
         self.alive = True
@@ -385,6 +389,27 @@ def test_a_signal_during_the_start_on_the_new_settings_leaves_no_service_on_sett
         assert state == "service_down" and "could NOT be put back" in said(text) and f"kept in {copy}" in said(text)
         assert json.loads((rig.data / "config.json").read_bytes())["arcade_connect_url"] == DB and copy.read_bytes() == before
         assert setup_mark.refusal(rig.data) is not None  # nothing else starts a service meanwhile
+
+
+@pytest.mark.parametrize("what", ["gone", "stays"])
+def test_a_start_that_times_out_does_not_leave_its_service_under_a_config_json_put_back(rig, what):
+    make(rig.tmp)
+    before = config_bytes(rig.tmp)
+    request = rig.request()
+    expected = rig.agreed(request)
+    rig.start_late = what
+    state, text = rig.go(request, expected=expected, language="pl")
+    copy = rig.data / setup_mark.BEFORE
+    if what == "gone":
+        # The slow service on the new store was asked to end before config.json was put back, and the old one started.
+        assert state == "failed" and len(rig.shutdowns) == 2 and len(rig.starts) == 2
+        assert json.loads(rig.starts[1][0]).get("arcade_connect_url") != DB
+        rig.untouched(before)
+    else:
+        assert state == "service_down" and len(rig.starts) == 1 and copy.read_bytes() == before
+        assert json.loads((rig.data / "config.json").read_bytes())["arcade_connect_url"] == DB
+        assert "nadal działa" in said(text) and "The knowledge service" not in text  # said in the workspace's language
+        assert setup_mark.refusal(rig.data) is not None
 
 
 def test_an_interrupt_that_comes_where_nothing_can_be_put_back_keeps_the_copy_and_says_so(rig, monkeypatch):

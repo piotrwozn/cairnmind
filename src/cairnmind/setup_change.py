@@ -87,6 +87,7 @@ SERVICE_DOWN = ("The knowledge service could not be started again: {reason} Noth
 INTERRUPTED = ("The change was interrupted (signal {signal}); the lines above say what was done and what was put "
                "back. The knowledge service was not started by the change; the next command that needs it starts it.")
 REQUEST_INVALID = "The request for the change could not be read ({reason}); nothing was changed."
+STILL_ON_NEW = "a knowledge service started on the new settings is still running and could not be ended"
 
 MESSAGES = {
     STOPPING: "Zatrzymywanie usługi wiedzy tego środowiska na czas zmiany.",
@@ -141,6 +142,7 @@ MESSAGES = {
     INTERRUPTED: ("Zmianę przerwano (sygnał {signal}); powyższe wiersze mówią, co zrobiono i co przywrócono. Zmiana "
                   "nie uruchomiła usługi wiedzy; następne polecenie, które jej potrzebuje, ją uruchomi."),
     REQUEST_INVALID: "Nie udało się odczytać prośby o zmianę ({reason}); nic nie zostało zmienione.",
+    STILL_ON_NEW: "usługa wiedzy uruchomiona z nowymi ustawieniami nadal działa i nie dała się zakończyć",
 }
 
 _signal = [None]  # the signal that interrupted the helper, for INTERRUPTED
@@ -350,22 +352,27 @@ def _lock_free(settings) -> bool:
 def _stop(settings) -> tuple[str, dict] | None:
     """Ask the service to stop and wait until it and its lock are gone; the item that says why not, else None."""
     from . import cli
-    if cli.service_alive(settings):
-        try:
-            with httpx.Client(trust_env=False, timeout=5) as client:
-                response = client.post(settings.url + "/shutdown", headers={"Authorization": f"Bearer {settings.token}"})
-                response.raise_for_status()
-                stopping = response.json().get("stopping") is True
-        except (httpx.HTTPError, ValueError, AttributeError) as exc:
-            return STOP_FAILED, {"reason": str(exc)[:200]}
-        if not stopping:
-            return STOP_DECLINED, {}
+    asked = False
     deadline = time.monotonic() + STOP_SECONDS
-    while cli.service_alive(settings) or not _lock_free(settings):
+    while True:
+        alive = cli.service_alive(settings)
+        if alive and not asked:  # also one that began to answer while this waited for its lock
+            try:
+                with httpx.Client(trust_env=False, timeout=5) as client:
+                    response = client.post(settings.url + "/shutdown",
+                                           headers={"Authorization": f"Bearer {settings.token}"})
+                    response.raise_for_status()
+                    stopping = response.json().get("stopping") is True
+            except (httpx.HTTPError, ValueError, AttributeError) as exc:
+                return STOP_FAILED, {"reason": str(exc)[:200]}
+            if not stopping:
+                return STOP_DECLINED, {}
+            asked = True
+        if not alive and _lock_free(settings):
+            return None
         if time.monotonic() >= deadline:
             return STOP_TIMEOUT, {"seconds": STOP_SECONDS}
         time.sleep(0.2)
-    return None
 
 
 def _start(settings) -> str | None:
@@ -470,9 +477,9 @@ def _new_settings_start(data_dir: Path, path: Path, snapshot: bytes, result: dic
             and store_writer.inspect(new).get("role") == "writer"):
         notes.append((NEW_STORE_CLAIMED, {"url": database_mode.address(new)}))  # the failed start opened a new store
     cannot = None
-    if interrupted and new is not None:
+    if new is not None:  # a start that failed late or timed out may have left its process: it ends before the put-back
         still = _stop(new)  # config.json is not put back under a service that runs on the new settings
-        cannot = render_one(still, "en") if still else None
+        cannot = render_one((STILL_ON_NEW, {}), out.language) if still else None
     if cannot is None:
         try:
             setup_profiles.put_back(path, snapshot, result["applied_state"], notes)
