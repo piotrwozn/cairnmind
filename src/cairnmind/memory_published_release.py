@@ -2,11 +2,13 @@
 
 The registered secrets are the ones the agent journal already redacts (the service token and the
 ArcadeDB password), the keys saved in the credential store, the values behind the `env:` references of
-the saved profiles, and the credential variables that the runtime strips from child environments. They exist only here, never in CI. Personal-data patterns
+the saved profiles, and the credential variables that the runtime strips from child environments. They exist
+only here, never in CI. Personal-data patterns
 come from the project's `.cairnmind/publication.toml`, which CI reads from the same checkout.
 
 A release is a person's act: after reading the record, they let its current hits through with a
-reason, in the inspector, with the open workspace's key (person_proof, #306). It is a `release://` source with origin `local_user_release`, published in the record's file
+reason, in the inspector, with the open workspace's key (person_proof, #306). It is a `release://` source
+with origin `local_user_release`, published in the record's file
 beside its sources, cited by no revision, and honoured only for the exact values it names.
 """
 from __future__ import annotations
@@ -32,7 +34,7 @@ REGISTERED_WHY = ("Every version a person confirmed is published, so changing th
                   "environment the Cairnmind service runs in).")
 CLI_REFUSED = ("The command line no longer releases a record. Nothing was released. The person reads the record in "
                "the inspector of the workspace (`cairnmind`) and chooses Release.")
-REGISTERED_ADVICE ="A registered secret is never released. " + REGISTERED_WHY
+REGISTERED_ADVICE = "A registered secret is never released. " + REGISTERED_WHY
 
 
 class SecretsRefused(MemoryConflict):

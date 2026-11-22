@@ -36,12 +36,13 @@ def test_a_verdict_needs_the_workspace_key(changed, workspace_person):
     shown = entry(build_impact(store, pid, "HEAD"), records["rule"])
     body = {"project": pid, "worktree": str(root), "since": "HEAD", "record_id": shown["id"],
             "fingerprint": shown["fingerprint"], "verdict": "still_valid"}
-    refused = client.post("/inspector/impact/verdict", json=body, headers=token)
-    assert refused.status_code == 403 and refused.json()["detail"] == person_proof.PROOF_MISSING
-    wrong = client.post("/inspector/impact/verdict", json=body, headers={**token, **workspace_person, **WRONG_KEY})
-    assert wrong.status_code == 403 and wrong.json()["detail"] == person_proof.PROOF_REFUSED
-    assert verdicts(store, pid) == []
-    saved = client.post("/inspector/impact/verdict", json=body, headers={**token, **workspace_person})
+    with person_unproven():  # the saved path proves itself through the route, not through the test's own door
+        refused = client.post("/inspector/impact/verdict", json=body, headers=token)
+        assert refused.status_code == 403 and refused.json()["detail"] == person_proof.PROOF_MISSING
+        wrong = client.post("/inspector/impact/verdict", json=body, headers={**token, **workspace_person, **WRONG_KEY})
+        assert wrong.status_code == 403 and wrong.json()["detail"] == person_proof.PROOF_REFUSED
+        assert verdicts(store, pid) == []
+        saved = client.post("/inspector/impact/verdict", json=body, headers={**token, **workspace_person})
     assert saved.status_code == 200, saved.text
     assert saved.json()["verdict"]["verdict"] == "still_valid" and len(verdicts(store, pid)) == 1
 
@@ -51,7 +52,7 @@ def test_a_release_needs_the_workspace_key(ada, workspace_person):
     record = reviewed(store, pid, "fact", f"Example {SHAPES['stripe_key']} from the Stripe guide.", "stripe")
     token = {"Authorization": f"Bearer {store.settings.token}"}
     url, body = f"/inspector/records/{record['id']}/release", {"project": "team", "reason": "The Stripe guide's example."}
-    with TestClient(create_app(store.settings, start_worker=False)) as client:
+    with person_unproven(), TestClient(create_app(store.settings, start_worker=False)) as client:
         refused = client.post(url, headers=token, json=body)
         assert refused.status_code == 403 and refused.json()["detail"] == person_proof.PROOF_MISSING
         wrong = client.post(url, headers={**token, **workspace_person, **WRONG_KEY}, json=body)
