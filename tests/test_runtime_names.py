@@ -233,13 +233,15 @@ def test_open_mcp_servers_are_named_even_when_the_installed_command_is_missing(s
     assert result.returncode == 1 and "processes: 101" in result.stderr and calls == []
 
 
-@pytest.mark.parametrize(("variable", "command"), [("STOP_FAILS", "stop"), ("COCKPIT_STOP_FAILS", "cockpit stop")])
-def test_a_failed_stop_is_said_with_its_last_line_and_the_installer_goes_on(stand_ins, variable, command):
+@pytest.mark.parametrize(("variable", "command", "after"), [
+    ("STOP_FAILS", "stop", "The new version is asked to stop it once it is installed."),
+    ("COCKPIT_STOP_FAILS", "cockpit stop", "`cairnmind cockpit stop` stops it later.")])
+def test_a_failed_stop_is_said_with_its_last_line_and_the_installer_goes_on(stand_ins, variable, command, after):
     run, terminal = stand_ins
     result, calls = run(**{variable: "1"})
     assert result.returncode == 0 and "continued" in result.stdout
     assert f"Note: cairnmind {command} failed (it said: Error: refused)" in result.stderr
-    assert f"`cairnmind {command}` stops it later" in result.stderr
+    assert after in result.stderr
     assert "first line" not in result.stderr
     assert calls == ["workspace status", "cockpit stop", "stop"]  # the other stop was still tried
 
@@ -250,7 +252,8 @@ def test_a_failed_stop_of_the_workspace_is_said_before_the_terminal_servers_are_
     result, calls = run(status="true", CAIRNMIND_INSTALL_STOP_WORKSPACE="1", WORKSPACE_STOP_FAILS="1")
     assert result.returncode == 0 and "continued" in result.stdout
     assert ("Note: cairnmind workspace stop --clients failed (it said: Error: refused), so the workspace and its "
-            "coding sessions may still run") in result.stderr
+            "coding sessions are ended at their terminal servers instead.") in result.stderr
+    assert "stops it later" not in result.stderr  # nothing is left for later on this path (#319 recheck)
     assert "tmux kill-server" in calls  # what then closes them
     server.close()
 
@@ -318,7 +321,7 @@ def test_coding_sessions_started_with_run_are_named_and_the_installer_stops(stan
 
 def test_the_new_installer_pieces_are_in_the_section_the_tests_cut():
     functions = installer_functions()
-    assert "stop_or_say \"$installed\" \"$name\" 'the knowledge service' stop" in functions
+    assert "the knowledge service may still run the version being replaced" in functions
     assert "stop >/dev/null 2>&1 || true" not in functions.replace("cockpit stop --clients >/dev/null 2>&1 || true", "")
     assert "live_runs()" in functions and "live_services()" in functions
 

@@ -291,9 +291,9 @@ live_services() {
 
 # Runs the installed command with the arguments after $3 and says so when it fails, with the last line it printed,
 # instead of going on in silence (#319); returns 1 then, and the caller decides what follows.
-# $1: the installed command, $2: the name a user types for it, $3: what the command stops.
+# $1: the installed command, $2: the name a user types for it, $3: what follows from the failure, a whole clause.
 stop_or_say() {
-    local installed="$1" name="$2" what="$3" said
+    local installed="$1" name="$2" after="$3" said
     shift 3
     if said="$("$installed" "$@" 2>&1 >/dev/null)"; then
         return 0
@@ -302,8 +302,7 @@ stop_or_say() {
     said="${said##*$'\n'}"                    # its last line
     said="${said//[^[:print:]]/}"
     said="${said:0:200}"
-    printf 'Note: %s %s failed (it said: %s), so %s may still run the version being replaced. `%s %s` stops it later.\n' \
-        "$name" "$*" "${said:-nothing}" "$what" "$name" "$*" >&2
+    printf 'Note: %s %s failed (it said: %s), so %s\n' "$name" "$*" "${said:-nothing}" "$after" >&2
     return 1
 }
 
@@ -433,15 +432,21 @@ stop_installed() {
         fi
         printf 'Closing the running workspace and coding sessions, as CAIRNMIND_INSTALL_STOP_WORKSPACE=1 asks.\n'
         # A failure is said before the terminal servers are ended below, which is what closes the sessions then.
-        stop_or_say "$installed" "$name" 'the workspace and its coding sessions' workspace stop --clients || true
-        stop_or_say "$installed" "$name" 'the interface broker' cockpit stop --clients || true
+        stop_or_say "$installed" "$name" 'the workspace and its coding sessions are ended at their terminal servers instead.' \
+            workspace stop --clients || true
+        stop_or_say "$installed" "$name" 'its coding sessions are ended at their terminal servers instead.' \
+            cockpit stop --clients || true
         # Whatever belongs to another data directory, or did not answer, is closed at its terminal server.
         while IFS= read -r socket; do
             [[ -n "$socket" ]] && tmux -S "$socket" kill-server >/dev/null 2>&1 || true
         done <<<"$(live_terminals "$python")"
     fi
-    stop_or_say "$installed" "$name" 'the interface broker' cockpit stop || true
-    stop_or_say "$installed" "$name" 'the knowledge service' stop || service_stop_failed=1
+    stop_or_say "$installed" "$name" \
+        "the interface broker may still run the version being replaced. \`$name cockpit stop\` stops it later." \
+        cockpit stop || true
+    stop_or_say "$installed" "$name" \
+        'the knowledge service may still run the version being replaced. The new version is asked to stop it once it is installed.' \
+        stop || service_stop_failed=1
     [[ -n "$python" ]] || return 0  # said above: without the Python nothing of the installed version can be looked for
     # A service told to stop takes a moment to end: what still runs after five seconds is named; nothing is stopped.
     local waited=0 services
