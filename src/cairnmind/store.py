@@ -24,7 +24,7 @@ from .sql import (IDENTIFIER, PROFILE_NAME, clean_row, evidence_time, insert_doc
                   quote_name, update_document, utc_now)
 from .backup_reader import opened_backup
 from .path_spelling import lies_in
-from .store_backup import payload_digest, streamed_backup, streamed_export, write_backup
+from .store_backup import VECTOR_COLLECTIONS, payload_digest, streamed_backup, streamed_export, write_backup
 
 SCHEMA_VERSION = 4
 # Indexes for lookups by a field other than id and project_id. They are not part of the schema version:
@@ -303,6 +303,9 @@ class Store:
     # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
     # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
     confirmations_before_rule = None
+    # After a restore: how many completed embed jobs it set back to pending because the backup brought no vectors
+    # (#187); None when the backup brought them or nothing was restored.
+    embed_jobs_requeued = None
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:
@@ -1829,13 +1832,9 @@ class Store:
         self._require_project(tx, project_id)
         for collection in collections:
             field = "id" if collection == "projects" else "project_id"
-            result[collection] = [] if collection == "ingestion_inbox" and project_id else [
+            result[collection] = [] if collection in VECTOR_COLLECTIONS or (collection == "ingestion_inbox" and project_id) else [
                 clean_row(row) for row in tx.query(f"SELECT FROM {quote_name(collection)}" + (f" WHERE {field}=:project" if project_id else ""), {"project": project_id})]
-        result["vector_data"] = {}
-        for registry in result["vector_indexes"]:
-            name = registry.get("type_name")
-            if isinstance(name, str) and name.startswith("vector_"):
-                result["vector_data"][name] = [clean_row(row) for row in tx.query(f"SELECT FROM {quote_name(name)}")]
+        result["vector_data"] = {}  # no vectors in an export, as in a backup (#187)
         return result
 
     def backup(self, destination):
@@ -1969,6 +1968,26 @@ class Store:
             # The rows go in groups of a few hundred per request, with the checks of row by row (#219).
             from .restore_groups import write_restored
             write_restored(self, tx, source, claims)
+            self.embed_jobs_requeued = self._requeue_embed_jobs(tx)
+
+    @staticmethod
+    def _requeue_embed_jobs(tx):
+        """A backup holds no vectors (#187): set each completed embed job of a current chunk back to pending, in the
+        restore's transaction, and return how many. None when the backup brought vectors, which stay as they are."""
+        if tx.query("SELECT id FROM embeddings LIMIT 1"):
+            return None
+        from .retrieval import json_value  # retrieval imports this module
+        current = {row["id"] for row in tx.query("SELECT id FROM chunks WHERE is_current=true")}
+        first = {}  # one job per chunk: a retry can leave two completed jobs of the same chunk
+        for row in tx.query("SELECT id, payload FROM jobs WHERE kind='embed' AND state='completed'"):
+            chunk = (json_value(row.get("payload"), {}) or {}).get("chunk_id")
+            if chunk in current:
+                first.setdefault(chunk, row["id"])
+        ids = list(first.values())
+        for start in range(0, len(ids), 500):
+            update_document(tx, "jobs", {"state": "pending", "error": None, "worker": None, "lease_until": None,
+                                         "updated_at": utc_now()}, "id IN :ids", {"ids": ids[start:start + 500]})
+        return len(ids)
 
     def forget_project(self, project_id):
         with self.transaction() as tx:

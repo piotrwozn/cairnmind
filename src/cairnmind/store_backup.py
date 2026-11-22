@@ -36,6 +36,8 @@ PAGE_BYTES = 2 * 1024 * 1024
 WRITE_BYTES = 1024 * 1024
 # The name a backup has until it is complete; a killed backup leaves a file with this prefix behind.
 TEMPORARY_PREFIX = ".cairnmind-backup-"
+# The collections that hold vectors or name their index types: never written to a backup (#187).
+VECTOR_COLLECTIONS = ("embeddings", "vector_indexes")
 
 
 class Rows:
@@ -113,14 +115,14 @@ def _pages(tx, name: str) -> Iterator[str]:
 def streamed_export(tx, collections: Iterable[str], format_version: int) -> dict:
     """The whole-database payload of ``Store._export_snapshot`` with rows read only while it is written.
 
-    Must be written while ``tx`` is open. Only the vector type names are read here.
+    Must be written while ``tx`` is open. Vectors are left out (#187): ``embeddings`` and ``vector_indexes``
+    are empty and ``vector_data`` is an empty object, which every earlier restore reads; a restore
+    rebuilds the vectors from the text (``Store.restore`` sets the embed jobs back to pending).
     """
     payload = {"format_version": format_version, "backend": "arcadedb", "exported_at": utc_now()}
     for collection in collections:
-        payload[collection] = Rows(lambda collection=collection: _pages(tx, collection))
-    names = {row.get("type_name") for row in tx.query("SELECT type_name FROM vector_indexes")}
-    payload["vector_data"] = {name: Rows(lambda name=name: _pages(tx, name))
-                              for name in names if isinstance(name, str) and name.startswith("vector_")}
+        payload[collection] = [] if collection in VECTOR_COLLECTIONS else Rows(lambda collection=collection: _pages(tx, collection))
+    payload["vector_data"] = {}
     return payload
 
 

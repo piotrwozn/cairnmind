@@ -282,7 +282,7 @@ There are two kinds of backup. Take the logical one regularly; add a volume snap
 
 ### Logical backup: `cairnmind backup` and `cairnmind restore`
 
-The logical backup is a checksummed, compressed JSON export of everything Cairnmind keeps in the database: projects, records and their history, sources, the graph, jobs and stored vectors. It is read over the HTTP API, so it works the same against a container as against the local engine, and it does not depend on the ArcadeDB version.
+The logical backup is a checksummed, compressed JSON export of everything Cairnmind keeps in the database: projects, records and their history, sources, the graph and jobs. It carries no vectors (#187): they are derived from the text and several times its size, so the backup is rebuilt from the text instead (below). It is read over the HTTP API, so it works the same against a container as against the local engine, and it does not depend on the ArcadeDB version.
 
 ```bash
 cairnmind backup "$HOME/backups/"                       # a folder (created when missing): a new timestamped file in it
@@ -304,9 +304,11 @@ To restore it into a server, for example a new empty one:
 
 `restore` replaces everything in the database with the backup. Before it does, it writes a backup of the current contents to `backups/` in the data directory.
 
+A backup holds no vectors, so after a restore the vectors are rebuilt. In the restore's own transaction every completed embedding job of a current chunk goes back to pending, and the output says how many (`embed_jobs_requeued`) and says that search uses the text only until the rebuild ends. Text search, records, plans, tasks and the graph work at once. Once the service runs with the models, it embeds the chunks one job at a time, and `cairnmind status` shows the jobs left (`pipeline_jobs.indexing`); until they are done, an answer that needs vectors says that its vectors are not ready, and does not read as if the project had no such text. In deterministic-only mode (no models) the jobs wait, as every embedding job does, until the models are turned on. A backup written by 0.12.0 or earlier carries its vectors and is restored with them, as before; then nothing is requeued.
+
 A restore keeps the person's confirmations in the backup only when this installation's workspace is open on the machine that runs `restore` and holds its key ([MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md#a-restore-without-the-workspace)). On a server, in CI or with no workspace, every row is still restored, each confirmation becomes the backup's claim, not verified here, and accepted transcript record kinds are withdrawn; the output says which (`person_confirmations`) and how many, and the exit code is 0 either way. `cairnmind setup local --backup FILE`, the way back from a store this installation only connects to, restores under the same rule, through the same code.
 
-What the logical backup does not contain: the files of the data directory (`config.json` with the local token and the database password, client credentials and API keys, the terminal workspace state, the hook spool, logs), ArcadeDB's own server configuration and users, and model weights.
+What the logical backup does not contain: the vectors (the `embeddings` rows and the `vector_*` index types), the files of the data directory (`config.json` with the local token and the database password, client credentials and API keys, the terminal workspace state, the hook spool, logs), ArcadeDB's own server configuration and users, and model weights.
 
 ### Volume snapshot
 
