@@ -251,7 +251,12 @@ class PublishedImporter:
             if old is not None:
                 update_document(tx, "records", {"active_key": None}, "id=:id", {"id": record_id})
         now = utc_now()
-        for record_id, (model, path, old, numbers) in written.items():
+        # A record that ends superseded goes first: its earlier versions hold their key, which the record that
+        # replaced it (same kind and key, #222) takes once this one lets it go.
+        def ends_active(item):
+            model, _, _, numbers = item[1]
+            return not (numbers and model["revisions"][numbers[-1]]["status"] == "superseded")
+        for record_id, (model, path, old, numbers) in sorted(written.items(), key=ends_active):
             version = old["version"] if old else 0
             for index in numbers:
                 version += 1

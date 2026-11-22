@@ -89,7 +89,8 @@ PERSON_POSTS = ("/api/inspector/records/r1/review", "/api/inspector/conflicts/re
                 "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import",
                 "/api/inspector/records/r1/release", "/api/inspector/impact/verdict",
                 "/api/memory/import-published", "/api/memory/import-commit",
-                "/api/inspector/legacy-groups/adopt", "/api/inspector/projects/forget")
+                "/api/inspector/legacy-groups/adopt", "/api/inspector/projects/forget",
+                "/api/inspector/records/r1/replace")
 
 
 def test_broker_client_adds_the_key_only_for_a_persons_post_inside_the_workspace(
@@ -146,6 +147,7 @@ def test_the_broker_passes_the_key_on_person_routes_only(broker_app):
                        ("/api/memory/import", {}), ("/api/memory/import-published", {}),
                        ("/api/memory/import-commit", {}),
                        ("/api/inspector/records/r1/release", {"project": "p", "reason": "Example."}),
+                       ("/api/inspector/records/r1/replace", {"project": "p", "content": "x", "expected_version": 1}),
                        ("/api/inspector/impact/verdict", {"project": "p"}),
                        ("/api/inspector/legacy-groups/adopt", {"project": "p"}),
                        ("/api/inspector/projects/forget", {"project": "p"})):

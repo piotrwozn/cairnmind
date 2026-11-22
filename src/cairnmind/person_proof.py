@@ -29,7 +29,7 @@ from .runtime_sockets import MAX_SOCKET_PATH, socket_base, socket_directory, wor
 OPTION = "@cairnmind_person_key"
 KEY_HEADER, SOCKET_HEADER = "X-Cairnmind-Person", "X-Cairnmind-Workspace"
 # The paths a panel sends to the broker for a person's act (BrokerClient adds the proof to these POSTs only).
-PERSON_BROKER_PATH = re.compile(r"/api/(inspector/(records/[^/]+/(review|release)|conflicts/resolve"
+PERSON_BROKER_PATH = re.compile(r"/api/(inspector/(records/[^/]+/(review|release|replace)|conflicts/resolve"
                                 r"|plans/[^/]+/confirm|impact/verdict|record-kinds/(accept|withdraw)"
                                 r"|legacy-groups/adopt|projects/forget)"
                                 r"|findings|memory/import(-published|-commit)?)")

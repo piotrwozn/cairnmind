@@ -12,7 +12,7 @@ from cairnmind.person_proof import PROOF_MISSING
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import FakeBroker, setup, settle
 
 RELEASE = "/api/inspector/records/record-a/release"
@@ -69,6 +69,7 @@ async def test_the_inspector_releases_a_record(tmp_path, monkeypatch, language):
         assert tr("Lets this record's current hits of the secrets scan be published. Your reason is published with "
                   "the record. A registered secret is never released.", language) in note
         app.screen.query_one("#field-reason", TextArea).text = "The documented example key."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         assert posts(broker) == []  # the form sent nothing (#332)
@@ -98,17 +99,47 @@ async def test_release_is_offered_only_on_a_record(tmp_path, monkeypatch):
         assert posts(broker) == []
 
 
+def cut_labels(app, width):
+    """The buttons of both rows whose label is not whole on the drawn screen (Button's line-pad takes 2 columns)."""
+    lines = ["".join(segment.text for segment in strip) for strip in app.screen._compositor.render_strips()]
+    cut = []
+    for button in app.query("#entity-actions Button, #review-actions Button").results(Button):
+        region = button.region
+        if str(button.label) not in lines[region.y][max(region.x, 0):min(region.right, width)]:
+            cut.append((button.id, str(button.label)))
+    return cut
+
+
+# The drawn screen is what counts: Textual's Button loses 2 columns to its line padding. 68 columns is the inspector pane of a
+# Cockpit of 140 columns (workspace._apply_layout), 66 the narrowest one measured to be whole before.
 @pytest.mark.asyncio
-@pytest.mark.parametrize("language", ["pl", "en"])
-async def test_every_review_button_keeps_its_whole_label_at_70_columns(tmp_path, monkeypatch, language):
-    # At 60 columns the fifth button leaves "Zakwestionuj" one character short; 70 shows every label whole.
+@pytest.mark.parametrize(
+    "language, width",
+    [("en", 66), ("en", 68), ("en", 70), ("pl", 66), ("pl", 68), ("pl", 70), ("pl", 76), ("pl", 80)],
+)
+async def test_no_button_of_either_row_is_cut_on_the_drawn_screen(tmp_path, monkeypatch, language, width):
     app, _, _ = release_app(tmp_path, monkeypatch, language)
-    async with app.run_test(size=(70, 42)) as pilot:
+    async with app.run_test(size=(width, 42)) as pilot:
         await settle(app, pilot)
+        assert app.query_one("#entity-replace", Button).disabled  # the list has no open record
         app.open_selected("record-a")
         await settle(app, pilot)
-        for button in app.query("#review-actions Button").results(Button):
-            assert button.size.width >= len(str(button.label)), (button.id, button.size.width, str(button.label))
+        assert not app.query_one("#entity-replace", Button).disabled
+        assert app.query_one("#entity-replace").parent.id == "entity-actions"
+        assert cut_labels(app, width) == []
+
+
+@pytest.mark.asyncio
+async def test_replace_is_reachable_from_the_proposed_view(tmp_path, monkeypatch):
+    app, _, _ = release_app(tmp_path, monkeypatch, "en")
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.query_one("#inspector-view", Select).value = "proposed"
+        await settle(app, pilot)
+        assert app.query_one("#entity-replace", Button).disabled
+        app.open_selected("record-a")  # as Enter does on a row of the Proposed list
+        await settle(app, pilot)
+        assert not app.query_one("#entity-replace", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -118,6 +149,7 @@ async def test_a_refused_release_says_why_and_is_not_sent_again(tmp_path, monkey
     async with app.run_test(size=(95, 42)) as pilot:
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = "Example."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         await pilot.click("#confirm-yes")
@@ -134,6 +166,7 @@ async def test_a_reason_the_form_refuses_is_not_sent(tmp_path, monkeypatch, reas
     async with app.run_test(size=(95, 42)) as pilot:
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = reason
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await pilot.pause()
         await pilot.pause()

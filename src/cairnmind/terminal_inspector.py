@@ -107,6 +107,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 yield Button(self.t("List"), id="entity-back")
                 yield Button(self.t("Filters"), id="entity-filters")
                 yield Button(self.t("Details"), id="entity-technical")
+                yield Button(self.t("Replace"), id="entity-replace", disabled=True)  # on in show_detail, for a record
             with Horizontal(id="review-actions"):
                 yield Button(self.t("Confirm"), id="entity-confirm")
                 yield Button(self.t("Dispute"), id="entity-dispute")
@@ -159,7 +160,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                   "entity-history": "History", "entity-sources": "Sources", "memory-preview": "Preview",
                   "memory-save": "Save", "memory-auto": "Automatic", "memory-import": self.t("Import"),
                   "memory-apply": "Apply", "memory-refresh": "Status", "memory-published": "Team memory",
-                  "conflict-resolve": "Resolve", "entity-release": "Release"}
+                  "conflict-resolve": "Resolve", "entity-release": "Release", "entity-replace": "Replace"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.refresh_impact_language()
@@ -327,6 +328,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#conflict-actions").display = False
         self.query_one("#impact-actions").display = False
         self.query_one("#entity-more", Button).disabled = not bool(self.next_cursor)
+        self.query_one("#entity-replace", Button).disabled = True  # the list has no open record
 
     @on(Input.Changed, "#inspector-filter")
     def filter_changed(self):
@@ -376,6 +378,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#entity-confirm", Button).disabled = kind not in {"records", "plans"}
         self.query_one("#entity-dispute", Button).disabled = kind != "records"
         self.query_one("#entity-release", Button).disabled = kind != "records"
+        self.query_one("#entity-replace", Button).disabled = kind != "records"
         self.query_one("#entity-history", Button).disabled = kind not in {"records", "plans"}
         self.query_one("#entity-sources", Button).label = self.t("View") if kind in {"sources", "inbox"} else self.t("Sources")
         self.query_one("#entity-more", Button).disabled = not bool(self.source_next)
@@ -491,6 +494,10 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         if action == "release":
             from .terminal_release import release_record  # a person releases a record here (#306)
             await release_record(self)
+            return
+        if action == "replace":
+            from .terminal_replace import replace_record  # a person replaces a record with a new text (#222)
+            await replace_record(self)
             return
         if self.entity_kind != "records" or not self.entity:
             self.notice(self.t("Open a record first."))
@@ -816,6 +823,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             self.review("dispute")
         elif button == "entity-release":
             self.review("release")
+        elif button == "entity-replace":
+            self.review("replace")
         elif button == "conflict-resolve":
             self.resolve_conflict()
         elif button == "impact-verdict":
