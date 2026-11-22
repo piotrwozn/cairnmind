@@ -276,6 +276,7 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
         assert result.returncode == 1
         assert str(folder / "tmux.sock") in result.stderr
         assert "tmux is not on the PATH here" in result.stderr and "Install tmux" in result.stderr
+        assert "could not be checked or closed" in result.stderr
         assert "remove each socket file" in result.stderr and "workspace stop" not in result.stderr
         assert "Closing" not in result.stdout and (folder / "tmux.sock").exists()
     finally:

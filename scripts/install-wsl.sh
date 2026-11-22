@@ -255,7 +255,7 @@ stop_installed() {
         # and neither is the permission to close them (#307).
         if [[ "$terminals" == /* ]] && ! command -v tmux >/dev/null 2>&1; then
             printf '%s\n' \
-                'Terminal server sockets of the installed version were found, but tmux is not on the PATH here, so they could not be checked:' \
+                'Terminal server sockets of the installed version were found, but tmux is not on the PATH here, so they could not be checked or closed:' \
                 "$terminals" \
                 'Install tmux so they can be checked, or, when no terminal server runs, remove each socket file named above.' \
                 'Then run this installer again. The installer removes nothing itself.' >&2
