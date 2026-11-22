@@ -6,6 +6,7 @@ with bounded waits. Nothing here depends on the platform: macOS runs all of it a
 """
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -15,12 +16,14 @@ from textual.widgets import Input, Static
 from cairnmind import person_proof
 from cairnmind.confirmation import REPLACED_CHANGED
 from cairnmind.memory import MemoryConflict, MemoryManager
+from cairnmind.store import Store
 from cairnmind.terminal_i18n import tr
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_panels import SidebarApp
 from cairnmind import terminal_published_import as published
 
 from conftest import as_person
+from test_backup_restore_stream import comparable
 from test_confirmed_by_person import fixture  # noqa: F401 (the fixture)
 from test_confirmed_elsewhere import rows, two_computers  # noqa: F401 (a fixture and a helper)
 from test_terminal_panels import FakeBroker, setup, settle
@@ -77,6 +80,36 @@ def test_the_check_lists_every_replaced_verdict_and_an_import_with_a_shorter_lis
     assert str(refused.value) == REPLACED_CHANGED and rows(source, pid) == before
     done = MemoryManager(source).import_snapshot(archive, first, replace_confirmed=True, expected_replaced=here["records"])
     assert done["status"] == "imported"
+
+
+def test_a_verdict_given_here_after_the_check_refuses_the_import_and_nothing_is_written(two_computers):  # noqa: F811
+    source, _, pid, first, _ = two_computers
+    made, change = verdicts_to_replace(two_computers, 2)
+    archive = change(made[:1])
+    shown = MemoryManager(source).import_snapshot(archive, first, dry_run=True)["replaces_confirmed_here"]["records"]
+    note = source.snapshot(pid, "manual://later", "Given after the check", "manual")
+    as_person(source, pid, {"kind": "fact", "content": "Confirmed here after the check"}, [note["id"]])
+    before = comparable(source.export())
+    with pytest.raises(MemoryConflict):  # the store changed after the check: refused, whichever rule says so first
+        MemoryManager(source).import_snapshot(archive, first, replace_confirmed=True, expected_replaced=shown)
+    assert comparable(source.export()) == before
+
+
+def test_after_an_accepted_import_a_snapshot_a_preview_and_a_backup_and_restore_still_work(two_computers, tmp_path):  # noqa: F811
+    source, _, pid, first, _ = two_computers
+    made, change = verdicts_to_replace(two_computers, 2)
+    archive = change(made)
+    shown = MemoryManager(source).import_snapshot(archive, first, dry_run=True)["replaces_confirmed_here"]["records"]
+    assert MemoryManager(source).import_snapshot(archive, first, replace_confirmed=True,
+                                                 expected_replaced=shown)["status"] == "imported"
+    manager = MemoryManager(source)
+    assert manager.preview(pid)["status"] == "preview"
+    assert Path(manager.snapshot(pid)["path"]).is_file()
+    restored = Store(tmp_path / "restored")
+    restored.restore(source.backup(tmp_path / "after-import.cairnmind.json.gz"))
+    contents = {identifier: row["content"] for identifier, row in rows(source, pid).items()}
+    assert {identifier: row["content"] for identifier, row in rows(restored, pid).items()} == contents
+    assert all(contents[identifier].startswith("Changed") for identifier in made)
 
 
 def test_the_route_needs_the_list_the_person_was_shown(fixture, workspace_person):  # noqa: F811
