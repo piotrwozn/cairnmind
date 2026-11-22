@@ -14,6 +14,8 @@ it is a confirmation.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from .confirmation import MARK, confirmation_of, import_mark
 from .sql import utc_now
 
@@ -93,7 +95,33 @@ def _with_mark(record, mark):
     return {**record, "metadata": {**metadata, MARK: mark}}
 
 
+def notice_item(proof: str, claims: BackupClaims) -> tuple[str, dict]:
+    """The sentence said when a restore kept no person's act, as (template, values) for either language."""
+    template = RESTORED_WITH_AN_OLD_WORKSPACE if proof == "no_key" else RESTORED_WITHOUT_WORKSPACE
+    return template, {"confirmations": claims.confirmations, "kinds": claims.record_kinds}
+
+
 def restore_notice(proof: str, claims: BackupClaims) -> str:
     """The sentence `cairnmind restore` prints on standard error when it kept no person's act."""
-    template = RESTORED_WITH_AN_OLD_WORKSPACE if proof == "no_key" else RESTORED_WITHOUT_WORKSPACE
-    return template.format(confirmations=claims.confirmations, kinds=claims.record_kinds)
+    template, values = notice_item(proof, claims)
+    return template.format(**values)
+
+
+def checked_restore(settings, source, open_store) -> dict:
+    """Every restore a command makes: `cairnmind restore` and the restore step of `cairnmind setup local --backup`.
+
+    The workspace's key is read once, before the store is opened or changed; only "key" keeps a person's
+    confirmations, otherwise BackupClaims turns them into the backup's claims. Returns what both commands print:
+    `person_confirmations` with its counts, and under "notice" the (template, values) sentence when nothing was kept.
+    """
+    from .person_proof import restore_proof
+    proof = restore_proof(settings)
+    claims = None if proof == "key" else BackupClaims(Path(source).name)
+    store = open_store()
+    store.restore(source, claims=claims)
+    if claims is not None:
+        return {"person_confirmations": "claims_of_the_backup", "confirmations_turned_into_claims": claims.confirmations,
+                "record_kinds_withdrawn": claims.record_kinds, "notice": notice_item(proof, claims)}
+    from .confirmation_upgrade import report
+    marks = report(getattr(store, "confirmations_before_rule", None))
+    return {"person_confirmations": "kept", **({"confirmations_before_rule": marks} if marks else {})}

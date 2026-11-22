@@ -4,15 +4,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import time
 from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
+from textual import _time as textual_time  # the clock of Message.time, which stamps every key and mouse event
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.events import Resize
+from textual.events import Click, MouseDown, Resize
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static, Switch
 
@@ -30,12 +30,14 @@ from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
 
 
 class ConfirmModal(MessageModal):
+    QUIET = 0.4  # seconds after the first refresh in which a consent dialog takes only Esc and Enter (#292, #318)
     SCROLL_HINT, CLOSE_HINT = "PgUp/PgDn: scroll · Esc: cancel", "Esc: cancel"
 
     def __init__(self, title, value, *, approve="Confirm", consent=False):
         super().__init__(title, value)
         self.approve = approve
         self.consent = consent
+        self.drawn_at = float("inf") if consent else 0  # set before any input can reach a dialog that is not mounted yet
         self.SCROLL_HINT, self.CLOSE_HINT = ("PgUp/PgDn: scroll · Tab: switch · Esc: cancel", "Tab: switch · Esc: cancel") if consent else (self.SCROLL_HINT, self.CLOSE_HINT)
 
     def compose(self):
@@ -74,31 +76,58 @@ class ConfirmModal(MessageModal):
             body.styles.max_height = rows + 1
 
     def on_mount(self):
-        # At once, before any queued key is handled (#292). Consent ignores an approval until 0.4 s after
-        # the first refresh (start_on_cancel), not after mount: a stall before it must not expire the guard.
-        self.armed_at = float("inf") if self.consent else 0
+        # At once, before any queued key is handled (#292). drawn_at, the first refresh (start_on_cancel), is on the clock
+        # Textual stamps every input event with when it reads it (#318).
         if self.consent:
             self.set_focus(self.query_one("#confirm-no", Button))
 
     def start_on_cancel(self):
         """A confirmation whose text fits starts on Cancel, so the focus shows and Enter cancels, even for consent.
         A text that scrolls starts on the text, where Enter does nothing; its hint names Tab, which reaches the buttons."""
-        first = self.armed_at == float("inf")  # only the first call may leave Cancel for the text, not a resize
+        first = self.drawn_at == float("inf")  # only the first call may leave Cancel for the text, not a resize
         if first:
-            self.armed_at = time.monotonic() + 0.4
+            self.drawn_at = textual_time.get_time()
         with suppress(Exception):
             body, cancel = self.query_one(".cm-dialog-body"), self.query_one("#confirm-no", Button)
             fits = body.virtual_size.height <= body.scrollable_content_region.height
             if self.focused in (body, cancel) and (fits or first):
                 self.set_focus(cancel if fits else body)
 
+    def admits(self, event):
+        """Whether a key or a mouse press may act on this dialog (#318). Only input produced after the dialog was
+        first drawn counts: Textual stamps each event when it reads it (Message.time), so an early key keeps its
+        early time however late it is handled. Esc always refuses. In the quiet moment only Esc and Enter act,
+        and Enter then reaches only Cancel or the text, because no focus move or click made in it counts."""
+        key = getattr(event, "key", None)
+        if not self.consent or key == "escape":
+            return True
+        return event.time >= self.drawn_at + self.QUIET or (key == "enter" and event.time >= self.drawn_at)
+
+    def presses_cancel(self, event):
+        # Cancel only refuses, so a press on it made after the dialog was drawn needs no quiet moment (#318).
+        with suppress(Exception):
+            return event.time >= self.drawn_at and self.get_widget_at(event.screen_x, event.screen_y)[0].id == "confirm-no"
+        return False
+
+    def on_key(self, event):
+        # A key typed while this dialog is on top passes here before any binding; drop_unseen_key in the App
+        # also catches a key queued on the screen below, which never passes here.
+        if not self.admits(event):
+            event.prevent_default()
+            event.stop()
+
+    def _forward_event(self, event):
+        # Textual hands every mouse event to the top screen here before any widget sees it: a press the dialog
+        # does not admit neither focuses nor clicks, and the click of its release is cancelled.
+        if isinstance(event, (MouseDown, Click)) and not self.admits(event) and not self.presses_cancel(event):
+            self.suppress_click()
+            return
+        super()._forward_event(event)
+
     @on(Button.Pressed)
     def confirm_button(self, event):
         if event.button.id in {"confirm-yes", "confirm-no"}:
             event.stop()
-            if event.button.id == "confirm-yes" and time.monotonic() < self.armed_at:
-                self.set_focus(self.query_one("#confirm-no", Button))
-                return
             self.dismiss(event.button.id == "confirm-yes")
 
     def action_close(self):
