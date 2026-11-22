@@ -340,7 +340,11 @@ def _refuse_unknown_project(settings: Settings, project: str) -> None:
     except ValueError as exc:
         if str(exc).startswith("Unknown project: "):
             raise
-    except (ArcadeError, OSError, httpx.HTTPError):
+    except ArcadeError as exc:
+        if exc.status_code == 401:
+            raise  # an engine that refuses this data directory: said in full, and no service is started for it
+        return
+    except (OSError, httpx.HTTPError):
         return
 
 

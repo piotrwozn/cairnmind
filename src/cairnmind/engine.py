@@ -458,6 +458,20 @@ def ensure_engine(settings: Settings) -> None:
         print("cairnmind: " + ENGINE_STARTED.format(mode=mode), file=sys.stderr)
 
 
+def own_engine_recorded(settings: Settings) -> bool:
+    """Whether the engine on arcade_url is the one this data directory started: a verified process recorded for
+    that address, or the recorded container in Docker mode. Anything that cannot be established is False, so a
+    refusal is never blamed on this directory's own engine without proof (#313)."""
+    if engine_mode(settings) == "docker":
+        from .engine_docker import container_recorded
+        return container_recorded(settings)
+    try:
+        recorded = json.loads((settings.data_dir / "arcade" / "process.json").read_text())
+        return recorded.get("url") == settings.arcade_url and native_engine_pid(settings) is not None
+    except (OSError, ValueError, AttributeError, ArcadeError):
+        return False
+
+
 def local_process_recorded(settings: Settings) -> bool:
     """Whether this data directory holds the record of an engine process it started (arcade/process.json)."""
     return (settings.data_dir / "arcade" / "process.json").exists()

@@ -276,7 +276,8 @@ def _storage_line(place: dict, language: str) -> str:
         parts.append(_say(STORAGE_PROBLEM, language, problem=_safe(storage["problem"], 400)))
     writer = storage.get("writer")
     if writer:
-        reason = _safe(writer.get("reason", ""), 400)
+        # A refused sign-in carries the way out ("The database engine ..."): doctor says it once, under Required (#313).
+        reason = _safe(str(writer.get("reason", "")).split(". The database engine ")[0], 400)
         if writer.get("problem"):  # a writer row that the journal head contradicts: never "this installation writes it"
             parts.append(_safe(writer["problem"], 400))
         elif writer["role"] == "writer":

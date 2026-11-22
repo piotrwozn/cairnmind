@@ -156,7 +156,8 @@ PROJECTS_NONE = "No project is registered yet. Next: cairnmind project add NAME 
 PROJECTS_HEADING = "Registered projects:"
 PROJECTS_NEXT = ('Next: cairnmind brief NAME shows where work stands in one; cairnmind remember NAME "..." stores a '
                  'finding.')
-INIT_READY = "Memory is ready in {data_dir}."
+INIT_READY = ("Memory is ready in {data_dir}. Next: cairnmind doctor checks every part, then "
+              "cairnmind project add NAME FOLDER registers a project.")
 INIT_MARKED = ("{marked} confirmed records were marked as confirmed by a person, because a review or a workspace form "
                "written on this computer covers each as it stands; {left} keep their status until you confirm them "
                "in the memory inspector.")
@@ -165,6 +166,9 @@ FOREIGN_ENGINE = ("The database engine at {url} does not accept the sign-in of {
                   "to another data directory. Give this data directory a free engine port: set arcade_url in "
                   "{data_dir}/config.json, for example to http://127.0.0.1:2490. Or stop the engine that answers "
                   "there: cairnmind stop, then cairnmind engine stop, both run with the --data-dir that started it.")
+OWN_ENGINE_REFUSED = ("The database engine of this data directory at {url} refused the sign-in. After a few failed "
+                      "sign-ins ArcadeDB refuses every one for about 30 seconds: wait, then run the command again. "
+                      "If it keeps refusing, the sign-in in {data_dir}/config.json does not match this engine.")
 
 # Stops that name the next step.
 UNKNOWN_PROJECT_NEXT = ("cairnmind project list shows the registered projects; cairnmind project add NAME FOLDER "
@@ -354,7 +358,8 @@ MESSAGES = {
     PROJECTS_HEADING: "Zarejestrowane projekty:",
     PROJECTS_NEXT: ('Dalej: cairnmind brief NAZWA pokazuje, na czym stoi praca w jednym z nich; cairnmind remember '
                     'NAZWA "..." zapisuje ustalenie.'),
-    INIT_READY: "Pamięć jest gotowa w {data_dir}.",
+    INIT_READY: ("Pamięć jest gotowa w {data_dir}. Dalej: cairnmind doctor sprawdza każdą część, potem "
+                 "cairnmind project add NAZWA FOLDER rejestruje projekt."),
     INIT_MARKED: ("Oznaczono {marked} potwierdzonych rekordów jako potwierdzone przez człowieka, bo każdy z nich w "
                   "obecnej postaci obejmuje przegląd lub formularz środowiska zapisany na tym komputerze; {left} "
                   "zachowuje swój status, dopóki nie potwierdzisz ich w inspektorze pamięci."),
@@ -365,7 +370,11 @@ MESSAGES = {
                      "tam odpowiada: cairnmind stop, potem cairnmind engine stop, oba z --data-dir, który go "
                      "uruchomił."),
 }
-MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
+MESSAGES[OWN_ENGINE_REFUSED] = ("Silnik bazy danych tego katalogu danych pod {url} odrzucił logowanie. Po kilku nieudanych "
+                                "logowaniach ArcadeDB odrzuca każde przez około 30 sekund: poczekaj i uruchom polecenie "
+                                "ponownie. Jeśli dalej odmawia, logowanie z {data_dir}/config.json nie pasuje do tego "
+                                "silnika.")
+MESSAGES[PROCESS_OFF] ="Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
 
 
