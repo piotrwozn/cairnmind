@@ -123,6 +123,8 @@ INSTALL_NOT_CONNECTED = "Written in the project: {files}. " + INSTALL_ALSO
 NOTHING_WRITTEN = "nothing new (the files were up to date)"
 CLIENT_SKIPPED = ("{client} is not installed, so only its instruction block was written; after installing it, run "
                   "cairnmind install again to connect it.")
+REMOVED_COMMAND = ("{path} ({entry}) starts the devbrain command, which Cairnmind no longer installs; it is left "
+                   "unchanged and fails to start. Write cairnmind there with the same arguments.")
 TRUST_NOTE = ("Each client asks you to trust this project's MCP server and hooks when it first starts here; "
               "Cairnmind answers no trust question for you.")
 SERVICE_STARTED = ("Started the Cairnmind service at {url} for {data_dir}. It keeps running in the background and "
@@ -264,6 +266,8 @@ MESSAGES = {
     NOTHING_WRITTEN: "nic nowego (pliki były aktualne)",
     CLIENT_SKIPPED: ("{client} nie jest zainstalowany, więc zapisano tylko jego blok instrukcji; po instalacji "
                      "uruchom ponownie cairnmind install, aby go połączyć."),
+    REMOVED_COMMAND: ("{path} ({entry}) uruchamia polecenie devbrain, którego Cairnmind już nie instaluje; wpis "
+                      "pozostaje bez zmian i nie uruchomi się. Wpisz tam cairnmind z tymi samymi argumentami."),
     TRUST_NOTE: ("Każdy klient przy pierwszym uruchomieniu tutaj zapyta, czy ufasz serwerowi MCP i hookom tego "
                  "projektu; Cairnmind nie odpowiada za Ciebie na takie pytania."),
     SERVICE_STARTED: ("Uruchomiono usługę Cairnmind pod {url} dla {data_dir}. Działa w tle i uruchamia silnik "

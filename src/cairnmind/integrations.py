@@ -28,7 +28,8 @@ from tomlkit.items import Comment, Table
 
 from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
 from .first_start import (CLIENT_SKIPPED, LAUNCH_REFUSED, PART_CONTRACT, PART_HOOKS, PART_INSTRUCTIONS, PART_MCP,
-                          TRUST_NOTE)
+                          REMOVED_COMMAND, TRUST_NOTE)
+from .removed_command import bare_devbrain_entries
 
 # The name of the MCP server in client configuration, and the markers around what install manages.
 # Entries and blocks written under the earlier name are recognised and converted in place.
@@ -707,6 +708,9 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
+    for client in clients:
+        results["warnings"] += [REMOVED_COMMAND.format(path=path, entry=entry)
+                                for path, entry in bare_devbrain_entries(root, client)]
     results["warnings"].append(TRUST_NOTE)
     return results
 
