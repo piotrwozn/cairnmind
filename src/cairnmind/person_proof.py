@@ -56,6 +56,9 @@ IMPORT_REPLACE = (
     "Replacing what a person confirmed or disputed on this machine needs the person's workspace, and this import did "
     "not come from it. Nothing was imported. Import it in the memory view of the workspace (`cairnmind`): "
     "Import for an archive, Team memory for a published folder or a commit.")
+FORGET_REFUSED = (
+    "Deleting a project's memory is a person's act made in the workspace, and this request did not come from it. "
+    "Nothing was deleted. The person deletes it in the workspace (`cairnmind`): More, then Delete project memory.")
 
 
 class PersonProofRefused(Exception):

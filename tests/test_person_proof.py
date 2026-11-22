@@ -242,7 +242,7 @@ def test_the_proof_is_not_present_until_require_passes(settings, workspace_socke
 def test_every_new_sentence_has_polish():
     from cairnmind.terminal_i18n import CATALOG, tr
     sentences = (person_proof.PROOF_MISSING, person_proof.PROOF_REFUSED, person_proof.NO_WORKSPACE_KEY,
-                 person_proof.TMUX_MISSING, person_proof.IMPORT_REPLACE, NOT_PROVEN)
+                 person_proof.TMUX_MISSING, person_proof.IMPORT_REPLACE, person_proof.FORGET_REFUSED, NOT_PROVEN)
     for sentence in sentences:
         assert BROKER_MESSAGES[sentence] != sentence and BROKER_MESSAGES[sentence].strip()
         assert CATALOG[sentence] == BROKER_MESSAGES[sentence] == tr(sentence, "pl")
@@ -250,5 +250,5 @@ def test_every_new_sentence_has_polish():
 
 def test_no_sentence_holds_a_key():
     for sentence in (person_proof.PROOF_MISSING, person_proof.PROOF_REFUSED, person_proof.NO_WORKSPACE_KEY,
-                     person_proof.TMUX_MISSING, person_proof.IMPORT_REPLACE, NOT_PROVEN):
+                     person_proof.TMUX_MISSING, person_proof.IMPORT_REPLACE, person_proof.FORGET_REFUSED, NOT_PROVEN):
         assert not __import__("re").search(r"[0-9a-f]{64}", sentence)

@@ -11,7 +11,7 @@ from .confirmation import GROUP_CHANGED, NOT_PROVEN, REPLACED_CHANGED
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
 from .memory_egress import HOSTED_ASK_UNKNOWN, HOSTED_PACKET_NOTE, HOSTED_READ_REFUSED, HOSTED_RECORDS_HELD
 from .sensitivity import CLASSES
-from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
+from .person_proof import FORGET_REFUSED, IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
 from .service_token import FOREIGN_SERVICE
 
 # Answers and gaps of the memory agent's /ask (agent.py, service.py).
@@ -288,6 +288,10 @@ BROKER_MESSAGES = {
         "Zastąpienie tego, co osoba potwierdziła lub zakwestionowała na tym komputerze, wymaga środowiska osoby, a "
         "ten import z niego nie pochodzi. Niczego nie zaimportowano. Zaimportuj go w widoku pamięci w środowisku "
         "(`cairnmind`): Import dla archiwum, Pamięć zespołu dla katalogu publikacji albo commita.",
+    FORGET_REFUSED:
+        "Skasowanie pamięci projektu to czynność osoby wykonywana w środowisku terminalowym, a to żądanie z niego nie "
+        "pochodzi. Niczego nie skasowano. Osoba kasuje ją w środowisku terminalowym (`cairnmind`): Więcej, potem "
+        "Skasuj pamięć projektu.",
     REPLACED_CHANGED:
         "To, co ten import zastępuje spośród rekordów potwierdzonych lub zakwestionowanych na tym komputerze, zmieniło "
         "się od sprawdzenia. Niczego nie zaimportowano. Sprawdź import ponownie i przeczytaj nową listę.",
