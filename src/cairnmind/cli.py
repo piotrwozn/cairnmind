@@ -2484,9 +2484,10 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         from cairnmind.restore_claims import checked_restore
         # The proof is read once, before anything changes; only "key" keeps a person's acts (#214).
         outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj))
-    notice = outcome.pop("notice", None)
-    if notice:
-        typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
+    for key in ("notice", "vectors_notice"):
+        notice = outcome.pop(key, None)
+        if notice:
+            typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
     output({"restored": True, **outcome})
 
 

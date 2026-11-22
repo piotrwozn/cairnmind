@@ -796,6 +796,8 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
         result["restore"] = outcome
         marks = outcome.get("confirmations_before_rule")
         result["done"].append(notice or (RESTORE_KEPT, {}))
+        if outcome.get("vectors_notice"):
+            result["done"].append(outcome.pop("vectors_notice"))  # said, as `cairnmind restore` says it (#187)
         if marks:
             result["done"].append((CONFIRMATIONS, {"marked": marks["marked_as_a_persons"],
                                                    "left": marks["still_before_the_rule"]}))

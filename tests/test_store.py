@@ -325,7 +325,7 @@ def test_corrupt_or_foreign_backups_rejected_without_destroying_store(store, pro
     assert store.resolve_project(project["id"])["name"] == "example"
 
 
-def test_native_ann_survives_portable_backup_restore(store, project, tmp_path):
+def test_portable_backup_carries_no_vectors_and_search_says_so_after_restore(store, project, tmp_path):
     from cairnmind.retrieval import Retriever
 
     s = source(store, project)
@@ -346,8 +346,13 @@ def test_native_ann_survives_portable_backup_restore(store, project, tmp_path):
     store.forget_project(project["id"])
     store.restore(backup)
     restored = Retriever(store, store.settings)
-    assert restored.search(project["id"], "unrelated", query_vector=[1, 0, 0], embedding_key=namespace)[0]["id"] == chunk["id"]
-    assert not restored.warnings
+    # The backup brought no vectors (#187): none are restored, the search that wanted one says so, and the
+    # text search finds the chunk at once.
+    assert store.query("SELECT count(*) AS n FROM embeddings")[0]["n"] == 0
+    assert store.query(f"SELECT count(*) AS n FROM {index['type_name']}")[0]["n"] == 0
+    assert restored.search(project["id"], "unrelated", query_vector=[1, 0, 0], embedding_key=namespace) == []
+    assert any("not ready" in warning and "text only" in warning for warning in restored.warnings)
+    assert restored.search(project["id"], "Authentication tokens")[0]["id"] == chunk["id"]
 
 
 def test_snapshot_invalidates_native_ann_and_lexical_current_flags(store, project):
