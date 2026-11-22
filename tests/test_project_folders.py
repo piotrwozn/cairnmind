@@ -8,7 +8,10 @@ import asyncio
 import json
 import os
 import shutil
+import socket
+import subprocess
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -327,3 +330,151 @@ def test_the_folder_notice_reads_in_english_and_polish():
     both = [project_folders.entry(project, missing), project_folders.entry(project, unreadable)]
     assert project_folders.folder_notice(both) == " ".join(item["message"] for item in both)
     assert project_folders.folder_notice([]) == ""
+
+
+# --- a folder belongs to the machine that registered it ---------------------------------------------------------
+
+def machine(monkeypatch, name):
+    """This test process acts as another machine; the stamps written before were written by the real one."""
+    monkeypatch.setattr(project_folders, "this_machine", lambda: name)
+
+
+def stamped(store, pid):
+    return [(row.get("machine"), row.get("host")) for row in store.query(
+        "SELECT machine,host FROM project_roots WHERE project_id=:p", {"p": pid})]
+
+
+def test_a_folder_of_another_machine_is_not_indexed_even_when_the_path_exists_here(tmp_path, monkeypatch):
+    from cairnmind.ingest import current_source
+    from cairnmind.store_writer import label
+    store, pid, root, record = indexed(tmp_path)
+    before = counts(store, pid, [record])
+    source = next(row["id"] for row in store.query(
+        "SELECT id FROM sources WHERE project_id=:p AND uri=:u AND is_current=true",
+        {"p": pid, "u": str(root / "app.py")}))
+    machine(monkeypatch, "b")
+    (root / "app.py").write_text("def handler():\n    return 'changed on this machine'\n")  # the same path, other files
+    result = index_project(store, pid)
+    assert result["files"] == 0 and result["changed"] == 0 and result["deleted"] == 0
+    (item,) = result["unavailable"]
+    assert item["state"] == "elsewhere" and item["host"] == label(socket.gethostname())
+    assert "belongs to" in item["message"] and "only that machine indexes it" in item["message"]
+    assert f"cairnmind project root cairnmind {root}" in item["message"]  # how the person moves it, by name
+    assert counts(store, pid, [record]) == before
+    assert index_project_if_changed(store, pid)["skipped"] is True
+    # A cited file is not refreshed from a same-path folder of another machine, and nothing is deactivated.
+    cited = current_source(store, source)
+    assert "unavailable" in cited["freshness_warning"] and cited.get("is_current") is not False
+    assert counts(store, pid, [record]) == before
+
+
+def test_a_folder_without_a_machine_is_stamped_by_its_first_complete_index_here(tmp_path, monkeypatch):
+    store, pid, root, record = indexed(tmp_path)
+    here = project_folders.this_machine()
+    assert [machine_id for machine_id, _ in stamped(store, pid)] == [here]  # a new registration is stamped
+    store.command("UPDATE project_roots REMOVE machine, host WHERE project_id=:p", {"p": pid})  # as before #371
+    assert stamped(store, pid) == [(None, None)]
+    machine(monkeypatch, "b")
+    away = root.with_name("proj-b.away")
+    root.rename(away)
+    index_project(store, pid)  # the folder is not here: not claimed
+    assert stamped(store, pid) == [(None, None)]
+    away.rename(root)
+    if os.geteuid() != 0:
+        (root / "pkg").chmod(0)
+        try:
+            index_project(store, pid)  # a walk that could not list everything is not complete: not claimed
+        finally:
+            (root / "pkg").chmod(0o755)
+        assert stamped(store, pid) == [(None, None)]
+    result = index_project(store, pid)
+    assert "unavailable" not in result and result["errors"] == []
+    assert [machine_id for machine_id, _ in stamped(store, pid)] == ["b"]
+    # Claimed: another machine now leaves it alone.
+    machine(monkeypatch, "c")
+    assert index_project(store, pid)["unavailable"][0]["state"] == "elsewhere"
+
+
+def test_project_root_moves_a_folder_to_this_machine_by_name(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from cairnmind import cli
+    from cairnmind.store_writer import label
+    store, pid, root, record = indexed(tmp_path)
+    machine(monkeypatch, "b")
+    assert index_project(store, pid)["unavailable"][0]["state"] == "elsewhere"
+    (root / "app.py").write_text("def handler():\n    return 'moved'\n")
+    monkeypatch.setattr(cli, "store_for", lambda settings: store)
+    moved = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "project", "root", "cairnmind", str(root)])
+    assert moved.exit_code == 0, moved.output
+    assert json.loads(moved.stdout) == {"project": pid, "root": str(root.resolve()),
+                                        "moved_from": label(socket.gethostname())}
+    assert [machine_id for machine_id, _ in stamped(store, pid)] == ["b"]
+    result = index_project(store, pid)  # now the folder is read here, and files that differ replace the indexed ones
+    assert "unavailable" not in result and result["changed"] == 1 and result["errors"] == []
+    # Registering a folder that already is this machine's, or a new one, says nothing of a move.
+    assert store.add_project_root(pid, root) == {}
+
+
+def test_a_backup_restored_on_another_machine_keeps_the_old_machines_folders(tmp_path, monkeypatch):
+    store, pid, root, record = indexed(tmp_path)
+    backup = store.backup(tmp_path / "old.cairnmind.json.gz")
+    machine(monkeypatch, "b")  # the disaster-recovery case: a new store on another machine
+    target = Store(tmp_path / "target")
+    target.restore(backup)
+    assert [machine_id for machine_id, _ in stamped(target, pid)] == [stamped(store, pid)[0][0]] != ["b"]
+    before = counts(target, pid)
+    assert before["graph_nodes"] > 0
+    (root / "app.py").write_text("def handler():\n    return 'another file'\n")
+    result = index_project(target, pid)
+    assert result["unavailable"][0]["state"] == "elsewhere" and result["changed"] == 0
+    assert counts(target, pid) == before  # worse than reading it here? no: nothing is replaced, and it is named
+    target.add_project_root(pid, root)  # the person moves it, by name
+    result = index_project(target, pid)
+    assert "unavailable" not in result and result["changed"] == 1
+
+
+def test_the_machine_of_a_folder_is_not_in_a_snapshot_or_its_state_hash(tmp_path, monkeypatch):
+    from cairnmind.memory import MemoryManager
+    store, pid, root, record = indexed(tmp_path)
+    for args in (("init", "-q", "-b", "main"), ("config", "user.name", "Fixture"),
+                 ("config", "user.email", "fixture@example.invalid"), ("add", "."), ("commit", "-qm", "initial")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    manager, here = MemoryManager(store), project_folders.stamp()
+    before = manager.preview(pid)
+    store.command("UPDATE project_roots SET machine='another-machine',host='another-host' WHERE project_id=:p",
+                  {"p": pid})
+    after = manager.preview(pid)
+    assert before["state_hash"] == after["state_hash"] and "another-host" not in json.dumps(after)
+    with pytest.raises(ValueError, match="belongs to another-host"):
+        manager.snapshot(pid)  # never a package into a same-path folder of another machine
+    store.command("UPDATE project_roots SET machine=:machine,host=:host WHERE project_id=:p", {**here, "p": pid})
+    published = Path(manager.snapshot(pid)["manifest_path"])
+    written = "".join(file.read_text() for file in published.parent.rglob("*.json"))
+    assert here["machine"] not in written and '"machine"' not in written and "project_roots" not in written
+    assert json.loads(published.read_text())["state_hash"] == before["state_hash"]
+
+
+def test_an_acknowledgement_holds_while_another_machine_scans_the_project(tmp_path, monkeypatch):
+    from cairnmind.sessions import SessionManager
+    from test_sessions import acknowledge, git
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-b", "main")
+    git(root, "config", "user.email", "fixture@example.invalid")
+    git(root, "config", "user.name", "Fixture")
+    (root / "app.py").write_text("VALUE = 1\n")
+    git(root, "add", "app.py")
+    git(root, "commit", "-m", "initial")
+    store = Store(tmp_path / "memory")
+    project = store.add_project("session-fixture", root)
+    index_project(store, project["id"])
+    manager = SessionManager(store, store.settings)
+    initial = manager.prepare(project["id"], "codex", timeout=0)
+    acknowledge(manager, initial)
+    machine(monkeypatch, "b")  # another machine scans the project: its folder is elsewhere for it
+    assert index_project(store, project["id"])["unavailable"][0]["state"] == "elsewhere"
+    store.command("UPDATE project_roots SET machine='c' WHERE project_id=:p", {"p": project["id"]})
+    manager.require_ack(initial["session_id"], initial["packet"]["id"])
+    again = manager.resume_context(initial["session_id"])
+    assert again["packet"]["hash"] == initial["packet"]["hash"] and again["epoch"] == initial["epoch"]

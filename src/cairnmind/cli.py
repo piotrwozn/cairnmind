@@ -1132,8 +1132,8 @@ def project_root(ctx: typer.Context, project: ProjectArg, path: FolderArg):
     root = path.expanduser().resolve(strict=True)
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
-    store.add_project_root(pid, root)
-    output({"project": pid, "root": str(root)})
+    moved = store.add_project_root(pid, root)  # a folder another machine had is now this machine's (#371)
+    output({"project": pid, "root": str(root), **moved})
 
 
 @app.command()

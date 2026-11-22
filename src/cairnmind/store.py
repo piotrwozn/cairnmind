@@ -769,10 +769,15 @@ class Store:
                 return restored
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
             insert_document(tx, "projects", project)
-            insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path})
+            from .project_folders import stamp
+            insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path, **stamp()})
             return project
 
-    def add_project_root(self, project_id, path):
+    def add_project_root(self, project_id, path) -> dict:
+        """Register a folder of the project, recording this machine as the one that has it (#371). A folder that
+        another machine registered is moved to this one, and `moved_from` says from which host."""
+        from .project_folders import stamp, this_machine
+        from .store_writer import label
         root = self.require_safe_project_root(path)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
@@ -780,7 +785,12 @@ class Store:
             if existing and existing["project_id"] != project_id:
                 raise ValueError("Directory already belongs to another project")
             if not existing:
-                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root})
+                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root, **stamp()})
+            elif existing.get("machine") != this_machine():
+                update_document(tx, "project_roots", stamp(), "id=:id", {"id": existing["id"]})
+                if existing.get("machine"):
+                    return {"moved_from": label(existing.get("host"))}
+        return {}
 
     def list_projects(self):
         return [clean_row(row) for row in self.query("SELECT FROM projects WHERE removed_at IS NULL ORDER BY name")]

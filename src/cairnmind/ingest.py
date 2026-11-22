@@ -690,6 +690,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     folders = project_folders.folder_states(store, project)
     registered_roots = [Path(folder["root"]) for folder in folders]
     away = {folder["root"] for folder in folders if folder["state"] != "available"}
+    walked: list[str] = []  # rows of folders without a machine that this run reads, stamped when it was complete
     started = time.time_ns() if started is None else started
     known = previous["files"] if previous and previous.get("parser") == parser_identity() else {}
     files: dict[str, dict] = {}
@@ -775,6 +776,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
                 f"`cairnmind project remove {quoted} --root {shlex.quote(safe_text(str(root)))} --yes`"))
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
+        if folder["adopt"]:
+            walked.append(folder["row_id"])
         for path in _files(root, *_walk_args(store, root, walk_errors)):
             name = str(path)
             try:
@@ -914,6 +917,8 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     if away:
         counts["unavailable"] = [project_folders.entry(project, folder) for folder in folders
                                  if folder["root"] in away]
+    if not walk_errors and not away:
+        project_folders.adopt(store, walked)
     if state is not None:
         state.update(parser=parser_identity(), files=files, graph=graph)
     return counts
@@ -1698,6 +1703,12 @@ def current_source(store, source_id: str) -> dict:
             return current_source(store, latest["id"])
         return {**source, "is_current": False,
                 "freshness_warning": "Imported file snapshot is historical until the local checkout is indexed"}
+    # A cited file under a folder this machine cannot read, or that belongs to another machine, is neither
+    # deactivated nor indexed from a same-named path here (#371); the same sentence as a missing root.
+    folders = project_folders.folder_states(store, project)
+    if (any(f["state"] != "available" and path.is_relative_to(f["root"]) for f in folders)
+            and not any(f["state"] == "available" and path.is_relative_to(f["root"]) for f in folders)):
+        return {**source, "freshness_warning": "Project root is unavailable; the current file cannot be checked"}
     allowed_roots = [root for root in roots if path.is_absolute() and path.is_relative_to(root)
                      and path.resolve().is_relative_to(root)]
     in_excluded = any(excluded_directory(part) for root in allowed_roots for part in path.relative_to(root).parts[:-1])
