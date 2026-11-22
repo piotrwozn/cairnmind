@@ -129,6 +129,16 @@ def test_an_external_server_that_starts_a_service_names_a_version_it_meets(tmp_p
     assert str(caught.value) == sentence(settings)
 
 
+def test_the_workspace_refuses_a_service_of_another_version_before_a_broker_starts(tmp_path, monkeypatch):
+    from cairnmind import cockpit
+    settings = Settings.load(tmp_path / "data", create=True)
+    old_service(monkeypatch, settings)
+    monkeypatch.setattr(cockpit.subprocess, "Popen", forbidden)
+    with pytest.raises(cli.ServiceOfOtherVersion) as refused:
+        cockpit.ensure_cockpit(settings)
+    assert isinstance(refused.value, cli.ServiceDidNotStart) and str(refused.value) == sentence(settings)
+
+
 def test_run_refuses_before_anything_starts(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
     old_service(monkeypatch, settings)

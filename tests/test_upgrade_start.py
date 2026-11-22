@@ -123,6 +123,55 @@ def test_a_start_that_outlasts_the_wait_while_an_upgrade_began_is_ended_and_says
     assert ended == [1]
 
 
+def test_no_broker_starts_during_an_upgrade_even_beside_a_running_service(tmp_path, monkeypatch):
+    from cairnmind import cockpit
+    settings = Settings.load(tmp_path / "data", create=True)
+    monkeypatch.setattr(cli, "service_alive", lambda settings: True)
+    monkeypatch.setattr(upgrade_mark, "state", lambda: RUNNING)
+    monkeypatch.setattr(cli, "ensure_service", forbidden)
+    monkeypatch.setattr(cockpit.subprocess, "Popen", forbidden)
+    with pytest.raises(cli.UpgradeInProgress) as refused:
+        cockpit.ensure_cockpit(settings)
+    assert str(refused.value) == upgrade_mark.NOTE_RUNNING.format(pid=4242)
+
+
+def broker_started_while_an_upgrade_began(tmp_path, monkeypatch):
+    """No mark at the gate, a running installer once the broker answers."""
+    from cairnmind import cockpit
+    settings = Settings.load(tmp_path / "data", create=True)
+    marks = iter([None, upgrade_mark.NOTE_RUNNING.format(pid=4242)])
+    monkeypatch.setattr(upgrade_mark, "refusal", lambda: next(marks, None))
+    monkeypatch.setattr(cli, "ensure_service", lambda settings, **kwargs: None)
+    answers = iter([{"available": False}, {"available": True, "version_matches": True}])
+    monkeypatch.setattr(cockpit, "cockpit_status", lambda settings: next(answers))
+    monkeypatch.setattr(cockpit.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(cockpit.time, "sleep", lambda seconds: None)
+    return cockpit, settings
+
+
+def test_a_broker_started_while_an_upgrade_began_is_stopped(tmp_path, monkeypatch):
+    cockpit, settings = broker_started_while_an_upgrade_began(tmp_path, monkeypatch)
+    stopped = []
+    monkeypatch.setattr(cockpit, "stop_cockpit", lambda settings: stopped.append(settings))
+    with pytest.raises(cli.UpgradeInProgress) as refused:
+        cockpit.ensure_cockpit(settings)
+    assert str(refused.value) == upgrade_mark.NOTE_RUNNING.format(pid=4242)
+    assert stopped == [settings]
+
+
+def test_a_broker_that_does_not_stop_is_named_with_the_command(tmp_path, monkeypatch):
+    cockpit, settings = broker_started_while_an_upgrade_began(tmp_path, monkeypatch)
+
+    def refuses(settings):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(cockpit, "stop_cockpit", refuses)
+    with pytest.raises(cli.UpgradeInProgress) as refused:
+        cockpit.ensure_cockpit(settings)
+    command = f"cairnmind --data-dir {settings.data_dir} cockpit stop"
+    assert str(refused.value) == upgrade_mark.BROKER_STOP_FAILED.format(command=command)
+
+
 def test_ask_during_an_upgrade_is_refused_with_the_reason(tmp_path, monkeypatch):
     Settings.load(tmp_path / "data", create=True)
     monkeypatch.setattr(upgrade_mark, "state", lambda: RUNNING)
