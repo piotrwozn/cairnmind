@@ -72,6 +72,7 @@ CLIENT_NAMES = {"codex": "Codex", "claude": "Claude Code"}  # as the first start
 
 # The doctor summary (#287): what is required and present, required and missing, optional and off.
 DATA_DIR = "Memory is kept in {data_dir}."
+THIS_MAC = "This Mac: {chip}, {gib} GiB of unified memory, shared with the models."  # the report's gpu block (#368)
 REQUIRED_PRESENT = "Required and present:"
 REQUIRED_MISSING = "Required and missing:"
 NOTHING_MISSING = "Required and missing: nothing."
@@ -117,6 +118,12 @@ PROJECT_FOLDER_MISSING = ("{root} does not exist. cairnmind project add NAME FOL
 PROJECT_ADDED = 'Registered {project} in {root}; files indexed: {files}.'
 PROJECT_ADDED_NEXT = ('Next: cairnmind remember {project} "..." stores a first finding, and cairnmind brief {project} '
                       'shows it.')
+JOBS_HELD_STOPPED = ("Extraction and embedding jobs waiting: {count}. The Cairnmind service runs them, and it is not "
+                     "running; project add does not start it. cairnmind index {project} starts it now.")
+JOBS_HELD_UPGRADE = ("Extraction and embedding jobs waiting: {count}. The Cairnmind service runs them, and it is not "
+                     "started now. {reason}")
+JOBS_HELD_NO_MODELS = ("Extraction and embedding jobs waiting: {count}. Without models (deterministic-only mode) they "
+                       "stay held until models are turned on. " + GET_MODELS)
 NOT_GIT = ("{root} is not a Git repository. Memory works without Git; impact, the commits in brief and coding "
            "sessions (cairnmind run) need a repository with a first commit (git init, git add, git commit).")
 NO_COMMIT = ("{root} is a Git repository without a commit yet. Memory works; impact, the commits in brief and "
@@ -403,6 +410,16 @@ MESSAGES[OWN_ENGINE_REFUSED] = ("Silnik bazy danych tego katalogu danych pod {ur
                                 "logowaniach ArcadeDB odrzuca każde przez około 30 sekund: poczekaj i uruchom polecenie "
                                 "ponownie. Jeśli dalej odmawia, logowanie z {data_dir}/config.json nie pasuje do tego "
                                 "silnika.")
+MESSAGES[JOBS_HELD_STOPPED] = ("Zadania ekstrakcji i osadzania w kolejce: {count}. Wykonuje je usługa Cairnmind, a ona "
+                               "nie działa; project add jej nie uruchamia. cairnmind index {project} uruchamia ją "
+                               "od razu.")
+MESSAGES[JOBS_HELD_UPGRADE] = ("Zadania ekstrakcji i osadzania w kolejce: {count}. Wykonuje je usługa Cairnmind, a ona "
+                               "nie jest teraz uruchamiana. {reason}")
+MESSAGES[JOBS_HELD_NO_MODELS] = ("Zadania ekstrakcji i osadzania w kolejce: {count}. Bez modeli (tryb tylko "
+                                 "deterministyczny) pozostają wstrzymane, dopóki modele nie zostaną włączone. "
+                                 "Aby używać modeli: `cairnmind models pull` pobiera lokalne modele do Ollamy (około 7 GB); "
+                                 "`cairnmind models set` wybiera serwer modeli.")
+MESSAGES[THIS_MAC] = "Ten Mac: {chip}, {gib} GiB pamięci zunifikowanej, współdzielonej z modelami."
 MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
 

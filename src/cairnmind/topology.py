@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from .terminal_safe import safe_text
 
-STORAGE_NATIVE = "Storage: ArcadeDB on this machine at {url}, started and stopped by Cairnmind (native engine, Java 21)."
+JAVA_MINIMUM = "Java 21 or newer"  # no version read: only what the engine needs is known, never "Java 21" as found
+STORAGE_NATIVE = "Storage: ArcadeDB on this machine at {url}, started and stopped by Cairnmind (native engine, {java})."
 STORAGE_DOCKER = "Storage: ArcadeDB on this machine at {url}, started and stopped by Cairnmind (engine in Docker)."
 STORAGE_ENGINE_UNKNOWN = ("Storage: ArcadeDB on this machine at {url}, managed by Cairnmind, but its engine mode "
                           "cannot be used: {problem}")
@@ -52,7 +53,7 @@ THIS_MACHINE = "On this machine: {items}."
 ITEM_SERVICE = "the knowledge service at {url}"
 ITEM_SERVICE_VARIABLE = "the knowledge service at {url} (port from {variable}, for this process only)"
 ITEM_NO_SERVICE = "no knowledge service, because this installation only reads the store"
-ITEM_ENGINE_NATIVE = "the ArcadeDB engine (native, Java 21)"
+ITEM_ENGINE_NATIVE = "the ArcadeDB engine (native, {java})"
 ITEM_ENGINE_DOCKER = "the ArcadeDB engine in Docker"
 ITEM_ENGINE_UNKNOWN = "the ArcadeDB engine, in an engine mode that cannot be used"
 ITEM_DATABASE_HERE = "ArcadeDB at {url}, which this installation does not manage"
@@ -77,7 +78,8 @@ WORD_OFF = "off"
 WORD_INVALID = "error"
 
 MESSAGES = {
-    STORAGE_NATIVE: "Baza: ArcadeDB na tym komputerze pod adresem {url}, uruchamiana i zatrzymywana przez Cairnmind (silnik natywny, Java 21).",
+    JAVA_MINIMUM: "Java 21 lub nowsza",
+    STORAGE_NATIVE: "Baza: ArcadeDB na tym komputerze pod adresem {url}, uruchamiana i zatrzymywana przez Cairnmind (silnik natywny, {java}).",
     STORAGE_DOCKER: "Baza: ArcadeDB na tym komputerze pod adresem {url}, uruchamiana i zatrzymywana przez Cairnmind (silnik w Dockerze).",
     STORAGE_ENGINE_UNKNOWN: "Baza: ArcadeDB na tym komputerze pod adresem {url}, zarządzana przez Cairnmind, ale jej trybu silnika nie można użyć: {problem}",
     STORAGE_CONNECT_HERE: "Baza: ArcadeDB pod adresem {url} na tym komputerze; ta instalacja tylko się z nią łączy, nie instaluje jej, nie uruchamia ani nie zatrzymuje.",
@@ -105,7 +107,7 @@ MESSAGES = {
     ITEM_SERVICE: "usługa wiedzy pod adresem {url}",
     ITEM_SERVICE_VARIABLE: "usługa wiedzy pod adresem {url} (port z {variable}, tylko dla tego procesu)",
     ITEM_NO_SERVICE: "brak usługi wiedzy, bo ta instalacja tylko czyta bazę",
-    ITEM_ENGINE_NATIVE: "silnik ArcadeDB (natywny, Java 21)",
+    ITEM_ENGINE_NATIVE: "silnik ArcadeDB (natywny, {java})",
     ITEM_ENGINE_DOCKER: "silnik ArcadeDB w Dockerze",
     ITEM_ENGINE_UNKNOWN: "silnik ArcadeDB w trybie, którego nie można użyć",
     ITEM_DATABASE_HERE: "ArcadeDB pod adresem {url}, którą ta instalacja nie zarządza",
@@ -173,8 +175,10 @@ def _evaluated(settings, models: dict | None, roles: dict) -> str:
     return "unknown"
 
 
-def topology(settings, *, models: dict | None = None, writer: dict | None = None) -> dict:
-    """The topology of ``settings``. ``models``: memory_models.doctor_models' result; ``writer``: the writer role."""
+def topology(settings, *, models: dict | None = None, writer: dict | None = None,
+             java_major: int | None = None) -> dict:
+    """The topology of ``settings``. ``models``: memory_models.doctor_models' result; ``writer``: the writer role;
+    ``java_major``: the major version doctor read from the Java the engine runs, when it read one."""
     from . import database_credentials, database_mode, knowledge_mode
     from .memory_models import ROLES
     environment = (getattr(settings, "_origin", None) or {}).get("environment", {})
@@ -218,6 +222,8 @@ def topology(settings, *, models: dict | None = None, writer: dict | None = None
         items.append(service)
     if storage["mode"] == "managed":
         items.append({"kind": "engine", "engine": storage["engine"]})
+        if java_major and storage["engine"] == "native":
+            storage["java_major"] = items[-1]["java_major"] = java_major
     elif storage["on_this_machine"]:
         items.append({"kind": "database", "url": storage["url"]})
     if chosen["knowledge_agent"] == "enabled" and "problem" not in chosen:
@@ -257,12 +263,17 @@ def _safe(value, limit: int = 200) -> str:
     return safe_text(value, limit=limit)
 
 
+def _java(block: dict, language: str) -> str:
+    major = block.get("java_major")
+    return f"Java {major}" if major else _say(JAVA_MINIMUM, language)
+
+
 def _storage_line(place: dict, language: str) -> str:
     storage = place["storage"]
     url = _safe(storage["url"])
     if storage["mode"] == "managed":
         if storage["engine"] == "native":
-            parts = [_say(STORAGE_NATIVE, language, url=url)]
+            parts = [_say(STORAGE_NATIVE, language, url=url, java=_java(storage, language))]
         elif storage["engine"] == "docker":
             parts = [_say(STORAGE_DOCKER, language, url=url)]
         else:
@@ -337,7 +348,7 @@ def _item(item: dict, language: str) -> str:
     if kind == "no_service":
         return _say(ITEM_NO_SERVICE, language)
     if kind == "engine":
-        return _say({"native": ITEM_ENGINE_NATIVE, "docker": ITEM_ENGINE_DOCKER}.get(item["engine"], ITEM_ENGINE_UNKNOWN), language)
+        return _say({"native": ITEM_ENGINE_NATIVE, "docker": ITEM_ENGINE_DOCKER}.get(item["engine"], ITEM_ENGINE_UNKNOWN), language, java=_java(item, language))
     if kind == "database":
         return _say(ITEM_DATABASE_HERE, language, url=_safe(item["url"]))
     template = (ITEM_MODELS_BOTH if len(item["roles"]) == 2 else
