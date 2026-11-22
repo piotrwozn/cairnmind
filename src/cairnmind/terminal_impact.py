@@ -388,7 +388,7 @@ class ImpactView:
         if not await agreed(self, "Save this verdict?", text, "Save verdict"):
             return
         if scope != self._scope_version or self.impact_key()[:2] != (project, worktree):
-            self.notice_for(about(project, worktree), self.t("The project changed during review. Nothing was saved."),
+            self.notice_for(about(project, None, worktree), self.t("The project changed during review. Nothing was saved."),
                             "warn")
             return
         payload = {"project": project, "since": since, "record_id": row["id"], "fingerprint": row["fingerprint"],
@@ -403,7 +403,7 @@ class ImpactView:
                                              json=payload, sent=sent)
         except (OSError, ValueError, RuntimeError) as exc:
             from .workspace_finding import outcome_unknown
-            here, subject = scope == self._scope_version, about(project, worktree)  # #354: after a switch too
+            here, subject = scope == self._scope_version, about(project, None, worktree)  # #354: after a switch too
             status, unknown = getattr(exc, "status_code", None), outcome_unknown(exc, sent)
             if here and (status in (404, 409) or unknown):
                 await self.load_impact()
@@ -425,6 +425,6 @@ class ImpactView:
         if scope == self._scope_version:
             await self.load_impact()
         saved = isinstance(result, dict) and result.get("already_saved")
-        self.tell(scope, about(project, worktree), self.t(
+        self.tell(scope, about(project, None, worktree), self.t(
             "This verdict was already saved." if saved else
             "Verdict saved: {verdict}. No record, status or task was changed.", verdict=self.t(VERDICTS[choice])))

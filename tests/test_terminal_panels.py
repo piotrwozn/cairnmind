@@ -9,6 +9,7 @@ import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from cairnmind.config import Settings
+from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_panels import SidebarApp
 from cairnmind.terminal_safe import plain, safe_text
@@ -79,7 +80,7 @@ class FakeBroker:
         if path == "/api/inspector/records/record-a/review":
             if self.review_conflict:
                 self.record["version"] += 1
-                raise ValueError("Broker 409: record version conflict")
+                raise BrokerError(409, "record version conflict")
             self.record.update(version=self.record["version"] + 1, status="confirmed" if json["action"] == "confirm" else "disputed")
             return {"record": deepcopy(self.record)}
         if path == "/api/inspector/plans/plan-a":

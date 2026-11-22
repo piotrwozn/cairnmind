@@ -118,6 +118,15 @@ def test_without_the_proof_nothing_is_deleted_and_nothing_is_recorded(world):
     assert store.query("SELECT FROM projects WHERE id=:p", {"p": pid})
 
 
+def test_the_proof_is_checked_before_anything_is_read(monkeypatch):
+    def read(*args, **kwargs):
+        raise AssertionError("the project was read before the proof was checked")
+    monkeypatch.setattr(project_forget, "plan", read)
+    with person_unproven(), pytest.raises(ConfirmationRefused) as refused:
+        project_forget.delete(None, None, "p")
+    assert str(refused.value) == FORGET_REFUSED
+
+
 def test_a_live_run_or_a_job_in_work_refuses_and_deletes_nothing(world, monkeypatch):
     store, project, other, root, confirmed = world
     pid = project["id"]

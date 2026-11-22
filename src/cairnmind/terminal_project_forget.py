@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 
 from .terminal_notices import about
-from .terminal_person_act import agreed
+from .terminal_person_act import agreed, refused
 from .terminal_safe import safe_text
 
 TITLE = "Delete project memory"
@@ -78,8 +78,7 @@ def _counts(shown) -> dict:
 
 
 def _no_answer(exc) -> bool:
-    from .terminal_client import BrokerError, BrokerUnreachable
-    return isinstance(exc, BrokerUnreachable) or (isinstance(exc, BrokerError) and exc.status_code in (502, 503, 504))
+    return not refused(exc)  # a 5xx, an unreadable answer or a lost connection may follow the commit
 
 
 async def _gone(app, project_id) -> bool:

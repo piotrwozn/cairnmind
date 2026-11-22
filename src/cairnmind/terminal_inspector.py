@@ -16,7 +16,7 @@ from .terminal_i18n import tr_count
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
-from .terminal_person_act import agreed, resolve_text, review_text
+from .terminal_person_act import agreed, refused, resolve_text, review_text
 from .terminal_proposed import ProposedView
 from .terminal_published_import import archive_replaced, archive_text
 from .terminal_safe import plain, safe_text
@@ -535,9 +535,13 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             reloaded = scope == self._scope_version
             if reloaded:
                 await self.open_entity(record["id"], "records")
-            self.tell(scope, about(project_id), self.t(
-                "Review was not retried. The current version was reloaded." if reloaded
-                else "The review was not saved.") + " " + broker_error_text(exc, self.t), "error")
+            if refused(exc):
+                said = self.t("Review was not retried. The current version was reloaded." if reloaded
+                              else "The review was not saved.")
+            else:  # a 5xx or a lost connection may follow the commit (#354)
+                said = self.t("The service did not confirm the review, so it may have been saved.") + (
+                    " " + self.t("The current version was reloaded.") if reloaded else "")
+            self.tell(scope, about(project_id), said + " " + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def resolve_conflict(self):
@@ -586,9 +590,13 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             reloaded = scope == self._scope_version
             if reloaded:
                 await self.load_page()
-            self.tell(scope, about(project_id), self.t(
-                "The decision was not saved. The current list was reloaded." if reloaded
-                else "The decision was not saved.") + " " + broker_error_text(exc, self.t), "error")
+            if refused(exc):
+                said = self.t("The decision was not saved. The current list was reloaded." if reloaded
+                              else "The decision was not saved.")
+            else:  # a 5xx or a lost connection may follow the commit (#354)
+                said = self.t("The service did not confirm the decision, so it may have been saved.") + (
+                    " " + self.t("The current list was reloaded.") if reloaded else "")
+            self.tell(scope, about(project_id), said + " " + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
@@ -682,9 +690,9 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
 
     @work(group="inspector-memory", exclusive=True, exit_on_error=False)
     async def memory_operation(self, action):
+        scope, params = self._scope_version, {}
         try:
             params = self.params()
-            scope = self._scope_version
             if action in {"preview", "save"}:
                 if not params["project"]:
                     raise ValueError(self.t("Choose a project to save."))
@@ -778,7 +786,10 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             else:
                 await self.load_memory()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc, "error")
+            if action == "save" and params.get("project") and scope != self._scope_version:  # told on its own project (#354)
+                self.notice_for(about(params["project"], None, params["worktree"]), exc, "error")
+            else:
+                self.notice(exc, "error")
 
     @work(group="inspector-journal", exclusive=True, exit_on_error=False)
     async def watch_journal(self):

@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.widgets import Button, DataTable, Input, Static
 
 from cairnmind.config import Settings
+from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_i18n import language_for, tr
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
@@ -552,7 +553,7 @@ async def test_a_refused_decision_reloads_the_list_and_a_mixed_pair_is_not_offer
             loads.append(1)
             return {"items": [{**deepcopy(CONFLICT), "can_supersede": False}], "total": 1, "next_cursor": None}
         if path == "/api/inspector/conflicts/resolve":
-            raise ValueError("Broker 409: Conflict version conflict; read the current findings")
+            raise BrokerError(409, "Conflict version conflict; read the current findings")
         return original(method, path, params=params, json=json, timeout=timeout)
 
     broker.request = request

@@ -52,6 +52,8 @@ class ForgetBroker(UIBroker):
             if self.no_answer != "not":
                 self.projects = [each for each in self.projects if each["id"] != json["project"]]
                 self.listed = [each for each in self.listed if each["id"] != json["project"]]
+            if self.no_answer == "500":  # an unexpected exception of the service after the commit
+                raise BrokerError(500, "Internal Server Error")
             if self.no_answer:
                 raise BrokerUnreachable(503, "The connection to the local broker was interrupted.")
             return deepcopy(self.reply)

@@ -601,7 +601,6 @@ async def test_agreed_is_true_only_for_an_explicit_yes():
 
 def test_every_new_sentence_has_polish():
     for module in (terminal_person_act, terminal_plan_confirm, terminal_release, terminal_record_kinds,
-    for module in (terminal_person_act, terminal_plan_confirm, terminal_release, terminal_record_kinds,
                    terminal_project_forget, project_forget, terminal_replace):
         for key, polish in module.MESSAGES.items():
             assert CATALOG[key] == polish, key

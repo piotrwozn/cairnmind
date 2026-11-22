@@ -170,6 +170,11 @@ CATALOG = {
     "Decision saved with an audit note.": "Decyzja zapisana z notatką audytową.",
     "The decision was not saved.": "Decyzja nie została zapisana.",
     "The review was not saved.": "Ocena nie została zapisana.",
+    "The service did not confirm the review, so it may have been saved.":
+        "Usługa nie potwierdziła oceny, więc mogła zostać zapisana.",
+    "The service did not confirm the decision, so it may have been saved.":
+        "Usługa nie potwierdziła decyzji, więc mogła zostać zapisana.",
+    "The current list was reloaded.": "Wczytano aktualną listę.",
     "No clear answer from the memory service. The verdict may have been saved. Saving the same verdict again is "
     "safe and stores nothing twice.":
         "Brak jednoznacznej odpowiedzi usługi pamięci. Ocena mogła zostać zapisana. Ponowny zapis tej samej oceny "
