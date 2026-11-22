@@ -100,8 +100,9 @@ def test_remember_says_a_proposed_finding_is_not_confirmed_and_where_to_see_it(r
     assert json.loads(proposed.stdout)["status"] == "proposed"
     assert told == [first_start.REMEMBER_PROPOSED.format(kind="fact", project="my-app")]
     told.clear()
-    confirmed = run("remember", "my-app", "Reviews are required", "--kind", "constraint", "--confirmed")
-    assert json.loads(confirmed.stdout)["status"] == "confirmed" and told == []
+    # #214: the command line confirms nothing; --confirmed is refused and stores nothing, so no sentence is said.
+    refused = run("remember", "my-app", "Reviews are required", "--kind", "constraint", "--confirmed")
+    assert refused.exit_code == 2 and told == []
     # brief leaves tasks and checkpoints out of its review list, so the sentence is not said for them.
     told.clear()
     assert run("remember", "my-app", "Add rate limiting", "--kind", "task").exit_code == 0 and told == []
