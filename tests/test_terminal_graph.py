@@ -10,6 +10,7 @@ import threading
 import pytest
 from textual.widgets import OptionList, Static
 
+from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT
 from cairnmind.config import Settings
 from cairnmind.terminal_graph import (BrailleCanvas, Camera, EDGE_LIMIT, GraphApp, GraphModel, GraphScope,
                                     GroupPicker, NODE_LIMIT, TerminalGraph, layout_positions, render_scene,
@@ -125,6 +126,8 @@ class ControlledBroker:
         self.started = threading.Event()
         self.release = threading.Event()
         self.block = False
+        self.group_warnings = []
+        self.group_count = 1
 
     def ensure(self):
         return {"available": True}
@@ -136,8 +139,9 @@ class ControlledBroker:
             return {"projects": self.projects}
         if path == "/api/inspector/graph/groups":
             if not params.get("cursor"):
-                return {"items": [{"id": "group:first", "group": "first", "kind": "group", "label": "First"}],
-                        "next_cursor": "groups-next"}
+                return {"items": [{"id": "group:first", "group": "first", "kind": "group", "label": "First"}]
+                        + [{"id": f"group:{i}", "group": str(i), "kind": "group", "label": f"G{i}"} for i in range(1, self.group_count)],
+                        "next_cursor": "groups-next", **({"warnings": self.group_warnings} if self.group_warnings else {})}
             return {"items": [{"id": "group:last", "group": "last", "kind": "group", "label": "Last"}], "next_cursor": None}
         if path == "/api/inspector/graph":
             data = deepcopy(self.data.get(params.get("project"), {
@@ -270,6 +274,76 @@ async def test_group_picker_pages_and_expands_backend_group(panel):
         await pilot.press("enter")
         await eventually(pilot, lambda: app.model.scope.group == "last")
         assert any(c[1].endswith("/groups") and c[2].get("cursor") == "groups-next" for c in broker.calls)
+
+
+def notice_text(app):
+    return str(app.query_one("#panel-notice", Static).render())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language, words", [("en", "code graph of this project is not built yet"),
+                                              ("pl", "Graf kodu tego projektu nie jest jeszcze zbudowany")])
+async def test_graph_says_that_the_code_graph_is_being_written_until_the_mark_is_gone(panel, language, words):
+    from cairnmind.cockpit_state import CockpitState
+    settings, workspace, broker = panel
+    CockpitState(settings).update({"language": language})
+    broker.data["alpha"]["warnings"] = [CODE_GRAPH_NOT_BUILT]
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await eventually(pilot, lambda: words in notice_text(app))
+        loads = sum(c[1] == "/api/inspector/graph" for c in broker.calls)
+        for _ in range(2):  # a reload that still carries the mark does not repeat the sentence in Notices
+            await broker.queue.put({"event": "change", "data": {"project_id": "alpha"}})
+            await eventually(pilot, lambda: sum(c[1] == "/api/inspector/graph" for c in broker.calls) > loads)
+            loads += 1
+            await pilot.pause(0.2)
+        assert [n.count for n in app.notice_history.entries if words in n.text] == [1]
+        del broker.data["alpha"]["warnings"]
+        await broker.queue.put({"event": "change", "data": {"project_id": "alpha"}})
+        await eventually(pilot, lambda: notice_text(app) == "")
+
+
+@pytest.mark.asyncio
+async def test_graph_with_a_built_code_graph_shows_no_such_notice(panel):
+    settings, workspace, broker = panel
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await eventually(pilot, lambda: len(app.model.nodes) == 3)
+        await pilot.press("g")
+        await eventually(pilot, lambda: isinstance(app.screen, GroupPicker) and len(app.screen.items) == 1)
+        await eventually(pilot, lambda: "groups" in str(app.screen.query_one("#group-notice", Static).render()))
+        assert "not built" not in notice_text(app)
+        assert "not built" not in str(app.screen.query_one("#group-notice", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_group_picker_says_that_the_code_graph_is_being_written(panel):
+    settings, workspace, broker = panel
+    broker.group_warnings = [CODE_GRAPH_NOT_BUILT]
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=(100, 35)) as pilot:
+        await eventually(pilot, lambda: bool(app.model.nodes))
+        await pilot.press("g")
+        await eventually(pilot, lambda: isinstance(app.screen, GroupPicker) and len(app.screen.items) == 1)
+        await eventually(pilot, lambda: "not built yet" in str(app.screen.query_one("#group-notice", Static).render()))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (60, 20)])
+async def test_group_picker_keeps_the_whole_sentence_inside_the_dialog_with_a_full_page(panel, size):
+    settings, workspace, broker = panel
+    broker.group_warnings, broker.group_count = [CODE_GRAPH_NOT_BUILT], 100
+    app = GraphApp(settings, broker=broker, workspace=workspace, motion=False)
+    async with app.run_test(size=size) as pilot:
+        await eventually(pilot, lambda: bool(app.model.nodes))
+        await pilot.press("g")
+        await eventually(pilot, lambda: isinstance(app.screen, GroupPicker) and len(app.screen.items) == 100)
+        notice = app.screen.query_one("#group-notice", Static)
+        await eventually(pilot, lambda: "not built yet" in str(notice.render()))
+        await pilot.pause(0.1)
+        dialog = app.screen.query_one(".cm-dialog")
+        assert notice.region.height >= 3
+        assert notice.region.bottom <= dialog.content_region.bottom
 
 
 @pytest.mark.asyncio
