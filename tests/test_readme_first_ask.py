@@ -10,6 +10,7 @@ import pytest
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.ingest import index_project_if_changed
 from cairnmind.knowledge_mode import text_matches
+from cairnmind.retrieval import VECTORS_BUILDING
 
 from test_knowledge import FakeOllama, final
 
@@ -53,8 +54,13 @@ async def test_first_ask_with_models_hands_the_matching_passage_to_the_model_and
         return final(note["id"], NOTE, "After five failed logins.")
 
     model = FakeOllama([answer])
-    result = await KnowledgeAgent(store, settings, model).ask(project["id"], QUESTION)
+    agent = KnowledgeAgent(store, settings, model)
+    chunk = store.query("SELECT id FROM chunks WHERE project_id=:id", {"id": project["id"]})[0]["id"]
+    # One chunk embedded, the other jobs still pending: right after `project add`.
+    await agent.retriever.embed_pending({"project_id": project["id"], "payload": {"chunk_id": chunk}})
+    result = await agent.ask(project["id"], QUESTION)
     uris = [item.get("uri", "") for item in seen["evidence"]]
     assert any(uri.endswith("same_words.py") for uri in uris), uris
-    assert any("vectors" in warning.lower()
+    assert any(warning.startswith(VECTORS_BUILDING)
                for warning in result["freshness"]["warnings"]), result["freshness"]
+    assert [source["id"] for source in result["sources"]] == [note["id"]], result["sources"]
