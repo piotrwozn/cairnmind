@@ -189,7 +189,9 @@ Additional root-facing methods needed:
   and records the id and the fields the cross references use, and whether the source hash was right). A
   second pass checks every cross reference against it. Only then is the before-restore copy made and the
   store changed; the inserts read the file three more times (documents, then vertices, then edges and
-  vectors) inside the one restore transaction, and write the rows in groups (`restore_groups.py`, #219): a
+  vectors) inside the one restore transaction, and, without the person's workspace (#214,
+  `restore_claims.py`), rewrite each confirmed record's and revision's confirmation mark into the backup's
+  claim and a project's accepted record kinds into withdrawn ones as the rows are inserted, and write the rows in groups (`restore_groups.py`, #219): a
   document or vector group is one `INSERT ... CONTENT :rows` of one type, at most 250 rows or about 1 MiB of
   JSON text; vertices and edges go per project through `prefetch_graph` and `write_graph` (#167), with the
   checks of `upsert_node` and `upsert_edge`, in groups with the same two limits, and at most 1,000 graph rows

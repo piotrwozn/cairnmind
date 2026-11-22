@@ -89,8 +89,10 @@ class GraphGroups:
             self._write(project)
 
 
-def write_restored(store, tx, source):
-    """Insert the rows of a validated backup into a store that restore's transaction has just emptied."""
+def write_restored(store, tx, source, claims=None):
+    """Insert the rows of a validated backup into a store that restore's transaction has just emptied.
+
+    With `claims` (restore_claims.BackupClaims) each row first loses what only a person's act could give it (#214)."""
     from .store import DOCUMENT_TYPES
     documents = DocumentGroups(tx)
     # Documents first (projects and sources before the graph that checks them), then vertices,
@@ -102,6 +104,8 @@ def write_restored(store, tx, source):
         if collection == "journal_state":
             # The backup's head may name the writer of the time it was made, or none.
             row["writer"] = store.installation.id
+        if claims is not None:
+            row = claims.turn(collection, row)
         documents.add(collection, row)
     documents.flush()
     nodes = GraphGroups(store, tx, "node")

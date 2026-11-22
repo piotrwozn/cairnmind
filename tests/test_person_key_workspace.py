@@ -53,6 +53,10 @@ def test_a_workspace_without_a_usable_key_does_not_open_quietly(settings, tmp_pa
 def test_workspace_status_reports_the_key_without_its_value(settings, tmp_path, monkeypatch):
     binary, _ = fake_tmux(tmp_path, KEY)
     manager = WorkspaceManager(settings, tmux_binary=binary)
+    monkeypatch.setattr(person_proof, "read_key", lambda *args: ("key", KEY))
+    # A socket that the checks of a restore and of a person's request refuse is not "present" (#214 review).
+    assert manager.status()["person_key"] == "unavailable"
+    monkeypatch.setattr(person_proof, "workspace_socket", lambda settings, value: value)
     for kind, expected in (("key", "present"), ("no_key", "absent"), ("unavailable", "unavailable")):
         monkeypatch.setattr(person_proof, "read_key", lambda *args, kind=kind: (kind, KEY if kind == "key" else None))
         status = manager.status()

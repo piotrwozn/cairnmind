@@ -247,6 +247,19 @@ def service_alive(settings: Settings) -> bool:
         return False
 
 
+@contextmanager
+def _service_stopped(settings: Settings, held: str, running: str):
+    """Hold service.lock, so no service of this data directory starts meanwhile; refuse while one runs."""
+    with (settings.data_dir / "service.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            refuse(held)
+        if service_alive(settings):
+            refuse(running)
+        yield
+
+
 def last_log_line(path: Path) -> str:
     """The last line of a log, bounded and with control characters replaced: what a stopped process said."""
     try:
@@ -275,7 +288,13 @@ def _bind_failed(log: Path, since: int) -> bool:
 def ensure_service(settings: Settings, *, background_inference: bool = True) -> bool:
     """True when this call started the service process, False when one already answered."""
     if service_alive(settings):
-        return False
+        return False  # used, and stoppable, during an upgrade too: the mark only stops a start
+    from cairnmind import upgrade_mark
+    reason = upgrade_mark.refusal()
+    if reason:
+        # The installer is replacing this code: a start now would run the version being replaced (#298).
+        # Raised before anything starts, so the caller announces no start.
+        raise UpgradeInProgress(reason)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log = settings.data_dir / "service.log"
     with log.open("ab") as handle:
@@ -288,8 +307,12 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
             command.append("--defer-background-inference")
         process = subprocess.Popen(command,
                                    stdin=subprocess.DEVNULL, stdout=handle, stderr=handle, start_new_session=True, env=env)
+    seen = None  # an installer that began at any moment of this start, even one that has ended by the time it answers
     for _ in range(300):
+        seen = seen or upgrade_mark.refusal()
         if service_alive(settings):
+            if seen:
+                _stop_started(settings)  # raises with the sentence that says the start was ended: never announced
             return True
         if getattr(process, "poll", lambda: None)() is not None:
             # It stopped instead of starting, for example on an installation that only reads the store (#70).
@@ -304,12 +327,42 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
                 raise ServiceDidNotStart(f"The service stopped at start: {said.removeprefix('Cairnmind: ')}")
             process = None
         time.sleep(0.2)
+    seen = seen or upgrade_mark.refusal()
+    if seen:
+        # Still starting when the installer began: its stop found nothing to stop. This start's own process goes.
+        if process is not None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
     raise ServiceDidNotStart(f"The service did not start. Check {log}; port {settings.port} may be in use.")
+
+
+def _stop_started(settings: Settings) -> None:
+    """An installer that began after the check in ensure_service may have found no service to stop yet: the service
+    this start brought up is stopped here, so none runs the version being replaced (#298). A start whose starter
+    ends first cannot be closed from here. The text says what is true now: an installer that has ended is not
+    "in progress"."""
+    from cairnmind import upgrade_mark
+    try:
+        with httpx.Client(trust_env=False, timeout=5) as client:
+            client.post(settings.url + "/shutdown",
+                        headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
+    except httpx.HTTPError:
+        import shlex
+        command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
+        raise UpgradeInProgress(upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)) from None
+    raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
 
 
 class ServiceDidNotStart(ValueError):
     """The knowledge service did not start. A command shows it as a refusal, not as a wrong argument (#244);
     the workspace and the cockpit, which call ensure_service too, get an ordinary error with the reason."""
+
+
+class UpgradeInProgress(ServiceDidNotStart):
+    """An installer is replacing Cairnmind (upgrade_mark.py): nothing starts the service until it has finished (#298)."""
 
 
 def _ensure_service_or_refuse(settings: Settings) -> None:
@@ -346,6 +399,10 @@ def _service_unavailable(settings: Settings) -> str:
         return (f"{safe_text(role.get('reason') or '')} This command asks the running service, which only the "
                 "writer runs. Here `cairnmind store writer` and `cairnmind doctor` show this installation's role, "
                 "and the commands that only read the store work.").strip()
+    from cairnmind import upgrade_mark
+    reason = upgrade_mark.refusal()
+    if reason:
+        return reason  # stopped for an upgrade: `cairnmind serve` would start the version being replaced (#298)
     from cairnmind.first_start import STATUS_NOT_RUNNING
     return STATUS_NOT_RUNNING
 
@@ -704,6 +761,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["data_dir"] = str(ctx.obj.data_dir)
     result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
+    from cairnmind.upgrade_mark import note as upgrade_note
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
     blockers = [
@@ -712,7 +770,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         for name in session_conflicts()]
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
-        for name in env_conflicts()] + blockers + [note for note in [data_dir_note()] if note]
+        for name in env_conflicts()] + blockers + [note for note in [data_dir_note(), upgrade_note()] if note]
     result["environment_blockers"] = blockers
     for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
         if name in ctx.obj._origin.get("kept", {}):
@@ -747,16 +805,70 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
 
 @app.command()
 @initialized
-def setup(ctx: typer.Context, as_json: Annotated[bool, typer.Option("--json", help="Print the topology as JSON.")] = False):
-    """Show where storage and the memory models run, and what runs on this machine. Changes no setting of an
-    initialized installation, except that a database address given for the first time in
-    CAIRNMIND_ARCADE_CONNECT_URL is saved, as every command saves it."""
-    from cairnmind.topology import CHANGE_HINT, probe
-    place = probe(ctx.obj)
+def setup(ctx: typer.Context,
+          profile: Annotated[str | None, typer.Argument(metavar="[PROFILE]", help=(
+              "local, remote-db or remote. Without it, setup only shows where storage and the models run."))] = None,
+          as_json: Annotated[bool, typer.Option("--json", help="Print the topology, or a profile's plan, as JSON.")] = False,
+          url: Annotated[str | None, typer.Option("--url", help="remote-db, remote: the ArcadeDB this installation only connects to.")] = None,
+          user: Annotated[str | None, typer.Option("--user", help="remote-db, remote: the database user; never root on another host.")] = None,
+          database: Annotated[str | None, typer.Option("--database", help="remote-db, remote: the database name.")] = None,
+          password_file: Annotated[str | None, typer.Option("--password-file", help=(
+              "remote-db, remote: a private file (mode 0600) you created with the user's password; only its path is saved."))] = None,
+          ca_file: Annotated[str | None, typer.Option("--ca-file", help="remote-db, remote: the PEM file of a private certificate authority.")] = None,
+          admin_password_file: Annotated[str | None, typer.Option("--admin-password-file", help=(
+              "remote-db, remote: a private file with the server's root password; with --yes the database and its user "
+              "are created first, as `cairnmind db create-user` does. Never saved."))] = None,
+          models_url: Annotated[str | None, typer.Option("--models-url", help="remote: the model server on another computer (HTTPS).")] = None,
+          provider: Annotated[str | None, typer.Option("--provider", help="remote: ollama or openai_compatible.")] = None,
+          chat_model: Annotated[str | None, typer.Option("--chat-model", help="remote: the chat model's name on that server.")] = None,
+          embedding_model: Annotated[str | None, typer.Option("--embedding-model", help="remote: the embedding model's name on that server.")] = None,
+          credential_ref: Annotated[str | None, typer.Option("--credential-ref", help="remote: env:NAME or profile:ID naming the server's key; never the key.")] = None,
+          allow_remote: Annotated[bool, typer.Option("--allow-remote", help="remote: consent to send memory content to that server.")] = False,
+          backup: Annotated[str | None, typer.Option("--backup", help=(
+              "local, from a store this installation only connects to: back it up into this new file and restore that here."))] = None,
+          empty: Annotated[bool, typer.Option("--empty", help=(
+              "local, from a store this installation only connects to: use the store on this machine without its data."))] = False,
+          yes: Annotated[bool, typer.Option("--yes", help="Make the change; without it nothing changes.")] = False):
+    """Show where storage and the memory models run; with PROFILE (local, remote-db, remote), move them.
+
+    A profile is tested before anything is saved; without --yes it is only tested and shown. Refused while the knowledge service runs and in a coding session. Passwords and keys are never asked for, printed or saved: --password-file names a file you created. Without a profile, no setting of an initialized installation changes, except that a database address given for the first time in CAIRNMIND_ARCADE_CONNECT_URL is saved, as every command saves it."""
+    from cairnmind import setup_profiles
+    fields = {"url": url, "user": user, "database": database, "password_file": password_file, "ca_file": ca_file,
+              "admin_password_file": admin_password_file, "models_url": models_url, "provider": provider,
+              "chat_model": chat_model, "embedding_model": embedding_model, "credential_ref": credential_ref,
+              "allow_remote": allow_remote, "backup": backup, "empty": empty}
+    if profile is None:
+        given = setup_profiles.given_options(fields)
+        if given:
+            raise typer.BadParameter(str(setup_profiles.Said(setup_profiles.WITHOUT_PROFILE, option=given[0])))
+        from cairnmind.topology import CHANGE_HINT, probe
+        place = probe(ctx.obj)
+        if as_json:
+            output(place)
+        else:
+            typer.echo("\n".join([*place["lines"], "", CHANGE_HINT]))
+        return
+    request = setup_profiles.Request(profile, **fields)
+    problem = setup_profiles.option_problem(request)
+    if problem:
+        raise typer.BadParameter(str(problem))
+    # Every refusal says "nothing was changed"; the generic rule may already have saved the address of a variable.
+    tail = (" " + str(setup_profiles.Said(setup_profiles.ADDRESS_SAVED))) if ctx.obj._origin.get("connect_saved") else ""
+    if session_value("SESSION_ID"):
+        refuse(str(setup_profiles.Said(setup_profiles.IN_SESSION)) + tail)
+    running = str(setup_profiles.Said(setup_profiles.SERVICE_RUNS)) + tail
+    with _service_stopped(ctx.obj, running, running):
+        try:
+            result = setup_profiles.run(ctx.obj, request, yes=yes,
+                                        say=lambda text: typer.echo(f"Cairnmind: {text}", err=True))
+        except setup_profiles.SetupRefused as exc:
+            refuse(str(exc) + tail)
     if as_json:
-        output(place)
+        output(setup_profiles.as_json(result))
     else:
-        typer.echo("\n".join([*place["lines"], "", CHANGE_HINT]))
+        typer.echo("\n".join(setup_profiles.render(result)))
+    if result["changes"] and not result["applied"]:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -2205,20 +2317,19 @@ def backup(ctx: typer.Context, destination: Annotated[str, typer.Argument(
 def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         metavar="SOURCE", exists=True, dir_okay=False, readable=True,
         help="A backup file written by `cairnmind backup`.")]):
-    """Replace the store with a backup, after a safety backup of the current one. The service must be stopped."""
+    """Replace the store with a backup, after a safety backup of the current one. The service must be stopped.
+
+    A person's confirmations in the backup are kept only while the workspace is open; otherwise each becomes the backup's claim and accepted record kinds are withdrawn."""
     # A missing path or a folder is refused while the arguments are read, before the store or engine is touched.
-    with (ctx.obj.data_dir / "service.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            refuse("Run cairnmind stop first; the service still holds the store lock")
-        if service_alive(ctx.obj):
-            refuse("Run cairnmind stop first; restoring requires a stopped service")
-        store = store_for(ctx.obj)
-        store.restore(source)
-    from cairnmind.confirmation_upgrade import report
-    marks = report(getattr(store, "confirmations_before_rule", None))
-    output({"restored": True, **({"confirmations_before_rule": marks} if marks else {})})
+    with _service_stopped(ctx.obj, "Run cairnmind stop first; the service still holds the store lock",
+                          "Run cairnmind stop first; restoring requires a stopped service"):
+        from cairnmind.restore_claims import checked_restore
+        # The proof is read once, before anything changes; only "key" keeps a person's acts (#214).
+        outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj))
+    notice = outcome.pop("notice", None)
+    if notice:
+        typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
+    output({"restored": True, **outcome})
 
 
 @app.command()

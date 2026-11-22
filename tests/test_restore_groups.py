@@ -27,7 +27,7 @@ def store(tmp_path):
     return Store(tmp_path / "memory")
 
 
-def _row_by_row(self, source):
+def _row_by_row(self, source, claims=None):
     """Store._restore_from as 0.11.0 wrote it: one request for each row (the reference result)."""
     for registry in source.vector_indexes:
         name, dimension = registry["type_name"], registry["dimension"]

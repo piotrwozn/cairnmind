@@ -349,11 +349,20 @@ around Cairnmind:
   directory from the workspace's on Linux and WSL);
 - use Cairnmind's library code, or the database engine with the password the
   user can read, and write any row, marks and audit notes included;
-- restore a backup: `cairnmind restore` is the one documented command that
-  still writes the rows of a backup as they are, marks included. With `cairnmind
-  stop` and `cairnmind backup` it can bring back a confirmation a person has
-  since disputed, by restoring an older genuine backup, and accepted record
-  kinds with it (#214 continues with this);
+- restore a backup while a key answers at this installation's workspace socket: `cairnmind restore` keeps the
+  confirmations and accepted record kinds of a backup when it reads a key from
+  the tmux server at this installation's workspace socket, and it reads the key
+  itself, so whoever runs `cairnmind stop` and `cairnmind restore` at that moment
+  needs no tmux command of its own. Unlike a route, which the service checks in
+  its own environment, restore checks in the environment of the program that runs
+  it: on Linux and WSL `TMPDIR` decides where it looks, so a tmux server of that
+  program's own in a directory named like the workspace's socket directory (the
+  bullet above) makes restore keep the marks with no workspace open, and
+  nothing compares the key with anything. With an older genuine backup this brings
+  back a confirmation a person has since disputed and record kinds since
+  withdrawn; with a prepared one (its checksum is a plain SHA-256 that any
+  program can recompute) any confirmation. Without the workspace a restore
+  keeps no person's act (see "A restore without the workspace");
 - import memory that carries a release or an impact verdict: `memory import`,
   `memory import-published` and `memory import-commit` are reachable with the
   token, and what the package carries counts as written. An imported release
@@ -377,6 +386,54 @@ before 0.13.0 keep their mark and say `on the command line`; nothing tells such
 a confirmation from one a program made in a pseudo-terminal, and the person can
 review them in the inspector.
 
+### A restore without the workspace
+
+`cairnmind restore` asks this installation's workspace for its key once, before
+it changes anything (`cairnmind workspace status` shows `"person_key":
+"present"` when it would answer, after the same socket checks; run it in the
+same terminal environment, since `TMPDIR` can move the socket on Linux and WSL).
+It adds no secret, file or option of its own. `cairnmind setup local --backup
+FILE` restores the backup it has just taken of a store this installation only
+connects to through the same code, so everything in this section holds for it;
+its plan says which way the restore will go as far as the key answers then.
+Only an answer with the key keeps a person's acts: with the workspace open,
+`cairnmind stop`, then `cairnmind restore FILE`, then `cairnmind` to start the
+service again. Anything else (no workspace, a closed one, one an earlier version
+started, tmux that cannot be run, a server, CI) takes the other way, and exit
+code 0 in both. Every row is still restored, in the one transaction, so disaster
+recovery works with no workspace. In the other way, as each row is inserted:
+
+- a confirmed record, and each confirmed revision of it, that carries a person's
+  mark or none (confirmed before the rule) gets an `import` mark with package
+  `backup`: "confirmed by Ada, in the inspector, 2026-11-20, as the backup says;
+  restored from FILE on 2026-11-22 without the person's workspace; not verified
+  here". Status, version, text, sources and evidence stay as the backup has
+  them. Records of a plan's steps and the record kept by a conflict decision are
+  records too, so they read the same way;
+- every accepted transcript record kind of a project moves to its withdrawn
+  ones, with route `restore` and no person named (`record-kind list` shows it);
+- disputed and superseded records, the inbox bookkeeping of a dismissed
+  conflict and the audit notes stay as the backup has them: none is a
+  confirmation. A restored `review://` audit still lets `memory publish` publish
+  a record as reviewed, as before; the receiving side reads it as a claim;
+- the upgrade step above does not run, since nothing restored is a person's.
+
+The output says which way it went. Standard output has `person_confirmations`:
+`kept`, or `claims_of_the_backup` with `confirmations_turned_into_claims` and
+`record_kinds_withdrawn`; the second way also prints one sentence on standard
+error, with a different one when the open workspace is an earlier version's with
+no key. The sentence for "no answer" names the three causes (closed, a socket
+the checks refuse, tmux that cannot be run: check `tmux_executable`). In the
+impact view and the extraction statistics a backup's claim is counted with every
+other import mark, as "confirmed elsewhere"; the confirmation line says "as the
+backup says". Because the mark is an `import` mark, every rule treats it as a claim: a
+session's write may change the record (it lapses), a plan's context may change,
+and an import replaces it without `replace_confirmed`. The person confirms again
+what still holds in the inspector: a record with Confirm, a plan under Plans with
+Confirm, a record kind under More, then Transcript record kinds. To undo a
+restore made without the workspace, restore the `before-restore-*` copy it wrote
+(in `backups/` of the data directory) with the workspace open.
+
 ### How a confirmation is recorded and shown
 
 The store keeps `metadata.confirmation` on the record. It is derived: a client
@@ -385,7 +442,7 @@ can neither send it nor remove it, and a package never carries it.
 | `by` | Meaning | Fields |
 | --- | --- | --- |
 | `person` | A person confirmed it on this machine. | `route`, `source_id` (the audit or note), `version`, `actor_name`, `at`; `marked_at_upgrade` when the upgrade step below gave it |
-| `import` | Confirmed elsewhere and brought by a package. Never verified here. | `package` (`archive` or `published`), `where`, `confirmed_by` (claims: name, action, branch, commit, time), `imported_at`, `version` |
+| `import` | Confirmed elsewhere and brought by a package. Never verified here. | `package` (`archive` or `published`, or `backup` for a restore without the person's workspace), `where`, `confirmed_by` (claims: name, action, branch, commit, time), `imported_at`, `version` |
 | `seed` | Written by `cairnmind eval` into its own store. Not a person. | `route`, `source_id`, `version` |
 | `lapsed` | No longer confirmed: a write that was not a person's act changed what was confirmed or set another status. Written only over a confirmation that was not a person's verdict given here (an imported one, seed data, the checkpoint record); a store may also hold it from before that was so. Kept until a person gives a verdict again. | `confirmed_version`, `version`, `status` |
 
@@ -408,7 +465,7 @@ in the import's receipt) does not, and neither does a command line note, which
 hashes nothing. The mark is the one the route would have written, with the note
 as `source_id`, the time of the act as `at` and `marked_at_upgrade`. The step
 runs once when this installation opens the store as its writer, and again after
-a restore; it records in `devbrain_meta` (`person_marks_before_rule`) that it
+a restore made with the workspace open; it records in `devbrain_meta` (`person_marks_before_rule`) that it
 ran and how many records it marked and left, and changes no status, version,
 source or evidence. Every other such record stays before the rule.
 

@@ -248,11 +248,68 @@ live_terminals() {
     done
 }
 
-# $1: the executable of the installed version, $2: the name a user types for it, $3 (optional): its Python.
+# External MCP servers (cairnmind mcp --client external) running the installed version's Python: an editor keeps
+# one open, and its next tool call would start the service again, from the version being replaced (#298).
+# $1: that Python, "<uv tool dir>/<tool>/bin/python". Prints their process ids, one per line; fails when ps does.
+live_bridges() {
+    local python="$1" pid args
+    command -v ps >/dev/null 2>&1 || return 1  # not found must not read as "none open", pipefail or not
+    ps -A -ww -o pid= -o args= | while read -r pid args; do
+        case "$args" in
+            "$python"*" mcp "*"--client external"*|"$python"*" mcp "*"--client=external"*) printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# While the file upgrade_mark exists, Cairnmind starts no service (upgrade_mark.py); it holds this installer's
+# process id. Set where it is used, not where it is defined.
+begin_upgrade() {
+    upgrade_mark="$HOME/.local/state/cairnmind/upgrade-in-progress"
+    if ! { mkdir -p -- "${upgrade_mark%/*}" && printf '%s\n' "$$" >"$upgrade_mark.$$" \
+        && mv -f -- "$upgrade_mark.$$" "$upgrade_mark"; }; then
+        printf 'Cannot write %s, which tells running Cairnmind processes that an upgrade is in progress.\n' \
+            "$upgrade_mark" >&2
+        exit 1
+    fi
+    # A signal ends the installer through exit, so the EXIT trap removes the mark.
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+}
+
+# Removes the mark only when this installer wrote it; safe to call more than once.
+end_upgrade() {
+    local owner
+    upgrade_mark="$HOME/.local/state/cairnmind/upgrade-in-progress"
+    rm -f -- "$upgrade_mark.$$"
+    owner="$(cat -- "$upgrade_mark" 2>/dev/null)" || return 0
+    if [[ "$owner" == "$$" ]]; then
+        rm -f -- "$upgrade_mark"
+    fi
+}
+
+# $1: the executable of the installed version, $2: the name a user types for it,
+# $3: its Python (live_bridges, and live_terminals to ask a socket), may be absent.
 # The workspace and coding sessions hold interactive work: the installer stops here unless it is
 # told to close them. The interface broker and the knowledge service hold none and are stopped.
 stop_installed() {
-    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown
+    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown bridges=""
+    # First, and also when the installed command is broken: nothing has been stopped yet. Before the terminals:
+    # it is a cheap read that ends the run with nothing asked of the installed command, and a refusal about
+    # terminals (#290) then never hides an open MCP server that would restart the service.
+    if [[ -z "$python" ]]; then
+        printf 'Note: the Python of the installed version is not known, so an open MCP server of it could not be ruled out.\n' >&2
+    elif ! bridges="$(live_bridges "$python")"; then
+        printf 'Note: ps failed, so an open MCP server of the installed version could not be ruled out.\n' >&2
+    elif [[ -n "$bridges" ]]; then
+        bridges="${bridges//$'\n'/ }"
+        printf '%s\n' \
+            "Editors have MCP servers of the installed version open ($name mcp --client external), processes: $bridges" \
+            'Their next tool call would start the knowledge service again, from the version being replaced.' \
+            "Close them in the editor, or end them with: kill $bridges" \
+            'then run this installer again.' >&2
+        exit 1
+    fi
     [[ -x "$installed" ]] || return 0
     terminals="$(live_terminals "$python")"
     # Asked as well, read whole and not through a pipe: an answer cut short must not read as "none".
@@ -312,6 +369,10 @@ stop_installed() {
 }
 # --- end ---
 
+# From here until the new version is installed, nothing starts the service from the version being replaced (#298).
+trap 'rm -f -- "$constraints_file"; end_upgrade' EXIT
+begin_upgrade
+
 # An earlier release was installed as the uv tool "devbrain", which owns the devbrain
 # executable that this package also provides as an alias. Remove the tool, not the data.
 upgraded_from_devbrain=false
@@ -338,6 +399,7 @@ if [[ ! -x "$cairnmind_bin" ]]; then
     printf 'Installation did not provide the executable: %s\n' "$cairnmind_bin" >&2
     exit 1
 fi
+end_upgrade  # the new version is in place: a service started from now on runs it
 
 # The engine mode this data directory stores (cairnmind init saves it), read by the installed version itself;
 # empty when it cannot say: the native engine is then installed as before, and init names what is wrong.

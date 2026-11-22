@@ -100,6 +100,12 @@ def test_the_database_name_of_an_existing_store_does_not_change(monkeypatch, tmp
         Settings.load(tmp_path / "data")
 
 
+def test_the_derived_database_is_the_name_a_fresh_directory_gets(tmp_path):
+    from cairnmind.config import derived_database
+    settings = Settings.load(tmp_path / "data")
+    assert settings.arcade_database == derived_database(settings.data_dir)
+
+
 def test_a_new_installation_starts_under_the_current_name(clean_environment):
     assert default_data_dir() == (clean_environment / ".local/share/cairnmind").resolve()
     assert data_dir_note() is None

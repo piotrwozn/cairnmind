@@ -60,9 +60,10 @@ ITEM_MODELS_BOTH = "{provider} at {url} for chat and embedding"
 ITEM_MODELS_CHAT = "{provider} at {url} for chat"
 ITEM_MODELS_EMBEDDING = "{provider} at {url} for embedding"
 
-CHANGE_HINT = ("To change it: `cairnmind engine start --native` or `cairnmind engine start --docker` (where the engine "
-               "Cairnmind manages runs), `cairnmind models set` (the memory models), and arcade_connect_url in "
-               "config.json for a database Cairnmind only connects to (docs/DEPLOYMENT.md).")
+CHANGE_HINT = ("To change it: `cairnmind setup local`, `cairnmind setup remote-db` or `cairnmind setup remote` (where "
+               "storage and the memory models run; `cairnmind setup --help` lists what each needs), `cairnmind engine "
+               "start --native` or `cairnmind engine start --docker` (where the engine Cairnmind manages runs), and "
+               "`cairnmind models set` (one memory model).")
 
 # The words of the workspace status row.
 STATUS_STORAGE = "Storage"
@@ -111,7 +112,7 @@ MESSAGES = {
     ITEM_MODELS_BOTH: "{provider} pod adresem {url} dla czatu i embeddingu",
     ITEM_MODELS_CHAT: "{provider} pod adresem {url} dla czatu",
     ITEM_MODELS_EMBEDDING: "{provider} pod adresem {url} dla embeddingu",
-    CHANGE_HINT: "Aby to zmienić: `cairnmind engine start --native` lub `cairnmind engine start --docker` (gdzie działa silnik zarządzany przez Cairnmind), `cairnmind models set` (modele pamięci) oraz arcade_connect_url w config.json dla bazy, z którą Cairnmind tylko się łączy (docs/DEPLOYMENT.md).",
+    CHANGE_HINT: "Aby to zmienić: `cairnmind setup local`, `cairnmind setup remote-db` lub `cairnmind setup remote` (gdzie działają baza i modele pamięci; `cairnmind setup --help` mówi, czego każdy potrzebuje), `cairnmind engine start --native` lub `cairnmind engine start --docker` (gdzie działa silnik zarządzany przez Cairnmind) oraz `cairnmind models set` (jeden model pamięci).",
     STATUS_STORAGE: "Baza",
     STATUS_MODELS: "Modele",
     WORD_LOCAL: "lokalnie",

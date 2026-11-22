@@ -14,7 +14,8 @@ import cursor, capture recovery provenance). Those keep blocking as before.
 Only a person's act stores or withdraws an acceptance, as only a person confirms a record (#177): the
 inspector routes the workspace calls, with the workspace's key (person_proof, #214); the command line does
 neither. A coding client, the built-in agent, an MCP call and an imported package have no way to write it:
-the store checks the open act and the note its route wrote, as it does for a confirmation.
+the store checks the open act and the note its route wrote, as it does for a confirmation. A restore without
+the person's workspace withdraws every acceptance of the backup (restore_claims).
 """
 from __future__ import annotations
 
@@ -185,6 +186,18 @@ def set_acceptance(store, project_id, client, kind, note=None, *, withdraw=False
             result = {"status": "accepted", "acceptance": current}
         update_document(tx, "projects", {FIELD: entries, WITHDRAWN_FIELD: withdrawn}, "id=:id", {"id": project_id})
     return {"project_id": project_id, **result}
+
+
+def withdraw_all(row, at, route, note) -> tuple[dict, int]:
+    """A project row with every standing acceptance moved to the withdrawn ones, and how many moved: what a
+    restore without the person's workspace does (#214, restore_claims). Nobody is named: no person acted."""
+    entries = _entries(row.get(FIELD))
+    if not entries:
+        return row, 0
+    withdrawn = [*_entries(row.get(WITHDRAWN_FIELD), MAX_WITHDRAWN),
+                 *({**entry, "withdrawn_at": at, "withdrawn_by": None, "withdrawn_route": route,
+                    "withdrawn_source_id": None, "withdraw_note": note} for entry in entries)][-MAX_WITHDRAWN:]
+    return {**row, FIELD: [], WITHDRAWN_FIELD: withdrawn}, len(entries)
 
 
 def act_as_person(store, project_id, client, kind, note=None, *, route, withdraw=False) -> dict:
