@@ -1041,9 +1041,7 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
     # Said, never silent (#327): whether a removed project came back, or one that keeps its memory did not.
-    restored = next((row for row in removed if row["id"] == project["id"]), None)
-    kept = [] if restored or project["id"] in known else [
-        row for row in removed if row.get("removed_name") == project["name"] or row.get("removed_root") == project["root"]]
+    restored, kept, details = removal.add_outcome(removed, known, project)
 
     def sentences():
         shown = safe_text(str(root))
@@ -1061,12 +1059,6 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         lines.append((first_start.PROJECT_EXISTED_NEXT if existed or restored else first_start.PROJECT_ADDED_NEXT)
                      .format(project=quoted))
         return lines
-    details = {}
-    if restored:
-        details["restored"] = {"removed_at": restored.get("removed_at"), "roots": restored.get("removed_roots") or []}
-    if kept:
-        details["removed_kept"] = [{"id": row["id"], "name": row.get("removed_name"), "root": row.get("removed_root"),
-                                   "removed_at": row.get("removed_at")} for row in kept]
     _human_or_json({"project": project, "indexed": result, "history": discovery, **details}, as_json, sentences)
 
 

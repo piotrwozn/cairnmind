@@ -106,6 +106,9 @@ REMOVED_NEXT = ("Next: cairnmind project add NAME FOLDER, with the name and fold
 REMOVED_HINT = "Removed projects whose memory is kept: {count}; cairnmind project list --removed lists them."
 IMPORT_REMOVED = ("This memory package belongs to the project {name}, which was removed from the registry on {when}. "
                   "cairnmind project add {name} {root} brings it back; then import again. Nothing was imported.")
+UNKNOWN = "Unknown project: {value}. "  # the store's prefix, which callers match (cli._refuse_unknown_project)
+UNKNOWN_REMOVED = UNKNOWN + PROJECT_REMOVED
+UNKNOWN_STUCK = UNKNOWN + REMOVED_STUCK
 
 MESSAGES = {
     IN_SESSION: ("Sesja programistyczna nie może usunąć projektu z rejestru; może to zrobić tylko człowiek, poza "
@@ -197,11 +200,21 @@ MESSAGES = {
     IMPORT_REMOVED: ("Ten pakiet pamięci należy do projektu {name}, który został usunięty z rejestru {when}. "
                      "cairnmind project add {name} {root} go przywraca; potem zaimportuj ponownie. Niczego nie "
                      "zaimportowano."),
+    UNKNOWN: "Nieznany projekt: {value}. ",
 }
+MESSAGES[UNKNOWN_REMOVED] = MESSAGES[UNKNOWN] + MESSAGES[PROJECT_REMOVED]
+MESSAGES[UNKNOWN_STUCK] = MESSAGES[UNKNOWN] + MESSAGES[REMOVED_STUCK]
+# Refusals the service sends the workspace as English text; the panel matches them and shows the Polish template.
+BROKER_TEMPLATES = (UNKNOWN_REMOVED, UNKNOWN_STUCK, NEW_REFUSED, SEVERAL_REMOVED, ROOT_OF_ANOTHER, IMPORT_REMOVED,
+                    IMPORT_STUCK)
 
 
 class Refused(ValueError):
     """A refusal: the command line prints it once and exits 2; nothing was changed."""
+
+
+class ProjectRemoved(ValueError):
+    """Store.resolve_project named a removed project: the text says so and how to bring it back."""
 
 
 def _q(text) -> str:
@@ -231,6 +244,11 @@ def removed_text(row: dict, data_dir) -> str:
     return (REMOVED_STUCK if stuck(row, data_dir) else PROJECT_REMOVED).format(
         name=_q(row.get("removed_name")), root=_q(row.get("removed_root")), when=when(row.get("removed_at")),
         id=row.get("id"))
+
+
+def unknown_removed(value: str, row: dict, data_dir) -> ProjectRemoved:
+    """The store's refusal of a value that names a removed project."""
+    return ProjectRemoved(UNKNOWN.format(value=value) + removed_text(row, data_dir))
 
 
 def import_refusal(row: dict, data_dir) -> str:
@@ -470,6 +488,33 @@ def workspace_notice(translate, project: dict, root: str, back: dict) -> str:
     """What the workspace says when adding a folder brought a removed project back."""
     return translate(RESTORED_WORKSPACE, project=_q(project["name"]), root=safe_text(root),
                      when=when(back.get("removed_at")))
+
+
+def add_outcome(removed: list[dict], known: set, project: dict) -> tuple[dict | None, list[dict], dict]:
+    """After `project add` (command line or workspace): the removed row it brought back, the removed rows that share
+    the name or the folder and were not brought back, and the keys the JSON gains for them (only when set)."""
+    restored = next((row for row in removed if row["id"] == project["id"]), None)
+    kept = [] if restored or project["id"] in known else [
+        row for row in removed if row.get("removed_name") == project["name"] or row.get("removed_root") == project["root"]]
+    details = {}
+    if restored:
+        details["restored"] = {"removed_at": restored.get("removed_at"), "roots": restored.get("removed_roots") or []}
+    if kept:
+        details["removed_kept"] = [{"id": row["id"], "name": row.get("removed_name"), "root": row.get("removed_root"),
+                                    "removed_at": row.get("removed_at")} for row in kept]
+    return restored, kept, details
+
+
+def workspace_lines(translate, project: dict, root: str, result: dict) -> list[str]:
+    """What the workspace's Add folder says from POST /projects' reply: brought back with the folders left out, or
+    a removed project of that name or folder that keeps its memory; nothing for a plain new project."""
+    back, name = result.get("restored"), _q(project["name"])
+    lines = [workspace_notice(translate, project, root, back)] if back else []
+    if back and back.get("roots"):
+        lines.append(translate(RESTORED_ROOTS, project=name, roots=", ".join(safe_text(p) for p in back["roots"])))
+    lines.extend(translate(NOT_BROUGHT_BACK, when=when(row.get("removed_at")), name=_q(row.get("name")),
+                           root=safe_text(row.get("root"))) for row in result.get("removed_kept") or [])
+    return lines
 
 
 def not_brought_back(row: dict) -> str:

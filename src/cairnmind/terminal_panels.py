@@ -832,9 +832,9 @@ class SidebarApp(BasePanel):
         await self.load_state()
         await self.reconcile()
         self.show_page("project")
-        from .project_removal import workspace_notice
-        back = result.get("restored")
-        self.notice(workspace_notice(self.t, project, root, back) if back else "Project opened. Choose Start work when ready.")
+        from .project_removal import workspace_lines
+        said = workspace_lines(self.t, project, root, result)  # brought back, or a removed one kept apart (#327)
+        self.notice(" ".join(said) if said else "Project opened. Choose Start work when ready.")
 
     async def import_memory_form(self, path="", root="", name=""):
         checked = {}

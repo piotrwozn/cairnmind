@@ -250,6 +250,41 @@ def test_the_workspace_route_says_a_removed_project_came_back_and_honours_a_sepa
         assert new.status_code == 200 and "restored" not in new.json()
 
 
+def test_the_workspace_route_names_a_removed_project_it_did_not_bring_back(world, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from cairnmind.service import create_app
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    other = tmp_path / "other"
+    other.mkdir()
+    headers = {"Authorization": "Bearer " + store.settings.token}
+    with TestClient(create_app(store.settings, start_worker=False, ollama=object()), headers=headers) as client:
+        new = client.post("/projects", json={"name": "app", "root": str(other)})
+        assert new.status_code == 200, new.text
+        assert new.json()["removed_kept"] == [{"id": project["id"], "name": "app", "root": str(root),
+                                               "removed_at": removal.removed_rows(store)[0]["removed_at"]}]
+        again = client.post("/projects", json={"name": "app", "root": str(other)})  # already registered: nothing new
+        assert "removed_kept" not in again.json() and "restored" not in again.json()
+
+
+def test_the_workspace_actions_of_main_say_that_a_project_was_removed(world):
+    """Old task groups, team memory and the inspector's other routes refuse a removed project by naming the removal."""
+    from fastapi.testclient import TestClient
+
+    from cairnmind.service import create_app
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    headers = {"Authorization": "Bearer " + store.settings.token}
+    with TestClient(create_app(store.settings, start_worker=False, ollama=object()), headers=headers) as client:
+        for answer in (client.get("/inspector/legacy-groups", params={"project": project["id"]}),
+                       client.get("/inspector/legacy-groups", params={"project": "app"}),
+                       client.post("/memory/import-published", json={"project": project["id"], "path": str(root),
+                                                                       "dry_run": True})):
+            assert answer.status_code == 404, answer.text
+            assert "was removed from the registry" in answer.json()["detail"], answer.text
+
+
 def test_cli_remove_and_add_again_end_to_end(monkeypatch, tmp_path):
     from typer.testing import CliRunner
 

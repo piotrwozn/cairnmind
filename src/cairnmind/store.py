@@ -793,7 +793,7 @@ class Store:
         transcript or a hook event): it names a place, typed by nobody, that may since have been removed.
         """
         value = str(identifier)
-        from .project_removal import find_removed, removed_text
+        from .project_removal import find_removed, unknown_removed
         project = one_row(self, "SELECT FROM projects WHERE removed_at IS NULL AND (id=:value OR name=:value)",
                           {"value": value}, False)
         if project:
@@ -801,7 +801,9 @@ class Store:
         if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
             # A removed project is named, with the way back, never reported as unknown (#327).
             removed = find_removed(self, value)
-            raise ValueError(f"Unknown project: {value}. " + (removed_text(removed, self.data_dir) if removed else UNKNOWN_PROJECT_NEXT))
+            if removed:
+                raise unknown_removed(value, removed, self.data_dir)
+            raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
         written = Path(value).expanduser()
         if not written.is_absolute() and (recorded or not self.relative_paths):
             raise ValueError(f"Unknown project: {value} (a relative path is not accepted here; give an absolute one)")
@@ -814,7 +816,9 @@ class Store:
             selected = max(candidates, key=lambda row: len(row["path"]))
             return one_row(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
         removed = find_removed(self, value, path)
-        raise ValueError(f"Unknown project: {value}. " + (removed_text(removed, self.data_dir) if removed else UNKNOWN_PROJECT_NEXT))
+        if removed:
+            raise unknown_removed(value, removed, self.data_dir)
+        raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
 
     def _delete_old_vectors(self, tx, source_ids):
         if not source_ids:

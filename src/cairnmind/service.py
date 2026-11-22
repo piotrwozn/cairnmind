@@ -694,14 +694,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             raise ValueError("Project root is unavailable") from exc
         if not root.is_dir():
             raise ValueError("Project root must be an existing directory")
-        from .project_removal import removed_rows
+        from .project_removal import add_outcome, removed_rows
+        known = {row["id"] for row in await asyncio.to_thread(store.list_projects)}
         removed = await asyncio.to_thread(removed_rows, store)
         created = await asyncio.to_thread(store.add_project, body.name, root, not body.fresh)
         cache.clear()
-        # Said, never silent (#327): a removed project that came back is not a new one.
-        back = next((row for row in removed if row["id"] == created["id"]), None)
-        return {"project": created, **({"restored": {"removed_at": back.get("removed_at"),
-                                                     "roots": back.get("removed_roots") or []}} if back else {})}
+        # Said, never silent (#327): a removed project that came back is not a new one, and one that keeps its
+        # memory under this name or folder was not brought back.
+        return {"project": created, **add_outcome(removed, known, created)[2]}
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):

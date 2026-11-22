@@ -315,6 +315,40 @@ def test_the_workspace_says_in_both_languages_that_a_removed_project_came_back()
         .startswith("Przywrócono demo w /src/demo wraz z pamięcią")
 
 
+def test_the_workspace_names_the_folders_left_out_and_a_removed_project_it_did_not_bring_back():
+    """What Add folder shows after POST /projects, in both languages; no engine, the same on macOS."""
+    def say(language, result):
+        return removal.workspace_lines(lambda text, **values: tr(text, language, **values), PROJECT, "/src/demo",
+                                       result)
+    back = {"restored": {"removed_at": REMOVED_AT, "roots": ["/src/demo-wt"]}}
+    assert say("en", back)[1] == ("Its other folders were not added back; cairnmind project root demo FOLDER adds each "
+                                  "again: /src/demo-wt.")
+    kept = {"removed_kept": [{"id": "p0", "name": "demo", "root": "/old/demo", "removed_at": REMOVED_AT}]}
+    assert say("en", kept) == ["The project removed on 2026-11-22 10:30 UTC as demo in /old/demo keeps its memory and "
+                               "was not brought back: only cairnmind project add with that same name and folder brings "
+                               "it back."]
+    assert say("pl", kept)[0].startswith("Projekt usunięty 2026-11-22 10:30 UTC jako demo w /old/demo")
+    assert say("en", {}) == []
+
+
+def test_a_refusal_about_a_removed_project_reaches_a_polish_workspace_in_polish():
+    """The service sends the English sentence; the panel puts it back together from the Polish template."""
+    from cairnmind.terminal_client import BrokerError
+    from cairnmind.terminal_i18n_messages import broker_error_text
+
+    def polish(text):
+        return tr(text, "pl")
+    refused = removal.NEW_REFUSED.format(name="demo", root="/src/demo", when="2026-11-22 10:30 UTC")
+    said = broker_error_text(BrokerError(400, refused), polish)
+    assert said == "Broker 400: " + removal.MESSAGES[removal.NEW_REFUSED].format(
+        name="demo", root="/src/demo", when="2026-11-22 10:30 UTC")
+    gone = "Unknown project: p1. " + removal.PROJECT_REMOVED.format(name="demo", root="/src/demo",
+                                                                    when="2026-11-22 10:30 UTC")
+    assert broker_error_text(BrokerError(404, gone), polish).startswith(
+        "Broker 404: Nieznany projekt: p1. Projekt demo został usunięty z rejestru 2026-11-22 10:30 UTC")
+    assert broker_error_text(BrokerError(404, "Something else."), polish) == "Broker 404: Something else."
+
+
 def test_without_a_project_the_usage_names_PROJECT(run):
     said = plain_words(run("project", "remove").output)
     assert "Missing argument 'PROJECT'" in said and "project name comes first" not in said
