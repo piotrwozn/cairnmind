@@ -29,7 +29,7 @@ from .retrieval import (Retriever, json_value, last_warnings, public_metadata, p
                         with_source_origin)
 from .store import validate_task_state
 from . import subject as _subject
-from .subject import NAMES_GAP, SUBJECT_GAP, unnamed_answer_names, unnamed_subject
+from .subject import NAMES_GAP, SUBJECT_GAP, found_names, unnamed_answer_names, unnamed_subject
 from .support import (NAMES_SCHEMA, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_TOKENS, names_messages, names_verdict,
                       support_messages, support_verdict)
 
@@ -1109,6 +1109,12 @@ class KnowledgeAgent:
             else:
                 diagnostics["model_calls"] = [*diagnostics["model_calls"][-2:], _model_diagnostics(response, "names")]
                 unstated = names_verdict(response)
+            if unstated:
+                # A name the model calls unstated that the question or a cited source has is not one (#245);
+                # a reader sees both lists. Only a name found in neither withholds the answer.
+                found = await asyncio.to_thread(found_names, unstated, question, result["sources"], evidence)
+                diagnostics.update(names_reported=unstated, names_found=found)
+                unstated = [name for name in unstated if name not in found]
             if unstated is None:
                 diagnostics["support_check"] = "names_failed"
                 supported, reason, gap = False, None, "Could not check the names the answer gives."
