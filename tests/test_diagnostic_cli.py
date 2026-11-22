@@ -139,7 +139,9 @@ def test_unavailable_diagnostics_do_not_autostart_service(tmp_path, monkeypatch,
     transport(monkeypatch, unavailable)
     result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), *arguments])
     assert result.exit_code == 2
-    assert "cairnmind serve" in plain_words(result.output)
+    # #287: the next command that needs the service starts it, so the refusal no longer tells a person to run serve.
+    from cairnmind import first_start
+    assert plain_words(first_start.STATUS_NOT_RUNNING) in plain_words(result.output)
     assert "Usage:" not in result.output and "Invalid value" not in result.output
     assert files(settings.data_dir) == before
 

@@ -62,9 +62,10 @@ def mac(tmp_path):
     for name in ("tr", "mktemp", "sleep", "rm"):  # what the Docker question uses
         os.symlink(shutil.which(name), bin_dir / name)
 
-    def run(show_flag=False, **environment):
+    def run(show_flag=False, pull_models=False, **environment):
         write()
-        text = checks().replace(JAVA_HOME_TOOL, str(tmp_path / "java_home"))
+        text = ("pull_models=true\n" if pull_models else "") + checks().replace(
+            JAVA_HOME_TOOL, str(tmp_path / "java_home"))
         flag = ('\necho "engine_in_docker=${engine_in_docker:-unset}"\necho "workspace_ready=${workspace_ready:-unset}"'
                 if show_flag else "")
         result = subprocess.run(
@@ -186,13 +187,40 @@ def test_a_tmux_that_reports_no_version_does_not_stop_the_installer(mac):
     assert "Cannot detect the tmux version" in result.stderr and "workspace_ready=false" in result.stdout
 
 
-def test_the_installer_ends_with_the_workspace_line_only_when_tmux_is_ready():
+def test_the_installer_ends_with_the_workspace_lines_only_when_tmux_is_ready_and_then_the_summary():
     script = SCRIPT.read_text()
     ready = script.index('if [[ "$workspace_ready" == true ]]; then\n    printf \'Open the terminal workspace: cairnmind\\n\'')
     ending = script[ready:]
-    assert ending.index("\nelse\n") < ending.index("without it these commands work: cairnmind serve, cairnmind run, "
-                                                   "cairnmind mcp, cairnmind brief.")
+    # #287: no else line any more (the summary says the workspace is optional and off); the summary ends the output.
+    assert "\nelse\n" not in ending and "cairnmind serve" not in ending
     assert ending.count("Open the terminal workspace") == 1
+    last = script.rstrip().splitlines()[-1]
+    assert last == '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention'
+    assert "Models were not downloaded" not in script
+    assert script.count('engine status >/dev/null') == 2 and 'engine install >/dev/null' in script  # no engine JSON
+
+
+def test_a_missing_uv_on_linux_is_one_install_line_and_run_again_without_a_second_document(mac):
+    run, state, bin_dir, tmp_path = mac
+    state.update(system="Linux")
+    java(bin_dir / "java", 21)
+    (bin_dir / "uv").unlink()
+    result = run()
+    assert result.returncode == 1
+    assert result.stderr.endswith("uv not found on PATH. Install it, open a new terminal and run this installer "
+                                  "again: curl -LsSf https://astral.sh/uv/install.sh | sh\n")
+    assert "docs/INSTALL.md" not in result.stderr
+
+
+def test_the_gpu_advice_is_printed_only_with_pull_models(mac):
+    run, state, bin_dir, tmp_path = mac
+    state.update(system="Linux", release="5.15.167.4-microsoft-standard-WSL2")
+    java(bin_dir / "java", 21)
+    assert "NVIDIA" not in run().stdout
+    assert "Install the NVIDIA driver in Windows, not in Linux." in run(pull_models=True).stdout
+    state.update(release="6.8.0-48-generic")
+    assert "GPU" not in run().stdout
+    assert "check local GPU access" in run(pull_models=True).stdout
 
 
 def test_a_connect_only_mac_needs_no_java(mac):
@@ -250,6 +278,77 @@ def test_an_upgrade_without_tmux_counts_a_server_it_cannot_ask_as_live(tmp_path)
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+def test_an_upgrade_without_tmux_does_not_count_a_socket_nothing_listens_on(tmp_path):
+    """#287: with the installed version's Python a leftover socket is told from a live server by a connect."""
+    import socket
+    import tempfile
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
+    try:
+        functions = script[start:script.index("# --- end ---", start)]
+        bin_dir = tmp_path / "bin"  # `id` only: no tmux on PATH
+        bin_dir.mkdir()
+        (bin_dir / "id").symlink_to(shutil.which("id"))
+        servers, expected = [], []
+        for suffix, listening in (("0000000000000001", False), ("0000000000000002", True)):
+            folder = system_temp / f"cairnmind-ui-{os.getuid()}-{suffix}"
+            folder.mkdir()
+            server = socket.socket(socket.AF_UNIX)
+            server.bind(str(folder / "tmux.sock"))
+            if listening:
+                server.listen()
+                expected.append(str(folder / "tmux.sock"))
+            servers.append(server)
+
+        def live(python):
+            return subprocess.run([BASH, "-c", "set -euo pipefail\n" + functions + f'\nlive_terminals "{python}"'],
+                                  env={"PATH": str(bin_dir), "TMPDIR": str(system_temp)},
+                                  capture_output=True, text=True, timeout=30)
+        result = live(sys.executable)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == expected
+        # A Python that is not there, or none: as before, a socket nobody can ask counts as live.
+        assert len(live(tmp_path / "no-python").stdout.splitlines()) == 2
+        for server in servers:
+            server.close()
+    finally:
+        shutil.rmtree(system_temp, ignore_errors=True)
+
+
+def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths(tmp_path):
+    import socket
+    import tempfile
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
+    try:
+        functions = script[start:script.index("# --- end ---", start)]
+        bin_dir = tmp_path / "bin"  # a tmux that finds every server alive, and an installed command with no workspace
+        tool(bin_dir / "tmux", "exit 0")
+        tool(bin_dir / "cairnmind", 'if [ "$1 $2" = "workspace status" ]; then echo \'{"available": false}\'; fi')
+        servers = []
+        for number in range(7):
+            folder = system_temp / f"cairnmind-native-{os.getuid()}-{number:016d}"
+            folder.mkdir()
+            server = socket.socket(socket.AF_UNIX)
+            server.bind(str(folder / "tmux.sock"))
+            servers.append(server)
+        result = subprocess.run(
+            [BASH, "-c", "set -euo pipefail\n" + functions + f'\nstop_installed "{bin_dir}/cairnmind" cairnmind'],
+            env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TMPDIR": str(system_temp)},
+            capture_output=True, text=True, timeout=30)
+        for server in servers:
+            server.close()
+        assert result.returncode == 1
+        lines = result.stderr.splitlines()
+        assert lines[0] == "A workspace or coding sessions of the installed version are running (7):"
+        assert [line.endswith("tmux.sock") for line in lines[1:6]] == [True] * 5 and lines[6] == "and 2 more."
+        assert "cairnmind workspace stop --clients" in lines[7]
+    finally:
+        shutil.rmtree(system_temp, ignore_errors=True)
+
+
 @pytest.mark.parametrize("stop_workspace", [{}, {"CAIRNMIND_INSTALL_STOP_WORKSPACE": "1"}])
 def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_removed(tmp_path, stop_workspace):
     """#290: `workspace stop --clients` cannot reach a server without a tmux client, so it is not the advice.
@@ -285,18 +384,22 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
 
 # --- Linux: what it printed before stays as it was -----------------------------------------------------------------
 
-@pytest.mark.parametrize("release,line", [
-    ("5.15.167.4-microsoft-standard-WSL2", "Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux."),
-    ("4.4.0-19041-Microsoft", "Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux."),
-    ("6.8.0-48-generic", "Detected Linux outside WSL. The package is supported; check local GPU access.")])
-def test_linux_output_is_unchanged(mac, release, line):
+@pytest.mark.parametrize("release,short,line", [
+    ("5.15.167.4-microsoft-standard-WSL2", "Detected Linux on WSL.",
+     "Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux."),
+    ("4.4.0-19041-Microsoft", "Detected Linux on WSL.",
+     "Detected Linux on WSL. Install the NVIDIA driver in Windows, not in Linux."),
+    ("6.8.0-48-generic", "Detected Linux outside WSL.",
+     "Detected Linux outside WSL. The package is supported; check local GPU access.")])
+def test_linux_output_is_short_and_has_the_old_sentences_with_pull_models(mac, release, short, line):
+    # #287: the platform line carries GPU advice only on the path that downloads models.
     run, state, bin_dir, tmp_path = mac
     state.update(system="Linux", release=release)
     java(bin_dir / "java", 21)
-    result = run()
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [line, "passed JAVA_HOME="]
-    assert result.stderr == ""
+    for result, expected in ((run(), short), (run(pull_models=True), line)):
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == [expected, "passed JAVA_HOME="]
+        assert result.stderr == ""
 
 
 def test_linux_keeps_its_apt_hints(mac):

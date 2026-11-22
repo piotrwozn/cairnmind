@@ -62,8 +62,8 @@ TEXTS: dict[str, dict[str, tuple[str, str]]] = {
                 "{client} nie jest zainstalowany w tej dystrybucji WSL"),
         "darwin": ("{client} is not installed on this machine", "{client} nie jest zainstalowany na tym komputerze")},
     "java": {
-        "wsl": ("Install Java 21 or newer in WSL (openjdk-21-jre-headless)",
-                "Zainstaluj Javę 21 lub nowszą w WSL (openjdk-21-jre-headless)"),
+        "wsl": ("Install Java 21 or newer in WSL: sudo apt install -y openjdk-21-jre-headless",
+                "Zainstaluj Javę 21 lub nowszą w WSL: sudo apt install -y openjdk-21-jre-headless"),
         "darwin": ("Install Java 21 or newer, for example with: brew install openjdk@21",
                    "Zainstaluj Javę 21 lub nowszą, na przykład poleceniem: brew install openjdk@21")},
     "gpu_missing": {

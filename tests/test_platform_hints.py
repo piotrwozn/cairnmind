@@ -156,7 +156,7 @@ WSL_WORDS = {
     "tmux_action": "Install tmux >= 3.4 in the same WSL distribution",
     "tmux_code": "tmux_missing: install tmux >= 3.4 in this WSL distribution",
     "client_missing": "client_missing: install the native CLI in this WSL distribution",
-    "java": "Install Java 21 or newer in WSL (openjdk-21-jre-headless)",
+    "java": "Install Java 21 or newer in WSL: sudo apt install -y openjdk-21-jre-headless",
 }
 
 

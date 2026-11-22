@@ -964,9 +964,10 @@ def cockpit_status(settings):
 
 def ensure_cockpit(settings):
     """Start/reuse the private broker without opening a browser or minting a ticket."""
-    from .cli import ensure_service
+    from .cli import ensure_service, say_service_started
     from .integrations import native_environment
-    ensure_service(settings, background_inference=False)
+    if ensure_service(settings, background_inference=False):
+        say_service_started(settings)
     folder = settings.data_dir / "cockpit"
     _private_directory(folder)
     with _private_lock(folder / "launch.lock"):

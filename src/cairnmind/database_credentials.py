@@ -280,6 +280,9 @@ def doctor_block(settings, *, timeout: float = 1.5) -> dict[str, Any]:
                               "configured_version": settings.arcade_version, "user": settings.arcade_user,
                               "transport": transport_label(settings), "password_source": SOURCE_LABELS.get(source, source),
                               "notes": []}
+    if place.get("engine") == "native":
+        from .engine import runtime_dir
+        result["installed"] = (runtime_dir(settings) / "lib").is_dir()  # a stopped engine is not a missing one (#287)
     if getattr(settings, "arcade_password_file", ""):
         result["password_file"] = settings.arcade_password_file
     if getattr(settings, "arcade_ca_file", ""):
