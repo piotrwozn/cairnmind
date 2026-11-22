@@ -95,7 +95,20 @@ ASK_MESSAGES = {
     GET_MODELS: FIRST_START[GET_MODELS],
     ASK_NO_MATCH: FIRST_START[ASK_NO_MATCH],
     MATCHES_HELD_BACK: FIRST_START[MATCHES_HELD_BACK],
+    # retrieval.VECTORS_NOT_READY (#187): a search that wanted vectors before any was built, as after a restore.
+    "Vectors for the current embedding model are not ready (being built or rebuilt, or models are off): this search "
+    "used the text only and may miss matches":
+        "Wektory dla bieżącego modelu embeddingu nie są gotowe (są budowane lub odbudowywane albo modele są "
+        "wyłączone): to wyszukiwanie użyło tylko tekstu i może pominąć trafienia",
 }
+# retrieval.VECTORS_BUILDING (#187): this fixed prefix, then the number of embedding jobs left.
+VECTORS_BUILDING_PREFIX = "Vectors are still being built, so this search may miss matches; embedding jobs left: "
+VECTORS_BUILDING_PREFIX_PL = "Wektory są wciąż budowane, więc to wyszukiwanie może pominąć trafienia; pozostałe zadania osadzania: "
+# retrieval.VECTORS_FAILED (#187): this fixed prefix, then the number of chunks whose embedding failed.
+VECTORS_FAILED_PREFIX = ("Vectors are missing for chunks whose embedding failed, so this search may miss matches "
+                         "(`cairnmind retry-jobs` tries again); chunks: ")
+VECTORS_FAILED_PREFIX_PL = ("Brakuje wektorów dla fragmentów, których osadzanie się nie powiodło, więc to wyszukiwanie "
+                            "może pominąć trafienia (`cairnmind retry-jobs` próbuje ponownie); fragmenty: ")
 # The support check's gap: this fixed prefix, then the judging model's own reason (untrusted, kept as is).
 ASK_UNSUPPORTED_PREFIX = "The quotes do not support the answer: "
 ASK_UNSUPPORTED_PREFIX_PL = "Cytaty nie potwierdzają odpowiedzi: "
@@ -622,8 +635,9 @@ CONFIRMATION_MESSAGES = {
 }
 
 MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL,
-            ASK_SUBJECT_PREFIX: ASK_SUBJECT_PREFIX_PL, ASK_NAMES_PREFIX: ASK_NAMES_PREFIX_PL, "Complete": "Pełna",
-            **CONFIRMATION_MESSAGES,
+            ASK_SUBJECT_PREFIX: ASK_SUBJECT_PREFIX_PL, ASK_NAMES_PREFIX: ASK_NAMES_PREFIX_PL,
+            VECTORS_BUILDING_PREFIX: VECTORS_BUILDING_PREFIX_PL, VECTORS_FAILED_PREFIX: VECTORS_FAILED_PREFIX_PL,
+            "Complete": "Pełna", **CONFIRMATION_MESSAGES,
             **PROVIDER_MESSAGES, **LOGIN_MESSAGES, **WORDS, **BROKER_MESSAGES, **STATE_MESSAGES,
             "Cairnmind · Memory": "Cairnmind · Pamięć"}
 
@@ -636,7 +650,8 @@ def fixed_message(text, translate, known=ASK_MESSAGES) -> str:
     text = str(text)
     if text in known:
         return translate(text)
-    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX, ASK_NAMES_PREFIX):
+    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX, ASK_NAMES_PREFIX, VECTORS_BUILDING_PREFIX,
+                   VECTORS_FAILED_PREFIX):
         if text.startswith(prefix) and known is ASK_MESSAGES:
             return translate(prefix) + text[len(prefix):]
     return text

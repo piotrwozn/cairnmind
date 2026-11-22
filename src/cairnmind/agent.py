@@ -25,7 +25,7 @@ from .memory_egress import (ASK, HELD_BACK_SOURCE, HELD_BACK_UNKNOWN, HOSTED_ASK
                             held_back_class)
 from .memory_models import answer_label, context_tokens, from_settings
 from .ollama import OllamaUnavailable
-from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
+from .retrieval import (Retriever, json_value, last_warnings, public_metadata, public_record, public_source_metadata, terms,
                         with_source_origin)
 from .store import validate_task_state
 from . import subject as _subject
@@ -672,7 +672,7 @@ class KnowledgeAgent:
                 raise ValueError("query must be a nonempty string")
             hits = await self.retriever.asearch(project_id, query[:2000], 6, worktree=worktree)
             refreshed = await asyncio.to_thread(self._hits, hits, project_id, evidence, worktree, query)
-            return {"hits": refreshed, "warnings": self.retriever.warnings[-3:]}
+            return {"hits": refreshed, "warnings": last_warnings(self.retriever.warnings, 3, 10**6)}
         if name == "graph":
             query = arguments.get("query")
             if not isinstance(query, str):
@@ -779,7 +779,7 @@ class KnowledgeAgent:
             "freshness": {"source_hashes": {source_id: unique_evidence[source_id]["sha256"]
                                              for source_id in cited_ids if source_id in unique_evidence},
                           "sources_inspected": len(unique_evidence),
-                          "warnings": list(dict.fromkeys(w[:240] for w in self.retriever.warnings))[-8:]},
+                          "warnings": last_warnings(self.retriever.warnings, 8)},
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "diagnostics": {"stage": "ask", "code": code or (
                 "ok" if status == "complete" else "insufficient_evidence" if status == "partial" else "unavailable")},
@@ -983,7 +983,7 @@ class KnowledgeAgent:
         if dropped:
             result["diagnostics"]["citations_dropped"] = dropped
             # Said in the result itself, without making a verified answer partial.
-            result["freshness"]["warnings"] = [*result["freshness"]["warnings"], CITATIONS_LEFT_OUT][-8:]
+            result["freshness"]["warnings"] = last_warnings([*result["freshness"]["warnings"], CITATIONS_LEFT_OUT], 8, 10**6)
         return result, invalid_unknowns
 
     async def ask(self, project_id: str, question: str, worktree=None,
