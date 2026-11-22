@@ -49,6 +49,21 @@ async def test_every_tool_refuses_an_argument_it_does_not_declare(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_parameter_a_tool_declares_later_is_accepted_with_no_other_edit(tmp_path):
+    # The refusal reads each tool's own schema, never a fixed list: a new parameter (such as full_packet) just works.
+    server, _ = server_of(tmp_path)
+
+    def probe(project: str, full_packet: bool = False) -> dict:
+        return {"project": project, "full_packet": full_packet}
+
+    server.add_tool(probe)
+    result = await server.call_tool("probe", {"project": "demo", "full_packet": True})
+    assert '"full_packet": true' in str(result)
+    with pytest.raises(ToolError, match="no argument named 'surprise'.*full_packet, project"):
+        await server.call_tool("probe", {"project": "demo", "surprise": 1})
+
+
+@pytest.mark.asyncio
 async def test_the_refusal_reaches_a_client_over_the_protocol_as_an_error_result(tmp_path):
     from mcp.shared.memory import create_connected_server_and_client_session
     server, bridge = server_of(tmp_path)
