@@ -70,7 +70,7 @@ def test_project_add_says_what_it_did_and_warns_about_a_folder_without_git(tmp_p
     added = run("project", "add", "my-app", str(root))
     assert added.exit_code == 0, added.output
     assert json.loads(added.stdout)["project"]["name"] == "my-app"  # the JSON is unchanged
-    assert told[0].startswith(f"Registered my-app in {root.resolve()}: ") and "Next: cairnmind remember my-app" in told[0]
+    assert told[0].startswith(f"Registered my-app in {root.resolve()}; files indexed: ") and "Next: cairnmind remember my-app" in told[0]
     assert told[1:] == [first_start.NOT_GIT.format(root=root.resolve())]
 
 
@@ -102,12 +102,17 @@ def test_remember_says_a_proposed_finding_is_not_confirmed_and_where_to_see_it(r
     told.clear()
     confirmed = run("remember", "my-app", "Reviews are required", "--kind", "constraint", "--confirmed")
     assert json.loads(confirmed.stdout)["status"] == "confirmed" and told == []
+    # brief leaves tasks and checkpoints out of its review list, so the sentence is not said for them.
+    told.clear()
+    assert run("remember", "my-app", "Add rate limiting", "--kind", "task").exit_code == 0 and told == []
 
 
-def stub_probe(installed):
+def stub_probe(installed, hooks=None):
+    """hooks: the clients whose hooks cannot be verified, though they are installed."""
     def probe(client, cwd=None, **kwargs):
         on = client in installed
-        return {"installed": on, "mcp": on, "hooks": on, "notes": [], "verified_resume": on}
+        return {"installed": on, "mcp": on, "hooks": on and client not in (hooks or ()), "notes": [],
+                "verified_resume": on}
     return probe
 
 
@@ -140,6 +145,33 @@ def test_install_with_a_client_says_which_files_and_the_next_command(tmp_path, r
     told.clear()
     assert run("install", "my-app").exit_code == 0
     assert "nothing new (the files were up to date)" in told[0]
+
+
+def test_an_installed_client_that_is_not_connected_is_not_called_connected_and_not_sent_to_run(
+        tmp_path, run, told, monkeypatch):
+    run("init")
+    run("project", "add", "my-app", str(folder(tmp_path, repository=True, commit=True)))
+    told.clear()
+    monkeypatch.setattr(integrations, "_probe_cli", stub_probe(("claude",), hooks=("claude",)))
+    assert run("install", "my-app").exit_code == 0
+    assert len(told) == 1 and told[0].startswith("Written in the project: ")
+    assert "Not connected: Claude Code (not in place: the session hooks)" in told[0]
+    assert "Connected" not in told[0] and "cairnmind run" not in told[0] and "doctor --contract" in told[0]
+    told.clear()
+    monkeypatch.setattr(integrations, "_probe_cli", stub_probe(("claude", "codex"), hooks=("claude",)))
+    assert run("install", "my-app").exit_code == 0
+    # The connected client is the one `run` is pointed at; the other is named with what it lacks.
+    assert told[0].startswith("Connected: Codex. ") and told[0].endswith("Next: cairnmind run my-app codex.")
+    assert told[1].startswith("Not connected: Claude Code (not in place: the session hooks)")
+
+
+def test_run_with_an_unsupported_client_is_not_told_to_install_it(tmp_path, run, monkeypatch):
+    run("init")
+    run("project", "add", "my-app", str(folder(tmp_path, repository=True, commit=True)))
+    monkeypatch.setattr(cli, "_ensure_service_or_refuse", lambda settings: None)
+    result = run("run", "my-app", "foo")
+    # The ValueError reaches the entry point, which prints it; its text is what the person reads.
+    assert str(result.exception) == "Unsupported client: foo"
 
 
 # --- nothing starts in the background without a word --------------------------------------------------------------
@@ -176,7 +208,28 @@ def test_the_engine_is_announced_before_a_command_starts_it_and_not_when_it_answ
     monkeypatch.setattr(engine, "engine_status", lambda *a, **k: {"available": False})
     engine.ensure_engine(settings)
     assert started == ["cairnmind: " + first_start.ENGINE_STARTING.format(mode="native", data_dir=settings.data_dir)
-                       + "\n"]  # printed before start_engine ran
+                       + "\n"]  # printed before start_engine ran, without a word about running on
+    assert capsys.readouterr().err == "cairnmind: " + first_start.ENGINE_STARTED.format(mode="native") + "\n"
+    assert "keeps running" not in first_start.ENGINE_STARTING
+    # A start that is refused at once never says the engine keeps running.
+    monkeypatch.setattr(engine, "start_engine", lambda _: (_ for _ in ()).throw(engine.ArcadeError("not installed")))
+    with pytest.raises(engine.ArcadeError):
+        engine.ensure_engine(settings)
+    assert "keeps running" not in capsys.readouterr().err
+
+
+def test_the_service_started_for_an_external_client_is_said_on_standard_error(tmp_path, monkeypatch, capsys):
+    from cairnmind import mcp_server
+    from cairnmind.config import Settings
+    settings = Settings.load(tmp_path / "data", create=True)
+    monkeypatch.setattr("cairnmind.store_writer.inspect", lambda _: {"role": "writer"})  # no engine is asked
+    monkeypatch.setattr(cli, "ensure_service", lambda _: True)
+    mcp_server.start_service(settings)
+    captured = capsys.readouterr()
+    assert captured.out == "" and first_start.SERVICE_STARTED.format(url=settings.url, data_dir=settings.data_dir) in captured.err
+    monkeypatch.setattr(cli, "ensure_service", lambda _: False)
+    mcp_server.start_service(settings)
+    assert capsys.readouterr().err == ""
 
 
 def test_the_brief_of_an_empty_project_says_how_to_start_and_of_a_proposal_how_it_is_reviewed(

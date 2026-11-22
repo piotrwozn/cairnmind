@@ -765,6 +765,14 @@ def launch_prompt(session_id: str, context_path) -> str:
         + DATA_NOT_INSTRUCTIONS)
 
 
+def missing_parts(info: dict[str, Any]) -> list[str]:
+    """What an installed client still lacks for a verified launch; empty when it is connected. One rule for
+    `install` and for the launch that refuses."""
+    return [label for key, label in (("verified_resume", PART_CONTRACT), ("mcp_configured", PART_MCP),
+                                     ("hooks_configured", PART_HOOKS), ("instructions_configured", PART_INSTRUCTIONS))
+            if not info.get(key)]
+
+
 def prepare_client_launch(settings: Settings, project: dict[str, Any], client: str,
                           args: list[str] | None = None, *, installation: dict | None = None,
                           bootstrap_when_args: bool = False) -> dict[str, Any]:
@@ -792,9 +800,7 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     for warning in installation["warnings"]:
         print(f"Cairnmind: {warning}", file=sys.stderr)
     info = installation["clients"][client]
-    parts = [label for key, label in (("verified_resume", PART_CONTRACT), ("mcp_configured", PART_MCP),
-                                      ("hooks_configured", PART_HOOKS), ("instructions_configured", PART_INSTRUCTIONS))
-             if not info.get(key)]
+    parts = missing_parts(info)
     if parts:
         raise ValueError(LAUNCH_REFUSED.format(client=client, missing=", ".join(parts)))
     prepared = _prepare_session(settings, project, client, root, args)

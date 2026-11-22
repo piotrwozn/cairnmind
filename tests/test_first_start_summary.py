@@ -50,7 +50,9 @@ def test_a_missing_java_is_required_and_missing_and_the_next_step_is_to_fix_it()
     heading = lines.index(first_start.REQUIRED_MISSING)
     missing = lines[heading + 1:lines.index(first_start.OPTIONAL_OFF)]
     assert any(line.startswith("  - Java 21 or newer is needed for the engine: not found. ") for line in missing)
-    assert any("does not answer at http://x:1" in line and "cairnmind engine start" in line for line in missing)
+    # Java is what stops the engine: the promise that the next command starts it is not made.
+    assert not any("does not answer" in line or "starts it" in line for line in missing)
+    assert any("sudo apt install -y openjdk-21-jre-headless" in line for line in missing)
     assert lines[-1] == first_start.NEXT_FIX
     assert not any(line.startswith("  - Database engine: answers") for line in lines)
 
@@ -93,15 +95,74 @@ def test_a_reader_installation_is_missing_with_the_writers_own_next_step():
     assert lines[-1] == first_start.NEXT_FIX
 
 
-def test_connect_mode_says_another_host_and_a_server_that_is_down_names_the_server():
+def test_connect_mode_names_the_host_and_a_server_that_is_down_names_the_server():
     connect = healthy(java={"needed": False, "reason": "connect"},
-                      arcadedb={"mode": "connect", "available": True, "database_available": True,
+                      arcadedb={"mode": "connect", "host": "db.example", "available": True, "database_available": True,
                                 "url": "https://db.example:2480", "database": "team"})
-    assert "answers at https://db.example:2480 (on another host)" in SUMMARY(connect)[2]
+    assert ("answers at https://db.example:2480 (a server this installation does not manage, at db.example)"
+            in SUMMARY(connect)[2])
+    local = healthy(java={"needed": False}, arcadedb={"mode": "connect", "host": "127.0.0.1", "available": True,
+                                                       "database_available": True, "url": "http://127.0.0.1:2480",
+                                                       "database": "team"})
+    assert "at 127.0.0.1)" in SUMMARY(local)[2] and "another host" not in SUMMARY(local)[2]
     down = healthy(java={"needed": False}, arcadedb={"mode": "connect", "available": False,
                                                       "url": "https://db.example:2480", "error": "ConnectError"})
     assert ("  - The database server at https://db.example:2480 does not answer (ConnectError). Check that it "
             "runs and that this machine reaches it.") in SUMMARY(down)
+
+
+STOPPED = "Local ArcadeDB is unavailable (ConnectError); run cairnmind engine status or cairnmind engine start"
+
+
+def down(engine="native", **changes):
+    arcade = {"mode": "managed", "engine": engine, "available": False, "url": "http://127.0.0.1:2480",
+              "installed": True, "error": STOPPED, **changes}
+    return healthy(arcadedb=arcade, store_writer={"role": "unknown", "reason": "ArcadeDB is not running"})
+
+
+def test_a_stopped_engine_that_can_start_is_present_on_demand_not_missing():
+    lines = SUMMARY(down())
+    assert first_start.NOTHING_MISSING in lines
+    assert "  - " + first_start.ENGINE_ON_DEMAND.format(url="http://127.0.0.1:2480") in lines
+    assert not any("Store writer" in line or "does not answer" in line for line in lines)
+    assert lines[-1] == first_start.NEXT_START
+    assert SUMMARY(down("docker", installed=None))[-1] == first_start.NEXT_START
+
+
+def test_a_stopped_engine_that_cannot_start_names_what_stops_it_once():
+    docker = healthy(arcadedb={"mode": "managed", "engine": "docker", "available": False, "url": "http://x:1",
+                               "error": STOPPED}, docker={"available": False, "error": "no daemon"},
+                     store_writer={"role": "unknown"})
+    lines = SUMMARY(docker)
+    missing = lines[lines.index(first_start.REQUIRED_MISSING) + 1:lines.index(first_start.OPTIONAL_OFF)]
+    assert len(missing) == 1 and "no daemon" in missing[0] and "next command that needs it starts it" not in missing[0]
+    never = SUMMARY(down(installed=False))
+    assert any(first_start.ENGINE_NOT_INSTALLED in line for line in never) and never[-1] == first_start.NEXT_FIX
+    busy = SUMMARY(down(error="Local ArcadeDB is unavailable (ReadTimeout); run cairnmind engine status"))
+    assert any("ReadTimeout); it may be starting or busy" in line for line in busy)
+    assert not any(line.startswith("  - Database engine: not running") for line in busy)
+
+
+def test_an_engine_of_another_release_is_not_present_and_names_both_releases():
+    arcade = {"mode": "managed", "engine": "native", "available": True, "database_available": True,
+              "url": "http://127.0.0.1:2480", "database": "cairnmind", "version": "25.9.1",
+              "configured_version": "26.11.1", "version_matches": False}
+    lines = SUMMARY(healthy(arcadedb=arcade))
+    assert not any(line.startswith("  - Database engine: answers") for line in lines)
+    assert any("runs release 25.9.1, not the pinned 26.11.1" in line and "cairnmind engine start" in line
+               for line in lines)
+    assert lines[-1] == first_start.NEXT_FIX
+    assert any("answers" in line for line in SUMMARY(healthy(arcadedb={**arcade, "version_matches": True})))
+
+
+def test_a_shell_whose_commands_are_refused_is_missing_not_a_note():
+    refused = "CAIRNMIND_SESSION_ID and DEVBRAIN_SESSION_ID name different sessions; neither is used: commands in this shell are refused."
+    informational = "CAIRNMIND_PORT is used by this process."
+    lines = SUMMARY(healthy(environment_notes=[refused, informational], environment_blockers=[refused]))
+    missing = lines[lines.index(first_start.REQUIRED_MISSING) + 1:lines.index(first_start.OPTIONAL_OFF)]
+    assert missing == [f"  - {refused}"]
+    notes = lines[lines.index(first_start.NOTES) + 1:lines.index(first_start.FULL_REPORT)]
+    assert notes == [f"  - {informational}"] and lines[-1] == first_start.NEXT_FIX
 
 
 def test_a_running_service_says_where():

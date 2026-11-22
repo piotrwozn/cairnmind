@@ -317,9 +317,14 @@ def _ensure_service_or_refuse(settings: Settings) -> None:
         started = ensure_service(settings)
     except ServiceDidNotStart as exc:
         refuse(str(exc))
-    if started:  # nothing starts in the background unannounced (#287): said whether or not this is a terminal
-        from cairnmind.first_start import SERVICE_STARTED
-        typer.echo(f"Cairnmind: {SERVICE_STARTED.format(url=settings.url, data_dir=settings.data_dir)}", err=True)
+    if started:
+        say_service_started(settings)
+
+
+def say_service_started(settings: Settings) -> None:
+    """Nothing starts in the background unannounced (#287): said whether or not this is a terminal."""
+    from cairnmind.first_start import SERVICE_STARTED
+    typer.echo(f"Cairnmind: {SERVICE_STARTED.format(url=settings.url, data_dir=settings.data_dir)}", err=True)
 
 
 def refuse(message: str, code: int = 2):
@@ -701,12 +706,15 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
-    result["environment_notes"] = [
-        f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
-        for name in env_conflicts()] + [
+    # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
+    blockers = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
-        for name in session_conflicts()] + [note for note in [data_dir_note()] if note]
+        for name in session_conflicts()]
+    result["environment_notes"] = [
+        f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
+        for name in env_conflicts()] + blockers + [note for note in [data_dir_note()] if note]
+    result["environment_blockers"] = blockers
     for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
         if name in ctx.obj._origin.get("kept", {}):
             stored, used = ctx.obj._origin["kept"][name]
@@ -1191,7 +1199,8 @@ def remember(ctx: typer.Context, project: ProjectArg,
         refuse(f"Record {exc.record_id} already holds the key {key!r} for a {kind}. Nothing was saved. Use "
                "another key, or dispute or decide that record in the inspector.")
     output(result)
-    if not confirmed:
+    # brief lists a proposed record for review, except a task or a checkpoint, which it leaves out.
+    if result.get("status") == "proposed" and kind not in {"task", "checkpoint"}:
         import shlex
         from cairnmind import first_start
         from cairnmind.terminal_safe import safe_text
@@ -1894,12 +1903,22 @@ def install(ctx: typer.Context, project: ProjectArg):
     from cairnmind.terminal_safe import safe_text
     root = Path(selected["root"]).resolve()
     files = ", ".join(safe_text(os.path.relpath(path, root)) for path in result["changed"]) or first_start.NOTHING_WRITTEN
-    connected = [name for name, info in result["clients"].items() if info.get("installed")]
+    from cairnmind.integrations import missing_parts
+    installed = {client: info for client, info in result["clients"].items() if info.get("installed")}
+    # Connected is the rule a verified launch uses; an installed client that fails it is named with what it lacks.
+    connected = [client for client, info in installed.items() if not missing_parts(info)]
+    unconnected = ", ".join(f"{first_start.CLIENT_NAMES.get(client, client)} (not in place: "
+                            f"{', '.join(missing_parts(info))})" for client, info in installed.items()
+                            if missing_parts(info))
     name = shlex.quote(safe_text(selected["name"]))
     if connected:
         _tell(first_start.INSTALL_DONE.format(
             clients=", ".join(first_start.CLIENT_NAMES.get(client, client) for client in connected), files=files,
             project=name, command=connected[0]))
+        if unconnected:
+            _tell(first_start.INSTALL_ALSO.format(clients=unconnected))
+    elif unconnected:
+        _tell(first_start.INSTALL_NOT_CONNECTED.format(files=files, clients=unconnected))
     else:
         _tell(first_start.INSTALL_NO_CLIENT.format(files=files, project=name))
 
@@ -1925,7 +1944,8 @@ def run(ctx: typer.Context, project: ProjectArg, client: ClientArg, worktree: Pa
     try:
         code = run_client(ctx.obj, selected, client, args)
     except ValueError as exc:
-        if shutil.which(client) is not None:
+        from cairnmind.integrations import CLIENTS
+        if client not in CLIENTS or shutil.which(client) is not None:
             raise
         # The client is not here: where to get it, and what works without one (the workspace words this its own way).
         from cairnmind.first_start import RUN_NO_CLIENT

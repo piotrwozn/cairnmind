@@ -128,9 +128,10 @@ UNAVAILABLE = "Cairnmind service is unavailable ({error}); start `cairnmind serv
 
 def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
-    external client, which no launcher started it for (#258). Prints nothing: stdout belongs to MCP."""
+    external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
+    standard error (#287)."""
     import shlex
-    from .cli import _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service
+    from .cli import _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service, say_service_started
     from .first_start import SERVICE_NOT_STARTED
     from .store_writer import inspect
     try:
@@ -141,7 +142,8 @@ def start_service(settings: Settings) -> None:
         # A reader never runs the service (#70): nothing is spawned, and it is not told to start one (#244).
         raise RuntimeError(_service_unavailable(settings))
     try:
-        ensure_service(settings)
+        if ensure_service(settings):
+            say_service_started(settings)  # standard error, which the client logs; stdout stays MCP's
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
         reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."

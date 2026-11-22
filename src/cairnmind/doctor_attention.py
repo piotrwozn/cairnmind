@@ -13,8 +13,8 @@ import sys
 from . import platform_hints
 from .engine_docker import DOCKER_ATTENTION
 from .first_start import (
-    CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_READY, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED,
-    MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE,
+    CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
+    ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE,
     REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WHERE_CONNECT,
     WHERE_DOCKER, WHERE_NATIVE, WORKSPACE_OFF, WORKSPACE_ON, cockpit_status)
 from .terminal_safe import safe_text
@@ -32,8 +32,8 @@ def _address(url: object) -> str:
     return str(url or "").strip().rstrip("/").lower()
 
 
-def attention(report: dict) -> list[str]:
-    """One plain line per part of the report that is required and missing or unusable."""
+def _prerequisites(report: dict) -> list[str]:
+    """Java, Docker or the engine's mode that stop an engine from starting; a line for each."""
     lines = []
     java = report.get("java") or {}
     if java and java.get("needed") is not False:
@@ -51,12 +51,42 @@ def attention(report: dict) -> list[str]:
     arcade = report.get("arcadedb") or {}
     if arcade.get("engine_problem"):
         lines.append(_line(arcade["engine_problem"]))
+    return lines
+
+
+def _on_demand(report: dict) -> bool:
+    """A managed engine that is installed, can start and is simply not running: the next command that needs it
+    starts it, as it does the service. Not a fault."""
+    arcade = report.get("arcadedb") or {}
+    return (arcade.get("mode") != "connect" and arcade.get("available") is False and arcade.get("installed") is not False
+            and _cause(arcade.get("error")) == "ConnectError" and not _prerequisites(report))
+
+
+def _cause(error: object) -> str:
+    """The name in the parentheses of 'Local ArcadeDB is unavailable (ConnectError); ...'; the text when there is none."""
+    text = str(error or "")
+    return text.partition("(")[2].partition(")")[0] or text
+
+
+def attention(report: dict) -> list[str]:
+    """One plain line per part of the report that is required and missing or unusable."""
+    lines = _prerequisites(report)
+    arcade = report.get("arcadedb") or {}
     if arcade.get("available") is False:
-        down = ENGINE_DOWN if arcade.get("mode") != "connect" else SERVER_DOWN_CONNECT
-        lines.append(_line(down.format(url=arcade.get("url") or "its address",
-                                       error=arcade.get("error") or arcade.get("reason") or "no answer")))
+        if arcade.get("mode") == "connect":
+            lines.append(_line(SERVER_DOWN_CONNECT.format(url=arcade.get("url") or "its address",
+                                                          error=arcade.get("error") or arcade.get("reason") or "no answer")))
+        elif arcade.get("installed") is False:
+            lines.append(_line(ENGINE_NOT_INSTALLED))
+        elif not lines and not _on_demand(report):  # Java, Docker or the mode above already names what stops it
+            lines.append(_line(ENGINE_DOWN.format(url=arcade.get("url") or "its address",
+                                                  error=_cause(arcade.get("error") or arcade.get("reason") or "no answer"))))
     elif arcade.get("error"):
         lines.append(_line(f"The database server cannot be used: {arcade['error']}"))
+    elif arcade.get("version_matches") is False:
+        lines.append(_line(ENGINE_RELEASE.format(url=arcade.get("url") or "its address",
+                                                 found=arcade.get("version") or "unknown",
+                                                 pinned=arcade.get("configured_version") or "release")))
     elif arcade.get("database_available") is False:
         lines.append(_line(f"The database {arcade.get('database') or ''} cannot be read; see cairnmind doctor --json."))
     knowledge = report.get("knowledge_agent")
@@ -84,19 +114,24 @@ def attention(report: dict) -> list[str]:
         if isinstance(client, dict) and client.get("installed") and not client.get("verified_resume"):
             lines.append(_line(f"{name} is installed but its contract checks fail; see cairnmind doctor --contract."))
     writer = report.get("store_writer") or {}
-    if writer.get("role") in {"reader", "lost", "unknown"} or writer.get("problem"):
+    # "unknown" because the engine did not answer is the engine's state, already said above or present on demand.
+    unknown_for_the_engine = writer.get("role") == "unknown" and arcade.get("available") is False
+    if (writer.get("role") in {"reader", "lost", "unknown"} or writer.get("problem")) and not unknown_for_the_engine:
         lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''} "
                            f"{writer.get('next') or ''}"))
+    lines += [_line(note) for note in report.get("environment_blockers") or []]  # commands here are refused
     return lines
 
 
 def _engine_present(report: dict) -> list[str]:
     arcade = report.get("arcadedb") or {}
+    if _on_demand(report):
+        return [ENGINE_ON_DEMAND.format(url=arcade.get("url") or "its address")]
     if not (arcade.get("available") and arcade.get("database_available")) or arcade.get("error") or arcade.get(
-            "engine_problem"):
+            "engine_problem") or arcade.get("version_matches") is False:
         return []
     if arcade.get("mode") == "connect":
-        where = WHERE_CONNECT
+        where = WHERE_CONNECT.format(host=arcade.get("host") or "another host")
     elif arcade.get("engine") == "docker":
         where = WHERE_DOCKER
     else:
@@ -147,14 +182,15 @@ def summary(report: dict) -> list[str]:
             on.append(CLIENT_ON.format(client=label, command=name))
         elif not client.get("installed"):
             off.append(CLIENT_OFF.format(client=label, note=platform_hints.hint("client_note", client=name)))
-    lines = [DATA_DIR.format(data_dir=report.get("data_dir") or "its data directory"), REQUIRED_PRESENT]
+    lines = [_line(DATA_DIR.format(data_dir=report.get("data_dir") or "its data directory")), REQUIRED_PRESENT]
     lines += [f"  - {_line(item)}" for item in present]
     if missing:
         lines.append(REQUIRED_MISSING)
         lines += [f"  - {item}" for item in missing]
     else:
         lines.append(NOTHING_MISSING)
-    for heading, items in ((OPTIONAL_OFF, off), (OPTIONAL_ON, on), (NOTES, notes)):
+    blockers = report.get("environment_blockers") or []  # listed above as missing
+    for heading, items in ((OPTIONAL_OFF, off), (OPTIONAL_ON, on), (NOTES, [n for n in notes if n not in blockers])):
         if items:
             lines.append(heading)
             lines += [f"  - {_line(item)}" for item in items]

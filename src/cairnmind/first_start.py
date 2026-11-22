@@ -72,12 +72,18 @@ NEXT_START = ('Next: cairnmind project add NAME FOLDER registers a project; then
 ENGINE_READY = "Database engine: answers at {url} ({where}); the database {database} can be read."
 WHERE_NATIVE = "on this machine, with Java {major}"
 WHERE_DOCKER = "on this machine, in Docker"
-WHERE_CONNECT = "on another host"
+WHERE_CONNECT = "a server this installation does not manage, at {host}"
 SERVICE_RUNNING = "Local service: running at {url}."
 SERVICE_ON_DEMAND = ("Local service: not running now; the next command that needs it starts it "
                      "(cairnmind stop stops it).")
-ENGINE_DOWN = ("The database engine does not answer at {url} ({error}). The next command that needs it starts it; "
-               "to start it now: cairnmind engine start.")
+ENGINE_ON_DEMAND = ("Database engine: not running now at {url}; the next command that needs it starts it "
+                    "(cairnmind engine start starts it now).")
+ENGINE_DOWN = ("The database engine does not answer at {url} ({error}); it may be starting or busy. If it is "
+               "stopped: cairnmind engine start.")
+ENGINE_RELEASE = ("The database engine at {url} runs release {found}, not the pinned {pinned}, and every command "
+                  "that opens the store refuses it. Stop it (cairnmind stop, then cairnmind engine stop) and run "
+                  "cairnmind engine start; if another program answers at that address, free it or set another "
+                  "arcade_url.")
 SERVER_DOWN_CONNECT = ("The database server at {url} does not answer ({error}). Check that it runs and that this "
                        "machine reaches it.")
 JAVA_NEEDED = ("Java 21 or newer is needed for the engine: {found}. {hint}; or run the engine in Docker: "
@@ -91,25 +97,28 @@ CLIENT_OFF = "{client}: not installed; needed only for coding sessions (cairnmin
 CLIENT_ON = "{client}: installed and verified; start it with cairnmind run NAME {command}."
 
 # What each command of the first start says it did and what comes next.
-PROJECT_ADDED = ('Registered {project} in {root}: {files} files indexed. Next: cairnmind remember {project} "..." '
+PROJECT_ADDED = ('Registered {project} in {root}; files indexed: {files}. Next: cairnmind remember {project} "..." '
                  'stores a first finding, and cairnmind brief {project} shows it.')
 NOT_GIT = ("{root} is not a Git repository. Memory works without Git; impact, the commits in brief and coding "
            "sessions (cairnmind run) need a repository with a first commit (git init, git add, git commit).")
 NO_COMMIT = ("{root} is a Git repository without a commit yet. Memory works; impact, the commits in brief and "
              "coding sessions (cairnmind run) need a first commit (git add, git commit).")
 REMEMBER_PROPOSED = ("Stored as a proposed {kind}: cairnmind brief {project} lists it as waiting for review, and "
-                     "cairnmind ask {project} finds it. Only a person confirms it, in the memory view of the "
-                     "terminal workspace (cairnmind, then Ctrl+B i).")
+                     "cairnmind ask {project} finds it. Only a person confirms it, in the memory inspector of the "
+                     "terminal workspace (cairnmind, then Ctrl+B i; needs tmux 3.4+).")
 BRIEF_START = ('Next: nothing is stored for this project yet. cairnmind remember {project} "..." stores a first '
                'finding; a coding session started with cairnmind run {project} claude (or codex) saves '
                'checkpoints, plans and tasks here.')
 BRIEF_REVIEW = ("Next: proposed findings stay unconfirmed until a person confirms or disputes them in the memory "
-                "view of the terminal workspace (cairnmind, then Ctrl+B i).")
+                "inspector of the terminal workspace (cairnmind, then Ctrl+B i; needs tmux 3.4+).")
 INSTALL_NO_CLIENT = ("Neither Codex nor Claude Code is installed here, so no client was connected. Written in the "
                      "project: {files}. Memory works without a client (cairnmind remember, brief, ask); after "
                      "installing one, run cairnmind install {project} again.")
 INSTALL_DONE = ("Connected: {clients}. Written in the project: {files}; review the files before committing. "
                 "Next: cairnmind run {project} {command}.")
+INSTALL_ALSO = ("Not connected: {clients}. cairnmind doctor --contract shows which check fails and what it "
+                "needs.")
+INSTALL_NOT_CONNECTED = "Written in the project: {files}. " + INSTALL_ALSO
 NOTHING_WRITTEN = "nothing new (the files were up to date)"
 CLIENT_SKIPPED = ("{client} is not installed, so only its instruction block was written; after installing it, run "
                   "cairnmind install again to connect it.")
@@ -117,8 +126,9 @@ TRUST_NOTE = ("Each client asks you to trust this project's MCP server and hooks
               "Cairnmind answers no trust question for you.")
 SERVICE_STARTED = ("Started the Cairnmind service at {url} for {data_dir}. It keeps running in the background and "
                    "starts the database engine when that is not running; cairnmind stop stops it.")
-ENGINE_STARTING = ("Starting the database engine ({mode}) for {data_dir}; it keeps running in the background "
-                   "(cairnmind engine stop stops it, after cairnmind stop).")
+ENGINE_STARTING = "Starting the database engine ({mode}) for {data_dir}."
+ENGINE_STARTED = ("The database engine ({mode}) answers and keeps running in the background (cairnmind engine stop "
+                  "stops it, after cairnmind stop).")
 
 # Stops that name the next step.
 UNKNOWN_PROJECT_NEXT = ("cairnmind project list shows the registered projects; cairnmind project add NAME FOLDER "
@@ -202,12 +212,18 @@ MESSAGES = {
     ENGINE_READY: "Silnik bazy danych: odpowiada pod {url} ({where}); bazę {database} można odczytać.",
     WHERE_NATIVE: "na tym komputerze, z Javą {major}",
     WHERE_DOCKER: "na tym komputerze, w Dockerze",
-    WHERE_CONNECT: "na innym hoście",
+    WHERE_CONNECT: "serwer, którym ta instalacja nie zarządza, pod adresem {host}",
     SERVICE_RUNNING: "Usługa lokalna: działa pod {url}.",
     SERVICE_ON_DEMAND: ("Usługa lokalna: teraz nie działa; uruchomi ją następne polecenie, które jej potrzebuje "
                         "(cairnmind stop ją zatrzymuje)."),
-    ENGINE_DOWN: ("Silnik bazy danych nie odpowiada pod {url} ({error}). Uruchomi go następne polecenie, które go "
-                  "potrzebuje; aby uruchomić go teraz: cairnmind engine start."),
+    ENGINE_ON_DEMAND: ("Silnik bazy danych: teraz nie działa pod {url}; uruchomi go następne polecenie, które go "
+                       "potrzebuje (cairnmind engine start uruchamia go od razu)."),
+    ENGINE_DOWN: ("Silnik bazy danych nie odpowiada pod {url} ({error}); może się uruchamiać albo być zajęty. Jeśli "
+                  "jest zatrzymany: cairnmind engine start."),
+    ENGINE_RELEASE: ("Silnik bazy danych pod {url} ma wydanie {found}, a nie przypięte {pinned}, i każde polecenie "
+                     "otwierające magazyn go odrzuca. Zatrzymaj go (cairnmind stop, potem cairnmind engine stop) i "
+                     "uruchom cairnmind engine start; jeśli pod tym adresem odpowiada inny program, zwolnij go albo "
+                     "ustaw inny arcade_url."),
     SERVER_DOWN_CONNECT: ("Serwer bazy danych pod {url} nie odpowiada ({error}). Sprawdź, czy działa i czy ten "
                           "komputer ma do niego dostęp."),
     JAVA_NEEDED: ("Silnik wymaga Javy 21 lub nowszej: {found}. {hint}; albo uruchom silnik w Dockerze: "
@@ -221,7 +237,7 @@ MESSAGES = {
     CLIENT_OFF: ("{client}: nie zainstalowano; potrzebny tylko do sesji programistycznych (cairnmind run). "
                  "{note}"),
     CLIENT_ON: "{client}: zainstalowany i sprawdzony; uruchom go poleceniem cairnmind run NAZWA {command}.",
-    PROJECT_ADDED: ('Zarejestrowano {project} w {root}: zindeksowano plików: {files}. Dalej: cairnmind remember '
+    PROJECT_ADDED: ('Zarejestrowano {project} w {root}; zindeksowane pliki: {files}. Dalej: cairnmind remember '
                     '{project} "..." zapisuje pierwsze ustalenie, a cairnmind brief {project} je pokazuje.'),
     NOT_GIT: ("{root} nie jest repozytorium Git. Pamięć działa bez Gita; impact, commity w brief i sesje "
               "programistyczne (cairnmind run) wymagają repozytorium z pierwszym commitem (git init, git add, "
@@ -230,17 +246,23 @@ MESSAGES = {
                 "programistyczne (cairnmind run) wymagają pierwszego commita (git add, git commit)."),
     REMEMBER_PROPOSED: ("Zapisano jako proponowane ({kind}): cairnmind brief {project} pokazuje je jako czekające "
                         "na przegląd, a cairnmind ask {project} je znajduje. Potwierdza je tylko człowiek, w "
-                        "widoku pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i)."),
+                        "inspektorze pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i; wymaga "
+                        "tmux 3.4+)."),
     BRIEF_START: ('Dalej: dla tego projektu nic jeszcze nie zapisano. cairnmind remember {project} "..." zapisuje '
                   'pierwsze ustalenie; sesja programistyczna uruchomiona przez cairnmind run {project} claude '
                   '(lub codex) zapisuje tu punkty kontrolne, plany i zadania.'),
     BRIEF_REVIEW: ("Dalej: proponowane ustalenia pozostają niepotwierdzone, dopóki człowiek ich nie potwierdzi lub "
-                   "nie zakwestionuje w widoku pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i)."),
+                   "nie zakwestionuje w inspektorze pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i; "
+                   "wymaga tmux 3.4+)."),
     INSTALL_NO_CLIENT: ("Nie zainstalowano tu ani Codexa, ani Claude Code, więc nie połączono żadnego klienta. "
                         "Zapisano w projekcie: {files}. Pamięć działa bez klienta (cairnmind remember, brief, "
                         "ask); po zainstalowaniu jednego z nich uruchom ponownie cairnmind install {project}."),
     INSTALL_DONE: ("Połączono: {clients}. Zapisano w projekcie: {files}; przejrzyj pliki przed commitem. "
                    "Dalej: cairnmind run {project} {command}."),
+    INSTALL_NOT_CONNECTED: ("Zapisano w projekcie: {files}. Nie połączono: {clients}. cairnmind doctor --contract "
+                            "pokazuje, który test nie przechodzi i czego wymaga."),
+    INSTALL_ALSO: ("Nie połączono: {clients}. cairnmind doctor --contract pokazuje, który test nie przechodzi "
+                   "i czego wymaga."),
     NOTHING_WRITTEN: "nic nowego (pliki były aktualne)",
     CLIENT_SKIPPED: ("{client} nie jest zainstalowany, więc zapisano tylko jego blok instrukcji; po instalacji "
                      "uruchom ponownie cairnmind install, aby go połączyć."),
@@ -248,8 +270,9 @@ MESSAGES = {
                  "projektu; Cairnmind nie odpowiada za Ciebie na takie pytania."),
     SERVICE_STARTED: ("Uruchomiono usługę Cairnmind pod {url} dla {data_dir}. Działa w tle i uruchamia silnik "
                       "bazy danych, gdy ten nie działa; cairnmind stop ją zatrzymuje."),
-    ENGINE_STARTING: ("Uruchamianie silnika bazy danych ({mode}) dla {data_dir}; działa w tle "
-                      "(cairnmind engine stop go zatrzymuje, po cairnmind stop)."),
+    ENGINE_STARTING: "Uruchamianie silnika bazy danych ({mode}) dla {data_dir}.",
+    ENGINE_STARTED: ("Silnik bazy danych ({mode}) odpowiada i działa w tle (cairnmind engine stop go zatrzymuje, po "
+                     "cairnmind stop)."),
     UNKNOWN_PROJECT_NEXT: ("cairnmind project list pokazuje zarejestrowane projekty; cairnmind project add NAZWA "
                            "FOLDER rejestruje nowy."),
     PROJECT_NAME_TAKEN: ("Nazwa {name} jest już zarejestrowana, dla {root}. Wybierz inną nazwę; cairnmind project "
