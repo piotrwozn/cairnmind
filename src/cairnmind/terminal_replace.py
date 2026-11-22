@@ -53,12 +53,13 @@ def replace_text(record, content, reason, t) -> str:
 
 
 async def reload_after(app, record_id, notice):
-    """Say the outcome first, then reload the old record; a failed reload must not take the notice away."""
-    app.notice(notice, "error")
+    """Reload the old record, then say the outcome: the reload's own hint would replace the notice if it came first,
+    and a failed reload must not take the notice away."""
     try:
         await app.open_entity(record_id, "records")
     except (OSError, ValueError, RuntimeError):
-        pass
+        pass  # the notice below is still said; the panel keeps what it showed
+    app.notice(notice, "error")
 
 
 async def replace_record(app):
