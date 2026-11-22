@@ -300,6 +300,9 @@ class Store:
     # Store(path, for_takeover=True) of a reader whose store this release cannot read: why (see take_over_at).
     not_ready = None
     _for_takeover = False
+    # Store(path, for_restore=True): the only opening that passes the mark of an unfinished restore (restore_staged).
+    _for_restore = False
+    _unfinished_restore = False
     # What the one-time step that marks records confirmed before 0.11.0 did when it ran on this open or the
     # last restore ({"marked", "before_rule", "at"}, confirmation_upgrade, #215); None when it did not run.
     confirmations_before_rule = None
@@ -325,10 +328,12 @@ class Store:
         from .store_readonly import read_consistently
         return read_consistently(self, read, kinds)
 
-    def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False):
+    def __init__(self, data_dir: Path, *, settings: Settings | None = None, for_takeover: bool = False,
+                 for_restore: bool = False):
         from .arcade import ArcadeClient
         from .engine import ensure_engine
         self._for_takeover = bool(for_takeover)
+        self._for_restore = bool(for_restore)
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if settings is not None and settings.data_dir.expanduser().resolve() != self.data_dir:
@@ -547,6 +552,13 @@ class Store:
                 # Another installation writes this database: no schema statement, no upgrade and no write here.
                 self._open_as_reader(writer)
                 return
+            if "devbrain_meta" in types:
+                # A restore that did not finish (#362): no command uses a half-restored store, and nothing runs over it.
+                from .restore_staged import RestoreUnfinished, refusal, unfinished
+                mark = unfinished(self.client)
+                if mark is not None and not (self._for_restore or self._for_takeover):
+                    raise RestoreUnfinished(refusal(mark), mark)
+                self._unfinished_restore = mark is not None
             if writer and named not in (None, self.installation.id):
                 # The row names this installation and the journal head another one: no schema statement and no
                 # write here either, until a person runs the takeover (store_writer.mixed_reason).
@@ -570,6 +582,8 @@ class Store:
             if other:
                 self._open_as_reader(other)
                 return
+        if self._unfinished_restore:
+            return  # the one-time step would write into a store that holds only part of a backup
         # As the writer, once the schema is current: the writer lock is taken again by the transaction.
         from .confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self)

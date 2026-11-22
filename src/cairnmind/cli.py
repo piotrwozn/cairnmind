@@ -191,10 +191,11 @@ def _os_error_text(exc: OSError) -> str:
 _NOTICES_SHOWN: set[str] = set()
 
 
-def store_for(settings: Settings, *, notice: bool = True):
-    """The full store. notice=False for a command that only reads it on a reader, as backup and export do."""
+def store_for(settings: Settings, *, notice: bool = True, for_restore: bool = False):
+    """The full store. notice=False for a command that only reads it on a reader, as backup and export do.
+    for_restore=True opens a store that carries the mark of an unfinished restore, as only `restore` does (#362)."""
     from cairnmind.store import Store
-    store = Store(settings.data_dir)
+    store = Store(settings.data_dir, for_restore=for_restore)
     if store.not_writer and notice:
         # Another installation writes this database (#70): reads work, every write is refused with this reason.
         typer.echo(f"Cairnmind: {store.not_writer}", err=True)
@@ -895,12 +896,20 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     from cairnmind.record_kinds import doctor_view
     result["projects"] = None  # how many are registered; None when the store cannot be read
+    result["restore_unfinished"] = None  # the mark of a restore that did not finish (#362); never None when unknown
+    from cairnmind.restore_staged import RestoreUnfinished
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
         store = store_for_read(ctx.obj)
         result["accepted_record_kinds"] = doctor_view(store)
         result["projects"] = len(store.list_projects())
+    except RestoreUnfinished as exc:
+        # A required thing is missing: the store holds part of a backup. The sentence names the way out.
+        result["restore_unfinished"] = exc.mark or {"unreadable": True}
+        blockers.append(str(exc))
+        result.setdefault("accepted_record_kinds", {"unavailable": "RestoreUnfinished"})
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
+        result["restore_unfinished"] = {"unavailable": type(exc).__name__}
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
     # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
@@ -2554,7 +2563,7 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
                           "Run cairnmind stop first; restoring requires a stopped service"):
         from cairnmind.restore_claims import checked_restore
         # The proof is read once, before anything changes; only "key" keeps a person's acts (#214).
-        outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj))
+        outcome = checked_restore(ctx.obj, source, lambda: store_for(ctx.obj, for_restore=True))
     for key in ("notice", "vectors_notice"):
         notice = outcome.pop(key, None)
         if notice:

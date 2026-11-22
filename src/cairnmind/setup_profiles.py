@@ -793,7 +793,7 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
         state["step"] = (STEP_RESTORE, {})
         say(render_one((RESTORING, {"path": written})))
         # The rule of `cairnmind restore` (#214): validation, writer check, safety backup and the workspace's key.
-        outcome = checked_restore(local, written, lambda: Store(local.data_dir, settings=local))
+        outcome = checked_restore(local, written, lambda: Store(local.data_dir, settings=local, for_restore=True))
         state["restored"] = (written, local.data_dir / "backups")
         result["done"].append((RESTORED, {"path": written, "backups": local.data_dir / "backups"}))
         notice = outcome.pop("notice", None)

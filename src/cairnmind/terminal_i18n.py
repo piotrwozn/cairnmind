@@ -10,6 +10,7 @@ from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .project_forget import MESSAGES as PROJECT_FORGET_MESSAGES
 from .project_removal import MESSAGES as PROJECT_REMOVAL_MESSAGES
 from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
+from .restore_staged import MESSAGES as RESTORE_STAGED_MESSAGES
 from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_legacy_groups import MESSAGES as LEGACY_GROUP_MESSAGES
@@ -687,6 +688,7 @@ CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
 CATALOG.update(SETUP_PROFILE_MESSAGES)  # where storage and models run: the profiles (#74)
 CATALOG.update(UPGRADE_MARK_MESSAGES)  # an upgrade in progress; an MCP server older than the installation (#298)
 CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
+CATALOG.update(RESTORE_STAGED_MESSAGES)  # a restore in bounded transactions, and one that did not finish (#362)
 CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
 CATALOG.update(PROJECT_FORGET_MESSAGES)  # deleting a project's memory: the command line refuses (#347)
