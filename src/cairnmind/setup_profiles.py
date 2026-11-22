@@ -616,7 +616,8 @@ def _test_storage(plan, request, yes, result, before_create=None) -> None:
     if admin is not None and yes:
         if before_create is not None:  # a database or user that appeared since the dry run: nothing is created for it
             found = _plan_user(candidate, admin, url)
-            before_create(None if found["sign_in"] is None else (_create_sentence(found), named))
+            before_create((TEST_STORAGE_OK, {**named, "version": found["version"]}) if found["sign_in"] is None
+                          else (_create_sentence(found), named))
         try:
             created = database_credentials.create_user(candidate, admin)
         except (ValueError, ArcadeError) as exc:
@@ -933,12 +934,13 @@ def put_back(path: Path, snapshot: bytes, state: dict, notes: list | None = None
 
 def run(settings, request: Request, *, yes: bool, say: Callable[[str], None],
         before_change: Callable[[dict], None] | None = None,
-        before_create: Callable[[tuple | None], None] | None = None) -> dict:
+        before_create: Callable[[tuple], None] | None = None) -> dict:
     """Validate, test, plan and (with ``yes``) change. Raises SetupRefused before anything changed, SetupFailed
     after config.json was put back. The result holds (template, values) items; see render. ``before_change`` is
     called with the plan after every test and before anything changes; a SetupRefused it raises stops the run with
     config.json untouched. ``before_create`` is called, before the administrator creates anything, with what the server
-    would have created now (the sentence and its values) or None, and may refuse in the same way."""
+    would have created now (the sentence and its values; TEST_STORAGE_OK when the user signs in), and may refuse in the
+    same way."""
     result: dict = {"profile": request.profile, "tests": [], "changes": [], "writer": [], "rebuild": [],
                     "left_behind": [], "applied": False, "done": [], "next": [], "topology": None}
     refused = environment_problem(settings)

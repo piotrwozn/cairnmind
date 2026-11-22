@@ -315,6 +315,27 @@ def test_a_database_made_by_someone_else_meanwhile_refuses_the_change_and_create
 
 
 @pytest.mark.no_schema_template
+def test_a_user_and_database_made_by_someone_else_meanwhile_refuse_the_change_and_say_the_user_signs_in(installation, new_names):
+    ns = installation
+    with Relay(ns.port) as relay:
+        ns.relay = relay
+        request = administrators_request(ns, new_names)
+        expected = ns.agreed(request)
+        before = (ns.data / "config.json").read_bytes()
+        with closing(administrator(ns)) as client:
+            client.server_command(f"create database {new_names.database}")
+            client.server_command("create user " + json.dumps({"name": new_names.user, "password": "User-password-of-the-test-1",
+                                                               "databases": {new_names.database: ["admin"]}}))
+        assert user_signs_in(ns, new_names)
+        state, text = ns.change(request, expected)
+        assert state == "refused" and "no longer what you agreed to" in text, text
+        assert f"the user {new_names.user} signs in to the database {new_names.database}" in text, text
+        assert (ns.data / "config.json").read_bytes() == before
+        settled(ns.data, remote=False)
+    ns.stop()
+
+
+@pytest.mark.no_schema_template
 def test_a_database_gone_meanwhile_refuses_a_change_agreed_as_the_user_only(installation, new_names):
     ns = installation
     with Relay(ns.port) as relay:

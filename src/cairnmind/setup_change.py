@@ -306,12 +306,13 @@ def _made(items: list) -> list:
     return [item for item in items if item in (*setup_profiles.CREATED, setup_profiles.NO_RIGHTS)]
 
 
-def same_creation(expected: dict) -> Callable[[tuple | None], None]:
+def same_creation(expected: dict) -> Callable[[tuple], None]:
     """The before_create hook of setup_profiles.run: refuses before the administrator creates anything when the server
-    would now create something other than the user and database agreed to; the notes name what is there now."""
-    def check(found: tuple | None) -> None:
-        if _made(expected["writer"]) != (_CREATES[found[0]] if found else []):
-            raise SetupRefused(PLAN_CHANGED, notes=[found] if found else [])
+    would now create something other than the user and database agreed to; the notes name what is there now (a user
+    that signs in now is TEST_STORAGE_OK, which creates nothing)."""
+    def check(found: tuple) -> None:
+        if _made(expected["writer"]) != _CREATES.get(found[0], []):
+            raise SetupRefused(PLAN_CHANGED, notes=[found])
     return check
 
 
