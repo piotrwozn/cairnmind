@@ -117,7 +117,7 @@ def test_a_link_out_of_the_worktree_is_not_followed(changed, tmp_path):
     assert entry(build_impact(store, pid, "HEAD"), records["task"])["fingerprint"] != first
 
 
-def test_the_route_answers_409_only_for_a_stale_entry(changed):
+def test_the_route_answers_409_only_for_a_stale_entry(changed, workspace_person):
     store, pid, root, records = changed
     service = FastAPI()
     attach_inspector_routes(service, store, store.settings)
@@ -128,7 +128,7 @@ def test_the_route_answers_409_only_for_a_stale_entry(changed):
 
     def post(payload):
         return client.post("/inspector/impact/verdict", json=payload,
-                           headers={"Authorization": "Bearer " + store.settings.token})
+                           headers={"Authorization": "Bearer " + store.settings.token, **workspace_person})
 
     unknown = post({**body, "since": "conflict-branch-that-does-not-exist"})
     assert unknown.status_code == 400 and "conflict-branch" in unknown.json()["detail"]

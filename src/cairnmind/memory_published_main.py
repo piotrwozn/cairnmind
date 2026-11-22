@@ -91,7 +91,7 @@ def _claimed(record):
 
 
 def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, bind=False, authorize=None,
-                  replace_confirmed=False):
+                  replace_confirmed=False, expected_replaced=None):
     from .evidence import evidence_states
     from .memory import MemoryConflict
     from .memory import MemoryManager
@@ -135,7 +135,8 @@ def import_commit(store, project_id, revision, *, worktree=None, dry_run=False, 
     rules = import_rules(None, store.settings, config=config)
     result = PublishedImporter(store).import_published(files, project_id, dry_run=dry_run, bind=bind,
                                                        authorize=authorize, after=after, rules=rules,
-                                                       replace_confirmed=replace_confirmed)
+                                                       replace_confirmed=replace_confirmed,
+                                                       expected_replaced=expected_replaced)
     tree = seen["tree"]
     result.update(base)
     result["rechecked"] = sorted(seen["changed"])

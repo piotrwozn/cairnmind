@@ -105,7 +105,7 @@ class PublishedImporter:
         self.store = store
 
     def import_published(self, directory, project_id, *, dry_run=False, bind=False, take_published=(), authorize=None,
-                         after=None, rules=None, replace_confirmed=False):
+                         after=None, rules=None, replace_confirmed=False, expected_replaced=None):
         """`directory` is a path or a {relative path: bytes} map (a commit read from Git, #172). `after(tx, tree,
         result)` runs in the same transaction once the tree is applied, before a dry run is rolled back.
 
@@ -137,6 +137,10 @@ class PublishedImporter:
                 # the project root's prefix, so _own_directory (#174) only judges a path.
                 self._apply(tx, tree, project_id, bind, take, result, directory)
                 replaced = result["replaces_confirmed_here"]["records"]
+                if expected_replaced is not None and not dry_run and sorted(expected_replaced) != replaced:
+                    # The person agreed to the list their check showed; any other list is not their choice (#304).
+                    from .confirmation import REPLACED_CHANGED
+                    raise MemoryConflict(REPLACED_CHANGED)
                 if replaced and not replace_confirmed and not dry_run:
                     # A verdict a person gave here is never replaced by a file without that person's choice (#177).
                     from .confirmation import replaces_refusal

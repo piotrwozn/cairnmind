@@ -541,7 +541,7 @@ def test_adopting_tasks_a_person_confirmed_into_a_plan_is_refused_until_the_pers
     refused = run("plan", "adopt", "demo", "old-group", "--idempotency-key", "adopt-1")
     words = plain_words(refused.output + str(refused.exception or ""))
     assert refused.exit_code != 0 and KEPT in words and f"(task {task['id']})" in words, words
-    assert "The person disputes the task in the inspector of the workspace" in words, words
+    assert "The person adopts the group in the workspace (`cairnmind`): More, then Old task groups" in words, words
     assert "own terminal" not in words and "plan save" not in words
     assert "key would differ from the confirmed version" in words, words
     stored = Store(data).query("SELECT FROM records WHERE id=:id", {"id": task["id"]})[0]
@@ -552,6 +552,17 @@ def test_adopting_tasks_a_person_confirmed_into_a_plan_is_refused_until_the_pers
     assert adopted.exit_code == 0, adopted.output + str(adopted.exception or "")
     [step] = json.loads(adopted.output)["tasks"]
     assert step["id"] == task["id"] and step["status"] == "disputed" and confirmation_of(step) is None
+
+
+def test_plan_adopt_still_adopts_a_group_without_a_persons_confirmation(tmp_path, monkeypatch, person_terminal):
+    from cairnmind import ingest
+    monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
+    run, data = cli(tmp_path)
+    task = json.loads(run("task", "add", "demo", "Write the docs", "--plan", "new-group").stdout)
+    adopted = run("plan", "adopt", "demo", "new-group", "--idempotency-key", "adopt-1")
+    assert adopted.exit_code == 0, adopted.output + str(adopted.exception or "")
+    [step] = json.loads(adopted.output)["tasks"]
+    assert step["id"] == task["id"] and step["status"] == "proposed"
 
 
 # Checkpoints: the one record that is a slot, not a statement.

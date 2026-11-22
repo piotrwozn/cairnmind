@@ -1,4 +1,4 @@
-"""The secrets gate's refusal advises only what can work (#239): `memory release` never takes a registered secret."""
+"""The secrets gate's refusal advises only what can work (#239): a release never takes a registered secret."""
 from __future__ import annotations
 
 import pytest
@@ -24,11 +24,12 @@ def test_a_registered_secret_is_not_sent_to_memory_release_and_a_key_shape_still
     monkeypatch.setenv("OPENAI_API_KEY", "plain env key 22")
     leaked = reviewed(store, pid, "decision", "Connect with plain env key 22 for now.", "connect")
     words = refusal(store, pid)
-    assert "registered secret in text" in words and "memory release" not in words, words
-    assert "never released" in words, words
+    assert "registered secret in text" in words and "choose Release" not in words, words
+    assert "never released" in words and "memory release" not in words, words
     token = reviewed(store, pid, "fact", f"CI uses {SHAPES['github_token']}.", "ci-token")
     both = refusal(store, pid)
-    assert "memory release" in both and "never released" in both, both
+    assert "inspector of the workspace (`cairnmind`) and choose Release" in both and "never released" in both, both
+    assert "memory release" not in both, both
     # What the refusal says is true: a later text without the value does not take it out of the record ...
     changed = person_edit(store, pid, {"id": leaked["id"], "expected_version": leaked["version"],
                                        "content": "Connect with the key in the vault."}, leaked["source_ids"])
