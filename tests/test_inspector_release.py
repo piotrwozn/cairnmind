@@ -100,18 +100,45 @@ async def test_release_is_offered_only_on_a_record(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["pl", "en"])
-async def test_every_review_button_keeps_its_whole_label_at_80_columns(tmp_path, monkeypatch, language):
-    # Six buttons (Replace, #222) share the inspector pane's width, which is not the terminal's: 80 is the pane of
-    # a Focus layout at 80 columns or of a Cockpit layout of about 160. In a Cockpit of 140 columns the pane is 68
-    # and the Polish "Zakwestionuj" is two characters short: a layout decision left to the owner.
+async def test_every_review_button_keeps_its_whole_label_at_70_columns(tmp_path, monkeypatch, language):
     app, _, _ = release_app(tmp_path, monkeypatch, language)
-    async with app.run_test(size=(80, 42)) as pilot:
+    async with app.run_test(size=(70, 42)) as pilot:
         await settle(app, pilot)
         app.open_selected("record-a")
         await settle(app, pilot)
         for button in app.query("#review-actions Button").results(Button):
             assert button.size.width >= len(str(button.label)), (button.id, button.size.width, str(button.label))
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["pl", "en"])
+async def test_no_button_of_either_row_is_cut_in_the_cockpit_pane_of_68_columns(tmp_path, monkeypatch, language):
+    # 68 is the inspector pane of the Cockpit at its 140-column minimum (workspace._apply_layout). Replace (#222)
+    # sits in the upper row so that the longest label of the review row, "Zakwestionuj", keeps its 12 columns.
+    app, _, _ = release_app(tmp_path, monkeypatch, language)
+    async with app.run_test(size=(68, 42)) as pilot:
+        await settle(app, pilot)
+        assert app.query_one("#entity-replace", Button).disabled  # the list has no open record
+        app.open_selected("record-a")
+        await settle(app, pilot)
+        assert not app.query_one("#entity-replace", Button).disabled
+        assert app.query_one("#entity-replace").parent.id == "entity-actions"
+        for button in app.query("#entity-actions Button, #review-actions Button").results(Button):
+            assert button.size.width >= len(str(button.label)), (button.id, button.size.width, str(button.label))
+            assert button.region.right <= 68, (button.id, button.region)
+
+
+@pytest.mark.asyncio
+async def test_replace_is_reachable_from_the_proposed_view(tmp_path, monkeypatch):
+    app, _, _ = release_app(tmp_path, monkeypatch, "en")
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        app.query_one("#inspector-view", Select).value = "proposed"
+        await settle(app, pilot)
+        assert app.query_one("#entity-replace", Button).disabled
+        app.open_selected("record-a")  # as Enter does on a row of the Proposed list
+        await settle(app, pilot)
+        assert not app.query_one("#entity-replace", Button).disabled
 
 @pytest.mark.asyncio
 async def test_a_refused_release_says_why_and_is_not_sent_again(tmp_path, monkeypatch):

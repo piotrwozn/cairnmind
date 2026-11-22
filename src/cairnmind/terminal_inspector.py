@@ -107,13 +107,13 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 yield Button(self.t("List"), id="entity-back")
                 yield Button(self.t("Filters"), id="entity-filters")
                 yield Button(self.t("Details"), id="entity-technical")
+                yield Button(self.t("Replace"), id="entity-replace", disabled=True)  # on in show_detail, for a record
             with Horizontal(id="review-actions"):
                 yield Button(self.t("Confirm"), id="entity-confirm")
                 yield Button(self.t("Dispute"), id="entity-dispute")
                 yield Button(self.t("History"), id="entity-history")
                 yield Button(self.t("Sources"), id="entity-sources")
                 yield Button(self.t("Release"), id="entity-release")
-                yield Button(self.t("Replace"), id="entity-replace")
             with Horizontal(id="conflict-actions"):
                 yield Button(self.t("Resolve"), id="conflict-resolve")
             with Horizontal(id="impact-actions"):
@@ -328,6 +328,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#conflict-actions").display = False
         self.query_one("#impact-actions").display = False
         self.query_one("#entity-more", Button).disabled = not bool(self.next_cursor)
+        self.query_one("#entity-replace", Button).disabled = True  # the list has no open record
 
     @on(Input.Changed, "#inspector-filter")
     def filter_changed(self):
