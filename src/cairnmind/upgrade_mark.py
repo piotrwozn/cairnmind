@@ -11,12 +11,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 import re
+import time
 
 from . import process_identity
 
 INSTALLER = "install-wsl.sh"
 BLOCKING = frozenset({"running", "unreadable"})
 _SHELLS = frozenset({"bash", "sh", "dash", "zsh"})
+_READS, _PAUSE = 3, 0.05
 _MARK = re.compile(rb"([0-9]{1,10})\n?")
 
 NOTE_RUNNING = ("An upgrade of Cairnmind is in progress (installer process {pid}), or that process cannot be "
@@ -90,13 +92,18 @@ def mark_state(path: Path, holds: Callable[[list[str]], bool], may_hold: Callabl
     pid = int(found.group(1))
     if process_identity._pid(pid) is None:  # 0 or beyond pid_t: the holder never writes it, so the file is malformed
         return "unreadable", None
-    arguments = process_identity.command_line(pid)
-    if arguments is None:
+    for read in range(_READS):
+        if read:
+            time.sleep(_PAUSE)  # a read of a living process can fail once (macOS, around exec): ask again
+        arguments = process_identity.command_line(pid)
+        if arguments is not None:
+            return ("running" if holds(arguments) else "stale"), pid
         program = process_identity.executable(pid)
-        if program is not None and not may_hold(program):
-            return "stale", pid  # a program that is readable and cannot be the holder is not the holder
-        return ("running" if process_identity.alive(pid) else "stale"), pid
-    return ("running" if holds(arguments) else "stale"), pid
+        if program is None or may_hold(program):
+            return ("running" if process_identity.alive(pid) else "stale"), pid
+        if not process_identity.alive(pid):
+            return "stale", pid
+    return "stale", pid  # alive, its command line unreadable every time, and a readable program that cannot be the holder
 
 
 def state() -> tuple[str, int | None]:

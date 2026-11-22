@@ -267,20 +267,33 @@ def target_refusal(result: dict, request) -> tuple[str, dict] | None:
 
 # --- The plan that was agreed -----------------------------------------------------------------------------------------
 
+# What the dry run says --admin-password-file will create, as the sentence the change says when it did (NO_RIGHTS: nothing).
+_CREATES = {setup_profiles.CREATE_BOTH: setup_profiles.USER_CREATED, setup_profiles.CREATE_USER: setup_profiles.USER_CREATED,
+            setup_profiles.CREATE_DB: setup_profiles.DATABASE_CREATED, setup_profiles.NO_RIGHTS: setup_profiles.NO_RIGHTS}
+
+
 def agreed_plan(result: dict) -> dict:
-    """What a person agrees to: the changes, what is to rebuild and what is left behind, in English, and which writer
-    sentences came with them. The tests are not part of it: their wording changes when a user is created."""
+    """What a person agrees to: the changes, what is to rebuild and what is left behind, in English, and which sentences
+    of the server's side came with them: the writer's, then what the administrator's file will create (or that the user
+    has no rights). The other tests are not part of it: their wording changes when a user is created."""
     return {"plan": [render_one(item) for key in ("changes", "rebuild", "left_behind") for item in result[key]],
-            "writer": [item[0] for item in result["writer"]]}
+            "writer": [item[0] for item in result["writer"]]
+            + [_CREATES[item[0]] for item in result["tests"] if item[0] in _CREATES]}
 
 
 def _writer_same(agreed: list, now: list) -> bool:
+    """The writer's sentences of the dry run and of the change are the same, or the writer could not be read at the dry
+    run because the user did not sign in yet; and the change created exactly what the dry run said it would."""
+    made = (*setup_profiles.CREATED, setup_profiles.NO_RIGHTS)
+    if [item for item in agreed if item in made] != [item for item in now if item in made]:
+        return False
+    agreed, now = [item for item in agreed if item not in made], [item for item in now if item not in made]
     if setup_profiles.WRITER_OTHER in now:
         return False
     if agreed == now:
         return True
     # The user did not exist at the dry run (--admin-password-file creates it with the change): not read then.
-    return bool(agreed and now and agreed[0] == setup_profiles.WRITER_NOT_READ
+    return bool(agreed and now and agreed[0] in (setup_profiles.WRITER_NOT_READ, setup_profiles.WRITER_AFTER_USER)
                 and now[0] in (setup_profiles.WRITER_KEEP, setup_profiles.WRITER_NEW) and agreed[1:] == now[1:])
 
 
@@ -288,10 +301,11 @@ def same_plan(expected: dict) -> Callable[[dict], None]:
     """The before_change hook of setup_profiles.run: refuses, with config.json untouched, when the plan is not the one
     agreed to."""
     def check(result: dict) -> None:
-        got = agreed_plan(result)
+        got = agreed_plan(result)  # the server's side as the change found it: what it created stands in "done"
+        got["writer"] += [item[0] for item in result["done"] if item[0] in setup_profiles.CREATED]
         if got["plan"] != expected["plan"] or not _writer_same(expected["writer"], got["writer"]):
             raise SetupRefused(PLAN_CHANGED, notes=[item for item in result["done"]
-                                                    if item[0] == setup_profiles.USER_CREATED])
+                                                    if item[0] in setup_profiles.CREATED])
     return check
 
 
@@ -481,7 +495,7 @@ def _left(result: dict) -> list:
     """What a change that is put back leaves behind, from what it did."""
     notes = []
     for template, values in result["done"]:
-        if template == setup_profiles.USER_CREATED:
+        if template in setup_profiles.CREATED:
             notes.append((template, values))
         elif template == setup_profiles.BACKUP_WRITTEN:
             notes.append((setup_profiles.KEPT_BACKUP, {"path": values["path"]}))

@@ -9,8 +9,8 @@ the digest Ollama reports, the embedding model, and the timings the answer alrea
 own token and database password are replaced wherever they occur.
 
 Where. The question and the answer are memory content, so they stay in the data directory, private to its
-owner (directories 0700, files 0600), and ``cairnmind forget --delete-project`` deletes them with the
-project. They are not in the store: a logged answer has no source row, no chunk and no embedding, so it is
+owner (directories 0700, files 0600), and the workspace's Delete project memory (project_forget.delete)
+deletes them with the project. They are not in the store: a logged answer has no source row, no chunk and no embedding, so it is
 never searched, never quoted, never cited and never exported in a memory snapshot. A stored answer never
 becomes evidence. (The issue reserved an ``agent_answer`` source kind for this; a source row would be
 readable by the agent's source tools and travel with memory packages, and sources are never pruned.)

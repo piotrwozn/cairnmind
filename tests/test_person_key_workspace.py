@@ -89,7 +89,8 @@ PERSON_POSTS = ("/api/inspector/records/r1/review", "/api/inspector/conflicts/re
                 "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import",
                 "/api/inspector/records/r1/release", "/api/inspector/impact/verdict",
                 "/api/memory/import-published", "/api/memory/import-commit",
-                "/api/inspector/legacy-groups/adopt")
+                "/api/inspector/legacy-groups/adopt", "/api/inspector/projects/forget",
+                "/api/inspector/records/r1/replace")
 
 
 def test_broker_client_adds_the_key_only_for_a_persons_post_inside_the_workspace(
@@ -104,7 +105,8 @@ def test_broker_client_adds_the_key_only_for_a_persons_post_inside_the_workspace
         assert sent["x-cairnmind-person"] == KEY and sent["x-cairnmind-workspace"] == SOCKET, path
     for method, path in (("GET", "/api/inspector/records"), ("POST", "/api/ask"), ("POST", "/api/client-runs"),
                          ("GET", "/api/findings"), ("GET", "/api/inspector/impact"),
-                         ("GET", "/api/inspector/legacy-groups")):
+                         ("GET", "/api/inspector/legacy-groups"), ("GET", "/api/inspector/projects/deletable"),
+                         ("GET", "/api/inspector/projects/forget")):
         client.request(method, path, json=None if method == "GET" else {})
         assert "x-cairnmind-person" not in calls[-1][2] and "x-cairnmind-workspace" not in calls[-1][2], path
     # A coding session's shell: another server's socket, or none.
@@ -145,8 +147,10 @@ def test_the_broker_passes_the_key_on_person_routes_only(broker_app):
                        ("/api/memory/import", {}), ("/api/memory/import-published", {}),
                        ("/api/memory/import-commit", {}),
                        ("/api/inspector/records/r1/release", {"project": "p", "reason": "Example."}),
+                       ("/api/inspector/records/r1/replace", {"project": "p", "content": "x", "expected_version": 1}),
                        ("/api/inspector/impact/verdict", {"project": "p"}),
-                       ("/api/inspector/legacy-groups/adopt", {"project": "p"})):
+                       ("/api/inspector/legacy-groups/adopt", {"project": "p"}),
+                       ("/api/inspector/projects/forget", {"project": "p"})):
         assert client.post(path, json=body, headers={**headers, **proof}).status_code == 200, path
         sent = seen[-1][2]
         assert sent["x-cairnmind-person"] == KEY and sent["x-cairnmind-workspace"] == SOCKET, path
@@ -171,3 +175,5 @@ def test_the_broker_passes_the_key_on_person_routes_only(broker_app):
     assert client.post("/api/inspector/plans/p1/confirm/extra", json={}, headers=headers).status_code == 405
     assert client.post("/api/inspector/records/r1/release/extra", json={}, headers=headers).status_code == 405
     assert client.post("/api/inspector/legacy-groups/adopt/extra", json={}, headers=headers).status_code == 405
+    assert client.post("/api/inspector/projects/forget/extra", json={}, headers=headers).status_code == 405
+    assert client.post("/api/inspector/projects/deletable", json={}, headers=headers).status_code == 405

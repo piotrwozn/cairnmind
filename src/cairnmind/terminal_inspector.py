@@ -16,7 +16,7 @@ from .terminal_i18n import tr_count
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
-from .terminal_person_act import agreed, resolve_text, review_text
+from .terminal_person_act import agreed, refused, resolve_text, review_text
 from .terminal_proposed import ProposedView
 from .terminal_published_import import archive_replaced, archive_text
 from .terminal_safe import plain, safe_text
@@ -107,6 +107,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 yield Button(self.t("List"), id="entity-back")
                 yield Button(self.t("Filters"), id="entity-filters")
                 yield Button(self.t("Details"), id="entity-technical")
+                yield Button(self.t("Replace"), id="entity-replace", disabled=True)  # on in show_detail, for a record
             with Horizontal(id="review-actions"):
                 yield Button(self.t("Confirm"), id="entity-confirm")
                 yield Button(self.t("Dispute"), id="entity-dispute")
@@ -159,7 +160,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                   "entity-history": "History", "entity-sources": "Sources", "memory-preview": "Preview",
                   "memory-save": "Save", "memory-auto": "Automatic", "memory-import": self.t("Import"),
                   "memory-apply": "Apply", "memory-refresh": "Status", "memory-published": "Team memory",
-                  "conflict-resolve": "Resolve", "entity-release": "Release"}
+                  "conflict-resolve": "Resolve", "entity-release": "Release", "entity-replace": "Replace"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.refresh_impact_language()
@@ -327,6 +328,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#conflict-actions").display = False
         self.query_one("#impact-actions").display = False
         self.query_one("#entity-more", Button).disabled = not bool(self.next_cursor)
+        self.query_one("#entity-replace", Button).disabled = True  # the list has no open record
 
     @on(Input.Changed, "#inspector-filter")
     def filter_changed(self):
@@ -376,6 +378,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#entity-confirm", Button).disabled = kind not in {"records", "plans"}
         self.query_one("#entity-dispute", Button).disabled = kind != "records"
         self.query_one("#entity-release", Button).disabled = kind != "records"
+        self.query_one("#entity-replace", Button).disabled = kind != "records"
         self.query_one("#entity-history", Button).disabled = kind not in {"records", "plans"}
         self.query_one("#entity-sources", Button).label = self.t("View") if kind in {"sources", "inbox"} else self.t("Sources")
         self.query_one("#entity-more", Button).disabled = not bool(self.source_next)
@@ -492,6 +495,10 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             from .terminal_release import release_record  # a person releases a record here (#306)
             await release_record(self)
             return
+        if action == "replace":
+            from .terminal_replace import replace_record  # a person replaces a record with a new text (#222)
+            await replace_record(self)
+            return
         if self.entity_kind != "records" or not self.entity:
             self.notice(self.t("Open a record first."))
             return
@@ -523,12 +530,18 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             await self.request("POST", f"/api/inspector/records/{record['id']}/review", json=payload)
             if scope == self._scope_version:
                 await self.open_entity(record["id"], "records")
-                self.notice(self.t("Review saved with an audit note."))
+            self.tell(scope, about(project_id), self.t("Review saved with an audit note."))
         except (OSError, ValueError, RuntimeError) as exc:
-            if scope == self._scope_version:
+            reloaded = scope == self._scope_version
+            if reloaded:
                 await self.open_entity(record["id"], "records")
-                self.notice(self.t("Review was not retried. The current version was reloaded.") + " "
-                            + broker_error_text(exc, self.t), "error")
+            if refused(exc):
+                said = self.t("Review was not retried. The current version was reloaded." if reloaded
+                              else "The review was not saved.")
+            else:  # a 5xx or a lost connection may follow the commit (#354)
+                said = self.t("The service did not confirm the review, so it may have been saved.") + (
+                    " " + self.t("The current version was reloaded.") if reloaded else "")
+            self.tell(scope, about(project_id), said + " " + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-review", exclusive=True, exit_on_error=False)
     async def resolve_conflict(self):
@@ -572,12 +585,18 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             await self.request("POST", "/api/inspector/conflicts/resolve", json=payload)
             if scope == self._scope_version:
                 await self.load_page()
-                self.notice(self.t("Decision saved with an audit note."))
+            self.tell(scope, about(project_id), self.t("Decision saved with an audit note."))
         except (OSError, ValueError, RuntimeError) as exc:
-            if scope == self._scope_version:
+            reloaded = scope == self._scope_version
+            if reloaded:
                 await self.load_page()
-                self.notice(self.t("The decision was not saved. The current list was reloaded.") + " "
-                            + broker_error_text(exc, self.t), "error")
+            if refused(exc):
+                said = self.t("The decision was not saved. The current list was reloaded." if reloaded
+                              else "The decision was not saved.")
+            else:  # a 5xx or a lost connection may follow the commit (#354)
+                said = self.t("The service did not confirm the decision, so it may have been saved.") + (
+                    " " + self.t("The current list was reloaded.") if reloaded else "")
+            self.tell(scope, about(project_id), said + " " + broker_error_text(exc, self.t), "error")
 
     @work(group="inspector-history", exclusive=True, exit_on_error=False)
     async def action_history(self, cursor=None):
@@ -671,9 +690,9 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
 
     @work(group="inspector-memory", exclusive=True, exit_on_error=False)
     async def memory_operation(self, action):
+        scope, params = self._scope_version, {}
         try:
             params = self.params()
-            scope = self._scope_version
             if action in {"preview", "save"}:
                 if not params["project"]:
                     raise ValueError(self.t("Choose a project to save."))
@@ -681,6 +700,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     raise ValueError(self.t("Review the current project's preview first."))
                 result = await self.request("POST", "/api/memory/" + ("snapshot" if action == "save" else "preview"), json=params)
                 if scope != self._scope_version:
+                    if action == "save":  # the snapshot is written all the same (#354)
+                        self.notice_for(about(params["project"], None, params["worktree"]), self.t("Snapshot saved."))
                     return
                 self.preview_scope = (params["project"], params["worktree"])
                 self.query_one("#memory-save", Button).disabled = False
@@ -765,7 +786,10 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             else:
                 await self.load_memory()
         except (OSError, ValueError, RuntimeError) as exc:
-            self.notice(exc, "error")
+            if action == "save" and params.get("project") and scope != self._scope_version:  # told on its own project (#354)
+                self.notice_for(about(params["project"], None, params["worktree"]), exc, "error")
+            else:
+                self.notice(exc, "error")
 
     @work(group="inspector-journal", exclusive=True, exit_on_error=False)
     async def watch_journal(self):
@@ -810,6 +834,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             self.review("dispute")
         elif button == "entity-release":
             self.review("release")
+        elif button == "entity-replace":
+            self.review("replace")
         elif button == "conflict-resolve":
             self.resolve_conflict()
         elif button == "impact-verdict":

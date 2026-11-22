@@ -639,7 +639,7 @@ def test_an_unexpected_error_before_the_change_changes_nothing_and_the_service_c
     before = config_bytes(rig.tmp)
     monkeypatch.setattr(setup_profiles, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     state, text = rig.go(rig.request(), expected={"plan": [], "writer": []})
-    assert state == "refused" and "The change could not be made: boom config.json was not changed." in said(text)
+    assert state == "refused" and "The change could not be made: boom. config.json was not changed." in said(text)
     rig.untouched(before)
 
 
@@ -657,6 +657,49 @@ def test_the_plan_check_allows_a_user_created_by_the_change_and_never_another_wr
     assert same([unread], [new]) and same([unread], [keep]) and same([keep], [keep])
     assert not same([new], [keep]) and not same([keep], [other]) and not same([unread], [other])
     assert not same([unread, setup_profiles.VERBATIM], [new])
+    after, made, db = setup_profiles.WRITER_AFTER_USER, setup_profiles.USER_CREATED, setup_profiles.DATABASE_CREATED
+    assert same([after, made], [keep, made]) and same([after, db], [new, db])  # the dry run could not read it yet (#365)
+    assert not same([after, made], [keep]) and not same([after], [keep, made])  # created less, or more, than agreed
+    assert not same([after, db], [keep, made]) and not same([after, made], [other, made])
+    assert not same([setup_profiles.NO_RIGHTS], [keep]) and not same([keep], [keep, db])
+
+
+def test_the_plan_of_the_dry_run_names_what_the_administrators_file_will_create_and_when_it_is_refused(rig):
+    make(rig.tmp)
+    admin = private(rig.tmp, "root-password", "PRIVATE_ADMIN_MARKER")
+    for found, create in (({"database_exists": False, "sign_in": 401}, setup_profiles.CREATE_BOTH),
+                          ({"database_exists": True, "sign_in": 401}, setup_profiles.CREATE_USER),
+                          ({"database_exists": False, "sign_in": 404}, setup_profiles.CREATE_DB),
+                          ({"database_exists": True, "sign_in": 403}, setup_profiles.NO_RIGHTS)):
+        rig.world.plan = {"version": "26.11.1", **found}
+        result = run(Settings.load(rig.data), rig.request(admin_password_file=admin), yes=False, say=lambda text: None)
+        assert create in [item[0] for item in result["tests"]] and setup_profiles.TEST_ADMIN_OK in [
+            item[0] for item in result["tests"]]
+        assert result["writer"] == [(setup_profiles.WRITER_AFTER_USER, {"url": DB})]
+        agreed = setup_change.agreed_plan(result)["writer"]
+        assert agreed == [setup_profiles.WRITER_AFTER_USER, setup_change._CREATES[create]]
+
+
+def test_a_user_created_by_someone_else_between_the_consent_and_the_change_refuses_the_change(rig, monkeypatch):
+    make(rig.tmp)
+    before = config_bytes(rig.tmp)
+    request = rig.request(admin_password_file=private(rig.tmp, "root-password", "PRIVATE_ADMIN_MARKER"))
+    expected = rig.agreed(request)  # the dry run: the user and the database do not exist, so both will be created
+    assert expected["writer"] == [setup_profiles.WRITER_AFTER_USER, setup_profiles.USER_CREATED]
+    monkeypatch.setattr(setup_profiles.database_credentials, "create_user",
+                        lambda candidate, admin, **kwargs: {"created": False, "database_created": False})
+    state, text = rig.go(request, expected=expected)
+    assert state == "refused" and setup_change.PLAN_CHANGED[:40] in said(text), text
+    assert rig.starts  # the service was brought back on the old settings
+    rig.untouched(before)
+
+
+def test_a_user_that_the_change_creates_as_agreed_is_changed_and_the_writer_is_read_afterwards(rig):
+    make(rig.tmp)
+    request = rig.request(admin_password_file=private(rig.tmp, "root-password", "PRIVATE_ADMIN_MARKER"))
+    state, text = rig.go(request)  # the dry run said: the user does not sign in yet, so the writer is not read
+    assert state == "changed", text
+    assert [call for call in rig.world.calls("create_user")] == [("cairnmind", "cairnmind", "PRIVATE_ADMIN_MARKER")]
 
 
 # The helper's input ---------------------------------------------------------------------------------------------------
@@ -815,7 +858,7 @@ def test_progress_sentences_are_said_in_polish():
     samples = {setup_profiles.BACKING_UP: {"url": "https://db.example", "path": "/b.json.gz"},
                setup_profiles.ENGINE_STARTING: {}, setup_profiles.RESTORING: {"path": "/b.json.gz"},
                engine_docker.CHOSE_DOCKER: {"config": "/d/config.json"},
-               engine_docker.CHOSE_NATIVE: {"java": "/usr/bin/java", "config": "/d/config.json"},
+               engine_docker.CHOSE_NATIVE: {"java": "/usr/bin/java", "major": 21, "config": "/d/config.json"},
                engine_docker.KEPT_NATIVE: {"config": "/c"}}
     assert set(samples) == set(setup_change.SAY_TEMPLATES)
     for template, values in samples.items():

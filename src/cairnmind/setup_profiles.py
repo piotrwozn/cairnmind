@@ -102,9 +102,24 @@ STORAGE_REFUSED_NOTED = "The store at {url} cannot be used: {error} Nothing was 
 # Tests, plan and result
 TEST_STORAGE_OK = ("Tested: ArcadeDB at {url} answers with version {version}, and the user {user} signs in to the "
                    "database {database}.")
-TEST_STORAGE_CREATE = ("Not tested yet: the user {user} cannot sign in to the database {database} on ArcadeDB at {url}. "
-                       "With --yes, --admin-password-file first creates them as `cairnmind db create-user` does, and "
-                       "the test runs then.")
+TEST_ADMIN_OK = ("Tested: ArcadeDB at {url} answers with version {version} and accepts the administrator; nothing was "
+                 "created.")
+ADMIN_REFUSED = ("The administrator was refused: ArcadeDB at {url} did not accept root with the password in "
+                 "--admin-password-file.")
+# ArcadeDB cannot list users and answers alike for a user that does not exist and for a wrong password.
+CREATE_BOTH = ("Not tested yet: the user {user} does not sign in to the database {database}, which does not exist. With "
+               "--yes, --admin-password-file creates the database and, if it does not exist yet, the user, with rights "
+               "on that database only. A user that exists with another password is never changed: that run is refused "
+               "and nothing is created.")
+CREATE_DB = ("Not tested yet: the user {user} exists, but the database {database} does not. With --yes, "
+             "--admin-password-file creates the database; the user is used only if it has rights on it, otherwise "
+             "nothing is created.")
+NO_RIGHTS = ("Not tested yet: the user {user} exists, but it has no rights on the database {database}. With --yes the "
+             "run is refused and nothing is created: each database gets its own user, so use a new user name.")
+CREATE_USER = ("Not tested yet: the user {user} does not sign in to the database {database}, which exists. With --yes, "
+               "--admin-password-file creates the user, if it does not exist yet, with rights on that database only. "
+               "A user that exists with another password is never changed: that run is refused and nothing is "
+               "created.")
 TEST_READABLE = "Tested: the store at {url} can be read for the backup."
 TEST_MODEL_OK = "Tested: the {role} model {model} at {url} answers."
 CHANGE_STORAGE_REMOTE = ("Storage: from {before} to ArcadeDB at {url}, which this installation only connects to: user "
@@ -117,9 +132,9 @@ CHANGE_STORAGE_LOCAL = ("Storage: from ArcadeDB at {before} to the engine on thi
 ENGINE_START = ("The engine on this machine will be started ({engine}). Nothing is installed: the native engine needs "
                 "`cairnmind engine install` done before; in Docker a missing engine image is downloaded, which is said "
                 "when it happens.")
-ENGINE_NATIVE = "native, Java 21"
+ENGINE_NATIVE = "native, Java 21 or newer"
 ENGINE_DOCKER = "in Docker"
-ENGINE_CHOSEN = "native with Java 21, or in Docker when Java 21 is not found, as `cairnmind init` chooses"
+ENGINE_CHOSEN = "native with Java 21 or newer, or in Docker when it is not found, as `cairnmind init` chooses"
 LOCAL_DATA_FOUND = ("The store on this machine still holds the database {database} from before; with --empty it is "
                     "used as it was left, with nothing from the store at {url}.")
 LOCAL_DATA_NEW = "The store on this machine has no database {database}; with --empty it starts empty."
@@ -154,6 +169,8 @@ WRITER_OTHER = ("Writer: another installation writes the store at {url}, so this
 WRITER_NOT_READ = ("Writer: it cannot be read yet ({reason}). The store decides when this installation first opens it: "
                    "this installation becomes the writer when none is recorded, and only reads when another "
                    "installation writes it.")
+WRITER_AFTER_USER = ("Writer: not read yet, because the user does not sign in to the store at {url} yet; it is read "
+                     "once the user signs in.")
 LEFT_LOCAL_STORE = ("Left as it is: the store on this machine, in {path}. This installation stops using it, and it is "
                     "not copied to the new store. To take its data along, run `cairnmind backup FILE` before this "
                     "command, and `cairnmind init` and `cairnmind restore FILE` after it.")
@@ -172,6 +189,9 @@ ENGINE_STARTING = "Starting the engine on this machine."
 RESTORING = "Restoring {path} into the store on this machine."
 BACKUP_WRITTEN = "Backup written and checked: {path}."
 USER_CREATED = "Created on ArcadeDB at {url}: the user {user}, with rights on the database {database} only."
+DATABASE_CREATED = ("Created on ArcadeDB at {url}: the database {database}. The user {user} already existed, with "
+                    "rights on it.")
+CREATED = (USER_CREATED, DATABASE_CREATED)  # the sentences that say the server was changed
 USER_EXISTED = ("The user {user} and the database {database} already existed on ArcadeDB at {url}; nothing was created "
                 "there.")
 ENGINE_STARTED = "The engine on this machine answers ({engine})."
@@ -233,7 +253,12 @@ MESSAGES = {
     INVALID_ROLE: "Nie można odczytać ustawień modelu {role}: {error} Popraw je poleceniem `cairnmind models set --role {role}`. Nic nie zostało zmienione.",
     REMOTE_NOT_READABLE: "Nie można odczytać bazy pod adresem {url} do kopii zapasowej: {error} Nic nie zostało zmienione.",
     TEST_STORAGE_OK: "Sprawdzono: ArcadeDB pod adresem {url} odpowiada w wersji {version}, a użytkownik {user} loguje się do bazy {database}.",
-    TEST_STORAGE_CREATE: "Jeszcze nie sprawdzono: użytkownik {user} nie może zalogować się do bazy {database} w ArcadeDB pod adresem {url}. Z --yes opcja --admin-password-file najpierw ich tworzy, tak jak `cairnmind db create-user`, i wtedy test się odbywa.",
+    TEST_ADMIN_OK: "Sprawdzono: ArcadeDB pod adresem {url} odpowiada wersją {version} i przyjmuje administratora; nic nie zostało utworzone.",
+    ADMIN_REFUSED: "Administrator został odrzucony: ArcadeDB pod adresem {url} nie przyjął konta root z hasłem z --admin-password-file.",
+    CREATE_BOTH: "Jeszcze nie sprawdzono: użytkownik {user} nie loguje się do bazy {database}, która nie istnieje. Z --yes opcja --admin-password-file tworzy bazę i, jeśli jeszcze nie istnieje, użytkownika, z uprawnieniami tylko do tej bazy. Istniejącemu użytkownikowi z innym hasłem nic się nie zmienia: taki przebieg jest odrzucany i nic nie powstaje.",
+    CREATE_DB: "Jeszcze nie sprawdzono: użytkownik {user} istnieje, ale baza {database} nie. Z --yes opcja --admin-password-file tworzy bazę; użytkownik zostaje użyty tylko wtedy, gdy ma do niej uprawnienia, w przeciwnym razie nic nie powstaje.",
+    NO_RIGHTS: "Jeszcze nie sprawdzono: użytkownik {user} istnieje, ale nie ma uprawnień do bazy {database}. Z --yes przebieg jest odrzucany i nic nie powstaje: każda baza ma własnego użytkownika, więc użyj nowej nazwy użytkownika.",
+    CREATE_USER: "Jeszcze nie sprawdzono: użytkownik {user} nie loguje się do bazy {database}, która istnieje. Z --yes opcja --admin-password-file tworzy użytkownika, jeśli jeszcze nie istnieje, z uprawnieniami tylko do tej bazy. Istniejącemu użytkownikowi z innym hasłem nic się nie zmienia: taki przebieg jest odrzucany i nic nie powstaje.",
     TEST_READABLE: "Sprawdzono: bazę pod adresem {url} można odczytać do kopii zapasowej.",
     TEST_MODEL_OK: "Sprawdzono: model {role} {model} pod adresem {url} odpowiada.",
     CHANGE_STORAGE_REMOTE: "Baza: z {before} na ArcadeDB pod adresem {url}, z którą ta instalacja tylko się łączy: użytkownik {user}, baza {database}, hasło czytane z {password_file}.",
@@ -252,9 +277,9 @@ MESSAGES = {
     CONFIRMATIONS: "Odtwarzanie oznaczyło {marked} rekordów jako potwierdzone przez człowieka i zostawiło {left} sprzed reguły; pozostałe potwierdź w inspektorze.",
     CHANGE_STORAGE_LOCAL: "Baza: z ArcadeDB pod adresem {before} na silnik na tym komputerze pod adresem {url}, z bazą {database}.",
     ENGINE_START: "Silnik na tym komputerze zostanie uruchomiony ({engine}). Nic nie jest instalowane: silnik natywny wymaga wcześniejszego `cairnmind engine install`; w Dockerze brakujący obraz silnika jest pobierany, co zostaje wtedy powiedziane.",
-    ENGINE_NATIVE: "natywny, Java 21",
+    ENGINE_NATIVE: "natywny, Java 21 lub nowsza",
     ENGINE_DOCKER: "w Dockerze",
-    ENGINE_CHOSEN: "natywny z Javą 21 albo w Dockerze, gdy Javy 21 nie ma, tak jak wybiera `cairnmind init`",
+    ENGINE_CHOSEN: "natywny z Javą 21 lub nowszą albo w Dockerze, gdy jej nie ma, tak jak wybiera `cairnmind init`",
     LOCAL_DATA_FOUND: "Baza na tym komputerze nadal ma bazę danych {database} sprzed zmiany; z --empty jest używana tak, jak została zostawiona, bez niczego z bazy pod adresem {url}.",
     LOCAL_DATA_NEW: "Baza na tym komputerze nie ma bazy danych {database}; z --empty zaczyna pusta.",
     BACKUP_PLAN: "Kopia zapasowa: baza pod adresem {url} jest czytana do {path}, bez żadnego zapisu do niej; plik jest sprawdzany, a potem odtwarzany w bazie na tym komputerze, której obecna zawartość najpierw trafia do kopii bezpieczeństwa w backups/. Kopia zapasowa nie zawiera wektorów: po odtworzeniu usługa odbudowuje je z tekstu, a do tego czasu wyszukiwanie korzysta tylko z tekstu.",
@@ -271,6 +296,7 @@ MESSAGES = {
     WRITER_NEW: "Zapisujący: żadna instalacja jeszcze nie zapisuje bazy pod adresem {url}; ta instalacja zostanie zapisującą, gdy pierwszy raz ją otworzy (`cairnmind init`).",
     WRITER_OTHER: "Zapisujący: bazę pod adresem {url} zapisuje inna instalacja, więc ta instalacja będzie ją tylko czytać; setup jej nie przejmuje. {reason}",
     WRITER_NOT_READ: "Zapisujący: nie można go jeszcze odczytać ({reason}). Baza rozstrzyga to, gdy ta instalacja pierwszy raz ją otworzy: ta instalacja zostaje zapisującą, gdy żadnej nie zapisano, i tylko czyta, gdy zapisuje ją inna instalacja.",
+    WRITER_AFTER_USER: "Zapisujący: jeszcze nie odczytano, bo użytkownik nie loguje się jeszcze do bazy {url}; zostanie odczytany, gdy użytkownik się zaloguje.",
     LEFT_LOCAL_STORE: "Zostaje bez zmian: baza na tym komputerze, w {path}. Ta instalacja przestaje jej używać i nie jest ona kopiowana do nowej bazy. Aby zabrać jej dane, uruchom `cairnmind backup PLIK` przed tym poleceniem, a `cairnmind init` i `cairnmind restore PLIK` po nim.",
     LEFT_ENGINE: "Zostaje bez zmian: silnik, który ten katalog danych uruchomił na tym komputerze; nie jest już używany, a `cairnmind engine stop` go zatrzymuje.",
     LEFT_REMOTE_STORE: "Zostaje bez zmian: baza pod adresem {url} (baza danych {database}); nic w niej nie jest zmieniane ani usuwane.",
@@ -283,6 +309,7 @@ MESSAGES = {
     RESTORING: "Odtwarzanie {path} w bazie na tym komputerze.",
     BACKUP_WRITTEN: "Kopia zapasowa zapisana i sprawdzona: {path}.",
     USER_CREATED: "Utworzono w ArcadeDB pod adresem {url}: użytkownika {user} z uprawnieniami tylko do bazy {database}.",
+    DATABASE_CREATED: "Utworzono w ArcadeDB pod adresem {url}: bazę {database}. Użytkownik {user} już istniał i ma do niej uprawnienia.",
     USER_EXISTED: "Użytkownik {user} i baza {database} już istniały w ArcadeDB pod adresem {url}; nic tam nie utworzono.",
     ENGINE_STARTED: "Silnik na tym komputerze odpowiada ({engine}).",
     RESTORED: "Odtworzono {path} w bazie na tym komputerze; jej wcześniejsza zawartość jest w kopii bezpieczeństwa w {backups}.",
@@ -311,7 +338,10 @@ def _value(key: str, value, language: str) -> str:
         return render_one(value, language)  # a sentence inside a sentence
     if isinstance(value, list):  # sentences that follow: each after a space, none when the list is empty
         return "".join(" " + render_one(item, language) for item in value)
-    return safe_text(value, limit=600 if key in LONG else 200)
+    text = safe_text(value, limit=600 if key in LONG else 200)
+    if key == "error" and text and not text.endswith((".", "!", "?")):
+        text += "."  # every {error} is followed by a sentence of its own ("... Nothing was saved.")
+    return text
 
 
 def render_one(item: tuple[str, dict], language: str = "en") -> str:
@@ -486,7 +516,7 @@ def local_storage(settings) -> dict:
     kept, or Settings.load(create=True) generates one after the switch. The database is the name derived from the
     data directory, so a --database given to remote-db cannot lose the local store. The prefix of that name is checked
     here as Settings.load checks it, because derived_database does not."""
-    if not env_value("ARCADE_DB_PREFIX", "devbrain").replace("_", "").isalnum():
+    if not env_value("ARCADE_DB_PREFIX", "cairnmind").replace("_", "").isalnum():
         raise SetupRefused(BAD_PREFIX, variable=next(key for key in env_names("ARCADE_DB_PREFIX") if key in os.environ))
     stored = (settings._origin or {}).get("kept", {}).get("arcade_url", (settings.arcade_url,))[0]
     default = Settings.__dataclass_fields__["arcade_url"].default
@@ -549,7 +579,9 @@ def _writer_items(found: dict, url: str) -> list:
 
 
 def _test_storage(plan, request, yes, result) -> None:
-    """Test the candidate store without saving anything; with --admin-password-file and --yes, create its user first."""
+    """Test the candidate store without saving anything; with --admin-password-file and --yes, create its user first.
+
+    Without --yes the administrator's file only reads what can be read, and the plan says what --yes would create."""
     candidate = plan["candidate"]
     url = database_mode.address(candidate)
     named = {"url": url, "user": candidate.arcade_user, "database": candidate.arcade_database}
@@ -564,13 +596,35 @@ def _test_storage(plan, request, yes, result) -> None:
             created = database_credentials.create_user(candidate, admin)
         except (ValueError, ArcadeError) as exc:
             raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
-        result["done"].append((USER_CREATED if created["created"] or created["database_created"] else USER_EXISTED,
-                               named))
+        result["done"].append((USER_CREATED if created["created"] else DATABASE_CREATED if created["database_created"]
+                               else USER_EXISTED, named))
+    if admin is not None and not yes:
+        # The dry run signs in as the administrator, which a user that does not exist yet cannot (#365).
+        try:
+            found = database_credentials.plan_user(candidate, admin)
+        except ArcadeError as exc:
+            if exc.status_code in (401, 403):
+                raise SetupRefused(STORAGE_REFUSED, url=url, error=(ADMIN_REFUSED, {"url": url})) from None
+            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+        except ValueError as exc:
+            raise SetupRefused(STORAGE_REFUSED, url=url, error=str(exc)) from None
+        if found["sign_in"] is None:
+            result["tests"].append((TEST_STORAGE_OK, {**named, "version": found["version"]}))
+        else:
+            result["tests"].append((TEST_ADMIN_OK, {"url": url, "version": found["version"]}))
+            # 403 is the answer to a user that exists and has no rights, 401 to one that does not or whose password differs
+            # and 404 to one with rights on a database that does not exist yet
+            known = found["sign_in"] in (403, 404)
+            create = ((NO_RIGHTS if found["database_exists"] else CREATE_DB) if known
+                      else CREATE_USER if found["database_exists"] else CREATE_BOTH)
+            result["tests"].append((create, named))
+        # A user that does not sign in cannot read the store either: no second refusal, no repeated advice.
+        result["writer"] = ([(WRITER_AFTER_USER, {"url": url})] if found["sign_in"] is not None
+                            else _writer_items(store_writer.inspect(candidate), url))
+        return
     block = database_credentials.doctor_block(candidate)
     if block.get("available") is True and block.get("database_available") is True and not block.get("error"):
         result["tests"].append((TEST_STORAGE_OK, {**named, "version": block.get("version", "")}))
-    elif admin is not None and not yes and block.get("available") is True and block.get("database_available") is False:
-        result["tests"].append((TEST_STORAGE_CREATE, named))  # the server answered; the user or database is not there yet
     else:
         if block.get("error"):
             error = block["error"]
@@ -578,7 +632,7 @@ def _test_storage(plan, request, yes, result) -> None:
             error = (SIGN_IN_REFUSED, {"advice": database_mode.sign_in_refused(candidate)})
         else:
             error = (QUERY_FAILED, {"status": block.get("database_status")})
-        notes = [item for item in result["done"] if item[0] == USER_CREATED]  # the server was changed before the test failed
+        notes = [item for item in result["done"] if item[0] in CREATED]  # the server was changed before the test failed
         raise SetupRefused(STORAGE_REFUSED_NOTED, url=url, error=error, notes=notes)
     result["writer"] = _writer_items(store_writer.inspect(candidate), url)
 
@@ -617,12 +671,17 @@ def model_moves(settings, request) -> list[dict]:
                 raise SetupRefused(MODEL_REFUSED, role=role, model=model,
                                    url=database_mode.shown(request.models_url), error=str(exc)) from None
             try:
-                same = enabled and memory_models.profile(settings, role) == wanted and (
-                    getattr(settings, memory_models.MODEL_FIELDS[role]) == model)
+                # A role without a profile runs on the Ollama of ollama_url: asking for that same server and model
+                # changes nothing (check_role saves it as no profile too).
+                current = memory_models.profile(settings, role) or {
+                    "provider": "ollama", "base_url": memory_models.normalize_base_url(settings.ollama_url)}
+                rest = [{key: value for key, value in row.items() if key != "base_url"} for row in (current, wanted)]
+                same = (rest[0] == rest[1] and memory_models.same_place(current["base_url"], wanted["base_url"])
+                        and getattr(settings, memory_models.MODEL_FIELDS[role]) == model)
             except ValueError:
                 same = False  # a stored profile that cannot be read is replaced
-            if not same:
-                moves.append(_move(settings, role, kwargs))
+            if not same or not enabled:  # with the agent off the model is still tested, before it is turned on
+                moves.append({**_move(settings, role, kwargs), "same": same})
         return moves
     if not enabled:
         return []  # nothing runs anywhere: the models stay off
@@ -726,8 +785,9 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             left.append((LEFT_WRITER_NOTE, {}))
     sent = False
     for move in moves:
-        changes.append((CHANGE_MODEL, {"role": move["role"], "before": _at(*move["before"]),
-                                       "after": _at(*move["after"])}))
+        if not move.get("same"):
+            changes.append((CHANGE_MODEL, {"role": move["role"], "before": _at(*move["before"]),
+                                           "after": _at(*move["after"])}))
         candidate = move["checked"]["candidate"]
         if not sent and not memory_models.is_loopback(move["checked"]["row"]["base_url"]):
             sent = True
@@ -735,11 +795,13 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             host = urlsplit(move["checked"]["row"]["base_url"]).hostname
             changes.append((SENDS, {"host": host, "classes": ", ".join(sends)}) if sends
                            else (SENDS_NO_TEXT, {"host": host}))
-        if move["role"] == "embedding" and move["before"] != move["after"]:
+        if move["role"] == "embedding" and not move.get("same") and (
+                move["before"][0] != move["after"][0]
+                or not memory_models.same_place(move["before"][1], move["after"][1])):
             result["rebuild"].append((REBUILD_VECTORS, {"before": _at(*move["before"]), "after": _at(*move["after"])}))
     if moves and not knowledge_mode.enabled(settings):
         changes.append((AGENT_ON, {}))
-    for url in dict.fromkeys(move["before"][1] for move in moves if move["away"]):
+    for url in dict.fromkeys(move["before"][1] for move in moves if move["away"] and not move.get("same")):
         left.append((LEFT_MODEL_SERVER, {"url": url}))
 
 
@@ -811,6 +873,8 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
 def _apply(settings, request, plan, moves, result, say, state) -> None:
     local = _back_to_local(settings, plan, result, say, state) if plan and request.profile == "local" else settings
     for move in moves:
+        if move.get("same"):
+            continue  # already saved so; only the agent is turned on
         state["step"] = (STEP_MODEL, {"role": move["role"]})
         report = asyncio.run(memory_models.configure_role(local, move["role"], **move["kwargs"]))
         _add_next(result, report["next"])
@@ -819,6 +883,15 @@ def _apply(settings, request, plan, moves, result, say, state) -> None:
         said = knowledge_mode.turn_on(settings)
         if said:
             result["done"].append((VERBATIM, {"sentence": said}))
+    if moves:
+        # Decided once for the pair after the saves, also for a role that was not moved again: the release's pair, or
+        # one that passed both evaluations, is not labelled, and any other is.
+        evaluate = (VERBATIM, {"sentence": memory_models.EVALUATE_STEP})
+        if asyncio.run(memory_models.unevaluated(Settings.load(settings.data_dir))):
+            if evaluate not in result["next"]:
+                result["next"].append(evaluate)
+        else:
+            result["next"] = [item for item in result["next"] if item != evaluate]
     if plan and request.profile != "local":
         state["step"] = (STEP_STORAGE, {})
         save_storage(settings.data_dir, plan["fields"])
@@ -882,7 +955,7 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None],
     except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
         raise
     except BaseException as exc:  # Ctrl-C too: the configuration is never left half changed
-        notes = [item for item in result["done"] if item[0] == USER_CREATED]
+        notes = [item for item in result["done"] if item[0] in CREATED]
         if state["backup"]:
             notes.append((KEPT_BACKUP, {"path": state["backup"]}))
         if state["engine"]:

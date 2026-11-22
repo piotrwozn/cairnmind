@@ -501,6 +501,47 @@ async def test_back_to_ollama_without_an_address_means_the_configured_ollama(tmp
     assert reloaded.memory_chat is None and reloaded.chat_model == "other:4b"
 
 
+def test_localhost_and_127_0_0_1_are_one_place_and_other_hosts_or_ports_are_not():
+    same = memory_models.same_place
+    assert same("http://localhost:11434", "http://127.0.0.1:11434") and same("http://127.0.0.1:11434", "http://localhost:11434")
+    assert same("http://[::1]:1234/v1", "http://localhost:1234/v1/")
+    assert not same("http://localhost:11434", "http://127.0.0.1:11435")
+    assert not same("http://localhost:1234/v1", "http://127.0.0.1:1234")
+    assert not same("https://localhost:11434", "http://127.0.0.1:11434")
+    assert not same("https://lan.example:11434", "https://other.example:11434")
+    assert not same("http://localhost:99999", "http://127.0.0.1:99999")  # a port that cannot be read
+
+
+@pytest.mark.parametrize("stored, asked", [("http://127.0.0.1:11434", "http://localhost:11434"),
+                                           ("http://localhost:11434", "http://127.0.0.1:11434")])
+async def test_the_ollama_of_ollama_url_under_its_other_loopback_name_is_saved_as_no_profile(tmp_path, monkeypatch,
+                                                                                         stored, asked):
+    async def check(settings, role):
+        return {"structured_output": True}, "c@1"
+    monkeypatch.setattr(memory_models, "_check", check)
+    settings = settings_with(tmp_path, ollama_url=stored)
+    checked = await memory_models.check_role(settings, "chat", provider="ollama", model="m1", base_url=asked)
+    assert checked["local_default"] and checked["saved_row"] is None
+
+
+async def test_a_pair_that_passed_both_evaluations_gets_no_evaluation_step(tmp_path, monkeypatch):
+    async def check(settings, role):
+        return {"structured_output": True}, "c@1"
+
+    async def identity(self, name):
+        return "c@1"
+    monkeypatch.setattr(memory_models, "_check", check)
+    monkeypatch.setattr(Ollama, "model_identity", identity)
+    settings = settings_with(tmp_path)
+    settings.save()
+    report = await memory_models.configure_role(settings, "chat", provider="ollama", model="other:4b")
+    assert memory_models.EVALUATE_STEP in report["next"]
+    for kind in memory_models.REQUIRED_EVALUATIONS:
+        memory_models.record_evaluation(Settings.load(tmp_path), kind, {"chat": "c@1", "embedding": "c@1"})
+    report = await memory_models.configure_role(Settings.load(tmp_path), "chat", provider="ollama", model="third:1b")
+    assert memory_models.EVALUATE_STEP not in report["next"]
+
+
 async def test_check_role_saves_nothing(tmp_path, monkeypatch):
     async def check(settings, role):
         return {"structured_output": True}, "c@1"

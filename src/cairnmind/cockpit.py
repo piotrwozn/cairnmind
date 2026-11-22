@@ -810,12 +810,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
             raise HTTPException(404)
         # The person's decisions are the only writes: a review, a conflict decision, an impact verdict, and
         # accepting or withdrawing an unknown transcript record kind (#210), confirming a plan (#214), and
-        # releasing a record's false alarms of the secrets gate (#306), and adopting an old task group (#305).
+        # releasing a record's false alarms of the secrets gate (#306), adopting an old task group (#305), and
+        # deleting a project's memory (#347), and replacing a record with a new text (#222).
         if request.method == "POST" and not (path.endswith("/review") or re.fullmatch(r"plans/[^/]+/confirm", path)
-                                             or re.fullmatch(r"records/[^/]+/release", path)
+                                             or re.fullmatch(r"records/[^/]+/(release|replace)", path)
                                              or path in ("conflicts/resolve", "impact/verdict",
                                                          "record-kinds/accept", "record-kinds/withdraw",
-                                                         "legacy-groups/adopt")):
+                                                         "legacy-groups/adopt", "projects/forget")):
             raise HTTPException(405)
         post = request.method == "POST"
         return forward(await upstream(request.method, "/inspector/" + path, params=request.query_params,

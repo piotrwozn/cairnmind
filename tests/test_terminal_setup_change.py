@@ -15,15 +15,17 @@ from textual import work
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
 
-from cairnmind import setup_change, setup_mark, setup_profiles, terminal_setup_change
+from cairnmind import database_credentials, setup_change, setup_mark, setup_profiles, terminal_setup_change
+from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_setup_change import MESSAGES, change_setup, consent_text
 from cairnmind.terminal_ui import ChoiceModal, FormModal, MessageModal
-from consent_steps import consent_drawn, early_enter_sends_nothing
+from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
 from test_setup_change import Rig
-from test_setup_profiles import DB, MODELS, config_bytes, connect_only_installation, make, private
+from test_setup_profiles import (DB, MODELS, RELEASE_CHAT, RELEASE_EMBEDDING, config_bytes, connect_only_installation,
+                                 make, private)
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 
@@ -155,7 +157,7 @@ async def test_the_consent_dialog_shows_the_plan_and_where_content_goes(ui, lang
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.change("remote")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote(tmp))
         modal = await consent_drawn(app, pilot)
         shown = modal.value
@@ -177,7 +179,7 @@ async def test_the_consent_dialog_shows_the_plan_and_where_content_goes(ui, lang
         assert rig.begun == []
         await early_enter_sends_nothing(app, pilot, modal)
         assert rig.begun == []
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         await until(pilot, lambda: rig.begun)
         assert len(rig.begun) == 1
         settings, request, expected, spoken = rig.begun[0]
@@ -211,7 +213,7 @@ async def test_cancel_and_esc_change_nothing(ui, stage, how):
             await until(pilot, on_screen(app, kind))
         else:
             app.change("remote-db")
-            await until(pilot, on_screen(app, FormModal))
+            await form_ready(app, pilot)
             await fill(app, pilot, **remote_db(tmp))
             await consent_drawn(app, pilot)
             kind, cancel = ConfirmModal, "#confirm-no"
@@ -267,7 +269,7 @@ async def test_a_refusal_of_the_test_is_shown_on_the_form_and_nothing_begins(ui,
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.change("remote-db")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote_db(tmp))
         await until(pilot, lambda: str(app.screen.query_one("#form-error", Static).render()) != "")
         error = str(app.screen.query_one("#form-error", Static).render())
@@ -301,7 +303,7 @@ async def test_a_store_written_by_another_installation_is_refused_after_the_test
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.change("remote-db")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote_db(tmp))
         await until(pilot, on_screen(app, MessageModal))
         await until(pilot, lambda: "Another installation writes the store at" in " ".join(screen_text(app).split()), what="the refusal of the target")
@@ -326,6 +328,71 @@ async def test_nothing_to_change_is_said_and_nothing_begins(ui):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stored", ["http://127.0.0.1:11434", "http://localhost:11434"])
+async def test_the_same_models_at_the_same_place_are_nothing_to_change_with_no_dialog_and_no_stop(ui, stored):
+    rig = ui(connect_only=True, knowledge_agent="enabled", ollama_url=stored)
+    app, tmp = rig.app, rig.tmp
+    before = config_bytes(tmp)
+    asked = "http://localhost:11434" if stored.startswith("http://127") else "http://127.0.0.1:11434"  # the other name
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.change("remote")
+        await form_ready(app, pilot)
+        await fill(app, pilot, **remote_db(tmp), models_url=asked, provider="ollama", chat_model=RELEASE_CHAT,
+                   embedding_model=RELEASE_EMBEDDING)
+        await until(pilot, on_screen(app, MessageModal))
+        await until(pilot, lambda: "already run as `cairnmind setup remote` says; nothing to change" in " ".join(
+            screen_text(app).split()), what="the nothing-to-change sentence")
+        assert not any(isinstance(screen, ConfirmModal) for screen in app.screen_stack)  # no consent dialog
+        await pilot.press("escape")
+        await settle(app, pilot)
+    assert rig.begun == [] and rig.rig.shutdowns == [] and rig.rig.starts == []  # no helper, no stop, no start
+    unchanged(tmp, before)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_the_consent_dialog_shows_what_the_administrators_file_will_create(ui, language):
+    rig = ui(language)
+    app, tmp = rig.app, rig.tmp
+    admin = private(tmp, "root-password", "PRIVATE_ADMIN_MARKER")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.change("remote-db")
+        await form_ready(app, pilot)
+        await fill(app, pilot, **remote_db(tmp), admin_password_file=admin)
+        modal = await consent_drawn(app, pilot)
+        shown = " ".join(modal.value.split())
+        for sentence in (setup_profiles.TEST_ADMIN_OK, setup_profiles.CREATE_BOTH):
+            assert " ".join(tr(sentence, language, url=DB, version="26.11.1", user="cairnmind",
+                               database="cairnmind").split()) in shown
+        assert "PRIVATE_ADMIN_MARKER" not in modal.value
+        await pilot.click("#confirm-no")
+    assert rig.begun == [] and rig.rig.world.calls("create_user") == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_administrator_is_shown_on_the_form_before_any_dialog(ui, monkeypatch):
+    rig = ui()
+    app, tmp = rig.app, rig.tmp
+    admin = private(tmp, "root-password", "PRIVATE_ADMIN_MARKER")
+
+    def refused(candidate, admin_secret):
+        raise ArcadeError("refused", status_code=401)
+    monkeypatch.setattr(database_credentials, "plan_user", refused)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.change("remote-db")
+        await form_ready(app, pilot)
+        await fill(app, pilot, **remote_db(tmp), admin_password_file=admin)
+        await until(pilot, lambda: str(app.screen.query_one("#form-error", Static).render()) != "")
+        assert isinstance(app.screen, FormModal) and "The administrator was refused" in str(
+            app.screen.query_one("#form-error", Static).render())
+        await pilot.press("escape")
+    assert rig.begun == []
+
+
+@pytest.mark.asyncio
 async def test_going_back_to_local_asks_backup_or_empty_and_says_to_keep_the_workspace_open(ui):
     rig = ui(connect_only=True)
     app, tmp = rig.app, rig.tmp
@@ -337,7 +404,7 @@ async def test_going_back_to_local_asks_backup_or_empty_and_says_to_keep_the_wor
         assert [label for label, _ in app.screen.choices] == [terminal_setup_change.BACK_BACKUP,
                                                               terminal_setup_change.BACK_EMPTY]
         await pilot.press("enter")  # the backup
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         assert [field.name for field in app.screen.fields] == ["backup"]
         target = tmp / "remote.cairnmind.json.gz"
         await fill(app, pilot, backup=str(target))
@@ -352,7 +419,7 @@ async def test_going_back_to_local_asks_backup_or_empty_and_says_to_keep_the_wor
         await pilot.press("down", "enter")  # without the data
         modal = await consent_drawn(app, pilot)
         assert terminal_setup_change.KEEP_OPEN not in modal.value
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         await until(pilot, lambda: rig.begun)
     request = rig.begun[0][1]
     assert request.profile == "local" and request.empty is True and request.backup is None
@@ -373,10 +440,10 @@ async def test_progress_and_the_result_are_shown_and_the_panel_reconnects(ui):
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.change("remote-db")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote_db(tmp))
         await consent_drawn(app, pilot)
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         modal_class = terminal_setup_change._progress_class()
         await until(pilot, on_screen(app, modal_class))
         modal = app.screen
@@ -407,10 +474,10 @@ async def test_a_progress_report_of_another_process_is_not_shown_and_a_silent_en
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.change("remote-db")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote_db(tmp))
         await consent_drawn(app, pilot)
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         modal_class = terminal_setup_change._progress_class()
         await until(pilot, on_screen(app, modal_class))
         modal = app.screen
@@ -484,10 +551,10 @@ async def test_the_outcome_seen_in_the_progress_dialog_is_not_shown_again(ui):
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         app.change("remote-db")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote_db(tmp))
         await consent_drawn(app, pilot)
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         modal_class = terminal_setup_change._progress_class()
         await until(pilot, on_screen(app, modal_class))
         finished_outcome(tmp, "changed")
@@ -623,7 +690,7 @@ async def test_the_flow_fits_at_80_by_24(ui):
         body.scroll_end(animate=False)
         last_line = [line for line in modal.value.splitlines() if line.strip()][-1]
         await until(pilot, lambda: last_line[:30] in screen_text(app), what="the last line of the plan")
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         await until(pilot, on_screen(app, terminal_setup_change._progress_class()))
         inside(app, "#progress-close")
         report(tmp, "failed", ["The change was made, but it failed."])

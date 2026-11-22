@@ -15,6 +15,7 @@ import tempfile
 
 import pytest
 
+from installer_script import installer_functions as installer_text
 from cairnmind import cli, cockpit, sessions
 from cairnmind.config import BACKUP_FORMATS, BACKUP_SUFFIXES, BROKER_NAMES, SERVICE_NAMES, Settings
 from cairnmind.service import instance_id
@@ -92,10 +93,9 @@ def test_a_backup_is_written_under_the_current_names_and_an_earlier_one_is_resto
         store.restore(foreign)
 
 
-def installer_functions():
-    script = (Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh").read_text()
-    start = script.index("# --- what an installed version left running")
-    return script[start:script.index("# --- end ---", start)]
+def installer_functions(sockets: Path = Path("/nonexistent/sockets")):
+    """The installer's functions; the socket folder is the test's own (#364), nowhere for a test that binds none."""
+    return installer_text(sockets)
 
 
 @pytest.fixture
@@ -146,7 +146,7 @@ def stand_ins(tmp_path):
             (tmp_path / "ps.txt").write_text("".join(line.format(tools=tools) + "\n" for line in ps))
             environment["PS_LINES"] = str(tmp_path / "ps.txt")
         result = subprocess.run(
-            ["bash", "-c", "set -euo pipefail\n" + installer_functions()
+            ["bash", "-c", "set -euo pipefail\n" + installer_functions(sockets)
              + f'\nstop_installed "{tools}/{installed}" cairnmind "{tools}/python"\necho continued'],
             env=environment, capture_output=True, text=True, timeout=30)
         return result, [line for line in log.read_text().splitlines() if not line.startswith(("tmux list-sessions", "tmux list-panes"))]

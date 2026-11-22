@@ -70,7 +70,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_install_macos",
     "test_first_start_round2", "test_first_start_round3", "test_engine_docker", "test_tmux_optional", "test_external_mcp_start",
     "test_knowledge_mode", "test_person_proof", "test_person_key_workspace", "test_inspector_plan_confirm",
-    "test_inspector_release", "test_inspector_published_import",
+    "test_inspector_release", "test_inspector_replace", "test_inspector_published_import",
     "test_command_line_confirms_nothing",
     "test_doc_links", "test_stall_watch", "test_restore_claims_units",
     "test_measure_service_spend", "test_compare_model_paths_script",
@@ -78,7 +78,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_sessions_dialog", "test_command_menu_popup", "test_mcp_unknown_argument", "test_stop_broker_line",
     "test_ended_pane_text",
     "test_short_answers", "test_person_acts_consent", "test_workspace_setup_screen",
-    "test_setup_mark", "test_setup_change", "test_terminal_setup_change",
+    "test_setup_mark", "test_setup_change", "test_terminal_setup_change", "test_project_forget_workspace",
     "test_server_mode",
 })
 
@@ -113,6 +113,8 @@ LEFT_OUT_ON_A_SERVER = {
         "its evaluation runs create databases of their own name, which a connect-only installation never creates",
     "test_memory_evaluation":
         "its evaluation runs create databases of their own name, which a connect-only installation never creates",
+    "test_injection_evaluation":
+        "its evaluation runs create and drop databases of their own name, which a connect-only installation never does",
     "test_arcade::test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for":
         "expects the unavailable message of a managed engine, which a connect-only installation words otherwise",
     "test_integrations::test_doctor_reports_arcadedb_without_lifecycle_work_or_credentials":

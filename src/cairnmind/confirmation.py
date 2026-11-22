@@ -300,7 +300,7 @@ def archive_claims(record, sources) -> list:
     metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
     definition = row_definition_hash(record["content"], metadata) if record["kind"] == "task" else None
     identity = identity_hash(record["kind"], record["key"], record.get("supersedes"))
-    claims = []
+    claims, replaced = [], False
     for source_id in record.get("source_ids") or []:
         source = sources.get(source_id) if isinstance(source_id, str) else None
         if not isinstance(source, dict):
@@ -315,10 +315,13 @@ def archive_claims(record, sources) -> list:
                                                         record["content"], definition, identity):
                 claims.append({"name": audit.get("actor_name"), "action": audit.get("action"),
                                "branch": audit.get("branch"), "commit": audit.get("commit"), "at": audit.get("at")})
+                replaced = replaced or bool(audit.get("replaces"))
         elif origin == "workspace_form" and source.get("content") == record["content"]:
             meta = source.get("metadata") or {}
             claims.append({"name": meta.get("actor_name"), "action": "workspace_form", "branch": meta.get("branch"),
                            "commit": meta.get("commit"), "at": source.get("created_at")})
+    if replaced:  # a replacement is one act: its audit is the claim, its note only carries the text (#222)
+        claims = [claim for claim in claims if claim["action"] != "workspace_form"]
     return sorted(claims, key=lambda claim: str(claim.get("at") or ""))
 
 

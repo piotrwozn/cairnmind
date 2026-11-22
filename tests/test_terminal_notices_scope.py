@@ -9,7 +9,7 @@ import pytest
 from cairnmind.terminal_notices import NoticeHistory
 from cairnmind.terminal_panels import SidebarApp
 from cairnmind.terminal_ui import FormModal, MessageModal
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import settle
 from test_terminal_ux080 import setup_ui
 from test_workspace_stage import answer_stage, decision
@@ -242,6 +242,7 @@ async def test_the_inspector_import_notice_belongs_to_the_new_project_and_stays_
         await pilot.pause()
         app.screen.query_one("#field-path", Input).value = "/projects/a/.memory/cairnmind"
         app.screen.query_one("#field-root", Input).value = "/projects/a"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await settle(app, pilot)
         await pilot.click("#memory-apply")

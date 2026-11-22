@@ -110,6 +110,8 @@ def record_parts(value, translate):
         lines.append(labelled(translate("Status"), display_word(state, translate), state_role(state)))
     if item.get("version"):
         lines.append(labelled(translate("Version"), str(item["version"])))
+    if isinstance(value.get("replaced_by"), str):
+        lines.append(labelled(translate("Replaced by"), value["replaced_by"]))  # the record that replaced it (#222)
     if item.get("source_ids"):
         lines.append(labelled(translate("Sources"), str(len(item["source_ids"]))))
     lines += sensitivity_parts(value, translate)

@@ -210,6 +210,9 @@ What they can do, and what the refusal tells them:
 - **Any other kind** (constraint, preference, question). The conflict inbox
   shows facts and decisions only. Store a new proposed record and tell the
   person; they dispute the old record or confirm the new one in the inspector.
+- **The person corrects a record themselves.** In the inspector: open it, then
+  Replace (any kind but a task and the checkpoint; see the table of a person's
+  routes below).
 - **A task.** Progress is not part of what was confirmed and is stored as
   before: `metadata.state`, reported evidence, check runs, a declared scope, a
   proposed command. The task's text, criteria, dependencies and requirements
@@ -258,7 +261,7 @@ What they can do, and what the refusal tells them:
   refused.
 
 A person takes their own confirmation away by disputing the record in the
-inspector, by a conflict decision, by adopting an old task group in the
+inspector, by a conflict decision, by replacing it in the inspector, by adopting an old task group in the
 workspace, or by an import run from the memory view of the
 workspace (Import, Team memory) that replaces what was confirmed or disputed here (`replace_confirmed`). A disputed record is no longer a
 person's confirmation, and any writer may change it, its status included: a
@@ -287,6 +290,8 @@ audit note included:
 | Old task group (`POST /inspector/legacy-groups/adopt`) | A new plan whose steps are the tasks of an old `--plan` group, each proposed until the person confirms the plan, with one audit note (`review://`, action `adopt_plan_group`). The person adopts a group in the workspace (More, then Old task groups); the body carries the task versions the person was shown, a group that changed since is refused with nothing written, and `adopt_group` itself refuses without the proof. |
 | Impact verdict (`POST /inspector/impact/verdict`) | A person's verdict on one entry of `impact`, an audit note (`review://impact/...`) that changes no record. The person gives it in the inspector (Impact, then Verdict); `record_verdict` itself refuses without the proof. |
 | Release (`POST /inspector/records/{id}/release`) | A release of one record's current hits of the secrets scan (`release://`), published with its reason. The person releases a record in the inspector (open it, then Release); `release` itself refuses without the proof. |
+| Deleting a project's memory (`POST /inspector/projects/forget`) | Every row of the project (records and revisions, sources and audit notes, passages, vectors, code graph, plans, sessions, acknowledgements, check runs, jobs, memory settings and bindings), its registry row and its answer log; the change journal is reset. Backups and the project's folders are not touched. The refusal is `Deleting a project's memory is a person's act made in the workspace ...`, written before anything is read. The person deletes it in the workspace (More, then Delete project memory) from a consent dialog that names the project and the counts read from `GET /inspector/projects/forget`; it is refused while the project has a session in the workspace or a job in work, and on a reader. What remains is an entry in the store's `deleted_projects` list (`cairnmind status`: the last 100, with the project's id, the time, the host and the counts, and neither its name nor its folder), which backups do not carry. `Store.forget_project` itself refuses without the proof. |
+| Replace (`POST /inspector/records/{id}/replace`) | A new record with the person's text, confirmed by that act, that supersedes the record (recorded on both records when the replaced one can never be published, as a conflict decision does); one `review://` audit (action `confirm`, naming the replaced record, its version and its text's hash) and the typed text as a `workspace://finding/` note. The old record stays in its history with its sources. The body carries the version the person was shown; a record that changed since is refused (409) with nothing written. Its body has no session field; `replace_record` itself refuses without the proof. The person replaces a record in the inspector (open it, then Replace). |
 | Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
 | An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. From the memory view: Import (archive) and Team memory (folder or commit), each after a dry run and the person's consent; both send `expected_replaced`, the list the person was shown, which all three routes require with `replace_confirmed`. |
 
@@ -294,9 +299,10 @@ In the workspace each of these acts is sent only from a consent dialog that show
 inspector, the sidebar and the memory view ask for a reason, a note or a title in a form (an import runs its
 check instead), and the request goes out only from the dialog that follows, which counts only input made after it
 appeared (#318). A key typed before a form or a dialog appeared therefore never makes a person's act. The quick
-finding form (`Ctrl+B n`) is the one exception, and an open item for the owner: it opens empty on `proposed` and
-sends only the text typed into it with the kind and status chosen there, so `confirmed` needs that status chosen,
-but it has no consent dialog and the guard of #318 does not cover it.
+finding form (`Ctrl+B n`) is the one exception, by the owner's decision of 22 November 2026: the person typed the
+text and sends it, so the form is the consent. It opens empty on `proposed` and sends only the text typed into it
+with the kind and status chosen there, so `confirmed` needs that status chosen; it has no consent dialog and the
+guard of #318 does not cover it, and it stays so.
 
 The command line confirms nothing and makes no person's act (since 0.13.0, #214,
 #306). A program that runs as the user can open a pseudo-terminal and unset the
@@ -304,7 +310,11 @@ session variables, so no test of the terminal tells it from a person. `remember
 --confirmed`, `memory confirm-plan`, `record-kind accept`, `record-kind
 withdraw`, `impact-verdict` and `memory release` are refused with exit code 2 and
 say that the person does it in the inspector of the workspace;
-`remember --confirmed` stores nothing, not even a proposed record. `task add`
+`remember --confirmed` stores nothing, not even a proposed record. `forget`
+(with or without `--delete-project`) is refused with exit code 2, before any
+store is opened, and says that the person deletes a project's memory in the
+workspace (More, then Delete project memory); there is no override flag or
+variable. `task add`
 stores a proposed task and says so on standard error. `plan save` and `plan
 adopt` are never a person's act: they are refused when they would change or
 remove a step a person confirmed, and any other save is stored; a group of old
@@ -480,9 +490,9 @@ the command cannot see it; after the removal every call of its session (context,
 acknowledgement, writes) is refused with a sentence that names the removal and the
 way back. The events the hooks in the folder keep recording wait in the data
 directory until the project is back, and do not delay other projects' events. A
-removed project's rows stay in backups and in a restore, still removed. Deleting a removed project's memory is
-`cairnmind forget ID --delete-project`, after a backup; it is unchanged by this
-command and is not checked as a person's act.
+removed project's rows stay in backups and in a restore, still removed. Deleting a removed project's memory is done
+in the workspace (More, then Delete project memory), after a backup; it is a person's act (see the table of the
+person's routes), and this command is unchanged by it.
 
 ### How a confirmation is recorded and shown
 
@@ -747,7 +757,7 @@ store versions and plan revisions are never published, and neither is any absolu
 
 A record state travels only when a person's act covers it:
 
-- a review audit (`review://`, origin `local_user_review`) written by an inspector review, a
+- a review audit (`review://`, origin `local_user_review`) written by an inspector review or a replacement (#222), a
   conflict decision that chose which finding stands, or `confirm_plan`, whose `content_sha256`
   equals the SHA-256 of the text and, for a task, whose `definition_sha256` equals the hash of what
   the task asks for (its text, plan, step key, dependencies, test and review requirements, profiles,

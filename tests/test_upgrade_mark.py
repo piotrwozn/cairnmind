@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from installer_script import installer_functions
 from cairnmind import process_identity, upgrade_mark
 from cairnmind.terminal_i18n import CATALOG
 
@@ -23,7 +24,8 @@ def mark(tmp_path):
 
 
 def installer_like_child():
-    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "/x/scripts/install-wsl.sh"])
+    return subprocess.Popen([sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)",
+                             "/x/scripts/install-wsl.sh"], stdout=subprocess.PIPE, text=True)
 
 
 def test_without_a_mark_nothing_is_blocked_or_noted(mark):
@@ -32,21 +34,36 @@ def test_without_a_mark_nothing_is_blocked_or_noted(mark):
     assert upgrade_mark.note() is None
 
 
+def wait_until_the_child_runs(child):
+    """The child says so from its final image, after any second exec of a launcher (a framework Python on macOS):
+    no read of it happens during an exec, and no assertion rests on how fast it started."""
+    import threading
+    watchdog = threading.Timer(10, child.kill)
+    watchdog.start()
+    try:
+        assert child.stdout.readline() == "ready\n", "the child did not announce itself"
+    finally:
+        watchdog.cancel()
+
+
 def test_a_mark_of_a_running_installer_blocks_and_names_its_process(mark):
     child = installer_like_child()
     try:
+        wait_until_the_child_runs(child)
         mark.write_text(f"{child.pid}\n")
         assert upgrade_mark.state() == ("running", child.pid)
         assert upgrade_mark.refusal() == upgrade_mark.NOTE_RUNNING.format(pid=child.pid)
     finally:
         child.kill()
         child.wait()
+        child.stdout.close()
 
 
 def test_a_mark_whose_installer_is_gone_blocks_nothing_and_doctor_says_the_upgrade_did_not_finish(mark):
     child = installer_like_child()
     child.kill()
     child.wait()
+    child.stdout.close()
     mark.write_text(f"{child.pid}\n")
     assert upgrade_mark.state() == ("stale", child.pid)
     assert upgrade_mark.refusal() is None
@@ -81,6 +98,37 @@ def test_a_process_without_a_readable_command_line_is_told_by_its_program(mark, 
     assert upgrade_mark.state() == (kind, 4242)
 
 
+def test_a_living_process_is_not_called_stale_by_one_failed_read(mark, monkeypatch):
+    """macOS answered running, then stale, for one living stand-in for the installer; most likely one read of its
+    command line failed (around an exec) while its program was readable and no shell (#348)."""
+    mark.write_text("4242\n")
+    answers = iter([None, ["python", "-c", "x", "/x/scripts/install-wsl.sh"]])
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: next(answers))
+    monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(process_identity, "alive", lambda pid: True)
+    monkeypatch.setattr(upgrade_mark.time, "sleep", lambda seconds: None)
+    assert upgrade_mark.state() == ("running", 4242)
+
+
+def test_a_command_line_read_again_that_names_another_program_is_stale(mark, monkeypatch):
+    mark.write_text("4242\n")
+    answers = iter([None, ["/usr/sbin/cron"]])
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: next(answers))
+    monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(process_identity, "alive", lambda pid: True)
+    monkeypatch.setattr(upgrade_mark.time, "sleep", lambda seconds: None)
+    assert upgrade_mark.state() == ("stale", 4242)
+    assert next(answers, None) is None  # the second read was used
+
+
+def test_a_readable_program_that_ended_between_reads_is_stale(mark, monkeypatch):
+    mark.write_text("4242\n")
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: None)
+    monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(process_identity, "alive", lambda pid: False)
+    assert upgrade_mark.state() == ("stale", 4242)
+
+
 @pytest.mark.parametrize("content", [b"", b"abc\n", b"12 34\n", b"1" * 40, b"0\n", b"4294967296\n", "directory", "no home"])
 def test_a_mark_that_cannot_be_read_blocks(mark, monkeypatch, content):
     if content == "directory":
@@ -100,10 +148,7 @@ def test_a_mark_that_cannot_be_read_blocks(mark, monkeypatch, content):
 def test_the_installer_and_the_package_agree_on_the_mark(tmp_path):
     """The path, the format and the identity the installer writes are the ones the package reads: a real bash,
     named install-wsl.sh, writes the mark and a Python reads it, while it runs and after it removed the mark."""
-    scripts = Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh"
-    text = scripts.read_text()
-    start = text.index("# --- what an installed version left running")
-    functions = text[start:text.index("# --- end ---", start)]
+    functions = installer_functions(tmp_path / "sockets")
     reader = ("import sys; from cairnmind import upgrade_mark as u; "
               "u.mark_path = lambda: __import__('pathlib').Path(sys.argv[1]); print(u.state())")
     mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"

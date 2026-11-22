@@ -26,8 +26,8 @@ from conftest import plain_words
 from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_panels import SidebarApp
 from cairnmind.terminal_panels import ConfirmModal
-from cairnmind.terminal_ui import ChoiceModal, FormModal
-from consent_steps import consent_drawn, early_enter_sends_nothing
+from cairnmind.terminal_ui import ChoiceModal
+from consent_steps import consent_drawn, early_enter_sends_nothing, form_ready
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from test_terminal_setup_change import click, fill, laid_out, on_screen, remote_db, report, until
@@ -464,7 +464,7 @@ def to_the_consent_dialog(app, pilot, tmp_path):
         await choose_the_entry(app, pilot)
         await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
         await click(pilot, "#change-remote-db")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote_db(tmp_path))
         return await consent_drawn(app, pilot)
     return go()
@@ -496,7 +496,7 @@ async def test_agreeing_in_the_dialog_starts_the_one_change_the_button_named(tmp
     rig = carried_out(tmp_path, monkeypatch)
     async with rig.app.run_test(size=(120, 40)) as pilot:
         await to_the_consent_dialog(rig.app, pilot, tmp_path)
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         await until(pilot, lambda: rig.begun)
         assert len(rig.begun) == 1 and rig.begun[0][0].profile == "remote-db" and rig.begun[0][2] == "en"
         assert rig.reads == ["GET"]  # the screen sent one read; the helper is the only thing that changes anything
@@ -514,10 +514,10 @@ async def test_after_a_change_made_here_the_screen_shows_the_new_place_when_it_i
         first = plain_words(screen_text(app))
         assert DB_HOST not in first
         await click(pilot, "#change-remote-db")
-        await until(pilot, on_screen(app, FormModal))
+        await form_ready(app, pilot)
         await fill(app, pilot, **remote_db(tmp_path))
         await consent_drawn(app, pilot)
-        await click(pilot, "#confirm-yes")
+        await pilot.click("#confirm-yes")
         modal_class = terminal_setup_change._progress_class()
         await until(pilot, on_screen(app, modal_class))
         await until(pilot, lambda: app.screen.final == "changed")

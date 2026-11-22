@@ -1180,8 +1180,10 @@ class Store:
 
     def _remember(self, tx, project_id, record, sources, *, managed_batch=False, conflict_review=False,
                   replace_origin=False, replace_metadata=False, mark_only_changes=False, extracted_from=None,
-                  extractor=None, slot=False):
+                  extractor=None, slot=False, new_id=None):
         """Write one record version.
+
+        new_id: the ID of a new record, chosen by a person's act whose audit names it before the write (#222).
 
         slot: the write replaces the content of the one checkpoint record, which is a slot for the latest
         state and not a statement: a confirmation of an earlier state lapses instead of refusing the write.
@@ -1209,6 +1211,8 @@ class Store:
                 raise ValueError("New managed records must not provide expected_version")
             if old and old["status"] == "superseded" and not managed_batch:
                 raise ValueError("A superseded record is immutable; create a new record")
+        if new_id is not None and (old is not None or record.get("id")):
+            raise ValueError("new_id names a new record; it cannot update one")
         # A write that is not a person's act and reaches a record a person confirmed (it can only leave the
         # statement as it is: progress on a task, or nothing) does not make that confirmation worth less: the
         # record keeps every source it had, the note of the person's act among them, and the write only adds.
@@ -1224,7 +1228,7 @@ class Store:
             raise RecordRefused("Record kind cannot change")
         if not isinstance(content, str) or not content.strip():
             raise RecordRefused("Record content must be nonempty text")
-        record_id, key = (old["id"] if old else record.get("id") or str(uuid4())), record.get("key", old["key"] if old else None)
+        record_id, key = (old["id"] if old else new_id or record.get("id") or str(uuid4())), record.get("key", old["key"] if old else None)
         key = record_id if key is None else key
         if not isinstance(key, str) or not key.strip():
             raise RecordRefused("Record key must be nonempty text")
@@ -1665,10 +1669,10 @@ class Store:
             # and is still called a timeout.
             (("runtime reported a context-length limit",), "model_context_length",
              "The model refused an input longer than its context length."),
-            (("response read timed out", "local request timed out"), "model_timeout",
+            (("response read timed out", "request timed out"), "model_timeout",
              "The model runtime did not answer in time."),
             (("ollama /api/", "runtime reported", "runtime rejected", "runtime returned", "embedding model returned",
-              "local model returned"), "model_runtime_error", "The model runtime refused or failed the request."),
+              "returned no chat message"), "model_runtime_error", "The model runtime refused or failed the request."),
             (("timeout", "timed out"), "job_timeout", "The job exceeded its execution budget."),
         )
         for needles, code, message in categories:
@@ -1990,6 +1994,10 @@ class Store:
         return len(ids)
 
     def forget_project(self, project_id):
+        from .confirmation import ConfirmationRefused
+        from .person_proof import FORGET_REFUSED, present
+        if not present():
+            raise ConfirmationRefused(FORGET_REFUSED)  # only the workspace's route deletes a project (#347)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
             from .journal import Journal

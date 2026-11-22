@@ -11,6 +11,7 @@ import asyncio
 
 from .confirmation import LIST_WORDS
 from .terminal_notices import about as notice_about
+from .terminal_person_act import refused
 from .terminal_safe import safe_text
 
 TEXT = 200  # a task's text in the dialog, escaped and cut
@@ -21,6 +22,8 @@ ADOPTING = (
     "or before only a person could confirm, loses that confirmation now. Progress and reported evidence are kept. "
     "If a task of the group changes before you choose Adopt, nothing is adopted.")
 TOO_LONG = f"A plan title has at most {TITLE} characters."
+NOT_ADOPTED = "The task group was not adopted into a plan."
+ADOPT_UNCLEAR = "The service did not confirm the adoption, so the group may have been adopted into a plan."
 MESSAGES = {
     "Old task groups": "Stare grupy zadań",
     "No old task groups in this project.": "W tym projekcie nie ma starych grup zadań.",
@@ -43,6 +46,8 @@ MESSAGES = {
     "Confirm.":
         "Grupa {group} została włączona jako plan {title}; kroki: {count}. Potwierdź plan w inspektorze: Plany, "
         "potem Potwierdź.",
+    NOT_ADOPTED: "Grupa zadań nie jest włączona do planu.",
+    ADOPT_UNCLEAR: "Usługa nie potwierdziła włączenia, więc grupa mogła zostać włączona do planu.",
 }
 
 
@@ -101,9 +106,15 @@ async def open_view(app):
     if not await app.push_screen_wait(ConfirmModal(app.t("Adopt this task group into a plan?"), text,
                                                    approve=app.t("Adopt"), consent=True)):
         return
-    adopted = await app.request("POST", "/api/inspector/legacy-groups/adopt", json={
-        "project": project, "group": group["group"], "title": values["title"], "task_versions": versions,
-        "worktree": selected.get("worktree")})
+    from .terminal_i18n_messages import broker_error_text
+    try:
+        adopted = await app.request("POST", "/api/inspector/legacy-groups/adopt", json={
+            "project": project, "group": group["group"], "title": values["title"], "task_versions": versions,
+            "worktree": selected.get("worktree")})
+    except (OSError, ValueError, RuntimeError) as exc:  # told for the project it belongs to, also after a switch
+        app.notice_for(subject, app.t(NOT_ADOPTED if refused(exc) else ADOPT_UNCLEAR) + " "
+                       + broker_error_text(exc, app.t), "error")
+        return
     app.notice_for(subject, app.t(
         "Group {group} is adopted as plan {title} with {count} steps. Confirm the plan in the inspector: Plans, "
         "then Confirm.", group=safe_text(group["group"], limit=80), title=safe_text(values["title"], limit=80),

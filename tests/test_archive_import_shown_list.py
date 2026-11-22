@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 from textual.widgets import Input, Static
 
 from cairnmind import person_proof
@@ -157,6 +157,7 @@ async def test_the_memory_view_shows_every_replaced_verdict_and_sends_that_list(
         await pilot.pause()
         app.screen.query_one("#field-path", Input).value = "/projects/a/.memory/archive"
         app.screen.query_one("#field-root", Input).value = "/projects/a"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await settle(app, pilot)
         text = str(app.query_one("#entity-body", Static).render())
@@ -187,6 +188,7 @@ async def test_the_sidebar_dialog_shows_every_replaced_verdict_and_sends_that_li
         await pilot.pause(.2)
         app.screen.query_one("#field-path", Input).value = "/projects/a/.memory/archive"
         app.screen.query_one("#field-root", Input).value = "/projects/a"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         text = str(app.screen.query_one("#message-body", Static).render())

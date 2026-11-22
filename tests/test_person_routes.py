@@ -62,6 +62,7 @@ def person_requests(fixture):  # noqa: F811
     resolve = {"project": pid, "record_id": candidate["id"], "other_id": existing["id"],
                "expected_version": candidate["version"], "other_expected_version": existing["version"]}
     imports = {"replace_confirmed": True}
+    replaceable = fixture.proposed("A decision to replace")
     legacy = fixture.store.remember(pid, {"kind": "task", "key": "old", "content": "An old task", "metadata": {
         "plan_id": "old-group", "step_index": 1, "state": "todo"}}, [fixture.note["id"]])
     return {
@@ -69,6 +70,8 @@ def person_requests(fixture):  # noqa: F811
             "project": pid, "group": "old-group", "task_versions": {legacy["id"]: legacy["version"]}}),
         "review confirm": (review, {"project": pid, "action": "confirm", "expected_version": 1}),
         "review dispute": (review, {"project": pid, "action": "dispute", "expected_version": 1, "reason": "No"}),
+        "replace": (f"/inspector/records/{replaceable['id']}/replace",
+                    {"project": pid, "content": "Use WAL mode", "expected_version": 1}),
         "conflict supersede": ("/inspector/conflicts/resolve", {**resolve, "action": "supersede",
                                                                 "keep": candidate["id"]}),
         "conflict dismiss": ("/inspector/conflicts/resolve", {**resolve, "action": "dismiss"}),
@@ -82,12 +85,13 @@ def person_requests(fixture):  # noqa: F811
         "import archive": ("/memory/import", {"path": "/nowhere", "root": str(fixture.root), **imports}),
         "import published": ("/memory/import-published", {"project": pid, "path": "/nowhere", **imports}),
         "import commit": ("/memory/import-commit", {"project": pid, "revision": "HEAD", **imports}),
+        "project forget": ("/inspector/projects/forget", {"project": pid}),
     }
 
 
-NAMES = ["review confirm", "review dispute", "conflict supersede", "conflict dismiss", "plan confirm",
+NAMES = ["review confirm", "review dispute", "replace", "conflict supersede", "conflict dismiss", "plan confirm",
          "record kind accept", "record kind withdraw", "finding proposed", "finding confirmed", "import archive",
-         "import published", "import commit", "legacy adopt"]
+         "import published", "import commit", "legacy adopt", "project forget"]
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -95,9 +99,11 @@ def test_every_person_route_refuses_the_service_token_alone(fixture, name):  # n
     path, body = person_requests(fixture)[name]
     before = state(fixture)
     response = fixture.client.post(path, json=body)
-    expected = person_proof.IMPORT_REPLACE if path.startswith("/memory/") else person_proof.PROOF_MISSING
+    expected = (person_proof.IMPORT_REPLACE if path.startswith("/memory/")
+                else person_proof.FORGET_REFUSED if path.endswith("/projects/forget") else person_proof.PROOF_MISSING)
     assert response.status_code == 403 and response.json()["detail"] == expected, (name, response.text)
     assert state(fixture) == before, name  # nothing written: no record, no audit note, no acceptance
+    assert fixture.store.query("SELECT id FROM projects WHERE id=:p", {"p": fixture.pid}), name
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -142,6 +148,8 @@ def test_the_workspace_key_lets_the_person_act(fixture):  # noqa: F811
     reviewed = post("review confirm")["record"]
     assert reviewed["status"] == "confirmed" and confirmation_of(reviewed)["route"] == "inspector_review"
     assert confirmation_of(reviewed)["by"] == "person"
+    replaced = post("replace")["record"]
+    assert replaced["status"] == "confirmed" and confirmation_of(replaced)["route"] == "inspector_review"
     decided = post("conflict supersede")
     assert decided["record"]["status"] == "confirmed" and confirmation_of(decided["record"])["route"] == "conflict_decision"
     planned = post("plan confirm")
@@ -161,6 +169,26 @@ def test_the_workspace_key_lets_the_person_act(fixture):  # noqa: F811
     assert imported.status_code == 200 and imported.json()["status"] == "unchanged", imported.text
     refused = fixture.client.post(path, json={**body, "path": snapshot["path"]})
     assert refused.status_code == 403
+
+
+def test_the_workspace_key_lets_the_person_delete_a_project(fixture):  # noqa: F811
+    path, body = person_requests(fixture)["project forget"]
+    listed = fixture.client.get("/inspector/projects/deletable")
+    assert listed.status_code == 200 and [item["id"] for item in listed.json()["items"]] == [fixture.pid]
+    shown = fixture.client.get("/inspector/projects/forget", params={"project": fixture.pid})  # reads, needs no key
+    assert shown.status_code == 200 and shown.json()["deletes"]["records"] >= 1, shown.text
+    assert fixture.client.get("/inspector/projects/forget", params={"project": "nope"}).status_code == 400
+    sent = fixture.client.post(path, json={**body, "session": "x"}, headers=fixture.person)
+    assert sent.status_code == 422  # a person's act names no session
+    response = fixture.client.post(path, json=body, headers=fixture.person)
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted"] == fixture.pid and response.json()["backups_unchanged"] is True
+    assert not fixture.store.query("SELECT id FROM projects WHERE id=:p", {"p": fixture.pid})
+    assert fixture.store._count("records", fixture.pid) == 0
+    entries = fixture.client.get("/status").json()["deleted_projects"]
+    assert [entry["project_id"] for entry in entries] == [fixture.pid]
+    again = fixture.client.post(path, json=body, headers=fixture.person)
+    assert again.status_code == 400 and "Unknown project" in again.json()["detail"]  # gone: nothing to delete
 
 
 def test_a_dispute_with_the_key_is_stored_and_without_it_is_not(fixture):  # noqa: F811

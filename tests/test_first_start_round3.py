@@ -271,6 +271,9 @@ def test_project_add_prints_the_warning_before_the_next_step_and_its_json_is_unc
 
         def add_project(self, name, root):
             return {"id": "p1", "name": name, "root": str(root)}
+
+        def job_summary(self, project_id):
+            return {group: {"pending": 0, "running": 0} for group in ("indexing", "extraction")}
     monkeypatch.setattr(cli, "store_for", lambda *a, **k: Store())
     monkeypatch.setattr(project_removal, "removed_rows", lambda reader: [])  # this fake store has no query (#327)
     monkeypatch.setattr(ingest, "index_project", lambda store, pid: {"files": 1})
@@ -283,7 +286,8 @@ def test_project_add_prints_the_warning_before_the_next_step_and_its_json_is_unc
     assert said[2].startswith("Next: cairnmind remember plain") and len(said) == 3
     piped = run("project", "add", "plain", str(folder), terminal=False).stdout
     assert piped == dumped({"project": {"id": "p1", "name": "plain", "root": str(folder.resolve())},
-                            "indexed": {"files": 1}, "history": {}})
+                            "indexed": {"files": 1}, "history": {},
+                            "jobs": {"queued": 0, "service_running": False, "waiting_because": None}})
 
 
 def test_every_new_sentence_has_polish():
