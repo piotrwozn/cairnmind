@@ -37,7 +37,36 @@ RESTORED_WITH_AN_OLD_WORKSPACE = (
     "transcript record kind(s) were withdrawn. The person confirms again in the inspector of the workspace what "
     "still holds. To keep the person's confirmations instead, close the workspace (`cairnmind workspace stop`), "
     "open it again (`cairnmind`), stop the service (`cairnmind stop`) and run the same restore again.")
+VECTORS_REBUILT = (
+    "A backup holds no vectors: {jobs} embedding job(s) are pending again and the service rebuilds the vectors in the "
+    "background. Until that ends, search uses the text only, and an answer that needs vectors says so. Progress: "
+    "`cairnmind status` (pipeline_jobs.indexing).")
+VECTORS_WAIT = (
+    "A backup holds no vectors: {jobs} embedding job(s) are pending again, and they wait, as every embedding job does "
+    "without models (deterministic-only mode), until models are turned on (`cairnmind models pull`). Until then, search "
+    "uses the text only, and an answer that needs vectors says so.")
+# knowledge_agent "" (not chosen yet): the service's first start decides, by whether the models are there (knowledge_mode.choose).
+VECTORS_UNDECIDED = (
+    "A backup holds no vectors: {jobs} embedding job(s) are pending again. When the service starts with the models "
+    "available, it rebuilds the vectors in the background (progress: `cairnmind status`, pipeline_jobs.indexing); "
+    "when they are missing, it starts in deterministic-only mode and the jobs wait until models are turned on "
+    "(`cairnmind models pull`). Until the vectors exist, search uses the text only, and an answer that needs vectors says so.")
 MESSAGES = {
+    VECTORS_UNDECIDED: (
+        "Kopia zapasowa nie zawiera wektorów: zadań osadzania, które znów czekają, jest {jobs}. Gdy usługa startuje z "
+        "dostępnymi modelami, odbuduje wektory w tle (postęp: `cairnmind status`, pipeline_jobs.indexing); gdy ich "
+        "brakuje, startuje w trybie tylko deterministycznym, a zadania czekają, aż modele zostaną włączone (`cairnmind "
+        "models pull`). Do czasu odbudowy wektorów wyszukiwanie korzysta tylko z tekstu, a odpowiedź, która wymaga "
+        "wektorów, mówi o tym."),
+    VECTORS_REBUILT: (
+        "Kopia zapasowa nie zawiera wektorów: zadań osadzania, które znów czekają, jest {jobs}, a usługa odbuduje "
+        "wektory w tle. Do tego czasu wyszukiwanie korzysta tylko z tekstu, a odpowiedź, która wymaga wektorów, mówi "
+        "o tym. Postęp: `cairnmind status` (pipeline_jobs.indexing)."),
+    VECTORS_WAIT: (
+        "Kopia zapasowa nie zawiera wektorów: zadań osadzania, które znów czekają, jest {jobs}, i czekają one, jak "
+        "każde zadanie osadzania bez modeli (tryb tylko deterministyczny), aż modele zostaną włączone (`cairnmind "
+        "models pull`). Do tego czasu wyszukiwanie korzysta tylko z tekstu, a odpowiedź, która wymaga wektorów, mówi "
+        "o tym."),
     RESTORED_WITHOUT_WORKSPACE: (
         "Przywrócono bez środowiska osoby: żadne otwarte środowisko tej instalacji nie odpowiedziało swoim kluczem "
         "(jest zamknięte, gniazdo w tym miejscu nie jest prywatnym gniazdem tej instalacji albo nie udało się "
@@ -119,9 +148,15 @@ def checked_restore(settings, source, open_store) -> dict:
     claims = None if proof == "key" else BackupClaims(Path(source).name)
     store = open_store()
     store.restore(source, claims=claims)
+    # A backup holds no vectors (#187): the embed jobs it brought are pending again, and both commands say so.
+    jobs = getattr(store, "embed_jobs_requeued", None)
+    rebuilt = {} if not jobs else {
+        "embed_jobs_requeued": jobs,
+        "vectors_notice": ({"disabled": VECTORS_WAIT, "enabled": VECTORS_REBUILT}.get(
+            getattr(settings, "knowledge_agent", ""), VECTORS_UNDECIDED), {"jobs": jobs})}
     if claims is not None:
         return {"person_confirmations": "claims_of_the_backup", "confirmations_turned_into_claims": claims.confirmations,
-                "record_kinds_withdrawn": claims.record_kinds, "notice": notice_item(proof, claims)}
+                "record_kinds_withdrawn": claims.record_kinds, "notice": notice_item(proof, claims), **rebuilt}
     from .confirmation_upgrade import report
     marks = report(getattr(store, "confirmations_before_rule", None))
-    return {"person_confirmations": "kept", **({"confirmations_before_rule": marks} if marks else {})}
+    return {"person_confirmations": "kept", **({"confirmations_before_rule": marks} if marks else {}), **rebuilt}

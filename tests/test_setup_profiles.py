@@ -436,6 +436,13 @@ def test_remote_tests_both_models_before_the_store_and_saves_nothing_when_one_fa
     assert config_bytes(tmp_path) == before
 
 
+def test_remote_does_not_advise_an_option_it_cannot_set_when_the_test_call_is_cut_at_the_length_limit(tmp_path, world):
+    make(tmp_path)
+    world.model_errors["chat"] = ValueError(memory_models.LENGTH_CUT_EFFORT)
+    result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *model_options(), "--yes")
+    assert result.exit_code != 0 and "length limit" in said(result) and "--reasoning-effort" not in said(result), result.output
+
+
 def test_remote_needs_the_consent_and_https_that_models_set_needs(tmp_path, world):
     make(tmp_path)
     before = config_bytes(tmp_path)
@@ -711,6 +718,17 @@ def test_the_report_of_confirmations_before_the_rule_is_said_after_the_restore(t
     assert "The restore marked 2 records as confirmed by a person and left 1 before the rule" in said(result)
 
 
+@pytest.mark.parametrize("agent, words", [
+    ("enabled", "3 embedding job(s) are pending again and the service rebuilds the vectors"),
+    ("disabled", "3 embedding job(s) are pending again, and they wait, as every embedding job does without models")])
+def test_the_rebuild_of_vectors_is_said_after_the_restore(tmp_path, world, monkeypatch, agent, words):
+    connect_only_installation(tmp_path, knowledge_agent=agent)
+    monkeypatch.setattr(Store, "embed_jobs_requeued", 3)  # what Store.restore sets when the backup brought no vectors (#187)
+    result = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "v.cairnmind.json.gz"), "--yes")
+    assert result.exit_code == 0, result.output
+    assert words in said(result)
+
+
 def test_an_interrupt_names_the_kept_backup_and_the_engine_before_it_goes_on(tmp_path, world):
     settings = connect_only_settings(tmp_path)
     world.restore_error = KeyboardInterrupt()
@@ -777,6 +795,7 @@ def test_the_dry_run_of_local_starts_and_writes_nothing(tmp_path, world):
     assert [what for what, _ in world.log] == ["open_readonly", "inspect"]
     assert not target.exists() and config_bytes(tmp_path) == before
     for words in (f"Tested: the store at {DB} can be read for the backup.", "The backup: the store at",
+                  "The backup carries no vectors: after the restore the service rebuilds them",  # before --yes (#187)
                   "Nothing was changed. To make these changes"):
         assert words in said(result), (words, result.output)
 

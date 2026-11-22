@@ -262,7 +262,7 @@ def ask_summary(result, translate) -> str:
     freshness = result.get("freshness")
     warnings = [str(w) for w in (freshness.get("warnings") or [])][:8] if isinstance(freshness, dict) else []
     if warnings:  # a source that changed since it was indexed, an index error: said, not only in the JSON (#313)
-        lines += ["", translate("Warnings") + ":"] + [f"- {item}" for item in warnings]
+        lines += ["", translate("Warnings") + ":"] + [f"- {fixed_message(item, translate)}" for item in warnings]
     coverage = result.get("coverage")
     if isinstance(coverage, dict) and coverage.get("answer_terms"):
         lines += ["", translate("Answer words found in quotes")

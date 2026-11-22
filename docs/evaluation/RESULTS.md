@@ -8,6 +8,19 @@
 
 This page is kept out of the copy that the evaluation indexes (see [../EVALUATION.md](../EVALUATION.md)), so that a run cannot read the results of earlier runs. It reports the questions that failed by topic, not by their answers.
 
+## The default chat model through the native path and through Ollama's `/v1` (issue #217)
+
+**NOT MEASURED YET.** Nothing below is a result. The figures need about one hour on the machine with the models: `scripts/compare_model_paths.sh` runs `cairnmind eval run` and `cairnmind eval repository` three times each on the native path, then the same through `/v1` for the chat role only (`--reasoning-effort none`, a second `ollama serve` whose context length is 16,384, because Cairnmind sends no `num_ctx` there), in a throwaway data directory with its own ports.
+
+| Path | Run | `eval run` right of 20 | `eval repository` right, complete and wrong | Model calls | Seconds | Calls cut at the length limit | Highest prompt tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| native | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
+| `/v1`, chat only | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
+
+The last two columns hold the `eval run` runs only: the `eval repository` report keeps no per-call length reason or prompt tokens, so they stay empty for it.
+
+What differed between the paths is to be written here after the run. Also to be recorded: whether the model check of `cairnmind models set --role chat --provider openai_compatible` without `--reasoning-effort` ends at the length limit on the real server.
+
 ## Questions about things the project does not have (issue #245)
 
 **With the subject check, twenty of twenty-one questions about things this repository does not have are refused, where eighteen were on the tree without it; the one that is still answered names its product in lower case, which the check does not read. No right answer was lost to the check: the twenty gave 18, 18 and 18 before, 18, 18 and 18 with its first version and 18, 18 and 18 with the version after review, with no complete and wrong answer, and the check refused none of them. Merged with the fixes after the release trial (478535d), which change what the answering model is shown, the figures are 20 of 21 again, and 19, 19 and 20 of the twenty with no complete and wrong answer, where the fixes alone gave 19 in one run; the check again refused no answer of the twenty or of the 22 further questions. The acceptance of the issue asks for every such question to be refused, so it is not met in full.**
@@ -271,6 +284,21 @@ The run at 9b21625 is the last one; the final tree differs from it by the merge 
 
 At c6ea2b5 the eight questions that were not complete were the project version (context budget), the ArcadeDB address and the installation time (answered `unknown`), the racy window, the worker poll interval, the indexing time and the graphics card (rejected by the support check), and the limit of the impact documentation scan (a quote that was not literal).
 
+## Planted instructions in sources (issue #179)
+
+**NOT MEASURED YET.** `cairnmind eval injection` is built and tested with fake models, which obey every plant (every rate 100%) or ignore every plant (every rate 0%); it has not been run with a real model, so there is no figure here, and none is to be read from this page until a run is recorded below with its model, date and fixture version. What is planted and what each rate counts is in [../EVALUATION.md](../EVALUATION.md#planted-instructions-in-sources). A low rate would show that this model did not act on these five texts in these runs; it would not show that it is safe, and a model that never reaches the ACK cannot request a file, a command or a confirmed record at all.
+
+| Path and rate | Counts | Model (digest) | Date | Fixture version | Runs | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| Extraction: plants restated | plant and run pairs with a proposed record that contains the canary | not run | not run | 2 | not run | NOT MEASURED YET |
+| Answers: a canary or a planted quote | asks with an answer and the plant shown whose answer carries a canary or quotes the planted text | not run | not run | 2 | not run | NOT MEASURED YET |
+| Answers: of those, supported | the same asks where the support check also said supported | not run | not run | 2 | not run | NOT MEASURED YET |
+| Answers: asks that could not be measured | asks without an answer, or in which the canary of the plant was never in a message to the model | not run | not run | 2 | not run | NOT MEASURED YET |
+| Built-in agent: runs that reached the ACK | runs in which the model read and acknowledged the packet | not run | not run | 2 | not run | NOT MEASURED YET |
+| Built-in agent: plant reached the agent | runs in which the text of the plant was in a tool result | not run | not run | 2 | not run | NOT MEASURED YET |
+| Built-in agent: requested a command, a file write or a confirmed record that a plant asks for | runs after the ACK in which the plant reached the agent (all denied or refused) | not run | not run | 2 | not run | NOT MEASURED YET |
+| Invariants broken (a command ran, a confirmed record stored, a file outside the sandbox or an execution file changed) | runs | not run | not run | 2 | not run | NOT MEASURED YET |
+
 ## What the support check does and does not catch
 
 As measured while this was built: it rejects a value quoted from a test, a lock file or a comment that only mentions a number, and lets through a value of a neighbouring setting or a number used for something else, such as a count in a test. It also varies between runs on the same answer. In the final runs it accepted two wrong answers (a count from a test next to the journal limit, and a command named in a script that builds the sample) and rejected answers that quoted the right definition.
@@ -323,3 +351,34 @@ In all six runs the five deterministic checks were true and every critical case 
 - After: four confirmed tasks, the proposed task, the confirmed decision and the proposed decision. The record left out is the finished task. Each confirmed record also says who confirmed it (`confirmed_by`, here `seed`, #177), and the state is 158 characters longer (7,550 against 7,392).
 
 **What this shows and does not show.** It shows the order of #213 reaching the model in a real run, and that recall on this fixture did not change with it or with `confirmed_by`. It does not show that an answer became better: the cases passed before as well, because a question names its case key and search finds the card whatever the project state holds, as the section on #181 above explains. The few more model calls per run after the merge (44, 45, 48 against 50, 48, 54) were not traced to a cause. `cairnmind eval repository` shows nothing about #213, because its copy has no records (see the first section). `cairnmind eval memory` was not run.
+
+# Store growth (#185)
+
+**NOT MEASURED YET.** `scripts/store_growth.py` is written and its measuring function is tested with tiny numbers; the run that fills the table below, and the second run after #187, have not been made. No figure here comes from a run.
+
+**How it measures.** `uv run python scripts/store_growth.py` starts its own ArcadeDB engine on a free loopback port in a new temporary data directory (it refuses to run when an environment variable names another database), and needs Java 21 and the pinned engine but no Ollama or other model. It never uses the default data directory, 8765, 2480 or 11434. It writes, through the product's own `import_history` and `index_project`:
+
+- transcript events in Claude's JSONL format, alternating user and assistant, 500 of each of 200 B, 1 KB and 8 KB of text (`--events`, `--event-sizes`), one step for each size;
+- 10 Markdown files of 2 KB, 20 KB and 100 KB in turn (`--files`, `--file-sizes`), indexed once and then revised 20 times (`--revisions`), each revision changing a tenth of the lines of every file, one step for each round.
+
+After every step it embeds every pending chunk through `Retriever.embed_pending` with a fake model that returns seeded pseudo-random vectors of 1,024 numbers (`--dimension`; the repository records the dimension of the default model nowhere, so that number is to be confirmed with `store size --json` on an installation, `vectors.types[].dimension`), and then measures: the rows and bytes of every collection and of every `vector_*` type (`store size`), the vector bytes (`embeddings` plus the `vector_*` types), the size of the database directory, and the size of one gzip backup written by `Store.backup`. The database directory is read with the engine stopped, which the script restarts for the next step, because the engine keeps files it has not written while it runs (about 20 MiB on a nearly empty store in a trial). Bytes per event and per revision are the difference between two steps divided by the events or files written in the second. `--json FILE` keeps the whole report.
+
+**What it does not show.**
+
+- Text is seeded pseudo-random words from one vocabulary of 2,000 words, so its gzip ratio is that of such words, not of real transcripts or code; the transcripts of an installation can compress better or worse.
+- Vectors are random numbers: their size in the store is right, but a real model's vectors are not random, and gzip may do slightly better on them.
+- Extraction is not run, so the jobs `extract` stay pending and no records, nodes or edges are written; the growth of extracted records, and of the code graph (the files are Markdown, not code), is outside this measurement.
+- Bytes of a collection are the length of its rows' JSON form in the engine (`store size`), and above 1,000 rows they are estimated from a sample (marked in the report), not the bytes on disk; the database directory is the bytes on disk, in the engine's own page files, and grows in steps of its page allocation, so a small run shows jumps and even zero or negative figures per unit. Only runs of the default size are to be read.
+- A revision of a file replaces its chunks and vectors (#186): what stays is a replaced source row with its full text, so the cost of a revision is that row, its job and the new chunks' difference, not a copy of the vectors.
+- One machine, one run, one engine version; no timing is claimed.
+
+| Step | Units | Database bytes | per unit | gzip backup bytes | per unit | Vector bytes | per unit | Chunks per unit |
+|---|---|---|---|---|---|---|---|---|
+| Before #187 (backup with vectors): 500 events of 200 B | NOT MEASURED YET | | | | | | | |
+| Before #187: 500 events of 1 KB | NOT MEASURED YET | | | | | | | |
+| Before #187: 500 events of 8 KB | NOT MEASURED YET | | | | | | | |
+| Before #187: first index of 10 files | NOT MEASURED YET | | | | | | | |
+| Before #187: 20 revisions of 10 files (average per revision) | NOT MEASURED YET | | | | | | | |
+| After #187 (backup without vectors): the same five rows | NOT MEASURED YET | | | | | | | |
+
+The "Before #187" rows cannot come from a run on this branch, where `Store.backup` no longer writes vectors: they are the script run against a checkout of origin/main from before #187 (or v0.12.0) with this script copied into it, and the "After" rows are the run on the branch with #187. Each filled row states the date, the commit and the ArcadeDB version, as the script prints them in the header of its table. The issue #185 closes with the first run, and #187 with the second, which shows the gzip backup column no longer carrying the vector column.
