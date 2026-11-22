@@ -669,9 +669,10 @@ def install_integrations(settings: Settings, project: dict[str, Any],
     root = Path(project["root"]).resolve()
     if not root.is_dir():
         raise ValueError(f"Project directory does not exist: {root}")
+    from .recorder_agent import RECORDER_OFF, RECORDER_ON, RECORDER_PATH, is_off as recorder_is_off, merge_recorder, remember
     if recorder is not None:
-        from .recorder_agent import remember
         remember(settings, project, recorder)
+    told = False  # a changed choice is always answered by one recorder sentence
     results: dict[str, Any] = {"project": project["id"], "clients": {}, "changed": [], "warnings": []}
     for client in clients:
         if client not in CLIENTS:
@@ -698,7 +699,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                                root / ".codex" / "config.toml" if client == "codex" else root / ".mcp.json"))
         else:
             results["warnings"].append(f"{client}: MCP capability could not be verified; MCP config left unchanged.")
-            if client == "claude":
+            if client == "claude" and not recorder_is_off(settings, project):  # off removes the file below: not "left in place"
                 from .recorder_agent import left_note
                 if note := left_note(root):
                     results["warnings"].append(note)
@@ -719,10 +720,10 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
-        from .recorder_agent import RECORDER_ON, RECORDER_PATH, is_off, merge_recorder
-        info["recorder_off"] = client == "claude" and is_off(settings, project)  # the person's choice (#389)
+        info["recorder_off"] = client == "claude" and recorder_is_off(settings, project)  # the person's choice (#389)
         # A subagent with its own session; Codex subagents share the parent's (#376). Off removes the file even where MCP is unverified.
         if client == "claude" and (info["mcp"] or info["recorder_off"]):
+            told = True
             try:
                 changed, note = merge_recorder(root, settings, project, info.get("version"))
                 if changed and note is None:  # a removal is named by its own sentence, not as written
@@ -734,6 +735,8 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 info["recorder_configured"] = note is None
             except (ValueError, OSError) as exc:
                 results["warnings"].append(str(exc))
+    if recorder is not None and "claude" in clients and not told:  # Claude Code absent or its MCP unverified: the choice is still saved
+        results["warnings"].append(RECORDER_ON.format(path=RECORDER_PATH) if recorder else RECORDER_OFF)
     for client in clients:
         info = results["clients"][client]
         for path, entry in bare_devbrain_entries(root, client):

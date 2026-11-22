@@ -193,7 +193,14 @@ def test_the_choice_stays_off_for_an_older_claude_and_where_mcp_is_unverified(se
     probe["mcp"] = False  # the file is still removed: off does not wait for a verified capability
     result = integrations.install_integrations(settings, project, recorder=False)
     assert not path.exists() and recorder_agent.RECORDER_OFF_REMOVED.format(path=PATH) in result["warnings"]
+    assert recorder_agent.RECORDER_LEFT.format(path=PATH) not in result["warnings"]  # removed, so not "left in place"
     probe["mcp"], probe["version"] = True, "2.1.237"
+    result = integrations.install_integrations(settings, project, recorder=False)  # off beats an older Claude Code
+    assert recorder_agent.RECORDER_OFF in result["warnings"]
+    probe["version"] = "2.1.500"
+    result = integrations.install_integrations(settings, project)  # and survives an upgrade
+    assert not path.exists() and recorder_agent.RECORDER_OFF in result["warnings"]
+    probe["version"] = "2.1.237"
     result = integrations.install_integrations(settings, project, recorder=True)  # on, but an older Claude Code
     assert not path.exists() and recorder_agent.RECORDER_ON.format(path=PATH) not in result["warnings"]
     assert recorder_agent.RECORDER_NOT_WRITTEN.format(version="2.1.237") in result["warnings"]
@@ -246,6 +253,15 @@ def test_no_recorder_without_claude_or_without_its_mcp_capability(settings, proj
     probe["mcp"] = False
     result = integrations.install_integrations(settings, project, ("claude",))  # an earlier file is named, not hidden
     assert (root / PATH).is_file() and recorder_agent.RECORDER_LEFT.format(path=PATH) in result["warnings"]
+
+
+def test_a_saved_choice_is_answered_even_where_nothing_is_written(settings, project, probe):
+    probe["installed"] = False
+    result = integrations.install_integrations(settings, project, ("claude",), recorder=False)
+    assert recorder_agent.RECORDER_OFF in result["warnings"] and recorder_agent.is_off(settings, project)
+    probe["installed"], probe["mcp"] = True, False
+    result = integrations.install_integrations(settings, project, ("claude",), recorder=True)
+    assert recorder_agent.RECORDER_ON.format(path=PATH) in result["warnings"] and not recorder_agent.is_off(settings, project)
 
 
 def test_the_recorder_file_names_only_its_own_server_and_tools(settings, project):
