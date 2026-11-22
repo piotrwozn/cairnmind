@@ -1,17 +1,22 @@
 """Confirm a plan in the inspector (#214): the person's own way to confirm a plan and its active steps.
 
-The command line confirms nothing any more, so this form is where a plan is confirmed. It sends the exact
-plan version the inspector read; the inspector route checks it, and the workspace's key travels with the
-request (terminal_client).
+The command line confirms nothing any more, so this form and its consent dialog are where a plan is confirmed.
+The form only collects the reason; the request goes out from the dialog (#332). It sends the exact plan version
+the inspector read; the inspector route checks it, and the workspace's key travels with the request
+(terminal_client).
 """
 from __future__ import annotations
 
 from .terminal_notices import about
+from .terminal_person_act import agreed, typed
+from .terminal_safe import safe_text
 
 MESSAGES = {
     "Confirm plan": "Potwierdź plan",
     "v{version} · Confirms the plan's title, goal and constraints with every active step.":
         "v{version} · Potwierdza tytuł, cel i ograniczenia planu razem z każdym aktywnym krokiem.",
+    "Confirm this plan?": "Potwierdzić ten plan?",
+    "Title: {title}": "Tytuł: {title}",
     "Plan confirmed with an audit note.": "Plan potwierdzony z notatką audytu.",
     "The plan was not confirmed. The current version was reloaded.":
         "Plan nie został potwierdzony. Wczytano bieżącą wersję.",
@@ -28,8 +33,13 @@ async def confirm_plan(app):
     form = await app.push_screen_wait(FormModal(
         app.t("Confirm plan"), [Field("reason", app.t("Reason"), multiline=True)],
         note=app.t("v{version} · Confirms the plan's title, goal and constraints with every active step.",
-                   version=plan["version"]), submit=app.t("Confirm plan")))
+                   version=plan["version"]), submit=app.t("Continue")))
     if form is None:
+        return
+    text = "\n".join([app.t("Title: {title}", title=safe_text(str(plan.get("title") or ""), limit=200)),
+                      app.t("v{version} · Confirms the plan's title, goal and constraints with every active step.",
+                            version=plan["version"]), "", typed(app.t, "Reason", form["reason"])])
+    if not await agreed(app, "Confirm this plan?", text, "Confirm plan"):
         return
     if scope != app._scope_version:
         app.notice_for(about(project_id), app.t("The project changed during review. Nothing was saved."), "warn")

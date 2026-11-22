@@ -74,6 +74,10 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The workspace adopts a group of old tasks into a plan: More, then Old task groups lists each group with its tasks in plan order; after the plan title, a consent dialog shows the tasks and what adopting does, and Adopt makes the group a new plan in one person's act, its steps proposed until the plan is confirmed (#305).
 - POST /inspector/legacy-groups/adopt needs the key the open workspace keeps; the service token alone is refused and nothing is written. GET /inspector/legacy-groups lists the groups (#305).
 - `cairnmind plan adopt` still adopts a group that holds nothing a person confirmed; for the other case its refusal names More, then Old task groups (#305).
+- Security: in the workspace a person's act is sent only from a consent dialog that shows what will be done, so a key typed before it appeared never sends one; this covers confirming or disputing a record, resolving a conflict, confirming a plan, releasing a record, an impact verdict, accepting and withdrawing a transcript record kind, and Apply of an archive import in the memory view, and a form before the dialog only collects the reason, note or title and its button says Continue (#332).
+- Withdrawing an accepted transcript record kind now asks in a consent dialog; before, its confirmation took keys typed before it appeared (#332).
+- Importing a snapshot archive over verdicts given on this computer now lists every record it replaces, with no cap, in the check and in the consent dialog, and is refused with nothing written if the archive or the store changed after the check (#333).
+
 ### Fixes
 
 - Two installations that first open one store at the same moment now end as one writer and one reader also when the database server runs in production mode, as the image of `deploy/arcadedb` does; before, the second one's command failed with the server's bare error (#277).

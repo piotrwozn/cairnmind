@@ -587,6 +587,7 @@ async def test_actual_textual_graph_live_source_selection_opens_exact_inspector_
 @pytest.mark.asyncio
 async def test_actual_sidebar_clone_snapshot_preflight_requires_confirmation_and_preserves_scope(terminal_stack, tmp_path):
     from cairnmind.terminal_panels import SidebarApp
+    from cairnmind.terminal_published_import import archive_replaced
 
     source = terminal_stack
     project = source.projects[0]
@@ -617,13 +618,29 @@ async def test_actual_sidebar_clone_snapshot_preflight_requires_confirmation_and
                             await result
                     return values
                 if type(screen).__name__ == "ConfirmModal":
+                    # The dialog is a consent dialog whose text names the scope the person is asked about (#332, #333).
+                    assert screen.consent and isinstance(screen.value, str)
+                    assert "Project: cloned-alpha" in screen.value and f"Working folder: {clone}" in screen.value
+                    checked = sent[-1]
+                    assert checked[1]["dry_run"] is True and checked[1]["root"] == str(clone)
+                    assert all(item in screen.value for item in archive_replaced(checks[-1]))
                     confirmations.append(screen.value)
-                    assert screen.value["project"]["id"] == project["id"]
-                    assert screen.value["project"]["root"] == str(clone)
-                    assert screen.value["status"] == "dry_run"
                     return approve[0]
                 raise AssertionError("Unexpected confirmation screen: " + type(screen).__name__)
 
+            sent, checks = [], []
+            ask = sidebar.request
+
+            async def request(method, path, **kwargs):
+                body = kwargs.get("json")
+                answer = await ask(method, path, **kwargs)
+                if path == "/api/memory/import":
+                    sent.append((path, body))
+                    if body["dry_run"]:
+                        checks.append(answer)
+                return answer
+
+            sidebar.request = request
             sidebar.push_screen_wait = choose
             async with sidebar.run_test(size=(90, 40)):
                 await wait_async(lambda: len(sidebar.projects) == 2)
@@ -636,6 +653,11 @@ async def test_actual_sidebar_clone_snapshot_preflight_requires_confirmation_and
                 assert sidebar.workspace.read()["intent"] == "inspect"
                 assert sidebar.workspace.read()["project_id"] == project["id"]
             assert len(confirmations) == 2
+            real = [body for _, body in sent if not body["dry_run"]]
+            assert len(real) == 1, "Only the approved import is sent as a write"
+            assert real[0]["root"] == str(clone) and real[0]["path"] == str(destination)
+            assert real[0]["expected_replaced"] == archive_replaced(checks[-1])
+            assert checks[-1]["project"]["id"] == project["id"] and checks[-1]["status"] == "dry_run"
             assert len(target.store.list_projects()) == 3
             assert target.store.list_records(project["id"])[0]["id"] == project["record"]["id"]
             imported = target.store.query("SELECT content FROM sources WHERE id=:id", {"id": project["source"]["id"]})

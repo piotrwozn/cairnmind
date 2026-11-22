@@ -16,7 +16,9 @@ from .terminal_i18n import tr_count
 from .terminal_i18n_messages import broker_error_text
 from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
+from .terminal_person_act import agreed, resolve_text, review_text
 from .terminal_proposed import ProposedView
+from .terminal_published_import import archive_replaced, archive_text
 from .terminal_safe import plain, safe_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
                           summary_text)
@@ -77,6 +79,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self._entity_request = 0
         self._selected_entity_signature = None
         self.pending_import = None
+        self.import_check = None  # the check result Apply shows in its dialog (#332)
         self.preview_scope = None
         self._journal_timer = None
         self.memory_status = {}
@@ -502,8 +505,12 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         form = await self.push_screen_wait(FormModal(self.t("Confirm record") if action == "confirm" else self.t("Dispute record"),
             [Field("reason", self.t("Reason"), required=action == "dispute", multiline=True)],
             note=f"v{record['version']}" + (f" · plan v{self.plan_version}" if self.plan_version else "") + " · " + self.t("Review changes confidence; it does not complete a task."),
-            submit=self.t("Confirm review") if action == "confirm" else self.t("Save dispute")))
+            submit=self.t("Continue")))
         if form is None:
+            return
+        if not await agreed(self, "Confirm this record?" if action == "confirm" else "Dispute this record?",
+                            review_text(record, action, plan_version, form["reason"], self.t),
+                            "Confirm review" if action == "confirm" else "Save dispute"):
             return
         if scope != self._scope_version:
             self.notice_for(about(project_id), self.t("The project changed during review. Nothing was saved."), "warn")
@@ -535,9 +542,9 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         # A fact and a decision cannot replace each other, so that pair is not offered "Keep".
         keep = [(self.t("Keep A: it replaces B and becomes confirmed"), "keep-first"),
                 (self.t("Keep B: it replaces A and becomes confirmed"), "keep-second")] if pair.get("can_supersede", True) else []
-        choice = await self.push_screen_wait(ChoiceModal(self.t("Resolve conflict"), [
-            *keep, (self.t("Both are valid in different scopes"), "different_scopes"),
-            (self.t("False alarm: they do not contradict"), "dismiss")]))
+        options = [*keep, (self.t("Both are valid in different scopes"), "different_scopes"),
+                   (self.t("False alarm: they do not contradict"), "dismiss")]
+        choice = await self.push_screen_wait(ChoiceModal(self.t("Resolve conflict"), options))
         if choice is None:
             return
         action = "supersede" if choice.startswith("keep-") else choice
@@ -546,8 +553,12 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                    required=action == "different_scopes", multiline=True)],
             note=f"A v{first['version']} · B v{second['version']} · "
                  + self.t("The decision is saved with an audit note; every source is kept."),
-            submit=self.t("Save decision")))
+            submit=self.t("Continue")))
         if form is None:
+            return
+        label = next(text for text, value in options if value == choice)
+        if not await agreed(self, "Save this decision?", resolve_text(pair, label, action, form["reason"], self.t),
+                            "Save decision"):
             return
         if scope != self._scope_version:
             self.notice_for(about(project_id), self.t("The project changed during review. Nothing was saved."), "warn")
@@ -654,7 +665,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             self.show_detail(result, text=self.t("Snapshots contain complete conversations and sources. Review before sharing.") + "\n\n" +
                              str(result.get("path") or "") + "\n" + summary_text(result, self.language))
         elif shown == "import":
-            self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + summary_text(result, self.language))
+            self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + archive_text(result, self.language))
         else:
             self.show_detail(result)
 
@@ -719,14 +730,23 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     submit=self.t("Check import"), on_submit=check_import))
                 if value and scope == self._scope_version:
                     payload, result = checked["payload"], checked["result"]
-                    self.pending_import = {**payload, "replace_confirmed": replaces_here(result)}
+                    # One check: the dialog shows its list and the import carries the same list (#332, #333).
+                    self.pending_import = {**payload, "replace_confirmed": replaces_here(result),
+                                         "expected_replaced": archive_replaced(result)}
+                    self.import_check = result
                     self.query_one("#memory-apply", Button).disabled = False
                     self.show_memory("import", result)
             elif action == "apply":
                 if not self.pending_import:
                     raise ValueError(self.t("Check the import with its source and destination folders first."))
-                payload = dict(self.pending_import)
-                # The check listed what the import replaces of this machine's own verdicts; Apply is the choice.
+                pending = self.pending_import
+                # The check the person read is the consent dialog's text; only its Import memory sends (#332).
+                if not await agreed(self, "Import this project memory?", archive_text(self.import_check, self.language),
+                                    "Import memory"):
+                    return
+                if self.pending_import is not pending:  # memory or the project changed while the dialog was open
+                    raise ValueError(self.t("Check the import with its source and destination folders first."))
+                payload = dict(pending)
                 result = await self.request("POST", "/api/memory/import", json={**payload, "dry_run": False})
                 self.pending_import = None
                 self.query_one("#memory-apply", Button).disabled = True
