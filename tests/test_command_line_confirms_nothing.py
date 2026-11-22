@@ -7,6 +7,7 @@ import sys
 from uuid import uuid4
 
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
 from cairnmind import cli, confirmation, impact_verdicts, memory_published_release, record_kinds
@@ -22,7 +23,7 @@ def clean_environment(**extra):
 
 
 def words(text):
-    return " ".join(text.split())
+    return plain_words(text)  # also drops the colour codes a forced-colour run puts inside option names
 
 
 def test_the_documented_pseudo_terminal_sequence_no_longer_confirms(tmp_path):
