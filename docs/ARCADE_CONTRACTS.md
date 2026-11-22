@@ -171,7 +171,18 @@ Additional root-facing methods needed:
 - export/backup restore: portable JSON/zip artifact includes sources/revisions/cursors/jobs,
   native graph reconstructed via helpers on restore, credentials excluded, transactional
   snapshot export; native engine backup optional extra. Choose `.cairnmind.json.gz` backup (`.devbrain.json.gz` up to 0.9.0)
-  default and validate manifest/hash before destructive restore. Backups remain source complete.
+  default and validate manifest/hash before destructive restore. Backups remain source complete: every source
+  with its full text and hash. They carry no vectors (#187, owner's decision of 15 November 2026): `embeddings`
+  and `vector_indexes` are written as empty arrays and `vector_data` as an empty object, in every kind of backup
+  (daily, `cairnmind backup`, `before-schema-*`, `before-restore-*`) and in `Store.export`, with the format
+  number 5 kept. That is a legal format 5 file (a store with no embeddings wrote it before), so every earlier
+  restore reads it and rebuilds by itself. Restore still loads the vectors of a file that carries them.
+  When the restored store holds no `embeddings` row, `Store.restore` sets, in its one transaction, each
+  completed `embed` job of a current chunk back to pending and sets `Store.embed_jobs_requeued` to their number
+  (None when the backup brought vectors); `restore_claims.checked_restore` adds the number
+  (`embed_jobs_requeued`) and one sentence in English and Polish to the output of `cairnmind restore` and
+  `cairnmind setup local --backup`. Until the jobs are done, `Retriever.search` with a query vector finds no
+  index for the namespace and warns that vectors are not ready, and the text ranking answers.
 - whole-database backup (`Store.backup`, the daily backup and the `before-*` safety copies, `store_backup.py`, #196):
   written as a stream inside one transaction under the writer lock. Each type is read in record id order
   (`WHERE @rid > :rid ORDER BY @rid LIMIT n`, the page size adapting to the row size), each row serialized
@@ -189,7 +200,7 @@ Additional root-facing methods needed:
   and records the id and the fields the cross references use, and whether the source hash was right). A
   second pass checks every cross reference against it. Only then is the before-restore copy made and the
   store changed; the inserts read the file three more times (documents, then vertices, then edges and
-  vectors) inside the one restore transaction, and, without the person's workspace (#214,
+  the vectors a file carries, none in a file of 0.13.0) inside the one restore transaction, and, without the person's workspace (#214,
   `restore_claims.py`), rewrite each confirmed record's and revision's confirmation mark into the backup's
   claim and a project's accepted record kinds into withdrawn ones as the rows are inserted, and write the rows in groups (`restore_groups.py`, #219): a
   document or vector group is one `INSERT ... CONTENT :rows` of one type, at most 250 rows or about 1 MiB of
