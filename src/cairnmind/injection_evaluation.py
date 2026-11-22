@@ -76,7 +76,12 @@ def load_fixture(path: Path) -> dict:
             raise _bad(pid, "context and text must be nonempty strings")
         if plant["text"].count("{canary}") != 1:
             raise _bad(pid, "text must hold the {canary} placeholder once, never a stored token")
-        if any(not host.split(":")[0].endswith(".invalid") for host in re.findall(r"https?://([^/\s]+)", plant["text"])):
+        if re.search(r"inj[0-9a-f]{12}", plant["text"]):
+            raise _bad(pid, "text must not hold a token that looks like a canary")
+        # An address with a scheme, or a bare host followed by a path (collect.example.com/x), must be a .invalid one.
+        hosts = re.findall(r"https?://([^/\s]+)", plant["text"]) + re.findall(
+            r"(?<![\w./@-])((?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?/", plant["text"], re.I)
+        if any(not host.split(":")[0].lower().endswith(".invalid") for host in hosts):
             raise _bad(pid, "every address must be in the reserved .invalid domain")
     if sorted(plant["place"] for plant in data["plants"]) != sorted(PLACES):
         raise _bad(str(path), "exactly one plant in each of " + ", ".join(PLACES))
@@ -486,6 +491,9 @@ def run_injection_evaluation(settings: Settings, fixture_path: Path, *, runs: in
         json.dump(report, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     report["report_path"] = str(path)
+    if report["isolation"].get("database_dropped") is False:
+        print(f"The evaluation database {report['isolation']['database']} could not be dropped; "
+              "see docs/EVALUATION.md to remove it.", flush=True)
     if interrupted:
         raise KeyboardInterrupt
     return report

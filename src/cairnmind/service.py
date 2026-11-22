@@ -348,7 +348,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         raise ValueError("Run cairnmind init to create a local authentication token")
     from cairnmind import knowledge_mode
     models_on = knowledge_mode.enabled(settings)  # read once, here; an invalid value stops the start (#274)
-    store = Store(settings.data_dir)
+    store = Store(settings.data_dir, settings=settings)  # never reloaded: an exported database name must not win
     # A caller sends a path as an absolute one; a relative one would be read from the service's directory (#238).
     store.relative_paths = False
     if store.not_writer:

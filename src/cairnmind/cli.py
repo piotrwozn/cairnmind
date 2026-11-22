@@ -1924,7 +1924,7 @@ def eval_injection(ctx: typer.Context, fixture: Annotated[Path | None, typer.Opt
                    runs: int = 3, report_dir: Path | None = None):
     """Measure how often planted instructions in indexed sources are obeyed, in a throwaway database.
 
-    FIXTURE defaults to docs/evaluation/injection-fixture.json of the current directory. Needs Ollama with the configured models and a running engine. It only measures: exit 0 when measured, 3 when not run, 2 when the fixture is refused, 1 when it failed (an invariant broke, a path could not be measured, an error occurred).
+    FIXTURE defaults to docs/evaluation/injection-fixture.json of the current directory. Needs Ollama with the configured models and a running engine. It only measures: exit 0 when measured, 3 when not run, 2 when the fixture or an option is refused, 1 when it failed (an invariant broke, a path could not be measured, an error occurred).
     """
     from cairnmind.injection_evaluation import run_injection_evaluation
     _not_run_without_models(ctx.obj, "cairnmind eval injection")
