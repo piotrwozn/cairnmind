@@ -112,7 +112,7 @@ class Rig:
         """carry_out; (the final state, the last lines)."""
         reports = []
         state = setup_change.carry_out(self.data, request, expected or self.agreed(request), language,
-                                       lambda state, lines: reports.append((state, list(lines))))
+                                       lambda state, lines, other: reports.append((state, list(lines))))
         assert reports and reports[-1][0] == state
         return state, "\n".join(reports[-1][1])
 
@@ -204,6 +204,111 @@ def test_a_reader_and_an_unknown_writer_refuse(rig, role, template):
     state, text = rig.go(rig.request(), expected={"plan": [], "writer": []})
     assert state == "refused" and rig.shutdowns == []
     assert setup_change.refusal(Settings.load(rig.data))[0] == template
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+@pytest.mark.parametrize("way", ["writer", "jobs"])
+def test_a_store_that_cannot_be_read_refuses_names_the_way_out_and_stops_nothing(rig, monkeypatch, language, way):
+    """The owner's decision of 22 November: the workspace does not stop anything on a store it cannot read; the way
+    out is `cairnmind setup local --empty --yes` in a terminal."""
+    make(rig.tmp)
+    before = config_bytes(rig.tmp)
+    if way == "writer":
+        rig.role = {"role": "unknown", "reason": "The store cannot be read."}
+    else:
+        def unreadable(cls, settings):
+            raise ValueError("no schema")
+        monkeypatch.setattr(Store, "open_readonly", classmethod(unreadable))
+    item = setup_change.refusal(Settings.load(rig.data))
+    assert item[0] == (setup_change.WRITER_UNKNOWN if way == "writer" else setup_change.JOBS_UNKNOWN)
+    state, text = rig.go(rig.request(), expected={"plan": [], "writer": []}, language=language)
+    sentence = render_one(item, language)
+    assert state == "refused" and said(sentence) in said(text)
+    assert "cairnmind setup local --empty --yes" in sentence and "cairnmind stop" in sentence
+    assert ("Jeśli ta baza zniknęła" if language == "pl" else "If that store is gone") in sentence
+    assert rig.shutdowns == [] and rig.starts == []  # nothing was asked to stop, nothing was started
+    rig.untouched(before)
+
+
+# The end of a change that nobody watched ---------------------------------------------------------------------------------
+
+def finished(tmp, state="changed", *, language="en", pid=4242, lines=("The end.",), other=("Koniec.",), **extra):
+    (tmp / "data").mkdir(exist_ok=True)
+    (tmp / "data" / setup_change.PROGRESS).write_text(json.dumps(
+        {"pid": pid, "state": state, "language": language, "lines": list(lines), "other": list(other), **extra}))
+
+
+@pytest.mark.parametrize("state", list(setup_change.EXIT))
+def test_every_final_state_is_unseen_once_and_in_the_language_asked_for(tmp_path, state):
+    finished(tmp_path, state)
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") == {"pid": 4242, "state": state, "lines": ["The end."]}
+    assert setup_change.unseen_outcome(tmp_path / "data", "pl")["lines"] == ["Koniec."]  # the other rendering, not English
+    setup_change.mark_shown(tmp_path / "data", 4242)
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is None
+    assert setup_change.unseen_outcome(tmp_path / "data", "pl") is None
+    assert json.loads((tmp_path / "data" / setup_change.PROGRESS).read_text())["shown"] is True
+
+
+def test_a_change_that_has_not_ended_or_still_runs_is_not_an_unseen_outcome(tmp_path, monkeypatch):
+    finished(tmp_path, "running")
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is None  # a helper killed midway: doctor says so
+    finished(tmp_path, "changed")
+    for kind in ("running", "unreadable"):  # a helper that runs, or whose mark cannot be judged: never a stale end
+        monkeypatch.setattr(setup_mark, "state", lambda data_dir, kind=kind: (kind, 4242))
+        assert setup_change.unseen_outcome(tmp_path / "data", "en") is None
+    monkeypatch.setattr(setup_mark, "state", lambda data_dir: ("stale", 4242))  # its helper died after it wrote the end
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is not None
+
+
+@pytest.mark.parametrize("raw", ["{", "[]", "text", '{"pid": "7", "state": "changed", "lines": ["a"], "language": "en"}',
+                                 '{"pid": 7, "state": "done", "lines": ["a"], "language": "en"}',
+                                 '{"pid": 7, "state": "changed", "lines": [1], "language": "en"}',
+                                 '{"pid": 7, "state": "changed", "lines": [], "language": "en"}',
+                                 '{"pid": 7, "state": "changed", "lines": ["a"], "language": "pl"}'])  # no "other" to show
+def test_a_file_that_cannot_be_read_shows_nothing_and_does_not_raise(tmp_path, raw):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / setup_change.PROGRESS).write_text(raw)
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is None
+    setup_change.mark_shown(tmp_path / "data", 7)
+    (tmp_path / "data" / setup_change.PROGRESS).unlink()
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is None  # no file at all
+
+
+def test_shown_is_recorded_only_for_the_change_it_belongs_to_and_the_next_change_is_unseen_again(tmp_path):
+    finished(tmp_path)
+    setup_change.mark_shown(tmp_path / "data", 99)  # another change's pid
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is not None
+    setup_change.mark_shown(tmp_path / "data", 4242)
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is None
+    setup_change._write_progress(tmp_path / "data", "failed", "en", ["Another end."], ["Inny koniec."])
+    assert setup_change.unseen_outcome(tmp_path / "data", "en")["lines"] == ["Another end."]
+
+
+SCENARIOS = {
+    "changed": lambda rig: None,
+    "refused": lambda rig: (setattr(rig, "jobs", [{"project_id": "p1", "kind": "ingest"}]),
+                            setattr(rig, "projects", [{"id": "p1", "name": "demo"}])),
+    "failed": lambda rig: setattr(rig, "start_error", lambda b: json.loads(b).get("arcade_connect_url") == DB),
+    "service_down": lambda rig: setattr(rig, "start_error", lambda b: True),
+    "interrupted": lambda rig: setattr(rig, "start_signal", "gone"),
+}
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+@pytest.mark.parametrize("state", list(setup_change.EXIT))
+def test_each_final_state_is_written_in_both_languages_with_no_english_inside_polish(rig, state, language):
+    make(rig.tmp)
+    SCENARIOS[state](rig)
+    request, reports = rig.request(), []
+    got = setup_change.carry_out(rig.data, request, rig.agreed(request) if state != "refused" else {"plan": [], "writer": []},
+                                 language, lambda *report: reports.append(report))
+    assert got == state and reports[-1][0] == state
+    _, shown, other = reports[-1]
+    english, polish = (shown, other) if language == "en" else (other, shown)
+    assert len(english) == len(polish) and any(line.strip() for line in english)
+    for en, pl in zip(english, polish):
+        assert not en.strip() or en != pl, en  # a Polish line that is the English one is an English sentence in Polish
+    assert "knowledge service" not in " ".join(polish).lower()
 
 
 def test_a_variable_and_a_coding_session_refuse(rig, monkeypatch):

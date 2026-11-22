@@ -30,8 +30,7 @@ from cairnmind.terminal_ui import ChoiceModal, FormModal
 from consent_steps import consent_drawn, early_enter_sends_nothing
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
-from test_workspace_stage_scope import wait_until
-from test_terminal_setup_change import fill, on_screen, remote_db, report, until
+from test_terminal_setup_change import click, fill, laid_out, on_screen, remote_db, report, until
 from test_topology import REMOTE, WRITER, clean_environment, make, remote_store  # noqa: F401 - clean_environment is an autouse fixture
 
 
@@ -323,15 +322,19 @@ def ui(tmp_path, monkeypatch, status, language="en"):
 
 async def choose_the_entry(app, pilot):
     app.action_settings()
-    await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
+    await until(pilot, on_screen(app, ChoiceModal), what="the Settings menu")
     assert app.screen.choices[-1][1] == "topology" and len(app.screen.choices) == 5
     if getattr(app, "language", "en") == "pl":
-        assert "Baza i modele" in screen_text(app)
+        await until(pilot, lambda: "Baza i modele" in screen_text(app), what="the entry Baza i modele in the menu")
     await pilot.press("down", "down", "down", "down", "enter")
 
 
 def is_screen(app):
     return isinstance(app.screen, terminal_setup._screen_class())
+
+
+def screen_open(app):
+    return laid_out(app, terminal_setup._screen_class())
 
 
 def notice_of(app):
@@ -347,15 +350,32 @@ async def test_settings_opens_the_screen_with_one_read(tmp_path, monkeypatch, la
         await settle(app, pilot)
         before = len(broker.seen)
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: is_screen(app))
+        await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
         assert app.screen.heading == "Storage and models"
-        await pilot.pause()
+        await until(pilot, lambda: plain_words(lines(status["topology"], language)[0])[:30] in plain_words(screen_text(app)),
+                    what="the first line of the screen")
         if language == "pl":
             assert tr(terminal_setup.TITLE, "pl") == "Baza i modele" and "Baza i modele" in screen_text(app)
         assert plain_words(lines(status["topology"], language)[0])[:30] in plain_words(screen_text(app))
         await pilot.press("escape")
-        await wait_until(pilot, lambda: not is_screen(app))
+        await until(pilot, lambda: not is_screen(app), what="the screen closed")
     assert broker.seen[before:] == [("GET", "/api/status", None, None)]
+
+
+@pytest.mark.asyncio
+async def test_a_menu_that_is_slow_to_mount_is_used_only_once_it_is_mounted_and_focused(tmp_path, monkeypatch):
+    """A key sent while a menu is the top screen but has no rows and no focus goes to the sidebar below it (what a
+    loaded machine did to the tests of this screen); the steps wait for the menu, so a slow mount changes nothing."""
+    original = ChoiceModal.on_mount
+    monkeypatch.setattr(ChoiceModal, "on_mount", lambda self: self.set_timer(0.5, lambda: original(self)))
+    status = served(make(sub(tmp_path, "service")))
+    app, broker = ui(tmp_path, monkeypatch, status)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        await choose_the_entry(app, pilot)
+        await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
+        await pilot.press("escape")
+        await until(pilot, lambda: not is_screen(app), what="the screen closed")
 
 
 @pytest.mark.asyncio
@@ -364,8 +384,7 @@ async def test_the_screen_fits_and_scrolls_at_80_by_24(tmp_path, monkeypatch):
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: is_screen(app))
-        await pilot.pause()
+        await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
         for identifier in ("#change-local", "#change-remote-db", "#change-remote", "#setup-close"):
             region = app.screen.query_one(identifier, Button).region
             assert region.width > 0 and region.x >= 0 and region.right <= 80 and region.bottom <= 24, identifier
@@ -390,12 +409,12 @@ async def test_a_service_that_does_not_answer_is_said_and_nothing_is_shown(tmp_p
         broker.refuse = BrokerError(503, "The client service is unavailable; running sessions are kept.")
         await choose_the_entry(app, pilot)
         detail = "sesje" if language == "pl" else "running sessions are kept"  # the broker's fixed detail, translated
-        await wait_until(pilot, lambda: detail in notice_of(app))
+        await until(pilot, lambda: detail in notice_of(app), what="the notice naming the broker's reason")
         assert not is_screen(app) and (language == "en" or "running sessions" not in notice_of(app))
         assert tr(NO_ANSWER, language)[:30] in notice_of(app)  # and where to look instead
         broker.refuse = None  # an answer of another shape
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: tr(UNREADABLE, language)[:40] in notice_of(app))
+        await until(pilot, lambda: tr(UNREADABLE, language)[:40] in notice_of(app), what="the notice that the answer is unreadable")
         assert not is_screen(app)
 
 
@@ -443,9 +462,8 @@ def to_the_consent_dialog(app, pilot, tmp_path):
     async def go():
         await settle(app, pilot)
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: is_screen(app))
-        await pilot.pause()
-        await pilot.click("#change-remote-db")
+        await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
+        await click(pilot, "#change-remote-db")
         await until(pilot, on_screen(app, FormModal))
         await fill(app, pilot, **remote_db(tmp_path))
         return await consent_drawn(app, pilot)
@@ -466,7 +484,7 @@ async def test_a_button_of_the_screen_starts_nothing_before_the_consent_dialog_a
         if how == "escape":
             await pilot.press("escape")
         else:
-            await pilot.click("#confirm-no")
+            await click(pilot, "#confirm-no")
         await until(pilot, lambda: not isinstance(rig.app.screen, ConfirmModal))
         await settle(rig.app, pilot)
     assert rig.begun == [] and config_bytes(tmp_path) == before and rig.reads == ["GET"]
@@ -478,7 +496,7 @@ async def test_agreeing_in_the_dialog_starts_the_one_change_the_button_named(tmp
     rig = carried_out(tmp_path, monkeypatch)
     async with rig.app.run_test(size=(120, 40)) as pilot:
         await to_the_consent_dialog(rig.app, pilot, tmp_path)
-        await pilot.click("#confirm-yes")
+        await click(pilot, "#confirm-yes")
         await until(pilot, lambda: rig.begun)
         assert len(rig.begun) == 1 and rig.begun[0][0].profile == "remote-db" and rig.begun[0][2] == "en"
         assert rig.reads == ["GET"]  # the screen sent one read; the helper is the only thing that changes anything
@@ -491,15 +509,15 @@ async def test_after_a_change_made_here_the_screen_shows_the_new_place_when_it_i
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(app, pilot)
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: is_screen(app))
-        await pilot.pause()
+        await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
+        await until(pilot, lambda: "Storage and models" in plain_words(screen_text(app)), what="the screen's title")
         first = plain_words(screen_text(app))
         assert DB_HOST not in first
-        await pilot.click("#change-remote-db")
+        await click(pilot, "#change-remote-db")
         await until(pilot, on_screen(app, FormModal))
         await fill(app, pilot, **remote_db(tmp_path))
         await consent_drawn(app, pilot)
-        await pilot.click("#confirm-yes")
+        await click(pilot, "#confirm-yes")
         modal_class = terminal_setup_change._progress_class()
         await until(pilot, on_screen(app, modal_class))
         await until(pilot, lambda: app.screen.final == "changed")
@@ -508,8 +526,8 @@ async def test_after_a_change_made_here_the_screen_shows_the_new_place_when_it_i
         await settle(app, pilot)
         assert not is_screen(app)  # it does not come back by itself: a person opens it, and it reads again
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: is_screen(app))
-        await pilot.pause()
+        await until(pilot, lambda: screen_open(app), what="the screen Storage and models")
+        await until(pilot, lambda: DB_HOST in plain_words(screen_text(app)), what="the new place on the screen")
         again = plain_words(screen_text(app))
         assert DB_HOST in again and again != first
     assert rig.reads == ["GET", "GET"] and len(rig.begun) == 1

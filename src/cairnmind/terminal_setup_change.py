@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from . import database_mode, knowledge_mode, memory_egress, setup_change, setup_profiles
+from . import database_mode, knowledge_mode, memory_egress, setup_change, setup_mark, setup_profiles
 from .config import Settings
 from .setup_profiles import Request, render_one, run
 from .terminal_safe import plain, safe_text
@@ -63,8 +63,10 @@ KEEP_OPEN = ("Keep the workspace open until the change has finished: the restore
              "while the workspace answers with its key.")
 GOES_ON = ("Once started, the change cannot be stopped halfway; it goes on if the workspace is closed. `cairnmind "
            "status` shows where storage and models run afterwards, and `cairnmind doctor` names a change that did "
-           "not finish. How it ended, including a restore that kept confirmations only as claims, is in "
-           "setup-change.json in the data directory.")
+           "not finish. How it ended, including a restore that kept confirmations only as claims, is shown once the "
+           "next time the workspace opens, if you did not see it here, and stays in setup-change.json in the data "
+           "directory.")
+OUTCOME_TITLE = "How the last change of where storage and models run ended"
 PLAN = "The plan, as `cairnmind setup` gives it:"
 PROGRESS_TITLE = "Changing where storage and models run"
 PROGRESS_HINT = "Wait: the change cannot be stopped halfway."
@@ -115,7 +117,9 @@ MESSAGES = {
     GOES_ON: ("Raz zaczętej zmiany nie można zatrzymać w połowie; trwa dalej także po zamknięciu środowiska. "
               "`cairnmind status` pokazuje potem, gdzie działają baza i modele, a `cairnmind doctor` wskazuje zmianę, "
               "która się nie skończyła. Jak się skończyła, także odtworzenie, które zachowało potwierdzenia tylko jako "
-              "twierdzenia, jest w setup-change.json w katalogu danych."),
+              "twierdzenia, zostanie pokazane raz przy następnym otwarciu środowiska, jeśli nie zobaczysz tego tutaj, "
+              "i zostaje w setup-change.json w katalogu danych."),
+    OUTCOME_TITLE: "Jak skończyła się ostatnia zmiana miejsca działania bazy i modeli",
     PLAN: "Plan, jaki podaje `cairnmind setup`:",
     PROGRESS_TITLE: "Zmiana miejsca działania bazy i modeli",
     PROGRESS_HINT: "Czekaj: zmiany nie można zatrzymać w połowie.",
@@ -216,6 +220,8 @@ def _progress_class():
             self.query_one(VerticalScroll).scroll_end(animate=False)
             if final is not None:
                 self.final = final
+                if final in setup_change.EXIT:  # a person is looking at the end: the next opening need not show it
+                    setup_change.mark_shown(self.data_dir, self.process.pid)
                 self.query_one("#progress-close", Button).disabled = False
                 self.query_one("#progress-hint", Static).update(self.t("Esc: close"))
                 self.set_focus(self.query_one("#progress-close", Button))
@@ -232,6 +238,23 @@ def _progress_class():
 
 def ProgressModal(process, data_dir, language):
     return _progress_class()(process, data_dir, language)
+
+
+def show_last_outcome(app) -> None:
+    """At an opening of the workspace (the sidebar's mount): the end of a change that nobody watched, once (#339)."""
+    app.run_worker(_show_last_outcome(app), group="setup-outcome", exit_on_error=False)
+
+
+async def _show_last_outcome(app) -> None:
+    from .terminal_ui import MessageModal
+    data_dir, language = app.settings.data_dir, app.language
+    found = await asyncio.to_thread(setup_change.unseen_outcome, data_dir, language)
+    if found is None:
+        return
+    kept = await asyncio.to_thread(setup_mark.unchecked, data_dir)  # a copy of config.json that was kept, as doctor names it
+    lines = [*found["lines"], *(["", render_one((kept.template, kept.values), language)] if kept else [])]
+    setup_change.mark_shown(data_dir, found["pid"])  # shown means put on the screen: at most once, never in the store
+    await app.push_screen_wait(MessageModal(app.t(OUTCOME_TITLE), "\n".join(lines)))
 
 
 async def change_setup(app, profile: str | None = None) -> None:

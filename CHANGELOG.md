@@ -55,6 +55,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A start of the knowledge service that is interrupted, fails late or times out during a change of setup no longer leaves its process behind under a config.json that was put back: the service started on the new settings is ended first, and when it cannot be ended config.json is left as it is and the outcome says so (#339).
 - `cairnmind setup` puts config.json back when its last step after the change fails, instead of leaving the change half reported (#339).
 - The status row of the workspace follows config.json when it changes, so Storage and Models show a new place without a restart, and keeps its last answer while the file does not parse (#339).
+- When a change of setup ended while nobody watched it (the workspace was closed meanwhile), the next opening of the workspace shows how it ended once, in a message dialog in the workspace's language, whatever the final state, and names the kept copy of config.json when there is one; a change still running, an outcome already seen in the progress dialog and a setup-change.json that cannot be read show nothing, and that the outcome was shown is recorded in setup-change.json itself (#339).
+- When the store in use cannot be read, the workspace refuses to change the setup, stops nothing, and names the way out: close the workspace, run `cairnmind stop`, then `cairnmind setup local --empty --yes` in a terminal (#339).
 
 ### Removed
 

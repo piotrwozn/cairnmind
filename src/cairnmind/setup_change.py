@@ -51,14 +51,14 @@ RUNS_LIVE_ANY = ("A session runs in the workspace ({runs}); end it first (in the
 RUNS_UNKNOWN_ANY = "Whether a session runs in the workspace could not be read ({reason}), so nothing was changed."
 JOBS_IN_WORK_ANY = ("Jobs are in work now ({jobs}); wait until they finish (`cairnmind jobs list PROJECT --state "
                     "running` shows them), then change the setup again. Nothing was changed.")
-JOBS_UNKNOWN = ("Whether a job is in work could not be read from the store ({reason}), so nothing was changed. With the "
-                "workspace closed and the service stopped (`cairnmind stop`), `cairnmind setup PROFILE` changes the "
-                "setup from a terminal.")
+JOBS_UNKNOWN = ("Whether a job is in work could not be read from the store ({reason}), so nothing was changed. If that "
+                "store is gone, close the workspace, run `cairnmind stop`, then `cairnmind setup local --empty --yes` in "
+                "a terminal: it uses the store on this machine without the data of that one.")
 READER_HERE = ("This installation only reads its store: {reason} It runs no knowledge service for the workspace to stop "
                "and start, so the setup is changed from a terminal: `cairnmind setup PROFILE`. Nothing was changed.")
 WRITER_UNKNOWN = ("Whether this installation writes its store could not be established ({reason}), so nothing was "
-                  "changed. With the workspace closed and the service stopped (`cairnmind stop`), `cairnmind setup "
-                  "PROFILE` changes the setup from a terminal.")
+                  "changed. If that store is gone, close the workspace, run `cairnmind stop`, then `cairnmind setup "
+                  "local --empty --yes` in a terminal: it uses the store on this machine without the data of that one.")
 READER_TARGET = ("Another installation writes the store at {url}, so after this change this installation would only "
                  "read it and run no knowledge service, which the workspace needs. Nothing was changed. To make this "
                  "installation a reader of that store, close the workspace, run `cairnmind stop`, then `cairnmind "
@@ -106,14 +106,14 @@ MESSAGES = {
     JOBS_IN_WORK_ANY: ("Trwają zadania ({jobs}); poczekaj, aż się skończą (`cairnmind jobs list PROJEKT --state "
                        "running` je pokazuje), a potem zmień ustawienia ponownie. Nic nie zostało zmienione."),
     JOBS_UNKNOWN: ("Nie udało się odczytać z bazy, czy trwa jakieś zadanie ({reason}), więc nic nie zostało zmienione. "
-                   "Przy zamkniętym środowisku i zatrzymanej usłudze (`cairnmind stop`) `cairnmind setup PROFIL` "
-                   "zmienia ustawienia z terminala."),
+                   "Jeśli ta baza zniknęła, zamknij środowisko, uruchom `cairnmind stop`, a potem w terminalu "
+                   "`cairnmind setup local --empty --yes`: użyje bazy na tym komputerze bez danych tamtej."),
     READER_HERE: ("Ta instalacja tylko czyta swoją bazę: {reason} Nie uruchamia usługi wiedzy, którą środowisko mogłoby "
                   "zatrzymać i uruchomić, więc ustawienia zmienia się z terminala: `cairnmind setup PROFIL`. Nic nie "
                   "zostało zmienione."),
     WRITER_UNKNOWN: ("Nie udało się ustalić, czy ta instalacja zapisuje swoją bazę ({reason}), więc nic nie zostało "
-                     "zmienione. Przy zamkniętym środowisku i zatrzymanej usłudze (`cairnmind stop`) `cairnmind setup "
-                     "PROFIL` zmienia ustawienia z terminala."),
+                     "zmienione. Jeśli ta baza zniknęła, zamknij środowisko, uruchom `cairnmind stop`, a potem w "
+                     "terminalu `cairnmind setup local --empty --yes`: użyje bazy na tym komputerze bez danych tamtej."),
     READER_TARGET: ("Bazę pod adresem {url} zapisuje inna instalacja, więc po tej zmianie ta instalacja tylko by ją "
                     "czytała i nie uruchamiała usługi wiedzy, której środowisko potrzebuje. Nic nie zostało zmienione. "
                     "Aby ta instalacja czytała tę bazę, zamknij środowisko, uruchom `cairnmind stop`, a potem w "
@@ -308,9 +308,10 @@ def begin(settings, request, expected: dict, language: str) -> subprocess.Popen:
     return process
 
 
-def _write_progress(data_dir: Path, state: str, language: str, lines: list[str]) -> None:
+def _write_progress(data_dir: Path, state: str, language: str, lines: list[str], other: list[str]) -> None:
+    """``other`` is the same lines in the other language, so a workspace opened later in that language can show them."""
     memory_models._write_json(data_dir / PROGRESS, {"pid": os.getpid(), "state": state, "language": language,
-                                                    "lines": lines[-_MAX_ITEMS:]})
+                                                    "lines": lines[-_MAX_ITEMS:], "other": other[-_MAX_ITEMS:]})
 
 
 def read_progress(data_dir: Path, pid: int) -> dict | None:
@@ -327,20 +328,71 @@ def read_progress(data_dir: Path, pid: int) -> dict | None:
     return None
 
 
+def _unseen_file(data_dir: Path) -> dict | None:
+    """The progress file when it holds the end of a change (any final state) that no person has been shown."""
+    try:
+        with open(Path(data_dir) / PROGRESS, "rb") as handle:
+            found = json.loads(handle.read(1 << 20))
+    except (OSError, ValueError):
+        return None
+    if (isinstance(found, dict) and type(found.get("pid")) is int and found.get("state") in EXIT
+            and found.get("shown") is not True):
+        return found
+    return None
+
+
+def unseen_outcome(data_dir: Path, language: str) -> dict | None:
+    """The finished outcome of the last change, in ``language``, when its helper no longer runs and no person has seen
+    it ({"pid", "state", "lines"}); None otherwise, also for a file that cannot be read (#339). A change still running
+    (its mark) shows nothing here. The workspace shows it once at its next opening, and the progress dialog of the
+    session that started the change counts as having shown it (mark_shown)."""
+    found = _unseen_file(data_dir)
+    if found is None or setup_mark.state(data_dir)[0] in ("running", "unreadable"):
+        return None
+    lines = found.get("lines") if found.get("language") == language else found.get("other")
+    if not isinstance(lines, list) or not lines or not all(isinstance(line, str) for line in lines):
+        return None
+    return {"pid": found["pid"], "state": found["state"], "lines": lines}
+
+
+def mark_shown(data_dir: Path, pid: int) -> None:
+    """Record, in the progress file itself (replaced atomically; the next change writes a file without it), that the
+    outcome of the helper ``pid`` was shown. Nothing is recorded in the store. Nothing is recorded when the file is
+    another change's or cannot be read: the outcome may then be shown again, never lost."""
+    found = _unseen_file(data_dir)
+    if found is not None and found["pid"] == pid:
+        try:
+            memory_models._write_json(Path(data_dir) / PROGRESS, {**found, "shown": True})
+        except OSError:
+            pass
+
+
 class _Report:
     def __init__(self, report, language):
-        self.report, self.language, self.lines = report, language, []
+        self.report, self.language = report, language
+        self.texts = {"en": [], "pl": []}  # every line in both languages: the workspace may be opened in the other one
+
+    @property
+    def lines(self) -> list[str]:
+        return self.texts[self.language]
+
+    def _report(self, state: str) -> None:
+        self.report(state, self.lines, self.texts["pl" if self.language == "en" else "en"])
 
     def add(self, *items) -> None:
-        self.lines.extend(render_one(item, self.language) for item in items)
-        self.report("running", self.lines)
+        self.extend(lambda language: [render_one(item, language) for item in items])
+
+    def extend(self, make) -> None:
+        """Add the lines ``make(language)`` gives, in each language."""
+        for language in self.texts:
+            self.texts[language].extend(make(language))
+        self._report("running")
 
     def say(self, text: str) -> None:
-        self.lines.append(said_in(text, self.language))
-        self.report("running", self.lines)
+        self.extend(lambda language: [said_in(text, language)])
 
     def finish(self, state: str) -> str:
-        self.report(state, self.lines)
+        self._report(state)
         return state
 
 
@@ -472,8 +524,8 @@ def _new_settings_start(data_dir: Path, path: Path, snapshot: bytes, result: dic
         reason = str(exc) or type(exc).__name__
     if reason is None:
         shown = [item for key in ("done", "rebuild") for item in result[key]]
-        out.lines.extend([*(render_one(item, out.language) for item in shown), "",
-                          *topology.lines(result["topology"], out.language)])
+        out.texts["en"].extend([*(render_one(item, "en") for item in shown), "", *topology.lines(result["topology"], "en")])
+        out.texts["pl"].extend([*(render_one(item, "pl") for item in shown), "", *topology.lines(result["topology"], "pl")])
         out.add((CHANGED, {}))
         return out.finish("changed"), False
     notes = _left(result)
@@ -618,8 +670,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no Cairnmind configuration in {data_dir}", file=sys.stderr)
         return 2
 
-    def report(state: str, lines: list[str]) -> None:
-        _write_progress(data_dir, state, language[0], lines)
+    def report(state: str, lines: list[str], other: list[str]) -> None:
+        _write_progress(data_dir, state, language[0], lines, other)
 
     language = ["en"]
 

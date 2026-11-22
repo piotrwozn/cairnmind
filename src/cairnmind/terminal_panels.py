@@ -401,6 +401,8 @@ class SidebarApp(BasePanel):
         self.show_page("projects")
         self.set_interval(.3, self._poll_workspace)
         self.set_interval(3, self.refresh_sidebar)
+        from .terminal_setup_change import show_last_outcome  # the end of a change nobody watched, once (#339)
+        show_last_outcome(self)
         self.start_panel()
 
     def on_resize(self, event: Resize):

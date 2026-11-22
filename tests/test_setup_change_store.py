@@ -95,7 +95,7 @@ def installation(tmp_path, test_engine, monkeypatch):  # noqa: F811
     def change(request, expected=None):
         reports = []
         outcome = setup_change.carry_out(data, request, expected or agreed(request), "en",
-                                         lambda state_, lines: reports.append((state_, list(lines))))
+                                         lambda state_, lines, other: reports.append((state_, list(lines))))
         return outcome, "\n".join(reports[-1][1])
 
     def stop():

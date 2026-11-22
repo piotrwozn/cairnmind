@@ -12,6 +12,7 @@ import types
 
 import pytest
 from textual import work
+from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
 
 from cairnmind import setup_change, setup_mark, setup_profiles, terminal_setup_change
@@ -69,20 +70,57 @@ def ui(tmp_path, monkeypatch):
         helper, begun = Helper(), []
         monkeypatch.setattr(setup_change, "begin", lambda *args: begun.append(args) or helper)
         app = Panel(settings, broker=broker, workspace=workspace)
-        return types.SimpleNamespace(app=app, rig=rig, broker=broker, helper=helper, begun=begun, tmp=tmp_path)
+        return types.SimpleNamespace(app=app, rig=rig, broker=broker, helper=helper, begun=begun, tmp=tmp_path,
+                                     reopen=lambda: Panel(settings, broker=broker, workspace=workspace))
     return build
 
 
-async def until(pilot, condition, seconds=8.0):
+async def until(pilot, condition, seconds=8.0, what="the condition"):
+    """Wait, bounded, for ``condition``; the timeout says what the screen showed instead."""
     for _ in range(int(seconds / .02)):
         await pilot.pause(.02)
         if condition():
             return
-    raise AssertionError("condition not reached")
+    app = pilot.app
+    raise AssertionError(f"{what} was not reached within {seconds} s; the top screen is {type(app.screen).__name__} "
+                         f"and shows: {' '.join(screen_text(app).split())[:400]}")
+
+
+def laid_out(app, kind):
+    """The top screen is a ``kind`` that is mounted and laid out: a key or a click before that goes to the screen below,
+    or (a click on a widget whose region is empty) to the corner, and nothing says so."""
+    screen = app.screen
+    if not isinstance(screen, kind) or not screen.is_attached:
+        return False
+    try:
+        buttons = list(screen.query(Button))
+        if not buttons or any(button.region.width <= 0 for button in buttons):
+            return False
+        if isinstance(screen, ChoiceModal):  # rows added and the table focused, as the dialog's mount does
+            table = screen.query_one("#choices")
+            return table.row_count == len(screen.choices) and app.focused is table
+        if isinstance(screen, FormModal):
+            return isinstance(app.focused, Input) and all(
+                screen.query_one("#field-" + field.name).region.width > 0 for field in screen.fields)
+    except NoMatches:
+        return False
+    return True
 
 
 def on_screen(app, kind):
-    return lambda: isinstance(app.screen, kind)
+    return lambda: laid_out(app, kind)
+
+
+async def click(pilot, selector):
+    """Click a button of the top screen once it has a region and can be pressed."""
+    def ready():
+        try:
+            button = pilot.app.screen.query_one(selector)
+        except NoMatches:
+            return False
+        return button.region.width > 0 and button.region.height > 0 and not button.disabled
+    await until(pilot, ready, what=f"{selector} laid out and enabled")
+    await pilot.click(selector)
 
 
 async def fill(app, pilot, **values):
@@ -139,7 +177,7 @@ async def test_the_consent_dialog_shows_the_plan_and_where_content_goes(ui, lang
         assert rig.begun == []
         await early_enter_sends_nothing(app, pilot, modal)
         assert rig.begun == []
-        await pilot.click("#confirm-yes")
+        await click(pilot, "#confirm-yes")
         await until(pilot, lambda: rig.begun)
         assert len(rig.begun) == 1
         settings, request, expected, spoken = rig.begun[0]
@@ -180,8 +218,7 @@ async def test_cancel_and_esc_change_nothing(ui, stage, how):
         if how == "escape":
             await pilot.press("escape")
         else:
-            await pilot.pause()  # the layout of the dialog is done before the button is clicked
-            await pilot.click(cancel)
+            await click(pilot, cancel)
         await until(pilot, lambda: not isinstance(app.screen, kind))
         await settle(app, pilot)
     assert rig.begun == []
@@ -314,7 +351,7 @@ async def test_going_back_to_local_asks_backup_or_empty_and_says_to_keep_the_wor
         await pilot.press("down", "enter")  # without the data
         modal = await consent_drawn(app, pilot)
         assert terminal_setup_change.KEEP_OPEN not in modal.value
-        await pilot.click("#confirm-yes")
+        await click(pilot, "#confirm-yes")
         await until(pilot, lambda: rig.begun)
     request = rig.begun[0][1]
     assert request.profile == "local" and request.empty is True and request.backup is None
@@ -323,9 +360,9 @@ async def test_going_back_to_local_asks_backup_or_empty_and_says_to_keep_the_wor
 
 # The progress ----------------------------------------------------------------------------------------------------------
 
-def report(tmp, state, lines, pid=Helper.pid):
+def report(tmp, state, lines, pid=Helper.pid, language="en", **extra):
     (tmp / "data" / setup_change.PROGRESS).write_text(json.dumps(
-        {"pid": pid, "state": state, "language": "en", "lines": lines}))
+        {"pid": pid, "state": state, "language": language, "lines": lines, **extra}))
 
 
 @pytest.mark.asyncio
@@ -338,7 +375,7 @@ async def test_progress_and_the_result_are_shown_and_the_panel_reconnects(ui):
         await until(pilot, on_screen(app, FormModal))
         await fill(app, pilot, **remote_db(tmp))
         await consent_drawn(app, pilot)
-        await pilot.click("#confirm-yes")
+        await click(pilot, "#confirm-yes")
         modal_class = terminal_setup_change._progress_class()
         await until(pilot, on_screen(app, modal_class))
         modal = app.screen
@@ -372,7 +409,7 @@ async def test_a_progress_report_of_another_process_is_not_shown_and_a_silent_en
         await until(pilot, on_screen(app, FormModal))
         await fill(app, pilot, **remote_db(tmp))
         await consent_drawn(app, pilot)
-        await pilot.click("#confirm-yes")
+        await click(pilot, "#confirm-yes")
         modal_class = terminal_setup_change._progress_class()
         await until(pilot, on_screen(app, modal_class))
         modal = app.screen
@@ -386,6 +423,144 @@ async def test_a_progress_report_of_another_process_is_not_shown_and_a_silent_en
         assert "ended without saying how (exit status 7)" in text and "Stopping the knowledge service" in text
         await pilot.press("escape")
         await until(pilot, lambda: not isinstance(app.screen, modal_class))
+
+
+# The end of a change that nobody watched --------------------------------------------------------------------------------
+
+ENGLISH = [setup_change.STOPPING, setup_change.CHANGED]
+POLISH = [setup_change.MESSAGES[sentence] for sentence in ENGLISH]
+
+
+def finished_outcome(tmp, state="changed", language="en", **extra):
+    """The progress file of a helper that has ended, with its lines in both languages as the helper writes them."""
+    shown, other = (ENGLISH, POLISH) if language == "en" else (POLISH, ENGLISH)
+    report(tmp, state, shown, language=language, other=other, **extra)
+
+
+def seen(app):
+    return " ".join(screen_text(app).split())
+
+
+def recorded(tmp):
+    return json.loads((tmp / "data" / setup_change.PROGRESS).read_text())
+
+
+async def opened_without_a_dialog(app):
+    """An opening of the workspace in which no outcome is shown: the worker that looks for one has finished."""
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        assert not isinstance(app.screen, MessageModal), seen(app)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_finished_outcome_nobody_saw_is_shown_once_at_the_next_opening(ui, language):
+    rig = ui(language)
+    app, tmp = rig.app, rig.tmp
+    finished_outcome(tmp, "changed", "en")  # the helper's language was English; the workspace opens in `language`
+    async with app.run_test(size=(120, 40)) as pilot:
+        await until(pilot, on_screen(app, MessageModal), what="the outcome of the last change")
+        shown = ENGLISH if language == "en" else POLISH
+        await until(pilot, lambda: all(line[:28] in seen(app) for line in shown), what="the outcome's sentences")
+        title = tr(terminal_setup_change.OUTCOME_TITLE, language)
+        assert title in seen(app) and all(line[:28] not in seen(app) for line in (POLISH if language == "en" else ENGLISH))
+        assert recorded(tmp)["shown"] is True  # recorded in the file, at once: it appears once, not each time
+        await pilot.press("escape")
+        await until(pilot, lambda: not isinstance(app.screen, MessageModal), what="the dialog closed")
+        await settle(app, pilot)
+    assert rig.begun == [] and (tmp / "data" / setup_change.PROGRESS).exists()  # nothing was removed or started
+    await opened_without_a_dialog(rig.reopen())  # the workspace opened again: not shown again
+
+
+@pytest.mark.asyncio
+async def test_the_outcome_seen_in_the_progress_dialog_is_not_shown_again(ui):
+    rig = ui()
+    app, tmp = rig.app, rig.tmp
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.change("remote-db")
+        await until(pilot, on_screen(app, FormModal))
+        await fill(app, pilot, **remote_db(tmp))
+        await consent_drawn(app, pilot)
+        await click(pilot, "#confirm-yes")
+        modal_class = terminal_setup_change._progress_class()
+        await until(pilot, on_screen(app, modal_class))
+        finished_outcome(tmp, "changed")
+        await until(pilot, lambda: app.screen.final == "changed", what="the end in the progress dialog")
+        assert recorded(tmp)["shown"] is True
+        await pilot.press("escape")
+        await until(pilot, lambda: not isinstance(app.screen, modal_class), what="the progress dialog closed")
+        await settle(app, pilot)
+    await opened_without_a_dialog(rig.reopen())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["mark_running", "mark_unreadable", "not_finished"])
+async def test_a_change_that_still_runs_shows_no_end(ui, monkeypatch, case):
+    rig = ui()
+    finished_outcome(rig.tmp, "running" if case == "not_finished" else "changed")
+    if case != "not_finished":
+        monkeypatch.setattr(setup_mark, "state", lambda data_dir: (case.removeprefix("mark_"), 4242))
+    await opened_without_a_dialog(rig.app)
+    assert "shown" not in recorded(rig.tmp)  # nobody was shown it: it is shown when the change has ended
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", list(setup_change.EXIT))
+async def test_each_final_state_is_shown_in_polish_with_no_english_inside(ui, state):
+    rig = ui("pl")
+    finished_outcome(rig.tmp, state, "en")
+    app = rig.app
+    async with app.run_test(size=(120, 40)) as pilot:
+        await until(pilot, on_screen(app, MessageModal), what=f"the outcome {state}")
+        await until(pilot, lambda: POLISH[0][:28] in seen(app), what="the Polish sentences")
+        assert ENGLISH[0][:20] not in seen(app) and ENGLISH[1][:20] not in seen(app)
+        assert tr(terminal_setup_change.OUTCOME_TITLE, "pl") in seen(app)
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_kept_copy_is_named_and_showing_the_outcome_does_not_remove_it(ui, language):
+    rig = ui(language)
+    app, tmp = rig.app, rig.tmp
+    finished_outcome(tmp, "service_down", language)
+    copy = tmp / "data" / setup_mark.BEFORE
+    copy.write_text("{}")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await until(pilot, on_screen(app, MessageModal), what="the outcome with the kept copy")
+        sentence = setup_mark.unchecked(tmp / "data")  # the sentence doctor and the refusal to start give
+        fragment = tr(sentence.template, language)[:30]
+        await until(pilot, lambda: fragment in seen(app), what="the sentence about the kept copy")
+        await pilot.press("escape")
+        await until(pilot, lambda: not isinstance(app.screen, MessageModal), what="the dialog closed")
+    assert copy.exists() and recorded(tmp)["shown"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", ["{", "[]", '{"pid": 7, "state": "changed", "lines": "x", "language": "en"}', ""])
+async def test_an_outcome_file_that_cannot_be_read_shows_nothing_and_the_opening_goes_on(ui, raw):
+    rig = ui()
+    (rig.tmp / "data" / setup_change.PROGRESS).write_text(raw)
+    await opened_without_a_dialog(rig.app)
+    assert (rig.tmp / "data" / setup_change.PROGRESS).read_text() == raw  # left as it was for a person to look at
+
+
+@pytest.mark.asyncio
+async def test_the_outcome_dialog_fits_80_by_24_and_scrolls(ui):
+    rig = ui()
+    app, tmp = rig.app, rig.tmp
+    lines = [f"Line {number} of the outcome of the change." for number in range(40)]
+    report(tmp, "failed", lines, other=lines)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await until(pilot, on_screen(app, MessageModal), what="the outcome dialog")
+        inside(app, "#message-close")
+        body = app.screen.query_one(".cm-dialog-body")
+        await until(pilot, lambda: body.max_scroll_y > 0, what="a body that scrolls")
+        body.scroll_end(animate=False)
+        await until(pilot, lambda: "Line 39" in seen(app), what="the last line of the outcome")
+        await click(pilot, "#message-close")
+        await until(pilot, lambda: not isinstance(app.screen, MessageModal), what="the dialog closed")
 
 
 # 80 x 24 ---------------------------------------------------------------------------------------------------------------
@@ -407,7 +582,6 @@ async def test_no_label_of_the_form_is_cut_at_80_by_24(ui, language):
         await until(pilot, on_screen(app, ChoiceModal))
         await pilot.press("down", "down", "enter")
         await until(pilot, on_screen(app, FormModal))
-        await pilot.pause()
         fields = app.screen.query_one("#form-fields")
         shown = set()
         for _ in range(12):  # scroll through the form: each label must be whole where it is drawn
@@ -430,12 +604,10 @@ async def test_the_flow_fits_at_80_by_24(ui):
         assert "(remote)" in screen_text(app)
         await pilot.press("down", "down", "enter")  # remote: the longest form
         await until(pilot, on_screen(app, FormModal))
-        await pilot.pause()
         inside(app, "#form-submit", "#form-cancel")
         last = app.screen.query_one("#field-credential_ref", Input)
         app.screen.query_one("#form-fields").scroll_end(animate=False)
-        await pilot.pause()
-        assert last.region.bottom <= 24 and last.region.y >= 0  # the last field scrolls into view
+        await until(pilot, lambda: 0 <= last.region.y and last.region.bottom <= 24, what="the last field scrolled into view")
         for name, value in remote(tmp).items():
             app.screen.query_one("#field-" + name, Input).value = value
         await pilot.press("ctrl+s")
@@ -444,12 +616,10 @@ async def test_the_flow_fits_at_80_by_24(ui):
         body = app.screen.query_one(".cm-dialog-body")
         assert body.max_scroll_y > 0
         body.scroll_end(animate=False)
-        await pilot.pause()
         last_line = [line for line in modal.value.splitlines() if line.strip()][-1]
-        assert last_line[:30] in screen_text(app)
-        await pilot.click("#confirm-yes")
+        await until(pilot, lambda: last_line[:30] in screen_text(app), what="the last line of the plan")
+        await click(pilot, "#confirm-yes")
         await until(pilot, on_screen(app, terminal_setup_change._progress_class()))
-        await pilot.pause()
         inside(app, "#progress-close")
         report(tmp, "failed", ["The change was made, but it failed."])
         await until(pilot, lambda: not app.screen.query_one("#progress-close", Button).disabled)
