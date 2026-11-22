@@ -1669,10 +1669,10 @@ class Store:
             # and is still called a timeout.
             (("runtime reported a context-length limit",), "model_context_length",
              "The model refused an input longer than its context length."),
-            (("response read timed out", "local request timed out"), "model_timeout",
+            (("response read timed out", "request timed out"), "model_timeout",
              "The model runtime did not answer in time."),
             (("ollama /api/", "runtime reported", "runtime rejected", "runtime returned", "embedding model returned",
-              "local model returned"), "model_runtime_error", "The model runtime refused or failed the request."),
+              "returned no chat message"), "model_runtime_error", "The model runtime refused or failed the request."),
             (("timeout", "timed out"), "job_timeout", "The job exceeded its execution budget."),
         )
         for needles, code, message in categories:
@@ -1816,11 +1816,6 @@ class Store:
         chunks = self.query("SELECT id,project_id FROM chunks WHERE is_current=true" + (" AND project_id=:project" if project_id else ""), {"project": project_id})
         existing = {r["chunk_id"] for r in self.query("SELECT chunk_id FROM embeddings WHERE namespace=:namespace", {"namespace": namespace})}
         return [{"id": row["id"], "project_id": row.get("project_id")} for row in chunks if row["id"] not in existing]
-
-    def reset_missing_embedding_job(self, job_id, chunk_id, namespace):
-        with self.transaction() as tx:
-            if not tx.query("SELECT id FROM embeddings WHERE chunk_id=:chunk AND namespace=:namespace", {"chunk": chunk_id, "namespace": namespace}):
-                update_document(tx, "jobs", {"state": "pending", "error": None, "lease_until": None, "updated_at": utc_now()}, "id=:id AND state='completed'", {"id": job_id})
 
     def delete_embeddings(self, project_id):
         with self.transaction() as tx:
