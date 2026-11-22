@@ -141,6 +141,20 @@ def test_a_live_run_or_a_job_in_work_refuses_and_deletes_nothing(world, monkeypa
     assert counts(store, pid) == before and project_forget.history(store) == []
 
 
+def test_a_job_leased_after_the_checks_is_refused_inside_the_transaction(world, monkeypatch):
+    store, project, other, root, confirmed = world
+    pid = project["id"]
+    shown = project_forget.plan(store.settings, store, pid)  # the checks passed: the job comes after them
+    before = counts(store, pid)
+    store.command("DELETE FROM jobs WHERE project_id=:p", {"p": other["id"]})
+    assert store.claim_job("w", lease_seconds=300, kinds=["embed"])["project_id"] == pid
+    monkeypatch.setattr(project_forget, "plan", lambda *args: shown)
+    with pytest.raises(removal.Refused, match=r"Jobs of app are in work now \(embed\)"):
+        project_forget.delete(store.settings, store, pid)
+    assert counts(store, pid) == before and project_forget.history(store) == []
+    assert store.query("SELECT FROM projects WHERE id=:p", {"p": pid})
+
+
 def test_a_reader_refuses(world):
     store, project, other, root, confirmed = world
     before = counts(store, project["id"])

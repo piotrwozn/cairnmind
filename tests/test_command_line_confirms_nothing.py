@@ -81,6 +81,8 @@ def test_impact_verdict_and_release_commands_are_refused_in_a_person_terminal(
     result = CliRunner().invoke(app, ["--data-dir", str(tmp_path / "memory"), *arguments])
     assert result.exit_code == 2 and sentence in words(result.output), result.output
     assert "inspector of the workspace" in words(result.output)
+
+
 @pytest.mark.parametrize("in_a_session", [False, True])
 @pytest.mark.parametrize("arguments", [["forget", "demo", "--delete-project"], ["forget", "demo"],
                                        ["forget", "0a1b2c3d", "--delete-project"]])

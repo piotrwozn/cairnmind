@@ -33,7 +33,16 @@ DONE = ("Deleted the memory of {name}: {records} records, {plans} plans, {source
         "{check_runs} check runs. Backups and the project's folders were not changed.")
 LOG_LEFT = "The answer log {path} could not be deleted ({reason}); delete it by hand."
 NOT_DELETED = "The project's memory was not deleted."
+UNKNOWN = ("No answer to the request came, so it is not known whether the project's memory was deleted. Open More, "
+           "then Delete project memory: the project is listed only while its memory is there.")
+REGISTRY = ("The project also leaves the registry and the project list; adding its folder again makes a new, empty "
+            "project.")
 MESSAGES = {
+    UNKNOWN: ("Nie przyszła odpowiedź na żądanie, więc nie wiadomo, czy pamięć projektu została skasowana. Otwórz "
+              "Więcej, potem Skasuj pamięć projektu: projekt jest na liście tylko wtedy, gdy jego pamięć jeszcze "
+              "istnieje."),
+    REGISTRY: ("Projekt znika też z rejestru i z listy projektów; ponowne dodanie jego folderu tworzy nowy, pusty "
+               "projekt."),
     TITLE: "Skasuj pamięć projektu",
     NONE: "Żaden projekt nie ma pamięci w tym magazynie.",
     REMOVED_ROW: "{name}: {root} (usunięty {when})",
@@ -64,6 +73,20 @@ def _counts(shown) -> dict:
             for key in ("records", "plans", "sources", "sessions", "check_runs", "chunks", "nodes", "embeddings")}
 
 
+def _no_answer(exc) -> bool:
+    from .terminal_client import BrokerError, BrokerUnreachable
+    return isinstance(exc, BrokerUnreachable) or (isinstance(exc, BrokerError) and exc.status_code in (502, 503, 504))
+
+
+async def _gone(app, project_id) -> bool:
+    """True only when the list was read again and no longer has the project."""
+    try:
+        listing = await app.request("GET", "/api/inspector/projects/deletable")
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return not any(isinstance(item, dict) and item.get("id") == project_id for item in listing.get("items") or [])
+
+
 def label(item, t) -> str:
     from .project_removal import when
     name, root = safe_text(item.get("name"), limit=80), safe_text(item.get("root"), limit=120)
@@ -84,6 +107,7 @@ def describe(shown, is_open, t) -> str:
     lines += ["", t(DELETES, **_counts(shown))]
     if shown.get("answer_log"):
         lines.append(t(ANSWER_LOG, path=safe_text(shown["answer_log"])))
+    lines.append(t(REGISTRY))
     lines += [t(KEPT, backups=safe_text(shown.get("backups"))), t(UNDO)]
     if is_open:
         lines.append(t(OPEN_NOTE))
@@ -114,17 +138,23 @@ async def open_view(app):
         return
     if not await agreed(app, QUESTION, describe(shown, item["id"] == open_id, app.t), APPROVE):
         return
+    result = {}
     try:
         result = await app.request("POST", "/api/inspector/projects/forget", json={"project": item["id"]})
     except (OSError, ValueError, RuntimeError) as exc:
-        app.notice(app.t(NOT_DELETED) + " " + broker_error_text(exc, app.t), "error")
-        return
+        if not _no_answer(exc):
+            app.notice(app.t(NOT_DELETED) + " " + broker_error_text(exc, app.t), "error")
+            return
+        # No answer came, and the service may have deleted all the same: the list says whether it did, never a guess.
+        if not await _gone(app, item["id"]):
+            app.notice(app.t(UNKNOWN), "error")
+            return
     if (await asyncio.to_thread(app.workspace.read)).get("project_id") == item["id"]:
-        await asyncio.to_thread(app.workspace.update, {
-            "project_id": None, "project_name": None, "worktree": None, "intent": "inspect", "work_request": None,
-            "selected_entity": None})
+        await asyncio.to_thread(app.workspace.select_project, None)
         app.action_projects()
-    done = app.t(DONE, name=safe_text(item.get("name"), limit=80), **_counts(shown))
+    deleted = result.get("deleted_counts")
+    done = app.t(DONE, name=safe_text(item.get("name"), limit=80),
+                 **_counts({"deletes": deleted} if isinstance(deleted, dict) else shown))
     if result.get("answer_log_error"):
         done += " " + app.t(LOG_LEFT, path=safe_text(shown.get("answer_log"), limit=400),
                             reason=safe_text(result["answer_log_error"], limit=300))

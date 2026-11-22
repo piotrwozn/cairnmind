@@ -13,7 +13,7 @@ from textual import _time as textual_time
 from textual.widgets import Button, Static
 
 from cairnmind import person_proof, project_removal, terminal_project_forget as view
-from cairnmind.terminal_client import BrokerError
+from cairnmind.terminal_client import BrokerError, BrokerUnreachable
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_ui import ChoiceModal
@@ -32,6 +32,7 @@ class ForgetBroker(UIBroker):
     def __init__(self, project, empty=False):
         super().__init__(project, empty=empty)
         self.sent, self.refuse_read, self.refuse_send, self.reply = [], None, None, {"deleted": OPEN}
+        self.no_answer = None  # "committed" or "not": the POST gets no answer, and the service did or did not delete
         self.listed = [{"id": "old1", "name": "Old", "root": "/old", "removed_at": REMOVED_AT},
                        {"id": "other", "name": "Other", "root": "/other", "removed_at": None},
                        {"id": OPEN, "name": project["name"], "root": project["root"], "removed_at": None}]
@@ -48,7 +49,11 @@ class ForgetBroker(UIBroker):
             self.sent.append((method, path, deepcopy(json)))
             if self.refuse_send:
                 raise BrokerError(403, self.refuse_send)
-            self.projects = [each for each in self.projects if each["id"] != json["project"]]
+            if self.no_answer != "not":
+                self.projects = [each for each in self.projects if each["id"] != json["project"]]
+                self.listed = [each for each in self.listed if each["id"] != json["project"]]
+            if self.no_answer:
+                raise BrokerUnreachable(503, "The connection to the local broker was interrupted.")
             return deepcopy(self.reply)
         return super().request(method, path, params=params, json=json, timeout=timeout)
 
@@ -122,6 +127,7 @@ async def test_the_dialog_names_the_project_the_counts_the_answer_log_and_what_s
     assert t(view.PROJECT_LINE, name="Keyboard project", id=OPEN) in opened
     assert t(view.FOLDER_LINE, root=broker.listed[-1]["root"]) in opened
     assert t(view.DELETES, **DELETES) in opened and t(view.ANSWER_LOG, path=LOG) in opened
+    assert t(view.REGISTRY) in opened and t(view.REGISTRY) in other  # it leaves the registry, whichever project it is
     assert t(view.KEPT, backups="/data/backups") in opened and t(view.UNDO) in opened and t(view.OPEN_NOTE) in opened
     assert t(view.PROJECT_LINE, name="Other", id="other") in other and t(view.OPEN_NOTE) not in other
     assert broker.sent == []  # reading and cancelling send nothing
@@ -199,6 +205,73 @@ async def test_a_refusal_after_consent_says_nothing_was_deleted(tmp_path, monkey
         await wait_until(pilot, lambda: broker.sent and " ".join(shown.split()) in notice_of(app))
         assert " ".join(tr(view.DONE, language, name="", **DELETES).split()[:3]) not in notice_of(app)
     assert len(broker.sent) == 1 and workspace.read()["project_id"] == OPEN  # still open: nothing was deleted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_lost_answer_after_a_deletion_that_happened_says_deleted_and_leaves_the_project(
+        tmp_path, monkeypatch, language):
+    app, broker, workspace = ui(tmp_path, monkeypatch, language)
+    broker.no_answer = "committed"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("enter")
+        await settle(app, pilot)
+        await choose(app, pilot)
+        await consent(app, pilot)
+        await pilot.click("#confirm-yes")
+        done = " ".join(tr(view.DONE, language, name="Keyboard project", **DELETES).split())
+        await wait_until(pilot, lambda: broker.sent and done in notice_of(app))
+        assert app.page == "projects"
+    assert workspace.read()["project_id"] is None  # the counts are the dialog's: the answer with the real ones was lost
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_lost_answer_with_the_project_still_listed_says_it_is_not_known_and_keeps_the_project(
+        tmp_path, monkeypatch, language):
+    app, broker, workspace = ui(tmp_path, monkeypatch, language)
+    broker.no_answer = "not"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await choose(app, pilot)
+        await consent(app, pilot)
+        await pilot.click("#confirm-yes")
+        unknown = " ".join(tr(view.UNKNOWN, language).split())
+        await wait_until(pilot, lambda: broker.sent and unknown in notice_of(app))
+        assert tr(view.NOT_DELETED, language) not in notice_of(app)
+    assert len(broker.sent) == 1 and workspace.read()["project_id"] == OPEN
+
+
+@pytest.mark.asyncio
+async def test_the_counts_of_the_notice_are_the_ones_the_service_deleted(tmp_path, monkeypatch):
+    app, broker, workspace = ui(tmp_path, monkeypatch)
+    broker.reply = {"deleted": OPEN, "deleted_counts": {**DELETES, "sources": 345}}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await choose(app, pilot, downs=1)
+        await consent(app, pilot)
+        await pilot.click("#confirm-yes")
+        done = " ".join(view.DONE.format(name="Other", **{**DELETES, "sources": 345}).split())
+        await wait_until(pilot, lambda: broker.sent and done in notice_of(app))
+
+
+@pytest.mark.asyncio
+async def test_more_leads_to_the_list_of_projects_to_delete(tmp_path, monkeypatch):
+    app, broker, workspace = ui(tmp_path, monkeypatch)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        app.action_more()
+        await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
+        menu = app.screen.choices
+        assert menu[-1][0] == "Delete project memory"
+        for _ in range(len(menu) - 1):
+            await pilot.press("down")
+        await pilot.press("enter")
+        await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal) and app.screen.choices != menu)
+        assert app.screen.choices[0][0].startswith("Keyboard project")
+        await pilot.press("escape")
+    assert broker.sent == []
 
 
 @pytest.mark.asyncio

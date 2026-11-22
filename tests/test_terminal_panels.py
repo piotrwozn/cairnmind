@@ -32,7 +32,10 @@ class FakeWorkspace:
         return self.read()
 
     def select_project(self, project, worktree=None, *, intent="inspect", requested_slot_ids=None):
-        self.selections.append((project["id"], worktree, intent))
+        self.selections.append((project["id"] if project else None, worktree, intent))
+        if project is None:  # as WorkspaceState: no project, nothing selected
+            return self.update({"project_id": None, "project_name": None, "worktree": None, "selected_entity": None,
+                "intent": intent, "requested_slot_ids": [], "slots": []})
         return self.update({"project_id": project["id"], "project_name": project["name"],
             "worktree": worktree or project["root"], "selected_entity": None, "intent": intent,
             "requested_slot_ids": requested_slot_ids or []})
