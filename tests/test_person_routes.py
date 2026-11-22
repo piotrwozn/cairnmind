@@ -156,7 +156,8 @@ def test_the_workspace_key_lets_the_person_act(fixture):  # noqa: F811
     # The import's route gate: the person's own archive, replacing nothing, is imported as before.
     snapshot = MemoryManager(fixture.store).snapshot(fixture.pid)
     path, body = requests["import archive"]
-    imported = fixture.client.post(path, json={**body, "path": snapshot["path"]}, headers=person)
+    imported = fixture.client.post(path, json={**body, "path": snapshot["path"], "expected_replaced": []},
+                                  headers=person)  # the list the person was shown: none (#333)
     assert imported.status_code == 200 and imported.json()["status"] == "unchanged", imported.text
     refused = fixture.client.post(path, json={**body, "path": snapshot["path"]})
     assert refused.status_code == 403

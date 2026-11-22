@@ -13,6 +13,7 @@ from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_panels import SidebarApp
 from cairnmind.terminal_safe import plain, safe_text
 from cairnmind.terminal_ui import wide_dialog
+from consent_steps import consent_drawn
 
 
 class FakeWorkspace:
@@ -202,6 +203,9 @@ async def test_managed_record_review_sends_both_versions_without_changing_task_p
         await pilot.pause()
         app.screen.query_one("#field-reason", TextArea).text = "Read the source."
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        assert not any(method == "POST" for method, _, _, _ in broker.calls)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         writes = [body for method, path, _, body in broker.calls if method == "POST" and path.endswith("/review")]
         assert writes == [{"project": "project-a", "action": "confirm", "expected_version": 3,
@@ -223,6 +227,8 @@ async def test_review_conflict_refreshes_without_resubmitting_intent(tmp_path, m
         await pilot.click("#entity-confirm")
         await pilot.pause()
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         assert len([1 for method, path, _, _ in broker.calls if method == "POST" and path.endswith("/review")]) == 1
         assert app.entity["version"] == 4
@@ -250,6 +256,10 @@ async def test_import_requires_dry_run_then_separate_apply_and_never_starts_clie
         await app._poll_workspace()
         assert app.pending_import and not app.query_one("#memory-apply", Button).disabled
         await pilot.click("#memory-apply")
+        await consent_drawn(app, pilot)
+        writes = [body for method, path, _, body in broker.calls if method == "POST" and path == "/api/memory/import"]
+        assert [item["dry_run"] for item in writes] == [True]  # Apply alone sends nothing (#332)
+        await pilot.click("#confirm-yes")
         await settle(app, pilot)
         writes = [body for method, path, _, body in broker.calls if method == "POST" and path == "/api/memory/import"]
         assert [item["dry_run"] for item in writes] == [True, False]
@@ -305,6 +315,8 @@ async def test_review_cancels_when_project_changes_while_modal_is_open(tmp_path,
         workspace.update({"project_id": "project-b", "project_name": "B", "worktree": "/projects/b"})
         await app._poll_workspace()
         await pilot.click("#form-submit")
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")  # approved, and still nothing is saved: the project changed
         await settle(app, pilot)
         assert not any(method == "POST" and path.endswith("/review") for method, path, _, _ in broker.calls)
         assert "Projekt zmienił się" in str(app.query_one("#panel-notice", Static).render())

@@ -14,10 +14,12 @@ import asyncio
 import time
 
 from .terminal_notices import about as notice_about
+from .terminal_person_act import agreed, typed
 from .terminal_safe import safe_text
 
 CHECK_SECONDS = 60
 EXAMPLE = 300
+NOTE_LABEL = "Why is this kind technical? Kept with the date."
 
 MESSAGES = {
     "Transcript record kinds": "Rodzaje rekordów transkrypcji",
@@ -40,6 +42,7 @@ MESSAGES = {
     "Accept a transcript record kind": "Akceptuj rodzaj rekordu transkrypcji",
     "Why is this kind technical? Kept with the date.": "Dlaczego ten rodzaj jest techniczny? Zapisane z datą.",
     "Treat as technical": "Traktuj jako techniczny",
+    "Treat this kind as technical?": "Traktować ten rodzaj jako techniczny?",
     "Kind {kind} from {client} is accepted as technical in this project.":
         "Rodzaj {kind} od {client} jest zaakceptowany jako techniczny w tym projekcie.",
     "Withdraw an acceptance": "Wycofaj akceptację",
@@ -92,8 +95,8 @@ def describe(item, t) -> str:
     return "\n".join(lines)
 
 
-async def open_view(app, confirm_modal):
-    """The view itself; `confirm_modal` is the sidebar's confirmation dialog."""
+async def open_view(app):
+    """The view itself. Accepting and withdrawing a kind go out only from a consent dialog (#332)."""
     from .terminal_ui import ChoiceModal, Field, FormModal
     selected = await asyncio.to_thread(app.workspace.read)
     project = selected.get("project_id")
@@ -124,15 +127,17 @@ async def open_view(app, confirm_modal):
     body = {"project": project, "client": item.get("client"), "kind": item.get("kind")}
     words = {"kind": _word(item.get("kind")), "client": _word(item.get("client"))}
     if action == "accept":
-        async def save(values):
-            await app.request("POST", "/api/inspector/record-kinds/accept", json={**body, "note": values["note"]})
-
         values = await app.push_screen_wait(FormModal(
             app.t("Accept a transcript record kind"),
-            [Field("note", app.t("Why is this kind technical? Kept with the date."), required=True, multiline=True)],
-            note=describe(item, app.t), submit=app.t("Treat as technical"), on_submit=save))
-        if values:
-            app.notice_for(subject, app.t("Kind {kind} from {client} is accepted as technical in this project.", **words))
+            [Field("note", app.t(NOTE_LABEL), required=True, multiline=True)],
+            note=describe(item, app.t), submit=app.t("Continue")))
+        if not values:
+            return
+        text = describe(item, app.t) + "\n\n" + typed(app.t, NOTE_LABEL, values["note"])
+        if not await agreed(app, "Treat this kind as technical?", text, "Treat as technical"):
+            return
+        await app.request("POST", "/api/inspector/record-kinds/accept", json={**body, "note": values["note"]})
+        app.notice_for(subject, app.t("Kind {kind} from {client} is accepted as technical in this project.", **words))
         return
     name = item.get("accepted_by")
     text = "\n".join([
@@ -140,7 +145,7 @@ async def open_view(app, confirm_modal):
               name=_word(name, 120) if name else app.t("an unnamed person"), note=safe_text(str(item.get("note") or ""),
                                                                                           limit=1000)),
         "", app.t("After withdrawing, records of this kind block the resume packets of this project again.")])
-    if await app.push_screen_wait(confirm_modal(app.t("Withdraw an acceptance"), text, approve=app.t("Withdraw"))):
+    if await agreed(app, "Withdraw an acceptance", text, "Withdraw"):
         await app.request("POST", "/api/inspector/record-kinds/withdraw", json=body)
         app.notice_for(subject, app.t("The acceptance of {kind} from {client} is withdrawn.", **words))
 
