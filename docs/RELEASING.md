@@ -57,7 +57,7 @@ The image of `deploy/arcadedb` is published to `ghcr.io/piotrwozn/cairnmind-arca
 gh workflow run database-image.yml --repo piotrwozn/cairnmind --ref main
 ```
 
-The summary of the run gives the digest (`sha256:...`). A later run with the same tag moves the tag, so anything that must name one exact image names it by digest. The first run creates the package as private; the owner makes it public once, in the package's settings on GitHub.
+The summary of the run gives the digest (`sha256:...`). A later run with the same tag moves the tag, so anything that must name one exact image names it by digest. The release notes of a release that publishes the image name it as `ghcr.io/piotrwozn/cairnmind-arcadedb@sha256:...`, the digest `src/cairnmind/config.py` pins. The first run creates the package as private; the owner makes it public once, in the package's settings on GitHub.
 
 ## Upgrades
 
