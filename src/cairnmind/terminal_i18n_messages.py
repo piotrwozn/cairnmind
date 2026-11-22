@@ -7,7 +7,7 @@ translated: text from a model, a provider or a source is never looked up here (s
 from __future__ import annotations
 
 from .code_graph import CODE_GRAPH_NOT_BUILT
-from .confirmation import NOT_PROVEN, REPLACED_CHANGED
+from .confirmation import GROUP_CHANGED, NOT_PROVEN, REPLACED_CHANGED
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
 from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
 from .service_token import FOREIGN_SERVICE
@@ -269,6 +269,14 @@ BROKER_MESSAGES = {
     "The record is not published": "To ustalenie nie jest publikowane",
     "The reason itself holds a secret or personal data; write it without one":
         "Samo uzasadnienie zawiera sekret lub dane osobowe; napisz je bez nich",
+    # What adopting an old task group can answer in the workspace (memory_acts.adopt_group; #305).
+    GROUP_CHANGED:
+        "Zadania tej grupy zmieniły się od chwili, gdy je pokazano. Niczego nie włączono do planu. Otwórz ponownie "
+        "Więcej → Stare grupy zadań i przeczytaj nową listę.",
+    "Legacy adoption requires all dependency tasks in the same group":
+        "Włączenie starej grupy do planu wymaga, by każde zadanie, od którego zależy jej zadanie, należało do tej "
+        "grupy",
+    "Plan dependencies must not contain a cycle": "Zależności planu nie mogą tworzyć cyklu",
     "Invalid graph projection format.": "Niepoprawny format projekcji grafu.",
     "The project of the chosen entry is unknown.": "Nieznany projekt wskazanego wpisu.",
     "Too many pending cockpit openings.": "Zbyt wiele oczekujących otwarć kokpitu.",

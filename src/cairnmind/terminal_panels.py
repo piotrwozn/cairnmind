@@ -1143,17 +1143,27 @@ class SidebarApp(BasePanel):
             # New entries go last: keyboard paths to the existing ones keep their positions.
             ("Settings", "settings"), ("Technical details", "details"), ("Plan stages", "stages"),
             ("MCP servers", "mcp"), ("Transcript record kinds", "record_kinds"),
-            ("Notices", "notices")]))
+            ("Notices", "notices"), ("Old task groups", "legacy_groups")]))
         actions = {"sessions": self.sessions, "assistants": self.edit_slots, "stages": self.edit_stages,
                    "mcp": self.edit_mcp_servers,
                    "scan": self.scan_projects,
                    "queue": self.action_queue,
                    "snapshot": self.action_snapshot, "import": self.import_memory, "settings": self.action_settings,
-                   "notices": self.action_notices, "record_kinds": self.record_kinds}
+                   "notices": self.action_notices, "record_kinds": self.record_kinds,
+                   "legacy_groups": self.legacy_groups}
         if action == "details":
             await self.push_screen_wait(MessageModal("Status", self.workspace_data))
         elif action in actions:
             actions[action]()
+
+    @work(group="sidebar-legacy-groups", exclusive=True, exit_on_error=False)
+    async def legacy_groups(self):
+        """More, then Old task groups (#305): adopt a group of tasks from before 0.11.0 into a plan."""
+        from .terminal_legacy_groups import open_view
+        try:
+            await open_view(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.notice(exc)
 
     @work(group="sidebar-record-kinds", exclusive=True, exit_on_error=False)
     async def record_kinds(self):
