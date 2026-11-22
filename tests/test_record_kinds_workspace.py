@@ -14,6 +14,7 @@ from cairnmind.terminal_i18n import CATALOG
 from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_record_kinds import MESSAGES
 from cairnmind.terminal_ui import ChoiceModal, FormModal
+from consent_steps import consent_drawn
 from test_cockpit_server import cockpit as cockpit  # noqa: F401 - the fixture
 from test_cockpit_server import login
 from test_terminal_panels import settle
@@ -74,13 +75,43 @@ async def test_a_person_looks_at_the_record_and_accepts_its_kind_with_a_note(tmp
         assert not broker.sent
         app.screen.query_one("#field-note", TextArea).text = "Claude Code bookkeeping"
         await pilot.press("ctrl+s")
-        await wait_until(pilot, lambda: broker.sent and not isinstance(app.screen, FormModal))
+        await consent_drawn(app, pilot)  # the form only collected the note (#332)
+        assert broker.sent == [] and "Claude Code bookkeeping" in screen_text(app)
+        await pilot.click("#confirm-yes")
+        await wait_until(pilot, lambda: broker.sent and not isinstance(app.screen, ConfirmModal))
         await settle(app, pilot)
         notice = notice_of(app)
     assert broker.sent == [("POST", "/api/inspector/record-kinds/accept", {
         "project": "project-keyboard", "client": "claude", "kind": "future-claude-record",
         "note": "Claude Code bookkeeping"})]
     assert ("is accepted as technical" if language == "en" else "zaakceptowany jako techniczny") in notice
+
+
+@pytest.mark.asyncio
+async def test_a_refused_accept_is_shown_on_the_notice_line_and_the_workspace_stays_up(tmp_path, monkeypatch):
+    from cairnmind.terminal_client import BrokerError
+    app, broker, _ = ui(tmp_path, monkeypatch, {"blocking": [BLOCKING], "accepted": []})
+    plain = broker.request
+
+    def request(method, path, **kwargs):
+        if path.endswith("/accept"):
+            raise BrokerError(403, "REFUSED-BY-SERVICE")
+        return plain(method, path, **kwargs)
+
+    broker.request = request
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.record_kinds()
+        await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
+        await pilot.press("enter")
+        await wait_until(pilot, lambda: isinstance(app.screen, FormModal))
+        app.screen.query_one("#field-note", TextArea).text = "bookkeeping"
+        await pilot.press("ctrl+s")
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")
+        await wait_until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+        await wait_until(pilot, lambda: "REFUSED-BY-SERVICE" in notice_of(app))
+    assert broker.sent == []
 
 
 @pytest.mark.asyncio
@@ -91,7 +122,7 @@ async def test_a_person_withdraws_an_acceptance_after_confirming(tmp_path, monke
         app.record_kinds()
         await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         await pilot.press("enter")
-        await wait_until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        assert (await consent_drawn(app, pilot)).consent  # a consent dialog, so a key made before it is dropped (#332)
         shown = screen_text(app)
         assert "Ada Nowak" in shown and "Rollout bookkeeping" in shown and "block the resume packets" in shown
         await pilot.click("#confirm-yes")
