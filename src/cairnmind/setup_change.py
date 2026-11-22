@@ -262,7 +262,8 @@ def target_refusal(result: dict, request) -> tuple[str, dict] | None:
     for template, values in result["writer"]:
         if template == setup_profiles.WRITER_OTHER:
             return READER_TARGET, {"url": values["url"], "profile": request.profile}
-    return None
+    # setup itself refuses this run with --yes and creates nothing: stop no service for it.
+    return next((item for item in result["tests"] if item[0] == setup_profiles.NO_RIGHTS), None)
 
 
 # --- The plan that was agreed -----------------------------------------------------------------------------------------
@@ -292,9 +293,11 @@ def _writer_same(agreed: list, now: list) -> bool:
         return False
     if agreed == now:
         return True
-    # The user did not exist at the dry run (--admin-password-file creates it with the change): not read then.
+    # The user did not exist at the dry run (--admin-password-file creates it with the change): not read then. A database
+    # the change just made has no schema yet, so it is not read after it either: the store decides at the first open.
     return bool(agreed and now and agreed[0] in (setup_profiles.WRITER_NOT_READ, setup_profiles.WRITER_AFTER_USER)
-                and now[0] in (setup_profiles.WRITER_KEEP, setup_profiles.WRITER_NEW) and agreed[1:] == now[1:])
+                and now[0] in (setup_profiles.WRITER_KEEP, setup_profiles.WRITER_NEW, setup_profiles.WRITER_NOT_READ)
+                and agreed[1:] == now[1:])
 
 
 def same_plan(expected: dict) -> Callable[[dict], None]:

@@ -662,6 +662,9 @@ def test_the_plan_check_allows_a_user_created_by_the_change_and_never_another_wr
     assert not same([after, made], [keep]) and not same([after], [keep, made])  # created less, or more, than agreed
     assert not same([after, db], [keep, made]) and not same([after, made], [other, made])
     assert not same([setup_profiles.NO_RIGHTS], [keep]) and not same([keep], [keep, db])
+    # a database the change just made has no schema: the writer is still not read afterwards (a real server, #339)
+    assert same([after, made], [unread, made]) and same([after, db], [unread, db]) and not same([after, made], [unread])
+    assert not same([keep], [unread]) and not same([after, made], [unread, db])
 
 
 def test_the_plan_of_the_dry_run_names_what_the_administrators_file_will_create_and_when_it_is_refused(rig):
@@ -678,6 +681,9 @@ def test_the_plan_of_the_dry_run_names_what_the_administrators_file_will_create_
         assert result["writer"] == [(setup_profiles.WRITER_AFTER_USER, {"url": DB})]
         agreed = setup_change.agreed_plan(result)["writer"]
         assert agreed == [setup_profiles.WRITER_AFTER_USER, setup_change._CREATES[create]]
+        refusal = setup_change.target_refusal(result, rig.request())  # no dialog, no stop for a run setup refuses
+        assert (refusal is not None) == (create == setup_profiles.NO_RIGHTS)
+        assert refusal is None or refusal[0] == setup_profiles.NO_RIGHTS
 
 
 def test_a_user_created_by_someone_else_between_the_consent_and_the_change_refuses_the_change(rig, monkeypatch):

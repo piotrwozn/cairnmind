@@ -149,6 +149,15 @@ def test_a_process_that_cannot_be_identified_counts_as_the_change(data_dir, monk
     assert setup_mark.refusal(data_dir) is not None
 
 
+def test_a_framework_python_with_an_unreadable_command_line_counts_as_the_change(data_dir, monkeypatch):
+    from cairnmind import process_identity  # macOS runs it as .../MacOS/Python
+    setup_mark.mark_path(data_dir).write_text("4242\n")
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: None)
+    monkeypatch.setattr(process_identity, "executable", lambda pid: "/x/Python.app/Contents/MacOS/Python")
+    monkeypatch.setattr(process_identity, "alive", lambda pid: True)
+    assert setup_mark.state(data_dir) == ("running", 4242)
+
+
 def test_the_mark_is_per_data_directory(tmp_path, children):
     one, other = tmp_path / "one", tmp_path / "other"
     one.mkdir()

@@ -83,7 +83,7 @@ def state(data_dir) -> tuple[str, int | None]:
     """("none" | "running" | "stale" | "unreadable", the helper's pid or None); a process that runs and cannot be
     identified counts as the helper."""
     return upgrade_mark.mark_state(mark_path(data_dir), lambda arguments: MODULE in arguments,
-                                   lambda program: Path(program).name.startswith("python"))
+                                   lambda program: Path(program).name.lower().startswith("python"))
 
 
 def _sentence(kind: str, pid: int | None, data_dir) -> Sentence | None:

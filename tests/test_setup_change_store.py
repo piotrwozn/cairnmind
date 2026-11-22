@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import time
+import uuid
 from contextlib import closing
 from dataclasses import replace
 from types import SimpleNamespace
@@ -214,6 +215,63 @@ def test_a_restore_that_fails_leaves_the_service_running_on_the_old_settings(ins
         after = settled(ns.data, remote=True)  # still connect-only, on the same store
         assert (after.arcade_connect_url, after.arcade_database) == (before.arcade_connect_url, before.arcade_database)
         assert service_pid(after) != pid and backup.exists()
+    ns.stop()
+
+
+@pytest.fixture
+def new_names(installation, test_engine):  # noqa: F811
+    """A user and a database that do not exist; both are dropped at the end, whoever made them."""
+    suffix = uuid.uuid4().hex[:8]
+    found = SimpleNamespace(user="cmu_" + suffix, database=f"{os.environ['CAIRNMIND_ARCADE_DB_PREFIX']}_new_{suffix}")
+    yield found
+    with closing(ArcadeClient(replace(installation.local, arcade_password=test_engine[1]), administrator=True)) as client:
+        for command in (f"drop user {found.user}", f"drop database {found.database}"):
+            try:
+                client.server_command(command)
+            except ArcadeError:
+                pass
+
+
+def administrators_request(ns, names):
+    password = ns.tmp / "user-password"
+    password.write_text("User-password-of-the-test-1\n")
+    os.chmod(password, 0o600)
+    return setup_profiles.Request("remote-db", url=ns.relay.url, user=names.user, database=names.database,
+                                  password_file=str(password), admin_password_file=str(ns.password_file))
+
+
+@pytest.mark.no_schema_template
+def test_a_user_and_database_created_as_agreed_are_changed_though_the_new_database_has_no_schema(installation, new_names):
+    ns = installation
+    with Relay(ns.port) as relay:
+        ns.relay = relay
+        request = administrators_request(ns, new_names)
+        expected = ns.agreed(request)
+        assert expected["writer"] == [setup_profiles.WRITER_AFTER_USER, setup_profiles.USER_CREATED]
+        state, text = ns.change(request, expected)
+        assert state == "changed", text
+        assert f"the user {new_names.user}, with rights on the database {new_names.database} only" in text
+        assert settled(ns.data, remote=True).arcade_user == new_names.user
+    ns.stop()
+
+
+@pytest.mark.no_schema_template
+def test_a_user_made_by_someone_else_meanwhile_refuses_the_change_and_names_what_it_created(installation, new_names):
+    ns = installation
+    with Relay(ns.port) as relay:
+        ns.relay = relay
+        request = administrators_request(ns, new_names)
+        expected = ns.agreed(request)
+        before = (ns.data / "config.json").read_bytes()
+        with closing(ArcadeClient(replace(ns.local, arcade_password=ns.password_file.read_text().strip()),
+                                  administrator=True)) as client:
+            client.server_command("create user " + json.dumps({"name": new_names.user, "password": "User-password-of-the-test-1",
+                                                               "databases": {new_names.database: ["admin"]}}))
+        state, text = ns.change(request, expected)
+        assert state == "refused" and "no longer what you agreed to" in text
+        assert f"Created on ArcadeDB at {relay.url}: the database {new_names.database}." in text, text
+        assert (ns.data / "config.json").read_bytes() == before
+        settled(ns.data, remote=False)
     ns.stop()
 
 
