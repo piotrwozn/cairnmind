@@ -280,6 +280,11 @@ class ServiceClient:
                 "project": project, "client": "external", "worktree": worktree, "reason": "startup"}, {}, adopt=True)
             if not self.session_id:
                 raise RuntimeError("Cairnmind service returned no session for this external client")
+            if result.get("unchanged") or result.get("acknowledged"):
+                # A session this process just prepared cannot hold an acknowledgement it did not make: it is not its own.
+                self.session_id = self.packet_id = None
+                raise RuntimeError("The session this external client was given already holds an acknowledgement; "
+                                   "nothing is written on it")
             return result
 
     async def _project_for_service(self, project: str) -> str:

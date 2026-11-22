@@ -6,11 +6,13 @@ import json
 
 from fastapi.testclient import TestClient
 
+from cairnmind.inspector import Inspector
 from cairnmind.mcp_server import _saved_record_view
+from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
 from cairnmind.packet_origin import EXTERNAL
 from cairnmind.recorder_agent import RECORDER_REPLY
 from cairnmind.service import create_app
-from cairnmind.store import ORIGIN_METADATA
+from cairnmind.store import ORIGIN_METADATA, Store
 
 from conftest import as_person
 
@@ -90,6 +92,22 @@ def test_a_second_session_without_its_own_ack_is_refused_in_one_sentence(fixture
     confirmed = write(fixture, recorder, "Asking to be confirmed", status="confirmed")
     assert confirmed.status_code == 400
     assert not fixture.store.query("SELECT FROM records WHERE content='Asking to be confirmed'")
+
+
+def test_a_recorders_record_is_held_from_publishing_and_survives_a_backup_and_restore(fixture, tmp_path, monkeypatch):  # noqa: F811
+    monkeypatch.setenv(PUBLICATION_SWITCH, "1")
+    start(fixture, "codex")
+    recorder = start(fixture, "external")
+    saved = write(fixture, recorder, "Quoted by the main conversation").json()
+    Inspector(fixture.store).review(fixture.project["id"], saved["id"], "confirm", saved["version"])
+    held = Publisher(fixture.store).publish(fixture.project["id"], preview=True)
+    assert held["records"] == 0 and held["held"]["items"][0]["reason"].endswith("(degraded origin)")
+    target = Store(tmp_path / "target")
+    target.restore(fixture.store.backup(tmp_path / "round-trip.cairnmind.json.gz"))
+    restored = target.query("SELECT FROM records WHERE id=:id", {"id": saved["id"]})[0]
+    assert {key: restored["metadata"][key] for key in ORIGIN_METADATA} == {
+        "origin_client": "external", "origin_session_id": recorder["session_id"],
+        "origin_history": "unarchived", "origin_evidence": "degraded"}
 
 
 def costs(fixture):  # noqa: F811
