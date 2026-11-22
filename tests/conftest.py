@@ -124,6 +124,8 @@ LEFT_OUT_ON_A_SERVER = {
         "`cairnmind eval run` is refused on a connect-only installation",
     "test_memory_cli_service::test_memory_evaluation_cli_preserves_exit_contract":
         "`cairnmind eval memory` is refused on a connect-only installation",
+    "test_graph_size":
+        "starts an engine of its own with the default heap, which a run against a server does not own",
 }
 
 
