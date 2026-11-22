@@ -40,8 +40,6 @@ Changelog = "https://github.com/piotrwozn/cairnmind/blob/main/CHANGELOG.md"
 
 [project.scripts]
 cairnmind = "cairnmind.cli:entrypoint"
-# Transitional alias for installations and scripts that still call devbrain.
-devbrain = "cairnmind.cli:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
