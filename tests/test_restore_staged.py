@@ -183,6 +183,26 @@ def test_a_failure_after_several_commits_puts_the_store_back_and_keeps_the_copy(
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
 
 
+def test_the_commits_of_the_undo_wait_as_long_as_those_of_the_restore(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch, rows=50)
+    _failing_commits(monkeypatch, 3)
+    commits, request = [], arcade.ArcadeClient._request
+
+    def recording(self, method, request_path, **kwargs):
+        if request_path.startswith("/api/v1/commit/"):
+            commits.append(kwargs.get("timeout", arcade.REQUEST_TIMEOUT))
+        return request(self, method, request_path, **kwargs)
+
+    monkeypatch.setattr(arcade.ArcadeClient, "_request", recording)
+    with pytest.raises(RestoreFailed, match="put back as it was before"):
+        store.restore(path)
+    monkeypatch.undo()
+    assert comparable(store.export()) == before
+    # The commits at either end are not the restore's own (see test_restore_network); between them are its mark, its
+    # deletes and writes up to the failing one, and the undo's.
+    assert len(commits) > 8 and set(commits[1:-1]) == {arcade.RESTORE_COMMIT_TIMEOUT}
+
+
 def test_an_engine_that_runs_out_of_memory_is_named_in_the_error_of_the_restore(tmp_path, monkeypatch):
     store, path, before, known = _world(tmp_path, monkeypatch)
     _failing_commits(monkeypatch, 4, error=arcade.ArcadeError("ArcadeDB HTTP 500: Java heap space", status_code=500))

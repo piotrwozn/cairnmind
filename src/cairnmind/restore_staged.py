@@ -41,7 +41,7 @@ ROWS_PER_TRANSACTION = 5000
 BYTES_PER_TRANSACTION = 8 << 20
 # A transaction that has been open this long is committed, and a delete that took this long halves the next ones:
 # the bound follows from time as well as from rows and bytes, so no request of a restore nears the client's wait
-# (arcade.REQUEST_TIMEOUT, and COMMIT_TIMEOUT for a commit) on a slow link or a loaded server.
+# (arcade.REQUEST_TIMEOUT, and RESTORE_COMMIT_TIMEOUT for a commit of the restore) on a slow link or a loaded server.
 TIME_PER_TRANSACTION = 5.0
 MIN_ROWS_PER_DELETE = 100
 JOURNAL_TYPES = ("journal_state", "journal_events")

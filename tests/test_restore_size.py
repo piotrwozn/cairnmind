@@ -131,7 +131,7 @@ def _say(engine_pid, seconds):
                     if line.startswith("VmHWM"))
     except (OSError, StopIteration):
         peak = "not readable here"
-    text = f"restore of {SOURCES} files, {NODES} vertices, {EDGES} edges: {seconds:.1f} s; engine's largest resident memory: {peak}"
+    text = f"restore of {SOURCES} files, {NODES} vertices, {EDGES} edges: {seconds:.1f} s; engine's largest resident memory since it started (building the store included): {peak}"
     print("\n" + text)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:

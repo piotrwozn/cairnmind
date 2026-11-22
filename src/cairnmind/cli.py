@@ -1425,7 +1425,7 @@ def store_prune_backups(
         yes: Annotated[bool, typer.Option("--yes", help="Delete without asking again.")] = False):
     """Delete old safety backups (before-schema-*, before-restore-*), keeping the newest K of each kind.
 
-    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled backups and backups you named are never touched. Starts no engine (#190).
+    Shows what it would delete and asks first. Only a person in their own terminal can run it; scheduled backups and backups you named are never touched. Starts no engine (#190): a before-restore-* copy is deleted only while the engine answers (`cairnmind engine start`), because the mark of an unfinished restore is read from it (#362).
     """
     from cairnmind.confirmation import person_at_terminal
     from cairnmind.store_prune import delete_backups, prune_plan
@@ -1437,6 +1437,8 @@ def store_prune_backups(
     said = {}
     if any(entry["kind"] == "before_restore" for entry in plan["delete"]):
         # A copy that the mark of an unfinished restore names is the only way back, however old it is (#362).
+        # shortcut: no writer lock, so with --keep 0 a restore that has just written its copy but not yet its mark can
+        # lose it here (it then fails closed as NO_UNDO); take database-writer.lock here if that ever matters.
         from cairnmind.store_prune import (KEPT_FOR_A_RESTORE, KEPT_FOR_AN_UNKNOWN_MARK, keep_what_a_restore_names,
                                            named_by_a_restore)
         from cairnmind.terminal_i18n import tr
