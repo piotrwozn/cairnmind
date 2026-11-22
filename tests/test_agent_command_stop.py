@@ -48,16 +48,19 @@ def kill(pid):
         pass
 
 
-async def wait_for(path):
+async def wait_for(path, written=False):
+    # written: the shell makes the file before echo fills it, and a reader in between saw '' (#322).
+    def there():
+        return path.exists() and (not written or path.stat().st_size > 0)
     deadline = time.monotonic() + 5
-    while not path.exists() and time.monotonic() < deadline:
+    while not there() and time.monotonic() < deadline:
         await asyncio.sleep(.01)
-    assert path.exists()
+    assert there()
 
 
 async def started_child(executor, command=CHILD_IGNORING_TERM):
     task = asyncio.create_task(executor.execute("run_command", {"command": command}))
-    await wait_for(executor.worktree / "child.pid")
+    await wait_for(executor.worktree / "child.pid", written=True)
     # The child can write its file before the spawn has returned to the executor. A cancellation in that
     # window is another path (stopped without an entry in _stopping; it has its own test below), and a slow
     # runner landed in it. These tests are about a command the executor has registered as running.

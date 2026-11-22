@@ -36,7 +36,7 @@ def inner_run(tmp_path: Path, source: str, *options: str, limit: str = "2", env:
     """
     tests = tmp_path / "inner" / "tests"
     (tests / "fixtures").mkdir(parents=True)
-    for name in ("conftest.py", "run_guard.py"):
+    for name in ("conftest.py", "run_guard.py", "stall_watch.py"):
         if (HERE / name).exists():
             shutil.copyfile(HERE / name, tests / name)
     shutil.copyfile(HERE / "fixtures" / "mcp_fixture_server.py", tests / "fixtures" / "mcp_fixture_server.py")

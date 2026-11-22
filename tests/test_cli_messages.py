@@ -182,6 +182,14 @@ def test_retry_jobs_says_what_it_retried(reader, tmp_path, monkeypatch, capsys):
 
 def test_status_on_a_reader_names_the_role_instead_of_cairnmind_serve(reader):
     first, data_dir = reader
+    with socket.socket() as probe:  # a port nothing listens on: the default one may be a real installation's (#221)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    for directory in (first.data_dir, data_dir):
+        config = directory / "config.json"
+        saved = json.loads(config.read_text()) if config.exists() else {}
+        config.write_text(json.dumps({**saved, "port": port}))
+        config.chmod(0o600)
     said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(data_dir), "status"]))
     assert "only reads this store" in said and "only the writer runs" in said
     assert "cairnmind serve" not in said and "cairnmind store writer" in said

@@ -12,6 +12,7 @@ from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .topology import MESSAGES as TOPOLOGY_MESSAGES
+from .upgrade_mark import MESSAGES as UPGRADE_MARK_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
 
@@ -646,6 +647,7 @@ CATALOG.update(ENGINE_DOCKER_MESSAGES)  # the engine in Docker (#272)
 CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service started for MCP (#273, #258)
 CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)
 CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
+CATALOG.update(UPGRADE_MARK_MESSAGES)  # an upgrade in progress; an MCP server older than the installation (#298)
 CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)

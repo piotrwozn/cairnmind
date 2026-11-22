@@ -283,7 +283,7 @@ cairnmind cockpit stop
 cairnmind stop
 ```
 
-Also close every editor that uses `cairnmind mcp --client external` (Cursor, Cline, Zed and others). An editor left open keeps running the MCP process of the version being replaced, and an editor that restarts its MCP server after the installer runs 0.13.0, which starts the knowledge service by itself (#258). Closing such editors is not needed for 0.12.0 itself, but from 0.13.0 on an editor left open can start the service of the version being replaced between `cairnmind stop` and the installer, so close them before every upgrade. The installer cannot see these editors.
+Also close every editor that uses `cairnmind mcp --client external` (Cursor, Cline, Zed and others). An editor left open keeps running the MCP process of the version being replaced, and an editor that restarts its MCP server after the installer runs 0.13.0, which starts the knowledge service by itself (#258). Closing such editors is not needed for 0.12.0 itself, but from 0.13.0 on an editor left open can start the service of the version being replaced between `cairnmind stop` and the installer, so close them before every upgrade. The installer of 0.13.0 looks for open `cairnmind mcp --client external` servers of the installed version, names them by process id and stops until they are closed; it cannot see the editors themselves. While it runs it leaves a mark, and no command starts the knowledge service until it has finished. An MCP server that stayed open across an upgrade refuses its calls and says to restart it (#298).
 
 ### 3. Get 0.13.0 and run the installer
 

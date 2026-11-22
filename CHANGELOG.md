@@ -92,12 +92,16 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Indexing names a project that 0.12.0 registered with a folder inside the data directory, says to move the files out and register them again, and leaves the registration untouched; it shows in `cairnmind ingest`, in `status` and in the warnings of `ask`. The refusal "Project root cannot contain Cairnmind's private credential store" has a Polish form in the workspace (#310).
 - An `https://` address of this computer in `ollama_url` now works for the local Ollama in every command, instead of being refused with an older message that named neither the setting nor the remedy (#302).
 - The acknowledgement reply and the session status now say how many automatic proposals were written after the session's packet, and `resume_context` still hands back the packet the session acknowledged, so the count never costs an ACK; the proposals are read with `ask` (MCP) or `cairnmind records` and `cairnmind ask` (#299).
+- An external MCP server no longer starts the knowledge service while Cairnmind is being upgraded: the installer leaves a mark for the time of the upgrade, every automatic start (`ask`, `run`, `context`, the workspace, the MCP server) refuses and says why, and `doctor` and `status` say so. A service that was still starting when the upgrade began is stopped, so none runs the version being replaced (#298).
+- The installer names open `cairnmind mcp --client external` servers of the installed version by process id and stops until they are closed (#298).
+- An MCP server that was open while Cairnmind was upgraded or reinstalled says that it still runs the old code and asks to be restarted, instead of mixing old and new code (#298).
 
 ### Development and CI
 
 - A workflow run by hand from main builds the database image of `deploy/arcadedb` for linux/amd64 and linux/arm64 and publishes it to `ghcr.io/piotrwozn/cairnmind-arcadedb`, tagged with the pinned ArcadeDB version; its summary gives the digest (#218).
 - Tests no longer reach a Cairnmind service or an Ollama running on the default ports of the machine that runs them; a test engine request that gets no answer for more than 5 s prints the statement, the wait, the load and the engine log; the stand-in pane process of the focus-column test no longer logs an older size after a newer one (#221).
 - A fast test checks that every internal link of README.md and `docs/` names a file that exists and, with an anchor, a heading that exists (#275).
+- The test engine client records, while a request is still waiting after 20 seconds, the request (without values), the sockets on the engine's port with their queues, the end of the engine log and the engine's thread dump, and reports a late answer as a slow request (#221).
 
 ## 0.12.0
 

@@ -15,7 +15,10 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from . import __version__
 from .config import Settings, env_names, session_value
+from . import upgrade_mark
+from .upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_UNREADABLE
 from .service_token import foreign_service_text, refused_token
 
 # store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
@@ -127,12 +130,35 @@ def _written_as_path(value: str) -> bool:
 UNAVAILABLE = "Cairnmind service is unavailable ({error}); start `cairnmind serve` or use the launcher."
 
 
+def code_identity() -> tuple[int, int, int, int] | None:
+    """The installed package's __init__.py as the file system has it now; None when it cannot be read. A reinstall
+    writes new files, so another identity means this process no longer runs what is installed (#298)."""
+    try:
+        found = os.stat(Path(__file__).with_name("__init__.py"))
+    except OSError:
+        return None
+    return found.st_dev, found.st_ino, found.st_mtime_ns, found.st_size
+
+
+LOADED_CODE = code_identity()  # what this process started from
+
+
+def refuse_if_code_replaced() -> None:
+    """Before anything of the installed package is imported lazily: the new version's modules must not load into
+    this process (#298)."""
+    if LOADED_CODE is None:
+        raise RuntimeError(CODE_UNREADABLE)
+    if code_identity() != LOADED_CODE:
+        raise RuntimeError(CODE_REPLACED.format(version=__version__))
+
+
 def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
     external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
     standard error (#287)."""
     import shlex
-    from .cli import _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service, say_service_started
+    from .cli import (UpgradeInProgress, _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service,
+                      say_service_started)
     from .first_start import SERVICE_NOT_STARTED
     from .store_writer import inspect
     try:
@@ -145,6 +171,9 @@ def start_service(settings: Settings) -> None:
     try:
         if ensure_service(settings):
             say_service_started(settings)  # standard error, which the client logs; stdout stays MCP's
+    except UpgradeInProgress as exc:
+        # Not SERVICE_NOT_STARTED, whose "start it with `cairnmind serve`" would be wrong advice now (#298).
+        raise RuntimeError(BRIDGE_UPGRADE.format(reason=str(exc))) from None
     except (ValueError, OSError) as exc:  # ServiceDidNotStart is a ValueError
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "serve"])
         reason = (_os_error_text(exc) if isinstance(exc, OSError) else str(exc)).strip().rstrip(".") + "."
@@ -250,6 +279,7 @@ class ServiceClient:
 
     async def request(self, method: str, endpoint: str, *, payload: dict[str, Any] | None = None,
                       params: dict[str, Any] | None = None) -> dict[str, Any]:
+        refuse_if_code_replaced()
         body = dict(payload or {})
         query = dict(params or {})
         if "session_id" in body and body["session_id"] != self.session_id:
@@ -302,6 +332,9 @@ class ServiceClient:
         except httpx.ConnectError:
             # Nothing listens: the request never reached a service, so sending it again cannot repeat a write.
             if self.external is None or started:
+                reason = upgrade_mark.refusal() if self.external is None else None
+                if reason:  # `cairnmind serve` is not what to do now: it would start the version being replaced
+                    raise RuntimeError(BRIDGE_UPGRADE.format(reason=reason)) from None
                 raise RuntimeError(UNAVAILABLE.format(error="ConnectError")) from None
         except (httpx.HTTPError, ValueError) as exc:
             raise RuntimeError(UNAVAILABLE.format(error=type(exc).__name__)) from None
@@ -343,6 +376,7 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
             raise ValueError("question is too long; ask a focused question")
         payload = {"project": project, "question": question}
         if answer_schema is not None:
+            refuse_if_code_replaced()
             from .answer_contract import prepare_answer_schema
             payload["answer_schema"] = prepare_answer_schema(answer_schema)
         return await bridge.post("/ask", payload)
