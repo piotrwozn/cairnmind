@@ -1494,7 +1494,7 @@ class KnowledgeAgent:
             return await self.ollama.chat(messages, tools=None, read_timeout=left, **kwargs)
         except OllamaUnavailable as exc:
             if exc.error_code == "read_timeout":  # the limit is the budget: the budget ended the call
-                raise TimeoutError("Extraction call exceeded its time budget") from None
+                raise TimeoutError("Extraction call timed out at its time budget") from None
             raise
 
     async def propose(self, source: dict, diagnostics: dict, deadline: float | None = None) -> list[dict] | None:

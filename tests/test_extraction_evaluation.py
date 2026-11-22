@@ -151,6 +151,21 @@ def test_a_message_whose_extraction_failed_fails_the_run(tmp_path):
     assert report["status"] == "failed"
 
 
+class ReadTimeoutOllama(EchoOllama):
+    async def chat(self, messages, **kwargs):
+        raise OllamaUnavailable("response read timed out", error_code="read_timeout")
+
+
+def test_a_call_cut_by_its_budget_is_reported_not_raised(tmp_path):
+    path = tmp_path / "set.json"
+    path.write_text(json.dumps({"format_version": 1, "transcripts": [_transcript()]}), encoding="utf-8")
+    report = run_extraction_evaluation(Settings(data_dir=tmp_path / "data"), path, runs=1,
+                                       report_dir=tmp_path / "reports", ollama=ReadTimeoutOllama())
+    failures = report["runs"][0]["failures"]
+    assert failures and {failure["code"] for failure in failures} == {"timeout"}
+    assert report["status"] == "failed" and Path(report["report_path"]).exists()
+
+
 def test_a_missing_model_is_not_run_and_bad_run_counts_are_refused(tmp_path):
     report = run_extraction_evaluation(Settings(data_dir=tmp_path / "data"), SET, runs=1,
                                        report_dir=tmp_path / "reports", ollama=EchoOllama(unavailable=True))
