@@ -1015,6 +1015,9 @@ def _hook_startup_context(settings: Settings, payload: dict[str, Any]) -> dict[s
         return pending("the exact prepared packet could not be obtained from the local service")
 
 
+_WAITING: dict[str, tuple[frozenset, set]] = {}  # spool folder -> (registered folders, its events none of them took)
+
+
 def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, Any]:
     """Move durable hook events to DB import jobs outside native hook deadlines.
 
@@ -1026,9 +1029,24 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
     if not directory.exists():
         return counts
     handled = 0  # events left waiting for an unregistered folder (a removed project's, #327) do not use up the limit
-    for path in sorted(directory.glob("*.json")):
+    # An event no registered folder took is read again only once the registered folders changed, so the work of
+    # a drain does not grow with the pile of a removed project's events (#327).
+    try:
+        folders = frozenset(row["path"] for row in store.query("SELECT path FROM project_roots"))
+    except (OSError, ValueError, RuntimeError, httpx.HTTPError):
+        folders = None  # the store does not answer: every event is tried, and fails below, as before
+    known, waiting = _WAITING.get(str(directory), (None, set()))
+    waiting = waiting if folders is not None and known == folders else set()
+    listing = sorted(directory.glob("*.json"))
+    waiting &= {path.name for path in listing}
+    if folders is not None:
+        _WAITING[str(directory)] = (folders, waiting)
+    for path in listing:
         if handled >= limit:
             break
+        if path.name in waiting:
+            counts["unassigned"] += 1
+            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict) or payload.get("client") not in CLIENTS:
@@ -1037,6 +1055,7 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
                 project = store.resolve_project(str(payload.get("cwd") or ""), recorded=True)
             except ValueError:
                 counts["unassigned"] += 1
+                waiting.add(path.name)
                 continue
             handled += 1
             # Receipt first invalidates compact/resume ACKs even if its source

@@ -813,6 +813,9 @@ def test_end_hook_survives_unavailable_backend_and_restart(settings, tmp_path, m
     assert time.monotonic() - start < 1
 
     class UnavailableBackend:
+        def query(self, sql, params=None):  # an unavailable engine refuses every call (#327: the drain reads roots)
+            raise RuntimeError("ArcadeDB is temporarily unavailable")
+
         def resolve_project(self, value, **options):
             raise RuntimeError("ArcadeDB is temporarily unavailable")
 
