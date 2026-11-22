@@ -9,12 +9,16 @@ import json
 import time
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 import cairnmind.agent as agent_module
+import cairnmind.ollama as ollama_module
 from cairnmind.agent import KnowledgeAgent
 from cairnmind.arcade import ArcadeError
 from cairnmind.config import Settings
+from cairnmind.memory_openai import OpenAICompatible
+from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.store import Store, TASK_STATES
 
 
@@ -602,3 +606,102 @@ async def test_a_job_over_the_budget_is_still_failed_and_names_the_budget(worksp
     assert diagnostic["code"] == "timeout" and diagnostic["repair_outcome"] == "budget_exhausted"
     assert diagnostic["budget"]["timeout_seconds"] == 180.0 and diagnostic["budget"]["elapsed_seconds"] >= 180.0
     assert diagnostic["counts"]["written_records"] == 0 and store.list_records(project["id"]) == []
+
+
+# ---- the read limit of an extraction call is what its job has left, not ask_timeout (#266) -------------------------
+
+GOOD = json.dumps({"records": [{"kind": "decision", "key": "authentication",
+                                "content": "Use explicit authentication.", "evidence": QUOTE, "metadata": {}}]})
+
+
+def http_model(monkeypatch, elapsed, calls):
+    """A real Ollama client over a fake transport that obeys the read limit the request carries, as httpx does.
+
+    ``calls`` is a list of (seconds, reason, content): the call takes that long on the fake clock, or, when it is
+    longer than the read limit, is cut off at the limit with a ReadTimeout. Each request's timeouts are recorded."""
+    seen, real = [], httpx.AsyncClient
+
+    def handler(request):
+        timeout = request.extensions["timeout"]
+        seen.append(timeout)
+        seconds, reason, content = calls.pop(0)
+        if reason == "down":
+            raise httpx.ConnectError("refused", request=request)
+        if seconds > timeout["read"]:
+            elapsed[0] += timeout["read"]
+            raise httpx.ReadTimeout("timed out", request=request)
+        elapsed[0] += seconds
+        return httpx.Response(200, json={"done_reason": reason, "message": {"role": "assistant", "content": content}})
+
+    monkeypatch.setattr(ollama_module.httpx, "AsyncClient",
+                        lambda **kw: real(**kw, transport=httpx.MockTransport(handler)))
+    return seen
+
+
+async def run_job(workspace, monkeypatch, calls, expect_error=None):
+    store, project, _source, job, settings = workspace
+    assert settings.ask_timeout == 60.0
+    elapsed = fake_clock(monkeypatch)
+    seen = http_model(monkeypatch, elapsed, calls)
+    agent = KnowledgeAgent(store, settings, Ollama(settings))
+    if expect_error:
+        with pytest.raises(expect_error):
+            await agent.extract(job)
+    else:
+        await agent.extract(job)
+    return seen, store.job_status(project["id"], job["id"])["diagnostics"], store.list_records(project["id"])
+
+
+async def test_a_cut_answer_and_a_repair_of_63_s_complete_with_ask_timeout_60(workspace, monkeypatch):
+    # Before #266 the 63-s call was cut at 60 s by the client and the job failed as model_unavailable (read_timeout).
+    seen, diagnostic, records = await run_job(workspace, monkeypatch, [
+        (63.0, "length", truncated_record_json()), (63.0, "stop", GOOD)])
+    assert diagnostic["code"] == "ok" and diagnostic["repair_outcome"] == "succeeded" and len(records) == 1
+    assert diagnostic["budget"]["elapsed_seconds"] >= 126.0
+    # The read limit handed to the client is what the budget has left: the whole of it, then the rest (#266).
+    assert seen[0]["read"] == pytest.approx(180.0, abs=1.0)
+    assert seen[1]["read"] == pytest.approx(180.0 - 63.0, abs=1.0)
+    assert seen[0]["connect"] == seen[1]["connect"] == 60.0  # connect stays what it was
+
+
+async def test_a_call_that_never_answers_ends_at_the_budget_not_at_ask_timeout(workspace, monkeypatch):
+    seen, diagnostic, records = await run_job(workspace, monkeypatch, [(float("inf"), "stop", "")], TimeoutError)
+    assert diagnostic["code"] == "timeout" and diagnostic["repair_outcome"] == "not_needed"
+    assert diagnostic["budget"]["elapsed_seconds"] >= 179.0 and records == []
+    assert len(seen) == 1 and seen[0]["read"] > 170.0
+
+
+@pytest.mark.parametrize("first", [178.0, 179.99])
+async def test_a_repair_with_almost_no_budget_left_fails_as_the_budget(workspace, monkeypatch, first):
+    seen, diagnostic, records = await run_job(workspace, monkeypatch, [
+        (first, "length", truncated_record_json()), (63.0, "stop", GOOD)], TimeoutError)
+    assert diagnostic["code"] == "timeout" and diagnostic["repair_outcome"] == "budget_exhausted"
+    assert diagnostic["repair_attempted"] is True and records == []
+    assert 0.9 < seen[1]["read"] < 3.0  # what was left, never less than the floor of 1 s
+
+
+async def test_an_unreachable_model_server_is_still_model_unavailable_at_once(workspace, monkeypatch):
+    seen, diagnostic, records = await run_job(workspace, monkeypatch, [(0.0, "down", "")], ValueError)
+    assert diagnostic["code"] == "model_unavailable" and diagnostic["budget"]["elapsed_seconds"] < 5.0
+    assert len(seen) == 1 and records == []
+
+
+async def test_a_question_keeps_ask_timeout_as_its_read_limit(workspace, monkeypatch):
+    _store, _project, _source, _job, settings = workspace
+    seen = http_model(monkeypatch, fake_clock(monkeypatch), [(float("inf"), "stop", "")])
+    with pytest.raises(OllamaUnavailable) as raised:
+        await Ollama(settings).chat([{"role": "user", "content": "q"}])
+    assert raised.value.error_code == "read_timeout" and seen[0]["read"] == 60.0
+
+
+async def test_the_openai_compatible_client_takes_the_same_read_limit(workspace, monkeypatch):
+    _store, _project, _source, _job, settings = workspace
+    seen = http_model(monkeypatch, fake_clock(monkeypatch), [(1.0, "stop", "")] * 2)
+    client = OpenAICompatible(settings, "chat", {"base_url": "http://127.0.0.1:1/v1"})
+    with pytest.raises(OllamaUnavailable) as raised:  # the fake reply is Ollama-shaped, which this client rejects
+        await client.chat([{"role": "user", "content": "q"}], read_timeout=42.0)
+    assert raised.value.error_code == "invalid_response"
+    assert seen[0]["read"] == 42.0 and seen[0]["connect"] == 60.0
+    with pytest.raises(OllamaUnavailable):
+        await client.chat([{"role": "user", "content": "q"}])
+    assert seen[1]["read"] == 60.0
