@@ -655,7 +655,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         False, "--contract", help="Show only the client contract: every check with its evidence line."),
            output_format: Annotated[str, typer.Option(
                "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json"):
-    """Report Python, Java, tmux, the engine, Ollama, the models and the coding clients. Read-only."""
+    """Report where storage and the models run, Python, Java, tmux, the engine, Ollama and the coding clients. Read-only."""
     if output_format not in ("json", "text"):
         raise typer.BadParameter("--format must be json or text.")
     if output_format == "text" and not contract:
@@ -706,7 +706,24 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         result["accepted_record_kinds"] = doctor_view(store_for_read(ctx.obj))
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
         result["accepted_record_kinds"] = {"unavailable": type(exc).__name__}
+    from cairnmind.topology import topology
+    # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
+    result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"]), **result}
     output(result)
+
+
+@app.command()
+@initialized
+def setup(ctx: typer.Context, as_json: Annotated[bool, typer.Option("--json", help="Print the topology as JSON.")] = False):
+    """Show where storage and the memory models run, and what runs on this machine. Changes no setting of an
+    initialized installation, except that a database address given for the first time in
+    CAIRNMIND_ARCADE_CONNECT_URL is saved, as every command saves it."""
+    from cairnmind.topology import CHANGE_HINT, probe
+    place = probe(ctx.obj)
+    if as_json:
+        output(place)
+    else:
+        typer.echo("\n".join([*place["lines"], "", CHANGE_HINT]))
 
 
 @app.command()
@@ -1767,6 +1784,37 @@ def memory_extraction_stats(ctx: typer.Context, project: ProjectArg,
         typer.echo(render(stats))
 
 
+@memory_app.command("reextract")
+@initialized
+def memory_reextract(ctx: typer.Context, project: ProjectArg,
+                     below_version: Annotated[int | None, typer.Option(
+                         "--below-version", min=1, help="Extractor version; default is this build's.")] = None,
+                     dry_run: Annotated[bool, typer.Option(
+                         "--dry-run", help="Print the counts per extractor version and queue nothing.")] = False):
+    """Extract again the sources whose untouched proposals come from an older extractor. Queues one extract job
+    per source; when it commits, that source's untouched proposals of an older extractor version are superseded
+    in the same transaction. Confirmed, disputed and edited records are never changed.
+    """
+    from cairnmind.extraction_input import EXTRACTOR_VERSION
+    from cairnmind.reextract import plan, queue
+    below = EXTRACTOR_VERSION if below_version is None else below_version
+    if below > EXTRACTOR_VERSION:
+        raise typer.BadParameter(f"This build's extractor is version {EXTRACTOR_VERSION}.", param_hint="--below-version")
+    if not dry_run:
+        if session_value("SESSION_ID"):
+            raise typer.BadParameter("A model session cannot queue extraction; a person runs this command.")
+        from cairnmind.knowledge_mode import needs_models
+        why = needs_models(ctx.obj, "cairnmind memory reextract")
+        if why:
+            refuse(why)  # as rebuild-vectors: the jobs loop does not run without models, nothing is queued (#274)
+    store = store_for(ctx.obj)
+    if not dry_run and getattr(store, "not_writer", None):
+        from cairnmind.store_writer import StoreNotWriter
+        raise StoreNotWriter(store.not_writer)
+    pid = store.resolve_project(project)["id"]
+    output((plan if dry_run else queue)(store, pid, below, EXTRACTOR_VERSION))
+
+
 @memory_app.command("import")
 def memory_import(ctx: typer.Context, path: SnapshotArg,
                   root: Annotated[Path, typer.Option("--root")], name: str | None = None,
@@ -1938,6 +1986,11 @@ def model_pull(ctx: typer.Context):
              if profile(settings, role) is None]
     if not local:
         raise typer.BadParameter("Neither memory model runs on the local Ollama; install them on their own server.")
+    from cairnmind.memory_models import local_server
+    try:
+        local_server(settings)
+    except ValueError as exc:  # another computer: nothing is downloaded there or asked (#288)
+        refuse(str(exc))
     with httpx.Client(trust_env=False, timeout=httpx.Timeout(60, read=900)) as client:
         for name in local:
             typer.echo(f"Downloading {name}…", err=True)

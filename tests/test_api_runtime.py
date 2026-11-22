@@ -115,6 +115,21 @@ def test_an_unusable_key_is_refused_by_its_own_code_and_never_quoted(runtime, mo
     assert secret not in json.dumps(started)
 
 
+def test_start_work_reports_a_partial_packet_by_its_code_under_the_supervisor(runtime, monkeypatch):
+    """The production path of Start work (cockpit -> RuntimeSupervisor), not NativeRuntime's own."""
+    from cairnmind import client_auth, integrations
+    runner, credentials, project, spawned, requests = runtime
+    monkeypatch.setattr(client_auth, 'probe_client', lambda client: {'installation': 'ready', 'auth': 'signed_in'})
+    info = {'verified_resume': True, 'mcp_configured': True, 'hooks_configured': True, 'instructions_configured': True}
+    monkeypatch.setattr(integrations, 'install_integrations',
+                        lambda settings, current, clients=(): {'clients': {c: info for c in clients}, 'warnings': []})
+    monkeypatch.setattr(integrations.shutil, 'which', lambda name: '/bin/true')
+    monkeypatch.setattr(integrations, '_prepare_session', lambda *a: {'status': 'partial', 'unknowns': ['x']})
+    started = runner.start_project(project, slots=[{'id': 'one', 'client': 'claude', 'profile_id': 'claude'}])
+    assert started['runs'] == [] and not spawned
+    assert [e['code'] for e in started['errors']] == ['resume_partial']
+
+
 def test_invalid_private_configuration_refuses_identity_and_symlink(runtime, tmp_path):
     runner, credentials, project, spawned, requests = runtime
     profile = normalize_profile({'id': 'local', 'client': 'api', 'label': 'Local', 'provider': 'ollama', 'model': 'local'})

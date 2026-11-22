@@ -5,10 +5,12 @@ from .mcp_failure_notice import MESSAGES as MCP_FAILURE_MESSAGES
 from .check_profile_messages import MESSAGES as CHECK_PROFILE_MESSAGES
 from .engine_docker import MESSAGES as ENGINE_DOCKER_MESSAGES
 from .first_start import MESSAGES as FIRST_START_MESSAGES
+from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
+from .topology import MESSAGES as TOPOLOGY_MESSAGES
 from .terminal_i18n_messages import MESSAGES
 
 
@@ -640,6 +642,8 @@ CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a pers
 CATALOG.update(PLAN_CONFIRM_MESSAGES)  # a person confirms a plan in the inspector (#214)
 CATALOG.update(ENGINE_DOCKER_MESSAGES)  # the engine in Docker (#272)
 CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service started for MCP (#273, #258)
+CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)
+CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

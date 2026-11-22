@@ -201,6 +201,16 @@ async def test_run_next_stage_records_a_launch_problem_once_per_press(tmp_path, 
         assert sum(entry.count for entry in same) == 1, [(e.text, e.count) for e in app.notice_history.entries]
 
 
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_a_partial_resume_is_said_as_such_not_as_a_general_problem(tmp_path, monkeypatch, language):
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("cairnmind.terminal_ui.language_for", lambda settings: language)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    text = app.launch_notice({"launch_errors": [{"slot_id": "slot", "client": "claude", "code": "resume_partial"}]})
+    assert tr("The memory of this project is partial. `cairnmind run` names what is missing.", language) in text
+    assert "Connections" not in text and "Operation needs attention" not in text
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_run_next_stage_says_what_to_do_about_a_key_the_launch_refused(tmp_path, monkeypatch, language):

@@ -155,8 +155,10 @@ def _checked(app) -> dict:
 def check_partial(app, value) -> None:
     """When a visible session's memory is partial, find out once whether an unknown kind blocks it."""
     project = value.get("project_id")
-    if not project or not any(isinstance(slot, dict) and (slot.get("memory") or {}).get("status") == "partial"
-                              for slot in value.get("slots") or []):
+    # A launch refused for a partial packet leaves no slot with a partial memory: look anyway (#246).
+    refused = any(isinstance(row, dict) and row.get("code") == "resume_partial" for row in value.get("launch_errors") or [])
+    if not project or not (refused or any(isinstance(slot, dict) and (slot.get("memory") or {}).get("status") == "partial"
+                                          for slot in value.get("slots") or [])):
         return
     checked = _checked(app)
     now = time.monotonic()

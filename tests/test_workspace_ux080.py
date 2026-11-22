@@ -156,6 +156,48 @@ def test_status_literal_width_and_cached_negative_evidence(language):
     assert cell_len(plain_first) <= 80
 
 
+def row_with_chips(language, place):
+    """The first row without chips, and the row given ``place``: its width condition and the chips inside it."""
+    import re
+    from cairnmind.workspace import workspace_status_lines
+    arguments = ({"project_name": "payments-api", "broker_available": True}, {},
+                 {"run_id": "run-7f3a9c", "client": "codex", "lifecycle": "running"}, "controller", language)
+    plain, _ = workspace_status_lines(*arguments)
+    assert workspace_status_lines(*arguments, place=None) == workspace_status_lines(*arguments)
+    first, _ = workspace_status_lines(*arguments, place=place)
+    found = re.fullmatch(re.escape(plain) + r"#\{\?#\{e\|>=:#\{client_width\},(\d+)\},(.*),\}", first)
+    assert found, first
+    return plain, int(found[1]), found[2]
+
+
+@pytest.mark.parametrize("language", ["en", "pl"])
+def test_status_row_shows_storage_and_models_only_where_they_fit(language, tmp_path):
+    import re
+    from rich.cells import cell_len
+    from cairnmind.config import Settings
+    from cairnmind.terminal_i18n import tr
+    from cairnmind.topology import topology
+
+    plain, width, chips = row_with_chips(language, topology(Settings.load(tmp_path / "data", create=True)))
+    visible = lambda text: re.sub(r"#\[[^]]*\]", "", text)  # noqa: E731
+    assert cell_len(visible(plain)) <= 80  # where the chips do not fit, the row is the pinned one
+    assert width == cell_len(visible(plain + chips))  # the condition is the width the row needs with them
+    for label in ("Storage", "Models"):
+        assert tr(label, language) + ":" + tr("local", language) in visible(chips)
+
+
+def test_a_host_with_branch_characters_cannot_end_a_tmux_branch(tmp_path):
+    from cairnmind.config import Settings
+    from cairnmind.topology import status_words, topology
+
+    settings = Settings.load(tmp_path / "data", create=True)
+    settings.arcade_connect_url = settings.arcade_url = "https://a,b}c:2490"
+    place = topology(settings)
+    assert status_words(place)[0] == ("a,b}c", True)  # the host as it is: only the row makes it literal
+    _, _, chips = row_with_chips("en", place)
+    assert "a b)c" in chips and "," not in chips and "}" not in chips
+
+
 @pytest.mark.parametrize("auth,expected", [
     ({}, "Configured"),
     ({"ready_to_launch": True, "credential_configuration": "environment_present"}, "Configured"),
@@ -221,7 +263,12 @@ def test_real_tmux_status_visible_in_every_focus_and_each_terminal(manager, lang
                 tty = os.ttyname(terminal.slave)
                 rows = [workspace.tmux("display-message", "-p", "-c", tty,
                     workspace.tmux("show-options", "-gv", f"status-format[{n}]").stdout.rstrip("\n")).stdout.rstrip("\n") for n in (0, 1)]
-                assert all(cell_len(re.sub(r"#\[[^]]*\]", "", row)) <= 80 for row in rows)
+                widths = [cell_len(re.sub(r"#\[[^]]*\]", "", row)) for row in rows]
+                # Storage and Models (#74) come only where the terminal holds them: tmux evaluates the width of
+                # each client. At 80 columns the rows are the pinned ones; wider, the first row may use the width.
+                assert widths[1] <= 80 and widths[0] <= (80 if size[0] == 80 else size[0])
+                assert (tr("Storage", language) + ":" + tr("local", language) in rows[0]) == (size[0] > 80)
+                assert (tr("Models", language) + ":" + tr("local", language) in rows[0]) == (size[0] > 80)
                 assert tr("Project", language) + ":" in rows[0] and tr("Session", language) + ":" in rows[0]
                 assert "native-…" in rows[0] and tr("Running", language) in rows[0]
                 assert tr("Memory", language) + ":" + tr("ACK ready", language) in rows[1]

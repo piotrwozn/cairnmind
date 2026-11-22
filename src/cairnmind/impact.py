@@ -29,6 +29,7 @@ import re
 import subprocess
 from pathlib import Path, PurePosixPath
 
+from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
 from cairnmind.brief import _git_out, _line, _scoped_records, _title
 from cairnmind.evidence import THIRD_PARTY_WRITTEN, _FILE_KINDS, _QUOTE, _metadata, evidence_states
 from cairnmind.impact_docs import documentation_lines, documentation_mentions, written_as_code
@@ -342,6 +343,8 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
              f"{_line(since, 60)} ({commit[:12]})",
              "A link means \"worth checking\", not that the record is wrong. Nothing was written. "
              "Links are as fresh as the last indexing."]
+    warnings = [CODE_GRAPH_NOT_BUILT] if code_graph_pending(project) else []  # the symbols it links to are rebuilt by indexing (#286)
+    lines += warnings
     if not changed:
         lines.append("Nothing in this worktree differs from that commit.")
     elif not rows:
@@ -387,4 +390,5 @@ def build_impact(store, project_id, since, worktree=None, *, pending=False):
             "commit": commit,
             "changed_files": [{"path": name, **entry, "symbols": symbols.get(name)}
                               for name, entry in sorted(changed.items(), key=lambda item: PurePosixPath(item[0]).parts)],
-            "records": shown, "text": "\n".join(lines), "documentation": documentation}
+            "records": shown, "text": "\n".join(lines), "documentation": documentation,
+            **({"warnings": warnings} if warnings else {})}

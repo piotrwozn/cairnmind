@@ -173,6 +173,34 @@ async def test_a_kind_that_comes_back_after_nothing_blocked_is_named_again(tmp_p
     assert "This project's transcripts" in named[0]
 
 
+@pytest.mark.asyncio
+async def test_a_start_refused_for_a_partial_packet_names_the_blocking_kind(tmp_path, monkeypatch):
+    app, broker, workspace = ui(tmp_path, monkeypatch, {"blocking": [BLOCKING], "accepted": []})
+    refused = {**workspace.read(), "slots": [],
+               "launch_errors": [{"slot_id": "slot-native", "client": "claude", "code": "resume_partial"}]}
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        await app.workspace_changed(refused)
+        await wait_until(pilot, lambda: broker.reads > 0)
+        await settle(app, pilot)
+        text = app.notice_history.entries[-1].text
+    assert "future-claude-record" in text and "Transcript record kinds" in text
+
+
+@pytest.mark.asyncio
+async def test_a_start_refused_for_a_partial_packet_says_nothing_more_when_no_kind_blocks(tmp_path, monkeypatch):
+    app, broker, workspace = ui(tmp_path, monkeypatch, {"blocking": [], "accepted": []})
+    refused = {**workspace.read(), "slots": [],
+               "launch_errors": [{"slot_id": "slot-native", "client": "claude", "code": "resume_partial"}]}
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        await app.workspace_changed(refused)
+        await wait_until(pilot, lambda: broker.reads > 0)
+        await settle(app, pilot)
+        text = app.notice_history.entries[-1].text
+    assert "cairnmind run" in text and "future-claude-record" not in text
+
+
 def test_every_text_of_the_view_has_a_polish_entry():
     assert all(CATALOG.get(english) == polish and polish != english for english, polish in MESSAGES.items())
 

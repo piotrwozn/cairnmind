@@ -6,6 +6,7 @@ translated: text from a model, a provider or a source is never looked up here (s
 """
 from __future__ import annotations
 
+from .code_graph import CODE_GRAPH_NOT_BUILT
 from .confirmation import NOT_PROVEN
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
 from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
@@ -49,6 +50,9 @@ ASK_MESSAGES = {
     "(memory_remote_classes).":
         "Część pamięci projektu nie została wysłana do zdalnego serwera modelu z powodu jej klasy "
         "wrażliwości (memory_remote_classes).",
+    CODE_GRAPH_NOT_BUILT:
+        "Graf kodu tego projektu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, więc to, "
+        "co znaleziono o kodzie, może być puste lub niepełne.",
     "The answer has no verified citations.": "Odpowiedź nie zawiera zweryfikowanych cytowań.",
     "Could not check whether the quotes support the answer.":
         "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.",
@@ -400,6 +404,10 @@ STATE_MESSAGES = {
     "The workspace configuration must be a private file of the user.":
         "Konfiguracja środowiska musi być prywatnym plikiem użytkownika.",
     "tmux is unavailable.": "tmux jest niedostępny.",
+    "The workspace's tmux server did not give a usable key for a person's acts, so every act in it would be "
+    "refused. Close it with `cairnmind workspace stop` and open it again.":
+        "Serwer tmux środowiska nie dał użytecznego klucza dla czynności osoby, więc każda czynność w nim zostałaby "
+        "odrzucona. Zamknij je poleceniem `cairnmind workspace stop` i otwórz ponownie.",
     "Attaching needs an interactive terminal.": "Dołączenie wymaga interaktywnego terminala.",
     "The terminal workspace is not running.": "Środowisko terminalowe nie działa.",
     "The identity of the attaching terminal was not confirmed.":
@@ -497,8 +505,15 @@ CONFIRMATION_MESSAGES = {
     # The size of the package against its publication limits (terminal_ui.summary_text, #191).
     "Package (estimate): {rows} of {row_limit} rows, {size} of {size_limit}":
         "Paczka (szacunek): {rows} z {row_limit} wierszy, {size} z {size_limit}",
+    "Package: {rows} of {row_limit} rows, {size} of {size_limit}":
+        "Paczka: {rows} z {row_limit} wierszy, {size} z {size_limit}",
+    "Manifest: {size} of {size_limit} bytes": "Manifest: {size} z {size_limit} bajtów",
     "Near the publication limit ({names}). Publishing stops at the limit.":
         "Blisko limitu publikacji ({names}). Publikacja zatrzymuje się na limicie.",
+    "Over the publication limit ({names}). A snapshot would be refused.":
+        "Powyżej limitu publikacji ({names}). Migawka zostałaby odrzucona.",
+    "The code graph is not built yet: indexing builds it from the project's files, a snapshot does not carry it.":
+        "Graf kodu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, migawka go nie zawiera.",
     "rows": "wiersze", "bytes": "bajty", "manifest bytes": "bajty manifestu",
     "object bytes": "bajty największego obiektu",
     "Package size: not measured (the store could not be read for it).":
