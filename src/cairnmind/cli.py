@@ -895,11 +895,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     from cairnmind.record_kinds import doctor_view
     result["projects"] = None  # how many are registered; None when the store cannot be read
+    result["project_folders"] = None  # the folders this machine cannot read, by project (#371); None likewise
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
         store = store_for_read(ctx.obj)
         result["accepted_record_kinds"] = doctor_view(store)
         result["projects"] = len(store.list_projects())
+        from cairnmind.project_folders import unavailable
+        result["project_folders"] = unavailable(store)
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
@@ -1054,6 +1057,7 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         shown = safe_text(str(root))
         existed = project["id"] in known
         lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
+                 [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
                  [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
                      project=quoted, root=shown, files=result.get("files", 0))])
         if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
@@ -1068,6 +1072,8 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         return lines
     _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs, **details},
                    as_json, sentences)
+    if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
+        raise typer.Exit(1)
 
 
 def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> tuple[dict, str | None]:
@@ -1165,15 +1171,21 @@ def project_root(ctx: typer.Context, project: ProjectArg, path: FolderArg):
     root = path.expanduser().resolve(strict=True)
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
-    store.add_project_root(pid, root)
-    output({"project": pid, "root": str(root)})
+    moved = store.add_project_root(pid, root)  # a folder another machine had is now this machine's (#371)
+    output({"project": pid, "root": str(root), **moved})
 
 
 @app.command()
 @initialized
 def index(ctx: typer.Context, project: ProjectArg):
     """Index the project's files again through the service, which it starts when needed."""
-    output(request(ctx.obj, "POST", "/ingest", json={"project": project}))
+    result = request(ctx.obj, "POST", "/ingest", json={"project": project})
+    output(result)
+    # A folder that is not on this machine is not an index that worked: named, and the exit code says so (#371).
+    if isinstance(result, dict) and result.get("unavailable"):
+        for folder in result["unavailable"]:
+            typer.echo(f"Cairnmind: {folder['message']}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("import")
@@ -2595,7 +2607,13 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         notice = outcome.pop(key, None)
         if notice:
             typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
-    output({"restored": True, **outcome})
+    # A restored folder keeps the machine that registered it: on another machine each is named, with its command.
+    from cairnmind import project_folders
+    away = project_folders.unavailable(store_for(ctx.obj, notice=False))
+    for item in away:
+        if item["state"] == "elsewhere":
+            typer.echo(f"Cairnmind: {item['message']}", err=True)
+    output({"restored": True, **outcome, **({"unavailable_folders": away} if away else {})})
 
 
 @app.command()

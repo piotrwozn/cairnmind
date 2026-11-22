@@ -302,6 +302,34 @@ def test_an_idle_round_costs_the_same_on_a_store_four_times_larger(tmp_path, mon
     assert costs[0] == costs[1] and costs[1] < 40, costs
 
 
+@pytest.mark.parametrize("state", ["missing", "elsewhere", "elsewhere-parser"])
+def test_an_idle_round_of_a_project_whose_folder_is_unavailable_costs_no_work_per_row(tmp_path, monkeypatch, state):
+    monkeypatch.setattr("cairnmind.store_writer.machine_identity", lambda: "machine-id:fixture")
+    small = settled_store(tmp_path, "small", 30, 10)
+    large = settled_store(tmp_path, "large", 120, 40)
+    time.sleep(2.1)
+    costs = []
+    for store, pid, root in (small, large):
+        warm(store, pid)  # indexed here, with its folder
+        if state == "missing":
+            root.rename(root.with_name(root.name + ".away"))
+        else:
+            store.command("UPDATE project_roots SET machine='the-first-machine',host='mac' WHERE project_id=:p", {"p": pid})
+        if state == "elsewhere-parser":  # the stored analyses are of another parser version: the graph is kept, and said so
+            monkeypatch.setattr(ingest, "parser_identity", lambda: "another-release")
+        warm(store, pid)  # the round that names the folder; the next ones only repeat it
+        warm(store, pid)
+        seen = counted(monkeypatch)
+        idle_round(store, pid)
+        costs.append(len(seen))
+        again = ingest.index_project_if_changed(store, pid)
+        assert again["skipped"] is True and [item["state"] for item in again["unavailable"]] == [state.split("-")[0]]
+        assert len(again["errors"]) == (2 if state == "elsewhere-parser" else 1)
+        monkeypatch.undo()
+        monkeypatch.setattr("cairnmind.store_writer.machine_identity", lambda: "machine-id:fixture")
+    assert costs[0] == costs[1] and costs[1] < 40, costs
+
+
 def test_a_changed_file_is_indexed_in_the_next_idle_round(tmp_path):
     store, pid, root = settled_store(tmp_path, "tree", 20, 3)
     time.sleep(2.1)

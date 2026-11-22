@@ -632,7 +632,9 @@ class MemoryManager:
 
     @contextmanager
     def _publisher_lock(self, project_id, worktree=None):
-        _, root = self._scope(project_id, worktree)
+        project, root = self._scope(project_id, worktree)
+        from .project_folders import require_here
+        require_here(self.store, project, root)  # never a package into a same-path folder of another machine (#371)
         folder = self._path(root).parent
         if not root.is_dir() or any(p.is_symlink() for p in (root / ".memory", folder)):
             raise ValueError("Memory publication needs a real project directory")
@@ -968,7 +970,9 @@ class MemoryManager:
             if not current:
                 insert_document(tx, "projects", {**result["project"], "created_at": utc_now()})
             if not roots:
-                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": str(root)})
+                from .project_folders import stamp
+                insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": str(root),
+                                                      **stamp()})
             for origin in origins:
                 binding = {"id": _digest([project_id, origin, str(root)]), "project_id": project_id,
                            "origin_root": origin, "local_root": str(root)}

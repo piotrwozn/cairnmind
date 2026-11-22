@@ -634,8 +634,15 @@ def test_two_installations_on_two_hosts_one_writes_the_other_reads_and_can_take_
             assert [row["name"] for row in second.list_projects()] == ["demo"]
             assert second.query("SELECT count(*) AS n FROM sources WHERE is_current=true")[0]["n"] == 3
             (tmp_path / "repo" / "module_1.py").write_text("VALUE_1 = 'edited on the second host'\n")
+            # The folder is the laptop's (#371): on the desktop it is named as elsewhere and nothing is written, so
+            # nothing is refused and nothing of the edited file is indexed.
+            elsewhere = index_project(second, pid)
+            assert elsewhere["unavailable"][0]["state"] == "elsewhere" and elsewhere["changed"] == 0
+            # Where the folder is this machine's, a reader's indexing is refused at its first write.
+            current["machine"] = machines[str(laptop)]
             with pytest.raises(StoreNotWriter, match="writes it"):
                 index_project(second, pid)
+            current["machine"] = machines[str(desktop)]
             with pytest.raises(StoreNotWriter):
                 second.command("CREATE DOCUMENT TYPE vector_never IF NOT EXISTS")
             # A reader can take the logical backup: it only reads, and the file is written on its own machine.

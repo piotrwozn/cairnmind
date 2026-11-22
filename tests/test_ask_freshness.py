@@ -161,8 +161,11 @@ def test_a_failed_or_forgotten_indexing_is_never_skipped(workspace, tmp_path):
     missing.rmdir()
     failed = index_project_if_changed(store, pid)
     assert failed["errors"] and "skipped" not in failed
-    # A run with errors is not a complete index, so the next question indexes again.
-    assert "skipped" not in index_project_if_changed(store, pid)
+    # A folder that is not here is named, not an index that failed (#371): the next question skips the project and
+    # names the folder again. A run with any other error is not a complete index and is indexed again (see
+    # tests/test_project_folders.py).
+    again = index_project_if_changed(store, pid)
+    assert again["skipped"] is True and again["errors"] == failed["errors"]
 
 
 def test_the_signature_of_one_store_does_not_skip_indexing_in_another(workspace, tmp_path):
