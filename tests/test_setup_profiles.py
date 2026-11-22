@@ -50,6 +50,7 @@ class World:
         self.model_errors = {}
         self.second_check_errors = {}  # role -> raised from its second check: the one configure_role makes
         self.checked = {}
+        self.passwords = []  # what each engine start was given to sign in with
         self.backup_error = self.check_error = self.restore_error = self.start_error = None
         monkeypatch.setattr(Store, "open_readonly", classmethod(lambda cls, settings: self.open_readonly(settings)))
         monkeypatch.setattr(Store, "__init__", lambda store, data_dir, **kwargs: self.log.append(("Store", self.mode())))
@@ -130,6 +131,7 @@ class World:
         self.log.append(("choose_engine_mode", self.mode()))
 
     def start_command(self, settings, **kwargs):
+        self.passwords.append(settings.arcade_password)
         self.log.append(("start_command", (self.mode(), bool(settings.arcade_password), connect_only(settings))))
         if self.start_error:
             raise self.start_error
@@ -368,6 +370,44 @@ def test_the_admin_password_file_creates_the_user_only_with_yes(tmp_path, world)
     assert "PRIVATE_ADMIN_MARKER" not in json.dumps(config(tmp_path)) + applied.output
 
 
+def test_a_user_created_before_a_failed_test_is_named_in_the_refusal(tmp_path, world):
+    make(tmp_path)
+    before = config_bytes(tmp_path)
+    admin = private(tmp_path, "root-password", "PRIVATE_ADMIN_MARKER")
+    world.block = {"available": True, "database_available": False, "database_status": 401}
+    result = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--admin-password-file", admin, "--yes")
+    refused(result, "The sign-in was refused", "Nothing was saved.",
+            f"Created on ArcadeDB at {DB}: the user cairnmind, with rights on the database cairnmind only.")
+    assert config_bytes(tmp_path) == before and "PRIVATE_ADMIN_MARKER" not in result.output
+
+
+def test_the_plan_of_the_walk_through_does_not_call_one_store_changed_and_left_alone(tmp_path, world):
+    """A connect-only installation with no password yet, set up for the same address (docs/DEPLOYMENT.md, step 2)."""
+    make(tmp_path, arcade_connect_url=DB)
+    admin = private(tmp_path, "root-password", "PRIVATE_ADMIN_MARKER")
+    world.block = {"available": True, "database_available": False, "database_status": 401}
+    dry = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--admin-password-file", admin)
+    assert dry.exit_code == 1 and "Storage: from ArcadeDB at" in said(dry)
+    assert "(database " in said(dry) and "Left as it is: the store at" not in said(dry), dry.output
+
+
+def test_the_same_store_with_another_user_is_not_left_behind(tmp_path, world):
+    make(tmp_path, arcade_connect_url=DB, arcade_user="other", arcade_database="cairnmind",
+         arcade_password_file=private(tmp_path, "old-password", "OLD"))
+    dry = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path))
+    assert dry.exit_code == 1 and "Left as it is: the store at" not in said(dry), dry.output
+    moved = make(tmp_path, arcade_database="elsewhere")
+    again = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path))
+    assert f"Left as it is: the store at {DB} (database elsewhere)" in said(again), again.output
+    assert moved.arcade_database == "elsewhere"
+
+
+def test_moving_out_of_a_store_whose_database_has_another_name_names_it(tmp_path, world):
+    make(tmp_path, arcade_database="earlier_name")
+    dry = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path))
+    assert "The store there holds the database earlier_name, not" in said(dry), dry.output
+
+
 def test_a_store_with_another_writer_makes_this_installation_a_reader_and_nothing_takes_over(tmp_path, world):
     make(tmp_path)
     world.writer = {"role": "reader", "reason": "Installation abc writes it. Run `cairnmind store takeover --yes`."}
@@ -449,7 +489,6 @@ def test_an_ollama_on_this_computer_without_the_model_is_named(tmp_path, world):
     refused(result, "`cairnmind setup remote-db` runs the chat model on this computer",
             f"`ollama pull {RELEASE_CHAT}`", "model not found", "Nothing was saved.")
     assert config_bytes(tmp_path) == before and world.calls("doctor_block") == []
-    result = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--yes")
     world.model_errors["chat"] = OllamaUnavailable("down")
     refused(invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--yes"), "down")
     assert config(tmp_path)["knowledge_agent"] == "enabled"
@@ -461,6 +500,15 @@ def test_a_remote_ollama_url_is_refused_and_never_asked(tmp_path, world):
     result = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--yes")
     refused(result, "ollama_url names models.lan, a server on another computer")
     assert config_bytes(tmp_path) == before and world.log == []
+
+
+def test_a_remote_ollama_url_with_a_role_on_another_computer_names_the_url_not_a_pull(tmp_path, world):
+    make(tmp_path, knowledge_agent="enabled", memory_chat=dict(REMOTE), chat_model="gpt-x",
+         ollama_url="http://models.lan:11434")
+    before = config_bytes(tmp_path)
+    result = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--yes")
+    refused(result, "ollama_url names models.lan, a server on another computer")
+    assert "ollama pull" not in said(result) and config_bytes(tmp_path) == before and world.log == []
 
 
 def test_models_that_are_off_stay_off(tmp_path, world):
@@ -522,7 +570,7 @@ def test_back_to_local_with_empty_saves_the_managed_settings_and_starts_the_engi
     assert dry.exit_code == 1 and world.calls("start_command") == []
     for words in (f"Storage: from ArcadeDB at {DB} to the engine on this machine at {before['arcade_url']}, with the "
                   f"database {derived}.", "The engine on this machine will be started", f"has no database {derived}",
-                  f"Left as it is: the store at {DB}; nothing in it is changed or deleted.",
+                  f"Left as it is: the store at {DB} (database cairnmind); nothing in it is changed or deleted.",
                   "This installation stays named as its writer", "Nothing was changed. To make these changes"):
         assert words in said(dry), (words, dry.output)
     (data / "arcade" / "databases" / derived).mkdir(parents=True)
@@ -572,8 +620,65 @@ def test_a_failed_restore_puts_the_configuration_back_and_names_the_backup(tmp_p
     message = str(result.exception)
     assert (f"The change stopped at the restore: cut config.json was put back as it was. The backup {target} is kept. "
             "The engine on this machine was started and is left running") in message
-    assert config_bytes(tmp_path) == before and target.exists()
+    assert config_without_password(tmp_path) == before and target.exists()  # the engine's password stays, see below
+    assert "stays in config.json (arcade_password)" in message and "PRIVATE_DB_MARKER" not in message
     assert world.calls("take_over") == [] and all(what != "create_user" for what, _ in world.log)
+
+
+def config_without_password(tmp_path) -> bytes:
+    """config.json as it is, minus the managed password a started engine keeps (the only difference a put-back leaves)."""
+    values = config(tmp_path)
+    values.pop("arcade_password", None)
+    return json.dumps(values, indent=2).encode()
+
+
+def test_a_retry_after_a_failed_restore_starts_the_engine_with_the_same_password(tmp_path, world):
+    stored = connect_only_installation(tmp_path)
+    world.restore_error = ArcadeError("cut")
+    first = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "one.cairnmind.json.gz"), "--yes")
+    assert first.exit_code == 1
+    kept = config(tmp_path)["arcade_password"]
+    assert kept and config(tmp_path)["arcade_connect_url"] == stored["arcade_connect_url"]  # still connect-only
+    world.restore_error = None
+    second = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "two.cairnmind.json.gz"), "--yes")
+    assert second.exit_code == 0, second.output
+    assert world.passwords == [kept, kept] and config(tmp_path)["arcade_password"] == kept
+
+
+def test_a_restore_that_finished_is_said_when_a_later_step_fails(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="enabled", memory_chat=dict(REMOTE), chat_model="gpt-x")
+    world.second_check_errors["chat"] = ValueError("the server changed its mind")
+    target = tmp_path / "done.cairnmind.json.gz"
+    result = invoke(tmp_path, "setup", "local", "--backup", str(target), "--yes")
+    assert result.exit_code == 1
+    message = str(result.exception)
+    assert f"The restore had already finished: the store on this machine holds the data of {target}" in message
+    assert "safety backup in" in message and "config.json was put back as it was." in message
+
+
+def test_the_report_of_confirmations_before_the_rule_is_said_after_the_restore(tmp_path, world, monkeypatch):
+    connect_only_installation(tmp_path)
+    monkeypatch.setattr(Store, "confirmations_before_rule", {"marked": 2, "before_rule": 1, "at": "x"})
+    result = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "c.cairnmind.json.gz"), "--yes")
+    assert result.exit_code == 0, result.output
+    assert "The restore marked 2 records as confirmed by a person and left 1 before the rule" in said(result)
+
+
+def test_an_interrupt_names_the_kept_backup_and_the_engine_before_it_goes_on(tmp_path, world):
+    settings = connect_only_settings(tmp_path)
+    world.restore_error = KeyboardInterrupt()
+    target = tmp_path / "ctrl-c.cairnmind.json.gz"
+    said_lines = []
+    with pytest.raises(KeyboardInterrupt):
+        run(settings, Request("local", backup=str(target)), yes=True, say=said_lines.append)
+    assert f"The backup {target} is kept." in said_lines[-1] and "left running" in said_lines[-1]
+    assert "config.json was put back as it was." in said_lines[-1]
+    assert config(tmp_path)["arcade_connect_url"] == DB
+
+
+def connect_only_settings(tmp_path):
+    connect_only_installation(tmp_path)
+    return Settings.load(tmp_path / "data")
 
 
 def test_a_backup_that_fails_or_fails_its_check_changes_nothing(tmp_path, world):
@@ -635,7 +740,7 @@ def test_a_model_save_that_fails_after_the_storage_switch_puts_everything_back(t
     result = invoke(tmp_path, "setup", "local", "--empty", "--yes")
     assert result.exit_code == 1 and "the server changed its mind" in str(result.exception)
     assert "stopped at saving the chat model" in str(result.exception) and "left running" in str(result.exception)
-    assert config_bytes(tmp_path) == before
+    assert config_without_password(tmp_path) == before
     assert world.calls("start_command") == [("managed", True, False)]
 
 
@@ -684,6 +789,47 @@ def test_a_configuration_that_cannot_be_put_back_says_so(tmp_path, world, monkey
         run(Settings.load(tmp_path / "data"), Request("remote-db", url=DB, user="cairnmind", database="cairnmind",
                                                       password_file=db_options(tmp_path)[7]),
             yes=True, say=lambda text: None)
+
+
+def test_an_applied_result_and_a_refusal_that_carry_another_modules_sentence_render_in_polish(tmp_path, world):
+    settings = make(tmp_path, knowledge_agent="disabled")
+    result = run(settings, Request("remote", url=DB, user="cairnmind", database="cairnmind",
+                                   password_file=db_options(tmp_path)[7], models_url=MODELS,
+                                   provider="openai_compatible", chat_model="gpt-x", embedding_model="emb-y",
+                                   allow_remote=True), yes=True, say=lambda text: None)
+    assert any(item[0] == setup_profiles.VERBATIM for key in ("done", "next") for item in result[key])
+    assert "Zapisano w" in "\n".join(render(result, "pl"))
+    make(tmp_path / "other", knowledge_agent="enabled", ollama_url="http://models.lan:11434")
+    with pytest.raises(SetupRefused) as refusal:
+        run(Settings.load(tmp_path / "other" / "data"), Request("remote-db", url=DB, user="u", database="d",
+                                                                 password_file=db_options(tmp_path)[7]),
+            yes=False, say=lambda text: None)
+    assert "models.lan" in render_one((refusal.value.template, refusal.value.values), "pl")
+
+
+def test_an_invalid_database_prefix_is_refused_going_back(tmp_path, world, monkeypatch):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_DB_PREFIX", "not valid")
+    refused(invoke(tmp_path, "setup", "local", "--empty", "--yes"),
+            "CAIRNMIND_ARCADE_DB_PREFIX is not a valid database prefix", "Nothing was changed.")
+    assert config_bytes(tmp_path) == before and world.log == []
+
+
+def test_the_plan_names_native_for_a_directory_that_holds_an_engine(tmp_path, world):
+    connect_only_installation(tmp_path, engine_mode="")
+    (tmp_path / "data" / "arcade").mkdir()
+    plan = said(invoke(tmp_path, "setup", "local", "--empty"))
+    assert "will be started (native, Java 21)" in plan and "as `cairnmind init` chooses" not in plan
+
+
+def test_a_refusal_after_the_generic_rule_saved_the_address_does_not_say_nothing_changed_alone(
+        tmp_path, world, monkeypatch):
+    make(tmp_path)
+    monkeypatch.setenv("CAIRNMIND_ARCADE_CONNECT_URL", "https://db.example:2490")
+    result = invoke(tmp_path, "setup", "remote-db", *db_options(tmp_path), "--yes")
+    refused(result, "CAIRNMIND_ARCADE_CONNECT_URL is set in this shell", "was saved in config.json first")
+    assert config(tmp_path)["arcade_connect_url"] == "https://db.example:2490" and world.log == []
 
 
 def test_every_setup_sentence_has_polish_with_the_same_placeholders():

@@ -778,15 +778,17 @@ def setup(ctx: typer.Context,
     problem = setup_profiles.option_problem(request)
     if problem:
         raise typer.BadParameter(str(problem))
+    # Every refusal says "nothing was changed"; the generic rule may already have saved the address of a variable.
+    tail = (" " + str(setup_profiles.Said(setup_profiles.ADDRESS_SAVED))) if ctx.obj._origin.get("connect_saved") else ""
     if session_value("SESSION_ID"):
-        refuse(str(setup_profiles.Said(setup_profiles.IN_SESSION)))
-    running = str(setup_profiles.Said(setup_profiles.SERVICE_RUNS))
+        refuse(str(setup_profiles.Said(setup_profiles.IN_SESSION)) + tail)
+    running = str(setup_profiles.Said(setup_profiles.SERVICE_RUNS)) + tail
     with _service_stopped(ctx.obj, running, running):
         try:
             result = setup_profiles.run(ctx.obj, request, yes=yes,
                                         say=lambda text: typer.echo(f"Cairnmind: {text}", err=True))
         except setup_profiles.SetupRefused as exc:
-            refuse(str(exc))
+            refuse(str(exc) + tail)
     if as_json:
         output(setup_profiles.as_json(result))
     else:

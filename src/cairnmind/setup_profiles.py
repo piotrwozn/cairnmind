@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 from . import (database_credentials, database_mode, engine, engine_docker, knowledge_mode, memory_egress,
                memory_models, store_writer, topology)
 from .arcade import ArcadeError
-from .config import Settings, derived_database, env_names
+from .config import Settings, derived_database, env_names, env_value
 from .ollama import OllamaUnavailable
 from .terminal_safe import safe_text
 
@@ -53,7 +53,7 @@ OPTION_NAMES = {"url": "--url", "user": "--user", "database": "--database", "pas
                 "provider": "--provider", "chat_model": "--chat-model", "embedding_model": "--embedding-model",
                 "credential_ref": "--credential-ref", "allow_remote": "--allow-remote", "backup": "--backup",
                 "empty": "--empty"}
-LONG = frozenset({"error", "reason", "advice", "problem", "text"})  # values that are whole sentences of other modules
+LONG = frozenset({"error", "reason", "advice", "problem", "sentence"})  # values that are whole sentences of other modules
 
 # Refusals and option errors
 SERVICE_RUNS = ("The knowledge service of this data directory is running; run `cairnmind stop` first, then this "
@@ -90,7 +90,14 @@ MODELS_HERE_NEEDED = ("`cairnmind setup {profile}` runs the {role} model on this
 INVALID_ROLE = ("The settings of the {role} model cannot be read: {error} Fix them with `cairnmind models set --role "
                 "{role}`. Nothing was changed.")
 REMOTE_NOT_READABLE = "The store at {url} cannot be read for the backup: {error} Nothing was changed."
-VERBATIM = "{text}"  # a sentence another module wrote and translates; the one constant without its own Polish
+# A sentence another module wrote, shown as that module wrote it (English); the one constant without its own Polish.
+# The placeholder is not `text`: terminal_i18n.tr takes a parameter of that name.
+VERBATIM = "{sentence}"
+ADDRESS_SAVED = ("The database address that CAIRNMIND_ARCADE_CONNECT_URL gave was saved in config.json first, as every "
+                 "command saves it the first time it sees it; nothing else changed.")
+BAD_PREFIX = ("{variable} is not a valid database prefix (letters, digits and underscores); fix it and run setup again. "
+              "Nothing was changed.")
+STORAGE_REFUSED_NOTED = "The store at {url} cannot be used: {error} Nothing was saved.{notes}"
 
 # Tests, plan and result
 TEST_STORAGE_OK = ("Tested: ArcadeDB at {url} answers with version {version}, and the user {user} signs in to the "
@@ -104,7 +111,7 @@ CHANGE_STORAGE_REMOTE = ("Storage: from {before} to ArcadeDB at {url}, which thi
                          "{user}, database {database}, password read from {password_file}.")
 CHANGE_CA = "Its certificate is checked against {ca_file}."
 BEFORE_LOCAL = "the engine on this machine"
-BEFORE_REMOTE = "ArcadeDB at {url}"
+BEFORE_REMOTE = "ArcadeDB at {url} (database {database}, user {user})"
 CHANGE_STORAGE_LOCAL = ("Storage: from ArcadeDB at {before} to the engine on this machine at {url}, with the database "
                         "{database}.")
 ENGINE_START = ("The engine on this machine will be started ({engine}). Nothing is installed: the native engine needs "
@@ -141,7 +148,9 @@ LEFT_LOCAL_STORE = ("Left as it is: the store on this machine, in {path}. This i
                     "command, and `cairnmind init` and `cairnmind restore FILE` after it.")
 LEFT_ENGINE = ("Left as it is: the engine this data directory started on this machine; it is not used any more, and "
                "`cairnmind engine stop` stops it.")
-LEFT_REMOTE_STORE = "Left as it is: the store at {url}; nothing in it is changed or deleted."
+LEFT_REMOTE_STORE = "Left as it is: the store at {url} (database {database}); nothing in it is changed or deleted."
+LOCAL_NAME_DIFFERS = ("The store there holds the database {database}, not {derived}, the name `cairnmind setup local` "
+                      "uses on this machine; its data stays on disk under {database}.")
 LEFT_WRITER_NOTE = ("This installation stays named as its writer; another installation that should write it runs "
                     "`cairnmind store takeover --yes`.")
 LEFT_MODEL_SERVER = "Left as it is: the model server at {url}; nothing is sent to it any more."
@@ -169,6 +178,12 @@ PUT_BACK = "The change stopped at {step}: {error} config.json was put back as it
 PUT_BACK_FAILED = ("The change stopped at {step}: {error} config.json could NOT be put back ({reason}); check it "
                    "before you start Cairnmind.{notes}")
 KEPT_BACKUP = "The backup {path} is kept."
+KEPT_PASSWORD = ("The password that engine now uses stays in config.json (arcade_password), so that `cairnmind setup "
+                 "local` can be run again.")
+RESTORE_DONE = ("The restore had already finished: the store on this machine holds the data of {path}, and its earlier "
+                "contents are in a safety backup in {backups}.")
+CONFIRMATIONS = ("The restore marked {marked} records as confirmed by a person and left {left} before the rule; confirm "
+                 "the others in the inspector.")
 ENGINE_LEFT = "The engine on this machine was started and is left running; `cairnmind engine stop` stops it."
 BACKUP_FAILED = "The backup of the store at {url} failed: {error} Nothing was changed."
 BACKUP_CHECK_FAILED = "The backup {path} did not pass its check: {error} The file is kept; nothing was changed."
@@ -201,7 +216,14 @@ MESSAGES = {
     CHANGE_STORAGE_REMOTE: "Baza: z {before} na ArcadeDB pod adresem {url}, z którą ta instalacja tylko się łączy: użytkownik {user}, baza {database}, hasło czytane z {password_file}.",
     CHANGE_CA: "Jej certyfikat jest sprawdzany względem {ca_file}.",
     BEFORE_LOCAL: "silnika na tym komputerze",
-    BEFORE_REMOTE: "ArcadeDB pod adresem {url}",
+    BEFORE_REMOTE: "ArcadeDB pod adresem {url} (baza {database}, użytkownik {user})",
+    ADDRESS_SAVED: "Adres bazy z CAIRNMIND_ARCADE_CONNECT_URL został najpierw zapisany w config.json, tak jak zapisuje go każde polecenie przy pierwszym zobaczeniu; nic poza tym nie zostało zmienione.",
+    BAD_PREFIX: "{variable} nie jest poprawnym prefiksem bazy (litery, cyfry i podkreślenia); popraw go i uruchom setup ponownie. Nic nie zostało zmienione.",
+    STORAGE_REFUSED_NOTED: "Nie można użyć bazy pod adresem {url}: {error} Nic nie zostało zapisane.{notes}",
+    LOCAL_NAME_DIFFERS: "Baza tam ma bazę danych {database}, a nie {derived}, czyli nazwę, której `cairnmind setup local` używa na tym komputerze; jej dane zostają na dysku pod nazwą {database}.",
+    KEPT_PASSWORD: "Hasło, którego ten silnik teraz używa, zostaje w config.json (arcade_password), aby można było ponownie uruchomić `cairnmind setup local`.",
+    RESTORE_DONE: "Odtwarzanie już się zakończyło: baza na tym komputerze ma dane z {path}, a jej wcześniejsza zawartość jest w kopii bezpieczeństwa w {backups}.",
+    CONFIRMATIONS: "Odtwarzanie oznaczyło {marked} rekordów jako potwierdzone przez człowieka i zostawiło {left} sprzed reguły; pozostałe potwierdź w inspektorze.",
     CHANGE_STORAGE_LOCAL: "Baza: z ArcadeDB pod adresem {before} na silnik na tym komputerze pod adresem {url}, z bazą {database}.",
     ENGINE_START: "Silnik na tym komputerze zostanie uruchomiony ({engine}). Nic nie jest instalowane: silnik natywny wymaga wcześniejszego `cairnmind engine install`; w Dockerze brakujący obraz silnika jest pobierany, co zostaje wtedy powiedziane.",
     ENGINE_NATIVE: "natywny, Java 21",
@@ -222,7 +244,7 @@ MESSAGES = {
     WRITER_NOT_READ: "Zapisujący: nie można go jeszcze odczytać ({reason}). Baza rozstrzyga to, gdy ta instalacja pierwszy raz ją otworzy: ta instalacja zostaje zapisującą, gdy żadnej nie zapisano, i tylko czyta, gdy zapisuje ją inna instalacja.",
     LEFT_LOCAL_STORE: "Zostaje bez zmian: baza na tym komputerze, w {path}. Ta instalacja przestaje jej używać i nie jest ona kopiowana do nowej bazy. Aby zabrać jej dane, uruchom `cairnmind backup PLIK` przed tym poleceniem, a `cairnmind init` i `cairnmind restore PLIK` po nim.",
     LEFT_ENGINE: "Zostaje bez zmian: silnik, który ten katalog danych uruchomił na tym komputerze; nie jest już używany, a `cairnmind engine stop` go zatrzymuje.",
-    LEFT_REMOTE_STORE: "Zostaje bez zmian: baza pod adresem {url}; nic w niej nie jest zmieniane ani usuwane.",
+    LEFT_REMOTE_STORE: "Zostaje bez zmian: baza pod adresem {url} (baza danych {database}); nic w niej nie jest zmieniane ani usuwane.",
     LEFT_WRITER_NOTE: "Ta instalacja pozostaje w niej zapisana jako zapisująca; inna instalacja, która ma ją zapisywać, uruchamia `cairnmind store takeover --yes`.",
     LEFT_MODEL_SERVER: "Zostaje bez zmian: serwer modeli pod adresem {url}; nic więcej nie jest do niego wysyłane.",
     NOTHING_TO_DO: "Baza i modele pamięci już działają tak, jak mówi `cairnmind setup {profile}`; nie ma czego zmieniać.",
@@ -409,12 +431,34 @@ def _put_back(path: Path, data: bytes) -> None:
             Path(name).unlink(missing_ok=True)
 
 
+def _generated_password(path: Path, snapshot: bytes) -> str | None:
+    """The managed password config.json gained since the snapshot, or None."""
+    try:
+        before, now = json.loads(snapshot), json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    password = now.get("arcade_password") if isinstance(now, dict) and isinstance(before, dict) else None
+    return password if password and not before.get("arcade_password") else None
+
+
+def _keep_password(path: Path, password: str) -> None:
+    """After a put-back: the password a started engine uses stays, unless config.json already holds one."""
+    with (path.parent / "config.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        values = json.loads(path.read_text())
+        values.setdefault("arcade_password", password)
+        memory_models._write_json(path, values)
+
+
 def local_storage(settings) -> dict:
     """The settings of the engine this installation manages on this machine, as every managed installation has them.
 
     No password is named: the managed engine's root signs in with the generated arcade_password that config.json
     kept, or Settings.load(create=True) generates one after the switch. The database is the name derived from the
-    data directory, so a --database given to remote-db cannot lose the local store."""
+    data directory, so a --database given to remote-db cannot lose the local store. The prefix of that name is checked
+    here as Settings.load checks it, because derived_database does not."""
+    if not env_value("ARCADE_DB_PREFIX", "devbrain").replace("_", "").isalnum():
+        raise SetupRefused(BAD_PREFIX, variable=next(key for key in env_names("ARCADE_DB_PREFIX") if key in os.environ))
     stored = (settings._origin or {}).get("kept", {}).get("arcade_url", (settings.arcade_url,))[0]
     default = Settings.__dataclass_fields__["arcade_url"].default
     return {"arcade_url": stored if isinstance(stored, str) and database_mode.is_managed_url(stored) else default,
@@ -471,7 +515,7 @@ def _writer_items(found: dict, url: str) -> list:
     else:
         items = [(WRITER_NOT_READ, {"url": url, "reason": reason})]
     if found.get("problem"):  # a writer row that the journal head contradicts: said as it is
-        items.append((VERBATIM, {"text": found["problem"]}))
+        items.append((VERBATIM, {"sentence": found["problem"]}))
     return items
 
 
@@ -505,7 +549,8 @@ def _test_storage(plan, request, yes, result) -> None:
             error = (SIGN_IN_REFUSED, {"advice": database_mode.sign_in_refused(candidate)})
         else:
             error = (QUERY_FAILED, {"status": block.get("database_status")})
-        raise SetupRefused(STORAGE_REFUSED, url=url, error=error)
+        notes = [item for item in result["done"] if item[0] == USER_CREATED]  # the server was changed before the test failed
+        raise SetupRefused(STORAGE_REFUSED_NOTED, url=url, error=error, notes=notes)
     result["writer"] = _writer_items(store_writer.inspect(candidate), url)
 
 
@@ -559,12 +604,12 @@ def model_moves(settings, request) -> list[dict]:
             row = memory_models.profile(settings, role)
         except ValueError as exc:
             raise SetupRefused(INVALID_ROLE, role=role, error=str(exc)) from None
-        if row is None:
+        if row is None or not memory_models.is_loopback(row["base_url"]):  # the role will use the Ollama of this computer
             try:
                 memory_models.local_server(settings)  # an ollama_url on another computer is never written or used (#288)
             except memory_models.RemoteServerRefused as exc:
-                raise SetupRefused(VERBATIM, text=str(exc)) from None
-        elif not memory_models.is_loopback(row["base_url"]):
+                raise SetupRefused(VERBATIM, sentence=str(exc)) from None
+        if row is not None and not memory_models.is_loopback(row["base_url"]):
             moves.append(_move(settings, role, {"provider": "ollama", "model": defaults[role]}))
     return moves
 
@@ -603,7 +648,8 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
     was_connect = database_mode.connect_only(settings)
     if plan and request.profile != "local":
         fields = plan["fields"]
-        before = (BEFORE_REMOTE, {"url": database_mode.address(settings)}) if was_connect else (BEFORE_LOCAL, {})
+        before = (BEFORE_REMOTE, {"url": database_mode.address(settings), "database": settings.arcade_database,
+                                  "user": settings.arcade_user}) if was_connect else (BEFORE_LOCAL, {})
         changes.append((CHANGE_STORAGE_REMOTE, {"before": before, "url": database_mode.shown(fields["arcade_connect_url"]),
                                                 "user": fields["arcade_user"], "database": fields["arcade_database"],
                                                 "password_file": fields["arcade_password_file"]}))
@@ -611,6 +657,9 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             changes.append((CHANGE_CA, {"ca_file": fields["arcade_ca_file"]}))
         if not was_connect:
             left.append((LEFT_LOCAL_STORE, {"path": settings.data_dir / "arcade"}))
+            if settings.arcade_database != derived_database(settings.data_dir):  # a moved directory, another prefix
+                left.append((LOCAL_NAME_DIFFERS, {"database": settings.arcade_database,
+                                                  "derived": derived_database(settings.data_dir)}))
             if engine.local_process_recorded(settings) or engine_docker.container_recorded(settings):
                 left.append((LEFT_ENGINE, {}))
     if plan and request.profile == "local":
@@ -618,7 +667,12 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
         url = database_mode.address(settings)
         changes.append((CHANGE_STORAGE_LOCAL, {"before": url, "url": fields["arcade_url"],
                                                "database": fields["arcade_database"]}))
-        how = (ENGINE_CHOSEN, {}) if settings.engine_mode == "" else _engine_item(settings)
+        if settings.engine_mode != "":
+            how = _engine_item(settings)
+        elif engine_docker._state(settings).exists():  # choose_engine_mode keeps native for an engine this directory holds
+            how = (ENGINE_NATIVE, {})
+        else:
+            how = (ENGINE_CHOSEN, {})
         changes.append((ENGINE_START, {"engine": how}))
         if plan["target"]:
             changes.append((BACKUP_PLAN, {"url": url, "path": plan["target"]}))
@@ -626,8 +680,14 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             data = settings.data_dir / "arcade" / "databases" / fields["arcade_database"]
             changes.append((LOCAL_DATA_FOUND if data.is_dir() else LOCAL_DATA_NEW,
                             {"database": fields["arcade_database"], "url": url}))
-    if plan and was_connect:
-        left.append((LEFT_REMOTE_STORE, {"url": database_mode.address(settings)}))
+    # Nothing is left behind when the same store is kept, or when the earlier settings had no password and so never
+    # reached one.
+    unreachable = bool((settings._origin or {}).get("problem")) or not settings.arcade_password
+    same_store = bool(plan and request.profile != "local"
+                      and database_mode.address(settings) == database_mode.address(plan["candidate"])
+                      and settings.arcade_database == plan["fields"]["arcade_database"])
+    if plan and was_connect and not same_store and not unreachable:
+        left.append((LEFT_REMOTE_STORE, {"url": database_mode.address(settings), "database": settings.arcade_database}))
         if store_writer.inspect(settings).get("role") == "writer":
             left.append((LEFT_WRITER_NOTE, {}))
     sent = False
@@ -653,8 +713,8 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
 
 def _add_next(result, steps) -> None:
     for step in steps:
-        if (VERBATIM, {"text": step}) not in result["next"]:
-            result["next"].append((VERBATIM, {"text": step}))
+        if (VERBATIM, {"sentence": step}) not in result["next"]:
+            result["next"].append((VERBATIM, {"sentence": step}))
 
 
 def _back_to_local(settings, plan, result, say, state) -> Settings:
@@ -695,8 +755,15 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
     if target:
         state["step"] = (STEP_RESTORE, {})
         say(render_one((RESTORING, {"path": written})))
-        Store(local.data_dir, settings=local).restore(written)  # validation, writer check and safety backup included
+        restored = Store(local.data_dir, settings=local)
+        restored.restore(written)  # validation, writer check and safety backup included
+        state["restored"] = (written, local.data_dir / "backups")
         result["done"].append((RESTORED, {"path": written, "backups": local.data_dir / "backups"}))
+        from .confirmation_upgrade import report
+        marks = report(restored.confirmations_before_rule)  # what `cairnmind restore` also says
+        if marks:
+            result["done"].append((CONFIRMATIONS, {"marked": marks["marked_as_a_persons"],
+                                                   "left": marks["still_before_the_rule"]}))
     return local
 
 
@@ -710,7 +777,7 @@ def _apply(settings, request, plan, moves, result, say, state) -> None:
         state["step"] = (STEP_AGENT, {})
         said = knowledge_mode.turn_on(settings)
         if said:
-            result["done"].append((VERBATIM, {"text": said}))
+            result["done"].append((VERBATIM, {"sentence": said}))
     if plan and request.profile != "local":
         state["step"] = (STEP_STORAGE, {})
         save_storage(settings.data_dir, plan["fields"])
@@ -740,7 +807,7 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
         return result
     path = settings.data_dir / "config.json"
     snapshot = path.read_bytes()
-    state: dict = {"step": None, "backup": None, "engine": False}
+    state: dict = {"step": None, "backup": None, "engine": False, "restored": None}
     try:
         _apply(settings, request, plan, moves, result, say, state)
     except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
@@ -751,12 +818,21 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
             notes.append((KEPT_BACKUP, {"path": state["backup"]}))
         if state["engine"]:
             notes.append((ENGINE_LEFT, {}))
+        if state["restored"]:
+            notes.append((RESTORE_DONE, {"path": state["restored"][0], "backups": state["restored"][1]}))
+        # The engine started with the managed password this change generated; a retry must find the same one.
+        kept = _generated_password(path, snapshot) if state["engine"] else None
         try:
             _put_back(path, snapshot)
+            if kept:
+                _keep_password(path, kept)
+                notes.append((KEPT_PASSWORD, {}))
         except OSError as failure:
             raise SetupFailed(PUT_BACK_FAILED, step=state["step"], error=str(exc), reason=str(failure),
                               notes=notes) from exc
         if not isinstance(exc, Exception):
+            say(render_one((PUT_BACK, {"step": state["step"], "error": str(exc) or type(exc).__name__,
+                                       "notes": notes})))
             raise
         raise SetupFailed(PUT_BACK, step=state["step"], error=str(exc), notes=notes) from exc
     result["applied"] = True
