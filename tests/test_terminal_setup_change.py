@@ -447,10 +447,13 @@ def recorded(tmp):
 
 
 async def opened_without_a_dialog(app):
-    """An opening of the workspace in which no outcome is shown: the worker that looks for one has finished."""
+    """An opening of the workspace in which no outcome is shown: the worker that looks for one has finished. The wait
+    is bounded, and ends at a dialog on top: a dialog shown by mistake keeps its worker waiting for ever."""
     async with app.run_test(size=(120, 40)) as pilot:
-        await settle(app, pilot)
+        await until(pilot, lambda: isinstance(app.screen, MessageModal) or all(
+            worker.is_finished for worker in app.workers if worker.group == "setup-outcome"), what="the look for an outcome")
         assert not isinstance(app.screen, MessageModal), seen(app)
+        await settle(app, pilot)
 
 
 @pytest.mark.asyncio

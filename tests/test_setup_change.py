@@ -189,15 +189,15 @@ def test_a_store_that_cannot_be_read_for_jobs_refuses(rig, monkeypatch):
         raise ValueError("no schema")
     monkeypatch.setattr(Store, "open_readonly", classmethod(unreadable))
     item = setup_change.refusal(Settings.load(rig.data))
-    assert item[0] == setup_change.JOBS_UNKNOWN and "no schema" in item[1]["reason"]
+    assert item[0] == setup_change.JOBS_UNKNOWN_LOCAL and "no schema" in item[1]["reason"]  # a store of this machine
 
 
 @pytest.mark.parametrize("role, template", [
     ({"role": "reader", "reason": "Another installation writes it."}, setup_change.READER_HERE),
     ({"role": "lost", "reason": "It was taken over."}, setup_change.READER_HERE),
-    ({"role": "unknown", "reason": "The store cannot be read."}, setup_change.WRITER_UNKNOWN),
-    ({"role": "none"}, setup_change.WRITER_UNKNOWN),
-    ({"role": "writer", "problem": "the journal head disagrees"}, setup_change.WRITER_UNKNOWN)])
+    ({"role": "unknown", "reason": "The store cannot be read."}, setup_change.WRITER_UNKNOWN_LOCAL),
+    ({"role": "none"}, setup_change.WRITER_UNKNOWN_LOCAL),
+    ({"role": "writer", "problem": "the journal head disagrees"}, setup_change.WRITER_UNKNOWN_LOCAL)])
 def test_a_reader_and_an_unknown_writer_refuse(rig, role, template):
     make(rig.tmp)
     rig.role = role
@@ -208,10 +208,15 @@ def test_a_reader_and_an_unknown_writer_refuse(rig, role, template):
 
 @pytest.mark.parametrize("language", ["en", "pl"])
 @pytest.mark.parametrize("way", ["writer", "jobs"])
-def test_a_store_that_cannot_be_read_refuses_names_the_way_out_and_stops_nothing(rig, monkeypatch, language, way):
-    """The owner's decision of 22 November: the workspace does not stop anything on a store it cannot read; the way
-    out is `cairnmind setup local --empty --yes` in a terminal."""
-    make(rig.tmp)
+@pytest.mark.parametrize("where", ["remote", "here"])
+def test_a_store_that_cannot_be_read_refuses_names_the_way_out_and_stops_nothing(rig, monkeypatch, language, way, where):
+    """The owner's decision of 22 November: the workspace does not stop anything on a store it cannot read. For a store
+    this installation only connects to the way out is `cairnmind setup local --empty --yes` in a terminal; on a store of
+    this machine that command refuses (ALREADY_LOCAL), so there the way is `cairnmind setup PROFILE`."""
+    if where == "remote":
+        connect_only_installation(rig.tmp)
+    else:
+        make(rig.tmp)
     before = config_bytes(rig.tmp)
     if way == "writer":
         rig.role = {"role": "unknown", "reason": "The store cannot be read."}
@@ -220,12 +225,18 @@ def test_a_store_that_cannot_be_read_refuses_names_the_way_out_and_stops_nothing
             raise ValueError("no schema")
         monkeypatch.setattr(Store, "open_readonly", classmethod(unreadable))
     item = setup_change.refusal(Settings.load(rig.data))
-    assert item[0] == (setup_change.WRITER_UNKNOWN if way == "writer" else setup_change.JOBS_UNKNOWN)
+    names = {("writer", "remote"): setup_change.WRITER_UNKNOWN, ("writer", "here"): setup_change.WRITER_UNKNOWN_LOCAL,
+             ("jobs", "remote"): setup_change.JOBS_UNKNOWN, ("jobs", "here"): setup_change.JOBS_UNKNOWN_LOCAL}
+    assert item[0] == names[way, where]
     state, text = rig.go(rig.request(), expected={"plan": [], "writer": []}, language=language)
     sentence = render_one(item, language)
     assert state == "refused" and said(sentence) in said(text)
-    assert "cairnmind setup local --empty --yes" in sentence and "cairnmind stop" in sentence
-    assert ("Jeśli ta baza zniknęła" if language == "pl" else "If that store is gone") in sentence
+    assert "cairnmind stop" in sentence
+    if where == "remote":
+        assert "cairnmind setup local --empty --yes" in sentence
+        assert ("Jeśli ta baza zniknęła" if language == "pl" else "If that store is gone") in sentence
+    else:
+        assert "--empty" not in sentence and ("`cairnmind setup PROFIL`" if language == "pl" else "`cairnmind setup PROFILE`") in sentence
     assert rig.shutdowns == [] and rig.starts == []  # nothing was asked to stop, nothing was started
     rig.untouched(before)
 
@@ -518,6 +529,25 @@ def test_a_start_that_times_out_does_not_leave_its_service_under_a_config_json_p
         assert json.loads((rig.data / "config.json").read_bytes())["arcade_connect_url"] == DB
         assert "nadal działa" in said(text) and "The knowledge service" not in text  # said in the workspace's language
         assert setup_mark.refusal(rig.data) is not None
+
+
+def test_the_reason_a_put_back_failed_is_said_in_each_language_of_the_report(rig):
+    make(rig.tmp)
+    request, reports = rig.request(), []
+    expected = rig.agreed(request)
+    rig.start_late = "stays"
+    setup_change.carry_out(rig.data, request, expected, "en", lambda *report: reports.append(report))
+    _, english, polish = reports[-1]
+    assert "is still running and could not be ended" in " ".join(english)
+    assert "nadal działa" in " ".join(polish) and "knowledge service" not in " ".join(polish).lower()
+
+
+def test_an_outcome_older_than_the_settings_is_not_shown(tmp_path):
+    finished(tmp_path)
+    config_path = tmp_path / "data" / "config.json"
+    config_path.write_text("{}")
+    os.utime(config_path, (time.time() + 60, time.time() + 60))  # `cairnmind setup` changed the settings since
+    assert setup_change.unseen_outcome(tmp_path / "data", "en") is None
 
 
 def test_an_interrupt_that_comes_where_nothing_can_be_put_back_keeps_the_copy_and_says_so(rig, monkeypatch):

@@ -54,11 +54,17 @@ JOBS_IN_WORK_ANY = ("Jobs are in work now ({jobs}); wait until they finish (`cai
 JOBS_UNKNOWN = ("Whether a job is in work could not be read from the store ({reason}), so nothing was changed. If that "
                 "store is gone, close the workspace, run `cairnmind stop`, then `cairnmind setup local --empty --yes` in "
                 "a terminal: it uses the store on this machine without the data of that one.")
+JOBS_UNKNOWN_LOCAL = ("Whether a job is in work could not be read from the store ({reason}), so nothing was changed. "
+                      "With the workspace closed and the service stopped (`cairnmind stop`), `cairnmind setup PROFILE` "
+                      "changes the setup from a terminal.")
 READER_HERE = ("This installation only reads its store: {reason} It runs no knowledge service for the workspace to stop "
                "and start, so the setup is changed from a terminal: `cairnmind setup PROFILE`. Nothing was changed.")
 WRITER_UNKNOWN = ("Whether this installation writes its store could not be established ({reason}), so nothing was "
                   "changed. If that store is gone, close the workspace, run `cairnmind stop`, then `cairnmind setup "
                   "local --empty --yes` in a terminal: it uses the store on this machine without the data of that one.")
+WRITER_UNKNOWN_LOCAL = ("Whether this installation writes its store could not be established ({reason}), so nothing "
+                        "was changed. With the workspace closed and the service stopped (`cairnmind stop`), "
+                        "`cairnmind setup PROFILE` changes the setup from a terminal.")
 READER_TARGET = ("Another installation writes the store at {url}, so after this change this installation would only "
                  "read it and run no knowledge service, which the workspace needs. Nothing was changed. To make this "
                  "installation a reader of that store, close the workspace, run `cairnmind stop`, then `cairnmind "
@@ -108,12 +114,18 @@ MESSAGES = {
     JOBS_UNKNOWN: ("Nie udało się odczytać z bazy, czy trwa jakieś zadanie ({reason}), więc nic nie zostało zmienione. "
                    "Jeśli ta baza zniknęła, zamknij środowisko, uruchom `cairnmind stop`, a potem w terminalu "
                    "`cairnmind setup local --empty --yes`: użyje bazy na tym komputerze bez danych tamtej."),
+    JOBS_UNKNOWN_LOCAL: ("Nie udało się odczytać z bazy, czy trwa jakieś zadanie ({reason}), więc nic nie zostało "
+                         "zmienione. Przy zamkniętym środowisku i zatrzymanej usłudze (`cairnmind stop`) `cairnmind "
+                         "setup PROFIL` zmienia ustawienia z terminala."),
     READER_HERE: ("Ta instalacja tylko czyta swoją bazę: {reason} Nie uruchamia usługi wiedzy, którą środowisko mogłoby "
                   "zatrzymać i uruchomić, więc ustawienia zmienia się z terminala: `cairnmind setup PROFIL`. Nic nie "
                   "zostało zmienione."),
     WRITER_UNKNOWN: ("Nie udało się ustalić, czy ta instalacja zapisuje swoją bazę ({reason}), więc nic nie zostało "
                      "zmienione. Jeśli ta baza zniknęła, zamknij środowisko, uruchom `cairnmind stop`, a potem w "
                      "terminalu `cairnmind setup local --empty --yes`: użyje bazy na tym komputerze bez danych tamtej."),
+    WRITER_UNKNOWN_LOCAL: ("Nie udało się ustalić, czy ta instalacja zapisuje swoją bazę ({reason}), więc nic nie "
+                           "zostało zmienione. Przy zamkniętym środowisku i zatrzymanej usłudze (`cairnmind stop`) "
+                           "`cairnmind setup PROFIL` zmienia ustawienia z terminala."),
     READER_TARGET: ("Bazę pod adresem {url} zapisuje inna instalacja, więc po tej zmianie ta instalacja tylko by ją "
                     "czytała i nie uruchamiała usługi wiedzy, której środowisko potrzebuje. Nic nie zostało zmienione. "
                     "Aby ta instalacja czytała tę bazę, zamknij środowisko, uruchom `cairnmind stop`, a potem w "
@@ -173,18 +185,24 @@ def _names(settings) -> dict:
         store.client.close()
 
 
+def _unknown(settings, remote: str, local: str, reason: str) -> tuple[str, dict]:
+    """`setup local --empty` is the way out of a store this installation only connects to; on a store of this machine it
+    refuses, so there the setup is changed with `cairnmind setup PROFILE`."""
+    return (remote if database_mode.connect_only(settings) else local), {"reason": reason}
+
+
 def _jobs(settings) -> tuple[str, dict] | None:
     from .store import Store
     try:
         store = Store.open_readonly(settings)
     except (ValueError, OSError, RuntimeError) as exc:
-        return JOBS_UNKNOWN, {"reason": str(exc)[:200]}
+        return _unknown(settings, JOBS_UNKNOWN, JOBS_UNKNOWN_LOCAL, str(exc)[:200])
     try:
         jobs = store.query("SELECT project_id, kind FROM jobs WHERE state='running' AND lease_until>=:now",
                            {"now": time.time()})
         names = {row["id"]: row.get("name") or row["id"] for row in store.query("SELECT id, name FROM projects")}
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
-        return JOBS_UNKNOWN, {"reason": str(exc)[:200]}
+        return _unknown(settings, JOBS_UNKNOWN, JOBS_UNKNOWN_LOCAL, str(exc)[:200])
     finally:
         store.client.close()
     if not jobs:
@@ -219,7 +237,8 @@ def refusal(settings) -> tuple[str, dict] | None:
     if found.get("role") in ("reader", "lost"):
         return READER_HERE, {"reason": found.get("reason", "")}
     if found.get("role") != "writer" or found.get("problem"):  # fail closed: the writer cannot be established
-        return WRITER_UNKNOWN, {"reason": found.get("problem") or found.get("reason") or f"role: {found.get('role')}"}
+        return _unknown(settings, WRITER_UNKNOWN, WRITER_UNKNOWN_LOCAL,
+                        found.get("problem") or found.get("reason") or f"role: {found.get('role')}")
     return _runs(settings) or _jobs(settings)
 
 
@@ -349,6 +368,11 @@ def unseen_outcome(data_dir: Path, language: str) -> dict | None:
     found = _unseen_file(data_dir)
     if found is None or setup_mark.state(data_dir)[0] in ("running", "unreadable"):
         return None
+    try:  # the helper writes this file last: a newer config.json is a later change (`cairnmind setup`), now out of date
+        if (Path(data_dir) / "config.json").stat().st_mtime > (Path(data_dir) / PROGRESS).stat().st_mtime:
+            return None
+    except OSError:
+        pass
     lines = found.get("lines") if found.get("language") == language else found.get("other")
     if not isinstance(lines, list) or not lines or not all(isinstance(line, str) for line in lines):
         return None
@@ -535,7 +559,7 @@ def _new_settings_start(data_dir: Path, path: Path, snapshot: bytes, result: dic
     cannot = None
     if new is not None:  # a start that failed late or timed out may have left its process: it ends before the put-back
         still = _stop(new)  # config.json is not put back under a service that runs on the new settings
-        cannot = render_one((STILL_ON_NEW, {}), out.language) if still else None
+        cannot = (STILL_ON_NEW, {}) if still else None
     if cannot is None:
         try:
             setup_profiles.put_back(path, snapshot, result["applied_state"], notes)
