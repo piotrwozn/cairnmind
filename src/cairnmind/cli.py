@@ -1054,6 +1054,7 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         existed = project["id"] in known
         quoted = shlex.quote(safe_text(name))
         lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
+                 [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
                  [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
                      project=quoted, root=shown, files=result.get("files", 0))])
         if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
@@ -1066,6 +1067,8 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
                      .format(project=quoted))
         return lines
     _human_or_json({"project": project, "indexed": result, "history": discovery, **details}, as_json, sentences)
+    if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
+        raise typer.Exit(1)
 
 
 @projects_app.command("list")

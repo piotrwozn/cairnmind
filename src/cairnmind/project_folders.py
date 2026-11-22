@@ -24,6 +24,7 @@ FOLDER_UNAVAILABLE = ("The folder {root} of project {project} is unavailable on 
 REASON_MISSING = "it does not exist here"
 REASON_UNREADABLE = "it cannot be read here ({error})"
 REASON_ELSEWHERE = "it belongs to {host}, the machine that added it, and only that machine indexes it"
+REASON_ELSEWHERE_UNNAMED = "it belongs to the machine that added it, and only that machine indexes it"
 FOLDER_MOVE = ("If the project's files are on this machine now, at this path, cairnmind project root {project} {root} "
                "records that, and the next indexing reads them here; files that differ from the indexed ones then "
                "replace them.")
@@ -36,6 +37,7 @@ MESSAGES = {
     REASON_MISSING: "nie istnieje tutaj",
     REASON_UNREADABLE: "nie da się go tu odczytać ({error})",
     REASON_ELSEWHERE: "należy do {host}, komputera, który go dodał, i tylko tamten komputer go indeksuje",
+    REASON_ELSEWHERE_UNNAMED: "należy do komputera, który go dodał, i tylko tamten komputer go indeksuje",
     FOLDER_MOVE: ("Jeśli pliki projektu są teraz na tym komputerze, pod tą ścieżką, cairnmind project root {project} "
                   "{root} to zapisuje, a następne indeksowanie czyta je tutaj; pliki różne od zaindeksowanych zastąpią "
                   "wtedy tamte."),
@@ -61,15 +63,20 @@ def _reason(folder: dict) -> tuple[str, dict]:
     if folder["state"] == "missing":
         return REASON_MISSING, {}
     if folder["state"] == "elsewhere":
-        return REASON_ELSEWHERE, {"host": safe_text(folder.get("host") or "another machine")}
+        if not folder.get("host"):
+            return REASON_ELSEWHERE_UNNAMED, {}
+        return REASON_ELSEWHERE, {"host": safe_text(folder["host"])}
     return REASON_UNREADABLE, {"error": safe_text(folder.get("error") or "unknown error")}
 
 
-def folder_states(store, project: dict) -> list[dict]:
-    """One item per registered folder, the project's main one first: root, state, host, error, row_id, adopt."""
+def folder_states(store, project: dict, rows: list[dict] | None = None) -> list[dict]:
+    """One item per registered folder, the project's main one first: root, state, host, error, row_id, adopt.
+    `rows` are the project's `project_roots` rows when the caller has read them already."""
     from .store_writer import label
-    rows = {str(Path(row["path"]).resolve()): row for row in store.query(
-        "SELECT id,path,machine,host FROM project_roots WHERE project_id=:project", {"project": project["id"]})}
+    if rows is None:
+        rows = store.query("SELECT id,path,machine,host FROM project_roots WHERE project_id=:project",
+                           {"project": project["id"]})
+    rows = {str(Path(row["path"]).resolve()): row for row in rows}
     # The order and resolution of ingest._roots, written out here so that module can import this one.
     roots = list(dict.fromkeys([Path(project["root"]).resolve(), *[Path(path) for path in rows]]))
     here, found = this_machine(), []
@@ -118,7 +125,10 @@ def unavailable(store, project_id: str | None = None) -> list[dict]:
 
 def adopt(store, row_ids: list[str]) -> None:
     """Stamp rows that have no machine with this one: the first complete index that read the folder claims it."""
-    if row_ids:
+    from .store_writer import machine_identity
+    # A host name tells machines apart badly (clones, a Mac whose host name follows the network): when nothing
+    # better identifies this one, the folder stays unclaimed rather than claimed by a name that may change.
+    if row_ids and not machine_identity().startswith("host:"):
         with store.transaction() as tx:
             tx.command("UPDATE project_roots SET machine=:machine,host=:host WHERE id IN :ids AND machine IS NULL",
                        {**stamp(), "ids": row_ids})

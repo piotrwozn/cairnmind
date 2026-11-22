@@ -478,3 +478,73 @@ def test_an_acknowledgement_holds_while_another_machine_scans_the_project(tmp_pa
     manager.require_ack(initial["session_id"], initial["packet"]["id"])
     again = manager.resume_context(initial["session_id"])
     assert again["packet"]["hash"] == initial["packet"]["hash"] and again["epoch"] == initial["epoch"]
+
+
+# --- review of the first build ------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("state", ["elsewhere", "unreadable"])
+def test_a_folder_reached_through_a_symlink_keeps_its_sources_when_it_is_away(tmp_path, monkeypatch, state):
+    if state == "unreadable" and os.geteuid() == 0:
+        pytest.skip("root reads every folder")
+    store, pid, root, record = indexed(tmp_path)
+    before = counts(store, pid, [record])
+    real = tmp_path / "mac.real"
+    (tmp_path / "mac").rename(real)
+    (tmp_path / "mac").symlink_to(real)  # the registered path now spells differently from the folder it resolves to
+    if state == "elsewhere":
+        machine(monkeypatch, "b")
+    else:
+        (real / "proj-b").chmod(0)
+    try:
+        result = index_project(store, pid)
+    finally:
+        (real / "proj-b").chmod(0o755)
+    assert [item["state"] for item in result["unavailable"]] == [state]
+    assert result["deleted"] == 0 and counts(store, pid, [record]) == before
+
+
+def test_project_add_of_a_folder_of_another_machine_names_it_and_fails(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from cairnmind import cli
+    store, pid, root, record = indexed(tmp_path)
+    before = counts(store, pid, [record])
+    machine(monkeypatch, "b")
+    monkeypatch.setattr(cli, "store_for", lambda settings: store)
+    added = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "project", "add", "cairnmind", str(root)])
+    assert added.exit_code == 1
+    assert "belongs to" in added.output and str(root) in added.output and "checked again" not in added.output
+    assert counts(store, pid, [record]) == before
+
+
+def test_the_elsewhere_notice_reads_in_english_and_polish():
+    project = {"name": "cairnmind"}
+    root = "/Users/me/proj-b"
+    move_en = (f" If the project's files are on this machine now, at this path, cairnmind project root cairnmind "
+               f"{root} records that, and the next indexing reads them here; files that differ from the indexed ones "
+               f"then replace them.")
+    move_pl = (f" Jeśli pliki projektu są teraz na tym komputerze, pod tą ścieżką, cairnmind project root cairnmind "
+               f"{root} to zapisuje, a następne indeksowanie czyta je tutaj; pliki różne od zaindeksowanych zastąpią "
+               f"wtedy tamte.")
+    tail_en = " Nothing of the project is changed for it: its files are not counted as deleted and its code graph is kept."
+    tail_pl = (" Nic w projekcie nie zmienia się z jego powodu: jego pliki nie są liczone jako usunięte, a graf kodu "
+               "zostaje zachowany.")
+    for host, reason_en, reason_pl in (
+            ("mac", "it belongs to mac, the machine that added it, and only that machine indexes it",
+             "należy do mac, komputera, który go dodał, i tylko tamten komputer go indeksuje"),
+            (None, "it belongs to the machine that added it, and only that machine indexes it",
+             "należy do komputera, który go dodał, i tylko tamten komputer go indeksuje")):
+        item = project_folders.entry(project, {"root": root, "state": "elsewhere", "host": host, "error": None})
+        assert item["message"] == (f"The folder {root} of project cairnmind is unavailable on this machine: "
+                                   f"{reason_en}.{tail_en}{move_en}")
+        assert project_folders.folder_notice([item], "pl") == (
+            f"Folder {root} projektu cairnmind jest niedostępny na tym komputerze: {reason_pl}.{tail_pl}{move_pl}")
+
+
+def test_a_folder_is_not_claimed_by_a_host_name(tmp_path, monkeypatch):
+    from cairnmind import store_writer
+    store, pid, root, record = indexed(tmp_path)
+    store.command("UPDATE project_roots REMOVE machine, host WHERE project_id=:p", {"p": pid})
+    monkeypatch.setattr(store_writer, "machine_identity", lambda: "host:laptop")
+    index_project(store, pid)
+    assert stamped(store, pid) == [(None, None)]

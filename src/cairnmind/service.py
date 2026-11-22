@@ -468,11 +468,13 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 scan_errors.extend(f"history: {err}" for err in polled.get("errors", []))
                 projects = await asyncio.to_thread(store.list_projects)
                 forget_missing_projects(store, [project["id"] for project in projects])
+                from cairnmind.arcade import ArcadeError
                 for project in projects:
-                    # One project that fails does not stop the round for the projects after it (#371).
+                    # One project that fails does not stop the round for the projects after it (#371); the store
+                    # itself being down is one error of the round, not one traceback per project.
                     try:
                         indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
-                    except (asyncio.CancelledError, StoreNotWriter):
+                    except (asyncio.CancelledError, StoreNotWriter, ArcadeError):
                         raise
                     except Exception as exc:
                         scan_errors.append(f"{project['name']}: {exc}")
@@ -737,12 +739,15 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):
-        pid = store.resolve_project(project)["id"]
+        found = store.resolve_project(project)
         rows = await asyncio.to_thread(store.query,
-            "SELECT path FROM project_roots WHERE project_id=:project ORDER BY path", {"project": pid})
-        from cairnmind.project_folders import unavailable
-        return {"roots": [row["path"] for row in rows],
-                "unavailable": await asyncio.to_thread(unavailable, store, pid)}
+            "SELECT id,path,machine,host FROM project_roots WHERE project_id=:project ORDER BY path",
+            {"project": found["id"]})
+        from cairnmind.project_folders import entry, folder_states
+        # From the rows read above, so the answer costs no second query on a workspace that polls it.
+        away = await asyncio.to_thread(lambda: [entry(found, folder) for folder in folder_states(store, found, rows)
+                                                if folder["state"] != "available"])
+        return {"roots": [row["path"] for row in rows], "unavailable": sorted(away, key=lambda i: i["root"])}
 
     @app.get("/status", dependencies=auth)
     async def status(project: str | None = None):

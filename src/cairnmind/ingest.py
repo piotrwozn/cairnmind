@@ -888,18 +888,19 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         path = row.get("path")
         if path and path not in seen:
             # Do not call a temporarily unavailable root a project-wide deletion.
+            # Roots are compared as folder_states resolves them: a path through a symlink spells differently.
             root = Path(row.get("root") or project["root"])
-            if str(root) not in away and root.is_dir():
+            if str(root.resolve()) not in away and root.is_dir():
                 deleted.append(row["id"])
     _deactivate_sources(store, deleted)
     counts["deleted"] += len(deleted)
     # The graph follows every current file source of the registered folders, not only the files this run read:
-    # a folder that is away, a subfolder that could not be listed or a file that could not be read keeps its
-    # files in the graph, from the analysis stored with their source (#371).
-    registered = {str(root) for root in registered_roots} | {project["root"]}
+    # a folder that is away or a subfolder that could not be listed keeps its files in the graph, from the
+    # analysis stored with their source (#371). A file whose read failed is deactivated above, as before.
+    registered = {str(root) for root in registered_roots}
     gone = set(deleted)
     kept = [row for row in rows if row.get("path") and row["path"] not in seen and row["id"] not in gone
-            and str(row.get("root") or project["root"]) in registered]
+            and str(Path(row.get("root") or project["root"]).resolve()) in registered]
     analyses = _stored_analyses(store, [row["id"] for row in kept])
     graph: dict = {}
     if any(analyses[row["id"]] is None for row in kept):
