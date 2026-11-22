@@ -4,7 +4,8 @@ Run as ``cairnmind doctor | python -I -m cairnmind.doctor_attention``. It reads 
 standard input and prints the summary: where memory is kept, what is required and present, what is required and
 missing, what is optional, and the next step. The installer prints the same summary as `cairnmind doctor` in a
 terminal; the full report is `cairnmind doctor --json`. The exit code of `cairnmind doctor` is 1 exactly when
-required_missing is not empty (#313).
+required_missing is not empty (#313). An installation that only reads a store another one writes is not missing
+anything (#373): the summary says so and who writes.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from .engine_docker import DOCKER_ATTENTION
 from .first_start import (
     CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
     ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_PROJECTS,
-    NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_BROKEN, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE, REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WORKSPACE_OFF,
+    NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_BROKEN, OPTIONAL_OFF, OPTIONAL_ON, READER_ROLE, REPORT_UNREADABLE, REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WORKSPACE_OFF,
     WORKSPACE_ON, cockpit_status)
 from .terminal_safe import safe_text
 
@@ -98,7 +99,8 @@ def required_missing(report: dict) -> list[str]:
     writer = report.get("store_writer") or {}
     # "unknown" because the engine did not answer is the engine's state, already said above or present on demand.
     unknown_for_the_engine = writer.get("role") == "unknown" and arcade.get("available") is False
-    if (writer.get("role") in {"reader", "lost", "unknown"} or writer.get("problem")) and not unknown_for_the_engine:
+    # A reader is how a second installation is meant to be (#373); a lost role, an unknown one and a mixed store are not.
+    if (writer.get("role") in {"lost", "unknown"} or writer.get("problem")) and not unknown_for_the_engine:
         lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''} "
                            f"{writer.get('next') or ''}"))
     # Commands here are refused; whole, so the command that ends a refusal is never cut off (#319).
@@ -175,8 +177,15 @@ def summary(report: dict) -> list[str]:
         raise ValueError("environment_notes is not a list")
     missing, broken = required_missing(report), not_working(report)
     present = _engine_present(report)
-    present.append(SERVICE_RUNNING.format(url=report.get("service_url") or "its address")
-                   if report.get("service_running") else SERVICE_ON_DEMAND)
+    writer = report.get("store_writer") or {}
+    if writer.get("role") == "reader" and not writer.get("problem"):
+        who = writer.get("writer") or {}  # already made safe to print by store_writer.describe
+        present.append(_line(READER_ROLE.format(writer=who.get("installation", "unknown"), host=who.get("host", "unknown"),
+                                                since=who.get("since", "unknown")), limit=600))
+    elif report.get("service_running"):
+        present.append(SERVICE_RUNNING.format(url=report.get("service_url") or "its address"))
+    else:
+        present.append(SERVICE_ON_DEMAND)
     off, on = [], []
     knowledge = report.get("knowledge_agent")
     if knowledge == KNOWLEDGE_DISABLED:
