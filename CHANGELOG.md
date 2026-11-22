@@ -115,6 +115,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The installer names by process id the knowledge services of the installed version that still run in other data directories, and stops none of them (#319).
 - The installer names open coding sessions started as `cairnmind run ...` of the installed version by process id and stops until they are closed; other spellings are listed in docs/UPGRADING.md (#319).
 - No workspace, `cairnmind run` session or interface broker starts while the installer replaces Cairnmind, even beside a running service; a service the workspace started at that moment is stopped with its broker, and its start is not announced (#319).
+- Through MCP, `resume_context` answers in a few hundred bytes (that the packet is unchanged and still acknowledged, its id and hash, and the count of newer automatic proposals) while the session's acknowledged packet is current; `full_packet: true` returns the whole packet, and a new, changed or unacknowledged packet always comes whole. The acknowledgement gate is unchanged: the short answer acknowledges nothing and extends nothing (#325).
+- Through MCP, `remember` and `checkpoint` answer with the stored record's id, version, status, kind, key, its source ids and what the service set or did not keep (the origin mark, a supersede, possible conflicts, the keys sent that were not stored as sent, and the stored keys the write removed) instead of repeating the whole record; `save_plan` no longer repeats the plan's title. The command line, the hooks and the built-in agent get what they got before (#325).
 
 ### Development and CI
 
