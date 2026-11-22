@@ -23,6 +23,7 @@ from .terminal_i18n_messages import display_word
 from .terminal_detail import BAR, evidence_parts, join_lines, joined, labelled, state_role
 from .terminal_notices import about
 from .terminal_safe import plain
+from .terminal_person_act import RECORD, agreed, typed
 from .terminal_ui import ChoiceModal, Field, FormModal
 
 IMPACT_TIMEOUT = 120  # Git and the parser run for each list; a large worktree needs longer than a page read.
@@ -372,16 +373,23 @@ class ImpactView:
             Field("note", self.t("What should be updated") if needs else self.t("Note (optional)"),
                   required=needs, multiline=True)],
             note=self.t("Saved as an audit note for this entry as listed. No record, status or task is changed."),
-            submit=self.t("Save verdict")))
+            submit=self.t("Continue")))
         if form is None:
-            return
-        if scope != self._scope_version or self.impact_key()[:2] != (project, worktree):
-            self.notice_for(about(project, worktree), self.t("The project changed during review. Nothing was saved."),
-                            "warn")
             return
         note = str(form.get("note") or "").strip()
         if needs and not note:
             self.notice(self.t("Needs update requires a note on what to update. Nothing was saved."), "warn")
+            return
+        text = "\n".join([self.t(RECORD, record=_line(row.get("title", ""), 200)),
+                          self.t("Verdict") + ": " + self.t(VERDICTS[choice]), "",
+                          self.t("Saved as an audit note for this entry as listed. No record, status or task is "
+                                 "changed."),
+                          typed(self.t, "What should be updated" if needs else "Note (optional)", note)])
+        if not await agreed(self, "Save this verdict?", text, "Save verdict"):
+            return
+        if scope != self._scope_version or self.impact_key()[:2] != (project, worktree):
+            self.notice_for(about(project, worktree), self.t("The project changed during review. Nothing was saved."),
+                            "warn")
             return
         payload = {"project": project, "since": since, "record_id": row["id"], "fingerprint": row["fingerprint"],
                    "verdict": choice}

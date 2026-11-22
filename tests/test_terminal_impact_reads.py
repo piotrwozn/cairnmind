@@ -77,7 +77,7 @@ async def test_an_unclear_or_stale_answer_reloads_the_list(tmp_path, monkeypatch
     app, impact, _ = started(tmp_path, monkeypatch, fail=error)
     async with app.run_test(size=(120, 40)) as pilot:
         await open_impact(app, pilot)
-        script(app, monkeypatch, ["still_valid", {"note": ""}], [])
+        script(app, monkeypatch, ["still_valid", {"note": ""}, True], [])
         app.query_one("#impact-verdict", Button).press()
         await wait(pilot, lambda: impact.posted)
         await settle(app, pilot)
@@ -94,7 +94,7 @@ async def test_a_second_press_while_a_verdict_is_sent_neither_cancels_nor_repeat
         gate = threading.Event()
         impact.post_gates.append(gate)
         offered = []
-        script(app, monkeypatch, ["still_valid", {"note": ""}, "not_related", {"note": ""}], offered)
+        script(app, monkeypatch, ["still_valid", {"note": ""}, True, "not_related", {"note": ""}, True], offered)
         app.query_one("#impact-verdict", Button).press()
         await wait(pilot, lambda: impact.posted)
         app.query_one("#impact-verdict", Button).press()
@@ -105,7 +105,7 @@ async def test_a_second_press_while_a_verdict_is_sent_neither_cancels_nor_repeat
         await wait(pilot, lambda: len(impact.reads) == 2)
         await settle(app, pilot)
         assert text(app.query_one("#panel-notice", Static)).startswith("Verdict saved: still valid.")
-    assert len(offered) == 2 and [payload["verdict"] for payload in impact.posted] == ["still_valid"]
+    assert len(offered) == 3 and [payload["verdict"] for payload in impact.posted] == ["still_valid"]
 
 
 @pytest.mark.asyncio
@@ -134,7 +134,7 @@ async def test_impact_requests_use_a_client_of_their_own_and_never_the_shared_on
     app = InspectorApp(settings, broker=Shared(settings), workspace=workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await open_impact(app, pilot)
-        script(app, monkeypatch, ["still_valid", {"note": ""}], [])
+        script(app, monkeypatch, ["still_valid", {"note": ""}, True], [])
         app.query_one("#impact-verdict", Button).press()
         await wait(pilot, lambda: len(separate) == 3)
         await settle(app, pilot)
