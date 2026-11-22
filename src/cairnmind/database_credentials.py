@@ -351,6 +351,7 @@ def plan_user(settings, admin_secret: str) -> dict[str, Any]:
     from dataclasses import replace
     from .arcade import ArcadeClient, ArcadeError
     from .database_mode import server_version, version_problem
+    _new_user(settings)  # what --yes refuses before it signs in, the dry run refuses too
     admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     try:
         info = admin.server_info()
@@ -367,10 +368,27 @@ def plan_user(settings, admin_secret: str) -> dict[str, Any]:
         user.query("SELECT 1 AS ok")
         sign_in = None
     except ArcadeError as exc:
+        if exc.status_code not in (401, 403):
+            raise  # no answer about the user (a timeout, invalid JSON): not "the user signs in"
         sign_in = exc.status_code
     finally:
         user.close()
     return {"version": server_version(info), "database_exists": exists, "sign_in": sign_in}
+
+
+def _new_user(settings) -> tuple[str, str]:
+    """The name and password ``create_user`` would use, or ValueError: what it refuses before it signs in as root."""
+    name, secret = settings.arcade_user, settings.arcade_password
+    if name == "root" or not USER_NAME.fullmatch(name or ""):
+        raise ValueError("Set arcade_user to the new user's name first (letters, digits, _ and -; not root).")
+    source = (getattr(settings, "_origin", None) or {}).get("password")
+    if source not in ("environment", "file") or not secret:
+        problem_text = (getattr(settings, "_origin", None) or {}).get("problem")
+        raise ValueError(problem_text or ("The new user's password must come from outside config.json: "
+                                          + PASSWORD_HELP + "."))
+    if not valid_password(secret):
+        raise ValueError("The new user's password must be one line of printable characters without spaces.")
+    return name, secret
 
 
 def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[str, Any]:
@@ -383,17 +401,8 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
     from dataclasses import replace
     from .arcade import ArcadeClient, ArcadeError
     import json
-    name, secret = settings.arcade_user, settings.arcade_password
-    if name == "root" or not USER_NAME.fullmatch(name or ""):
-        raise ValueError("Set arcade_user to the new user's name first (letters, digits, _ and -; not root).")
-    source = (getattr(settings, "_origin", None) or {}).get("password")
-    if source not in ("environment", "file") or not secret:
-        problem_text = (getattr(settings, "_origin", None) or {}).get("problem")
-        raise ValueError(problem_text or ("The new user's password must come from outside config.json: "
-                                          + PASSWORD_HELP + "."))
-    if not valid_password(secret):
-        raise ValueError("The new user's password must be one line of printable characters without spaces.")
-    admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
+    name, secret = _new_user(settings)
+    admin =ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     payload = {"name": name, "password": secret, "databases": {settings.arcade_database: [group]}}
     created = database_created = False
     try:

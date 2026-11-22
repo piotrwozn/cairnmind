@@ -169,6 +169,8 @@ WRITER_OTHER = ("Writer: another installation writes the store at {url}, so this
 WRITER_NOT_READ = ("Writer: it cannot be read yet ({reason}). The store decides when this installation first opens it: "
                    "this installation becomes the writer when none is recorded, and only reads when another "
                    "installation writes it.")
+WRITER_AFTER_USER = ("Writer: not read yet, because the user does not sign in to the store at {url} yet; it is read "
+                     "once the user signs in.")
 LEFT_LOCAL_STORE = ("Left as it is: the store on this machine, in {path}. This installation stops using it, and it is "
                     "not copied to the new store. To take its data along, run `cairnmind backup FILE` before this "
                     "command, and `cairnmind init` and `cairnmind restore FILE` after it.")
@@ -291,6 +293,7 @@ MESSAGES = {
     WRITER_NEW: "Zapisujący: żadna instalacja jeszcze nie zapisuje bazy pod adresem {url}; ta instalacja zostanie zapisującą, gdy pierwszy raz ją otworzy (`cairnmind init`).",
     WRITER_OTHER: "Zapisujący: bazę pod adresem {url} zapisuje inna instalacja, więc ta instalacja będzie ją tylko czytać; setup jej nie przejmuje. {reason}",
     WRITER_NOT_READ: "Zapisujący: nie można go jeszcze odczytać ({reason}). Baza rozstrzyga to, gdy ta instalacja pierwszy raz ją otworzy: ta instalacja zostaje zapisującą, gdy żadnej nie zapisano, i tylko czyta, gdy zapisuje ją inna instalacja.",
+    WRITER_AFTER_USER: "Zapisujący: jeszcze nie odczytano, bo użytkownik nie loguje się jeszcze do bazy {url}; zostanie odczytany, gdy użytkownik się zaloguje.",
     LEFT_LOCAL_STORE: "Zostaje bez zmian: baza na tym komputerze, w {path}. Ta instalacja przestaje jej używać i nie jest ona kopiowana do nowej bazy. Aby zabrać jej dane, uruchom `cairnmind backup PLIK` przed tym poleceniem, a `cairnmind init` i `cairnmind restore PLIK` po nim.",
     LEFT_ENGINE: "Zostaje bez zmian: silnik, który ten katalog danych uruchomił na tym komputerze; nie jest już używany, a `cairnmind engine stop` go zatrzymuje.",
     LEFT_REMOTE_STORE: "Zostaje bez zmian: baza pod adresem {url} (baza danych {database}); nic w niej nie jest zmieniane ani usuwane.",
@@ -607,7 +610,9 @@ def _test_storage(plan, request, yes, result) -> None:
             create = ((NO_RIGHTS if found["database_exists"] else CREATE_DB) if known
                       else CREATE_USER if found["database_exists"] else CREATE_BOTH)
             result["tests"].append((create, named))
-        result["writer"] = _writer_items(store_writer.inspect(candidate), url)
+        # A user that does not sign in cannot read the store either: no second refusal, no repeated advice.
+        result["writer"] = ([(WRITER_AFTER_USER, {"url": url})] if found["sign_in"] is not None
+                            else _writer_items(store_writer.inspect(candidate), url))
         return
     block = database_credentials.doctor_block(candidate)
     if block.get("available") is True and block.get("database_available") is True and not block.get("error"):

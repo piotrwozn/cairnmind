@@ -29,18 +29,19 @@ def private(path, text):
 
 @pytest.fixture
 def server(tmp_path, monkeypatch, arcade_test_engine):
-    root = arcade_test_engine[0]
+    root, prefix = arcade_test_engine[0], arcade_test_engine[1]
     root_secret = os.environ["CAIRNMIND_ARCADE_PASSWORD"]
     for key in [key for key in os.environ if is_own_variable(key)]:
         monkeypatch.delenv(key)
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
     suffix = uuid.uuid4().hex[:10]
-    names = {"user": "cm_" + suffix, "database": "cm_plan_" + suffix}
+    # The run's prefix: on a server the databases of this run are the ones the fixtures create as root (#360).
+    names = {"user": "cm_" + suffix, "database": f"{prefix}_plan_{suffix}"}
     Settings.load(tmp_path / "data", create=True).save()
     try:
         yield root, root_secret, names, tmp_path
     finally:
-        with closing(ArcadeClient(replace(root, arcade_password=root_secret))) as client:
+        with closing(ArcadeClient(replace(root, arcade_password=root_secret), administrator=True)) as client:
             for command in (f"drop user {names['user']}", f"drop database {names['database']}"):
                 try:
                     client.server_command(command)
@@ -59,21 +60,23 @@ def dry_run(server, admin_secret=None, password=USER_SECRET):
 
 def make_user(server, database=None):
     root, root_secret, names, _ = server
-    with closing(ArcadeClient(replace(root, arcade_password=root_secret))) as client:
+    with closing(ArcadeClient(replace(root, arcade_password=root_secret), administrator=True)) as client:
         client.server_command("create user " + json.dumps(
             {"name": names["user"], "password": USER_SECRET, "databases": {database or names["database"]: ["admin"]}}))
 
 
 def make_database(server):
     root, root_secret, names, _ = server
-    with closing(ArcadeClient(replace(root, arcade_password=root_secret, arcade_database=names["database"]))) as client:
+    with closing(ArcadeClient(replace(root, arcade_password=root_secret, arcade_database=names["database"]),
+                              administrator=True)) as client:
         client.ensure_database()
 
 
 def database_exists(server) -> bool:
     """Whether the server holds the database, asked of the server itself as the administrator."""
     root, root_secret, names, _ = server
-    with closing(ArcadeClient(replace(root, arcade_password=root_secret, arcade_database=names["database"]))) as client:
+    with closing(ArcadeClient(replace(root, arcade_password=root_secret, arcade_database=names["database"]),
+                              administrator=True)) as client:
         return client.database_exists()
 
 
@@ -87,6 +90,7 @@ def test_a_user_and_database_that_do_not_exist_yet_get_a_plan_and_nothing_is_cre
     assert "creates the database and, if it does not exist yet, the user" in words
     assert (tmp_path / "data" / "config.json").read_bytes() == before
     assert root_secret not in result.output and USER_SECRET not in result.output
+    assert "create them once" not in words  # the plan has said what --yes creates: no advice to run db create-user
     assert database_exists(server) is False
     # The server holds no new user: creating it now is the first time.
     candidate = Settings.load(tmp_path / "data")
@@ -147,6 +151,35 @@ def test_a_user_of_another_database_is_planned_as_refused_and_nothing_is_created
     assert result.exit_code == 1, result.output
     assert f"the user {names['user']} exists, but it has no rights on the database {names['database']}" in words
     assert "each database gets its own user" in words
+
+
+def test_a_user_request_that_fails_without_a_status_is_not_reported_as_signing_in(server, monkeypatch):
+    root, root_secret, names, tmp_path = server
+    make_user(server)
+    make_database(server)
+    original = ArcadeClient.query
+
+    def query(self, *args, **kwargs):
+        if self.settings.arcade_user == names["user"]:
+            raise ArcadeError("ArcadeDB at the server is unavailable (ReadTimeout)")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ArcadeClient, "query", query)
+    result = dry_run(server)
+    words = plain_words(result.output)
+    assert result.exit_code == 2, result.output
+    assert "unavailable (ReadTimeout)" in words and "signs in to the database" not in words
+
+
+def test_the_plan_refuses_a_password_that_a_run_with_yes_refuses(server):
+    root, root_secret, names, tmp_path = server
+    candidate = replace(Settings.load(tmp_path / "data"), arcade_connect_url=root.arcade_url, arcade_url=root.arcade_url,
+                        arcade_user=names["user"], arcade_database=names["database"], arcade_password="has a space")
+    candidate._origin = {"password": "file"}
+    with pytest.raises(ValueError, match="without spaces"):
+        database_credentials.plan_user(candidate, root_secret)
+    with pytest.raises(ValueError, match="without spaces"):
+        database_credentials.create_user(candidate, root_secret)
 
 
 def test_a_wrong_administrator_password_is_refused_naming_the_administrator(server):
