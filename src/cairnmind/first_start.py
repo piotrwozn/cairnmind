@@ -72,6 +72,7 @@ CLIENT_NAMES = {"codex": "Codex", "claude": "Claude Code"}  # as the first start
 
 # The doctor summary (#287): what is required and present, required and missing, optional and off.
 DATA_DIR = "Memory is kept in {data_dir}."
+THIS_MAC = "This Mac: {chip}, {gib} GiB of unified memory, shared with the models."  # the report's gpu block (#368)
 REQUIRED_PRESENT = "Required and present:"
 REQUIRED_MISSING = "Required and missing:"
 NOTHING_MISSING = "Required and missing: nothing."
@@ -418,7 +419,8 @@ MESSAGES[JOBS_HELD_NO_MODELS] = ("Zadania ekstrakcji i osadzania w kolejce: {cou
                                  "deterministyczny) pozostają wstrzymane, dopóki modele nie zostaną włączone. "
                                  "Aby używać modeli: `cairnmind models pull` pobiera lokalne modele do Ollamy (około 7 GB); "
                                  "`cairnmind models set` wybiera serwer modeli.")
-MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
+MESSAGES[THIS_MAC] = "Ten Mac: {chip}, {gib} GiB pamięci zunifikowanej, współdzielonej z modelami."
+MESSAGES[PROCESS_OFF] ="Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
 
 
