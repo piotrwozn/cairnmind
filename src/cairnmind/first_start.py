@@ -161,6 +161,7 @@ STOP_STOPPING = "The Cairnmind service at {url} is stopping; the next command th
 STOP_NOT_RUNNING = "The Cairnmind service at {url} was not running, so nothing was stopped."
 STOP_REFUSED = "The Cairnmind service at {url} answered but did not stop; cairnmind status shows its state."
 ENGINE_LEFT_RUNNING = "The database engine is not stopped by this; cairnmind engine stop stops it."
+BROKER_LEFT_RUNNING = "The interface broker is not stopped by this; cairnmind cockpit stop stops it."
 ENGINE_STOPPED = "The database engine of {data_dir} was stopped; the next command that needs it starts it again."
 ENGINE_STOPPED_CONNECT = ("The engine this data directory started earlier was stopped; this installation only connects "
                           "to its database server, so nothing starts that engine again.")
@@ -376,6 +377,7 @@ MESSAGES = {
     STOP_NOT_RUNNING: "Usługa Cairnmind pod {url} nie działała, więc niczego nie zatrzymano.",
     STOP_REFUSED: "Usługa Cairnmind pod {url} odpowiedziała, ale się nie zatrzymała; cairnmind status pokazuje jej stan.",
     ENGINE_LEFT_RUNNING: "To polecenie nie zatrzymuje silnika bazy danych; zatrzymuje go cairnmind engine stop.",
+    BROKER_LEFT_RUNNING: "To polecenie nie zatrzymuje brokera interfejsu; zatrzymuje go cairnmind cockpit stop.",
     ENGINE_STOPPED: ("Silnik bazy danych dla {data_dir} został zatrzymany; następne polecenie, które go potrzebuje, "
                      "uruchomi go ponownie."),
     ENGINE_STOPPED_CONNECT: ("Zatrzymano silnik, który ten katalog danych uruchomił wcześniej; ta instalacja tylko "

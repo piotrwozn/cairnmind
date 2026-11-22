@@ -239,6 +239,39 @@ Not covered by the writer row, as on one machine: a schema statement (`CREATE ..
 
 The data directory keeps everything that is not in the database: `config.json` (the service token, the settings), `installation.json`, client credentials and API keys, the terminal workspace state, session contexts, the hook spool, the answer log, logs and local backups. Two machines that use one database each have their own; none of it is shared or copied by the database. A coding session started on one machine is not resumed on the other.
 
+### Why the knowledge service stays on your machine
+
+Decided on 22 November 2026, from reading the code of 0.13.0 (the answer was first written on 14 November from 0.10.0; nothing in it was measured): the knowledge service, the process that owns the queue and extracts, embeds and answers, stays on the machine where you work. Cairnmind plans no split of it before 1.0.0, and no headless worker for the extraction and embedding jobs only. The database and the models can already be elsewhere (see above); the service is what ties them to your checkout. The reasons, each with the module that causes it:
+
+| Reason | Module |
+| --- | --- |
+| Indexing walks the checkout on disk, and roots and worktrees are stored as paths of this machine; a question is answered for a worktree by comparing them. | `ingest.index_project`, `retrieval.Retriever.source_in_scope` |
+| The code fingerprint and the state of checks and changed files are read from the worktree and from `git`; answering a question already asks for the check status. | `verification.capture_code_state`, `scope.path_states` |
+| Hook events are files in the data directory's spool; hooks and the MCP bridge reach the service on a loopback address with the token of `config.json`, and the service refuses any other address. | `integrations.drain_hook_spool`, `service.create_app` |
+| Transcripts of the coding assistants are read from the home directory, with cursors that are paths and offsets. | `ingest.import_history` |
+| Published team memory is written to `.memory/` inside the worktree. | `memory_published_*` |
+| One declared writer per store runs the service and claims jobs; a second process that claims jobs would contradict it, and a lease is timed by the clock of the machine that claims. | `store_writer`, `Store.claim_job` |
+| What a person confirms needs a key held by the open workspace's tmux server on that machine; the service token alone is refused. | `person_proof`, `workspace` |
+| Teams share memory through published files in git, not through one live service. | `memory_published_git` |
+
+The three options that were compared, with the verdict:
+
+| Option | What it would need | Verdict |
+| --- | --- | --- |
+| A full split: the service on a server, the laptop sends what it reads | A new authenticated, non-loopback protocol for parsed sources, fingerprints, hook events and transcript segments, with TLS and tokens; in effect a rewrite of the service's API | Not built. Large, and it contradicts one writer per store. |
+| The service stays local; the database and the models are remote (what `cairnmind setup remote-db` and `setup remote` set up) | Nothing more | The supported way. What stays on the laptop is Python parsing, `git`, hashing and the service's many small database requests; over a network the requests matter more than CPU (inferred, not measured: [the wall times](#how-long-indexing-takes-over-a-connection) are 39 s on a loopback and 229 s with 20 ms added). |
+| A remote service with its own clone | A server that clones the project | Not built. Every answer and check status would describe the server's clone, not your work; fit only for read-only questions at a pinned commit. |
+
+A headless worker process for extraction and embedding on a server is not planned and has no issue: the models already run on a server, so it would move only the service's HTTP calls and database writes, and it needs a second writer.
+
+`cairnmind index` only asks the service to index, so the figures below are the service's own: its CPU and peak memory while the command runs, and in a fixed interval after the command returned, while it works off its queue.
+
+| Measured | While `cairnmind index` runs (CPU, peak memory) | After it returned, working off the queue (CPU, peak memory) |
+| --- | --- | --- |
+| **NOT MEASURED YET.** One run is still to be made with `scripts/measure_service_spend.py` (a throwaway data directory and its own ports, the service started just before it, the database connect-only, both model roles remote). | NOT MEASURED YET | NOT MEASURED YET |
+
+The request counts of indexing over a connection are measured; they are in the table of [How long indexing takes over a connection](#how-long-indexing-takes-over-a-connection).
+
 ### When the connection drops
 
 Every change is one server transaction that commits whole or not at all, so a dropped connection leaves whole steps, never half of one:
@@ -275,6 +308,10 @@ A logical backup of that store took 119 requests and 6 s. Its restore took 297,4
 | The same, with 20 ms added to every request | about 94 minutes more (computed from the request count, not measured) | 1,079 requests, 28 s |
 
 The first row includes the safety copy and the deletion of the rows it replaces inside the restore's one transaction. A large store can now be restored from the laptop over the network; for your network, add the round-trip time times about 1,100 requests for a store of this size.
+
+### The engine tests against this server
+
+The engine tests of Cairnmind (the tests marked `arcade`) can run against a server instead of an engine they start themselves, through connect-only mode: set `CAIRNMIND_TEST_ARCADE_SERVER_URL` to its address (plain http on this machine) and `CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE` to a private file (mode 0600) holding its root password, then run `uv run pytest -m arcade -rs`. The tests install, start and stop no engine; each creates its databases as root and drops them. The job has not yet run against the image, so whether every test passes there, and how long it takes, is not known. The non-required `server-tests` CI job does this on pushes to main and by hand, against the published image at the digest pinned in `src/cairnmind/config.py`, in production mode. Tests that cannot run against a server (they start an engine, read its files, or run a command a connect-only installation refuses) are skipped, each with its reason; the table is `LEFT_OUT_ON_A_SERVER` in `tests/conftest.py`, and the job summary prints it.
 
 ## Backup and restore
 
