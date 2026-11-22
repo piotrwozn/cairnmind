@@ -36,6 +36,11 @@ def env_names(name: str) -> tuple[str, ...]:
     return tuple(prefix + name for prefix in ENV_PREFIXES)
 
 
+def derived_database(root: Path) -> str:
+    """The database name of a data directory that names none: the prefix and a hash of its path."""
+    return env_value("ARCADE_DB_PREFIX", "devbrain") + "_" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
+
+
 def is_own_variable(name: str) -> bool:
     return name.startswith(ENV_PREFIXES)
 
@@ -318,7 +323,7 @@ class Settings:
         values["arcade_password"] = password
         # The default prefix is part of the name of every existing database: it does not change.
         prefix = env_value("ARCADE_DB_PREFIX", "devbrain")
-        derived = prefix + "_" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
+        derived = derived_database(root)
         if not values.get("arcade_database"):
             if not prefix.replace("_", "").isalnum():
                 raise ValueError("Invalid ArcadeDB database prefix")
