@@ -36,6 +36,7 @@ These commands say in a terminal what they did and what comes next, and a comman
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
 - `my-app` is any name you choose; `~/src/my-app` stands for the folder of a project you already have. A Git repository with at least one commit is best: `impact`, coding sessions and the commit list of `brief` need Git, and `project add` says when the folder has no repository or no commit.
+- `project add` indexes the files in its own process and starts no service. The extraction and embedding jobs it queues are run by the knowledge service: when it is stopped, `project add` says how many jobs wait (its JSON has `jobs`: `queued`, `service_running`, `waiting_because`), and the next command that needs the service, for example `cairnmind index my-app`, starts it and they run. Without models, or while an upgrade is in progress, it says why they wait.
 - What you and your assistants store is *proposed*, and nothing more is needed to go on: `brief`, `ask` and the assistants already use it, marked as unconfirmed. You can confirm or dispute it later in the memory inspector of the terminal workspace (below; it needs tmux 3.4+).
 - Without models, `ask` makes no answer: in a terminal it says so and lists the passages that match words of the question as search results, not as evidence; its JSON reports `status: unavailable`. `cairnmind models pull` turns answers on (below).
 

@@ -117,6 +117,13 @@ PROJECT_FOLDER_MISSING = ("{root} does not exist. cairnmind project add NAME FOL
 PROJECT_ADDED = 'Registered {project} in {root}; files indexed: {files}.'
 PROJECT_ADDED_NEXT = ('Next: cairnmind remember {project} "..." stores a first finding, and cairnmind brief {project} '
                       'shows it.')
+JOBS_HELD_STOPPED = ("{count} extraction and embedding jobs wait: the Cairnmind service runs them, and it is not "
+                     "running; project add does not start it. The next command that needs it starts it, and "
+                     "cairnmind index {project} starts it now.")
+JOBS_HELD_UPGRADE = ("{count} extraction and embedding jobs wait: the Cairnmind service runs them, and it is not "
+                     "started now. {reason}")
+JOBS_HELD_NO_MODELS = ("{count} extraction and embedding jobs wait: without models (deterministic-only mode) they "
+                       "stay held until models are turned on. " + GET_MODELS)
 NOT_GIT = ("{root} is not a Git repository. Memory works without Git; impact, the commits in brief and coding "
            "sessions (cairnmind run) need a repository with a first commit (git init, git add, git commit).")
 NO_COMMIT = ("{root} is a Git repository without a commit yet. Memory works; impact, the commits in brief and "
@@ -403,6 +410,15 @@ MESSAGES[OWN_ENGINE_REFUSED] = ("Silnik bazy danych tego katalogu danych pod {ur
                                 "logowaniach ArcadeDB odrzuca każde przez około 30 sekund: poczekaj i uruchom polecenie "
                                 "ponownie. Jeśli dalej odmawia, logowanie z {data_dir}/config.json nie pasuje do tego "
                                 "silnika.")
+MESSAGES[JOBS_HELD_STOPPED] = ("{count} zadań ekstrakcji i osadzania czeka: wykonuje je usługa Cairnmind, a ona nie "
+                               "działa; project add jej nie uruchamia. Uruchomi ją następne polecenie, które jej "
+                               "potrzebuje, a cairnmind index {project} uruchamia ją od razu.")
+MESSAGES[JOBS_HELD_UPGRADE] = ("{count} zadań ekstrakcji i osadzania czeka: wykonuje je usługa Cairnmind, a ona nie "
+                               "jest teraz uruchamiana. {reason}")
+MESSAGES[JOBS_HELD_NO_MODELS] = ("{count} zadań ekstrakcji i osadzania czeka: bez modeli (tryb tylko deterministyczny) "
+                                 "pozostają wstrzymane, dopóki modele nie zostaną włączone. "
+                                 "Aby używać modeli: `cairnmind models pull` pobiera lokalne modele do Ollamy (około 7 GB); "
+                                 "`cairnmind models set` wybiera serwer modeli.")
 MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
 

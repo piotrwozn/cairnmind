@@ -65,7 +65,12 @@ def test_project_add_says_what_it_did_and_warns_about_a_folder_without_git(tmp_p
     assert json.loads(added.stdout)["project"]["name"] == "my-app"  # the JSON is unchanged
     assert told[0].startswith(f"Registered my-app in {root.resolve()}; files indexed: ")
     assert told[-1].startswith("Next: cairnmind remember my-app")  # #326: the warning comes before the next step
-    assert told[1:-1] == [first_start.NOT_GIT.format(root=root.resolve())]
+    assert told[1:-1] == [first_start.NOT_GIT.format(root=root.resolve()), *queued(told)]
+
+
+def queued(told):
+    """The sentence about the queued jobs (#366): the stopped service of these tests leaves the file's job waiting."""
+    return [line for line in told if "extraction and embedding jobs wait" in line]
 
 
 def test_project_add_warns_about_a_repository_without_a_commit_and_stays_quiet_with_one(tmp_path, run, told):
@@ -73,11 +78,12 @@ def test_project_add_warns_about_a_repository_without_a_commit_and_stays_quiet_w
     told.clear()
     empty = folder(tmp_path, "empty", repository=True)
     assert run("project", "add", "empty", str(empty)).exit_code == 0
-    assert told[1:-1] == [first_start.NO_COMMIT.format(root=empty.resolve())]
+    assert told[1:-1] == [first_start.NO_COMMIT.format(root=empty.resolve()), *queued(told)]
     told.clear()
     ready = folder(tmp_path, "ready", repository=True, commit=True)
     assert run("project", "add", "ready", str(ready)).exit_code == 0
-    assert len(told) == 2 and told[0].startswith("Registered ready in ") and told[1].startswith("Next: ")
+    assert told[0].startswith("Registered ready in ") and told[-1].startswith("Next: ")
+    assert told[1:-1] == queued(told)  # nothing else: no warning
 
 
 def test_a_project_name_with_a_space_is_quoted_in_the_next_step(tmp_path, run, told):
@@ -99,7 +105,7 @@ def test_adding_a_registered_project_says_it_existed(tmp_path, run, told):
     assert again.exit_code == 0, again.output
     assert told[0].startswith(f"my-app was already registered for {root.resolve()}; its files were checked again")
     assert json.loads(again.stdout)["project"]["id"] == json.loads(first.stdout)["project"]["id"]  # the JSON is unchanged
-    assert set(json.loads(again.stdout)) == {"project", "indexed", "history"}
+    assert set(json.loads(again.stdout)) == {"project", "indexed", "history", "jobs"}
 
 
 def test_remember_says_a_proposed_finding_needs_nothing_more_and_a_confirmed_one_what_it_stored(
