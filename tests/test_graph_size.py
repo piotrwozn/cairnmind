@@ -1,9 +1,9 @@
 """A project of four times this repository's graph is indexed and backed up on the engine's default heap (#377).
 
-This repository's graph has about 81,000 vertices and 101,000 edges. Written in ONE transaction, a graph of 120,000
-vertices and 150,000 edges already ran the engine out of memory or made it stop answering (1 GB heap, the product's
-own command line); the graph is now written in transactions of at most 20,000 rows, so the heap it needs does not
-follow the size of the project. The engine here is a private one with the product's own heap. The graph is synthetic:
+This repository's graph has about 81,000 vertices and 101,000 edges. Written in ONE transaction by the
+indexer, a graph of 120,000 vertices and 150,000 edges still passed and one of 330,660 vertices and 412,830 edges ran
+the engine out of memory (1 GB heap, the product's own command line; heavier rows failed from 120,000); the graph is now
+written in transactions of at most 20,000 rows, so the heap it needs does not follow the size of the project. The engine here is a private one with the product's own heap. The graph is synthetic:
 330 files of 1,000 symbols each, written by the indexer's own graph step. The restore of such a backup is #362's.
 """
 import json

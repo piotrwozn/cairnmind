@@ -1,13 +1,14 @@
 """The graph of a large project written in transactions of bounded size (#377).
 
 The engine keeps the pages a transaction changed in its heap until the commit. On its default heap of 1 GB, one
-transaction holding the graph of a project of about 120,000 vertices (and 150,000 edges) ran out of memory, so the
-graph is written in transactions of at most ``ROWS_PER_TRANSACTION`` rows. A graph that fits in one is written in one,
-all or nothing, as before.
+transaction holding the graph of a project of about 330,000 vertices (and 410,000 edges) ran out of memory (rows with
+more metadata failed from 120,000 vertices), so the graph is written in transactions of at most
+``ROWS_PER_TRANSACTION`` rows. A graph that fits in one is written in one, all or nothing, as before.
 
 Split, it is no longer all or nothing, so the project's ``graph_fingerprint`` is cleared in the first transaction and
-set again in the last: until then every reader says that the code graph is not built (``code_graph_pending``), and a
-write that stops half way leaves that mark, so the next indexing replaces the whole graph.
+set again in the last: until then the readers that check it (impact, ``memory status``, the inspector's graph) say
+that the code graph is not built (``code_graph_pending``), and a write that stops half way leaves that mark, so the
+next indexing replaces the whole graph.
 
 The engine's unique index on ``nodes.id`` does not find vertices that were committed a moment ago while the engine
 compacts the index (seen on ArcadeDB 26.11.1; seconds, and not with compaction switched off). ``await_vertices``

@@ -5,7 +5,8 @@ import pytest
 from test_index_batching import code_tree, dump
 
 from cairnmind import graph_transactions, ingest
-from cairnmind.code_graph import code_graph_pending
+from cairnmind.code_graph import CODE_GRAPH_NOT_BUILT, code_graph_pending
+from cairnmind.inspector import Inspector
 from cairnmind.journal import JournalTransaction
 from cairnmind.store import Store
 
@@ -81,3 +82,43 @@ def test_vertices_the_index_does_not_find_yet_are_waited_for_and_never_assumed(t
     monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
     with pytest.raises(RuntimeError, match="did not find 1 graph vertices"):
         graph_transactions.await_vertices(whole, [*ids, "no-such-vertex"])
+
+
+def test_the_wait_for_the_vertices_runs_inside_indexing_before_the_edges_and_the_graph_is_still_the_same(tmp_path, monkeypatch):
+    whole, first, split, second = pair(tmp_path)
+    ingest.index_project(whole, first)
+    real_query, real_wait, state = JournalTransaction.query, ingest.await_vertices, {"inside": False, "hidden": 2, "waits": 0}
+
+    def wait(store, identifiers):
+        state["inside"] = True
+        try:
+            real_wait(store, identifiers)
+        finally:
+            state["inside"] = False
+
+    def query(self, sql, params=None):
+        found = real_query(self, sql, params)
+        if state["inside"] and state["hidden"] and "FROM nodes WHERE id IN" in sql:  # the index, compacting, finds nothing
+            state["hidden"] -= 1
+            return []
+        return found
+    monkeypatch.setattr(graph_transactions, "ROWS_PER_TRANSACTION", 100)
+    monkeypatch.setattr(ingest, "await_vertices", wait)
+    monkeypatch.setattr(JournalTransaction, "query", query)
+    monkeypatch.setattr(graph_transactions.time, "sleep", lambda _seconds: state.update(waits=state["waits"] + 1))
+    ingest.index_project(split, second)
+    assert state["hidden"] == 0 and state["waits"] == 2  # indexing waited until the index found its vertices
+    assert graph(split, second) == graph(whole, first)
+
+
+def test_the_inspector_graph_says_that_the_code_graph_is_not_built_while_it_is_being_written(tmp_path):
+    whole, first, *_ = pair(tmp_path)
+    ingest.index_project(whole, first)
+    inspector = Inspector(whole)
+    assert inspector.graph(first)["warnings"] == [] and inspector.groups(first)["warnings"] == []
+    with whole.transaction() as tx:  # what a split write leaves until its last transaction
+        tx.command("UPDATE projects SET graph_fingerprint=null WHERE id=:p", {"p": first})
+    assert inspector.graph(first)["warnings"] == [CODE_GRAPH_NOT_BUILT]
+    assert inspector.groups(first)["warnings"] == [CODE_GRAPH_NOT_BUILT]
+    node = inspector.graph(first, _full=True)["nodes"][-1]["id"]
+    assert inspector.neighbors(first, node)["warnings"] == [CODE_GRAPH_NOT_BUILT]
