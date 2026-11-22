@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from copy import deepcopy
 from datetime import datetime
 
@@ -78,7 +79,7 @@ class Workspace:
 class Broker:
     def __init__(self, tasks=TASKS, plans=PLANS, stage=STAGE):
         self.data = {"project-a": (tasks, plans, stage), "project-b": ([task("b1", "todo", content="Other task")], [], None)}
-        self.calls, self.events_opened = [], 0
+        self.calls, self.times, self.events_opened = [], [], 0   # times: when each call came, time.monotonic()
         self.down = False
         self.hold = None            # a threading.Event the next request for project-a waits on
         self.queue = None
@@ -94,6 +95,7 @@ class Broker:
 
     def request(self, method, path, *, params=None, json=None, timeout=20):
         self.calls.append((method, path, deepcopy(params), deepcopy(json)))
+        self.times.append(time.monotonic())
         if self.down:
             raise ConnectionError("broker down")
         project = (params or {}).get("project")
@@ -136,12 +138,18 @@ def flat(app):
     return " ".join(text_of(app).split())
 
 
-async def until(pilot, condition, timeout=4.0):
+async def until(pilot, condition, timeout=4.0, what=None):
     for _ in range(int(timeout / .02)):
         await pilot.pause(.02)
         if condition():
             return
-    raise AssertionError("condition not reached")
+    raise AssertionError("condition not reached" + (f": {what()}" if what else ""))
+
+
+def requests(broker, since=0):
+    """The requests made after the first `since`, with their seconds from the first of them."""
+    first = broker.times[since] if len(broker.times) > since else 0
+    return [(f"{when - first:.2f}s", call[1]) for call, when in zip(broker.calls[since:], broker.times[since:])]
 
 
 def loaded(app):
@@ -294,15 +302,45 @@ async def test_triggers_are_throttled_and_merged(tmp_path, monkeypatch):
     app, *_ = make(tmp_path, monkeypatch, broker=broker)
     async with app.run_test(size=(32, 43)) as pilot:
         await until(pilot, loaded(app))
+        await until(pilot, lambda: app._in_flight is None)
+        # The window opens now, however long the first load took (#378): triggers in the same tick are inside it.
+        app._last_fetch = time.monotonic()
         start = len(broker.calls)
         app.request_refresh()
-        await pilot.pause(.1)
         app.request_refresh()
+        assert len(broker.calls) == start and app._refresh_timer is not None and app._in_flight is None
+        shown = lambda: f"{requests(broker, start)}"  # noqa: E731
+        await until(pilot, lambda: len(broker.calls) - start == 3, timeout=3, what=shown)
+        await pilot.pause(terminal_activity.THROTTLE + .2)  # a second refresh, if there were one, would be here
+        assert len(broker.calls) - start == 3, shown()
+        # A trigger after the window has its own refresh, at once.
+        app.request_refresh()
+        assert app._in_flight is not None and app._refresh_timer is None  # started in the same tick
+        await until(pilot, lambda: len(broker.calls) - start == 6, timeout=3, what=shown)
+
+
+async def test_a_trigger_during_a_refresh_is_not_lost_and_not_repeated(tmp_path, monkeypatch):
+    monkeypatch.setattr(terminal_activity, "THROTTLE", .8)
+    broker = Broker()
+    app, *_ = make(tmp_path, monkeypatch, broker=broker)
+    async with app.run_test(size=(32, 43)) as pilot:
+        await until(pilot, loaded(app))
+        await until(pilot, lambda: app._in_flight is None)
+        app._last_fetch = time.monotonic() - terminal_activity.THROTTLE - 1  # the window is closed
+        start = len(broker.calls)
+        broker.hold = threading.Event()  # the broker holds its answer
+        app.request_refresh()
+        await until(pilot, lambda: len(broker.calls) > start, what=lambda: f"{requests(broker, start)}")
+        await pilot.pause(terminal_activity.THROTTLE + .3)  # the window is over, the answer still held
+        for _ in range(3):  # triggers while the refresh is in flight
+            app.request_refresh()
         await pilot.pause(.1)
-        assert len(broker.calls) - start <= 3
-        await until(pilot, lambda: len(broker.calls) - start == 3, timeout=1.5)
-        await pilot.pause(.9)
-        assert len(broker.calls) - start == 3
+        assert len(broker.calls) - start == 1 and app._in_flight is not None, f"{requests(broker, start)}"
+        broker.hold.set()
+        shown = lambda: f"{requests(broker, start)}"  # noqa: E731
+        await until(pilot, lambda: len(broker.calls) - start == 6, timeout=3, what=shown)  # one more, not three
+        await pilot.pause(terminal_activity.THROTTLE + .2)
+        assert len(broker.calls) - start == 6, shown()
 
 
 async def test_read_only_requests_and_enter_writes_only_the_ui_selection(tmp_path, monkeypatch):
