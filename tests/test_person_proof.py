@@ -204,11 +204,13 @@ def test_only_a_persons_post_paths_carry_the_proof():
                  "/api/inspector/plans/p1/confirm", "/api/inspector/record-kinds/accept",
                  "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import",
                  "/api/inspector/records/r1/release", "/api/inspector/impact/verdict",
-                 "/api/memory/import-published", "/api/memory/import-commit"):
+                 "/api/memory/import-published", "/api/memory/import-commit",
+                 "/api/inspector/legacy-groups/adopt"):
         assert person_proof.PERSON_BROKER_PATH.fullmatch(path), path
     for path in ("/api/ask", "/api/client-runs", "/api/inspector/records", "/api/inspector/records/r1/release/x",
                  "/api/inspector/impact", "/api/inspector/impact/verdicts", "/api/memory/import-publishedx",
-                 "/api/memory/import/x", "/api/memory/import-commit/x", "/api/inspector/records/a/b/review"):
+                 "/api/memory/import/x", "/api/memory/import-commit/x", "/api/inspector/records/a/b/review",
+                 "/api/inspector/legacy-groups", "/api/inspector/legacy-groups/adopt/x"):
         assert not person_proof.PERSON_BROKER_PATH.fullmatch(path), path
 
 

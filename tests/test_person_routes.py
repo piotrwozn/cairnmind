@@ -62,7 +62,11 @@ def person_requests(fixture):  # noqa: F811
     resolve = {"project": pid, "record_id": candidate["id"], "other_id": existing["id"],
                "expected_version": candidate["version"], "other_expected_version": existing["version"]}
     imports = {"replace_confirmed": True}
+    legacy = fixture.store.remember(pid, {"kind": "task", "key": "old", "content": "An old task", "metadata": {
+        "plan_id": "old-group", "step_index": 1, "state": "todo"}}, [fixture.note["id"]])
     return {
+        "legacy adopt": ("/inspector/legacy-groups/adopt", {
+            "project": pid, "group": "old-group", "task_versions": {legacy["id"]: legacy["version"]}}),
         "review confirm": (review, {"project": pid, "action": "confirm", "expected_version": 1}),
         "review dispute": (review, {"project": pid, "action": "dispute", "expected_version": 1, "reason": "No"}),
         "conflict supersede": ("/inspector/conflicts/resolve", {**resolve, "action": "supersede",
@@ -83,7 +87,7 @@ def person_requests(fixture):  # noqa: F811
 
 NAMES = ["review confirm", "review dispute", "conflict supersede", "conflict dismiss", "plan confirm",
          "record kind accept", "record kind withdraw", "finding proposed", "finding confirmed", "import archive",
-         "import published", "import commit"]
+         "import published", "import commit", "legacy adopt"]
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -144,6 +148,8 @@ def test_the_workspace_key_lets_the_person_act(fixture):  # noqa: F811
     assert {task["status"] for task in planned["tasks"]} == {"confirmed"}
     assert post("record kind accept")["status"] == "accepted"
     assert post("record kind withdraw")["status"] == "withdrawn"
+    adopted = post("legacy adopt")
+    assert adopted["plan"]["title"] == "old-group" and {task["status"] for task in adopted["tasks"]} == {"proposed"}
     form = post("finding confirmed")["record"]
     assert form["status"] == "confirmed" and confirmation_of(form)["route"] == "workspace_form"
     assert post("finding proposed")["record"]["status"] == "proposed"

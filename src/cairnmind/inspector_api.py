@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from . import conflicts, impact_verdicts, person_proof
 from . import stale_proposed as proposed
@@ -75,6 +75,16 @@ class RecordKindBody(BaseModel):
     client: Literal["claude", "codex", "unknown"]
     kind: str = Field(min_length=1, max_length=64)
     note: str | None = Field(default=None, max_length=1000)
+
+
+class AdoptGroupBody(BaseModel):
+    # No session field: only a person adopts an old group into a plan (#305).
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    group: str = Field(min_length=1, max_length=1000)
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    task_versions: dict[str, StrictInt] = Field(min_length=1, max_length=10000)
+    worktree: str | None = Field(default=None, max_length=4096)
 
 
 def _event_id(cursor):
@@ -293,6 +303,21 @@ def create_inspector_router(store, settings):
     @router.post("/inspector/record-kinds/withdraw", dependencies=person)
     async def withdraw_record_kind(body: RecordKindBody):
         return await record_kind_act(body, True)
+
+    @router.get("/inspector/legacy-groups")
+    async def legacy_groups(project: str):
+        # Read-only: the old task groups a person can adopt in the workspace (#305).
+        from .plans import legacy_groups as listing
+        project_id = (await call(inspector._project, project))["id"]
+        return await call(listing, store, project_id)
+
+    @router.post("/inspector/legacy-groups/adopt", dependencies=person)
+    async def adopt_legacy_group(body: AdoptGroupBody):
+        # A person adopts an old task group into a plan (#305); it needs the open workspace's key.
+        from .memory_acts import adopt_group
+        project_id = (await call(inspector._project, body.project))["id"]
+        return await call(adopt_group, store, project_id, body.group, body.task_versions, title=body.title,
+                          worktree=body.worktree)
 
     @router.get("/events")
     async def events(request: Request, after: str | None = None, project: str | None = None, once: bool = False,

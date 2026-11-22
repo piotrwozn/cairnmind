@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from cairnmind import person_proof
-from cairnmind.confirmation import ConfirmationRefused, confirmation_of, confirmed_by
+from cairnmind.confirmation import GROUP_CHANGED, ConfirmationRefused, confirmation_of, confirmed_by
 from cairnmind.memory_acts import adopt_group
 from cairnmind.plans import PlanManager, legacy_groups
 
@@ -92,6 +92,25 @@ def test_adopting_needs_the_proof(fixture):  # noqa: F811
     assert str(refused.value) == person_proof.PROOF_MISSING
     assert PlanManager(fixture.store).list(fixture.pid) == []
     assert len(audits(fixture)) == notes and fixture.count() == records
+
+
+def test_the_routes_list_with_the_token_and_adopt_only_with_the_key(fixture):  # noqa: F811
+    first, second, third = old_group(fixture)
+    listed = fixture.client.get("/inspector/legacy-groups", params={"project": fixture.pid})
+    assert listed.status_code == 200 and [group["group"] for group in listed.json()["groups"]] == ["old-group"]
+    body = {"project": fixture.pid, "group": "old-group", "task_versions": shown(fixture)}
+    notes, records = len(audits(fixture)), fixture.count()
+    refused = fixture.client.post("/inspector/legacy-groups/adopt", json=body)
+    assert refused.status_code == 403 and refused.json()["detail"] == person_proof.PROOF_MISSING
+    assert len(audits(fixture)) == notes and fixture.count() == records
+    for bad in ({**body, "task_versions": {}}, {**body, "extra": 1}, {**body, "title": ""}):
+        assert fixture.client.post("/inspector/legacy-groups/adopt", json=bad, headers=fixture.person
+                                   ).status_code == 422
+    done = fixture.client.post("/inspector/legacy-groups/adopt", json=body, headers=fixture.person)
+    assert done.status_code == 200, done.text
+    assert {task["status"] for task in done.json()["tasks"]} == {"proposed"}
+    again = fixture.client.post("/inspector/legacy-groups/adopt", json=body, headers=fixture.person)
+    assert again.status_code == 400 and again.json()["detail"] == GROUP_CHANGED
 
 
 def test_a_group_that_changed_since_it_was_shown_adopts_nothing(fixture):  # noqa: F811
