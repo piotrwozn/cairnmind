@@ -346,7 +346,7 @@ def finish_job_if_present(store, job_id: str, error: str | None = None, *, worke
 
 
 def create_app(settings: Settings | None = None, *, start_worker: bool = True,
-               background_inference: bool = True, ollama=None) -> FastAPI:
+               background_inference: bool = True, ollama=None, store=None) -> FastAPI:
     from cairnmind.agent import KnowledgeAgent, extraction_outer_timeout, inference_lease_seconds
     from cairnmind.memory_models import from_settings, ready_kinds
     from cairnmind.ollama import OllamaUnavailable
@@ -364,7 +364,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         raise ValueError("Run cairnmind init to create a local authentication token")
     from cairnmind import knowledge_mode
     models_on = knowledge_mode.enabled(settings)  # read once, here; an invalid value stops the start (#274)
-    store = Store(settings.data_dir)
+    store = store or Store(settings.data_dir)  # a caller that holds the store (the evaluation) keeps its own database
     # A caller sends a path as an absolute one; a relative one would be read from the service's directory (#238).
     store.relative_paths = False
     if store.not_writer:

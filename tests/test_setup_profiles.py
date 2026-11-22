@@ -436,6 +436,13 @@ def test_remote_tests_both_models_before_the_store_and_saves_nothing_when_one_fa
     assert config_bytes(tmp_path) == before
 
 
+def test_remote_does_not_advise_an_option_it_cannot_set_when_the_test_call_is_cut_at_the_length_limit(tmp_path, world):
+    make(tmp_path)
+    world.model_errors["chat"] = ValueError(memory_models.LENGTH_CUT_EFFORT)
+    result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *model_options(), "--yes")
+    assert result.exit_code != 0 and "length limit" in said(result) and "--reasoning-effort" not in said(result), result.output
+
+
 def test_remote_needs_the_consent_and_https_that_models_set_needs(tmp_path, world):
     make(tmp_path)
     before = config_bytes(tmp_path)
