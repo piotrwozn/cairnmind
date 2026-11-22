@@ -354,7 +354,7 @@ In all six runs the five deterministic checks were true and every critical case 
 
 # Store growth (#185)
 
-**NOT MEASURED YET.** `scripts/store_growth.py` is written and its measuring function is tested with tiny numbers; the run that fills the table below, and the second run after #187, have not been made. No figure here comes from a run.
+**Measured on 22 November 2026**, ArcadeDB 26.11.1, one run of the default size before #187 and one after it, on one machine (WSL 2). Both runs used the same seed, so every column but the backup is the same number in both.
 
 **How it measures.** `uv run python scripts/store_growth.py` starts its own ArcadeDB engine on a free loopback port in a new temporary data directory (it refuses to run when an environment variable names another database), and needs Java 21 and the pinned engine but no Ollama or other model. It never uses the default data directory, 8765, 2480 or 11434. It writes, through the product's own `import_history` and `index_project`:
 
@@ -372,13 +372,20 @@ After every step it embeds every pending chunk through `Retriever.embed_pending`
 - A revision of a file replaces its chunks and vectors (#186): what stays is a replaced source row with its full text, so the cost of a revision is that row, its job and the new chunks' difference, not a copy of the vectors.
 - One machine, one run, one engine version; no timing is claimed.
 
-| Step | Units | Database bytes | per unit | gzip backup bytes | per unit | Vector bytes | per unit | Chunks per unit |
-|---|---|---|---|---|---|---|---|---|
-| Before #187 (backup with vectors): 500 events of 200 B | NOT MEASURED YET | | | | | | | |
-| Before #187: 500 events of 1 KB | NOT MEASURED YET | | | | | | | |
-| Before #187: 500 events of 8 KB | NOT MEASURED YET | | | | | | | |
-| Before #187: first index of 10 files | NOT MEASURED YET | | | | | | | |
-| Before #187: 20 revisions of 10 files (average per revision) | NOT MEASURED YET | | | | | | | |
-| After #187 (backup without vectors): the same five rows | NOT MEASURED YET | | | | | | | |
+| Step | Units | Database bytes | per unit | Vector bytes | per unit | Chunks per unit | gzip backup before #187 | per unit | gzip backup after #187 | per unit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| empty store | 0 | 20,615,439 | - | 0 | - | - | 701 | - | 696 | - |
+| 500 events of 200 B | 500 | 33,530,970 | 25,831 | 16,584,459 | 33,169 | 1.0 | 7,625,105 | 15,249 | 431,109 | 861 |
+| 500 events of 1 KB | 500 | 49,260,383 | 31,459 | 33,168,225 | 33,168 | 1.0 | 15,600,833 | 15,951 | 1,218,386 | 1,575 |
+| 500 events of 8 KB | 500 | 92,973,121 | 87,425 | 66,341,075 | 66,346 | 2.0 | 33,697,447 | 36,193 | 4,969,199 | 7,502 |
+| first index of 10 files | 10 | 96,446,642 | 347,352 | 69,455,507 | 311,443 | 9.4 | 35,386,194 | 168,875 | 5,311,093 | 34,189 |
+| 20 revisions of 10 files (after the last; per unit is the average over the 200 file revisions) | 200 | 123,251,232 | 134,023 | 69,456,039 | 3 | 0.0 | 39,133,368 | 18,736 | 9,057,936 | 18,734 |
 
-The "Before #187" rows cannot come from a run on this branch, where `Store.backup` no longer writes vectors: they are the script run against a checkout of origin/main from before #187 (or v0.12.0) with this script copied into it, and the "After" rows are the run on the branch with #187. Each filled row states the date, the commit and the ArcadeDB version, as the script prints them in the header of its table. The issue #185 closes with the first run, and #187 with the second, which shows the gzip backup column no longer carrying the vector column.
+**What the two runs show.**
+
+- A transcript event costs one vector of about 33 KB in the store for each chunk (1,024 numbers in the engine's JSON form), which is more than its text: an event of 200 B adds about 26 KB to the database directory, one of 8 KB (two chunks) about 87 KB.
+- Before #187 a gzip backup carried those vectors: about 15 KB for each event of 200 B or 1 KB, and 39.1 MB for the whole store at the end of the run. After #187 the same store's backup is 9.1 MB, and an event of 200 B costs 861 B in it. A restore rebuilds the vectors (see `docs/STORAGE_AND_MAINTENANCE.md`).
+- A revision of a file adds no vectors (#186: the chunks and vectors are replaced; the average of 3 B per revision is the noise of the estimate above 1,000 rows). What stays is the replaced source row with its full text: about 18.7 KB of backup for a revision of a file, the same before and after #187, and on average 134 KB of the database directory, which grows in page steps (single rounds ranged from a negative figure to 387 KB per file).
+
+**Where the runs were made.** Before: `scripts/store_growth.py` copied into a checkout of main at a3ce347, the commit before #187 (#341). After: a branch holding main at 527edc0, the commit of #341. The script could not name its commit in either run (it ran in a copy without the Git history) and printed "commit unknown"; the commits above are the checkouts the copies were made from. The whole reports were kept as JSON by the run and are not in the repository.
+
