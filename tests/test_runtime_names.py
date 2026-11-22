@@ -258,27 +258,52 @@ def test_a_failed_stop_of_the_workspace_is_said_before_the_terminal_servers_are_
     server.close()
 
 
-def after_install(tmp_path, fails):
-    """stop_failed_service with a stand-in for the new command, which fails or succeeds at `stop`."""
-    command = tmp_path / "cairnmind"
+def after_install(tmp_path, fails, ps_times=None, known=True):
+    """stop_failed_service with a stand-in for the new command, which fails or succeeds at `stop`, and a stand-in
+    `ps` that shows the replaced version's service of the data directory /d (for $ps_times looks, or always)."""
+    command, tools = tmp_path / "cairnmind", tmp_path / "bin"
+    tools.mkdir(exist_ok=True)
     command.write_text("#!/bin/sh\n" + ("echo first >&2; echo 'Error: refused' >&2; exit 2\n" if fails else "exit 0\n"))
-    command.chmod(0o755)
+    lines = tmp_path / "ps.txt"
+    lines.write_text("501 /t/python -m cairnmind --data-dir /d serve\n502 /t/python -m cairnmind --data-dir /e serve\n"
+                     "503 /t/python -m cairnmind --data-dir /d/x serve\n")
+    count = tmp_path / "ps.n"
+    count.unlink(missing_ok=True)
+    limit = "" if ps_times is None else f'n=$(cat {count} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > {count}; ' \
+                                        f'[ "$n" -le {ps_times} ] || {{ grep -v " /d serve" {lines}; exit 0; }}\n'
+    (tools / "ps").write_text(f"#!/bin/sh\n[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n{limit}cat {lines}\n")
+    for tool in (command, tools / "ps"):
+        tool.chmod(0o755)
+    arguments = '/t/python cairnmind /d' if known else '"" cairnmind ""'
     return subprocess.run(["bash", "-c", "set -euo pipefail\n" + installer_functions()
-                           + f'\nstop_failed_service "{command}" && echo written || echo refused'],
-                          capture_output=True, text=True, timeout=30)
+                           + f'\nstop_failed_service "{command}" {arguments} && echo written || echo refused'],
+                          env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}"},
+                          capture_output=True, text=True, timeout=60)
 
 
 def test_a_service_that_still_answers_the_new_stop_ends_the_installer_before_the_store_is_written(tmp_path):
     refused = after_install(tmp_path, fails=True)
     assert refused.stdout.strip() == "refused" and "the installer stops here" in refused.stderr
-    assert "first" not in refused.stderr and "(it said: Error: refused)" in refused.stderr
-    stopped = after_install(tmp_path, fails=False)
+    assert "first" not in refused.stderr and "(its stop said: Error: refused)" in refused.stderr
+    # The process of that data directory is named, not the services of /e or /d/x; the way out is a rerun (#319 recheck).
+    assert "processes: 501" in refused.stderr and "kill 501)" in refused.stderr and "run this installer again" in refused.stderr
+    assert "502" not in refused.stderr and "503" not in refused.stderr and "cairnmind init" not in refused.stderr
+    stopped = after_install(tmp_path, fails=False, ps_times=2)  # it ends while the installer looks
     assert stopped.stdout.strip() == "written" and stopped.stderr == ""
+
+
+def test_a_stop_that_reports_success_while_the_old_service_still_runs_ends_the_installer(tmp_path):
+    """A stop that was only asked, or a service that did not answer within 0.7 s ("not running", exit 0): its
+    process still runs after ten seconds, so nothing writes the store (#319 recheck)."""
+    result = after_install(tmp_path, fails=False)
+    assert result.stdout.strip() == "refused" and "processes: 501" in result.stderr and "its stop said" not in result.stderr
+    unknown = after_install(tmp_path, fails=False, known=False)  # without the data directory: said, and trusted
+    assert unknown.stdout.strip() == "written" and "could not be confirmed" in unknown.stderr
 
 
 def test_nothing_writes_the_store_between_the_new_install_and_the_guard_on_a_failed_stop():
     script = (Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh").read_text()
-    guard = script.index('stop_failed_service "$cairnmind_bin" || exit 1')
+    guard = script.index('stop_failed_service "$cairnmind_bin"')
     assert script.index("end_upgrade  # the new version") < guard
     assert guard < script.index('"$cairnmind_bin" engine install') and guard < script.index('"$cairnmind_bin" init')
     assert "service_stop_failed=1" in script
@@ -322,6 +347,7 @@ def test_coding_sessions_started_with_run_are_named_and_the_installer_stops(stan
 def test_the_new_installer_pieces_are_in_the_section_the_tests_cut():
     functions = installer_functions()
     assert "the knowledge service may still run the version being replaced" in functions
+    assert 'service_stop_failed=1 failed_python="$python" failed_name="$name"' in functions
     assert "stop >/dev/null 2>&1 || true" not in functions.replace("cockpit stop --clients >/dev/null 2>&1 || true", "")
     assert "live_runs()" in functions and "live_services()" in functions
 

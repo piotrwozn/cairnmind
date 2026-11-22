@@ -392,10 +392,11 @@ def test_the_run_and_service_checks_and_a_failed_stop_run_on_the_bash_of_macos(t
     result = subprocess.run(
         [BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_runs /u/tools/cairnmind/bin/python /u/bin/cairnmind\n"
          "live_services /u/tools/cairnmind/bin/python cairnmind\n"
+         "live_services /u/tools/cairnmind/bin/python cairnmind /d; live_services /u/tools/cairnmind/bin/python cairnmind /e\n"
          f"stop_or_say {failing} cairnmind 'the knowledge service' stop || echo \"returned $?\"\necho went on"],
         env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["601", "603", "returned 1", "went on"]
+    assert result.stdout.splitlines() == ["601", "603", "603", "returned 1", "went on"]
     assert "Note: cairnmind stop failed (it said: Error: refused)" in result.stderr and "first" not in result.stderr
 
 

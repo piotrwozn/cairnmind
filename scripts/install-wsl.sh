@@ -277,11 +277,18 @@ live_runs() {
 
 # Knowledge services the installed version started by itself, of any data directory (#319): cli.ensure_service runs
 # "<its Python> -m <name> --data-dir DIR serve", ending in --defer-background-inference for the workspace.
-# $1: that Python, $2: the module, the same as the name. Prints their process ids, one per line; fails when ps does.
+# $1: that Python, $2: the module, the same as the name, $3 (optional): only the service of that data directory.
+# Prints their process ids, one per line; fails when ps does.
 live_services() {
-    local prefix="$1 -m $2 --data-dir " pid args
+    local prefix="$1 -m $2 --data-dir " dir="${3:-}" pid args
     command -v ps >/dev/null 2>&1 || return 1
     ps -A -ww -o pid= -o args= | while read -r pid args; do
+        if [[ -n "$dir" ]]; then
+            case "$args" in
+                "$prefix$dir serve"|"$prefix$dir serve --defer-background-inference") printf '%s\n' "$pid" ;;
+            esac
+            continue
+        fi
         case "$args" in
             "$prefix"*" cockpit serve") ;;  # the interface broker, not a knowledge service
             "$prefix"*" serve"|"$prefix"*" serve --defer-background-inference") printf '%s\n' "$pid" ;;
@@ -307,22 +314,43 @@ stop_or_say() {
 }
 
 # After the new version is installed, a knowledge service whose stop failed is asked to stop again, by the new command
-# (it reaches a service of another version, service_version.py): while it still answers, nothing writes the store from
-# here on, because the two versions may not agree on what the store allows (#319). $1: the new command.
-# Fails when it still runs; the installer then ends, and `cairnmind init` is run by hand afterwards.
+# (it reaches a service of another version, service_version.py): while it still runs, nothing writes the store from
+# here on, because the two versions may not agree on what the store allows (#319). The stop's exit code says only that
+# a stop was asked or that nothing answered in time, so the process itself is looked for, for up to ten seconds.
+# $1: the new command, $2: the Python of the version that was replaced, $3: its name, $4: the data directory.
+# Fails when it still runs; the installer then ends, and running it again does the remaining steps.
 stop_failed_service() {
-    local said
+    local said="" left="" waited=0
     if said="$("$1" stop 2>&1 >/dev/null)"; then
-        return 0
+        said=""
+        if [[ -z "$2" || -z "$4" ]]; then
+            printf 'Note: the data directory or the Python of the replaced version is not known, so it could not be confirmed that its knowledge service has ended.\n' >&2
+            return 0
+        fi
+        while :; do
+            if ! left="$(live_services "$2" "$3" "$4")"; then
+                printf 'Note: ps failed, so it could not be confirmed that the knowledge service of the replaced version has ended.\n' >&2
+                return 0
+            fi
+            [[ -n "$left" ]] && ((waited < 100)) || break
+            sleep 0.1 2>/dev/null || break
+            waited=$((waited + 1))
+        done
+        [[ -n "$left" ]] || return 0
+    else
+        said="${said%"${said##*[![:space:]]}"}"
+        said="${said##*$'\n'}"
+        said="${said//[^[:print:]]/}"
+        said="${said:0:200}"
+        if [[ -n "$2" && -n "$4" ]]; then
+            left="$(live_services "$2" "$3" "$4")" || left=""
+        fi
     fi
-    said="${said%"${said##*[![:space:]]}"}"
-    said="${said##*$'\n'}"
-    said="${said//[^[:print:]]/}"
-    said="${said:0:200}"
+    left="${left//$'\n'/ }"
     printf '%s\n' \
-        "The knowledge service of the version that was replaced still runs and could not be stopped (it said: ${said:-nothing})." \
+        "The knowledge service of the version that was replaced still runs${left:+, processes: $left}${said:+ (its stop said: $said)}." \
         'The new version is installed, but the installer stops here: it would write the store beside that service.' \
-        'Stop it with `cairnmind stop`, then run: cairnmind init' >&2
+        "End that service${left:+ (kill $left)}, then run this installer again; it does the remaining steps." >&2
     return 1
 }
 
@@ -444,9 +472,11 @@ stop_installed() {
     stop_or_say "$installed" "$name" \
         "the interface broker may still run the version being replaced. \`$name cockpit stop\` stops it later." \
         cockpit stop || true
-    stop_or_say "$installed" "$name" \
+    if ! stop_or_say "$installed" "$name" \
         'the knowledge service may still run the version being replaced. The new version is asked to stop it once it is installed.' \
-        stop || service_stop_failed=1
+        stop; then
+        service_stop_failed=1 failed_python="$python" failed_name="$name"  # read by the main flow
+    fi
     [[ -n "$python" ]] || return 0  # said above: without the Python nothing of the installed version can be looked for
     # A service told to stop takes a moment to end: what still runs after five seconds is named; nothing is stopped.
     local waited=0 services
@@ -502,7 +532,11 @@ if [[ ! -x "$cairnmind_bin" ]]; then
 fi
 end_upgrade  # the new version is in place: a service started from now on runs it
 if [[ "${service_stop_failed:-0}" == 1 ]]; then
-    stop_failed_service "$cairnmind_bin" || exit 1
+    # The default data directory as the new version reads it: the one whose service the installer stops.
+    data_dir="$("$(uv tool dir)/cairnmind/bin/python" -I -c '
+from cairnmind.config import Settings
+print(Settings.load().data_dir)' 2>/dev/null || true)"
+    stop_failed_service "$cairnmind_bin" "${failed_python:-}" "${failed_name:-}" "$data_dir" || exit 1
 fi
 
 # The engine mode this data directory stores (cairnmind init saves it), read by the installed version itself;
