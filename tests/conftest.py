@@ -104,6 +104,16 @@ LEFT_OUT_ON_A_SERVER = {
         "names its own database address, which conflicts with the connect address of server mode",
     "test_store_readonly::test_a_missing_database_is_refused_and_not_created":
         "expects the message of a managed installation for a missing database, which a connect-only one words otherwise",
+    "test_evaluation":
+        "its evaluation runs create databases of their own name, which a connect-only installation never creates",
+    "test_memory_evaluation":
+        "its evaluation runs create databases of their own name, which a connect-only installation never creates",
+    "test_arcade::test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for":
+        "expects the unavailable message of a managed engine, which a connect-only installation words otherwise",
+    "test_integrations::test_doctor_reports_arcadedb_without_lifecycle_work_or_credentials":
+        "expects the Java report of a managed installation, which a connect-only one answers with no engine needed",
+    "test_lookup_indexes::test_a_new_database_has_every_lookup_index":
+        "asks the product's own path to create a new database, which a connect-only installation never does",
     "test_cli::test_cli_evaluation_skip_claude_is_explicit_and_remains_not_run":
         "`cairnmind eval run` is refused on a connect-only installation",
     "test_memory_cli_service::test_memory_evaluation_cli_preserves_exit_contract":
@@ -698,7 +708,11 @@ def created_as_root(original, prefix: str, template):
         if template.paused or not client.database.startswith(prefix + "_"):
             return original(client)
         if not client.database_exists():
-            client.server_command(f"create database {client.database}")
+            try:
+                client.server_command(f"create database {client.database}")
+            except ArcadeError:  # as the product's ensure_database: a client that created it at the same time won
+                if not client.database_exists():
+                    raise
     return ensure_database
 
 
@@ -806,11 +820,22 @@ def arcade_test_engine(tmp_path_factory, request):
 
 
 @pytest.fixture(autouse=True)
-def server_mode_saves_the_address_silently(request):
-    """Server mode exports the connect address to every test, so each new data directory would print the notice
-    that it saved the address, into the output of a command whose output the test parses. Only test_connect_only,
-    which checks the notice, sees it (#218)."""
-    if request.module.__name__ == "test_connect_only" or not server_under_test():
+def server_mode_keeps_the_address_to_the_engine_tests(request, monkeypatch):
+    """Server mode exports the connect address, once the engine fixture has run, to every later test of the worker.
+
+    A test that is not marked arcade never uses the server: it builds its own managed or Docker installation with
+    stand-ins, which the address would turn connect-only. It gets no address (#218). An arcade test would print the
+    notice that it saved the address, into the output of a command whose output it parses: only test_connect_only,
+    which checks the notice, sees it."""
+    if not server_under_test():
+        yield
+        return
+    if request.node.get_closest_marker("arcade") is None:
+        for name in env_names("ARCADE_CONNECT_URL"):
+            monkeypatch.delenv(name, raising=False)
+        yield
+        return
+    if request.module.__name__ == "test_connect_only":
         yield
         return
     original = Settings.load.__func__

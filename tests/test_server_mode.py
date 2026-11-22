@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from cairnmind.arcade import ArcadeError
 from conftest import LEFT_OUT_ON_A_SERVER, created_as_root, left_out_reason, server_under_test
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +70,35 @@ def test_a_test_that_asks_for_the_products_own_path_gets_no_database_created_for
             raise AssertionError("created as root although the test asked for the product's own path")
 
     assert created_as_root(lambda client: "original", "prefix", Template)(Client()) == "original"
+
+
+def test_two_clients_creating_the_same_database_at_once_both_succeed():
+    class Template:
+        paused = False
+
+    class Client:
+        database = "prefix_x"
+        checks = 0
+
+        def database_exists(self):
+            self.checks += 1
+            return self.checks > 1  # absent before the create, there after the other client's create won
+
+        def server_command(self, command):
+            raise ArcadeError("database already exists")
+
+    created_as_root(lambda client: "original", "prefix", Template)(Client())
+    stays_absent = Client()
+    stays_absent.database_exists = lambda: False
+    with pytest.raises(ArcadeError):
+        created_as_root(lambda client: "original", "prefix", Template)(stays_absent)
+
+
+def test_the_server_job_runs_java_and_a_summary_that_cannot_hide_a_failed_import():
+    job = WORKFLOW.split("\n  server-tests:\n", 1)[1].split("\n  coverage-badge:\n", 1)[0]
+    assert "actions/setup-java" in job
+    summary = job.split("Say what is tested and what is left out", 1)[1].split("- run:", 1)[0]
+    assert "shell: bash" in summary
 
 
 def test_ci_runs_the_server_tests_in_a_job_nothing_waits_for_and_that_needs_no_secret():

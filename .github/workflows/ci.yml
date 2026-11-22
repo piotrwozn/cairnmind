@@ -250,6 +250,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y tmux
+      # Java 21 as in the tests job: tests that set up a managed installation of their own (a backup, a move to a
+      # connect-only store and back) need it, and the pinned image runs the server, not those.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked --extra dev
       - name: Start the pinned image
@@ -268,6 +274,7 @@ jobs:
           echo "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE=$RUNNER_TEMP/root-password" >> "$GITHUB_ENV"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
       - name: Say what is tested and what is left out
+        shell: bash  # with pipefail: a failing import must not leave an empty list over a green step
         run: |
           {
             echo "Engine tests against \`$IMAGE\`, production mode, connect-only. Left out, with the reason:"
