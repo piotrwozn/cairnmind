@@ -1578,7 +1578,7 @@ def poll_imports(store) -> dict:
     try:  # local files only; when the secrets cannot be read no file is skipped, so each import refuses and says so
         ingest_masker(store.settings)
         secrets_readable = True
-    except ValueError:
+    except (OSError, ValueError):  # an OSError too: each import then raises it and the loop reports it per file, as on main
         secrets_readable = False
     for row in rows:
         if row["project_id"] in removed:

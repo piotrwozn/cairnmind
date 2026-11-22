@@ -81,6 +81,59 @@ def test_the_repair_still_queues_resets_and_replaces_jobs_as_before(tmp_path):
     assert store.query("SELECT state FROM jobs WHERE id=:id", {"id": raced})[0]["state"] == "completed"
 
 
+def per_row_repair(store, rows, namespace):
+    """The repair as it was before #363: a transaction or more for every chunk."""
+    for row in rows:
+        job = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]}, f"embed:{row['id']}")
+        if store.query("SELECT state FROM jobs WHERE id=:id", {"id": job})[0]["state"] == "failed":
+            job = store.enqueue("embed", row["project_id"], {"chunk_id": row["id"]},
+                                f"embedding-namespace:{namespace}:{row['id']}")
+        with store.transaction() as tx:
+            if not tx.query("SELECT id FROM embeddings WHERE chunk_id=:c AND namespace=:n", {"c": row["id"], "n": namespace}):
+                tx.command("UPDATE jobs SET state='pending',error=null,lease_until=null,updated_at=:now "
+                           "WHERE id=:id AND state='completed'", {"now": "t", "id": job})
+
+
+def per_row_queue(store, pid, chunk_ids):
+    for chunk in chunk_ids:  # what ingest did for the chunks of a file
+        store.enqueue("embed", pid, {"chunk_id": chunk}, f"embed:{chunk}")
+
+
+def stored_jobs(store, pid):
+    """What is stored for the jobs, without what differs by nature (ids, times, the project's id)."""
+    jobs = store.query("SELECT * FROM jobs WHERE project_id=:p", {"p": pid})
+    names = {job["id"]: job["dedupe_key"] for job in jobs}
+    skip = {"id", "project_id", "created_at", "updated_at", "job_key", "last_error_at"}
+    rows = sorted(({key: value for key, value in job.items() if key not in skip and not key.startswith('@')} for job in jobs),
+                  key=lambda job: job["dedupe_key"])
+    for row in rows:
+        row["attempt_history"] = [{k: v for k, v in item.items() if k != "at"} for item in row.get("attempt_history") or []]
+    keys = sorted(json.loads(job["job_key"])[2] for job in jobs)
+    events = sorted((event["entity_type"], event["op"], names.get(event["entity_id"], event["entity_id"]))
+                    for event in store.query("SELECT * FROM journal_events WHERE project_id=:p AND entity_type='job'", {"p": pid}))
+    return rows, keys, events
+
+
+def test_jobs_written_in_groups_are_what_the_per_row_path_wrote(tmp_path):
+    found = []
+    for name in ("rows", "groups"):
+        store = Store(tmp_path / name)
+        pid = store.add_project("p", tmp_path)["id"]
+        rows = chunk_rows(store, pid, 6)
+        store.enqueue("embed", pid, {"chunk_id": "c1"}, "embed:c1")
+        store.finish_job(store.enqueue("embed", pid, {"chunk_id": "c2"}, "embed:c2"))
+        store.finish_job(store.enqueue("embed", pid, {"chunk_id": "c3"}, "embed:c3"), "model down")
+        if name == "rows":
+            per_row_repair(store, rows, NAMESPACE)
+            per_row_queue(store, pid, ["c5", "c6"])
+        else:
+            schedule_embeddings(store, NAMESPACE)
+            embed_jobs.queue_embed_jobs(store, pid, ["c5", "c6"])
+        found.append(stored_jobs(store, pid))
+    for left, right in zip(*found):
+        assert left == right, (left, right)
+    assert len(found[0][0]) == 8 and ("job", "upsert", "embed:c6") in found[0][2]
+
 def transcript(root, text):
     return json.dumps({"type": "user", "cwd": str(root), "sessionId": "s", "message": {"role": "user", "content": text}}) + "\n"
 
@@ -165,7 +218,19 @@ def test_an_unreadable_secret_registry_is_still_reported_by_every_poll(tmp_path,
         assert len(errors) == 1 and "Transcript import refused" in errors[0] and str(history) in errors[0]
 
 
-def test_a_skipped_transcript_reports_what_a_full_poll_reports(tmp_path, monkeypatch):
+def test_a_secret_registry_that_cannot_be_opened_is_reported_per_file_not_raised(tmp_path, monkeypatch):
+    store, pid, root, history = followed(tmp_path, lambda root: transcript(root, "hello"))
+    ingest.poll_imports(store)
+    ingest.poll_imports(store)  # remembered
+
+    def refuse(settings):
+        raise PermissionError("the credential directory cannot be traversed")
+    monkeypatch.setattr(ingest, "ingest_masker", refuse)
+    for _ in range(2):  # an OSError must not abort the scanner's whole round
+        errors = ingest.poll_imports(store)["errors"]
+        assert len(errors) == 1 and str(history) in errors[0]
+
+def test_a_lines_errors_are_reported_once(tmp_path, monkeypatch):
     other = tmp_path / "other"
     other.mkdir()
     # The errors of a line are reported in the round that reads it, and not again.
