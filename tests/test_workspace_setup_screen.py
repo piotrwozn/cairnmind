@@ -14,7 +14,7 @@ import pytest
 import typer.main
 from textual.widgets import Button, Static
 
-from cairnmind import cli, setup_profiles, terminal_setup, topology as topology_module
+from cairnmind import cli, setup_mark, setup_profiles, terminal_setup, terminal_setup_change, topology as topology_module
 from cairnmind.config import Settings
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_setup import (
@@ -25,10 +25,13 @@ from cairnmind.topology import lines, topology
 from conftest import plain_words
 from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_panels import SidebarApp
-from cairnmind.terminal_ui import ChoiceModal, MessageModal
+from cairnmind.terminal_panels import ConfirmModal
+from cairnmind.terminal_ui import ChoiceModal, FormModal
+from consent_steps import consent_drawn, early_enter_sends_nothing
 from test_terminal_panels import settle
 from test_terminal_ux080 import UIBroker, screen_text, setup_ui
 from test_workspace_stage_scope import wait_until
+from test_terminal_setup_change import fill, on_screen, remote_db, report, until
 from test_topology import REMOTE, WRITER, clean_environment, make, remote_store  # noqa: F401 - clean_environment is an autouse fixture
 
 
@@ -238,7 +241,7 @@ def test_the_screen_in_polish(tmp_path):
     for english in MESSAGES:
         if english != terminal_setup.TITLE:
             assert english[:40] not in text, english
-    for name in ("LOCAL_BACK", "KEEP_OPEN", "HOW", "WHY_HERE", "LOADED", "REMOTE", "OPTIONAL_KEY"):
+    for name in ("LOCAL_BACK", "KEEP_OPEN", "HOW", "HERE", "LOADED", "REMOTE", "OPTIONAL_KEY"):
         assert tr(getattr(terminal_setup, name), "pl", url="https://db.example:2490")[:30] in text
     english = describe(status, "en")
     for rows in COMMANDS.values():
@@ -261,13 +264,39 @@ def test_every_sentence_has_polish_with_the_same_placeholders():
     assert topology_module.STATUS_STORAGE in CATALOG  # the marks' labels have Polish already
 
 
-def test_the_module_sends_nothing_that_writes():
+def called(tree, name):
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and getattr(node.func, "attr", getattr(node.func, "id", "")) == name]
+
+
+def test_the_screen_sends_only_a_get_and_every_change_goes_through_change_setup():
     tree = ast.parse(Path(terminal_setup.__file__).read_text(encoding="utf-8"))
     strings = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
     assert not strings & {"POST", "PUT", "PATCH", "DELETE"}
-    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-             and getattr(node.func, "attr", getattr(node.func, "id", "")) == "request"]
-    assert [[arg.value for arg in call.args[:2]] for call in calls] == [["GET", "/api/status"]]
+    assert [[arg.value for arg in call.args[:2]] for call in called(tree, "request")] == [["GET", "/api/status"]]
+    # no way to change anything but the one call, whose own dialogs ask for the agreement
+    assert len(called(tree, "change_setup")) == 1
+    assert not any(called(tree, name) for name in ("begin", "run", "carry_out", "save_storage", "Popen"))
+    imported = {alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+                for alias in node.names}
+    assert not imported & {"setup_change", "subprocess", "run", "begin"}
+
+
+def test_nothing_starts_a_change_except_after_the_consent_dialog_agreed():
+    """change_setup is not a person's act in the sense of #332 (it sends no POST of PERSON_BROKER_PATH and needs no
+    workspace key), so test_person_acts_consent does not see it. This is the same check for it: the helper starts in
+    one place, and only after `if not await agreed(...): return` in the same function."""
+    package = Path(terminal_setup.__file__).parent
+    starters = [(file.name, node.lineno) for file in sorted(package.glob("*.py"))
+                for node in ast.walk(ast.parse(file.read_text(encoding="utf-8")))  # passed to to_thread, not called
+                if isinstance(node, ast.Attribute) and node.attr == "begin" and getattr(node.value, "id", "") == "setup_change"]
+    assert [name for name, _ in starters] == ["terminal_setup_change.py"]
+    tree = ast.parse((package / "terminal_setup_change.py").read_text(encoding="utf-8"))
+    function = next(node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == "change_setup")
+    guard = [statement.lineno for statement in function.body if isinstance(statement, ast.If)
+             and isinstance(statement.test, ast.UnaryOp) and isinstance(statement.test.op, ast.Not)
+             and called(statement.test, "agreed") and isinstance(statement.body[-1], ast.Return)]
+    assert len(guard) == 1 and guard[0] < starters[0][1]
 
 
 class StatusBroker(UIBroker):
@@ -301,6 +330,10 @@ async def choose_the_entry(app, pilot):
     await pilot.press("down", "down", "down", "down", "enter")
 
 
+def is_screen(app):
+    return isinstance(app.screen, terminal_setup._screen_class())
+
+
 def notice_of(app):
     return str(app.query_one("#panel-notice", Static).render())
 
@@ -314,14 +347,14 @@ async def test_settings_opens_the_screen_with_one_read(tmp_path, monkeypatch, la
         await settle(app, pilot)
         before = len(broker.seen)
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: isinstance(app.screen, MessageModal))
+        await wait_until(pilot, lambda: is_screen(app))
         assert app.screen.heading == "Storage and models"
         await pilot.pause()
         if language == "pl":
             assert tr(terminal_setup.TITLE, "pl") == "Baza i modele" and "Baza i modele" in screen_text(app)
         assert plain_words(lines(status["topology"], language)[0])[:30] in plain_words(screen_text(app))
         await pilot.press("escape")
-        await wait_until(pilot, lambda: not isinstance(app.screen, MessageModal))
+        await wait_until(pilot, lambda: not is_screen(app))
     assert broker.seen[before:] == [("GET", "/api/status", None, None)]
 
 
@@ -331,10 +364,11 @@ async def test_the_screen_fits_and_scrolls_at_80_by_24(tmp_path, monkeypatch):
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: isinstance(app.screen, MessageModal))
+        await wait_until(pilot, lambda: is_screen(app))
         await pilot.pause()
-        region = app.screen.query_one("#message-close", Button).region
-        assert region.width > 0 and region.x >= 0 and region.right <= 80 and region.bottom <= 24
+        for identifier in ("#change-local", "#change-remote-db", "#change-remote", "#setup-close"):
+            region = app.screen.query_one(identifier, Button).region
+            assert region.width > 0 and region.x >= 0 and region.right <= 80 and region.bottom <= 24, identifier
         body = app.screen.query_one(".cm-dialog-body")
         assert body.max_scroll_y > 0
         body.scroll_end(animate=False)
@@ -356,9 +390,125 @@ async def test_a_service_that_does_not_answer_is_said_and_nothing_is_shown(tmp_p
         broker.refuse = BrokerError(503, "The client service is unavailable; running sessions are kept.")
         await choose_the_entry(app, pilot)
         await wait_until(pilot, lambda: "running sessions are kept" in notice_of(app) or "sesje" in notice_of(app))
-        assert not isinstance(app.screen, MessageModal)
+        assert not is_screen(app)
         assert tr(NO_ANSWER, language)[:30] in notice_of(app)  # and where to look instead
         broker.refuse = None  # an answer of another shape
         await choose_the_entry(app, pilot)
         await wait_until(pilot, lambda: tr(UNREADABLE, language)[:40] in notice_of(app))
-        assert not isinstance(app.screen, MessageModal)
+        assert not is_screen(app)
+
+
+# --- the buttons: a change from the screen goes through change_setup and its consent dialog (#339) -------------------
+
+DB_HOST = "db.example"
+
+
+def carried_out(tmp_path, monkeypatch, language="en", *, change=False):
+    """A panel whose /api/status is read from config.json at each request (the service as it was last started) and
+    whose helper is fake: it records its start and, with `change`, makes the change as the helper would."""
+    import types
+
+    from cairnmind import setup_change
+    from test_setup_change import Rig
+    from test_setup_profiles import make as make_installation
+    from test_terminal_setup_change import Broker, Helper
+
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    rig = Rig(tmp_path, monkeypatch)
+    broker = Broker(next(iter(broker.projects)))
+    make_installation(tmp_path)
+    reads, inner = [], broker.request
+
+    def request(method, path, *, params=None, json=None, timeout=20):
+        if path == "/api/status":
+            reads.append(method)
+            return served(Settings.load(tmp_path / "data"))
+        return inner(method, path, params=params, json=json, timeout=timeout)
+    broker.request = request
+    helper, begun = Helper(), []
+
+    def begin(settings, requested, expected, spoken):
+        begun.append((requested, expected, spoken))
+        if change:
+            setup_profiles.run(settings, requested, yes=True, say=lambda text: None)
+            report(tmp_path, "changed", ["The change is made and the knowledge service runs again with the new settings."])
+        return helper
+    monkeypatch.setattr(setup_change, "begin", begin)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    return types.SimpleNamespace(app=app, rig=rig, begun=begun, reads=reads, tmp=tmp_path)
+
+
+def to_the_consent_dialog(app, pilot, tmp_path):
+    async def go():
+        await settle(app, pilot)
+        await choose_the_entry(app, pilot)
+        await wait_until(pilot, lambda: is_screen(app))
+        await pilot.pause()
+        await pilot.click("#change-remote-db")
+        await until(pilot, on_screen(app, FormModal))
+        await fill(app, pilot, **remote_db(tmp_path))
+        return await consent_drawn(app, pilot)
+    return go()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["escape", "cancel"])
+async def test_a_button_of_the_screen_starts_nothing_before_the_consent_dialog_agrees(tmp_path, monkeypatch, how):
+    from test_setup_profiles import config_bytes
+    rig = carried_out(tmp_path, monkeypatch)
+    before = config_bytes(tmp_path)
+    async with rig.app.run_test(size=(120, 40)) as pilot:
+        modal = await to_the_consent_dialog(rig.app, pilot, tmp_path)
+        assert rig.begun == []  # the button, the form and the test sent nothing and changed nothing
+        await early_enter_sends_nothing(rig.app, pilot, modal)
+        assert rig.begun == []
+        if how == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click("#confirm-no")
+        await until(pilot, lambda: not isinstance(rig.app.screen, ConfirmModal))
+        await settle(rig.app, pilot)
+    assert rig.begun == [] and config_bytes(tmp_path) == before and rig.reads == ["GET"]
+    assert not (tmp_path / "data" / setup_mark.MARK).exists()
+
+
+@pytest.mark.asyncio
+async def test_agreeing_in_the_dialog_starts_the_one_change_the_button_named(tmp_path, monkeypatch):
+    rig = carried_out(tmp_path, monkeypatch)
+    async with rig.app.run_test(size=(120, 40)) as pilot:
+        await to_the_consent_dialog(rig.app, pilot, tmp_path)
+        await pilot.click("#confirm-yes")
+        await until(pilot, lambda: rig.begun)
+        assert len(rig.begun) == 1 and rig.begun[0][0].profile == "remote-db" and rig.begun[0][2] == "en"
+        assert rig.reads == ["GET"]  # the screen sent one read; the helper is the only thing that changes anything
+
+
+@pytest.mark.asyncio
+async def test_after_a_change_made_here_the_screen_shows_the_new_place_when_it_is_opened_again(tmp_path, monkeypatch):
+    rig = carried_out(tmp_path, monkeypatch, change=True)
+    app = rig.app
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await choose_the_entry(app, pilot)
+        await wait_until(pilot, lambda: is_screen(app))
+        await pilot.pause()
+        first = plain_words(screen_text(app))
+        assert DB_HOST not in first
+        await pilot.click("#change-remote-db")
+        await until(pilot, on_screen(app, FormModal))
+        await fill(app, pilot, **remote_db(tmp_path))
+        await consent_drawn(app, pilot)
+        await pilot.click("#confirm-yes")
+        modal_class = terminal_setup_change._progress_class()
+        await until(pilot, on_screen(app, modal_class))
+        await until(pilot, lambda: app.screen.final == "changed")
+        await pilot.press("escape")
+        await until(pilot, lambda: not isinstance(app.screen, modal_class))
+        await settle(app, pilot)
+        assert not is_screen(app)  # it does not come back by itself: a person opens it, and it reads again
+        await choose_the_entry(app, pilot)
+        await wait_until(pilot, lambda: is_screen(app))
+        await pilot.pause()
+        again = plain_words(screen_text(app))
+        assert DB_HOST in again and again != first
+    assert rig.reads == ["GET", "GET"] and len(rig.begun) == 1

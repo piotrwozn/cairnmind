@@ -35,7 +35,7 @@ class Broker(UIBroker):
 
 
 class Panel(SidebarApp):
-    """The panel as the screen of #74 will use it: the flow runs from a worker and shows what it raises."""
+    """The panel as the screen of Storage and models uses it: the flow runs from a worker and shows what it raises."""
 
     @work(group="test-change", exclusive=True, exit_on_error=False)
     async def change(self, profile=None):
