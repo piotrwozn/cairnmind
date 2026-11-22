@@ -378,6 +378,27 @@ def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+def test_the_run_and_service_checks_and_a_failed_stop_run_on_the_bash_of_macos(tmp_path):
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    functions = script[start:script.index("# --- end ---", start)]
+    tool(tmp_path / "bin" / "ps", "[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
+         "echo '  601 /u/tools/cairnmind/bin/python /u/bin/cairnmind run demo claude'\n"
+         "echo '  602 /u/tools/cairnmind/bin/python /u/bin/cairnmind check run unit'\n"
+         "echo '  603 /u/tools/cairnmind/bin/python -m cairnmind --data-dir /d serve'\n"
+         "echo '  604 /u/tools/cairnmind/bin/python -m cairnmind --data-dir /d cockpit serve'")
+    failing = tool(tmp_path / "cairnmind", "echo 'first' >&2; echo 'Error: refused' >&2; exit 2")
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "HOME": str(tmp_path)}
+    result = subprocess.run(
+        [BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_runs /u/tools/cairnmind/bin/python /u/bin/cairnmind\n"
+         "live_services /u/tools/cairnmind/bin/python cairnmind\n"
+         f"stop_or_say {failing} cairnmind 'the knowledge service' stop\necho went on"],
+        env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["601", "603", "went on"]
+    assert "Note: cairnmind stop failed (it said: Error: refused)" in result.stderr and "first" not in result.stderr
+
+
 @pytest.mark.parametrize("stop_workspace", [{}, {"CAIRNMIND_INSTALL_STOP_WORKSPACE": "1"}])
 def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_removed(tmp_path, stop_workspace):
     """#290: `workspace stop --clients` cannot reach a server without a tmux client, so it is not the advice.

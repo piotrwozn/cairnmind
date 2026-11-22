@@ -111,10 +111,17 @@ def stand_ins(tmp_path):
     (tools / "cairnmind").write_text(
         "#!/bin/sh\necho \"$*\" >> " + str(log) + "\n"
         "if [ \"$1 $2\" = 'workspace status' ]; then [ \"$STATUS\" = fail ] && exit 3; "
-        "printf '{\\n  \"available\": %s\\n}\\n' \"$STATUS\"; fi\n")
+        "printf '{\\n  \"available\": %s\\n}\\n' \"$STATUS\"; fi\n"
+        # $STOP_FAILS and $COCKPIT_STOP_FAILS make that stop fail, saying two lines (#319)
+        "if [ \"$*\" = stop ] && [ -n \"$STOP_FAILS\" ]; then echo 'first line' >&2; echo 'Error: refused' >&2; exit 2; fi\n"
+        "if [ \"$*\" = 'cockpit stop' ] && [ -n \"$COCKPIT_STOP_FAILS\" ]; then echo 'first line' >&2; "
+        "echo 'Error: refused' >&2; exit 2; fi\n")
     # `ps -A -ww -o pid= -o args=`: prints the file $PS_LINES (nothing by default) and ends with $PS_STATUS (0).
+    # With $PS_TIMES it prints them only for that many calls (a process that ends meanwhile).
     (tools / "ps").write_text(
         "#!/bin/sh\n[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
+        "if [ -n \"$PS_TIMES\" ]; then n=$(cat \"$PS_LINES.n\" 2>/dev/null || echo 0); n=$((n + 1)); "
+        "echo $n > \"$PS_LINES.n\"; [ \"$n\" -le \"$PS_TIMES\" ] || exit 0; fi\n"
         "[ -n \"$PS_LINES\" ] && cat \"$PS_LINES\"\nexit \"${PS_STATUS:-0}\"\n")
     for tool in tools.iterdir():
         tool.chmod(0o755)
@@ -222,6 +229,59 @@ def test_open_mcp_servers_are_named_even_when_the_installed_command_is_missing(s
     run, terminal = stand_ins
     result, calls = run(installed="not-installed", ps=["101 {tools}/python /x/cairnmind mcp --client external"])
     assert result.returncode == 1 and "processes: 101" in result.stderr and calls == []
+
+
+@pytest.mark.parametrize(("variable", "command"), [("STOP_FAILS", "stop"), ("COCKPIT_STOP_FAILS", "cockpit stop")])
+def test_a_failed_stop_is_said_with_its_last_line_and_the_installer_goes_on(stand_ins, variable, command):
+    run, terminal = stand_ins
+    result, calls = run(**{variable: "1"})
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert f"Note: cairnmind {command} failed (it said: Error: refused)" in result.stderr
+    assert f"cairnmind {command} stops it" in result.stderr
+    assert "first line" not in result.stderr
+    assert calls == ["workspace status", "cockpit stop", "stop"]  # the other stop was still tried
+
+
+def test_services_of_other_data_directories_are_named_and_none_is_stopped(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(ps=[
+        "201 {tools}/python -m cairnmind --data-dir /d serve",
+        "202 {tools}/python -m cairnmind --data-dir /e f serve --defer-background-inference",
+        "203 {tools}/python -I -m cairnmind --data-dir /d cockpit serve",
+        "204 {tools}/python {tools}/cairnmind ask p how to serve",
+        "205 /usr/bin/python3 -m cairnmind --data-dir /d serve"])
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert "Knowledge services of the installed version still run, processes: 201 202" in result.stderr
+    assert not any(number in result.stderr for number in ("203", "204", "205"))
+    assert "/d" not in result.stderr.replace("/default", "") and "/e" not in result.stderr
+    assert calls == ["workspace status", "cockpit stop", "stop"]  # nothing was stopped by process or by directory
+
+
+def test_a_service_that_ends_after_its_stop_is_not_named(stand_ins):
+    run, terminal = stand_ins
+    # ps is read for bridges, for run sessions and for the first look: the service has ended by the second.
+    result, calls = run(ps=["201 {tools}/python -m cairnmind --data-dir /d serve"], PS_TIMES="3")
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert "still run" not in result.stderr
+
+
+def test_coding_sessions_started_with_run_are_named_and_the_installer_stops(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(ps=[
+        "301 {tools}/python {tools}/cairnmind run demo claude",
+        "302 {tools}/python {tools}/cairnmind check run unit",
+        "303 {tools}/python {tools}/cairnmind --data-dir /d run demo codex"])
+    assert result.returncode == 1 and "continued" not in result.stdout
+    assert "of the installed version are open, processes: 301" in result.stderr
+    assert "302" not in result.stderr and "303" not in result.stderr
+    assert calls == []
+
+
+def test_the_new_installer_pieces_are_in_the_section_the_tests_cut():
+    functions = installer_functions()
+    assert "stop_or_say \"$installed\" \"$name\" 'the knowledge service' stop" in functions
+    assert "stop >/dev/null 2>&1 || true" not in functions.replace("cockpit stop --clients >/dev/null 2>&1 || true", "")
+    assert "live_runs()" in functions and "live_services()" in functions
 
 
 def mark_script(tmp_path, body):

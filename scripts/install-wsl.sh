@@ -261,6 +261,51 @@ live_bridges() {
     done
 }
 
+# Coding sessions started with `<name> run` of the installed version (#319): the arguments begin with its Python, the
+# installed command and `run`, nothing between them, so no other command is taken for one. A session started as
+# `<name> --data-dir DIR run` or `python -m cairnmind run` is not seen; docs/UPGRADING.md asks to end those first.
+# $1: that Python, $2: the installed command. Prints their process ids, one per line; fails when ps does.
+live_runs() {
+    local prefix="$1 $2 run " pid args
+    command -v ps >/dev/null 2>&1 || return 1
+    ps -A -ww -o pid= -o args= | while read -r pid args; do
+        case "$args" in
+            "$prefix"*) printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# Knowledge services the installed version started by itself, of any data directory (#319): cli.ensure_service runs
+# "<its Python> -m <name> --data-dir DIR serve", ending in --defer-background-inference for the workspace.
+# $1: that Python, $2: the module, the same as the name. Prints their process ids, one per line; fails when ps does.
+live_services() {
+    local prefix="$1 -m $2 --data-dir " pid args
+    command -v ps >/dev/null 2>&1 || return 1
+    ps -A -ww -o pid= -o args= | while read -r pid args; do
+        case "$args" in
+            "$prefix"*" cockpit serve") ;;  # the interface broker, not a knowledge service
+            "$prefix"*" serve"|"$prefix"*" serve --defer-background-inference") printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# Runs the installed command with the arguments after $3 and says so when it fails, with the last line it printed,
+# instead of going on in silence (#319). The installation goes on: the new version does not use what still runs of
+# the old one, and says so. $1: the installed command, $2: the name a user types for it, $3: what the command stops.
+stop_or_say() {
+    local installed="$1" name="$2" what="$3" said
+    shift 3
+    if said="$("$installed" "$@" 2>&1 >/dev/null)"; then
+        return 0
+    fi
+    said="${said%"${said##*[![:space:]]}"}"  # without trailing blank lines
+    said="${said##*$'\n'}"                    # its last line
+    said="${said//[^[:print:]]/}"
+    said="${said:0:200}"
+    printf 'Note: %s %s failed (it said: %s), so %s may still run the version being replaced. The installation goes on: the new version does not use it and says so, and %s %s stops it.\n' \
+        "$name" "$*" "${said:-nothing}" "$what" "$name" "$*" >&2
+}
+
 # While the file upgrade_mark exists, Cairnmind starts no service (upgrade_mark.py); it holds this installer's
 # process id. Set where it is used, not where it is defined.
 begin_upgrade() {
@@ -293,7 +338,7 @@ end_upgrade() {
 # The workspace and coding sessions hold interactive work: the installer stops here unless it is
 # told to close them. The interface broker and the knowledge service hold none and are stopped.
 stop_installed() {
-    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown bridges=""
+    local installed="$1" name="$2" python="${3:-}" terminals status socket total shown bridges="" runs=""
     # First, and also when the installed command is broken: nothing has been stopped yet. Before the terminals:
     # it is a cheap read that ends the run with nothing asked of the installed command, and a refusal about
     # terminals (#290) then never hides an open MCP server that would restart the service.
@@ -308,6 +353,15 @@ stop_installed() {
             'Their next tool call would start the knowledge service again, from the version being replaced.' \
             "Close them in the editor, or end them with: kill $bridges" \
             'then run this installer again.' >&2
+        exit 1
+    elif ! runs="$(live_runs "$python" "$installed")"; then
+        printf 'Note: ps failed, so an open %s run session of the installed version could not be ruled out.\n' "$name" >&2
+    elif [[ -n "$runs" ]]; then
+        runs="${runs//$'\n'/ }"
+        printf '%s\n' \
+            "Coding sessions started with $name run of the installed version are open, processes: $runs" \
+            'They run the version being replaced: after the upgrade their MCP server refuses every call until the session starts again.' \
+            'Finish there and exit the coding client, then run this installer again.' >&2
         exit 1
     fi
     [[ -x "$installed" ]] || return 0
@@ -364,8 +418,28 @@ stop_installed() {
             [[ -n "$socket" ]] && tmux -S "$socket" kill-server >/dev/null 2>&1 || true
         done <<<"$(live_terminals "$python")"
     fi
-    "$installed" cockpit stop >/dev/null 2>&1 || true
-    "$installed" stop >/dev/null 2>&1 || true
+    stop_or_say "$installed" "$name" 'the interface broker' cockpit stop
+    stop_or_say "$installed" "$name" 'the knowledge service' stop
+    [[ -n "$python" ]] || return 0  # said above: without the Python nothing of the installed version can be looked for
+    # A service told to stop takes a moment to end: what still runs after five seconds is named; nothing is stopped.
+    local waited=0 services
+    while :; do
+        if ! services="$(live_services "$python" "$name")"; then
+            printf 'Note: ps failed, so knowledge services of the installed version in other data directories could not be looked for.\n' >&2
+            return 0
+        fi
+        [[ -n "$services" ]] && ((waited < 50)) || break
+        sleep 0.1 2>/dev/null || break
+        waited=$((waited + 1))
+    done
+    if [[ -n "$services" ]]; then
+        services="${services//$'\n'/ }"
+        printf '%s\n' \
+            "Knowledge services of the installed version still run, processes: $services" \
+            "This installer stops only the default data directory's service, so they belong to other data directories (or one is the default one, if its stop failed above)." \
+            'Each keeps running the version being replaced, and the new version does not use it until it is stopped:' \
+            '  cairnmind --data-dir <its data directory> stop    (ps -o args= -p <process> shows the directory)' >&2
+    fi
 }
 # --- end ---
 
