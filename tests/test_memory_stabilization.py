@@ -15,7 +15,7 @@ from cairnmind.agent import KnowledgeAgent
 from cairnmind.config import Settings
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.store import Store
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 PRIVATE = "PRIVATE_METADATA_CREDENTIAL_DO_NOT_ECHO"
@@ -29,6 +29,7 @@ class ScriptedOllama:
         self.replies = list(replies)
         self.calls = []
         self.support_calls = []  # the support check of a complete answer, which always agrees here
+        self.names_calls = []  # the names call after it, which finds every name stated
         self.context_chars = context_chars
 
     async def chat(self, messages, tools=None, **kwargs):
@@ -37,6 +38,10 @@ class ScriptedOllama:
             self.support_calls.append(call)
             return {"message": {"role": "assistant", "content": json.dumps({"supported": True, "reason": "Stated."})},
                     "done_reason": "stop", "prompt_eval_count": 80, "eval_count": 10, "total_duration": 500}
+        if messages and messages[0].get("content") == NAMES_SYSTEM:  # the names call of a complete answer
+            self.names_calls.append(call)
+            return {"message": {"role": "assistant", "content": json.dumps({"names": []})}, "done_reason": "stop",
+                    "prompt_eval_count": 60, "eval_count": 6, "total_duration": 400}
         self.calls.append(call)
         if self.context_chars is not None and kwargs.get("format"):
             size = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
@@ -282,7 +287,7 @@ async def test_answer_diagnostics_normalize_untrusted_runtime_counters(workspace
     diagnostic = result["diagnostics"]
     safe_diagnostics(diagnostic)
     # The answer call and the support check of the complete answer.
-    assert [call["phase"] for call in diagnostic["model_calls"]] == ["discovery", "support"]
+    assert [call["phase"] for call in diagnostic["model_calls"]] == ["discovery", "support", "names"]
     for call in diagnostic["model_calls"]:
         for name in ("prompt_eval_count", "eval_count", "total_duration"):
             assert name not in call or (type(call[name]) is int and 0 <= call[name] <= 2**63 - 1)

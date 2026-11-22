@@ -9,6 +9,8 @@ from __future__ import annotations
 from .code_graph import CODE_GRAPH_NOT_BUILT
 from .confirmation import GROUP_CHANGED, NOT_PROVEN, REPLACED_CHANGED
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
+from .memory_egress import HOSTED_ASK_UNKNOWN, HOSTED_PACKET_NOTE, HOSTED_READ_REFUSED, HOSTED_RECORDS_HELD
+from .sensitivity import CLASSES
 from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
 from .service_token import FOREIGN_SERVICE
 
@@ -51,12 +53,17 @@ ASK_MESSAGES = {
     "(memory_remote_classes).":
         "Część pamięci projektu nie została wysłana do zdalnego serwera modelu z powodu jej klasy "
         "wrażliwości (memory_remote_classes).",
+    # memory_egress.HOSTED_ASK_UNKNOWN (#183)
+    HOSTED_ASK_UNKNOWN:
+        "Fragmenty niektórych klas wrażliwości pominięto w tej odpowiedzi, bo ustawienie memory_remote_classes "
+        "nie pozwala na nie dla modelu hostowanego; diagnostics.held_back je zlicza.",
     CODE_GRAPH_NOT_BUILT:
         "Graf kodu tego projektu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, więc to, "
         "co znaleziono o kodzie, może być puste lub niepełne.",
     "The answer has no verified citations.": "Odpowiedź nie zawiera zweryfikowanych cytowań.",
     "Could not check whether the quotes support the answer.":
         "Nie udało się sprawdzić, czy cytaty potwierdzają odpowiedź.",
+    "Could not check the names the answer gives.": "Nie udało się sprawdzić nazw, które podaje odpowiedź.",
     "The analysis reached the context budget; narrow the question.":
         "Analiza osiągnęła budżet kontekstu; zawęź pytanie.",
     "The budget for read sources was exceeded.": "Przekroczono budżet odczytanych źródeł.",
@@ -72,6 +79,8 @@ ASK_MESSAGES = {
     "The agent's step limit was exceeded.": "Przekroczono limit kroków agenta.",
     "The support check of the answer did not finish within the analysis time limit.":
         "Kontrola poparcia odpowiedzi nie zakończyła się w limicie czasu analizy.",
+    "The check of the names the answer gives did not finish within the analysis time limit.":
+        "Sprawdzenie nazw, które podaje odpowiedź, nie zakończyło się w limicie czasu analizy.",
     "Correcting the format or citations did not finish within the analysis time limit.":
         "Poprawa formatu lub cytowań nie zakończyła się w limicie czasu analizy.",
     "The local analysis ran out of time.": "Przekroczono czas lokalnej analizy.",
@@ -107,6 +116,10 @@ ASK_UNSUPPORTED_PREFIX_PL = "Cytaty nie potwierdzają odpowiedzi: "
 # question wrote them (a person's text, kept as is).
 ASK_SUBJECT_PREFIX = "The quoted sources do not name what the question asks about: "
 ASK_SUBJECT_PREFIX_PL = "Cytowane źródła nie wymieniają tego, czego dotyczy pytanie: "
+# The names check's gap (subject.NAMES_GAP, #245): this fixed prefix, then the names the answer gave
+# (a model's text, kept as is).
+ASK_NAMES_PREFIX = "The quoted sources do not state the names the answer gives: "
+ASK_NAMES_PREFIX_PL = "Cytowane źródła nie podają nazw, które podaje odpowiedź: "
 
 # Errors of the model providers (api_providers.py) and of Copilot (copilot_adapter.py).
 PROVIDER_MESSAGES = {
@@ -200,6 +213,17 @@ ENGINE_MESSAGES = {
     "continue with a shorter request restored from archived memory. The request was not automatically retried.":
         "Żądanie przekracza skonfigurowany kontekst modelu. Zwiększ jawne okno kontekstu profilu albo kontynuuj "
         "krótszym żądaniem odtworzonym z zarchiwizowanej pamięci. Żądanie nie zostało automatycznie ponowione.",
+    # What a hosted run is told when memory is held back from it (memory_egress, #183).
+    **{HOSTED_READ_REFUSED.format(name=name):
+       f"Ta pamięć należy do klasy {name}, której ustawienie memory_remote_classes nie dopuszcza dla modelu "
+       f"hostowanego. Nic nie zostało odczytane. Poproś człowieka o dodanie {name} do tego ustawienia, jeśli "
+       f"jest potrzebna." for name in CLASSES},
+    HOSTED_RECORDS_HELD:
+        "Rekordy klas, których ustawienie memory_remote_classes nie dopuszcza dla modelu hostowanego, są "
+        "wypisane bez treści: oznaczono je held_back.",
+    HOSTED_PACKET_NOTE:
+        "Podglądy rekordów niektórych klas wrażliwości pominięto, bo ustawienie memory_remote_classes nie "
+        "pozwala na nie dla modelu hostowanego; held_back je zlicza.",
     # Turn results without a word of their own in the status line.
     "Context limit": "Limit kontekstu", "Limit reached": "Osiągnięto limit", "Resume required": "Wymagane wznowienie",
     "Uncertain": "Niepewne", "Partial": "Częściowo",
@@ -611,8 +635,9 @@ CONFIRMATION_MESSAGES = {
 }
 
 MESSAGES = {**ASK_MESSAGES, ASK_UNSUPPORTED_PREFIX: ASK_UNSUPPORTED_PREFIX_PL,
-            ASK_SUBJECT_PREFIX: ASK_SUBJECT_PREFIX_PL, VECTORS_BUILDING_PREFIX: VECTORS_BUILDING_PREFIX_PL,
-            VECTORS_FAILED_PREFIX: VECTORS_FAILED_PREFIX_PL, "Complete": "Pełna", **CONFIRMATION_MESSAGES,
+            ASK_SUBJECT_PREFIX: ASK_SUBJECT_PREFIX_PL, ASK_NAMES_PREFIX: ASK_NAMES_PREFIX_PL,
+            VECTORS_BUILDING_PREFIX: VECTORS_BUILDING_PREFIX_PL, VECTORS_FAILED_PREFIX: VECTORS_FAILED_PREFIX_PL,
+            "Complete": "Pełna", **CONFIRMATION_MESSAGES,
             **PROVIDER_MESSAGES, **LOGIN_MESSAGES, **WORDS, **BROKER_MESSAGES, **STATE_MESSAGES,
             "Cairnmind · Memory": "Cairnmind · Pamięć"}
 
@@ -625,7 +650,8 @@ def fixed_message(text, translate, known=ASK_MESSAGES) -> str:
     text = str(text)
     if text in known:
         return translate(text)
-    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX, VECTORS_BUILDING_PREFIX, VECTORS_FAILED_PREFIX):
+    for prefix in (ASK_UNSUPPORTED_PREFIX, ASK_SUBJECT_PREFIX, ASK_NAMES_PREFIX, VECTORS_BUILDING_PREFIX,
+                   VECTORS_FAILED_PREFIX):
         if text.startswith(prefix) and known is ASK_MESSAGES:
             return translate(prefix) + text[len(prefix):]
     return text

@@ -18,22 +18,31 @@ from cairnmind.retrieval import Retriever, public_record
 from cairnmind.store import Store
 
 from conftest import as_person
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 class FakeOllama:
     """Replies in order. Support-check calls are kept apart: they go to support_calls and are
-    answered from ``support`` (default: supported), so call counts of the answer stay as they were."""
+    answered from ``support`` (default: supported), so call counts of the answer stay as they were.
+    The names call (#245) goes to names_calls and is answered from ``names`` (default: no unstated name)."""
 
-    def __init__(self, replies=None, vector=None, support=None):
+    def __init__(self, replies=None, vector=None, support=None, names=None):
         self.replies = list(replies or [])
         self.vector = vector or [0.0, 1.0, 0.0]
         self.calls = []
         self.support_calls = []
+        self.names_calls = []
         self.support = support
+        self.names = names
         self.embedding_calls = []
 
     async def chat(self, messages, tools=None, **kwargs):
+        if messages and messages[0].get("content") == NAMES_SYSTEM:
+            self.names_calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
+            if isinstance(self.names, Exception):
+                raise self.names
+            reply = self.names or {"content": json.dumps({"names": []})}
+            return {"message": {"role": "assistant", **reply}, "done_reason": "stop"}
         if messages and messages[0].get("content") == SUPPORT_SYSTEM:
             self.support_calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
             if isinstance(self.support, Exception):
@@ -240,7 +249,9 @@ async def test_answer_the_support_check_accepts_stays_complete(workspace):
     assert payload["citations"][0]["quote"] == SUPPORTED_QUOTE
     assert payload["citations"][0]["secondary_file"] is False and payload["citations"][0]["line_start"] == 1
     assert result["diagnostics"]["support_check"] == "supported"
-    assert result["diagnostics"]["model_calls"][-1]["phase"] == "support"
+    # The names call (#245) follows the judge; both are counted like the discovery call.
+    assert [call["phase"] for call in result["diagnostics"]["model_calls"]] == ["discovery", "support", "names"]
+    assert len(model.names_calls) == 1
 
 
 async def test_answer_the_support_check_rejects_is_not_complete(workspace):
@@ -672,6 +683,8 @@ def _without_structured_output(settings, answers, refusal=None):
             return httpx.Response(501, json=refusal)
         if payload["messages"][0]["content"].startswith(SUPPORT_SYSTEM):
             content = json.dumps({"supported": True, "reason": "Stated."})
+        elif payload["messages"][0]["content"].startswith(NAMES_SYSTEM):
+            content = json.dumps({"names": []})
         else:
             content = answers.pop(0)
         return httpx.Response(200, json={"message": {"role": "assistant", "content": content},
@@ -701,8 +714,8 @@ async def test_a_server_without_structured_output_still_corrects_and_validates_t
         assert result["status"] == "partial" and "Six attempts." not in result["answer"]
         assert result["diagnostics"]["repair_outcome"] == "failed"
     assert not any("unavailable" in gap for gap in result.get("unknowns", []))
-    # Nothing is cached: the correction, and the support check of a complete answer, each try `format` first.
-    assert len([payload for payload in requests if "format" in payload]) == (2 if complete else 1)
+    # Nothing is cached: the correction, and the support and names checks of a complete answer, each try `format` first.
+    assert len([payload for payload in requests if "format" in payload]) == (3 if complete else 1)
 
 
 async def test_a_501_for_another_reason_while_correcting_is_still_reported_as_unavailable(workspace):
