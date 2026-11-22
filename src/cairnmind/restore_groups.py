@@ -86,8 +86,13 @@ class GraphGroups:
         rows = list(self.groups.pop(project).values())
         size = self.sizes.pop(project, 0)
         nodes, edges = (rows, []) if self.kind == "node" else ([], rows)
-        if edges:  # the edges look their vertices up by the index of nodes.id, which may not find them yet (#377)
-            await_vertices(self.store, {row[key] for row in edges for key in ("from_id", "to_id") if isinstance(row.get(key), str)})
+        ends = {row[key] for row in edges for key in ("from_id", "to_id") if isinstance(row.get(key), str)}
+        if ends:
+            # The edges look their vertices up by the index of nodes.id, which may not find them yet (#377). A
+            # transaction that has missed a vertex keeps missing it, so wait with none open, as indexing does.
+            self.batches.commit()
+            await_vertices(self.store, ends, *self.batches.timeout)
+            self.batches.open()
         tx = self.batches.tx
         self.store.prefetch_graph(tx, nodes, edges)
         self.store.write_graph(tx, project, nodes, edges)
@@ -125,8 +130,6 @@ def write_restored(store, batches, source, claims=None):
     for _, _, node in source.rows(("nodes",)):
         nodes.add(node)
     nodes.flush()
-    batches.commit()  # the vertices are committed before an edge group waits for the index to find them
-    batches.open()
     edges = GraphGroups(store, batches, "edge")
     for kind, name, row in source.rows(("edges",), vectors=True):
         if kind == "row":

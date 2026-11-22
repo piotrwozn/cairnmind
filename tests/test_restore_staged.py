@@ -341,18 +341,38 @@ def test_a_restore_whose_vertex_lookup_misses_fails_cleanly_and_is_put_back(tmp_
 
 
 def _hiding_the_index(monkeypatch, hidden):
-    """The engine, compacting its unique index on nodes.id, finds no vertex for a while after a commit (#377): the next
-    `hidden` lookups of vertices by id answer nothing. The sleeps of the wait are counted, not slept."""
-    from cairnmind import graph_transactions
-    real, state = JournalTransaction.query, {"hidden": hidden, "slept": []}
+    """The engine, compacting its unique index on nodes.id, finds no vertex for a while after a commit (#377). From the
+    first edge group, the next `hidden` lookups of vertices by id (the wait's read-back, the prefetch) answer nothing,
+    and so does every later lookup of a transaction that has missed one, as under the engine's REPEATABLE_READ (measured
+    on 26.11.1): the end points of its CREATE EDGE are not found either. The sleeps of the wait are counted, not slept."""
+    from cairnmind import graph_transactions, restore_groups
+    query, script, write = JournalTransaction.query, JournalTransaction.script, restore_groups.GraphGroups._write
+    state = {"hidden": hidden, "armed": False, "stale": [], "slept": []}
 
-    def query(self, sql, params=None):
-        found = real(self, sql, params)
-        if "SELECT id FROM nodes WHERE id IN" in sql and state["hidden"]:  # the read-back of the wait, not the vertices' own prefetch
+    def hides(tx):
+        if tx in state["stale"]:
+            return True
+        if state["armed"] and state["hidden"]:
             state["hidden"] -= 1
-            return []
-        return found
-    monkeypatch.setattr(JournalTransaction, "query", query)
+            state["stale"].append(tx)
+            return True
+        return False
+
+    def hiding_query(self, sql, params=None):
+        found = query(self, sql, params)
+        return [] if "FROM nodes WHERE id IN" in sql and hides(self) else found
+
+    def hiding_script(self, statements, params, project_id):
+        if any(str(sql).startswith("CREATE EDGE edges") for sql in statements) and hides(self):
+            params = {key: f"hidden {value}" if key[0] in "ft" and key[1:].isdigit() else value for key, value in params.items()}
+        return script(self, statements, params, project_id)
+
+    def armed_write(self, project):
+        state["armed"] = state["armed"] or self.kind == "edge"
+        return write(self, project)
+    monkeypatch.setattr(JournalTransaction, "query", hiding_query)
+    monkeypatch.setattr(JournalTransaction, "script", hiding_script)
+    monkeypatch.setattr(restore_groups.GraphGroups, "_write", armed_write)
     monkeypatch.setattr(graph_transactions.time, "sleep", state["slept"].append)
     return state
 
@@ -369,7 +389,7 @@ def test_a_restore_waits_for_the_index_to_find_the_vertices_it_committed_before_
     assert comparable(store.export()) == restored and restore_staged.unfinished(store.client) is None
 
 
-def test_a_restore_whose_vertices_the_index_never_finds_fails_by_name_and_is_put_back(tmp_path, monkeypatch):
+def test_a_restore_whose_index_misses_once_with_no_time_left_to_wait_fails_by_name_and_is_put_back(tmp_path, monkeypatch):
     from cairnmind import graph_transactions
     store, path, before, known = _world(tmp_path, monkeypatch)
     state = _hiding_the_index(monkeypatch, 1)  # the first wait finds nothing, and with no time to wait it fails
@@ -380,6 +400,21 @@ def test_a_restore_whose_vertices_the_index_never_finds_fails_by_name_and_is_put
     monkeypatch.undo()
     assert comparable(store.export()) == before
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
+
+
+def test_a_restore_whose_index_keeps_missing_cannot_put_the_store_back_either_and_keeps_the_mark(tmp_path, monkeypatch):
+    from cairnmind import graph_transactions
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    _hiding_the_index(monkeypatch, 10 ** 9)
+    monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
+    with pytest.raises(RestoreFailed) as failed:
+        store.restore(path)
+    monkeypatch.undo()
+    text = " ".join(str(failed.value).split())
+    assert "did not find" in text and "putting the store back" in text and "failed too" in text
+    assert restore_staged.unfinished(store.client) is not None
+    Store(store.data_dir, for_restore=True).restore(path)  # the person restores the backup again, once the index answers
+    assert restore_staged.unfinished(store.client) is None
 
 
 def test_a_transaction_open_for_the_time_bound_is_committed_and_a_slow_delete_halves_the_next(tmp_path, monkeypatch):

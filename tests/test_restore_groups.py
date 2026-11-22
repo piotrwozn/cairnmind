@@ -126,8 +126,9 @@ def test_restore_writes_rows_in_groups(store, tmp_path, monkeypatch):
     target.restore(path)
     rows = 2 * (NODES + 30) + CHUNKS + VECTORS
     # Row by row this was 6,407 requests: about five per edge, four per vertex and one per document.
-    # Now about a hundred, most of them the safety copy and the statements around the inserts.
-    assert len(seen) < 200, f"{len(seen)} requests for {rows} rows"
+    # Now about a hundred, most of them the safety copy and the statements around the inserts; each edge group
+    # also commits and opens a transaction, so that the wait for the index has none open (#377).
+    assert len(seen) < 250,f"{len(seen)} requests for {rows} rows"
     graph = [command for _, command in seen if command.startswith(("CREATE VERTEX", "CREATE EDGE"))]
     assert len(graph) <= 10, graph  # 630 vertices and 630 edges of two projects, and the fixture's few
     assert comparable(target.export()) == comparable(store.export())

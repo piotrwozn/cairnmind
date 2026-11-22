@@ -12,8 +12,9 @@ next indexing replaces the whole graph.
 
 The engine's unique index on ``nodes.id`` does not find vertices that were committed a moment ago while the engine
 compacts the index (seen on ArcadeDB 26.11.1; seconds, and not with compaction switched off). ``await_vertices``
-reads the vertices back by that index before the edges that name them are written; the restore (#362) does the same
-before it writes the edges of a group, and shares ``BoundedTransactions`` with the indexer.
+reads the vertices back by that index before the edges that name them are written; the restore (#362) commits, waits with no
+transaction open and opens a new one before it writes the edges of each group (a transaction that has missed a vertex
+keeps missing it, whatever is committed after), and shares ``BoundedTransactions`` with the indexer.
 """
 from __future__ import annotations
 
@@ -92,12 +93,15 @@ class GraphTransactions(BoundedTransactions):
         return self.rows >= ROWS_PER_TRANSACTION
 
 
-def await_vertices(store, identifiers):
-    """Return when a new transaction finds every vertex of ``identifiers`` by id; fail after ``VERTEX_WAIT`` seconds."""
+def await_vertices(store, identifiers, *timeout):
+    """Return when a new transaction finds every vertex of ``identifiers`` by id; fail after ``VERTEX_WAIT`` seconds.
+
+    Call it with no transaction open: inside one, the transaction is reused and keeps missing what it missed.
+    ``timeout`` is what the commit of each read waits (arguments of Store.transaction)."""
     missing, deadline = sorted(identifiers), time.monotonic() + VERTEX_WAIT
     while missing:
         still = []
-        with store.transaction() as tx:
+        with store.transaction(*timeout) as tx:
             for offset in range(0, len(missing), 1000):
                 part = missing[offset:offset + 1000]
                 found = {row["id"] for row in tx.query("SELECT id FROM nodes WHERE id IN :ids", {"ids": part})}
