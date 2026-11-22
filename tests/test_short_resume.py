@@ -2,7 +2,23 @@
 
 Real HTTP service, ArcadeDB and Git; no model is asked. The short answer is never an acknowledgement.
 """
+import json
+import shutil
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+
+from cairnmind.config import Settings
 from cairnmind.inspector import Inspector
+from cairnmind.mcp_server import _saved_record_view
+from cairnmind.memory import MemoryManager
+from cairnmind.service import create_app
+from cairnmind.sessions import SessionManager
+from cairnmind.store import Store
+
+from conftest import as_person
 
 from test_ack_under_extraction import (NEWER, ack_body, extract_one, indexed_notes, prepared,  # noqa: F401
                                        session_view)
@@ -127,3 +143,69 @@ def test_a_short_answer_after_the_epoch_moved_is_the_whole_packet(fixture):  # n
     assert answer["packet"]["id"] != native["packet_id"]
     assert not fixture.manager.status(native["session_id"])["acknowledged"]
     assert readback(answer["packet"]) is not None
+
+
+SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sample-project"
+
+
+def size(value):
+    return len(json.dumps(value, ensure_ascii=False).encode())
+
+
+def sample_project(tmp_path):
+    """The sample project's memory imported into a repository of its own, served over HTTP."""
+    root = tmp_path / "trail-notes"
+    shutil.copytree(SAMPLE, root, ignore=shutil.ignore_patterns(".memory"))
+    for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@example.invalid"),
+                 ("config", "user.name", "T"), ("add", "."), ("commit", "-qm", "initial")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    settings = Settings.load(tmp_path / "memory", create=True)
+    store = Store(settings.data_dir)
+    imported = MemoryManager(store).import_snapshot(SAMPLE / ".memory" / "cairnmind" / "manifest.json", root)
+    project = store.resolve_project(imported["project"]["id"])
+    return SimpleNamespace(root=root, settings=settings, store=store, project=project,
+                           manager=SessionManager(store, settings),
+                           note=store.snapshot(project["id"], "manual://editor-note", "A note a record cites"))
+
+
+def measured(fixture):  # noqa: F811
+    """The size in bytes of each answer before (the route as it was) and after (what the MCP tool now returns)."""
+    started = prepared(fixture)
+    post(fixture, "/sessions/ack", ack_body(started))
+    full = read(fixture, started)
+    short = read(fixture, started, short=True)
+    assert full["packet"]["id"] == short["packet_id"] and short["unchanged"] is True
+    text = "Keep every note readable by the older reader, as decided in March. " * 9
+    sent = {"topic": "storage"}
+    body = {"project": fixture.project["id"], "sources": [fixture.note["id"]], "session_id": started["session_id"],
+            "packet_id": started["packet"]["id"], "record": {"kind": "decision", "content": text, "metadata": sent}}
+    saved = post(fixture, "/remember", body)
+    renewed = read(fixture, started)
+    post(fixture, "/sessions/ack", ack_body(started, renewed["packet"]))
+    state = {"summary": "Sizes measured. " * 40, "next": "Write the docs"}
+    checkpoint = post(fixture, "/checkpoint", {"project": fixture.project["id"], "session_id": started["session_id"],
+                                               "packet_id": renewed["packet"]["id"], "state": state})
+    after_remember, after_checkpoint = _saved_record_view(saved, sent), _saved_record_view(checkpoint, state)
+    for answer, view in ((saved, after_remember), (checkpoint, after_checkpoint)):
+        assert size(view) < size(answer) and "content" not in view and "metadata" not in view
+    assert text not in json.dumps(after_remember) and "Sizes measured" not in json.dumps(after_checkpoint)
+    return {"packet_full": size(full), "packet_short": size(short), "remember_full": size(saved),
+            "remember_short": size(after_remember), "checkpoint_full": size(checkpoint),
+            "checkpoint_short": size(after_checkpoint)}
+
+
+def test_sample_project_answers_before_and_after(tmp_path):
+    fixture = sample_project(tmp_path)
+    with TestClient(create_app(fixture.settings, start_worker=False, ollama=object()),
+                    headers={"Authorization": f"Bearer {fixture.settings.token}"}) as client:
+        fixture.client = client
+        sizes = measured(fixture)
+        print("h325 sizes:", *(f"{key}={value}" for key, value in sizes.items()))
+        assert sizes["packet_short"] < 1024 and sizes["packet_short"] < sizes["packet_full"]
+        for number in range(20):  # a store that fills the packet's budget
+            as_person(fixture.store, fixture.project["id"],
+                      {"kind": "decision", "key": f"budget-{number}", "content": f"Decision {number}. " + "x" * 580},
+                      [fixture.note["id"]])
+        budget = measured(fixture)
+        print("h325 sizes (full budget):", *(f"{key}={value}" for key, value in budget.items()))
+        assert budget["packet_short"] < 1024 and budget["packet_short"] * 5 < budget["packet_full"]
