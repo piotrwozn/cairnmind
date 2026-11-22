@@ -645,6 +645,22 @@ def test_a_retry_after_a_failed_restore_starts_the_engine_with_the_same_password
     assert world.passwords == [kept, kept] and config(tmp_path)["arcade_password"] == kept
 
 
+def test_a_retry_after_an_engine_start_that_failed_late_uses_the_same_password(tmp_path, world):
+    stored = connect_only_installation(tmp_path)
+    world.start_error = ArcadeError("ArcadeDB did not become ready")
+    first = invoke(tmp_path, "setup", "local", "--empty", "--yes")
+    assert first.exit_code == 1
+    message = str(first.exception)
+    kept = config(tmp_path)["arcade_password"]
+    assert kept and config(tmp_path)["arcade_connect_url"] == stored["arcade_connect_url"]  # still connect-only
+    assert "did not finish starting" in message and "config.json was put back as it was." in message
+    assert kept not in message and "left running" not in message
+    world.start_error = None
+    second = invoke(tmp_path, "setup", "local", "--empty", "--yes")
+    assert second.exit_code == 0, second.output
+    assert world.passwords == [kept, kept]
+
+
 def test_a_restore_that_finished_is_said_when_a_later_step_fails(tmp_path, world):
     connect_only_installation(tmp_path, knowledge_agent="enabled", memory_chat=dict(REMOTE), chat_model="gpt-x")
     world.second_check_errors["chat"] = ValueError("the server changed its mind")
@@ -717,7 +733,8 @@ def test_an_engine_that_cannot_start_puts_the_configuration_back(tmp_path, world
     assert result.exit_code == 1
     assert ("The change stopped at starting the engine on this machine: Docker is installed but its daemon does not "
             "answer. config.json was put back as it was.") in str(result.exception)
-    assert config_bytes(tmp_path) == before and "left running" not in str(result.exception)
+    assert config_without_password(tmp_path) == before and "left running" not in str(result.exception)
+    assert config(tmp_path)["arcade_password"] and "may already have taken the password" in str(result.exception)
 
 
 def test_the_dry_run_of_local_starts_and_writes_nothing(tmp_path, world):

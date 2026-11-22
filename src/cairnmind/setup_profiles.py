@@ -180,6 +180,9 @@ PUT_BACK_FAILED = ("The change stopped at {step}: {error} config.json could NOT 
 KEPT_BACKUP = "The backup {path} is kept."
 KEPT_PASSWORD = ("The password that engine now uses stays in config.json (arcade_password), so that `cairnmind setup "
                  "local` can be run again.")
+KEPT_PASSWORD_START = ("The engine did not finish starting, and ArcadeDB may already have taken the password this "
+                       "change generated for it, so that password stays in config.json (arcade_password) and "
+                       "`cairnmind setup local` can be run again.")
 RESTORE_DONE = ("The restore had already finished: the store on this machine holds the data of {path}, and its earlier "
                 "contents are in a safety backup in {backups}.")
 CONFIRMATIONS = ("The restore marked {marked} records as confirmed by a person and left {left} before the rule; confirm "
@@ -222,6 +225,7 @@ MESSAGES = {
     STORAGE_REFUSED_NOTED: "Nie można użyć bazy pod adresem {url}: {error} Nic nie zostało zapisane.{notes}",
     LOCAL_NAME_DIFFERS: "Baza tam ma bazę danych {database}, a nie {derived}, czyli nazwę, której `cairnmind setup local` używa na tym komputerze; jej dane zostają na dysku pod nazwą {database}.",
     KEPT_PASSWORD: "Hasło, którego ten silnik teraz używa, zostaje w config.json (arcade_password), aby można było ponownie uruchomić `cairnmind setup local`.",
+    KEPT_PASSWORD_START: "Silnik nie dokończył uruchamiania, a ArcadeDB mogła już przyjąć hasło wygenerowane dla niego przez tę zmianę, więc to hasło zostaje w config.json (arcade_password), aby można było ponownie uruchomić `cairnmind setup local`.",
     RESTORE_DONE: "Odtwarzanie już się zakończyło: baza na tym komputerze ma dane z {path}, a jej wcześniejsza zawartość jest w kopii bezpieczeństwa w {backups}.",
     CONFIRMATIONS: "Odtwarzanie oznaczyło {marked} rekordów jako potwierdzone przez człowieka i zostawiło {left} sprzed reguły; pozostałe potwierdź w inspektorze.",
     CHANGE_STORAGE_LOCAL: "Baza: z ArcadeDB pod adresem {before} na silnik na tym komputerze pod adresem {url}, z bazą {database}.",
@@ -745,6 +749,7 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
     save_storage(settings.data_dir, plan["fields"])
     local = Settings.load(settings.data_dir, create=True)  # generates the managed password a connect-only one lacks
     state["step"] = (STEP_ENGINE, {})
+    state["engine_tried"] = True  # from here ArcadeDB may hold the password Settings.load generated
     chosen = engine_docker.choose_engine_mode(local)  # as `init` chooses; nothing is installed
     if chosen:
         say(chosen)
@@ -807,7 +812,7 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
         return result
     path = settings.data_dir / "config.json"
     snapshot = path.read_bytes()
-    state: dict = {"step": None, "backup": None, "engine": False, "restored": None}
+    state: dict = {"step": None, "backup": None, "engine": False, "engine_tried": False, "restored": None}
     try:
         _apply(settings, request, plan, moves, result, say, state)
     except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
@@ -820,13 +825,13 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
             notes.append((ENGINE_LEFT, {}))
         if state["restored"]:
             notes.append((RESTORE_DONE, {"path": state["restored"][0], "backups": state["restored"][1]}))
-        # The engine started with the managed password this change generated; a retry must find the same one.
-        kept = _generated_password(path, snapshot) if state["engine"] else None
+        # A started engine, or one whose start failed late, may hold the managed password this change generated.
+        kept = _generated_password(path, snapshot) if state["engine_tried"] else None
         try:
             _put_back(path, snapshot)
             if kept:
                 _keep_password(path, kept)
-                notes.append((KEPT_PASSWORD, {}))
+                notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
         except OSError as failure:
             raise SetupFailed(PUT_BACK_FAILED, step=state["step"], error=str(exc), reason=str(failure),
                               notes=notes) from exc
