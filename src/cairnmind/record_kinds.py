@@ -12,9 +12,9 @@ was stored under, and every integrity check of the captured transcript (hashes, 
 import cursor, capture recovery provenance). Those keep blocking as before.
 
 Only a person's act stores or withdraws an acceptance, as only a person confirms a record (#177): the
-command line in a person's own terminal, or the inspector routes the workspace calls. A coding client, the
-built-in agent, an MCP call and an imported package have no way to write it: the store checks the open act
-and the note its route wrote, as it does for a confirmation.
+inspector routes the workspace calls, with the workspace's key (person_proof, #214); the command line does
+neither. A coding client, the built-in agent, an MCP call and an imported package have no way to write it:
+the store checks the open act and the note its route wrote, as it does for a confirmation.
 """
 from __future__ import annotations
 
@@ -45,12 +45,9 @@ LIST_LIMIT = 20000
 _PAGE = 1000
 
 REFUSED = ("Only a person accepts an unknown transcript record kind, and this is not a person's act. Nothing was "
-           "stored. The person runs `cairnmind record-kind accept` in their own terminal, or accepts it in the "
-           "workspace under More, then Transcript record kinds.")
-CLI_REFUSED = ("Only a person accepts or withdraws an unknown transcript record kind. This command runs inside a "
-               "coding session, or its input or output is not a terminal (piped or redirected), so it does not count "
-               "as a person. Nothing was stored. The person runs it in their own terminal, with input and output not "
-               "piped or redirected, or uses More, then Transcript record kinds in the workspace.")
+           "stored. The person accepts it in the workspace under More, then Transcript record kinds.")
+CLI_REFUSED = ("The command line no longer accepts or withdraws a record kind. Nothing was changed. The person does "
+               "it in the inspector of the workspace (`cairnmind`): More, then Transcript record kinds.")
 
 
 class AcceptanceRefused(ValueError):
@@ -113,9 +110,8 @@ def blocking_message(found, offset, project_id) -> str:
     """The unknown a packet carries for a kind nobody accepted: which kind, and how a person accepts it."""
     version = found["version"] or "version unknown"
     return (f"Unknown transcript record kind '{found['kind']}' from {found['client']} {version} at byte {offset} "
-            f"blocks this packet. A person can accept it as technical for this project: `cairnmind record-kind "
-            f"accept {project_id} {found['client']} {found['kind']} --note TEXT` in their own terminal, or More, "
-            "then Transcript record kinds in the workspace.")
+            "blocks this packet. A person can accept it as technical for this project in the workspace: More, then "
+            "Transcript record kinds.")
 
 
 def _entries(value, limit=MAX_ACCEPTED) -> list[dict]:
@@ -194,8 +190,8 @@ def set_acceptance(store, project_id, client, kind, note=None, *, withdraw=False
 def act_as_person(store, project_id, client, kind, note=None, *, route, withdraw=False) -> dict:
     """A person's acceptance or withdrawal: the route's note is written here and the act opened on it.
 
-    The caller has established that a person acts: the command line by `person_at_terminal`, the inspector
-    route by being the authenticated request that names no session.
+    Only the inspector route calls it: the authenticated request that names no session and carries the
+    workspace's key (person_proof, #214). The store counts the act only with that proof.
     """
     check(client, kind, note, withdraw=withdraw)
     try:
@@ -290,5 +286,5 @@ def doctor_view(reader) -> list[dict]:
         entries = _entries(row.get(FIELD))
         if entries:
             result.append({"project_id": row["id"], "project": row.get("name"), "accepted": entries,
-                           "withdraw": f"cairnmind record-kind withdraw {row['id']} CLIENT KIND"})
+                           "withdraw": "in the workspace: More, then Transcript record kinds"})
     return result

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import conflicts, impact_verdicts
+from . import conflicts, impact_verdicts, person_proof
 from . import stale_proposed as proposed
 from .arcade import ArcadeError
 from .inspector import Inspector, InspectorNotFound
@@ -107,6 +107,11 @@ def create_inspector_router(store, settings):
             raise HTTPException(status_code=401, detail="Invalid local service token")
 
     router = APIRouter(dependencies=[Depends(authorize)])
+
+    async def person_route(request: Request):
+        # A person's act (#214): the open workspace's key, on top of the token. Nothing is written without it.
+        await person_proof.require(request, settings)
+    person = [Depends(person_route)]
 
     async def call(method, *args, **kwargs):
         try:
@@ -217,7 +222,7 @@ def create_inspector_router(store, settings):
         # Read-only, what `cairnmind proposed --json` prints (#189); acting on an entry is the review route below.
         return await call(proposed.listing, inspector, project, worktree, days, limit)
 
-    @router.post("/inspector/conflicts/resolve")
+    @router.post("/inspector/conflicts/resolve", dependencies=person)
     async def resolve_conflict(body: ConflictBody):
         return await call(conflicts.resolve, inspector, body.project, body.record_id, body.other_id, body.action,
                           body.expected_version, body.other_expected_version, keep=body.keep, reason=body.reason,
@@ -247,13 +252,13 @@ def create_inspector_router(store, settings):
         return await impact_call(impact_verdicts.resolve, body.project, body.worktree, body.since, body.record_id,
                                  body.fingerprint, body.verdict, body.note)
 
-    @router.post("/inspector/records/{record_id}/review")
+    @router.post("/inspector/records/{record_id}/review", dependencies=person)
     async def review(record_id: str, body: ReviewBody):
         return await call(inspector.review, body.project, record_id, body.action, body.expected_version,
                           expected_plan_version=body.expected_plan_version, reason=body.reason,
                           worktree=body.worktree)
 
-    @router.post("/inspector/plans/{plan_id}/confirm")
+    @router.post("/inspector/plans/{plan_id}/confirm", dependencies=person)
     async def confirm_plan(plan_id: str, body: ConfirmPlanBody):
         # A person confirms a plan and its steps at once (#170); the audit lets them travel as published memory.
         from .memory_acts import confirm
@@ -280,11 +285,11 @@ def create_inspector_router(store, settings):
         return await call(record_kinds.act_as_person, store, project_id, body.client, body.kind, body.note,
                           route="inspector_review", withdraw=withdraw)
 
-    @router.post("/inspector/record-kinds/accept")
+    @router.post("/inspector/record-kinds/accept", dependencies=person)
     async def accept_record_kind(body: RecordKindBody):
         return await record_kind_act(body, False)
 
-    @router.post("/inspector/record-kinds/withdraw")
+    @router.post("/inspector/record-kinds/withdraw", dependencies=person)
     async def withdraw_record_kind(body: RecordKindBody):
         return await record_kind_act(body, True)
 

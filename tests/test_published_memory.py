@@ -20,7 +20,9 @@ from cairnmind.memory_published_import import PublishedImporter
 from cairnmind.plans import PlanManager
 from cairnmind.store import Store
 
-from conftest import as_person, person_edit
+from cairnmind.confirmation import ConfirmationRefused
+
+from conftest import as_person, person_edit, person_unproven
 
 GUIDE = "# Guide\n\nThe active backend is ArcadeDB.\nNothing else stores memory.\n"
 
@@ -332,7 +334,16 @@ def test_the_same_record_changed_on_two_branches_conflicts_in_exactly_its_file(a
     with pytest.raises(MemoryConflict, match="take-published"):
         PublishedImporter(store).import_published(folder_of(root), pid)
     versions = len(store.record_history(record["id"]))
-    taken = PublishedImporter(store).import_published(folder_of(root), pid, take_published=[record["id"]])
+    # Ada confirmed the record here: taking the published side replaces her verdict, so it needs her choice
+    # and the workspace's proof like any other replacement (#214).
+    with pytest.raises(MemoryConflict, match="would replace 1 record"):
+        PublishedImporter(store).import_published(folder_of(root), pid, take_published=[record["id"]])
+    with person_unproven(), pytest.raises(ConfirmationRefused):
+        PublishedImporter(store).import_published(folder_of(root), pid, take_published=[record["id"]],
+                                                  replace_confirmed=True)
+    assert len(store.record_history(record["id"])) == versions
+    taken = PublishedImporter(store).import_published(folder_of(root), pid, take_published=[record["id"]],
+                                                      replace_confirmed=True)
     assert taken["taken"] == [path] and taken["unchanged"] == 1
     current = next(r for r in store.list_records(pid) if r["id"] == record["id"])
     assert current["content"] == "Use signed cookies." and len(store.record_history(record["id"])) == versions + 1
