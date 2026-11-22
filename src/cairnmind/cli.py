@@ -74,11 +74,19 @@ def _stdout_is_terminal() -> bool:
     return sys.stdout.isatty()
 
 
-def _tell(message: str) -> None:
-    """What a command did and what comes next, for a person: standard error, and only in a terminal, so JSON on
-    standard output and an agent's shell stay as they are (#287)."""
-    if sys.stderr.isatty():
-        typer.echo(f"Cairnmind: {message}", err=True)
+JSON_FLAG = Annotated[bool, typer.Option(
+    "--json", help="Print the full result as JSON; the default when the output is not a terminal.")]
+
+
+def _human_or_json(result, as_json: bool, sentences) -> None:
+    """doctor's rule for the commands a person reads (#287, #313): in a terminal the sentences, each made safe to
+    print; with --json, or in a pipe, a file or a script, the full JSON exactly as before. `sentences` is called only
+    for a terminal."""
+    if as_json or not _stdout_is_terminal():
+        output(result)
+    else:
+        from cairnmind.terminal_safe import safe_text
+        typer.echo("\n".join(safe_text(line) for line in sentences()))
 
 
 def initialized(command):
@@ -321,6 +329,21 @@ def _ensure_service_or_refuse(settings: Settings) -> None:
         say_service_started(settings)
 
 
+def _refuse_unknown_project(settings: Settings, project: str) -> None:
+    """An unknown project is said before a service is started for it (#313). Only when the store can be read without
+    starting anything; otherwise the service resolves the project and says the same sentence."""
+    from cairnmind.store_readonly import StoreNotReady
+    try:
+        store_for_read(settings).resolve_project(project)
+    except StoreNotReady:
+        return  # shortcut: an engine that is not running yet is started by the service, which then refuses
+    except ValueError as exc:
+        if str(exc).startswith("Unknown project: "):
+            raise
+    except (ArcadeError, OSError, httpx.HTTPError):
+        return
+
+
 def say_service_started(settings: Settings) -> None:
     """Nothing starts in the background unannounced (#287): said whether or not this is a terminal."""
     from cairnmind.first_start import SERVICE_STARTED
@@ -550,7 +573,7 @@ def cockpit_stop(ctx: typer.Context, clients: bool = False):
 
 @app.command()
 @initialized
-def init(ctx: typer.Context):
+def init(ctx: typer.Context, as_json: JSON_FLAG = False):
     """Create the store, or open the one a connect-only installation was given.
 
     Downloads no models and changes no client configuration."""
@@ -576,7 +599,15 @@ def init(ctx: typer.Context):
     marks = report(getattr(store, "confirmations_before_rule", None))
     if marks:
         result["confirmations_before_rule"] = marks
-    output(result)
+
+    def sentences():
+        from cairnmind import first_start
+        lines = [first_start.INIT_READY.format(data_dir=ctx.obj.data_dir)]
+        if marks:
+            lines.append(first_start.INIT_MARKED.format(marked=marks["marked_as_a_persons"],
+                                                        left=marks["still_before_the_rule"]))
+        return lines
+    _human_or_json(result, as_json, sentences)
 
 
 @contextmanager
@@ -644,7 +675,7 @@ def engine_inspect(ctx: typer.Context):
 
 @engine_app.command("stop")
 @initialized
-def engine_stop(ctx: typer.Context):
+def engine_stop(ctx: typer.Context, as_json: JSON_FLAG = False):
     from cairnmind.engine import local_process_recorded, stop_engine
     from cairnmind.engine_docker import container_recorded
     from cairnmind.database_mode import connect_only
@@ -655,7 +686,16 @@ def engine_stop(ctx: typer.Context):
     if not nothing_here and service_alive(ctx.obj):
         refuse("Run cairnmind stop first; the knowledge service is using ArcadeDB")
     with _engine_command():
-        output(stop_engine(ctx.obj))
+        result = stop_engine(ctx.obj)
+
+    def sentences():
+        from cairnmind import first_start
+        if not result.get("stopping"):
+            return [first_start.ENGINE_NOT_STOPPED.format(reason=str(result.get("reason") or "unknown").rstrip("."))]
+        if connect_only(ctx.obj):
+            return [first_start.ENGINE_STOPPED_CONNECT]
+        return [first_start.ENGINE_STOPPED.format(data_dir=ctx.obj.data_dir)]
+    _human_or_json(result, as_json, sentences)
 
 
 @db_app.command("create-user")
@@ -680,7 +720,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
            as_json: bool = typer.Option(
                False, "--json", help="Print the full report as JSON; the default when the output is not a terminal.")):
     """Report where storage and the models run and what Cairnmind needs and what is optional: a short summary in a
-    terminal, the full report as JSON otherwise. Read-only."""
+    terminal, the full report as JSON otherwise. Read-only. Exits 1 when something required is missing."""
     if output_format not in ("json", "text"):
         raise typer.BadParameter("--format must be json or text.")
     if output_format == "text" and not contract:
@@ -730,19 +770,21 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     from cairnmind.api_runtime import coding_profiles_status
     result["coding_profiles"] = coding_profiles_status(ctx.obj)
     from cairnmind.record_kinds import doctor_view
+    result["projects"] = None  # how many are registered; None when the store cannot be read
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
-        result["accepted_record_kinds"] = doctor_view(store_for_read(ctx.obj))
+        store = store_for_read(ctx.obj)
+        result["accepted_record_kinds"] = doctor_view(store)
+        result["projects"] = len(store.list_projects())
     except Exception as exc:  # noqa: BLE001 - doctor reports a store it cannot read, it does not stop
-        result["accepted_record_kinds"] = {"unavailable": type(exc).__name__}
+        result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
     # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
     result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"]), **result}
-    if as_json or not _stdout_is_terminal():
-        output(result)  # a pipe, a file and a script read this, as before
-    else:
-        from cairnmind.doctor_attention import summary
-        typer.echo("\n".join(summary(result)))
+    from cairnmind.doctor_attention import required_missing, summary
+    _human_or_json(result, as_json, lambda: summary(result))
+    if required_missing(result):
+        raise typer.Exit(1)  # something required is missing; models, tmux and clients never change this (#313)
 
 
 @app.command()
@@ -779,42 +821,67 @@ def serve(ctx: typer.Context, defer_background_inference: bool = False):
 
 @app.command()
 @initialized
-def stop(ctx: typer.Context):
+def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
     """Stop only this store's service, without deleting data."""
+    from cairnmind import first_start
+    from cairnmind.engine import local_process_recorded
+    from cairnmind.engine_docker import container_recorded
     if not service_alive(ctx.obj):
-        output({"stopping": False, "reason": "The service is not running"})
-        return
-    output(request(ctx.obj, "POST", "/shutdown"))
+        result = {"stopping": False, "reason": "The service is not running"}
+        lines = [first_start.STOP_NOT_RUNNING.format(url=ctx.obj.url)]
+    else:
+        result = request(ctx.obj, "POST", "/shutdown")
+        lines = [(first_start.STOP_STOPPING if result.get("stopping") else first_start.STOP_REFUSED)
+                 .format(url=ctx.obj.url)]
+    if local_process_recorded(ctx.obj) or container_recorded(ctx.obj):
+        lines.append(first_start.ENGINE_LEFT_RUNNING)
+    _human_or_json(result, as_json, lambda: lines)
 
 
 @projects_app.command("add")
 @initialized
-def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg):
-    root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
-    if not root.is_dir():
-        raise typer.BadParameter("The path must be a folder, not a file")
-    store = store_for(ctx.obj)
-    project = store.add_project(name, root)
-    from cairnmind.ingest import index_project, register_default_histories
-    result = index_project(store, project["id"])
-    discovery = register_default_histories(store, project["id"], Path(project["root"]))
-    output({"project": project, "indexed": result, "history": discovery})
+def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, as_json: JSON_FLAG = False):
     import shlex
     from cairnmind import first_start
     from cairnmind.brief import _git_out
     from cairnmind.terminal_safe import safe_text
-    shown = safe_text(str(root))
-    _tell(first_start.PROJECT_ADDED.format(project=shlex.quote(safe_text(name)), root=shown,
-                                           files=result.get("files", 0)))
-    if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
-        _tell(first_start.NOT_GIT.format(root=shown))
-    elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
-        _tell(first_start.NO_COMMIT.format(root=shown))
+    try:
+        root = root.expanduser().resolve(strict=True)  # the folder is checked before the store is opened
+    except FileNotFoundError:
+        given = safe_text(str(root.expanduser().absolute()))
+        raise ValueError(first_start.PROJECT_FOLDER_MISSING.format(root=given, quoted=shlex.quote(given))) from None
+    if not root.is_dir():
+        raise typer.BadParameter("The path must be a folder, not a file")
+    store = store_for(ctx.obj)
+    known = {row["id"] for row in store.list_projects()}
+    project = store.add_project(name, root)
+    from cairnmind.ingest import index_project, register_default_histories
+    result = index_project(store, project["id"])
+    discovery = register_default_histories(store, project["id"], Path(project["root"]))
+
+    def sentences():
+        shown = safe_text(str(root))
+        said = first_start.PROJECT_EXISTED if project["id"] in known else first_start.PROJECT_ADDED
+        lines = [said.format(project=shlex.quote(safe_text(name)), root=shown, files=result.get("files", 0))]
+        if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
+            lines.append(first_start.NOT_GIT.format(root=shown))
+        elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
+            lines.append(first_start.NO_COMMIT.format(root=shown))
+        return lines
+    _human_or_json({"project": project, "indexed": result, "history": discovery}, as_json, sentences)
 
 
 @projects_app.command("list")
-def project_list(ctx: typer.Context):
-    output(store_for_read(ctx.obj).list_projects())
+def project_list(ctx: typer.Context, as_json: JSON_FLAG = False):
+    projects = store_for_read(ctx.obj).list_projects()
+
+    def sentences():
+        from cairnmind import first_start
+        if not projects:
+            return [first_start.PROJECTS_NONE]
+        return [first_start.PROJECTS_HEADING, *(f"  - {row['name']}: {row['root']}" for row in projects),
+                first_start.PROJECTS_NEXT]
+    _human_or_json(projects, as_json, sentences)
 
 
 @projects_app.command("root")
@@ -850,7 +917,8 @@ def import_command(ctx: typer.Context, path: TranscriptArg, project: str | None 
 def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree: Path | None = None,
         answer_schema: Path | None = None,
         log: Annotated[bool, typer.Option("--log", help="Keep this answer and its citations in the project's "
-                                          "answer log, for `cairnmind eval replay`.")] = False):
+                                          "answer log, for `cairnmind eval replay`.")] = False,
+        as_json: JSON_FLAG = False):
     """Answer a question from the project's memory, with the sources it cites. Starts the service when needed."""
     payload = {"project": project, "question": question,
                "worktree": str(worktree.resolve()) if worktree else None}
@@ -859,7 +927,14 @@ def ask(ctx: typer.Context, project: ProjectArg, question: QuestionArg, worktree
     if answer_schema is not None:
         from cairnmind.answer_contract import prepare_answer_schema
         payload["answer_schema"] = prepare_answer_schema(_json_file(answer_schema))
-    output(request(ctx.obj, "POST", "/ask", json=payload))
+    if not service_alive(ctx.obj):
+        _refuse_unknown_project(ctx.obj, project)
+    result = request(ctx.obj, "POST", "/ask", json=payload)
+
+    def sentences():
+        from cairnmind.terminal_commands import ask_summary  # the workspace's view of an answer
+        return ask_summary(result, str).split("\n")
+    _human_or_json(result, as_json, sentences)
 
 
 @app.command()
@@ -1187,7 +1262,7 @@ def remember(ctx: typer.Context, project: ProjectArg,
              source_id: Annotated[list[str] | None, typer.Option("--source")] = None,
              confirmed: Annotated[bool, typer.Option(
                  help="Refused since 0.13.0; a person confirms in the inspector.")] = False,
-             key: str | None = None):
+             key: str | None = None, as_json: JSON_FLAG = False):
     """Store a finding as proposed. --confirmed is refused: a person confirms in the inspector of the workspace."""
     from cairnmind import confirmation
     if confirmed:
@@ -1214,14 +1289,18 @@ def remember(ctx: typer.Context, project: ProjectArg,
         # The key is taken and this command cannot update a record by id: what the person can do (#238).
         refuse(f"Record {exc.record_id} already holds the key {key!r} for a {kind}. Nothing was saved. Use "
                "another key, or dispute or decide that record in the inspector.")
-    output(result)
-    # brief lists a proposed record for review, except a task or a checkpoint, which it leaves out.
-    if result.get("status") == "proposed" and kind not in {"task", "checkpoint"}:
+
+    def sentences():
         import shlex
         from cairnmind import first_start
         from cairnmind.terminal_safe import safe_text
-        _tell(first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind),
-                                                   project=shlex.quote(safe_text(project))))
+        quoted = shlex.quote(safe_text(project))
+        # brief lists a proposed record for review, except a task or a checkpoint, which it leaves out.
+        if result.get("status") == "proposed" and kind not in {"task", "checkpoint"}:
+            return [first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind), project=quoted)]
+        return [first_start.REMEMBER_STORED.format(status=result.get("status"), kind=safe_text(kind),
+                                                   id=result.get("id"), project=quoted)]
+    _human_or_json(result, as_json, sentences)
 
 
 @app.command()
@@ -1925,13 +2004,12 @@ _register_record_kinds(app, initialized)
 
 @app.command()
 @initialized
-def install(ctx: typer.Context, project: ProjectArg):
+def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
     result = install_integrations(ctx.obj, selected)
-    output(result)
     import shlex
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text
@@ -1946,15 +2024,19 @@ def install(ctx: typer.Context, project: ProjectArg):
                             if missing_parts(info))
     name = shlex.quote(safe_text(selected["name"]))
     if connected:
-        _tell(first_start.INSTALL_DONE.format(
+        lines = [first_start.INSTALL_DONE.format(
             clients=", ".join(first_start.CLIENT_NAMES.get(client, client) for client in connected), files=files,
-            project=name, command=connected[0]))
+            project=name, command=connected[0])]
         if unconnected:
-            _tell(first_start.INSTALL_ALSO.format(clients=unconnected))
+            lines.append(first_start.INSTALL_ALSO.format(clients=unconnected))
     elif unconnected:
-        _tell(first_start.INSTALL_NOT_CONNECTED.format(files=files, clients=unconnected))
+        lines = [first_start.INSTALL_NOT_CONNECTED.format(files=files, clients=unconnected)]
     else:
-        _tell(first_start.INSTALL_NO_CLIENT.format(files=files, project=name))
+        lines = [first_start.INSTALL_NO_CLIENT.format(project=name)]
+    # With no client installed the warnings are the two "not installed" lines, which INSTALL_NO_CLIENT says once.
+    skipped = {first_start.CLIENT_SKIPPED.format(client=client) for client in result["clients"]}
+    notes = [warning for warning in result["warnings"] if installed or warning not in skipped]
+    _human_or_json(result, as_json, lambda: lines + notes)
 
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

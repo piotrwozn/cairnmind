@@ -336,3 +336,13 @@ def test_the_guides_name_the_sign_in_lockout_and_one_user_per_database():
         text = " ".join(path.read_text(encoding="utf-8").split())
         assert "each database gets its own user" in text.lower(), path
         assert "about 30 seconds, even with the right password" in text, path
+
+def test_the_deployment_checks_accept_doctors_exit_code_for_something_missing():
+    """doctor exits 1 when something required is missing (#313); the checks judge its report, so 1 is no crash."""
+    deployment = (ROOT / "scripts" / "deployment_check.py").read_text()
+    kubernetes = (ROOT / "scripts" / "kubernetes_check.py").read_text()
+    connection = ROOT / "deploy" / "kubernetes" / "check" / "connection-check.sh"
+    assert 'source.cli("doctor", codes=(0, 1))' in deployment and "result.returncode not in codes" in deployment
+    assert 'cairnmind("doctor", codes=(0, 1))' in kubernetes and "result.returncode not in codes" in kubernetes
+    assert 'cairnmind doctor > "$work/doctor.json" || [ $? -eq 1 ]' in connection.read_text()
+    assert subprocess.run(["sh", "-n", str(connection)], capture_output=True).returncode == 0

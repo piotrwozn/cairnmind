@@ -12,7 +12,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
 from .cockpit_state import CockpitState
-from .first_start import GET_MODELS, MATCHES_HEADING, MODE_HEADING
+from .first_start import GET_MODELS, MATCHES_HEADING, MODE_HEADING, MODE_STATUS
 from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
@@ -234,14 +234,16 @@ def ask_summary(result, translate) -> str:
         # Not a verified answer: the agent wrote one of its fixed sentences (or kept the model's text,
         # which fixed_message leaves exactly as it is).
         answer = fixed_message(answer, translate)
-    lines = [translate("Status") + ": " + translate(ASK_STATUS.get(status, status)), "", answer]
+    raw = result.get("unknowns", [])
+    # Without models "unavailable" is the mode, not a failure: the status line says so; the JSON keeps unavailable (#313).
+    label = MODE_STATUS if GET_MODELS in raw else ASK_STATUS.get(status, status)
+    lines = [translate("Status") + ": " + translate(label), "", answer]
     sources = [source for source in result.get("sources", []) if isinstance(source, dict)][:8]
     if sources:
         lines += ["", translate("Sources") + ":", *_passages(sources, "quote")]
     matches = [match for match in result.get("full_text_matches", []) if isinstance(match, dict)][:8]
     if matches:  # search results without models (#274): their own heading, never "Sources"
         lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt")]
-    raw = result.get("unknowns", [])
     if GET_MODELS in raw:  # the way to get models is not missing evidence: the mode's own heading (#294)
         lines += ["", translate(MODE_HEADING) + ":", translate(GET_MODELS)]
     unknowns = [fixed_message(item, translate) for item in raw if item != GET_MODELS][:8]

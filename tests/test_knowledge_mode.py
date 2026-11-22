@@ -401,13 +401,14 @@ def _store_choice(tmp_path, value):
     return data
 
 
-def test_doctor_says_disabled_as_information_and_exits_0(monkeypatch, tmp_path):
+def test_doctor_says_disabled_as_information_and_exits_0_unless_the_value_is_invalid(monkeypatch, tmp_path):
     _quiet_doctor(monkeypatch)
     reports = {}
     for value in ("disabled", "enabled", "", None, "maybe"):
         data = _store_choice(tmp_path, value)
         result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "doctor"])
-        assert result.exit_code == 0, result.output
+        # An invalid value stops the service, so it is required and missing (#313); every other choice exits 0.
+        assert result.exit_code == (1 if value == "maybe" else 0), result.output
         reports[value] = json.loads(result.stdout)
     assert reports["disabled"]["knowledge_agent"] == "disabled (deterministic-only mode)"
     assert reports["disabled"]["get_models"] == first_start.GET_MODELS

@@ -133,8 +133,13 @@ def _quiet_doctor(monkeypatch):
     from cairnmind import api_runtime, database_credentials, engine, integrations, store_writer
     monkeypatch.setattr(cli, "service_alive", lambda settings: False)
     monkeypatch.setattr(integrations, "_probe_cli", lambda name: {"installed": False})
-    monkeypatch.setattr(database_credentials, "doctor_block", lambda settings: {"available": False})
+    monkeypatch.setattr(database_credentials, "doctor_block", lambda settings: {
+        "mode": "managed", "engine": "native", "available": True, "database_available": True, "version_matches": True,
+        "url": "http://127.0.0.1:2480", "database": "cairnmind"})  # #313: a healthy engine, so only tmux differs
     monkeypatch.setattr(engine, "resolve_java", lambda settings: None)
+    real_which = integrations.shutil.which
+    monkeypatch.setattr(integrations.shutil, "which",
+                        lambda name, *a, **k: "/usr/bin/java" if name == "java" else real_which(name, *a, **k))
     monkeypatch.setattr(store_writer, "inspect", lambda settings: {"role": "writer"})
     monkeypatch.setattr(api_runtime, "coding_profiles_status", lambda settings: [])
 

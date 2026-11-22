@@ -182,10 +182,10 @@ def forwarded(files: dict[str, Path], data: Path):
                    CAIRNMIND_ARCADE_DATABASE="cairnmind", CAIRNMIND_ARCADE_PASSWORD_FILE=str(files["user-password"]),
                    CAIRNMIND_ARCADE_CA_FILE=str(files["ca"]))
 
-        def cairnmind(*arguments: str) -> dict:
+        def cairnmind(*arguments: str, codes: tuple[int, ...] = (0,)) -> dict:
             result = run(sys.executable, "-m", "cairnmind", "--data-dir", str(data), *arguments, env=env,
                          capture=True, check=False, timeout=300)
-            if result.returncode != 0:
+            if result.returncode not in codes:
                 raise SystemExit(f"cairnmind {' '.join(arguments)} failed:\n{result.stdout}{result.stderr}")
             return json.loads(result.stdout)
 
@@ -200,7 +200,8 @@ def port_forward_check(files: dict[str, Path], work: Path) -> list:
     step("engine status and doctor from this machine through kubectl port-forward")
     with forwarded(files, work / "port-forward-data") as cairnmind:
         status = cairnmind("engine", "status")
-        database = cairnmind("doctor")["arcadedb"]
+        # A reader of the Job's store before it takes over: doctor exits 1 when something required is missing (#313).
+        database = cairnmind("doctor", codes=(0, 1))["arcadedb"]
         if not (status.get("available") and status.get("version_matches") and database.get("database_available")
                 and database.get("transport", "").startswith("https")):
             raise SystemExit(f"through port-forward: engine status {status}, doctor {database}")

@@ -1,4 +1,4 @@
-"""What the commands of the first start say they did and what comes next (#287)."""
+"""What the commands of the first start say they did and what comes next (#287, #313)."""
 import io
 import json
 import subprocess
@@ -11,9 +11,14 @@ from cairnmind import cli, first_start, ingest, integrations
 
 @pytest.fixture
 def told(monkeypatch):
-    """The sentences `_tell` was given; nothing reaches a terminal."""
+    """The sentences a command gives `_human_or_json`; CliRunner is not a terminal, so standard output stays JSON."""
     sentences = []
-    monkeypatch.setattr(cli, "_tell", sentences.append)
+    real = cli._human_or_json
+
+    def record(result, as_json, make):
+        sentences.extend(make())
+        real(result, as_json, make)
+    monkeypatch.setattr(cli, "_human_or_json", record)
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     return sentences
 
@@ -51,19 +56,6 @@ def test_init_points_at_doctor_and_project_add_not_at_models(run):
     assert json.loads(result.stdout)["next"] == "cairnmind doctor, then cairnmind project add NAME FOLDER"
 
 
-def test_tell_prints_only_in_a_terminal_and_on_standard_error(monkeypatch, capsys):
-    cli._tell("hello")
-    quiet = capsys.readouterr()
-    assert quiet.out == quiet.err == ""
-    class Terminal(io.StringIO):
-        def isatty(self):
-            return True
-    terminal = Terminal()
-    monkeypatch.setattr("sys.stderr", terminal)
-    cli._tell("hello")
-    assert terminal.getvalue() == "Cairnmind: hello\n"
-
-
 def test_project_add_says_what_it_did_and_warns_about_a_folder_without_git(tmp_path, run, told):
     run("init")
     root = folder(tmp_path)
@@ -92,7 +84,20 @@ def test_a_project_name_with_a_space_is_quoted_in_the_next_step(tmp_path, run, t
     assert "cairnmind remember 'my app' " in told[0]
 
 
-def test_remember_says_a_proposed_finding_is_not_confirmed_and_where_to_see_it(run, told, tmp_path, person_terminal):
+def test_adding_a_registered_project_says_it_existed(tmp_path, run, told):
+    run("init")
+    root = folder(tmp_path, repository=True, commit=True)
+    first = run("project", "add", "my-app", str(root))
+    assert told[0].startswith("Registered my-app in ")
+    told.clear()
+    again = run("project", "add", "my-app", str(root))
+    assert again.exit_code == 0, again.output
+    assert told[0].startswith(f"my-app was already registered for {root.resolve()}; its files were checked again")
+    assert json.loads(again.stdout)["project"] == json.loads(first.stdout)["project"]  # the JSON is unchanged
+
+
+def test_remember_says_a_proposed_finding_needs_nothing_more_and_a_confirmed_one_what_it_stored(
+        run, told, tmp_path, person_terminal):
     run("init")
     run("project", "add", "my-app", str(folder(tmp_path, repository=True, commit=True)))
     told.clear()
@@ -103,9 +108,10 @@ def test_remember_says_a_proposed_finding_is_not_confirmed_and_where_to_see_it(r
     # #214: the command line confirms nothing; --confirmed is refused and stores nothing, so no sentence is said.
     refused = run("remember", "my-app", "Reviews are required", "--kind", "constraint", "--confirmed")
     assert refused.exit_code == 2 and told == []
-    # brief leaves tasks and checkpoints out of its review list, so the sentence is not said for them.
+    # brief leaves tasks and checkpoints out of its review list, so the proposed sentence is not said for them.
     told.clear()
-    assert run("remember", "my-app", "Add rate limiting", "--kind", "task").exit_code == 0 and told == []
+    assert run("remember", "my-app", "Add rate limiting", "--kind", "task").exit_code == 0
+    assert told[0].startswith("Stored as proposed (task), record ")
 
 
 def stub_probe(installed, hooks=None):
@@ -117,7 +123,7 @@ def stub_probe(installed, hooks=None):
     return probe
 
 
-def test_install_without_a_client_names_the_files_it_wrote_and_what_works_without_one(
+def test_install_without_a_client_writes_nothing_and_says_what_works_without_one(
         tmp_path, run, told, monkeypatch):
     run("init")
     root = folder(tmp_path, repository=True, commit=True)
@@ -126,12 +132,12 @@ def test_install_without_a_client_names_the_files_it_wrote_and_what_works_withou
     monkeypatch.setattr(integrations, "_probe_cli", stub_probe(()))
     result = run("install", "my-app")
     assert result.exit_code == 0, result.output
-    assert told == [first_start.INSTALL_NO_CLIENT.format(files="AGENTS.md, CLAUDE.md", project="my-app")]
-    assert any("is not installed, so only its instruction block was written" in w
-               for w in json.loads(result.stdout)["warnings"])
+    assert told == [first_start.INSTALL_NO_CLIENT.format(project="my-app")]
+    assert not (root / "AGENTS.md").exists() and not (root / "CLAUDE.md").exists()
+    assert json.loads(result.stdout)["changed"] == []
     told.clear()
-    assert run("install", "my-app").exit_code == 0  # a second run has nothing new to write
-    assert told[0].startswith("Neither Codex nor Claude Code") and "nothing new" in told[0]
+    assert run("install", "my-app").exit_code == 0  # a second run has nothing to write either
+    assert told[0].startswith("Neither Codex nor Claude Code") and "nothing was written" in told[0]
 
 
 def test_install_with_a_client_says_which_files_and_the_next_command(tmp_path, run, told, monkeypatch):
@@ -141,8 +147,11 @@ def test_install_with_a_client_says_which_files_and_the_next_command(tmp_path, r
     told.clear()
     monkeypatch.setattr(integrations, "_probe_cli", stub_probe(("codex",)))
     assert run("install", "my-app").exit_code == 0
-    assert len(told) == 1 and told[0].startswith("Connected: Codex. Written in the project: AGENTS.md, ")
+    assert told[0].startswith("Connected: Codex. Written in the project: AGENTS.md, ")
     assert ".codex/config.toml" in told[0] and told[0].endswith("Next: cairnmind run my-app codex.")
+    # The terminal has no JSON: what the JSON warns about is said after it, the absent client once.
+    assert told[1:] == [first_start.CLIENT_SKIPPED.format(client="claude"), first_start.TRUST_NOTE]
+    assert not (root / "CLAUDE.md").exists()
     told.clear()
     assert run("install", "my-app").exit_code == 0
     assert "nothing new (the files were up to date)" in told[0]
@@ -155,7 +164,7 @@ def test_an_installed_client_that_is_not_connected_is_not_called_connected_and_n
     told.clear()
     monkeypatch.setattr(integrations, "_probe_cli", stub_probe(("claude",), hooks=("claude",)))
     assert run("install", "my-app").exit_code == 0
-    assert len(told) == 1 and told[0].startswith("Written in the project: ")
+    assert told[0].startswith("Written in the project: ")
     assert "Not connected: Claude Code (not in place: the session hooks)" in told[0]
     assert "Connected" not in told[0] and "cairnmind run" not in told[0] and "doctor --contract" in told[0]
     told.clear()

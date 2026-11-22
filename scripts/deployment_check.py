@@ -84,14 +84,14 @@ class Server:
         if not made.get("signed_in"):
             raise SystemExit(f"{self.name}: create-user did not sign in as the new user: {made}")
 
-    def cli(self, *arguments: str, check: bool = True):
+    def cli(self, *arguments: str, check: bool = True, codes: tuple[int, ...] = (0,)):
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("CAIRNMIND_", "DEVBRAIN_"))}
         env.update(CAIRNMIND_ARCADE_CONNECT_URL=self.url, CAIRNMIND_ARCADE_USER=USER,
                    CAIRNMIND_ARCADE_PASSWORD_FILE=str(self.user_file), CAIRNMIND_ARCADE_DATABASE="cairnmind")
         command = [sys.executable, "-m", "cairnmind", "--data-dir", str(self.data_dir), *arguments]
         result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=300)
-        if check and result.returncode != 0:
+        if check and result.returncode not in codes:
             raise SystemExit(f"{self.name}: cairnmind {' '.join(arguments)} failed ({result.returncode}):\n"
                              f"{result.stdout}{result.stderr}")
         return json.loads(result.stdout) if check else result
@@ -126,7 +126,8 @@ def roundtrip(source: Server, target: Server, work: Path) -> tuple[list, list]:
         check_server(server, pinned)
     step("source: init, project add, remember")
     source.cli("init")
-    doctor = source.cli("doctor")["arcadedb"]
+    # doctor exits 1 when something required is missing (#313); what this check needs is asserted on the report below.
+    doctor = source.cli("doctor", codes=(0, 1))["arcadedb"]
     if not (doctor.get("available") and doctor.get("version_matches") and doctor.get("database_available")
             and doctor.get("mode") == "connect" and doctor.get("user") == USER
             and doctor.get("password_source") == "file"):

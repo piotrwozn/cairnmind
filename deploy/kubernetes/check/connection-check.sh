@@ -33,7 +33,7 @@ cat "$work/user.json"
 echo "== engine status and doctor as $CAIRNMIND_ARCADE_USER"
 cairnmind engine status > "$work/status.json"
 cairnmind init > /dev/null
-cairnmind doctor > "$work/doctor.json"
+cairnmind doctor > "$work/doctor.json" || [ $? -eq 1 ]  # 1: something required is missing; the checks below judge the report (#313)
 
 echo "== index a small project from inside the cluster, and read it back"
 mkdir "$work/project"
