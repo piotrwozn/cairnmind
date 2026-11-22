@@ -92,24 +92,17 @@ SHARED_ENGINE = "arcade-engine-shared"
 # CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE (a private file with its root password), the engine tests install, start
 # and stop nothing and run against that server through connect-only mode; the `server-tests` CI job does it with the
 # published image. Without them nothing here changes. Tests that cannot run against a server this run does not own are
-# skipped with the reason below: a module (`test_x`) or one test (`test_x::test_name`). Each reason names what needs
-# the local engine; it is a first list, settled by the runs of that job. tests/test_server_mode.py keeps it true.
+# skipped with the reason below: a module (`test_x`) or one test (`test_x::test_name`). An entry is added only after a
+# run showed that test failing, with the reason from that failure. tests/test_server_mode.py keeps the list true.
 LEFT_OUT_ON_A_SERVER = {
-    "test_store_prune": "starts its own engine and reads its log and folders under the data directory",
-    "test_store_size": "counts the files it makes under the installation's own arcade/databases folder",
-    "test_trial011_store": "starts its own engine and reads its engine.log",
-    "test_first_start_stops": "starts its own engine and reads its engine.log",
-    "test_connect_only": "builds connect-only installations from the port and the password of the managed engine",
-    "test_connect_only_network": "puts a relay in front of the managed engine's port and reads its password",
-    "test_database_user": "names its own database address, and reads the first command's output as JSON, which "
-                          "starts with the notice that a connect-only installation saved its address",
+    "test_database_user::test_a_remote_url_a_dedicated_user_and_a_password_file_index_and_read":
+        "sets its own database address, which conflicts with the connect address of server mode",
+    "test_platform_hints::test_a_missing_client_and_a_missing_java_ask_for_the_system_they_run_on":
+        "starts the engine of a managed installation to see its Java hint, which a connect-only one never starts",
     "test_store_readonly::test_a_stopped_engine_is_refused_without_starting_it":
         "names its own database address, which conflicts with the connect address of server mode",
     "test_store_readonly::test_a_missing_database_is_refused_and_not_created":
         "expects the message of a managed installation for a missing database, which a connect-only one words otherwise",
-    "test_memory_cli_service::test_cli_memory_operations_forward_current_actor_without_stale_environment_packet":
-        "reads the first command's output as JSON, which starts with the notice that a connect-only installation "
-        "saved its address",
     "test_cli::test_cli_evaluation_skip_claude_is_explicit_and_remains_not_run":
         "`cairnmind eval run` is refused on a connect-only installation",
     "test_memory_cli_service::test_memory_evaluation_cli_preserves_exit_contract":
@@ -125,8 +118,16 @@ def server_under_test():
     if not (address and password_file):
         raise pytest.UsageError("Server mode needs both CAIRNMIND_TEST_ARCADE_SERVER_URL and "
                                 "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE.")
+    if urlparse(address).port in default_ports():  # the identity of a server fails closed: never the installed one
+        raise pytest.UsageError(f"CAIRNMIND_TEST_ARCADE_SERVER_URL names a default port of Cairnmind ({address}).")
     from cairnmind.database_credentials import read_private_file
     return address, read_private_file(password_file, "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE")
+
+
+def default_ports() -> set:
+    """The default service, cockpit, engine and Ollama ports: those of the Cairnmind installed on a machine (#221)."""
+    defaults = Settings(data_dir=Path("."))
+    return {defaults.port, defaults.cockpit_port, urlparse(defaults.arcade_url).port, urlparse(defaults.ollama_url).port}
 
 
 def left_out_reason(module: str, name: str) -> str | None:
@@ -529,11 +530,9 @@ def no_foreign_service():
     machine that runs the tests (its own token is refused: "Invalid local service token") or its Ollama. Such a
     connection now fails as it does when nothing listens there. By hand, not monkeypatch, for the reason above.
     """
-    defaults = Settings(data_dir=Path("."))
     # The engine's default port too: a command that reads the store before the service starts met the engine of
     # the Cairnmind installed on the machine and its refusal of a foreign password (#313).
-    foreign = {defaults.port, defaults.cockpit_port, urlparse(defaults.arcade_url).port,
-               urlparse(defaults.ollama_url).port}
+    foreign = default_ports()
     connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
 
     def refused(original):
@@ -687,10 +686,12 @@ class SchemaTemplate:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
 
-def created_as_root(original, prefix: str):
-    """Server mode: a connect-only installation creates no database (#68), so the run's own are created here as root."""
+def created_as_root(original, prefix: str, template):
+    """Server mode: a connect-only installation creates no database (#68), so the run's own are created here as root.
+
+    Not for a test marked no_schema_template: it asks for the product's own path, which refuses to create one."""
     def ensure_database(client):
-        if not client.database.startswith(prefix + "_"):
+        if template.paused or not client.database.startswith(prefix + "_"):
             return original(client)
         if not client.database_exists():
             client.server_command(f"create database {client.database}")
@@ -782,7 +783,7 @@ def arcade_test_engine(tmp_path_factory, request):
     try:
         # Built inside the try: a schema that fails to initialise must still stop the engine and restore the environment.
         template = SchemaTemplate(settings, prefix, tmp_path_factory.mktemp("schema-template"))
-        ArcadeClient.ensure_database = (created_as_root(original_ensure, prefix) if server
+        ArcadeClient.ensure_database = (created_as_root(original_ensure, prefix, template) if server
                                         else template.ensure_database(original_ensure))
         yield settings, prefix, template
     finally:
@@ -798,6 +799,25 @@ def arcade_test_engine(tmp_path_factory, request):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
+def server_mode_saves_the_address_silently(request):
+    """Server mode exports the connect address to every test, so each new data directory would print the notice
+    that it saved the address, into the output of a command whose output the test parses. Only test_connect_only,
+    which checks the notice, sees it (#218)."""
+    if request.module.__name__ == "test_connect_only" or not server_under_test():
+        yield
+        return
+    original = Settings.load.__func__
+
+    def load(cls, *args, **kwargs):
+        settings = original(cls, *args, **kwargs)
+        settings._origin.pop("connect_saved", None)
+        return settings
+    Settings.load = classmethod(load)
+    yield
+    Settings.load = classmethod(original)
 
 
 @pytest.fixture(autouse=True)
