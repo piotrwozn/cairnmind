@@ -786,11 +786,7 @@ def setup(ctx: typer.Context,
           yes: Annotated[bool, typer.Option("--yes", help="Make the change; without it nothing changes.")] = False):
     """Show where storage and the memory models run; with PROFILE (local, remote-db, remote), move them.
 
-    A profile is tested before anything is saved; without --yes it is only tested and shown. Refused while the
-    knowledge service runs and in a coding session. Passwords and keys are never asked for, printed or saved:
-    --password-file names a file you created. Without a profile, no setting of an initialized installation changes,
-    except that a database address given for the first time in CAIRNMIND_ARCADE_CONNECT_URL is saved, as every
-    command saves it."""
+    A profile is tested before anything is saved; without --yes it is only tested and shown. Refused while the knowledge service runs and in a coding session. Passwords and keys are never asked for, printed or saved: --password-file names a file you created. Without a profile, no setting of an initialized installation changes, except that a database address given for the first time in CAIRNMIND_ARCADE_CONNECT_URL is saved, as every command saves it."""
     from cairnmind import setup_profiles
     fields = {"url": url, "user": user, "database": database, "password_file": password_file, "ca_file": ca_file,
               "admin_password_file": admin_password_file, "models_url": models_url, "provider": provider,
