@@ -111,7 +111,7 @@ def _without_copies(matches: list[dict]) -> list[dict]:
     return [match for match in matches if match.get("status") or (match["source_id"], text(match)) not in records]
 
 
-async def text_matches(agent, project_id: str, question: str, worktree=None) -> dict:
+async def text_matches(agent, project_id: str, question: str, worktree=None, also_held=frozenset()) -> dict:
     """The passages a full-text search finds for the question's words, through exactly the filters of the first,
     lexical search of `ask` (KnowledgeAgent._ask_impl): Retriever.search without a query vector, then agent._hits,
     with the sensitivity gate set as KnowledgeAgent.ask sets it. No model is asked. Search results, never an
@@ -122,7 +122,7 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
         raise ValueError("Question must contain 1–16000 characters")  # as KnowledgeAgent._ask_impl refuses it
     started = time.monotonic()
     agent.retriever.warnings.clear()
-    gate = ask_gate(agent.settings, agent.store)
+    gate = ask_gate(agent.settings, agent.store, also_held)
     token = ASK.set(gate)
     evidence: dict = {}
     try:
@@ -149,7 +149,7 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
     held_back = gate.summary() if gate else None
     # Found but not shown: held by the gate, unverifiable on disk (_hits drops it) or changed since indexing.
     left_out = bool(held_back) or len(shown) < len(hits) or refreshed > 0
-    return {"matches": matches, "held_back": held_back, "left_out": left_out,
+    return {"matches": matches, "held_back": held_back, "left_out": left_out, "hosted": bool(also_held),
             "warnings": list(dict.fromkeys(w[:240] for w in agent.retriever.warnings))[-8:],
             "elapsed_seconds": round(time.monotonic() - started, 3)}
 
@@ -158,7 +158,10 @@ def unavailable_answer(found: dict, index_errors=()) -> dict:
     """What /ask returns in deterministic-only mode: no answer (status unavailable, no source), and the passages
     text_matches found, in their own key, said by the answer sentence to be search results and not an answer."""
     errors = [str(error)[:240] for error in list(index_errors)[:5]]
-    unknowns = [GET_MODELS, *([MATCHES_HELD_BACK] if found["held_back"] else []), *errors]
+    from .memory_egress import HOSTED_ASK_UNKNOWN
+    # A hosted built-in run is told why in its own words: there is no remote model server in its case (#183).
+    held = HOSTED_ASK_UNKNOWN if found.get("hosted") else MATCHES_HELD_BACK
+    unknowns = [GET_MODELS, *([held] if found["held_back"] else []), *errors]
     diagnostics = {"stage": "ask", "code": UNAVAILABLE_CODE}
     if found["held_back"]:
         diagnostics["held_back"] = found["held_back"]

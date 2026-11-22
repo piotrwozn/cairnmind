@@ -370,7 +370,7 @@ def test_the_managed_block_is_not_chunked():
 def test_text_matches_lists_a_record_and_its_note_once(monkeypatch):
     import asyncio
     from cairnmind import memory_egress
-    monkeypatch.setattr(memory_egress, "ask_gate", lambda settings, store: None)
+    monkeypatch.setattr(memory_egress, "ask_gate", lambda settings, store, also_held=frozenset(): None)  # #183's run classes
     shown = [{"id": "chunk", "source_id": "s1", "uri": "manual://note/1", "kind": "note", "text": "We deploy blue green."},
              {"id": "rec", "source_id": "s1", "uri": "manual://note/1", "kind": "decision", "status": "proposed",
               "text": "We deploy blue green."}]
