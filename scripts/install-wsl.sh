@@ -312,8 +312,8 @@ stop_installed() {
 }
 # --- end ---
 
-# An earlier release was installed as the uv tool "devbrain", which owns the devbrain
-# executable that this package also provides as an alias. Remove the tool, not the data.
+# DevBrain 0.8.0 was installed as the uv tool "devbrain". Its tool is removed, never the data: its own devbrain
+# command would still start 0.8.0 against the same data directory.
 upgraded_from_devbrain=false
 if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
@@ -338,6 +338,16 @@ if [[ ! -x "$cairnmind_bin" ]]; then
     printf 'Installation did not provide the executable: %s\n' "$cairnmind_bin" >&2
     exit 1
 fi
+
+# Cairnmind up to 0.12.0 also installed the command devbrain (#314). uv removes it on --reinstall; one still there is
+# named, never removed: nothing here can tell whose it is.
+leftover_devbrain() {
+    local leftover="$1/devbrain"
+    if [[ -e "$leftover" || -L "$leftover" ]]; then
+        printf 'Cairnmind no longer installs the devbrain command, but %s is still there. Use cairnmind instead; if nothing else uses that file, remove it: rm "%s"\n' "$leftover" "$leftover" >&2
+    fi
+}
+leftover_devbrain "$tool_bin_dir"
 
 # The engine mode this data directory stores (cairnmind init saves it), read by the installed version itself;
 # empty when it cannot say: the native engine is then installed as before, and init names what is wrong.
