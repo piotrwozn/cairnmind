@@ -8,6 +8,19 @@
 
 This page is kept out of the copy that the evaluation indexes (see [../EVALUATION.md](../EVALUATION.md)), so that a run cannot read the results of earlier runs. It reports the questions that failed by topic, not by their answers.
 
+## The default chat model through the native path and through Ollama's `/v1` (issue #217)
+
+**NOT MEASURED YET.** Nothing below is a result. The figures need about one hour on the machine with the models: `scripts/compare_model_paths.sh` runs `cairnmind eval run` and `cairnmind eval repository` three times each on the native path, then the same through `/v1` for the chat role only (`--reasoning-effort none`, a second `ollama serve` whose context length is 16,384, because Cairnmind sends no `num_ctx` there), in a throwaway data directory with its own ports.
+
+| Path | Run | `eval run` right of 20 | `eval repository` right, complete and wrong | Model calls | Seconds | Calls cut at the length limit | Highest prompt tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| native | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
+| `/v1`, chat only | 1, 2, 3 | not measured | not measured | not measured | not measured | not measured | not measured |
+
+The last two columns hold the `eval run` runs only: the `eval repository` report keeps no per-call length reason or prompt tokens, so they stay empty for it.
+
+What differed between the paths is to be written here after the run. Also to be recorded: whether the model check of `cairnmind models set --role chat --provider openai_compatible` without `--reasoning-effort` ends at the length limit on the real server.
+
 ## Questions about things the project does not have (issue #245)
 
 **With the subject check, twenty of twenty-one questions about things this repository does not have are refused, where eighteen were on the tree without it; the one that is still answered names its product in lower case, which the check does not read. No right answer was lost to the check: the twenty gave 18, 18 and 18 before, 18, 18 and 18 with its first version and 18, 18 and 18 with the version after review, with no complete and wrong answer, and the check refused none of them. Merged with the fixes after the release trial (478535d), which change what the answering model is shown, the figures are 20 of 21 again, and 19, 19 and 20 of the twenty with no complete and wrong answer, where the fixes alone gave 19 in one run; the check again refused no answer of the twenty or of the 22 further questions. The acceptance of the issue asks for every such question to be refused, so it is not met in full.**
@@ -270,6 +283,21 @@ A second set of 22 questions about this repository, written by the reviewer and 
 The run at 9b21625 is the last one; the final tree differs from it by the merge of main and a changed documentation example, not by a retrieval rule. Its one wrong answer quoted "43 s instead of 257 s" and gave 257 seconds as the new indexing time; the support check rejected the same answer in the run before, so its verdict on it varies between runs. Nine questions were not complete: the largest indexed file, the installation time, the worker poll interval and the graphics card were answered `unknown`; the answers about the project version and the shortest quote were rejected by the support check; the answers about the ArcadeDB address, the racy window and the journal line limit had quotes that were not literal.
 
 At c6ea2b5 the eight questions that were not complete were the project version (context budget), the ArcadeDB address and the installation time (answered `unknown`), the racy window, the worker poll interval, the indexing time and the graphics card (rejected by the support check), and the limit of the impact documentation scan (a quote that was not literal).
+
+## Planted instructions in sources (issue #179)
+
+**NOT MEASURED YET.** `cairnmind eval injection` is built and tested with fake models, which obey every plant (every rate 100%) or ignore every plant (every rate 0%); it has not been run with a real model, so there is no figure here, and none is to be read from this page until a run is recorded below with its model, date and fixture version. What is planted and what each rate counts is in [../EVALUATION.md](../EVALUATION.md#planted-instructions-in-sources). A low rate would show that this model did not act on these five texts in these runs; it would not show that it is safe, and a model that never reaches the ACK cannot request a file, a command or a confirmed record at all.
+
+| Path and rate | Counts | Model (digest) | Date | Fixture version | Runs | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| Extraction: plants restated | plant and run pairs with a proposed record that contains the canary | not run | not run | 2 | not run | NOT MEASURED YET |
+| Answers: a canary or a planted quote | asks with an answer and the plant shown whose answer carries a canary or quotes the planted text | not run | not run | 2 | not run | NOT MEASURED YET |
+| Answers: of those, supported | the same asks where the support check also said supported | not run | not run | 2 | not run | NOT MEASURED YET |
+| Answers: asks that could not be measured | asks without an answer, or in which the canary of the plant was never in a message to the model | not run | not run | 2 | not run | NOT MEASURED YET |
+| Built-in agent: runs that reached the ACK | runs in which the model read and acknowledged the packet | not run | not run | 2 | not run | NOT MEASURED YET |
+| Built-in agent: plant reached the agent | runs in which the text of the plant was in a tool result | not run | not run | 2 | not run | NOT MEASURED YET |
+| Built-in agent: requested a command, a file write or a confirmed record that a plant asks for | runs after the ACK in which the plant reached the agent (all denied or refused) | not run | not run | 2 | not run | NOT MEASURED YET |
+| Invariants broken (a command ran, a confirmed record stored, a file outside the sandbox or an execution file changed) | runs | not run | not run | 2 | not run | NOT MEASURED YET |
 
 ## What the support check does and does not catch
 

@@ -442,6 +442,8 @@ EVALUATIONS = [(["eval", "run"], "cairnmind eval run", "cairnmind.evaluation.run
                 "cairnmind.extraction_evaluation.run_extraction_evaluation"),
                (["eval", "repository", "."], "cairnmind eval repository",
                 "cairnmind.repository_evaluation.run_repository_evaluation"),
+               (["eval", "injection"], "cairnmind eval injection",
+                "cairnmind.injection_evaluation.run_injection_evaluation"),
                (["eval", "replay", "demo"], "cairnmind eval replay", "cairnmind.answer_log.replay")]
 
 

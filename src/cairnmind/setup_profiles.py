@@ -651,10 +651,13 @@ def _test_models(settings, request, moves, result) -> None:
         except (ValueError, OllamaUnavailable) as exc:
             model, url = move["kwargs"]["model"], database_mode.shown(
                 move["kwargs"].get("base_url") or settings.ollama_url)
+            # `models set --reasoning-effort none` does not help here: setup plans its move without the option and
+            # would check (and save) the role without it again, so the advice would loop.
+            error = memory_models.LENGTH_CUT if str(exc) == memory_models.LENGTH_CUT_EFFORT else str(exc)
             if request.profile == "remote":
-                raise SetupRefused(MODEL_REFUSED, role=role, model=model, url=url, error=str(exc)) from None
+                raise SetupRefused(MODEL_REFUSED, role=role, model=model, url=url, error=error) from None
             raise SetupRefused(MODELS_HERE_NEEDED, profile=request.profile, role=role, url=url, model=model,
-                               error=str(exc)) from None
+                               error=error) from None
         move["checked"] = checked
         url = database_mode.shown(checked["row"]["base_url"])
         move["after"] = (move["kwargs"]["model"], url)

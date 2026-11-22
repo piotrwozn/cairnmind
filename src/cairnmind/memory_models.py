@@ -68,6 +68,19 @@ MESSAGES = {REMOTE_OLLAMA: ("{setting} wskazuje {host}, serwer na innym komputer
                             "aby używać Ollamy na tym komputerze, ustaw ollama_url na http://127.0.0.1:11434.")}
 
 
+LENGTH_CUT = ("The chat model's reply to the test call ended at the length limit before the answer was complete, so "
+              "it could not be read as JSON. Nothing was saved.")
+LENGTH_CUT_EFFORT = (LENGTH_CUT + " A reasoning model can spend that limit on its reasoning. Turn thinking off by "
+                     "running `cairnmind models set` again with the options you gave (`--base-url`, `--model`, "
+                     "`--context-window`, `--credential-ref`, `--allow-remote`) and `--reasoning-effort none` added.")
+MESSAGES[LENGTH_CUT] = ("Odpowiedź modelu czatu na wywołanie testowe urwała się na limicie długości, zanim "
+                        "odpowiedź była kompletna, więc nie dało się jej odczytać jako JSON. Nic nie zapisano.")
+MESSAGES[LENGTH_CUT_EFFORT] = (MESSAGES[LENGTH_CUT] + " Model rozumujący może zużyć ten limit na rozumowanie. Wyłącz "
+                               "myślenie, uruchamiając `cairnmind models set` ponownie z podanymi opcjami "
+                               "(`--base-url`, `--model`, `--context-window`, `--credential-ref`, `--allow-remote`) "
+                               "i dodanym `--reasoning-effort none`.")
+
+
 class RemoteServerRefused(ValueError):
     """ollama_url names another computer and no profile records the consent (#288)."""
 
@@ -488,6 +501,10 @@ async def _check(settings: Settings, role: str) -> tuple[dict, str]:
         except ValueError:
             document = None
         if not isinstance(document, dict) or not isinstance(document.get("ok"), bool):
+            if reply.get("done_reason") == "length":
+                profile_row = getattr(settings, FIELDS[role]) or {}
+                helps = profile_row.get("provider") == "openai_compatible" and profile_row.get("reasoning_effort") != "none"
+                raise ValueError(LENGTH_CUT_EFFORT if helps else LENGTH_CUT)
             raise ValueError("The chat model did not return structured JSON output for a JSON schema; extraction "
                              "and answer repair need it. Nothing was saved.")
         if reply.get("structured_output") == "prompted":  # the server refused `format`; the JSON was checked (#231)
