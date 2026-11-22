@@ -83,6 +83,21 @@ tools that exist, for an MCP client `ask`, on the command line `cairnmind record
 built after them shows them, and its count is then zero. Packets show at most 20 records, automatic
 proposals last. A proposal that lands while a packet is built is counted as newer than it.
 
+Reading the packet again costs a client little (#325). `POST /sessions/context` with `"short": true` answers,
+when the stored packet would be returned (ready, current schema, the state hash unchanged, no continuity
+unknown of an own-agent session) and the session holds a valid ACK of exactly that packet in this epoch, with
+`{session_id, epoch, status: ready, unchanged: true, acknowledged: true, packet_id, packet_hash,
+newer_automatic_proposals, note}`, plus `history` and `evidence` for an external session. The count is always
+present there, 0 included. The answer writes nothing, is no ACK and extends none; `require_ack` decides every
+write as before. In every other case the answer is what it was: the stored packet whole, or a new packet. Without
+`short` (the command line, the built-in agent, the start hook) nothing changes, and `short` with an exact read
+(`packet_id`) is refused with HTTP 400. The MCP tool `resume_context` sends `short` unless it is called with
+`full_packet: true`. The MCP tools `remember` and `checkpoint` answer with the stored record's id, version,
+status, kind, key and source ids, the store's `origin_*` mark, `supersedes`, `possible_conflicts` and the
+supersede warning where present, and `metadata_not_stored_as_sent`: the keys of the metadata the client sent
+(for a checkpoint, its state) that the stored version does not hold with the same value. The routes still return
+the whole stored record.
+
 A captured transcript horizon is complete only when every line in it is an archived record the reader
 understood. A line stored as `transcript_unknown` keeps the packet partial, with one exception (#210): a
 record whose `type` is a kind the reader does not know at all, that is a JSON object and names no other
