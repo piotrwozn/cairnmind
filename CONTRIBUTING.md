@@ -81,7 +81,7 @@ All modules are in `src/cairnmind/`, all tests in `tests/`. **Fast** tests run w
 
 Run a single file with, for example, `uv run pytest tests/test_terminal_commands.py`.
 
-A few names still say `devbrain` on purpose: the data directory of an existing installation, the directory and format name of snapshots written by earlier versions, the prefix of the database name and the `devbrain_meta` type inside it, and the spellings that are read for compatibility. Environment variables are `CAIRNMIND_*`, with `DEVBRAIN_*` still read. That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40). The Python module is `cairnmind`; `src/devbrain/` is only an import alias kept for one release, so do not import from it.
+A few names still say `devbrain` on purpose: the data directory of an existing installation, the directory and format name of snapshots written by earlier versions, the `devbrain_` prefix of the database name of an installation from before 0.13.0 and the `devbrain_meta` type inside it, and the spellings that are read for compatibility. Environment variables are `CAIRNMIND_*`, with `DEVBRAIN_*` still read. That is expected until the compatible migration in [#40](https://github.com/piotrwozn/cairnmind/issues/40). The Python module is `cairnmind`; `src/devbrain/` is only an import alias kept for one release, so do not import from it.
 
 ## Evaluations
 

@@ -762,7 +762,7 @@ def engine_start(
         ctx: typer.Context,
         docker: Annotated[bool, typer.Option("--docker", help="Run the engine in Docker; saved as engine_mode.")] = False,
         native: Annotated[bool, typer.Option(
-            "--native", help="Run the engine with Java 21 on this machine; saved as engine_mode.")] = False,
+            "--native", help="Run the engine with Java 21 or newer on this machine; saved as engine_mode.")] = False,
         build: Annotated[bool, typer.Option(
             "--build", help="With --docker: build the image on this machine from the files shipped with "
                             "Cairnmind, instead of downloading it.")] = False):
@@ -904,7 +904,9 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
     # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
-    result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"]), **result}
+    java = result.get("java", {})  # a Java below 21 is not named as the engine's: the attention line says what was found
+    result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"],
+                                     java_major=java.get("major") if java.get("compatible") else None), **result}
     from cairnmind.doctor_attention import required_missing, summary
     _human_or_json(result, as_json, lambda: summary(result))
     if required_missing(result):
@@ -1045,11 +1047,12 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
     # Said, never silent (#327): whether a removed project came back, or one that keeps its memory did not.
     restored, kept, details = removal.add_outcome(removed, known, project)
+    quoted = shlex.quote(safe_text(name))
+    jobs, waiting_line = _jobs_after_add(ctx.obj, store, project["id"], quoted)
 
     def sentences():
         shown = safe_text(str(root))
         existed = project["id"] in known
-        quoted = shlex.quote(safe_text(name))
         lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
                  [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
                      project=quoted, root=shown, files=result.get("files", 0))])
@@ -1058,11 +1061,44 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
             lines.append(first_start.NO_COMMIT.format(root=shown))
         lines.extend(removal.not_brought_back(row) for row in kept)
+        lines.extend([waiting_line] if waiting_line else [])
         # The warning comes before the next step, which stays last (#326).
         lines.append((first_start.PROJECT_EXISTED_NEXT if existed or restored else first_start.PROJECT_ADDED_NEXT)
                      .format(project=quoted))
         return lines
-    _human_or_json({"project": project, "indexed": result, "history": discovery, **details}, as_json, sentences)
+    _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs, **details},
+                   as_json, sentences)
+
+
+def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> tuple[dict, str | None]:
+    """The extraction and embedding jobs of a project add are run by the service. project add indexes in its own
+    process, as remember does, and starts nothing: only `index` goes through the service (#366). So it says how many
+    jobs are queued, whether the service runs, and why they wait: no models (#274), an upgrade mark that refuses a
+    start (#298), or a service that was stopped. waiting_because None means not known to wait: a running service
+    started by the workspace, or before models were turned on, can still hold them."""
+    from cairnmind import first_start, knowledge_mode, upgrade_mark
+    summary = store.job_summary(project_id)
+    count = sum(summary[group][state] for group in ("indexing", "extraction") for state in ("pending", "running"))
+    running = service_alive(settings)
+    jobs = {"queued": count, "service_running": running, "waiting_because": None}
+    if not count:
+        return jobs, None
+    try:
+        models_on = knowledge_mode.enabled(settings)
+    except ValueError as invalid:  # a hand-edited config: the add is done, so it still reports, with the reason
+        jobs["waiting_because"] = "models_not_configured"
+        return jobs, str(invalid)
+    if not models_on:
+        jobs["waiting_because"] = "models_not_configured"  # held even beside a running service
+        return jobs, first_start.JOBS_HELD_NO_MODELS.format(count=count)
+    if running:
+        return jobs, None
+    reason = upgrade_mark.refusal()
+    if reason:
+        jobs["waiting_because"] = "upgrade_in_progress"
+        return jobs, first_start.JOBS_HELD_UPGRADE.format(count=count, reason=reason)
+    jobs["waiting_because"] = "service_stopped"
+    return jobs, first_start.JOBS_HELD_STOPPED.format(count=count, project=quoted)
 
 
 @projects_app.command("list")
