@@ -186,6 +186,32 @@ def test_a_broker_that_does_not_stop_is_named_with_the_command(tmp_path, monkeyp
     assert str(refused.value) == upgrade_mark.BROKER_STOP_FAILED.format(command=command)
 
 
+@pytest.mark.parametrize("started", [False, True])
+def test_a_service_start_is_announced_once_the_broker_is_up_and_never_before_a_refusal(
+        tmp_path, monkeypatch, capsys, started):
+    """A service the workspace started is stopped with its broker when an installer began meanwhile, and its start
+    is not said; one that runs on is said (#287, #319)."""
+    from cairnmind import cockpit
+    from cairnmind.first_start import SERVICE_STARTED
+    _, settings = broker_started_while_an_upgrade_began(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "ensure_service", lambda settings, **kwargs: started)
+    monkeypatch.setattr(cockpit, "stop_cockpit", lambda settings: None)
+    seen = []
+    real = httpx.Client
+    monkeypatch.setattr(cli.httpx, "Client", lambda **kwargs: real(transport=httpx.MockTransport(
+        lambda request: seen.append(request.url.path) or httpx.Response(200))))
+    with pytest.raises(cli.UpgradeInProgress):
+        cockpit.ensure_cockpit(settings)
+    assert seen == (["/shutdown"] if started else [])
+    announced = SERVICE_STARTED.split("{")[0]
+    assert announced not in capsys.readouterr().err
+    answers = iter([{"available": True, "version_matches": True}])
+    monkeypatch.setattr(cockpit, "cockpit_status", lambda settings: next(answers))
+    monkeypatch.setattr(upgrade_mark, "refusal", lambda: None)
+    cockpit.ensure_cockpit(settings)
+    assert (announced in capsys.readouterr().err) is started
+
+
 def test_ask_during_an_upgrade_is_refused_with_the_reason(tmp_path, monkeypatch):
     Settings.load(tmp_path / "data", create=True)
     monkeypatch.setattr(upgrade_mark, "state", lambda: RUNNING)

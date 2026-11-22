@@ -966,14 +966,27 @@ def ensure_cockpit(settings):
     """Start/reuse the private broker without opening a browser or minting a ticket."""
     from . import upgrade_mark
     from .cli import UpgradeInProgress, ensure_service, say_service_started
-    from .integrations import native_environment
     reason = upgrade_mark.refusal()
     if reason:
         # ensure_service reads the mark only when it starts the service: beside a running service a broker and a
         # workspace started now would run the version being replaced and outlive the installer's stop (#319).
         raise UpgradeInProgress(reason)
-    if ensure_service(settings, background_inference=False):
-        say_service_started(settings)
+    started = ensure_service(settings, background_inference=False)
+    # Said once the broker is up or failed: a start ended for an upgrade below is never announced (#298, #319).
+    announce = started
+    try:
+        return _start_broker(settings, started)
+    except UpgradeInProgress:
+        announce = False
+        raise
+    finally:
+        if announce:
+            say_service_started(settings)
+
+
+def _start_broker(settings, started):
+    from . import upgrade_mark
+    from .integrations import native_environment
     folder = settings.data_dir / "cockpit"
     _private_directory(folder)
     with _private_lock(folder / "launch.lock"):
@@ -998,17 +1011,17 @@ def ensure_cockpit(settings):
                 raise ValueError("The cockpit did not start; check the local file cockpit/server.log.")
         reason = upgrade_mark.refusal()
         if reason:
-            _stop_for_upgrade(settings, reason)
+            _stop_for_upgrade(settings, reason, started)
         if not status.get("version_matches", True):
             raise ValueError("The running cockpit has another version. Stop it and open it again.")
         return status
 
 
-def _stop_for_upgrade(settings, reason):
+def _stop_for_upgrade(settings, reason, started=False):
     """An installer began while this broker started, maybe after its own `cockpit stop`: the broker is stopped here,
-    so none runs the version being replaced (#319)."""
+    and the service too when this call started it, so none runs the version being replaced (#319)."""
     import shlex
-    from .cli import UpgradeInProgress, _data_dir_arguments
+    from .cli import UpgradeInProgress, _data_dir_arguments, _stop_started
     from .service_version import Sentence
     from .upgrade_mark import BROKER_STOP_FAILED
     try:
@@ -1016,6 +1029,8 @@ def _stop_for_upgrade(settings, reason):
     except (httpx.HTTPError, OSError):
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "cockpit", "stop"])
         raise UpgradeInProgress(Sentence(BROKER_STOP_FAILED, command=command)) from None
+    if started:
+        _stop_started(settings)  # raises, with the stop command when the service does not stop
     raise UpgradeInProgress(reason)
 
 
