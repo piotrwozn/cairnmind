@@ -8,7 +8,9 @@ before the dialog, so the dialog is never shown for a deletion that would be ref
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
+from .terminal_notices import about
 from .terminal_person_act import agreed
 from .terminal_safe import safe_text
 
@@ -33,14 +35,16 @@ DONE = ("Deleted the memory of {name}: {records} records, {plans} plans, {source
         "{check_runs} check runs. Backups and the project's folders were not changed.")
 LOG_LEFT = "The answer log {path} could not be deleted ({reason}); delete it by hand."
 NOT_DELETED = "The project's memory was not deleted."
-UNKNOWN = ("No answer to the request came, so it is not known whether the project's memory was deleted. Open More, "
-           "then Delete project memory: the project is listed only while its memory is there.")
+UNKNOWN = ("The request got no clear answer, so it is not known whether the project's memory was deleted. Open "
+           "More, then Delete project memory: the project is listed only while its memory is there.")
+LOST_ANSWER = "the service's answer was lost"
 REGISTRY = ("The project also leaves the registry and the project list; adding its folder again makes a new, empty "
             "project.")
 MESSAGES = {
-    UNKNOWN: ("Nie przyszła odpowiedź na żądanie, więc nie wiadomo, czy pamięć projektu została skasowana. Otwórz "
-              "Więcej, potem Skasuj pamięć projektu: projekt jest na liście tylko wtedy, gdy jego pamięć jeszcze "
-              "istnieje."),
+    UNKNOWN: ("Żądanie nie dostało jasnej odpowiedzi, więc nie wiadomo, czy pamięć projektu została skasowana. "
+              "Otwórz Więcej, potem Skasuj pamięć projektu: projekt jest na liście tylko wtedy, gdy jego pamięć "
+              "jeszcze istnieje."),
+    LOST_ANSWER: "odpowiedź usługi zaginęła",
     REGISTRY: ("Projekt znika też z rejestru i z listy projektów; ponowne dodanie jego folderu tworzy nowy, pusty "
                "projekt."),
     TITLE: "Skasuj pamięć projektu",
@@ -83,6 +87,8 @@ async def _gone(app, project_id) -> bool:
     try:
         listing = await app.request("GET", "/api/inspector/projects/deletable")
     except (OSError, ValueError, RuntimeError):
+        return False
+    if not isinstance(listing, dict):
         return False
     return not any(isinstance(item, dict) and item.get("id") == project_id for item in listing.get("items") or [])
 
@@ -130,11 +136,12 @@ async def open_view(app):
     if choice is None:
         return
     item = items[int(choice)]
+    subject = about(item["id"], item.get("name"))  # the outcome is told for this project, whichever is shown then
     try:
         shown = await app.request("GET", "/api/inspector/projects/forget", params={"project": item["id"]})
     except (OSError, ValueError, RuntimeError) as exc:
         # A session running, a job in work or a reader: the refusal is the answer, and no dialog is shown.
-        app.notice(app.t(NOT_DELETED) + " " + broker_error_text(exc, app.t), "error")
+        app.notice_for(subject, app.t(NOT_DELETED) + " " + broker_error_text(exc, app.t), "error")
         return
     if not await agreed(app, QUESTION, describe(shown, item["id"] == open_id, app.t), APPROVE):
         return
@@ -143,11 +150,11 @@ async def open_view(app):
         result = await app.request("POST", "/api/inspector/projects/forget", json={"project": item["id"]})
     except (OSError, ValueError, RuntimeError) as exc:
         if not _no_answer(exc):
-            app.notice(app.t(NOT_DELETED) + " " + broker_error_text(exc, app.t), "error")
+            app.notice_for(subject, app.t(NOT_DELETED) + " " + broker_error_text(exc, app.t), "error")
             return
         # No answer came, and the service may have deleted all the same: the list says whether it did, never a guess.
         if not await _gone(app, item["id"]):
-            app.notice(app.t(UNKNOWN), "error")
+            app.notice_for(subject, app.t(UNKNOWN) + " " + broker_error_text(exc, app.t), "error")
             return
     if (await asyncio.to_thread(app.workspace.read)).get("project_id") == item["id"]:
         await asyncio.to_thread(app.workspace.select_project, None)
@@ -155,8 +162,11 @@ async def open_view(app):
     deleted = result.get("deleted_counts")
     done = app.t(DONE, name=safe_text(item.get("name"), limit=80),
                  **_counts({"deletes": deleted} if isinstance(deleted, dict) else shown))
-    if result.get("answer_log_error"):
+    log_error = result.get("answer_log_error")
+    if not result and shown.get("answer_log") and await asyncio.to_thread(Path(str(shown["answer_log"])).exists):
+        log_error = app.t(LOST_ANSWER)  # confirmed by the list only: the log is on this host, so look at it
+    if log_error:
         done += " " + app.t(LOG_LEFT, path=safe_text(shown.get("answer_log"), limit=400),
-                            reason=safe_text(result["answer_log_error"], limit=300))
-    app.notice(done)
+                            reason=safe_text(log_error, limit=300))
+    app.notice_for(subject, done)
     await app.reconcile()
