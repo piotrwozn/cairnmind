@@ -54,6 +54,19 @@ def is_loopback(url: str) -> bool:
         return host.casefold() == "localhost"
 
 
+def same_place(first: str, second: str) -> bool:
+    """One model server under two addresses: the same address, or this computer under two loopback names (localhost,
+    127.0.0.1, ::1) with the same scheme, port and path."""
+    if first == second:
+        return True
+    try:
+        a, b = urlsplit(first), urlsplit(second)
+        where = [(part.scheme, part.port, part.path.rstrip("/")) for part in (a, b)]
+    except ValueError:  # a port that is not a number: not shown to be the same place
+        return False
+    return is_loopback(first) and is_loopback(second) and where[0] == where[1]
+
+
 REMOTE_OLLAMA = ("{setting} names {host}, a server on another computer. A model server there receives memory "
                  "content (your questions and the text of the classes in memory_remote_classes), and nothing was "
                  "agreed to that, so nothing is sent to it. To use it, give your consent with `cairnmind models set "
@@ -397,6 +410,21 @@ async def answer_label(settings: Settings, models) -> str | None:
     return "evaluated" if evaluation_status(settings, pair)["evaluated"] else "unevaluated"
 
 
+async def unevaluated(settings: Settings) -> bool:
+    """Whether answers with these settings' models are labelled unevaluated, as answer_label decides: what
+    EVALUATE_STEP says. The release's pair and a pair that passed both evaluations are not."""
+    if is_default(settings):
+        return False
+    try:
+        models = from_settings(settings)
+    except ValueError:  # a role that cannot run is not an evaluated one
+        return True
+    try:
+        return await answer_label(settings, models) == "unevaluated"
+    finally:
+        await models.aclose()
+
+
 # doctor and `models set` -----------------------------------------------------------------------------
 
 def _destination(row: dict, role: str) -> dict:
@@ -557,7 +585,8 @@ async def check_role(settings: Settings, role: str, *, provider: str, model: str
     if allow_remote:
         row["allow_remote"] = True
     row = normalize_memory_model(row, role)
-    local_default = row == {"provider": "ollama", "base_url": normalize_base_url(settings.ollama_url)}
+    local_default = (set(row) == {"provider", "base_url"} and row["provider"] == "ollama"
+                     and same_place(row["base_url"], normalize_base_url(settings.ollama_url)))
     saved_row = None if local_default else row
     candidate = replace(settings, **{FIELDS[role]: saved_row, MODEL_FIELDS[role]: model})
     checked, identity = await _check(candidate, role)
@@ -596,7 +625,7 @@ async def configure_role(settings: Settings, role: str, *, provider: str, model:
         if report["embedding_changed"]:
             steps.append("Run cairnmind rebuild-vectors PROJECT for each project: vectors of the earlier model are "
                          "kept apart and never searched with this one.")
-    if not is_default(candidate):  # the release's models carry no label: the release evaluation covers them
+    if await unevaluated(candidate):  # the release's models and an evaluated pair carry no "unevaluated" label
         steps.append(EVALUATE_STEP)
     report["next"] = steps
     return report

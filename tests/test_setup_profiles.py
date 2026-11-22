@@ -437,7 +437,10 @@ def test_remote_tests_both_models_before_the_store_and_saves_nothing_when_one_fa
     before = config_bytes(tmp_path)
     world.model_errors["embedding"] = ValueError("no vector")
     result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *model_options(), "--yes")
-    refused(result, f"The embedding model emb-y at {MODELS} cannot be used: no vector")
+    refused(result, f"The embedding model emb-y at {MODELS} cannot be used: no vector. Nothing was saved.")
+    polish = render_one((setup_profiles.MODEL_REFUSED, {"role": "embedding", "model": "emb-y", "url": MODELS,
+                                                         "error": "no vector"}), "pl")
+    assert polish.endswith(": no vector. Nic nie zostało zapisane."), polish
     assert [detail[0] for detail in world.calls("check")] == ["chat", "embedding"]
     assert world.calls("doctor_block") == [] and world.calls("create_user") == []
     assert config_bytes(tmp_path) == before
@@ -570,8 +573,8 @@ def connect_only_installation(tmp_path, **fields):
     return stored
 
 
-def here_options(chat=RELEASE_CHAT, provider="ollama"):
-    return ["--models-url", "http://127.0.0.1:11434", "--provider", provider, "--chat-model", chat,
+def here_options(chat=RELEASE_CHAT, provider="ollama", url="http://127.0.0.1:11434"):
+    return ["--models-url", url, "--provider", provider, "--chat-model", chat,
             "--embedding-model", RELEASE_EMBEDDING]
 
 
@@ -616,6 +619,33 @@ def test_the_evaluation_step_is_left_out_when_the_second_saved_role_completes_th
     result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(), "--yes")
     assert result.exit_code == 0, result.output
     assert "labelled unevaluated" not in said(result), result.output
+
+
+def test_a_pair_that_passed_both_evaluations_is_not_told_it_is_unevaluated(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="enabled", chat_model="third:1b")
+    for kind in memory_models.REQUIRED_EVALUATIONS:  # the pair the fakes name after the change: earlier@1 for both
+        memory_models.record_evaluation(Settings.load(tmp_path / "data"), kind,
+                                        {"chat": "earlier@1", "embedding": "earlier@1"})
+    result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(chat="other:4b"), "--yes")
+    assert result.exit_code == 0 and config(tmp_path)["chat_model"] == "other:4b", result.output
+    assert "labelled unevaluated" not in said(result), result.output
+
+
+@pytest.mark.parametrize("stored, asked", [("http://127.0.0.1:11434", "http://localhost:11434"),
+                                           ("http://localhost:11434", "http://127.0.0.1:11434")])
+def test_localhost_and_127_0_0_1_are_one_place_for_the_model_server(tmp_path, world, stored, asked):
+    connect_only_installation(tmp_path, knowledge_agent="enabled", ollama_url=stored)
+    before = config_bytes(tmp_path)
+    same = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(url=asked), "--yes")
+    assert same.exit_code == 0 and "nothing to change" in said(same), same.output
+    assert config_bytes(tmp_path) == before and world.log == []
+    other = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(chat="other:4b", url=asked))
+    assert "The chat model: from" in said(other) and "The embedding model: from" not in said(other), other.output
+    assert "To rebuild: the vectors" not in said(other), other.output
+    done = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(chat="other:4b", url=asked), "--yes")
+    assert done.exit_code == 0, done.output
+    # Saved as the Ollama of ollama_url (no profile), so the role keeps following ollama_url.
+    assert config(tmp_path)["memory_chat"] is None and config(tmp_path)["chat_model"] == "other:4b"
 
 
 def test_going_back_without_a_choice_is_refused_and_names_both(tmp_path, world):
@@ -684,7 +714,7 @@ def test_a_failed_restore_puts_the_configuration_back_and_names_the_backup(tmp_p
     result = invoke(tmp_path, "setup", "local", "--backup", str(target), "--yes")
     assert result.exit_code == 1 and isinstance(result.exception, setup_profiles.SetupFailed)
     message = str(result.exception)
-    assert (f"The change stopped at the restore: cut config.json was put back as it was. The backup {target} is kept. "
+    assert (f"The change stopped at the restore: cut. config.json was put back as it was. The backup {target} is kept. "
             "The engine on this machine was started and is left running") in message
     assert config_without_password(tmp_path) == before and target.exists()  # the engine's password stays, see below
     assert "stays in config.json (arcade_password)" in message and "PRIVATE_DB_MARKER" not in message
@@ -727,7 +757,7 @@ def test_a_password_that_cannot_be_kept_is_said_and_the_original_error_stays(tmp
     result = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "k.cairnmind.json.gz"), "--yes")
     assert isinstance(result.exception, setup_profiles.SetupFailed)
     message = str(result.exception)
-    assert "The change stopped at the restore: cut config.json was put back as it was." in message
+    assert "The change stopped at the restore: cut. config.json was put back as it was." in message
     assert "could NOT be put back" not in message and "could not be kept in config.json (arcade_password)" in message
     assert str(failure) in message and config_bytes(tmp_path) == before
     if earlier_store:
@@ -808,11 +838,11 @@ def test_a_backup_that_fails_or_fails_its_check_changes_nothing(tmp_path, world)
     world.backup_error = StoreNotReady("x")
     failed = invoke(tmp_path, "setup", "local", "--backup", str(first), "--yes")
     assert isinstance(failed.exception, setup_profiles.SetupFailed)
-    assert f"The backup of the store at {DB} failed: x Nothing was changed." in str(failed.exception)
+    assert f"The backup of the store at {DB} failed: x. Nothing was changed." in str(failed.exception)
     world.backup_error, world.check_error = None, ValueError("Backup checksum mismatch")
     second = tmp_path / "second.cairnmind.json.gz"
     checked = invoke(tmp_path, "setup", "local", "--backup", str(second), "--yes")
-    assert (f"The backup {second} did not pass its check: Backup checksum mismatch The file is kept; nothing was "
+    assert (f"The backup {second} did not pass its check: Backup checksum mismatch. The file is kept; nothing was "
             "changed.") in str(checked.exception)
     assert second.exists() and config_bytes(tmp_path) == before
     assert world.calls("start_command") == [] and world.calls("restore") == []
@@ -920,7 +950,7 @@ def test_a_step_that_fails_puts_the_configuration_back(tmp_path, world, monkeypa
                                                       provider="openai_compatible", chat_model="gpt-x",
                                                       embedding_model="emb-y", allow_remote=True),
             yes=True, say=lambda text: None)
-    assert "stopped at saving the storage settings: disk full config.json was put back as it was." in str(failure.value)
+    assert "stopped at saving the storage settings: disk full. config.json was put back as it was." in str(failure.value)
     assert config_bytes(tmp_path) == before  # the models and the agent were saved first, and are back too
 
 

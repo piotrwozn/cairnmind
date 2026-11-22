@@ -334,7 +334,10 @@ def _value(key: str, value, language: str) -> str:
         return render_one(value, language)  # a sentence inside a sentence
     if isinstance(value, list):  # sentences that follow: each after a space, none when the list is empty
         return "".join(" " + render_one(item, language) for item in value)
-    return safe_text(value, limit=600 if key in LONG else 200)
+    text = safe_text(value, limit=600 if key in LONG else 200)
+    if key == "error" and text and not text.endswith((".", "!", "?")):
+        text += "."  # every {error} is followed by a sentence of its own ("... Nothing was saved.")
+    return text
 
 
 def render_one(item: tuple[str, dict], language: str = "en") -> str:
@@ -667,7 +670,9 @@ def model_moves(settings, request) -> list[dict]:
                 # changes nothing (check_role saves it as no profile too).
                 current = memory_models.profile(settings, role) or {
                     "provider": "ollama", "base_url": memory_models.normalize_base_url(settings.ollama_url)}
-                same = current == wanted and getattr(settings, memory_models.MODEL_FIELDS[role]) == model
+                rest = [{key: value for key, value in row.items() if key != "base_url"} for row in (current, wanted)]
+                same = (rest[0] == rest[1] and memory_models.same_place(current["base_url"], wanted["base_url"])
+                        and getattr(settings, memory_models.MODEL_FIELDS[role]) == model)
             except ValueError:
                 same = False  # a stored profile that cannot be read is replaced
             if not same or not enabled:  # with the agent off the model is still tested, before it is turned on
@@ -785,7 +790,9 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             host = urlsplit(move["checked"]["row"]["base_url"]).hostname
             changes.append((SENDS, {"host": host, "classes": ", ".join(sends)}) if sends
                            else (SENDS_NO_TEXT, {"host": host}))
-        if move["role"] == "embedding" and not move.get("same") and move["before"] != move["after"]:
+        if move["role"] == "embedding" and not move.get("same") and (
+                move["before"][0] != move["after"][0]
+                or not memory_models.same_place(move["before"][1], move["after"][1])):
             result["rebuild"].append((REBUILD_VECTORS, {"before": _at(*move["before"]), "after": _at(*move["after"])}))
     if moves and not knowledge_mode.enabled(settings):
         changes.append((AGENT_ON, {}))
@@ -866,8 +873,10 @@ def _apply(settings, request, plan, moves, result, say, state) -> None:
         state["step"] = (STEP_MODEL, {"role": move["role"]})
         report = asyncio.run(memory_models.configure_role(local, move["role"], **move["kwargs"]))
         _add_next(result, report["next"])
-    if moves and memory_models.is_default(Settings.load(settings.data_dir)):  # the pair after both saves is the release's
-        result["next"] = [item for item in result["next"] if item != (VERBATIM, {"sentence": memory_models.EVALUATE_STEP})]
+    evaluate = (VERBATIM, {"sentence": memory_models.EVALUATE_STEP})
+    # Decided again for the pair after both saves: the release's, or one that passed both evaluations, is not labelled.
+    if evaluate in result["next"] and not asyncio.run(memory_models.unevaluated(Settings.load(settings.data_dir))):
+        result["next"] = [item for item in result["next"] if item != evaluate]
     if request.profile == "remote" and moves:
         state["step"] = (STEP_AGENT, {})
         said = knowledge_mode.turn_on(settings)
