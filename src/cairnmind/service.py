@@ -108,6 +108,7 @@ class CheckpointBody(BaseModel):
 class RegisterProjectBody(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     root: str = Field(min_length=1, max_length=4096)
+    fresh: bool = False  # a separate identity: a removed project of that name and folder is not brought back
 
 
 class PlanSaveBody(BaseModel):
@@ -691,9 +692,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             raise ValueError("Project root is unavailable") from exc
         if not root.is_dir():
             raise ValueError("Project root must be an existing directory")
-        created = await asyncio.to_thread(store.add_project, body.name, root)
+        from .project_removal import removed_rows
+        removed = await asyncio.to_thread(removed_rows, store)
+        created = await asyncio.to_thread(store.add_project, body.name, root, not body.fresh)
         cache.clear()
-        return {"project": created}
+        # Said, never silent (#327): a removed project that came back is not a new one.
+        back = next((row for row in removed if row["id"] == created["id"]), None)
+        return {"project": created, **({"restored": {"removed_at": back.get("removed_at"),
+                                                     "roots": back.get("removed_roots") or []}} if back else {})}
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):

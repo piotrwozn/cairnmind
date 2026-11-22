@@ -266,7 +266,13 @@ class SessionManager:
     def _session(self, session_id: str) -> dict:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("A logical session ID is required")
-        return one_row(self.store, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+        session = one_row(self.store, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
+        removed = one_row(self.store, "SELECT FROM projects WHERE id=:id AND removed_at IS NOT NULL",
+                          {"id": session.get("project_id")}, False)
+        if removed:  # every call of a session of a removed project names the removal, the way back included (#327)
+            from .project_removal import removed_text
+            raise ValueError(f"Unknown project: {removed['id']}. " + removed_text(removed, self.store.data_dir))
+        return session
 
     def _packet(self, session: dict) -> dict | None:
         if not session.get("packet_id"):

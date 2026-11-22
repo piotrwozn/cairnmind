@@ -48,10 +48,12 @@ KEPT_STORE = ("Kept in the store: {records} records, {plans} plans, {sources} so
               "are not changed.")
 KEPT_ANSWERS = "Kept: the answer log {path}."
 KEPT_FOLDER = ("Nothing in the folder is changed; these stay as they are: {paths}. An assistant started there is told "
-               "that {project} was removed when it calls Cairnmind.")
+               "that {project} was removed when it calls Cairnmind, and the events its hooks record wait in the data "
+               "directory until the project is back.")
 KEPT_FOLDER_EMPTY = "Nothing in the folder is changed."
 NESTED = ("{root} lies inside the folder {parent} of {other}; once this project is removed, {other} indexes the "
-          ".memory folders in {root} as ordinary files.")
+          ".memory folders in {root} as ordinary files, and an assistant or hook started in {root} reaches {other}, "
+          "not the removed project.")
 BRING_BACK = "cairnmind project add {project} {root} brings back the same project with its memory."
 EXTRA_ROOTS = ("Its other folders are not added back by that; cairnmind project root {project} FOLDER adds each "
                "again: {roots}.")
@@ -78,6 +80,23 @@ RESTORED_ROOTS = ("Its other folders were not added back; cairnmind project root
                   "{roots}.")
 NOT_BROUGHT_BACK = ("The project removed on {when} as {name} in {root} keeps its memory and was not brought back: "
                     "only cairnmind project add with that same name and folder brings it back.")
+NO_WAY_BACK = ("cairnmind project add cannot bring {name} back: its folder {root} lies inside the data directory, which "
+               "Cairnmind never indexes. Its memory stays in the store; deleting it takes cairnmind backup DIR/ and "
+               "then cairnmind forget {id} --delete-project.")
+REMOVED_STUCK = ("The project {name} was removed from the registry on {when}; its memory is kept, but cairnmind project "
+                 "add cannot bring it back: its folder {root} lies inside the data directory, which Cairnmind never "
+                 "indexes. Deleting its memory takes cairnmind backup DIR/ and then cairnmind forget {id} "
+                 "--delete-project.")
+IMPORT_STUCK = ("This memory package belongs to the project {name}, which was removed from the registry on {when} and "
+                "cannot be brought back, because its folder {root} lies inside the data directory. Nothing was "
+                "imported.")
+FORGET_BY_ID = ("The project {name} was removed from the registry, so forget takes its id: first cairnmind backup "
+                "DIR/, then cairnmind forget {id} --delete-project. Nothing was deleted.")
+RESTORED_WORKSPACE = ("Brought back {project} in {root} with its memory, as it was when removed on {when}; it is not a "
+                      "new project.")
+NEW_REFUSED = ("The project {name} in {root} was removed on {when} and keeps its memory; a new project with that name "
+               "and folder cannot be told apart from it. Give the new project another name, or cairnmind project add "
+               "{name} {root} brings the old one back. Nothing was changed.")
 REMOVED_HEADING = "Removed projects, whose memory is kept:"
 REMOVED_ROW = "  - {name}: {root} (removed {when}; id {id})"
 REMOVED_NONE = "No removed project keeps memory in this store."
@@ -117,10 +136,12 @@ MESSAGES = {
                  "wyszukiwania; kopie zapasowe nie są zmieniane."),
     KEPT_ANSWERS: "Zostaje: dziennik odpowiedzi {path}.",
     KEPT_FOLDER: ("Nic w folderze nie jest zmieniane; te pliki zostają bez zmian: {paths}. Asystent uruchomiony tam "
-                  "usłyszy przy wywołaniu Cairnmind, że {project} został usunięty."),
+                  "usłyszy przy wywołaniu Cairnmind, że {project} został usunięty, a zdarzenia zapisywane przez jego "
+                  "hooki czekają w katalogu danych, aż projekt wróci."),
     KEPT_FOLDER_EMPTY: "Nic w folderze nie jest zmieniane.",
     NESTED: ("{root} leży w folderze {parent} projektu {other}; po usunięciu tego projektu {other} indeksuje foldery "
-             ".memory w {root} jak zwykłe pliki."),
+             ".memory w {root} jak zwykłe pliki, a asystent lub hook uruchomiony w {root} trafia do {other}, nie do "
+             "usuniętego projektu."),
     BRING_BACK: "cairnmind project add {project} {root} przywraca ten sam projekt wraz z jego pamięcią.",
     EXTRA_ROOTS: ("Jego pozostałe foldery nie wracają przy tym; cairnmind project root {project} FOLDER dodaje każdy "
                   "z nich ponownie: {roots}."),
@@ -149,6 +170,22 @@ MESSAGES = {
                      "dodaje każdy z nich ponownie: {roots}."),
     NOT_BROUGHT_BACK: ("Projekt usunięty {when} jako {name} w {root} zachowuje pamięć i nie został przywrócony: "
                        "przywraca go tylko cairnmind project add z tą samą nazwą i tym samym folderem."),
+    NO_WAY_BACK: ("cairnmind project add nie przywróci {name}: jego folder {root} leży w katalogu danych, którego "
+                  "Cairnmind nigdy nie indeksuje. Pamięć zostaje w magazynie; jej skasowanie wymaga cairnmind backup "
+                  "KATALOG/, a potem cairnmind forget {id} --delete-project."),
+    REMOVED_STUCK: ("Projekt {name} został usunięty z rejestru {when}; jego pamięć jest zachowana, ale cairnmind "
+                    "project add go nie przywróci: jego folder {root} leży w katalogu danych, którego Cairnmind nigdy "
+                    "nie indeksuje. Skasowanie jego pamięci wymaga cairnmind backup KATALOG/, a potem cairnmind forget "
+                    "{id} --delete-project."),
+    IMPORT_STUCK: ("Ten pakiet pamięci należy do projektu {name}, który został usunięty z rejestru {when} i nie da się "
+                   "go przywrócić, bo jego folder {root} leży w katalogu danych. Niczego nie zaimportowano."),
+    FORGET_BY_ID: ("Projekt {name} został usunięty z rejestru, więc forget przyjmuje jego identyfikator: najpierw "
+                   "cairnmind backup KATALOG/, potem cairnmind forget {id} --delete-project. Niczego nie skasowano."),
+    RESTORED_WORKSPACE: ("Przywrócono {project} w {root} wraz z pamięcią, w stanie z chwili usunięcia ({when}); to nie "
+                         "jest nowy projekt."),
+    NEW_REFUSED: ("Projekt {name} w {root} został usunięty {when} i zachowuje pamięć; nowy projekt o tej nazwie i tym "
+                  "folderze nie dałby się od niego odróżnić. Nadaj nowemu projektowi inną nazwę albo użyj cairnmind "
+                  "project add {name} {root}, który przywraca stary. Nic nie zostało zmienione."),
     REMOVED_HEADING: "Usunięte projekty, których pamięć jest zachowana:",
     REMOVED_ROW: "  - {name}: {root} (usunięty {when}; id {id})",
     REMOVED_NONE: "Żaden usunięty projekt nie zachowuje pamięci w tym magazynie.",
@@ -184,14 +221,21 @@ def removed_ids(reader) -> set[str]:
     return {row["id"] for row in reader.query("SELECT id FROM projects WHERE removed_at IS NOT NULL")}
 
 
-def removed_text(row: dict) -> str:
-    return PROJECT_REMOVED.format(name=_q(row.get("removed_name")), root=_q(row.get("removed_root")),
-                                  when=when(row.get("removed_at")))
+def stuck(row: dict, data_dir) -> bool:
+    """A folder inside the data directory is refused by `project add` (#295), so such a project cannot come back."""
+    from .path_spelling import lies_in
+    return bool(row.get("removed_root")) and lies_in(row["removed_root"], data_dir)
 
 
-def import_refusal(row: dict) -> str:
-    return IMPORT_REMOVED.format(name=_q(row.get("removed_name")), root=_q(row.get("removed_root")),
-                                 when=when(row.get("removed_at")))
+def removed_text(row: dict, data_dir) -> str:
+    return (REMOVED_STUCK if stuck(row, data_dir) else PROJECT_REMOVED).format(
+        name=_q(row.get("removed_name")), root=_q(row.get("removed_root")), when=when(row.get("removed_at")),
+        id=row.get("id"))
+
+
+def import_refusal(row: dict, data_dir) -> str:
+    return (IMPORT_STUCK if stuck(row, data_dir) else IMPORT_REMOVED).format(
+        name=_q(row.get("removed_name")), root=_q(row.get("removed_root")), when=when(row.get("removed_at")))
 
 
 def find_removed(reader, value: str, path: Path | None = None) -> dict | None:
@@ -208,12 +252,15 @@ def find_removed(reader, value: str, path: Path | None = None) -> dict | None:
     return found
 
 
-def restore_in(tx, name: str, path: str) -> dict | None:
-    """Inside Store.add_project: the removed project that had exactly this name and main folder comes back."""
+def restore_in(tx, name: str, path: str, allow: bool = True) -> dict | None:
+    """Inside Store.add_project: the removed project that had exactly this name and main folder comes back; a caller
+    that asked for a separate identity (allow False) is refused instead of getting the old one."""
     rows = tx.query("SELECT FROM projects WHERE removed_at IS NOT NULL AND removed_name=:name AND removed_root=:root "
                     "LIMIT 2", {"name": name, "root": path})
     if not rows:
         return None
+    if not allow:
+        raise ValueError(NEW_REFUSED.format(name=_q(name), root=_q(path), when=when(rows[0].get("removed_at"))))
     if len(rows) > 1:
         raise ValueError(SEVERAL_REMOVED.format(name=_q(name), root=_q(path), ids=", ".join(r["id"] for r in rows)))
     pid = rows[0]["id"]
@@ -240,11 +287,18 @@ def require_idle(settings, store, project: dict) -> None:
     cannot be read. A client outside the workspace leaves no sign that it runs and cannot be seen here."""
     from .client_runtime import NativeRuntime
     name = _q(project["name"])
+    runtime = NativeRuntime(settings)
     try:
-        runs = NativeRuntime(settings).list_runs(project["id"])
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        # Read only, even for a dry run: the registry is never rewritten here (list_runs would mark rows).
+        rows = runtime._read() if runtime.registry.exists() else []
+        mine = [run for run in rows if run.get("project_id") == project["id"]
+                and str(run.get("lifecycle") or run.get("state")) not in ENDED]  # unknown counts as live
+        if mine and runtime.binary is None:
+            # Without tmux a live session cannot be ruled out: refused, not assumed ended.
+            raise ValueError(runtime._binary_error or "tmux cannot be found")
+        live = [run for run in mine if (pane := runtime._pane(run)) is not None and not pane["dead"]]
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         raise Refused(RUNS_UNKNOWN.format(project=name, reason=safe_text(str(exc))[:200])) from None
-    live = [run for run in runs if str(run.get("lifecycle") or run.get("state")) not in ENDED]  # unknown counts as live
     if live:
         shown = ", ".join(f"{safe_text(run.get('client'))} {safe_text(run.get('lifecycle') or run.get('state'))}"
                           for run in live)
@@ -310,6 +364,7 @@ def plan(settings, store, project: dict, root: Path | None = None) -> dict:
             "scheduled_snapshot": bool(store.query("SELECT id FROM memory_settings WHERE id=:id AND enabled=true",
                                                    {"id": pid})),
             "kept": kept, "nested": nested, "bring_back": f"cairnmind project add {name} {_q(main)}",
+            "no_way_back": stuck({"removed_root": main}, store.data_dir),
             "extra_roots": roots[1:], "delete": f"cairnmind forget {pid} --delete-project"}
 
 
@@ -368,8 +423,11 @@ def sentences(result: dict) -> list[str]:
                  if kept["folder"] else KEPT_FOLDER_EMPTY)
     lines.extend(NESTED.format(root=safe_text(n["root"]), parent=safe_text(n["parent"]), other=_q(n["project"]))
                  for n in result["nested"])
-    lines.append(BRING_BACK.format(project=name, root=_q(result["project"]["root"])))
-    if result["extra_roots"]:
+    if result["no_way_back"]:
+        lines.append(NO_WAY_BACK.format(name=name, root=_q(result["project"]["root"]), id=result["project"]["id"]))
+    else:
+        lines.append(BRING_BACK.format(project=name, root=_q(result["project"]["root"])))
+    if result["extra_roots"] and not result["no_way_back"]:
         lines.append(EXTRA_ROOTS.format(project=name, roots=", ".join(safe_text(p) for p in result["extra_roots"])))
     lines.append(DELETE_STEP.format(id=result["project"]["id"]))
     lines.append((NEXT_LIST if applied else NEXT_YES).format(project=name))
@@ -378,7 +436,8 @@ def sentences(result: dict) -> list[str]:
 
 def removed_view(reader) -> list[dict]:
     return [{"id": row["id"], "name": row.get("removed_name"), "root": row.get("removed_root"),
-             "roots": row.get("removed_roots") or [], "removed_at": row.get("removed_at")}
+             "roots": row.get("removed_roots") or [], "removed_at": row.get("removed_at"),
+             "can_return": not stuck(row, reader.data_dir)}
             for row in removed_rows(reader)]
 
 
@@ -388,6 +447,8 @@ def removed_sentences(rows: list[dict]) -> list[str]:
     return [REMOVED_HEADING,
             *(REMOVED_ROW.format(name=safe_text(r["name"]), root=safe_text(r["root"]), when=when(r["removed_at"]),
                                  id=r["id"]) for r in rows),
+            *(NO_WAY_BACK.format(name=_q(r["name"]), root=_q(r["root"]), id=r["id"])
+              for r in rows if not r["can_return"]),
             REMOVED_NEXT]
 
 
@@ -402,6 +463,12 @@ def restored_lines(project: dict, removed: dict, files: int) -> list[str]:
     return lines
 
 
+def workspace_notice(translate, project: dict, root: str, back: dict) -> str:
+    """What the workspace says when adding a folder brought a removed project back."""
+    return translate(RESTORED_WORKSPACE, project=_q(project["name"]), root=safe_text(root),
+                     when=when(back.get("removed_at")))
+
+
 def not_brought_back(row: dict) -> str:
     return NOT_BROUGHT_BACK.format(when=when(row.get("removed_at")), name=_q(row.get("removed_name")),
                                    root=safe_text(row.get("removed_root")))
@@ -414,5 +481,8 @@ def forget_target(store, value: str) -> dict:
     except ValueError:
         rows = store.query("SELECT FROM projects WHERE removed_at IS NOT NULL AND id=:id", {"id": value})
         if not rows:
+            named = find_removed(store, value)
+            if named:
+                raise ValueError(FORGET_BY_ID.format(name=_q(value), id=named["id"])) from None
             raise
         return clean_row(rows[0])

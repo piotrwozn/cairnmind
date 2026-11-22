@@ -515,7 +515,8 @@ def index_pending_sources(store, limit: int = 100) -> dict:
         # Third-party MCP events (agent_memory.is_mcp_source) are never chunked: not even loaded here.
         "AND (kind <> 'agent_transcript' OR metadata.origin_evidence IS NULL "
         "OR metadata.origin_evidence <> 'degraded') "
-        "AND id NOT IN (SELECT source_id FROM chunks) ORDER BY created_at,id",
+        "AND id NOT IN (SELECT source_id FROM chunks) "
+        "AND project_id NOT IN (SELECT id FROM projects WHERE removed_at IS NOT NULL) ORDER BY created_at,id",  # #327
         {"excluded": list(excluded_kinds), "known": list(known_kinds)},
     )
     counts = {"sources": 0, "chunks": 0, "errors": []}
@@ -753,7 +754,7 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
             head = (f"Project {project['name']!r} has a folder inside the data directory, which Cairnmind never "
                     f"indexes: {root}; this registration is left as it is. Move the files to a folder outside it, ")
             counts["errors"].append(head + (
-                f"then `cairnmind project remove {quoted} --yes` unregisters this one and keeps its memory, and "
+                f"then `cairnmind project remove {quoted} --yes` unregisters this one and keeps its memory (this folder cannot be added again), and "
                 f"`cairnmind project add {quoted} NEWFOLDER` registers the new folder as a new project"
                 if root == registered_roots[0] else
                 f"add that with `cairnmind project root {quoted} NEWFOLDER`, and remove this one with "

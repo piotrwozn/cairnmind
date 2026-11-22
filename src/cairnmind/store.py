@@ -745,7 +745,7 @@ class Store:
             raise ValueError("Project root cannot contain Cairnmind's private credential store")
         return path
 
-    def add_project(self, name, root):
+    def add_project(self, name, root, restore=True):
         name, path = name.strip(), self.require_safe_project_root(root)
         if not name:
             raise ValueError("Project name must not be empty")
@@ -761,7 +761,7 @@ class Store:
                     raise ValueError(PROJECT_ROOT_TAKEN.format(name=safe_text(existing["name"]), root=safe_text(path)))
                 return existing
             from .project_removal import restore_in
-            restored = restore_in(tx, name, path)  # the same name and folder as a removed project (#327)
+            restored = restore_in(tx, name, path, restore)  # the same name and folder as a removed project (#327)
             if restored:
                 return restored
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
@@ -801,7 +801,7 @@ class Store:
         if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
             # A removed project is named, with the way back, never reported as unknown (#327).
             removed = find_removed(self, value)
-            raise ValueError(f"Unknown project: {value}. " + (removed_text(removed) if removed else UNKNOWN_PROJECT_NEXT))
+            raise ValueError(f"Unknown project: {value}. " + (removed_text(removed, self.data_dir) if removed else UNKNOWN_PROJECT_NEXT))
         written = Path(value).expanduser()
         if not written.is_absolute() and (recorded or not self.relative_paths):
             raise ValueError(f"Unknown project: {value} (a relative path is not accepted here; give an absolute one)")
@@ -814,7 +814,7 @@ class Store:
             selected = max(candidates, key=lambda row: len(row["path"]))
             return one_row(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
         removed = find_removed(self, value, path)
-        raise ValueError(f"Unknown project: {value}. " + (removed_text(removed) if removed else UNKNOWN_PROJECT_NEXT))
+        raise ValueError(f"Unknown project: {value}. " + (removed_text(removed, self.data_dir) if removed else UNKNOWN_PROJECT_NEXT))
 
     def _delete_old_vectors(self, tx, source_ids):
         if not source_ids:

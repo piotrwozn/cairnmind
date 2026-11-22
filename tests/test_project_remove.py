@@ -4,9 +4,9 @@ import subprocess
 import pytest
 
 from cairnmind import project_removal as removal
-from cairnmind.ingest import index_project, poll_imports
+from cairnmind.ingest import index_pending_sources, index_project, poll_imports
 from cairnmind.memory import MemoryConflict, MemoryManager
-from cairnmind.record_kinds import doctor_view
+from cairnmind.record_kinds import FIELD, doctor_view
 from cairnmind.service import schedule_embeddings
 from cairnmind.sessions import SessionManager
 from cairnmind.sql import insert_document
@@ -135,8 +135,9 @@ def test_forget_deletes_a_removed_project_by_id(world):
     store, project, root, extra, confirmed = world
     remove(store, project)
     assert removal.forget_target(store, project["id"])["id"] == project["id"]
-    with pytest.raises(ValueError, match="Unknown project: app"):
-        removal.forget_target(store, "app")  # by name it stays unknown: only the id names it
+    with pytest.raises(ValueError, match=rf"app was removed .* forget takes its id: .*cairnmind forget {project['id']} "
+                                         r"--delete-project"):
+        removal.forget_target(store, "app")  # by name it is refused, and the refusal names the id form
     store.forget_project(project["id"])
     assert not store.query("SELECT FROM projects WHERE id=:p", {"p": project["id"]})
     assert store._count("records", project["id"]) == 0
@@ -202,9 +203,51 @@ def test_a_memory_package_of_a_removed_project_is_refused(world, tmp_path):
 
 def test_the_workspace_and_doctor_list_registered_projects_only(world):
     store, project, root, extra, confirmed = world
+    entry = {"client": "claude", "kind": "tool_note", "note": "technical", "accepted_at": "2026-11-22T10:00:00+00:00"}
+    store.command(f"UPDATE projects SET {FIELD}=:entries WHERE id=:id", {"entries": [entry], "id": project["id"]})
+    assert [row["project_id"] for row in doctor_view(store)] == [project["id"]]  # the filter, not the data, hides it
     remove(store, project)
     assert doctor_view(store) == []
     assert store.list_projects() == []
+
+
+def test_sources_waiting_to_be_indexed_are_not_chunked_for_a_removed_project(world):
+    store, project, root, extra, confirmed = world
+    store.snapshot(project["id"], "manual://waiting", "A note that nobody chunked yet.", "manual")
+    remove(store, project)
+    assert index_pending_sources(store, limit=1000) == {"sources": 0, "chunks": 0, "errors": []}
+    store.add_project("app", root)
+    assert index_pending_sources(store, limit=1000)["sources"] >= 1  # back: it waited, nothing was lost
+
+
+def test_a_session_of_a_removed_project_names_the_removal_on_every_call(world):
+    store, project, root, extra, confirmed = world
+    sessions = SessionManager(store, store.settings)
+    session_id = store.query("SELECT id FROM sessions WHERE project_id=:p LIMIT 1", {"p": project["id"]})[0]["id"]
+    remove(store, project)
+    for call in (lambda: sessions.resume_context(session_id), lambda: sessions.ack(session_id, "x", "y", {})):
+        with pytest.raises(ValueError, match=r"^Unknown project: .*was removed from the registry"):
+            call()
+    store.add_project("app", root)
+    sessions.resume_context(session_id)  # back: the session answers again
+
+
+def test_the_workspace_route_says_a_removed_project_came_back_and_honours_a_separate_identity(world):
+    from fastapi.testclient import TestClient
+
+    from cairnmind.service import create_app
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    headers = {"Authorization": "Bearer " + store.settings.token}
+    with TestClient(create_app(store.settings, start_worker=False, ollama=object()), headers=headers) as client:
+        fresh = client.post("/projects", json={"name": "app", "root": str(root), "fresh": True})
+        assert fresh.status_code >= 400 and "keeps its memory" in fresh.text and "another name" in fresh.text
+        assert store.list_projects() == []  # nothing was brought back, nothing was created
+        back = client.post("/projects", json={"name": "app", "root": str(root)})
+        assert back.status_code == 200, back.text
+        assert back.json()["project"]["id"] == project["id"] and back.json()["restored"]["removed_at"]
+        new = client.post("/projects", json={"name": "second", "root": str(extra)})
+        assert new.status_code == 200 and "restored" not in new.json()
 
 
 def test_cli_remove_and_add_again_end_to_end(monkeypatch, tmp_path):

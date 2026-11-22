@@ -826,7 +826,7 @@ class MemoryManager:
             current = one_row(tx, "SELECT FROM projects WHERE id=:id", {"id": project_id}, False)
             if current and current.get("removed_at"):
                 from .project_removal import import_refusal
-                raise MemoryConflict(import_refusal(current))  # the way back is named; nothing is imported (#327)
+                raise MemoryConflict(import_refusal(current, self.store.data_dir))  # the way back is named; nothing is imported (#327)
             # A package never carries the code graph (#261): it is built from the project's files by indexing.
             result["code_graph"] = {"state": "not_built" if code_graph_pending(current) else "built_here"}
             conflicts = tx.query("SELECT id FROM projects WHERE (name=:name OR root=:root) AND id!=:id",

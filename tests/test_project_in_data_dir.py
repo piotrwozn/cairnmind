@@ -45,8 +45,18 @@ def test_a_project_registered_inside_the_data_directory_by_an_earlier_version_is
     assert any(str(inside.resolve()) in error and '`cairnmind project remove old --yes`' in error
                and '`cairnmind project add old NEWFOLDER`' in error for error in result['errors'])
     from cairnmind import project_removal  # the advice works: the registration goes, its memory stays (#327)
-    project_removal.apply(store, project_removal.plan(store.settings, store, store.resolve_project('old')))
+    plan = project_removal.plan(store.settings, store, store.resolve_project('old'))
+    said = ' '.join(project_removal.sentences(plan))  # the dry run promises no way back that the code refuses
+    assert 'cairnmind project add cannot bring old back' in said and 'brings back the same project' not in said
+    project_removal.apply(store, plan)
     assert store.list_projects() == [] and store.query("SELECT FROM projects WHERE id='old'")
+    with pytest.raises(ValueError, match='inside the data directory'):
+        store.add_project('old', inside)  # as predicted: the memory can never be attached to this folder again
+    with pytest.raises(ValueError) as named:
+        store.resolve_project('old')
+    assert 'cannot bring it back' in str(named.value) and 'cairnmind forget old --delete-project' in str(named.value)
+    listed = ' '.join(project_removal.removed_sentences(project_removal.removed_view(store)))
+    assert 'cairnmind project add cannot bring old back' in listed
 
 
 def test_an_extra_root_inside_the_data_directory_is_named_with_the_command_for_roots(tmp_path):

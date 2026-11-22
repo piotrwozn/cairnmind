@@ -3,13 +3,14 @@
 No engine: a fake store, a fake run registry, no tmux. Every test runs unchanged on macOS."""
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from conftest import plain_words
 
-from cairnmind import cli, first_start, ingest, store_writer
+from cairnmind import cli, client_runtime, first_start, ingest, store_writer
 from cairnmind import project_removal as removal
 from cairnmind.client_runtime import NativeRuntime
 from cairnmind.terminal_i18n import tr
@@ -23,7 +24,7 @@ PLAN = {"project": PROJECT, "root": None, "applied": False, "removed_at": None,
                  "nodes": 800, "embeddings": 900, "answer_log": "/data/answer-log/p1/answers.jsonl",
                  "backups": "/data/backups", "folder": ["/src/demo/CLAUDE.md"]},
         "nested": [{"root": "/src/demo", "project": "mono", "parent": "/src"}],
-        "bring_back": "cairnmind project add demo /src/demo", "extra_roots": ["/src/demo-wt"],
+        "bring_back": "cairnmind project add demo /src/demo", "no_way_back": False, "extra_roots": ["/src/demo-wt"],
         "delete": "cairnmind forget p1 --delete-project"}
 
 
@@ -105,28 +106,56 @@ def test_yes_applies_and_the_json_in_a_pipe_is_the_result(remove_world, run):
     assert dry.exit_code == 1 and json.loads(dry.stdout)["applied"] is False
 
 
-def test_a_live_workspace_run_refuses_and_names_it(monkeypatch, run):
-    monkeypatch.setattr(cli, "store_for", lambda *a, **k: FakeStore())
-    monkeypatch.setattr(store_writer, "require_writer", lambda store: None)
-    monkeypatch.setattr(NativeRuntime, "list_runs", lambda self, project_id=None: [
-        {"client": "claude", "lifecycle": "running"}, {"client": "codex", "lifecycle": "strange"},
-        {"client": "claude", "lifecycle": "exited"}])
-    said = run("project", "remove", "demo", "--yes")
-    assert said.exit_code == 2
-    assert "demo has a session running in the workspace (claude running, codex strange)" in plain_words(said.output)
+def registry(tmp_path, rows, mode=0o600):
+    """A real run registry of the workspace in a temporary data directory, and the settings that name it."""
+    directory = tmp_path / "runtime"
+    directory.mkdir()
+    path = directory / "runs.json"
+    path.write_text(json.dumps({"version": 1, "runs": rows}))
+    path.chmod(mode)
+    return path, SimpleNamespace(data_dir=tmp_path)
 
 
-def test_an_unreadable_run_registry_refuses(monkeypatch, run):
-    monkeypatch.setattr(cli, "store_for", lambda *a, **k: FakeStore())
-    monkeypatch.setattr(store_writer, "require_writer", lambda store: None)
+def run_row(client, lifecycle, project="p1"):
+    return {"id": "r-" + client + lifecycle, "client": client, "lifecycle": lifecycle, "project_id": project,
+            "tmux_session": "s-" + client, "generation": 1}
 
-    def unreadable(self, project_id=None):
-        raise ValueError("Native runtime registry must be owner-only")
-    monkeypatch.setattr(NativeRuntime, "list_runs", unreadable)
-    said = run("project", "remove", "demo", "--yes")
-    assert said.exit_code == 2
-    assert "could not be read (Native runtime registry must be owner-only), so nothing was changed" \
-        in plain_words(said.output)
+
+def test_a_live_workspace_run_refuses_and_names_it_and_the_registry_is_not_rewritten(monkeypatch, tmp_path):
+    path, settings = registry(tmp_path, [run_row("claude", "running"), run_row("codex", "strange"),
+                                         run_row("claude", "exited"), run_row("codex", "running", "other")])
+    before = path.read_bytes()
+    monkeypatch.setattr(client_runtime, "resolve_tmux", lambda *a, **k: "tmux")
+    monkeypatch.setattr(NativeRuntime, "_pane", lambda self, row: {"pane": "%1", "pid": 1, "dead": False})
+    with pytest.raises(removal.Refused) as refused:
+        removal.require_idle(settings, FakeStore(), PROJECT)
+    assert "demo has a session running in the workspace (claude running, codex strange)" in str(refused.value)
+    assert path.read_bytes() == before  # a dry run is read only
+
+
+def test_a_run_whose_pane_is_gone_does_not_refuse(monkeypatch, tmp_path):
+    path, settings = registry(tmp_path, [run_row("claude", "running")])
+    monkeypatch.setattr(client_runtime, "resolve_tmux", lambda *a, **k: "tmux")
+    monkeypatch.setattr(NativeRuntime, "_pane", lambda self, row: None)
+    removal.require_idle(settings, FakeStore(), PROJECT)
+
+
+def test_without_tmux_a_live_row_refuses_instead_of_being_marked_ended(monkeypatch, tmp_path):
+    path, settings = registry(tmp_path, [run_row("claude", "running")])
+    before = path.read_bytes()
+    monkeypatch.setattr(client_runtime, "resolve_tmux", lambda *a, **k: None)
+    with pytest.raises(removal.Refused, match=r"could not be read \(tmux cannot be found\), so nothing was changed"):
+        removal.require_idle(settings, FakeStore(), PROJECT)
+    assert path.read_bytes() == before
+    path.write_text(json.dumps({"version": 1, "runs": [run_row("claude", "exited")]}))
+    removal.require_idle(settings, FakeStore(), PROJECT)  # nothing live: tmux is not needed
+
+
+def test_an_unreadable_run_registry_refuses(monkeypatch, tmp_path):
+    path, settings = registry(tmp_path, [], mode=0o644)
+    monkeypatch.setattr(client_runtime, "resolve_tmux", lambda *a, **k: "tmux")
+    with pytest.raises(removal.Refused, match=r"could not be read \(Native runtime registry must be owner-only\)"):
+        removal.require_idle(settings, FakeStore(), PROJECT)
 
 
 def test_a_reader_installation_refuses_in_one_line(monkeypatch, run):
@@ -223,6 +252,8 @@ def test_project_add_of_a_new_project_names_the_removed_one_it_did_not_bring_bac
 
 
 class ListStore:
+    data_dir = Path("/data")
+
     def list_projects(self):
         return [{"id": "p1", "name": "demo", "root": "/src/demo"}]
 
@@ -239,7 +270,13 @@ def test_project_list_removed_and_the_hint(monkeypatch, run):
     assert removed[1] == "  - old: /old (removed 2026-11-22 10:30 UTC; id p0)"
     assert removed[-1] == removal.REMOVED_NEXT
     assert json.loads(run("project", "list", "--removed", terminal=False).stdout) == [
-        {"id": "p0", "name": "old", "root": "/old", "roots": ["/w"], "removed_at": REMOVED_AT}]
+        {"id": "p0", "name": "old", "root": "/old", "roots": ["/w"], "removed_at": REMOVED_AT, "can_return": True}]
+    inside = {**row, "id": "p9", "removed_root": "/data/old"}  # a folder in the data directory cannot be added again
+    monkeypatch.setattr(removal, "removed_rows", lambda reader: [inside])
+    stuck = run("project", "list", "--removed").stdout
+    assert "cairnmind project add cannot bring old back: its folder /data/old lies inside the data directory" in stuck
+    assert "cairnmind forget p9 --delete-project" in stuck
+    monkeypatch.setattr(removal, "removed_rows", lambda reader: [row])
     assert json.loads(run("project", "list", terminal=False).stdout) == ListStore().list_projects()
     monkeypatch.setattr(removal, "removed_rows", lambda reader: [])
     assert run("project", "list", "--removed").stdout.splitlines() == [removal.REMOVED_NONE]
@@ -257,6 +294,15 @@ def test_every_sentence_has_polish_in_the_catalog():
     assert set(sentences.values()) == set(removal.MESSAGES)
     for english, polish in removal.MESSAGES.items():
         assert polish != english and tr(english, "pl") == polish
+
+
+def test_the_workspace_says_in_both_languages_that_a_removed_project_came_back():
+    back = {"removed_at": REMOVED_AT}
+    assert removal.workspace_notice(lambda text, **values: tr(text, "en", **values), PROJECT, "/src/demo", back) == (
+        "Brought back demo in /src/demo with its memory, as it was when removed on 2026-11-22 10:30 UTC; it is not a "
+        "new project.")
+    assert removal.workspace_notice(lambda text, **values: tr(text, "pl", **values), PROJECT, "/src/demo", back) \
+        .startswith("Przywrócono demo w /src/demo wraz z pamięcią")
 
 
 def test_without_a_project_the_usage_names_PROJECT(run):
