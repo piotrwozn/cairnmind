@@ -12,7 +12,8 @@ metadata, which no backup carries and no restore deletes, and which every instal
 names the backup, the safety copy ``before-restore-*`` and the digest of that copy.
 
 - A restore that fails puts the store back from the safety copy and removes the mark: the store holds the backup
-  or what it held before, and the error says which.
+  or what it held before, and the error says which. When the mark was unreadable at the start, what the store holds
+  is not known: nothing is copied or put back, and the store stays refused until a restore succeeds.
 - A restore that is cut off or killed, or whose undo failed too, leaves the mark. Every opening of the store is
   refused, for a writer and a reader, with the sentence that names both files and both commands, until
   `cairnmind restore` finishes it (``Store(for_restore=True)`` is the only opening that passes).
@@ -42,25 +43,26 @@ UNFINISHED = (
     "A restore of this store did not finish: it began at {started_at} on installation {installation}, from {backup}. "
     "Until a restore finishes, the store holds only part of that backup and no command uses it. On the installation "
     "that writes this store, run `cairnmind restore {backup}` to finish it, or `cairnmind restore {before}` to go back "
-    "to the store as it was before (that file is in the backups of that installation).")
+    "to the rows the store held before (that file is in the backups of that installation).")
 UNDO_UNFINISHED = (
     "A restore of this store failed, and putting the store back did not finish either: it began at {started_at} on "
     "installation {installation}, from {backup}. Until a restore finishes, no command uses the store. On the "
-    "installation that writes this store, run `cairnmind restore {before}` to go back to the store as it was before, "
-    "or `cairnmind restore {backup}` to restore that backup.")
+    "installation that writes this store, run `cairnmind restore {before}` to go back to the rows the store held "
+    "before, or `cairnmind restore {backup}` to restore that backup.")
 UNREADABLE = (
     "This store carries a mark of an unfinished restore that cannot be read, so no command uses it. On the "
     "installation that writes this store, restore a whole backup with `cairnmind restore FILE`; the copies made before "
     "earlier restores are in backups/ of its data directory (before-restore-*).")
 UNDONE = "{error} The restore stopped, and the store was put back as it was before, from {before}."
-UNDONE_VECTORS = (
-    "{error} The restore stopped, and the store was put back as it was before, from {before}. That copy holds no "
-    "vectors: {jobs} embedding job(s) are pending again and the service rebuilds the vectors in the background; until "
-    "then search uses the text only.")
+NOTHING_CHANGED = "{error} The restore stopped before it changed any row: the store is as it was."
+UNKNOWN_STATE = (
+    "{error} The restore stopped. The mark of an earlier, unfinished restore could not be read, so what the store holds "
+    "is not known and it was not put back. No command uses the store: run `cairnmind restore FILE` again with a whole "
+    "backup.")
 NOT_UNDONE = (
     "{error} The restore stopped, and putting the store back from {before} failed too ({undo_error}). Until a restore "
-    "finishes, no command uses the store: run `cairnmind restore {before}` to go back to the store as it was before, "
-    "or `cairnmind restore {backup}` to restore that backup again.")
+    "finishes, no command uses the store: run `cairnmind restore {before}` to go back to the rows the store held "
+    "before, or `cairnmind restore {backup}` to restore that backup again.")
 NO_UNDO = (
     "{error} The restore stopped. The copy from before the first, unfinished restore ({before}) is not on this machine, "
     "so the store was not put back. Until a restore finishes, no command uses the store: run `cairnmind restore "
@@ -70,38 +72,39 @@ COPY_CHANGED = ("the copy {before} changed after the restore wrote it, so it is 
 MEMORY_SEEN = "The database engine ran out of memory (Java heap space)."
 MEMORY_MAYBE = ("The database engine failed or stopped answering; if its log names OutOfMemoryError or \"Available heap "
                 "RAM is critically low\", it ran out of memory.")
-_RESTORE_FITS = ("a restore commits every 5,000 rows or 8 MB of text whatever the size of the store, which fits in that "
-                 "heap, so stop other work on the engine (`cairnmind stop`) and run the restore again.")
-WHERE_NATIVE = ("Its log is {log}. The engine Cairnmind starts on this machine has a heap of 1 GB (-Xmx1024m), which "
-                "this release does not change; " + _RESTORE_FITS)
-WHERE_DOCKER = ("Its log: `docker logs {container}`. The container Cairnmind starts has a heap of 1 GB (-Xmx1024m), which "
-                "this release does not change; " + _RESTORE_FITS)
+_FIXED_HEAP = ("has a heap of 1 GB (-Xmx1024m) that this release has no setting to change. A restore commits every "
+               "5,000 rows or 8 MiB of text, so the heap it needs does not follow the size of the store: if this happens "
+               "again, report it with the size of the store, or restore on a server with a larger heap "
+               "(docs/DEPLOYMENT.md, What to change, Memory).")
+WHERE_NATIVE = "Its log is {log}. The engine Cairnmind starts on this machine " + _FIXED_HEAP
+WHERE_DOCKER = "Its log: `docker logs {container}`. The container Cairnmind starts " + _FIXED_HEAP
 WHERE_SERVER = ("Its log is the server's own (for deploy/kubernetes: `kubectl -n cairnmind-db logs "
                 "statefulset/arcadedb`). To give the server more memory, add -Xmx4g to ARCADEDB_JAVA_OPTS and raise the "
                 "container's memory limit with it, as docs/DEPLOYMENT.md says under What to change, Memory.")
-_FITS_PL = ("przywracanie zatwierdza co 5000 wierszy albo 8 MB tekstu bez względu na rozmiar magazynu, co mieści się w "
-            "tej stercie, więc zatrzymaj inną pracę silnika (`cairnmind stop`) i uruchom przywracanie ponownie.")
+_FIXED_HEAP_PL = ("ma stertę 1 GB (-Xmx1024m), której to wydanie nie pozwala zmienić. Przywracanie zatwierdza co 5000 "
+                  "wierszy albo 8 MiB tekstu, więc potrzebna mu sterta nie rośnie z rozmiarem magazynu: jeśli to się "
+                  "powtórzy, zgłoś to z rozmiarem magazynu albo przywróć na serwerze z większą stertą (docs/DEPLOYMENT.md, "
+                  "What to change, Memory).")
 MESSAGES = {
     MEMORY_SEEN: "Silnikowi bazy danych zabrakło pamięci (Java heap space).",
     MEMORY_MAYBE: ("Silnik bazy danych zawiódł albo przestał odpowiadać; jeśli jego dziennik wymienia "
                    "OutOfMemoryError albo \"Available heap RAM is critically low\", zabrakło mu pamięci."),
-    WHERE_NATIVE: ("Jego dziennik to {log}. Silnik, który Cairnmind uruchamia na tym komputerze, ma stertę 1 GB "
-                   "(-Xmx1024m), której to wydanie nie zmienia; " + _FITS_PL),
-    WHERE_DOCKER: ("Jego dziennik: `docker logs {container}`. Kontener, który Cairnmind uruchamia, ma stertę 1 GB "
-                   "(-Xmx1024m), której to wydanie nie zmienia; " + _FITS_PL),
+    WHERE_NATIVE: "Jego dziennik to {log}. Silnik, który Cairnmind uruchamia na tym komputerze, " + _FIXED_HEAP_PL,
+    WHERE_DOCKER: "Jego dziennik: `docker logs {container}`. Kontener, który Cairnmind uruchamia, " + _FIXED_HEAP_PL,
     WHERE_SERVER: ("Jego dziennik to dziennik samego serwera (dla deploy/kubernetes: `kubectl -n cairnmind-db logs "
                    "statefulset/arcadedb`). Aby dać serwerowi więcej pamięci, dopisz -Xmx4g do ARCADEDB_JAVA_OPTS i "
                    "razem z tym podnieś limit pamięci kontenera, tak jak mówi docs/DEPLOYMENT.md w części What to "
                    "change, Memory."),
     UNDONE: "{error} Przywracanie zostało przerwane, a magazyn przywrócono do stanu sprzed niego, z pliku {before}.",
-    UNDONE_VECTORS: (
-        "{error} Przywracanie zostało przerwane, a magazyn przywrócono do stanu sprzed niego, z pliku {before}. Ta "
-        "kopia nie zawiera wektorów: zadań osadzania, które znów czekają, jest {jobs}, a usługa odbuduje wektory w "
-        "tle; do tego czasu wyszukiwanie korzysta tylko z tekstu."),
+    NOTHING_CHANGED: "{error} Przywracanie zostało przerwane, zanim zmieniło jakikolwiek wiersz: magazyn jest taki, jaki był.",
+    UNKNOWN_STATE: (
+        "{error} Przywracanie zostało przerwane. Znacznika wcześniejszego, niedokończonego przywracania nie dało się "
+        "odczytać, więc nie wiadomo, co zawiera magazyn, i nie przywrócono go. Żadne polecenie nie używa magazynu: "
+        "uruchom ponownie `cairnmind restore PLIK` z całą kopią zapasową."),
     NOT_UNDONE: (
         "{error} Przywracanie zostało przerwane i przywrócenie magazynu z pliku {before} też się nie powiodło "
         "({undo_error}). Dopóki jakieś przywracanie się nie zakończy, żadne polecenie nie używa magazynu: uruchom "
-        "`cairnmind restore {before}`, aby wrócić do stanu sprzed przywracania, albo `cairnmind restore {backup}`, aby "
+        "`cairnmind restore {before}`, aby wrócić do wierszy sprzed przywracania, albo `cairnmind restore {backup}`, aby "
         "ponownie przywrócić tamtą kopię."),
     NO_UNDO: (
         "{error} Przywracanie zostało przerwane. Kopii sprzed pierwszego, niedokończonego przywracania ({before}) nie "
@@ -113,13 +116,13 @@ MESSAGES = {
         "Przywracanie tego magazynu nie zostało dokończone: zaczęło się {started_at} w instalacji {installation}, z "
         "pliku {backup}. Dopóki jakieś przywracanie się nie zakończy, magazyn zawiera tylko część tej kopii i żadne "
         "polecenie go nie używa. W instalacji, która zapisuje ten magazyn, uruchom `cairnmind restore {backup}`, aby je "
-        "dokończyć, albo `cairnmind restore {before}`, aby wrócić do magazynu sprzed przywracania (ten plik jest w "
+        "dokończyć, albo `cairnmind restore {before}`, aby wrócić do wierszy sprzed przywracania (ten plik jest w "
         "kopiach zapasowych tamtej instalacji)."),
     UNDO_UNFINISHED: (
         "Przywracanie tego magazynu nie powiodło się i przywrócenie poprzedniego stanu też nie zostało dokończone: "
         "zaczęło się {started_at} w instalacji {installation}, z pliku {backup}. Dopóki jakieś przywracanie się nie "
         "zakończy, żadne polecenie nie używa magazynu. W instalacji, która zapisuje ten magazyn, uruchom `cairnmind "
-        "restore {before}`, aby wrócić do magazynu sprzed przywracania, albo `cairnmind restore {backup}`, aby "
+        "restore {before}`, aby wrócić do wierszy sprzed przywracania, albo `cairnmind restore {backup}`, aby "
         "przywrócić tamtą kopię."),
     UNREADABLE: (
         "Ten magazyn ma znacznik niedokończonego przywracania, którego nie da się odczytać, więc żadne polecenie go "
@@ -325,22 +328,32 @@ def staged_restore(store, source, path: Path, claims) -> None:
     store as it was. Called by ``Store.restore`` once the writer is known."""
     from .config import BACKUP_SUFFIXES
     offset = _log_size(store.settings)
-    mark = unfinished(store.client)
-    if mark:
-        # Finishing an unfinished restore: the copy to go back to is the one from before it, not one of its half store.
-        before, before_sha256 = Path(mark["before"]), mark["before_sha256"]
+    found = unfinished(store.client)
+    unknown = found == {}  # a row that cannot be read: what the store holds is not known, so there is nothing to put back
+    if unknown:
+        mark = None  # the unreadable row stays, and keeps the store refused, until a restore succeeds
     else:
-        # No mark, or one that cannot be read and so names no copy: a copy of the store as it is now.
-        before = store.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
-        store.backup(before)
-        before_sha256 = _file_sha256(before)
-    mark = {"backup": str(path), "before": str(before), "before_sha256": before_sha256,
-            "installation_id": store.installation.id, "started_at": utc_now(), "undoing": False}
-    write_mark(store, mark)
+        if found:
+            # Finishing an unfinished restore: the copy to go back to is the one from before it, not its half store.
+            before, before_sha256 = Path(found["before"]), found["before_sha256"]
+        else:
+            before = store.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}"
+            store.backup(before)
+            before_sha256 = _file_sha256(before)
+        mark = {"backup": str(path), "before": str(before), "before_sha256": before_sha256,
+                "installation_id": store.installation.id, "started_at": utc_now(), "undoing": False}
+        write_mark(store, mark)
+    store.restore_changed = False
     try:
         store._restore_from(source, claims)
     except Exception as exc:  # noqa: BLE001 - every failure is undone or leaves the mark; none passes as it was
-        _undo(store, mark, _described(exc, store.settings, offset), exc)
+        error = _described(exc, store.settings, offset)
+        if unknown:
+            raise RestoreFailed(UNKNOWN_STATE.format(error=error)) from exc
+        if found is None and not store.restore_changed:
+            clear_mark(store)  # failed before the first delete: the store was never touched, so there is nothing to undo
+            raise RestoreFailed(NOTHING_CHANGED.format(error=error)) from exc
+        _undo(store, mark, error, exc)
     clear_mark(store)
 
 
@@ -363,8 +376,11 @@ def _undo(store, mark: dict, error: str, cause: BaseException) -> NoReturn:
     except Exception as second:  # noqa: BLE001 - the mark stays, and the person is told how to finish
         raise RestoreFailed(NOT_UNDONE.format(error=error, undo_error=_described(second, store.settings, None).rstrip("."),
                                               before=safe_text(before), backup=backup)) from cause
+    from .restore_claims import vectors_template
     jobs = store.embed_jobs_requeued
-    raise RestoreFailed((UNDONE_VECTORS if jobs else UNDONE).format(error=error, before=safe_text(before), jobs=jobs)) from cause
+    said = UNDONE.format(error=error, before=safe_text(before))
+    # The copy holds no vectors: say what happens to the pending jobs as a finished restore does, by the setting.
+    raise RestoreFailed(f"{said} {vectors_template(store.settings).format(jobs=jobs)}" if jobs else said) from cause
 
 
 def replace(store, source, claims) -> int | None:
@@ -377,6 +393,7 @@ def replace(store, source, claims) -> int | None:
     vectors = [row["type_name"] for row in store.query("SELECT type_name FROM vector_indexes")
                if str(row.get("type_name", "")).startswith("vector_")]
     # The journal's own rows are rewritten by every commit of a reset (journal.JournalTransaction.flush).
+    store.restore_changed = True  # from here a failure may have deleted rows, so only the safety copy puts it back
     clear(store, [*vectors, "edges", "nodes", *(name for name in reversed(DOCUMENT_TYPES) if name not in JOURNAL_TYPES)])
     batches = Batches(store)
     try:

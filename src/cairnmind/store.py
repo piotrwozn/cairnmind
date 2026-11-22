@@ -309,6 +309,7 @@ class Store:
     # After a restore: how many completed embed jobs it set back to pending because the backup brought no vectors
     # (#187); None when the backup brought them or nothing was restored.
     embed_jobs_requeued = None
+    restore_changed = False  # restore_staged: a delete of the restore may have been committed
 
     @classmethod
     def open_readonly(cls, settings: Settings) -> Store:

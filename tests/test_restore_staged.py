@@ -22,7 +22,9 @@ from cairnmind.store import GRAPH_ROWS_PER_REQUEST, Store
 from cairnmind.store_readonly import StoreNotReady
 from cairnmind.sql import utc_now
 
+from cairnmind.restore_claims import VECTORS_REBUILT, VECTORS_UNDECIDED, VECTORS_WAIT
 from test_backup_restore_stream import comparable
+from test_backup_without_vectors import embedded  # noqa: F401 - a fixture
 from test_restore_groups import _large
 from test_store_writer import second_installation
 
@@ -98,7 +100,7 @@ def test_an_unreadable_mark_refuses_every_opening(tmp_path, monkeypatch):
 def _watching(monkeypatch):
     """Rows written or deleted per server transaction (a session) that committed: counted from the requests and
     answers, as the engine sees them."""
-    sessions, commits = {}, []
+    sessions, commits, unbounded = {}, [], []
     request = arcade.ArcadeClient._request
 
     def watched(self, method, path, **kwargs):
@@ -112,6 +114,8 @@ def _watching(monkeypatch):
             rows = command.count("CREATE EDGE")
         elif command.startswith("DELETE FROM") and " LIMIT " in command:
             rows = response.json()["result"][0]["count"]
+        elif command.startswith("DELETE FROM") and " WHERE " not in command and "journal_" not in command:
+            unbounded.append(command)  # every row of a type in one statement: what 0.12.0 did
         if rows and self.session_id:
             sessions[self.session_id] = sessions.get(self.session_id, 0) + rows
         if path.startswith("/api/v1/commit/") and self.session_id in sessions:
@@ -119,7 +123,7 @@ def _watching(monkeypatch):
         return response
 
     monkeypatch.setattr(arcade.ArcadeClient, "_request", watched)
-    return commits
+    return commits, unbounded
 
 
 def test_a_restore_commits_no_more_than_the_bound_per_transaction(tmp_path, monkeypatch):
@@ -127,11 +131,12 @@ def test_a_restore_commits_no_more_than_the_bound_per_transaction(tmp_path, monk
     source = Store(tmp_path / "memory")
     target = Store(tmp_path / "target")
     monkeypatch.setattr(restore_staged, "ROWS_PER_TRANSACTION", 100)
-    commits = _watching(monkeypatch)
+    commits, unbounded = _watching(monkeypatch)
     target.restore(path)
     monkeypatch.undo()
     # The bound, and one group of the request limit that a commit waits for: never one transaction of 2,000 rows.
     assert len(commits) >= 8 and max(commits) < 100 + GRAPH_ROWS_PER_REQUEST, commits
+    assert not unbounded, unbounded  # and every delete names its limit
     assert comparable(target.export()) == comparable(source.export())
 
 
@@ -222,6 +227,59 @@ def test_a_changed_copy_is_not_used_to_put_the_store_back(tmp_path, monkeypatch)
     assert mark["undoing"] is True and mark["before"] == str(_copies(store, known)[0])
     with pytest.raises(RestoreUnfinished):
         Store(store.data_dir)
+
+
+def test_a_failed_restore_over_an_unreadable_mark_does_not_put_back_a_store_of_unknown_content(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    store.client.command("INSERT INTO devbrain_meta CONTENT :row", {"row": {"name": restore_staged.MARK, "backup": 7}})
+    _failing_commits(monkeypatch, 3)
+    with pytest.raises(RestoreFailed, match="not known and it was not put back"):
+        Store(store.data_dir, for_restore=True).restore(path)
+    monkeypatch.undo()
+    assert _copies(store, known) == []  # a copy of a store that may be half restored would be no way back
+    assert restore_staged.unfinished(store.client) == {}
+    with pytest.raises(RestoreUnfinished, match="cannot be read"):
+        Store(store.data_dir)
+    Store(store.data_dir, for_restore=True).restore(path)  # a restore that finishes is the way out
+    assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
+
+
+def test_a_failure_before_the_first_delete_leaves_the_store_untouched_and_is_not_undone(tmp_path, monkeypatch):
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    armed, query, mark = [], store.query, restore_staged.write_mark
+
+    def marked(target, row):
+        mark(target, row)
+        armed.append(True)
+
+    def failing(sql, params=None):
+        if armed and "vector_indexes" in sql:
+            raise OSError("the engine went away")
+        return query(sql, params)
+
+    def never(*arguments):
+        raise AssertionError("an intact store must not be rewritten from the copy")
+
+    monkeypatch.setattr(restore_staged, "write_mark", marked)
+    monkeypatch.setattr(restore_staged, "_undo", never)
+    monkeypatch.setattr(store, "query", failing)
+    with pytest.raises(RestoreFailed, match="before it changed any row: the store is as it was"):
+        store.restore(path)
+    monkeypatch.undo()
+    assert comparable(store.export()) == before and restore_staged.unfinished(store.client) is None
+    assert len(_copies(store, known)) == 1 and not Store(store.data_dir).read_only
+
+
+@pytest.mark.parametrize("agent", ["disabled", "enabled", ""])
+def test_the_undo_says_what_becomes_of_the_vectors_as_the_setting_does(embedded, monkeypatch, agent):  # noqa: F811
+    store = embedded.store
+    monkeypatch.setattr(store.settings, "knowledge_agent", agent)
+    monkeypatch.setattr(restore_staged, "ROWS_PER_TRANSACTION", 1)
+    _failing_commits(monkeypatch, 2)
+    with pytest.raises(RestoreFailed, match="put back as it was") as failed:
+        store.restore(embedded.backup)
+    expected = {"disabled": VECTORS_WAIT, "enabled": VECTORS_REBUILT, "": VECTORS_UNDECIDED}[agent]
+    assert str(failed.value).endswith(expected.format(jobs=embedded.jobs))
 
 
 KILLED_RESTORE = """
