@@ -21,7 +21,9 @@ The English sentences are the source; ``MESSAGES`` holds their Polish.
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
 import re
+import sys
 
 from .store_readonly import StoreNotReady
 from .terminal_safe import safe_text
@@ -29,6 +31,7 @@ from .terminal_safe import safe_text
 MARK = "restore_unfinished"  # the name of the row of devbrain_meta
 ROWS_PER_TRANSACTION = 5000
 BYTES_PER_TRANSACTION = 8 << 20
+JOURNAL_TYPES = ("journal_state", "journal_events")
 
 UNFINISHED = (
     "A restore of this store did not finish: it began at {started_at} on installation {installation}, from {backup}. "
@@ -120,3 +123,88 @@ def write_mark(store, mark: dict) -> None:
 def clear_mark(store) -> None:
     with store.transaction() as tx:
         tx.command("DELETE FROM devbrain_meta WHERE name=:name", {"name": MARK})
+
+
+class Batches:
+    """The open transaction of the write phase: ``wrote`` counts what went into it and, at the bound, commits it.
+
+    Each transaction resets the journal, as the one transaction of a restore did: that is what lets the graph be
+    written in groups, and what leaves the journal free of single rows."""
+
+    def __init__(self, store):
+        self.store, self._stack, self.tx = store, None, None
+        self._open()
+
+    def _open(self) -> None:
+        from .journal import Journal
+        stack = ExitStack()
+        try:
+            self.tx = stack.enter_context(self.store.transaction())
+            Journal.reset(self.tx, reason="restore")
+        except BaseException:
+            stack.close()
+            raise
+        self._stack, self.rows, self.size = stack, 0, 0
+
+    def wrote(self, rows: int, size: int = 0) -> None:
+        self.rows += rows
+        self.size += size
+        if self.rows >= ROWS_PER_TRANSACTION or self.size >= BYTES_PER_TRANSACTION:
+            self.commit()
+            self._open()
+
+    def commit(self) -> None:
+        """Commit the open transaction; none is open afterwards."""
+        stack, self._stack = self._stack, None
+        if stack is not None:
+            stack.close()
+
+    def abandon(self) -> None:
+        """Roll the open transaction back, inside the handler of the error that ends the restore. Never raises."""
+        stack, self._stack = self._stack, None
+        if stack is not None:
+            try:
+                stack.__exit__(*sys.exc_info())
+            except Exception:  # noqa: BLE001 - the first error is the one the person needs
+                pass
+
+
+def clear(store, types: list[str]) -> None:
+    """Delete every row of ``types``, in order, at most ``ROWS_PER_TRANSACTION`` rows per transaction."""
+    from .journal import Journal
+    from .sql import quote_name
+    types = list(types)
+    while types:
+        with store.transaction() as tx:
+            Journal.reset(tx, reason="restore")
+            budget = ROWS_PER_TRANSACTION
+            while types and budget:
+                result = tx.command(f"DELETE FROM {quote_name(types[0])} LIMIT {budget}")
+                count = result[0].get("count") if isinstance(result, list) and result and isinstance(result[0], dict) else None
+                if type(count) is not int or not 0 <= count <= budget:
+                    raise RuntimeError("The database did not say how many rows of a restore it deleted")
+                budget -= count
+                if budget:  # fewer than asked: this type is empty now
+                    types.pop(0)
+
+
+def replace(store, source, claims) -> int | None:
+    """Delete every row of the store and write the backup's, in transactions of bounded size.
+
+    Returns how many embed jobs were set back to pending (Store._requeue_embed_jobs). A failure leaves the store
+    part way: ``staged_restore`` is what puts it back."""
+    from .restore_groups import write_restored
+    from .store import DOCUMENT_TYPES
+    vectors = [row["type_name"] for row in store.query("SELECT type_name FROM vector_indexes")
+               if str(row.get("type_name", "")).startswith("vector_")]
+    # The journal's own rows are rewritten by every commit of a reset (journal.JournalTransaction.flush).
+    clear(store, [*vectors, "edges", "nodes", *(name for name in reversed(DOCUMENT_TYPES) if name not in JOURNAL_TYPES)])
+    batches = Batches(store)
+    try:
+        write_restored(store, batches, source, claims)
+        requeued = store._requeue_embed_jobs(batches)
+        batches.commit()
+    except BaseException:
+        batches.abandon()
+        raise
+    return requeued

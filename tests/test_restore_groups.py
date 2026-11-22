@@ -241,7 +241,10 @@ class _Recording:
     """A store and transaction that only record the graph groups ``GraphGroups`` writes."""
 
     def __init__(self):
-        self.groups, self.known = [], None
+        self.groups, self.known, self.tx = [], None, self
+
+    def wrote(self, rows, size=0):
+        pass
 
     def prefetch_graph(self, tx, nodes, edges):
         pass

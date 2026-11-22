@@ -1,7 +1,9 @@
 """Restore writes the rows of a validated backup in groups, a few hundred per request (#219).
 
 Row by row, a restore of a store of 26,000 graph vertices and 32,000 edges took 297,454 requests: every
-vertex and edge was looked up before it was written. Here the same rows go in the same transaction:
+vertex and edge was looked up before it was written. Here the same rows go in the transactions of
+``restore_staged.Batches`` (#362), which commits after a bounded number of rows, never between a group's
+reads and its write:
 
 - Documents and vector rows: one ``INSERT ... CONTENT :rows`` per group of one type (``insert_documents``),
   in file order, a group ending at ``GRAPH_ROWS_PER_REQUEST`` rows or ``DOCUMENT_BYTES_PER_REQUEST`` of text.
@@ -28,8 +30,8 @@ GRAPH_BYTES_HELD = 4 * DOCUMENT_BYTES_PER_REQUEST
 class DocumentGroups:
     """Rows of document and vector types, written one group of one type per request, in the order added."""
 
-    def __init__(self, tx):
-        self.tx, self.collection, self.rows, self.size = tx, None, [], 0
+    def __init__(self, batches):
+        self.batches, self.collection, self.rows, self.size = batches, None, [], 0
 
     def add(self, collection, row):
         size = len(json_text(row))
@@ -41,16 +43,18 @@ class DocumentGroups:
         self.size += size
 
     def flush(self):
-        if self.rows:
-            insert_documents(self.tx, self.collection, self.rows)
+        rows, size = self.rows, self.size
         self.rows, self.size = [], 0
+        if rows:
+            insert_documents(self.batches.tx, self.collection, rows)
+            self.batches.wrote(len(rows), size)
 
 
 class GraphGroups:
     """Vertices (``kind="node"``) or edges of the graph, written per project by ``Store.write_graph``."""
 
-    def __init__(self, store, tx, kind):
-        self.store, self.tx, self.kind = store, tx, kind
+    def __init__(self, store, batches, kind):
+        self.store, self.batches, self.kind = store, batches, kind
         self.groups = {}  # project id -> {row id: row}
         self.sizes = {}  # project id -> characters of JSON text in its group
 
@@ -59,7 +63,8 @@ class GraphGroups:
         if not isinstance(project, str) or not isinstance(identifier, str):
             # Refused by the upsert's own check, with its message, after the rows before it.
             self.flush()
-            (self.store.upsert_node if self.kind == "node" else self.store.upsert_edge)(row, self.tx)
+            (self.store.upsert_node if self.kind == "node" else self.store.upsert_edge)(row, self.batches.tx)
+            self.batches.wrote(1)
             return
         size = len(json_text(row))
         group = self.groups.get(project)
@@ -78,41 +83,46 @@ class GraphGroups:
 
     def _write(self, project):
         rows = list(self.groups.pop(project).values())
-        self.sizes.pop(project, None)
+        size = self.sizes.pop(project, 0)
         nodes, edges = (rows, []) if self.kind == "node" else ([], rows)
-        self.store.prefetch_graph(self.tx, nodes, edges)
-        self.store.write_graph(self.tx, project, nodes, edges)
-        self.tx.known = None  # what the prefetch read is of this group only
+        tx = self.batches.tx
+        self.store.prefetch_graph(tx, nodes, edges)
+        self.store.write_graph(tx, project, nodes, edges)
+        tx.known = None  # what the prefetch read is of this group only
+        self.batches.wrote(len(rows), size)  # the one place a commit may fall: after a group, never inside one
 
     def flush(self):
         for project in list(self.groups):
             self._write(project)
 
 
-def write_restored(store, tx, source, claims=None):
-    """Insert the rows of a validated backup into a store that restore's transaction has just emptied.
+def write_restored(store, batches, source, claims=None):
+    """Insert the rows of a validated backup into a store that a restore has just emptied, in the transactions of
+    `batches` (restore_staged.Batches).
 
-    With `claims` (restore_claims.BackupClaims) each row first loses what only a person's act could give it (#214)."""
+    With `claims` (restore_claims.BackupClaims) each row first loses what only a person's act could give it (#214).
+    The backup's journal rows are not written: every commit of the restore resets the journal and writes a head
+    that names this installation as the writer."""
+    from .restore_staged import JOURNAL_TYPES
     from .store import DOCUMENT_TYPES
-    documents = DocumentGroups(tx)
+    documents = DocumentGroups(batches)
     # Documents first (projects and sources before the graph that checks them), then vertices,
     # then edges and vectors; a streamed file is read once for each of the three.
     for _, collection, original in source.rows(DOCUMENT_TYPES):
+        if collection in JOURNAL_TYPES:
+            continue
         row = dict(original)
         if collection == "jobs" and row.get("state") == "running":
             row.update(state="pending", worker=None, lease_until=None)
-        if collection == "journal_state":
-            # The backup's head may name the writer of the time it was made, or none.
-            row["writer"] = store.installation.id
         if claims is not None:
             row = claims.turn(collection, row)
         documents.add(collection, row)
     documents.flush()
-    nodes = GraphGroups(store, tx, "node")
+    nodes = GraphGroups(store, batches, "node")
     for _, _, node in source.rows(("nodes",)):
         nodes.add(node)
     nodes.flush()
-    edges = GraphGroups(store, tx, "edge")
+    edges = GraphGroups(store, batches, "edge")
     for kind, name, row in source.rows(("edges",), vectors=True):
         if kind == "row":
             edges.add(row)

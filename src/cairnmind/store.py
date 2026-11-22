@@ -1972,26 +1972,15 @@ class Store:
             self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(id) UNIQUE")
             self.command(f"CREATE PROPERTY {quote_name(name)}.vector IF NOT EXISTS ARRAY_OF_FLOATS")
             self.command(f"CREATE INDEX IF NOT EXISTS ON {quote_name(name)}(vector) LSM_VECTOR METADATA {{dimensions:{dimension},similarity:'COSINE',idPropertyName:'id'}}")
-        with self.transaction() as tx:
-            from .journal import Journal
-            Journal.reset(tx, reason="restore")
-            old_vectors = tx.query("SELECT FROM vector_indexes")
-            for row in old_vectors:
-                if row.get("type_name", "").startswith("vector_"):
-                    tx.command(f"DELETE FROM {quote_name(row['type_name'])}")
-            tx.command("DELETE FROM edges")
-            tx.command("DELETE FROM nodes")
-            for collection in reversed(DOCUMENT_TYPES):
-                tx.command(f"DELETE FROM {quote_name(collection)}")
-            # The rows go in groups of a few hundred per request, with the checks of row by row (#219).
-            from .restore_groups import write_restored
-            write_restored(self, tx, source, claims)
-            self.embed_jobs_requeued = self._requeue_embed_jobs(tx)
+        # Rows are deleted and written in transactions of bounded size, the engine's heap holding a transaction (#362).
+        from .restore_staged import replace
+        self.embed_jobs_requeued = replace(self, source, claims)
 
     @staticmethod
-    def _requeue_embed_jobs(tx):
+    def _requeue_embed_jobs(batches):
         """A backup holds no vectors (#187): set each completed embed job of a current chunk back to pending, in the
-        restore's transaction, and return how many. None when the backup brought vectors, which stay as they are."""
+        restore's transactions, and return how many. None when the backup brought vectors, which stay as they are."""
+        tx = batches.tx
         if tx.query("SELECT id FROM embeddings LIMIT 1"):
             return None
         from .retrieval import json_value  # retrieval imports this module
@@ -2003,8 +1992,9 @@ class Store:
                 first.setdefault(chunk, row["id"])
         ids = list(first.values())
         for start in range(0, len(ids), 500):
-            update_document(tx, "jobs", {"state": "pending", "error": None, "worker": None, "lease_until": None,
-                                         "updated_at": utc_now()}, "id IN :ids", {"ids": ids[start:start + 500]})
+            update_document(batches.tx, "jobs", {"state": "pending", "error": None, "worker": None, "lease_until": None,
+                                                 "updated_at": utc_now()}, "id IN :ids", {"ids": ids[start:start + 500]})
+            batches.wrote(len(ids[start:start + 500]))
         return len(ids)
 
     def forget_project(self, project_id):
