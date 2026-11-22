@@ -595,7 +595,7 @@ def test_back_to_local_with_empty_saves_the_managed_settings_and_starts_the_engi
     assert "PRIVATE_DB_MARKER" not in json.dumps(after) + result.output
     assert world.calls("start_command") == [("managed", True, False)]
     assert world.calls("Store") == [] and world.calls("backup") == [] and world.calls("restore") == []
-    assert "The engine on this machine answers (native, Java 21)." in said(result)
+    assert "The engine on this machine answers (native, Java 21 or newer)." in said(result)
     assert "`cairnmind init` opens the store on this machine" in said(result)
     assert "Storage: ArcadeDB on this machine at" in result.output
 
@@ -914,7 +914,7 @@ def test_the_plan_names_native_for_a_directory_that_holds_an_engine(tmp_path, wo
     connect_only_installation(tmp_path, engine_mode="")
     (tmp_path / "data" / "arcade").mkdir()
     plan = said(invoke(tmp_path, "setup", "local", "--empty"))
-    assert "will be started (native, Java 21)" in plan and "as `cairnmind init` chooses" not in plan
+    assert "will be started (native, Java 21 or newer)" in plan and "as `cairnmind init` chooses" not in plan
 
 
 def test_a_refusal_after_the_generic_rule_saved_the_address_does_not_say_nothing_changed_alone(

@@ -904,7 +904,8 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         result.setdefault("accepted_record_kinds", {"unavailable": type(exc).__name__})
     from cairnmind.topology import topology
     # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
-    result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"]), **result}
+    result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"],
+                                     java_major=result.get("java", {}).get("major")), **result}
     from cairnmind.doctor_attention import required_missing, summary
     _human_or_json(result, as_json, lambda: summary(result))
     if required_missing(result):

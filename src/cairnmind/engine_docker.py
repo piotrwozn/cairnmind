@@ -91,9 +91,9 @@ SHORT_PASSWORD = ("The engine image needs a root password of at least 8 characte
                   "shorter.")
 BUILD_INVALID = "engine_docker_build in config.json is {value}; it must be true or false."
 MODE_SAVED = "Engine mode: {mode}, saved as engine_mode in {config}."
-CHOSE_DOCKER = ("Engine mode: docker. Java 21 was not found and Docker answers, so the database engine runs in a "
+CHOSE_DOCKER = ("Engine mode: docker. Java 21 or newer was not found and Docker answers, so the database engine runs in a "
                 "container. Saved as engine_mode in {config}.")
-CHOSE_NATIVE = ("Engine mode: native. Java 21 was found ({java}), so the database engine runs on this machine. "
+CHOSE_NATIVE = ("Engine mode: native. Java {major} was found ({java}), so the database engine runs on this machine. "
                 "Saved as engine_mode in {config}.")
 KEPT_NATIVE = ("Engine mode: native, the engine this data directory already holds. Saved as engine_mode in "
                "{config}. To run it in Docker instead: `cairnmind engine start --docker`.")
@@ -169,9 +169,9 @@ MESSAGES = {
     BUILD_INVALID: "engine_docker_build w config.json ma wartość {value}; musi to być true albo false.",
     MODE_INVALID: "engine_mode w config.json ma wartość {value}; musi to być native albo docker.",
     MODE_SAVED: "Tryb silnika: {mode}, zapisany jako engine_mode w {config}.",
-    CHOSE_DOCKER: ("Tryb silnika: docker. Nie znaleziono Javy 21, a Docker odpowiada, więc silnik bazy danych "
+    CHOSE_DOCKER: ("Tryb silnika: docker. Nie znaleziono Javy 21 ani nowszej, a Docker odpowiada, więc silnik bazy danych "
                    "działa w kontenerze. Zapisano jako engine_mode w {config}."),
-    CHOSE_NATIVE: ("Tryb silnika: native. Znaleziono Javę 21 ({java}), więc silnik bazy danych działa na tym "
+    CHOSE_NATIVE: ("Tryb silnika: native. Znaleziono Javę {major} ({java}), więc silnik bazy danych działa na tym "
                    "komputerze. Zapisano jako engine_mode w {config}."),
     KEPT_NATIVE: ("Tryb silnika: native, czyli silnik, który ten katalog danych już ma. Zapisano jako engine_mode "
                   "w {config}. Aby uruchamiać go w Dockerze: `cairnmind engine start --docker`."),
@@ -557,7 +557,7 @@ def choose_engine_mode(settings) -> str | None:
     major = java_major(java) if java else None
     if major is not None and major >= 21:
         store_engine_mode(settings, "native", build=False)
-        return CHOSE_NATIVE.format(java=java, config=where)
+        return CHOSE_NATIVE.format(major=major, java=java, config=where)
     version, problem = docker_answers()
     if problem:
         found = "not found" if java is None else f"Java {major}, older than 21" if major else "it did not run"
