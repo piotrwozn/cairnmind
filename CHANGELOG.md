@@ -74,6 +74,11 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The workspace adopts a group of old tasks into a plan: More, then Old task groups lists each group with its tasks in plan order; after the plan title, a consent dialog shows the tasks and what adopting does, and Adopt makes the group a new plan in one person's act, its steps proposed until the plan is confirmed (#305).
 - POST /inspector/legacy-groups/adopt needs the key the open workspace keeps; the service token alone is refused and nothing is written. GET /inspector/legacy-groups lists the groups (#305).
 - `cairnmind plan adopt` still adopts a group that holds nothing a person confirmed; for the other case its refusal names More, then Old task groups (#305).
+- Deleting a project's whole memory is a person's act: More, then Delete project memory in the workspace lists the projects whose memory is in the store (removed ones too), shows what is deleted with its counts, and deletes only after you agree in a consent dialog, with the workspace's key. POST /inspector/projects/forget needs the key; the service token alone is refused and nothing is deleted (#347).
+- `cairnmind forget PROJECT --delete-project` is refused with exit code 2, deletes nothing and says where the person does it (#347).
+- Each deletion of a project's memory is kept as a row of `deleted_projects` in the store's metadata (name, folder, host and counts; the last 100), which `cairnmind status` lists and a restore does not clear (#347).
+- When the answer to a deletion is lost after you agreed, the workspace reads the list of deletable projects again and says that the memory is deleted or that it is not known, never that it was not deleted; it also says when the answer log was left behind (#347).
+- A person's act whose answer comes after you switched project (Release, plan confirmation, review, conflict decision, impact verdict, adopting an old task group, Team memory import, saving a snapshot, Delete project memory) tells its outcome, done, refused or not clear, as a notice addressed to the project it belongs to, instead of nothing (#354).
 
 ### Evaluations, measurements and decisions
 
