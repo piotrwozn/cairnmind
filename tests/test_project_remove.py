@@ -1,5 +1,6 @@
 """A project is removed from the registry and keeps its memory; the same name and folder bring it back (#327)."""
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -283,6 +284,83 @@ def test_the_workspace_actions_of_main_say_that_a_project_was_removed(world):
                                                                        "dry_run": True})):
             assert answer.status_code == 404, answer.text
             assert "was removed from the registry" in answer.json()["detail"], answer.text
+
+
+def test_cli_backup_and_restore_round_trip_with_the_project_removed_and_after_it_is_back(world, monkeypatch, tmp_path):
+    """`cairnmind backup` and `restore` (checked_restore, #214/#321) with a removed row in the store: the restore
+    keeps it removed with its memory, and once it is back the next round trip keeps it registered."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from cairnmind import cli, ingest, person_proof
+    store, project, root, extra, confirmed = world
+    entry = {"client": "claude", "kind": "tool_note", "note": "technical", "accepted_at": "2026-11-22T10:00:00+00:00"}
+    store.command(f"UPDATE projects SET {FIELD}=:entries WHERE id=:id", {"entries": [entry], "id": project["id"]})
+    other = tmp_path / "other"
+    other.mkdir()
+    kept = store.add_project("other", other)
+    monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
+    monkeypatch.setattr(cli, "service_alive", lambda settings: False)
+    monkeypatch.setattr(person_proof, "restore_proof", lambda settings: "unavailable")
+
+    def invoke(*arguments):
+        said = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), *arguments])
+        assert said.exit_code == 0, (said.output, said.exception)
+        return said
+    invoke("project", "remove", "app", "--yes")
+    before = counts(store, project["id"])
+    removed_row = removal.removed_rows(store)[0]
+    backup = json.loads(invoke("backup", str(tmp_path / "removed.cairnmind.json.gz")).stdout)["backup"]
+    restored = json.loads(invoke("restore", backup).stdout)
+    assert restored["person_confirmations"] == "claims_of_the_backup" and restored["record_kinds_withdrawn"] == 1
+    again = Store(store.data_dir)
+    assert [p["id"] for p in again.list_projects()] == [kept["id"]]
+    row = removal.removed_rows(again)[0]
+    assert {key: row[key] for key in removal.REMOVED_FIELDS} == {key: removed_row[key] for key in removal.REMOVED_FIELDS}
+    assert "name" not in row and "root" not in row and counts(again, project["id"]) == before
+    with pytest.raises(removal.ProjectRemoved, match="was removed from the registry"):
+        again.resolve_project("app")
+    invoke("project", "add", "app", str(root))
+    assert again.resolve_project("app")["id"] == project["id"]
+    monkeypatch.setattr(person_proof, "restore_proof", lambda settings: "key")
+    backup = json.loads(invoke("backup", str(tmp_path / "back.cairnmind.json.gz")).stdout)["backup"]
+    assert json.loads(invoke("restore", backup).stdout)["person_confirmations"] == "kept"
+    final = Store(store.data_dir)
+    assert {p["id"] for p in final.list_projects()} == {project["id"], kept["id"]} and removal.removed_rows(final) == []
+    assert final.query("SELECT status FROM records WHERE id=:id", {"id": confirmed["id"]})[0]["status"] == "confirmed"
+
+
+def test_the_memory_of_another_project_in_the_store_is_untouched_by_a_removal(world, monkeypatch, tmp_path):
+    """Preview, snapshot and publishing of another project, and the store-wide readers, with a removed row (no
+    name, no root) in the store."""
+    from cairnmind.memory_published import PUBLICATION_SWITCH, Publisher
+    from cairnmind.store_size import measure
+    monkeypatch.setenv(PUBLICATION_SWITCH, "1")
+    store, project, root, extra, confirmed = world
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "c.py").write_text("z = 3\n")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    for command in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "first"]):
+        subprocess.run([*git, *command], cwd=other, check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(other), "config", "user.name", "t"], check=True)
+    oid = store.add_project("other", other)["id"]
+    index_project(store, oid)
+    source = store.query("SELECT id FROM sources WHERE project_id=:p LIMIT 1", {"p": oid})[0]["id"]
+    record = store.remember(oid, {"kind": "decision", "key": "o", "content": "Use Z."}, [source])
+    from cairnmind.inspector import Inspector
+    Inspector(store).review(oid, record["id"], "confirm", record["version"])
+    remove(store, project)
+    memory = MemoryManager(store)
+    assert memory.preview(oid, worktree=str(other))
+    assert Path(memory.snapshot(oid, worktree=str(other))["manifest_path"]).is_file()
+    published = Publisher(store).publish(oid)
+    assert published["status"] == "written" and (other / ".memory" / "cairnmind-published").is_dir()
+    assert measure(store) and measure(store, project["id"])["project"] == {"id": project["id"], "name": None}
+    assert {row["id"] for row in store.export()["projects"]} == {project["id"], oid}
+    assert (store.status()["projects"], store.status()["removed_projects"]) == (1, 1)
+    assert [p["id"] for p in Store(store.data_dir).list_projects()] == [oid]  # the schema check of a new open passes
 
 
 def test_cli_remove_and_add_again_end_to_end(monkeypatch, tmp_path):
