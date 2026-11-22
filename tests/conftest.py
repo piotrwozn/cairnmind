@@ -76,7 +76,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
     "test_sessions_dialog", "test_command_menu_popup", "test_mcp_unknown_argument", "test_stop_broker_line",
     "test_ended_pane_text",
-    "test_short_answers",
+    "test_short_answers", "test_person_acts_consent",
 })
 
 TMUX_MODULES = frozenset({

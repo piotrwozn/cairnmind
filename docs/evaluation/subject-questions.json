@@ -1,0 +1,27 @@
+{
+  "format_version": 1,
+  "about": "Questions built for the checks of names (issue #245), for `cairnmind eval repository . --questions docs/evaluation/subject-questions.json` (see docs/EVALUATION.md). The first four have a name the checks must pass (the project's own and one it has, a name that is also a word of code (Java), a Polish request). The next five have the shapes the review named as costs: a right answer to them is withheld by the subject check when no quoted source has the name, because the name is only context (an operating system, a person) or only a word that opens a sentence (an unlisted adverb, a Polish infinitive). The last three are about things the repository does not have, written where a capital shows no name (lower case, headline case) and with a real name on a value the project does not have (Ollama's metrics port), so they rest on the model's support check and the names call. tests/test_subject.py counts, without a model, what the subject check withholds on the questions that name a file. Like everything in this directory, the file is left out of the copy that is indexed.",
+  "questions": [
+    {"id": "service-port", "question": "On which port does the local service listen by default?",
+     "file": "src/cairnmind/config.py", "answer": {"pattern": "^    port: int = ([0-9]+)"}},
+    {"id": "name-the-file-has", "question": "Which ArcadeDB version does Cairnmind use by default?",
+     "file": "src/cairnmind/config.py", "answer": {"pattern": "^    arcade_version: str = \"([^\"]+)\""}},
+    {"id": "java-is-a-name", "question": "Which Java version does Cairnmind need?",
+     "file": "docs/INSTALL.md", "answer": {"pattern": "^\\| Java \\| ([0-9]+) or newer"}},
+    {"id": "polish-request", "question": "Podaj domyślny port lokalnej usługi.",
+     "file": "src/cairnmind/config.py", "answer": {"pattern": "^    port: int = ([0-9]+)"}},
+    {"id": "context-operating-system", "question": "Which Python version does this project require on Fedora?",
+     "file": "pyproject.toml", "answer": {"pattern": "^requires-python = \">=([0-9.]+)\""}},
+    {"id": "context-person", "question": "Which tmux version does Cairnmind need, as Anna asked?",
+     "file": "docs/INSTALL.md", "answer": {"pattern": "^\\| tmux \\| ([0-9.]+) or newer"}},
+    {"id": "context-two-names", "question": "On Fedora, which Java version does Cairnmind need for Anna?",
+     "file": "docs/INSTALL.md", "answer": {"pattern": "^\\| Java \\| ([0-9]+) or newer"}},
+    {"id": "word-first-in-the-sentence", "question": "Roughly how long is the default timeout of a question, in seconds?",
+     "file": "src/cairnmind/config.py", "answer": {"pattern": "^    ask_timeout: float = ([0-9.]+)", "forms": ["{}s"]}},
+    {"id": "polish-infinitive", "question": "Sprawdzić, na jakim porcie domyślnie nasłuchuje lokalna usługa.",
+     "file": "src/cairnmind/config.py", "answer": {"pattern": "^    port: int = ([0-9]+)"}},
+    {"id": "lower-case-name", "question": "What is the default nginx port in the settings?", "answer": {"absent": true}},
+    {"id": "headline-case-name", "question": "What Is The Default Zookeeper Port Of The Local Service?", "answer": {"absent": true}},
+    {"id": "real-name-other-thing", "question": "What is the default port of the Ollama metrics endpoint?", "answer": {"absent": true}}
+  ]
+}

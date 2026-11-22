@@ -1,22 +1,27 @@
 """Release a record in the inspector (#306): the person lets a record's false alarms of the secrets scan be
 published, with a reason that is published too.
 
-The command line releases nothing any more, so this form is where a record is released. The inspector route checks
-the record and the reason; the workspace's key travels with the request (terminal_client).
+The command line releases nothing any more, so this form and its consent dialog are where a record is released.
+The form only collects the reason; the request goes out from the dialog (#332). The inspector route checks the
+record and the reason; the workspace's key travels with the request (terminal_client).
 """
 from __future__ import annotations
 
 from .memory_published_secrets import MAX_RELEASE_REASON
 from .terminal_notices import about
+from .terminal_person_act import RECORD, agreed, record_line, typed
 
 TOO_LONG = f"A reason has at most {MAX_RELEASE_REASON} characters."
+NOTE = ("Lets this record's current hits of the secrets scan be published. Your reason is published with the "
+        "record. A registered secret is never released.")
+REASON = "Why these hits are not secrets (published with the record)"
 MESSAGES = {
     "Release": "Przepuść",
     "Release record": "Przepuść ustalenie",
     "Why these hits are not secrets (published with the record)":
         "Dlaczego te trafienia nie są sekretami (publikowane razem z ustaleniem)",
-    "Lets this record's current hits of the secrets scan be published. Your reason is published with the record. "
-    "A registered secret is never released.":
+    "Release this record?": "Przepuścić to ustalenie?",
+    NOTE:
         "Pozwala opublikować obecne trafienia skanu sekretów w tym ustaleniu. Twoje uzasadnienie zostanie "
         "opublikowane razem z ustaleniem. Zarejestrowany sekret nigdy nie jest przepuszczany.",
     "Release saved with your reason. Hits of the secrets scan let through in this record: {count}.":
@@ -39,12 +44,13 @@ async def release_record(app):
     project_id = app.workspace_data.get("project_id")
     form = await app.push_screen_wait(FormModal(
         app.t("Release record"),
-        [Field("reason", app.t("Why these hits are not secrets (published with the record)"), required=True,
+        [Field("reason", app.t(REASON), required=True,
                multiline=True, validator=lambda value: TOO_LONG if len(value) > MAX_RELEASE_REASON else None)],
-        note=app.t("Lets this record's current hits of the secrets scan be published. Your reason is published with "
-                   "the record. A registered secret is never released."),
-        submit=app.t("Release")))
+        note=app.t(NOTE), submit=app.t("Continue")))
     if form is None:
+        return
+    text = "\n".join([app.t(RECORD, record=record_line(record)), "", app.t(NOTE), typed(app.t, REASON, form["reason"])])
+    if not await agreed(app, "Release this record?", text, "Release"):
         return
     if scope != app._scope_version:
         app.notice_for(about(project_id), app.t("The project changed during review. Nothing was saved."), "warn")

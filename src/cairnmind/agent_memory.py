@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 import httpx
 
+from .memory_egress import ordered
 from .sql import clean_row, json_text, one_row
 from .terminal_safe import safe_text
 
@@ -419,10 +420,12 @@ class MemoryRefusal(RuntimeError):
 
 class AgentMemoryClient:
     """Run-bound service transport; the model alone supplies ACK and readback."""
-    def __init__(self, settings, project_id, worktree, session_id, *, client="api", transport=None):
+    def __init__(self, settings, project_id, worktree, session_id, *, client="api", transport=None,
+                 held=frozenset()):
         if client not in AGENT_CLIENTS:
             raise ValueError("Own-agent memory client must be api or copilot")
         _journal_path(settings, session_id)
+        self.held = ordered(held)  # the classes a hosted run must not receive; the service holds them back (#183)
         self.settings, self.project_id = settings, project_id
         self.worktree = str(Path(worktree).expanduser().resolve())
         self.session_id, self.client = session_id, client
@@ -471,7 +474,7 @@ class AgentMemoryClient:
     async def prepare(self, reason="startup"):
         result = await self._request("POST", "/sessions/prepare", body={
             "project": self.project_id, "client": self.client, "worktree": self.worktree,
-            "session_id": self.session_id, "reason": reason})
+            "session_id": self.session_id, "reason": reason, "held_classes": self.held})
         if result.get("session_id") != self.session_id:
             raise RuntimeError("Session mismatch in prepared own-agent context")
         # Preparation/delivery is not an actual model read and cannot authorize ACK.
@@ -516,7 +519,7 @@ class AgentMemoryClient:
             return await self._request("POST", "/sessions/ack", body={**args, "session_id": self.session_id})
         common = {"project": self.project_id, "worktree": self.worktree, "session_id": self.session_id}
         if name == "ask":
-            return await self._request("POST", "/ask", body={**common, **args})
+            return await self._request("POST", "/ask", body={**common, **args, "held_classes": self.held})
         if name == "next_task":
             return await self._request("POST", "/plans/next", body={**common, **args})
         if name == "check_status":
