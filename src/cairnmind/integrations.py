@@ -675,6 +675,9 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         info["hooks_configured"] = False
         info["instructions_configured"] = False
         results["clients"][client] = info
+        if not info["installed"]:  # nothing is written for a client that is not here, not even its instruction block (#313)
+            results["warnings"].append(CLIENT_SKIPPED.format(client=client))
+            continue
         instructions = root / ("AGENTS.md" if client == "codex" else "CLAUDE.md")
         try:
             if _merge_instructions(instructions, project, settings):
@@ -682,9 +685,6 @@ def install_integrations(settings: Settings, project: dict[str, Any],
             info["instructions_configured"] = True
         except (ValueError, OSError) as exc:
             results["warnings"].append(str(exc))
-        if not info["installed"]:
-            results["warnings"].append(CLIENT_SKIPPED.format(client=client))
-            continue
         operations = []
         if info["mcp"]:
             operations.append((_merge_toml_mcp if client == "codex" else _merge_json_mcp,
@@ -711,7 +711,8 @@ def install_integrations(settings: Settings, project: dict[str, Any],
     for client in clients:
         results["warnings"] += [REMOVED_COMMAND.format(path=path, entry=entry)
                                 for path, entry in bare_devbrain_entries(root, client)]
-    results["warnings"].append(TRUST_NOTE)
+    if any(info["installed"] for info in results["clients"].values()):
+        results["warnings"].append(TRUST_NOTE)  # a trust question is asked only by a client that was connected
     return results
 
 
