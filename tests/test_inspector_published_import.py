@@ -212,6 +212,22 @@ async def test_a_commit_without_published_memory_says_so_and_imports_nothing(tmp
         assert len(broker.writes()) == 1 and app.screen is app.screen_stack[0]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_the_commit_form_says_a_diverged_record_is_taken_from_a_folder(tmp_path, monkeypatch, language):
+    # The importer's diverged refusal names --take-published, which a commit has nowhere (#304 review).
+    app, broker, _ = published_app(tmp_path, monkeypatch, language)
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        await open_choice(app, pilot, row=1)
+        note = " ".join(str(app.screen.query_one(".cm-note", Static).render()).split())
+        assert tr(published.COMMIT_NOTE, language) == note
+        assert tr("From a published memory folder", language) in note
+        await pilot.press("escape")
+        await settle(app, pilot)
+    assert broker.writes() == []
+
+
 def test_taken_ids_accepts_ids_and_file_names_and_refuses_the_rest():
     one, two = ids(2)
     assert taken_ids("") == [] and taken_ids("  \n ") == []

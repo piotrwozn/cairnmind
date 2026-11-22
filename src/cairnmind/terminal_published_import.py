@@ -13,7 +13,9 @@ FULL_PATH = "Enter the full path of the folder."
 TAKE_ENTRY = "Enter record IDs or file names such as fact/<ID>.md, at most 1,000."
 FOLDER_NOTE = ("The check writes nothing. If it lists records that diverged, paste their file names into the last "
                "field to take the published side of them; your versions stay in the history.")
-COMMIT_NOTE = "The check writes nothing. The import also checks every quoted passage against that commit's code."
+COMMIT_NOTE = ("The check writes nothing. The import also checks every quoted passage against that commit's code. "
+               "A commit cannot take the published side of a record that diverged: import such records From a "
+               "published memory folder, with their file names in its last field.")
 REPLACED_HEADING = ("These records were confirmed or disputed on this computer, and the import puts the published "
                     "text or status in their place ({count}):")
 COUNTS = ("New: {inserted} · moved on: {advanced} · taken from the published side: {taken} · unchanged: {unchanged} "
@@ -32,7 +34,9 @@ MESSAGES = {
     "Commit (a branch, HEAD or a commit ID)": "Commit (gałąź, HEAD albo identyfikator commita)",
     FOLDER_NOTE: "Sprawdzenie niczego nie zapisuje. Jeśli wymieni rekordy, które się rozeszły, wklej nazwy ich plików "
                  "do ostatniego pola, aby wziąć ich stronę opublikowaną; twoje wersje zostają w historii.",
-    COMMIT_NOTE: "Sprawdzenie niczego nie zapisuje. Import sprawdza też każdy cytowany fragment z kodem tego commita.",
+    COMMIT_NOTE: "Sprawdzenie niczego nie zapisuje. Import sprawdza też każdy cytowany fragment z kodem tego commita. "
+                 "Commit nie może wziąć strony opublikowanej rekordu, który się rozszedł: zaimportuj takie rekordy "
+                 "Z katalogu opublikowanej pamięci, z nazwami ich plików w ostatnim polu.",
     FULL_PATH: "Podaj pełną ścieżkę katalogu.",
     TAKE_ENTRY: "Podaj identyfikatory rekordów albo nazwy plików, np. fact/<ID>.md, najwyżej 1000.",
     "Import this team memory?": "Zaimportować tę pamięć zespołu?",
