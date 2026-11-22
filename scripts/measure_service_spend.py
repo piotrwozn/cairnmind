@@ -85,7 +85,9 @@ def refuse_an_installation(env, command: list[str]) -> str | None:
         service_port = int(env["CAIRNMIND_PORT"])
     except ValueError:
         return "CAIRNMIND_PORT is not a number"
-    engine_ports = [port_of(env[k]) for k in ("CAIRNMIND_ARCADE_URL", "CAIRNMIND_ARCADE_CONNECT_URL") if env.get(k)]
+    # The earlier DEVBRAIN_ spelling counts when the current one is absent; the three required names shadow theirs.
+    engine_ports = [port_of(env[k]) for k in ("CAIRNMIND_ARCADE_URL", "CAIRNMIND_ARCADE_CONNECT_URL",
+                                              "DEVBRAIN_ARCADE_CONNECT_URL") if env.get(k)]
     if service_port == 8765 or 2480 in engine_ports or None in engine_ports:
         return "the service port is 8765, or an engine port is 2480 or not readable: those are the installation's, not a measurement's"
     return None

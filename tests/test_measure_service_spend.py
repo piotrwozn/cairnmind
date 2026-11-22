@@ -65,7 +65,7 @@ def test_only_the_service_of_this_directory_is_accepted():
     {"CAIRNMIND_PORT": "8765"}, {"CAIRNMIND_PORT": "08765"}, {"CAIRNMIND_PORT": " 8765"}, {"CAIRNMIND_PORT": "x"},
     {"CAIRNMIND_HOME": None}, {"CAIRNMIND_HOME": "~/.local/share/cairnmind"}, {"CAIRNMIND_HOME": "~/.local/share/devbrain/"},
     {"CAIRNMIND_ARCADE_URL": "http://127.0.0.1:2480/api"}, {"CAIRNMIND_ARCADE_URL": "http://127.0.0.1:x"},
-    {"CAIRNMIND_ARCADE_CONNECT_URL": "http://db:2480"}])
+    {"CAIRNMIND_ARCADE_CONNECT_URL": "http://db:2480"}, {"DEVBRAIN_ARCADE_CONNECT_URL": "http://db:2480"}])
 def test_it_refuses_what_could_be_the_installation(capsys, monkeypatch, change):
     for key, value in {**SAFE, **change}.items():
         monkeypatch.delenv(key, raising=False) if value is None else monkeypatch.setenv(key, value)
