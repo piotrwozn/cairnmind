@@ -18,6 +18,8 @@ Archiving does not wait for the GPU. Status shows archiving, indexing, model pro
 
 A store has one writer: the installation that first opened it, named in the database. An installation is its data directory, identified by `installation.json` there; a copy of that directory on another machine or under another path gets an identity of its own and does not write as the original. A second installation pointed at the same database (for example a server on another host, #72) reads it only: commands that read work, a command that writes stops with one line naming the writer, and its service does not start. `cairnmind store writer` shows which installation writes and what this one is; `doctor` and `status` show the same. To move writing to this installation, a person runs `cairnmind store takeover --yes [--note TEXT]`; the change is kept in the store, the jobs the previous writer was running go back to the queue, and the previous writer stops at its next write. For a store used from one machine nothing changes.
 
+A project removed with `cairnmind project remove` (see [INSTALL.md](INSTALL.md#7-open-your-first-project)) keeps every row in the store: it is counted in `store size`, shown by `status` as `removed_projects`, and written to backups, and a restore brings it back still removed. Its queued jobs wait and run once the project is back. `cairnmind forget ID --delete-project` deletes one, by its id; backups are not changed, so take one first with `cairnmind backup`.
+
 ## Store size
 
 `store size [PROJECT] [--json]` reports how large the store is. Like the other commands that only read, it never starts the engine or the service and changes nothing; it prints counts and sizes, never the text of a record or a source. It lists:

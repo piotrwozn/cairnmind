@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from conftest import plain_words
 
-from cairnmind import cli, doctor_attention, first_start, ingest, knowledge_mode
+from cairnmind import cli, doctor_attention, first_start, ingest, knowledge_mode, project_removal
 from cairnmind.terminal_commands import ask_summary
 from cairnmind.terminal_i18n import tr
 from cairnmind.topology import FROM_VARIABLE, WRITER_YES, _storage_line
@@ -272,6 +272,7 @@ def test_project_add_prints_the_warning_before_the_next_step_and_its_json_is_unc
         def add_project(self, name, root):
             return {"id": "p1", "name": name, "root": str(root)}
     monkeypatch.setattr(cli, "store_for", lambda *a, **k: Store())
+    monkeypatch.setattr(project_removal, "removed_rows", lambda reader: [])  # this fake store has no query (#327)
     monkeypatch.setattr(ingest, "index_project", lambda store, pid: {"files": 1})
     monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
     folder = tmp_path / "plain"

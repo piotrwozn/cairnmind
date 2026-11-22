@@ -93,7 +93,9 @@ find matching scoped runs by task_id, never trusts user booleans.
 
 - prepare(project_id,client,worktree=None,session_id=None,reason='startup',timeout=30)->dict
   {session_id,epoch,status:ready|partial|unavailable,packet,unknowns}
-- resume_context(session_id)->same result (refresh stale epoch as needed)
+- resume_context(session_id, short=False)->same result (refresh stale epoch as needed), or the short answer
+  {session_id,epoch,status:ready,unchanged,acknowledged,packet_id,packet_hash,newer_automatic_proposals,
+  note[,history,evidence]} when short and the session's ACK of its current packet holds (#325)
 - ack(session_id,packet_id,packet_hash,readback:dict)->dict
 - require_ack(session_id,packet_id=None)->None (raises resume_required on stale/missing)
 - note_event(payload:dict,client:str)->None (service drains spool, never DB in hook)
@@ -162,10 +164,14 @@ manualCLI/admin operations stay available for repair. Bootstrap read/ack always 
 POST /plans/save {project,plan,steps,idempotency_key,expected_version?,task_versions?,worktree?,activate?,session_id?}
 POST /plans/next {project,plan_id?,worktree?}; GET /plans?project=...
 POST /sessions/prepare {project,client,worktree?,session_id?,reason?} (client: codex|claude|external|api|copilot)
-POST /sessions/context {session_id}; POST /sessions/ack {session_id,packet_id,packet_hash,readback}
+POST /sessions/context {session_id, short?}; POST /sessions/ack {session_id,packet_id,packet_hash,readback}
 GET /sessions/{id}; GET /checks?project=...&task_id=...
 Existing /context enhanced current plan/scope/verification, old public tools retained.
 MCP new save_plan,next_task,resume_context,ack_resume,check_status (read-only checks).
+MCP resume_context(full_packet=false) sends short; remember/checkpoint answer {id,version,status,kind,key,
+source_ids, origin_*, supersedes?, possible_conflicts?, supersede_warning?, metadata_not_stored_as_sent?, metadata_dropped?, omitted_source_ids?};
+save_plan's plan header has no title (#325). metadata_dropped comes from /remember and /checkpoint only with
+name_dropped:true (sent by the bridge alone), on a copy of the stored record; Store.remember never returns it.
 ServiceClient autoadds bound sessionid for writes and scoped ask/context/next/check reads;
 rejects request session mismatch. Direct CLI workflow reads inherit the same worktree.
 `cairnmind mcp --client external [--project P] [--worktree W]` binds nothing at start;

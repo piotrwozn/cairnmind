@@ -515,7 +515,8 @@ def index_pending_sources(store, limit: int = 100) -> dict:
         # Third-party MCP events (agent_memory.is_mcp_source) are never chunked: not even loaded here.
         "AND (kind <> 'agent_transcript' OR metadata.origin_evidence IS NULL "
         "OR metadata.origin_evidence <> 'degraded') "
-        "AND id NOT IN (SELECT source_id FROM chunks) ORDER BY created_at,id",
+        "AND id NOT IN (SELECT source_id FROM chunks) "
+        "AND project_id NOT IN (SELECT id FROM projects WHERE removed_at IS NOT NULL) ORDER BY created_at,id",  # #327
         {"excluded": list(excluded_kinds), "known": list(known_kinds)},
     )
     counts = {"sources": 0, "chunks": 0, "errors": []}
@@ -747,12 +748,17 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         if lies_in(root, store.data_dir):
             # Registered by 0.12.0, before #295 refused it: the walk leaves the data directory out, so it
             # would report 0 files. Named, not removed.
-            again = ("`cairnmind project add`" if root == registered_roots[0]
-                     else "`cairnmind project root` for this project")
-            counts["errors"].append(
-                f"Project {project['name']!r} has a folder inside the data directory, which Cairnmind never "
-                f"indexes: {root}; move the files to a folder outside it and register that with {again}; "
-                f"this registration is left as it is")
+            import shlex
+            from .terminal_safe import safe_text
+            quoted = shlex.quote(safe_text(project["name"]))
+            head = (f"Project {project['name']!r} has a folder inside the data directory, which Cairnmind never "
+                    f"indexes: {root}; this registration is left as it is. Move the files to a folder outside it, ")
+            counts["errors"].append(head + (
+                f"then `cairnmind project remove {quoted} --yes` unregisters this one and keeps its memory (this folder cannot be added again), and "
+                f"`cairnmind project add {quoted} NEWFOLDER` registers the new folder as a new project"
+                if root == registered_roots[0] else
+                f"add that with `cairnmind project root {quoted} NEWFOLDER`, and remove this one with "
+                f"`cairnmind project remove {quoted} --root {shlex.quote(safe_text(str(root)))} --yes`"))
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
         for path in _files(root, *_walk_args(store, root, walk_errors)):
@@ -1547,9 +1553,13 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
 
 
 def poll_imports(store) -> dict:
+    from .project_removal import removed_ids
     rows = store.query("SELECT path,project_id,client FROM import_cursors")
     result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
+    removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
     for row in rows:
+        if row["project_id"] in removed:
+            continue
         try:
             item = import_history(store, Path(row["path"]), row["project_id"], row["client"])
             for key, value in item.items():
