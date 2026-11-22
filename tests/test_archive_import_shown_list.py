@@ -9,7 +9,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from textual import _time as textual_time
+from consent_steps import consent_drawn
 from textual.widgets import Input, Static
 
 from cairnmind import person_proof
@@ -108,16 +108,6 @@ class ArchiveBroker(FakeBroker):
         return [body for method, path, _, body in self.calls if method == "POST" and path == "/api/memory/import"]
 
 
-async def consent_drawn(app, pilot):
-    for _ in range(300):
-        await pilot.pause(.02)
-        if app.screen.query("#message-body"):
-            modal = app.screen  # a consent dialog takes only input made after its draw and its quiet moment (#328)
-            await wait_until(pilot, lambda: modal.drawn_at + modal.QUIET <= textual_time.get_time())
-            return
-    raise AssertionError("no consent dialog")
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "pl"])
 async def test_the_memory_view_shows_every_replaced_verdict_and_sends_that_list(tmp_path, monkeypatch, language):
@@ -141,7 +131,13 @@ async def test_the_memory_view_shows_every_replaced_verdict_and_sends_that_list(
         assert all(identifier in text for identifier in listed)  # none cut
         assert app.pending_import["expected_replaced"] == listed and app.pending_import["replace_confirmed"]
         await pilot.click("#memory-apply")
-        await settle(app, pilot)
+        modal = await consent_drawn(app, pilot)  # Apply is a person's act: its consent dialog lists them too (#332)
+        assert broker.imports()[1:] == []
+        shown = str(modal.query_one("#message-body", Static).render())
+        assert tr(published.ARCHIVE_HEADING, language, count=250) in shown
+        assert all(identifier in shown for identifier in listed)
+        await pilot.click("#confirm-yes")
+        await wait_until(pilot, lambda: len(broker.imports()) == 2)
     check, final = broker.imports()
     assert final == {**check, "dry_run": False, "replace_confirmed": True, "expected_replaced": listed}
 

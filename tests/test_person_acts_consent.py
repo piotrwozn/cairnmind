@@ -284,7 +284,7 @@ ACTS = [
             "worktree": w.value["worktree"]})], REASON),
     Act("apply", make_apply, reach_apply, "Import this project memory?", (),
         lambda w: [(IMPORT, {"path": "/projects/a/.memory/devbrain", "root": "/projects/a", "dry_run": False,
-                             "replace_confirmed": False})]),
+                             "replace_confirmed": False, "expected_replaced": []})]),
     Act("plan", make_plan, reach_plan, "Confirm this plan?", ("Managed plan",),
         lambda w: [("/api/inspector/plans/plan-a/confirm", {
             "project": "project-a", "expected_plan_version": 5, "reason": REASON, "worktree": w.value["worktree"]})],
@@ -310,7 +310,7 @@ ACTS = [
             "task_versions": {"t1": 3, "t2": 1}, "worktree": w.value["worktree"]})]),
     Act("sidebar-import", make_sidebar_import, reach_sidebar_import, "Import this project memory?", (),
         lambda w: [(IMPORT, {"path": "/projects/a/.memory/devbrain", "root": "/projects/a", "dry_run": False,
-                             "replace_confirmed": False})]),
+                             "replace_confirmed": False, "expected_replaced": []})]),
     Act("team-memory", make_team, reach_team, "Import this team memory?", (),
         lambda w: [("/api/memory/import-published", {
             "path": "/projects/a/.memory/cairnmind-published", "project": "project-a", "take_published": [],
