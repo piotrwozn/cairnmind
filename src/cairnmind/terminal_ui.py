@@ -384,6 +384,16 @@ class MessageModal(LocalizedModal, ModalScreen[None]):
         self.dismiss(None)
 
 
+def drop_unseen_key(app, event) -> None:
+    """Every key reaches the App here just before a binding acts on it, from whichever screen it bubbled: a key
+    queued on the screen below a dialog is bound to the dialog's focus too (#318). The top screen's admits()
+    decides; a screen without one takes every key."""
+    admits = getattr(app.screen, "admits", None)
+    if admits is not None and not admits(event):
+        event.prevent_default()
+        event.stop()
+
+
 class BasePanel(App):
     ENABLE_COMMAND_PALETTE = False
     run_start_request = False  # set by `--run-request`: the request found at start is for this start
@@ -413,6 +423,9 @@ class BasePanel(App):
 
     def t(self, text, **values):
         return tr(text, self.language, **values)
+
+    def on_key(self, event) -> None:
+        drop_unseen_key(self, event)
 
     def open_command(self, action):
         """Only known UI actions can be dispatched; never evaluate command text."""
