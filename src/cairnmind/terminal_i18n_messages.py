@@ -9,6 +9,8 @@ from __future__ import annotations
 from .code_graph import CODE_GRAPH_NOT_BUILT
 from .confirmation import GROUP_CHANGED, NOT_PROVEN, REPLACED_CHANGED
 from .first_start import ASK_NO_MATCH, ASK_OFF, GET_MODELS, MATCHES_HELD_BACK, MESSAGES as FIRST_START
+from .memory_egress import HOSTED_ASK_UNKNOWN, HOSTED_PACKET_NOTE, HOSTED_READ_REFUSED, HOSTED_RECORDS_HELD
+from .sensitivity import CLASSES
 from .person_proof import IMPORT_REPLACE, NO_WORKSPACE_KEY, PROOF_MISSING, PROOF_REFUSED, TMUX_MISSING
 from .service_token import FOREIGN_SERVICE
 
@@ -51,6 +53,10 @@ ASK_MESSAGES = {
     "(memory_remote_classes).":
         "Część pamięci projektu nie została wysłana do zdalnego serwera modelu z powodu jej klasy "
         "wrażliwości (memory_remote_classes).",
+    # memory_egress.HOSTED_ASK_UNKNOWN (#183)
+    HOSTED_ASK_UNKNOWN:
+        "Fragmenty niektórych klas wrażliwości pominięto w tej odpowiedzi, bo ustawienie memory_remote_classes "
+        "nie pozwala na nie dla modelu hostowanego; diagnostics.held_back je zlicza.",
     CODE_GRAPH_NOT_BUILT:
         "Graf kodu tego projektu nie jest jeszcze zbudowany: buduje go indeksowanie plików projektu, więc to, "
         "co znaleziono o kodzie, może być puste lub niepełne.",
@@ -187,6 +193,17 @@ ENGINE_MESSAGES = {
     "continue with a shorter request restored from archived memory. The request was not automatically retried.":
         "Żądanie przekracza skonfigurowany kontekst modelu. Zwiększ jawne okno kontekstu profilu albo kontynuuj "
         "krótszym żądaniem odtworzonym z zarchiwizowanej pamięci. Żądanie nie zostało automatycznie ponowione.",
+    # What a hosted run is told when memory is held back from it (memory_egress, #183).
+    **{HOSTED_READ_REFUSED.format(name=name):
+       f"Ta pamięć należy do klasy {name}, której ustawienie memory_remote_classes nie dopuszcza dla modelu "
+       f"hostowanego. Nic nie zostało odczytane. Poproś człowieka o dodanie {name} do tego ustawienia, jeśli "
+       f"jest potrzebna." for name in CLASSES},
+    HOSTED_RECORDS_HELD:
+        "Rekordy klas, których ustawienie memory_remote_classes nie dopuszcza dla modelu hostowanego, są "
+        "wypisane bez treści: oznaczono je held_back.",
+    HOSTED_PACKET_NOTE:
+        "Podglądy rekordów niektórych klas wrażliwości pominięto, bo ustawienie memory_remote_classes nie "
+        "pozwala na nie dla modelu hostowanego; held_back je zlicza.",
     # Turn results without a word of their own in the status line.
     "Context limit": "Limit kontekstu", "Limit reached": "Osiągnięto limit", "Resume required": "Wymagane wznowienie",
     "Uncertain": "Niepewne", "Partial": "Częściowo",

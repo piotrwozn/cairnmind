@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from .confirmation import confirmed_by
 from .integrations import DATA_NOT_INSTRUCTIONS
+from .memory_egress import HOSTED_PACKET_NOTE, Gate, ordered
 from .packet_origin import omitted_by_origin, preview_key, record_origins
 from .store import EXTRACTION_MARK, ORIGIN_METADATA
 from .sql import clean_row, insert_document, json_text, one_row, update_document, utc_now
@@ -939,6 +940,13 @@ class SessionManager:
         if task and isinstance(task.get("metadata", {}).get("scope"), list) and task["metadata"]["scope"]:
             # Only for a task that declares one, so every other packet stays byte for byte what it was.
             task_view["scope"] = [str(pattern)[:500] for pattern in task["metadata"]["scope"][:64]]
+        gate = None
+        if session.get("held_classes"):
+            # A hosted built-in session (#183): previews of held classes are left out and counted. The state
+            # hash is not changed by it, so the ACK rules are the same as for every other session.
+            gate = Gate(self.store, frozenset(session["held_classes"]))
+            gate.prime(state["records"])
+            state = {**state, "records": [row for row in state["records"] if not gate.record_held(row)]}
         origins = record_origins(self.store, state["records"])
         previews = sorted(state["records"], key=lambda row: preview_key(row, origins[row["id"]]))[:MAX_RECORDS]
         archived_agent_history = self.store.query(
@@ -972,6 +980,9 @@ class SessionManager:
                   "extraction": self._pending_status(session["project_id"], "extract"),
                   "unknowns": [value[:500] for value in list(dict.fromkeys(unknowns))[:20]],
                   "omitted_unknowns": max(0, len(set(unknowns)) - 20)}
+        if gate and gate.records:
+            packet["held_back"] = {"classes": ordered(gate.held), "records": len(gate.records),
+                                   "note": HOSTED_PACKET_NOTE}
         orphaned = sum(value == "orphaned" for value in evidence.values())
         changed = sum(value == "evidence_replaced" for value in evidence.values())
         evidence_warning = (
@@ -1047,7 +1058,8 @@ class SessionManager:
                 "unknowns": packet.get("unknowns", []) if packet else ["Resume packet requires preparation"]}
 
     def prepare(self, project_id: str, client: str, worktree: str | None = None,
-                session_id: str | None = None, reason: str = "startup", timeout: float = 30) -> dict:
+                session_id: str | None = None, reason: str = "startup", timeout: float = 30,
+                held_classes: list[str] | None = None) -> dict:
         if client not in {"codex", "claude", EXTERNAL_CLIENT, *AGENT_CLIENTS}:
             raise ValueError("Session client must be codex, claude, external, api or copilot")
         if client in AGENT_CLIENTS and session_id is not None:
@@ -1087,6 +1099,8 @@ class SessionManager:
                            "pending_start": reason != "refresh", "resume_targets": None,
                            "transcript_targets": [], "event_ids": [], "created_at": utc_now()}
                 insert_document(tx, "sessions", session)
+            if held_classes is not None:  # a refresh without it keeps what the session was prepared with
+                session["held_classes"] = list(held_classes)
             session["updated_at"] = utc_now()
             update_document(tx, "sessions", session, "id=:id", {"id": session["id"]})
         archives, unknowns, targets = [], [], []

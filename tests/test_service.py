@@ -267,6 +267,18 @@ def test_cache_tracks_profiles_and_ignored_verification_inputs(workspace):
         assert model.calls == 3
 
 
+def test_a_cached_answer_of_a_local_run_is_not_served_to_a_hosted_run(workspace):
+    settings, store, project, root = workspace
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    body = {"project": "demo", "question": "Gdzie jest authenticate?"}
+    with TestClient(create_app(settings, start_worker=False, ollama=LocalModelFixture())) as client:
+        assert client.post("/ask", json=body, headers=headers).json()["cached"] is False
+        assert client.post("/ask", json=body, headers=headers).json()["cached"] is True
+        hosted = {**body, "held_classes": ["conversation", "third_party"]}  # #183: such a run may not see conversation
+        assert client.post("/ask", json=hosted, headers=headers).json()["cached"] is False
+        assert client.post("/ask", json=hosted, headers=headers).json()["cached"] is True
+
+
 def test_embedding_digest_rebuild_preserves_sources(workspace):
     from cairnmind.ingest import index_project
     from cairnmind.service import schedule_embeddings
