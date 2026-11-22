@@ -32,9 +32,22 @@ def test_without_a_mark_nothing_is_blocked_or_noted(mark):
     assert upgrade_mark.note() is None
 
 
+def wait_for_the_installer_name(child):
+    """Not before the child's command line shows the installer: no assertion rests on how fast it started."""
+    import time
+    deadline, read = time.monotonic() + 10, None
+    while time.monotonic() < deadline:
+        read = process_identity.command_line(child.pid)
+        if read and any(Path(argument).name == upgrade_mark.INSTALLER for argument in read):
+            return
+        time.sleep(0.05)
+    pytest.fail(f"the command line of process {child.pid} never showed {upgrade_mark.INSTALLER}; last read: {read!r}")
+
+
 def test_a_mark_of_a_running_installer_blocks_and_names_its_process(mark):
     child = installer_like_child()
     try:
+        wait_for_the_installer_name(child)
         mark.write_text(f"{child.pid}\n")
         assert upgrade_mark.state() == ("running", child.pid)
         assert upgrade_mark.refusal() == upgrade_mark.NOTE_RUNNING.format(pid=child.pid)
@@ -79,6 +92,28 @@ def test_a_process_without_a_readable_command_line_is_told_by_its_program(mark, 
     monkeypatch.setattr(process_identity, "alive", lambda pid: True)
     monkeypatch.setattr(process_identity, "executable", lambda pid: program)
     assert upgrade_mark.state() == (kind, 4242)
+
+
+def test_a_living_process_is_not_called_stale_by_one_failed_read(mark, monkeypatch):
+    """macOS answered running, then stale, for one living installer: a read around exec failed once and the program
+    that was readable was no shell (#348)."""
+    mark.write_text("4242\n")
+    answers = iter([None, ["python", "-c", "x", "/x/scripts/install-wsl.sh"]])
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: next(answers))
+    monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(process_identity, "alive", lambda pid: True)
+    monkeypatch.setattr(upgrade_mark.time, "sleep", lambda seconds: None)
+    assert upgrade_mark.state() == ("running", 4242)
+
+
+def test_a_command_line_read_again_that_names_another_program_is_stale(mark, monkeypatch):
+    mark.write_text("4242\n")
+    answers = iter([None, ["/usr/sbin/cron"]])
+    monkeypatch.setattr(process_identity, "command_line", lambda pid: next(answers))
+    monkeypatch.setattr(process_identity, "executable", lambda pid: "/usr/bin/python3")
+    monkeypatch.setattr(process_identity, "alive", lambda pid: True)
+    monkeypatch.setattr(upgrade_mark.time, "sleep", lambda seconds: None)
+    assert upgrade_mark.state() == ("stale", 4242)
 
 
 @pytest.mark.parametrize("content", [b"", b"abc\n", b"12 34\n", b"1" * 40, b"0\n", b"4294967296\n", "directory", "no home"])
