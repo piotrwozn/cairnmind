@@ -44,7 +44,8 @@ class _ProjectFirstGroup(TyperGroup):
             if (len(arguments) > 1 and arguments[0].metavar == "PROJECT" and isinstance(exc.param, TyperArgument)
                     and exc.param is not arguments[0]):
                 from cairnmind.first_start import PROJECT_FIRST
-                exc.message = PROJECT_FIRST.format(missing=exc.param.metavar or exc.param.name)
+                exc.message = PROJECT_FIRST.format(
+                    missing=" ".join(a.metavar or a.name for a in arguments[1:]))  # every argument after the project
             raise
 
 

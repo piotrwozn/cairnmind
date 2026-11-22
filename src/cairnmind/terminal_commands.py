@@ -1,6 +1,7 @@
 """A searchable, prefix-only command surface shared by every workspace pane."""
 from __future__ import annotations
 
+import shutil
 import textwrap
 
 from rich.cells import cell_len
@@ -12,7 +13,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
 from .cockpit_state import CockpitState
-from .first_start import ASK_NEXT, GET_MODELS, MATCHES_HEADING, MODE_STATUS, STORED_FINDING
+from .first_start import ASK_NEXT, CLIENT_NAMES, GET_MODELS, MATCHES_HEADING, MODE_STATUS, STORED_FINDING
 from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
@@ -252,7 +253,9 @@ def ask_summary(result, translate) -> str:
     if matches:  # search results without models (#274): their own heading, never "Sources"
         lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt", translate, name_notes=True)]
     if GET_MODELS in raw:  # the way to get models is not missing evidence; then the one next step (#294, #326)
-        lines += ["", translate(GET_MODELS), translate(ASK_NEXT)]
+        # The assistant to install is the next step only when none is on PATH (the check of first_start.workspace_refusal).
+        no_client = not any(shutil.which(name) for name in CLIENT_NAMES)
+        lines += ["", translate(GET_MODELS), *([translate(ASK_NEXT)] if no_client else [])]
     unknowns = [fixed_message(item, translate) for item in raw if item != GET_MODELS][:8]
     if unknowns:
         lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]

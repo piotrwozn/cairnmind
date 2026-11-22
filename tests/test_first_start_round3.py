@@ -50,6 +50,12 @@ def test_a_question_given_without_a_project_says_the_project_comes_first_and_sta
     # The same for every command whose first argument is the project, found where the error is made.
     assert first_start.PROJECT_FIRST.format(missing="CONTENT") in plain_words(run("remember", "a finding").output)
     assert first_start.PROJECT_FIRST.format(missing="PATH") in plain_words(run("project", "root", "demo").output)
+    # Three positional arguments: every argument after the project is named, in order, also after a right project.
+    for given in (("task", "update", "demo", "t1"), ("task", "update", "t1", "in_progress")):
+        said = plain_words(run(*given).output)
+        assert first_start.PROJECT_FIRST.format(missing="TASK_ID STATE") in said
+    assert first_start.PROJECT_FIRST.format(missing="CLIENT KIND") in plain_words(
+        run("record-kind", "accept", "demo", "claude").output)
     # Not when the first argument is not a project, or when the project itself is missing.
     assert "project name comes first" not in plain_words(run("project", "add", "demo").output)
     assert "project name comes first" not in plain_words(run("ask").output)
@@ -113,6 +119,12 @@ def test_the_installer_prints_no_init_block_and_keeps_the_one_time_marks(tmp_pat
     assert shown(plain) == ""
     marked = {**plain, "confirmations_before_rule": {"marked_as_a_persons": 2, "still_before_the_rule": 1}}
     assert shown(marked) == first_start.INIT_MARKED.format(marked=2, left=1) + "\n"
+    # An init result that cannot be read is said on stderr with what init said, never dropped.
+    result = subprocess.run([BASH, "-c", f"set -euo pipefail\n{function}\nshow_init_marks 'not json'"],
+                            env={**os.environ, "PATH": f"{uv.parent}:{os.environ['PATH']}"}, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0 and result.stdout == ""
+    assert "could not be read" in result.stderr and "not json" in result.stderr
 
 
 # --- 4: the stop without Java and Docker ----------------------------------------------------------------------------
@@ -146,7 +158,7 @@ def test_the_storage_line_says_who_sets_the_address_and_who_writes_to_the_store(
                          "This installation is the one that writes to the store.")
     assert "comes from" not in line
     polish = _storage_line(place, "pl")
-    assert "zmienna środowiskowa CAIRNMIND_ARCADE_URL" in polish and "jest tą, która zapisuje" in polish
+    assert "zmienna środowiskowa CAIRNMIND_ARCADE_URL" in polish and "To ta instalacja zapisuje do tej bazy." in polish and "magazyn" not in polish
     assert FROM_VARIABLE.format(variable="CAIRNMIND_ARCADE_URL") in line and WRITER_YES in line
 
 
@@ -178,6 +190,9 @@ def test_the_brief_legend_names_only_the_marks_and_titles_the_lines_use(monkeypa
     assert legend(("reported", "Checkpoint summary: half done")) == "[reported] = stored by an assistant or a person, not verified"
     assert legend(machine, ("machine", "Next task is ready | task: Add the limit")) == (
         "[machine] = measured now by Cairnmind; text after | is a stored title")
+    # A " | " inside stored or Git text is not a title.
+    assert legend(machine, ("reported", "Checkpoint summary: a | b")) == (
+        "[machine] = measured now by Cairnmind; [reported] = stored by an assistant or a person, not verified")
 
 
 # --- 8: the only place a person confirms ---------------------------------------------------------------------------
@@ -222,6 +237,7 @@ def answer(*matches):
 
 
 def test_ask_without_models_names_a_stored_finding_drops_the_lone_heading_and_ends_with_a_next_step(monkeypatch, run):
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None)  # no coding assistant installed
     shown = ask_summary(answer(MATCH), str)
     lines = shown.splitlines()
     assert '- stored finding (unconfirmed): "Accounts lock after five failed logins."' in lines
@@ -229,6 +245,10 @@ def test_ask_without_models_names_a_stored_finding_drops_the_lone_heading_and_en
     assert lines[-2:] == [first_start.GET_MODELS, first_start.ASK_NEXT] and lines[-3] == ""
     pl = ask_summary(answer(MATCH), lambda text: tr(text, "pl"))
     assert "zapisane ustalenie (niepotwierdzone)" in pl and pl.splitlines()[-1] == tr(first_start.ASK_NEXT, "pl")
+    # With an assistant installed, installing one is not the next step: the models are.
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: "/bin/x" if name == "claude" else None)
+    installed = ask_summary(answer(MATCH), str)
+    assert installed.splitlines()[-1] == first_start.GET_MODELS and first_start.ASK_NEXT not in installed
     # A file match keeps its address; the JSON in a pipe is the answer as it was, byte for byte (status unavailable).
     file_match = {**MATCH, "id": "c1", "uri": "/w/app.py", "kind": "code"}
     assert "- /w/app.py (unconfirmed)" in ask_summary(answer(file_match), str)

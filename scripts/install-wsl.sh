@@ -401,7 +401,10 @@ import json, sys
 from cairnmind.first_start import INIT_MARKED
 marks = json.load(sys.stdin).get("confirmations_before_rule")
 if marks:
-    print(INIT_MARKED.format(marked=marks["marked_as_a_persons"], left=marks["still_before_the_rule"]))' || true
+    print(INIT_MARKED.format(marked=marks["marked_as_a_persons"], left=marks["still_before_the_rule"]))' || {
+        # The marks are said only once, by the init that made them: never lose them without a word.
+        printf 'The result of init could not be read; it said:\n%s\n' "$1" >&2
+    }
 }
 
 if [[ -n "$connect_url" ]]; then

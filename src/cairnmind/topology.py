@@ -83,7 +83,7 @@ MESSAGES = {
     STORAGE_CONNECT_REMOTE: "Baza: ArcadeDB pod adresem {url} na {host}; ta instalacja tylko się z nią łączy, nie instaluje jej, nie uruchamia ani nie zatrzymuje.",
     FROM_VARIABLE: "Adres ustawia zmienna środowiskowa {variable}, tylko dla tego procesu.",
     STORAGE_PROBLEM: "Nie można jej użyć: {problem}",
-    WRITER_YES: "Ta instalacja jest tą, która zapisuje do magazynu.",
+    WRITER_YES: "To ta instalacja zapisuje do tej bazy.",
     WRITER_UNKNOWN: "Nie wiadomo, czy ta instalacja do niej zapisuje: {reason}",
     MODELS_DISABLED: "Modele pamięci: żadne nie są używane; agent wiedzy jest wyłączony (tryb tylko deterministyczny).",
     MODELS_INVALID: "Modele pamięci: nie można ich użyć: {problem}",

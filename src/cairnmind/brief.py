@@ -262,7 +262,7 @@ def build_brief(store, project_id, worktree=None, *, now=None):
     budget = MAX_LINES - 2
     if len(lines) > budget:
         lines = lines[:budget - 1] + [("machine", f"{len(lines) - budget + 1} more lines were left out to keep the brief short.")]
-    used = {basis for basis, _ in lines} | {"|" for _, text in lines if " | " in text}
+    used = {basis for basis, _ in lines} | {"|" for _, text in lines if " | task: " in text or " | plan: " in text}
     head = [f"Brief for {_line(project['name'], 60)} in {_line(root, 120)}",
             "; ".join(part for key, part in _LEGEND.items() if key in used)]
     marked = [{"basis": basis, "text": text} for basis, text in lines]

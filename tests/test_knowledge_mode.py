@@ -471,8 +471,9 @@ def test_rebuild_vectors_refuses_without_models(monkeypatch, tmp_path):
         command="cairnmind rebuild-vectors") + " " + first_start.GET_MODELS
 
 
-def test_the_ask_panel_names_the_mode_apart_from_missing_evidence():
+def test_the_ask_panel_names_the_mode_apart_from_missing_evidence(monkeypatch):
     from cairnmind.terminal_commands import ask_summary
+    monkeypatch.setattr("shutil.which", lambda name, *a, **k: None)  # no coding assistant: ASK_NEXT is shown
     # #326: no heading of its own above the one line; the way to get models, then the next step.
     for language, missing in (("en", "Missing evidence"), ("pl", "Brakujące dowody")):
         def say(text, language=language):
