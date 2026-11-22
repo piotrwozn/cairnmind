@@ -10,16 +10,23 @@ import fcntl
 import json
 import os
 import string
+import types
+from contextlib import contextmanager
+from pathlib import Path
 
 import httpx
 import pytest
 from typer.testing import CliRunner
 
 from conftest import plain_words
-from cairnmind import cli, database_credentials, memory_models, setup_profiles, store_writer
+from cairnmind import (backup_reader, cli, database_credentials, engine, engine_docker, memory_models, setup_profiles,
+                       store_writer)
 from cairnmind import topology as topology_module
-from cairnmind.config import Settings, is_own_variable
+from cairnmind.arcade import ArcadeError
+from cairnmind.config import Settings, derived_database, is_own_variable
 from cairnmind.database_mode import connect_only
+from cairnmind.store import Store
+from cairnmind.store_readonly import StoreNotReady
 from cairnmind.memory_openai import OpenAICompatible
 from cairnmind.ollama import Ollama, OllamaUnavailable
 from cairnmind.setup_profiles import (
@@ -35,11 +42,21 @@ RELEASE_EMBEDDING = Settings.__dataclass_fields__["embedding_model"].default
 class World:
     """What the profile reaches, replaced: every call is logged as (name, detail)."""
 
-    def __init__(self, monkeypatch):
+    def __init__(self, monkeypatch, config_path):
         self.log = []
+        self.config_path = config_path
         self.block = {"available": True, "database_available": True, "version": "26.11.1"}
         self.writer = {"role": "none"}
         self.model_errors = {}
+        self.second_check_errors = {}  # role -> raised from its second check: the one configure_role makes
+        self.checked = {}
+        self.backup_error = self.check_error = self.restore_error = self.start_error = None
+        monkeypatch.setattr(Store, "open_readonly", classmethod(lambda cls, settings: self.open_readonly(settings)))
+        monkeypatch.setattr(Store, "__init__", lambda store, data_dir, **kwargs: self.log.append(("Store", self.mode())))
+        monkeypatch.setattr(Store, "restore", lambda store, path: self.restore(path))
+        monkeypatch.setattr(backup_reader, "opened_backup", self.opened_backup)
+        monkeypatch.setattr(engine, "start_command", self.start_command)
+        monkeypatch.setattr(engine_docker, "choose_engine_mode", self.choose_engine_mode)
         monkeypatch.setattr(database_credentials, "doctor_block", self.doctor_block)
         monkeypatch.setattr(database_credentials, "create_user", self.create_user)
         monkeypatch.setattr(store_writer, "inspect", self.inspect)
@@ -71,9 +88,52 @@ class World:
         row = memory_models.profile(settings, role)
         self.log.append(("check", (role, getattr(settings, memory_models.MODEL_FIELDS[role]),
                                    row["base_url"] if row else settings.ollama_url)))
+        self.checked[role] = self.checked.get(role, 0) + 1
         if role in self.model_errors:
             raise self.model_errors[role]
+        if self.checked[role] > 1 and role in self.second_check_errors:
+            raise self.second_check_errors[role]
         return {"structured_output": True}, f"{role}@1"
+
+    def mode(self):
+        """Where config.json points at this moment: the store a call would reach."""
+        return "connect" if json.loads(self.config_path.read_text()).get("arcade_connect_url") else "managed"
+
+    def open_readonly(self, settings):
+        self.log.append(("open_readonly", settings.arcade_url))
+        world = self
+
+        class Reading:
+            client = types.SimpleNamespace(close=lambda: None)
+
+            def backup(self, target):
+                world.log.append(("backup", (str(target), world.mode())))
+                if world.backup_error:
+                    raise world.backup_error
+                Path(target).write_bytes(b"BACKUP")
+                return Path(target)
+        return Reading()
+
+    @contextmanager
+    def opened_backup(self, path, load_whole, types):
+        self.log.append(("opened_backup", (str(path), self.mode())))
+        if self.check_error:
+            raise self.check_error
+        yield None
+
+    def restore(self, path):
+        self.log.append(("restore", (str(path), self.mode())))
+        if self.restore_error:
+            raise self.restore_error
+
+    def choose_engine_mode(self, settings):
+        self.log.append(("choose_engine_mode", self.mode()))
+
+    def start_command(self, settings, **kwargs):
+        self.log.append(("start_command", (self.mode(), bool(settings.arcade_password), connect_only(settings))))
+        if self.start_error:
+            raise self.start_error
+        return {}
 
     async def identity(self, name):
         return "earlier@1"
@@ -92,8 +152,8 @@ def clean_environment(monkeypatch):
 
 
 @pytest.fixture
-def world(monkeypatch):
-    return World(monkeypatch)
+def world(monkeypatch, tmp_path):
+    return World(monkeypatch, tmp_path / "data" / "config.json")
 
 
 def make(tmp_path, **fields):
@@ -430,6 +490,165 @@ def test_setting_up_the_same_profile_again_changes_nothing(tmp_path, world):
     again = invoke(tmp_path, "setup", "remote-db", *options, "--yes")
     assert again.exit_code == 0 and "nothing to change" in said(again)
     assert config_bytes(tmp_path) == before and world.log == []
+
+
+# local, from a store this installation only connects to --------------------------------------------------------------
+
+def connect_only_installation(tmp_path, **fields):
+    """An installation that was connect-only from its start: no password of its own in config.json."""
+    make(tmp_path, arcade_connect_url=DB, arcade_user="cairnmind", arcade_database="cairnmind",
+         arcade_password_file=private(tmp_path, "db-password", "PRIVATE_DB_MARKER"), **fields)
+    stored = config(tmp_path)
+    stored.pop("arcade_password", None)
+    (tmp_path / "data" / "config.json").write_text(json.dumps(stored, indent=2))
+    return stored
+
+
+def test_going_back_without_a_choice_is_refused_and_names_both(tmp_path, world):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    result = invoke(tmp_path, "setup", "local", "--yes")
+    refused(result, f"needs a choice about the data of the store at {DB}", "--backup FILE", "--empty",
+            f"The store at {DB} is left as it is either way.")
+    assert config_bytes(tmp_path) == before and world.log == []
+
+
+def test_back_to_local_with_empty_saves_the_managed_settings_and_starts_the_engine(tmp_path, world):
+    before = connect_only_installation(tmp_path)
+    data = Settings.load(tmp_path / "data").data_dir
+    derived = derived_database(data)
+    world.writer = {"role": "writer"}
+    dry = invoke(tmp_path, "setup", "local", "--empty")
+    assert dry.exit_code == 1 and world.calls("start_command") == []
+    for words in (f"Storage: from ArcadeDB at {DB} to the engine on this machine at {before['arcade_url']}, with the "
+                  f"database {derived}.", "The engine on this machine will be started", f"has no database {derived}",
+                  f"Left as it is: the store at {DB}; nothing in it is changed or deleted.",
+                  "This installation stays named as its writer", "Nothing was changed. To make these changes"):
+        assert words in said(dry), (words, dry.output)
+    (data / "arcade" / "databases" / derived).mkdir(parents=True)
+    assert f"still holds the database {derived} from before" in said(invoke(tmp_path, "setup", "local", "--empty"))
+    result = invoke(tmp_path, "setup", "local", "--empty", "--yes")
+    assert result.exit_code == 0, result.output
+    after = config(tmp_path)
+    assert (after["arcade_connect_url"], after["arcade_user"], after["arcade_password_file"],
+            after["arcade_ca_file"], after["arcade_database"]) == ("", "root", "", "", derived)
+    assert after["arcade_url"] == before["arcade_url"] and after["arcade_password"]
+    assert "PRIVATE_DB_MARKER" not in json.dumps(after) + result.output
+    assert world.calls("start_command") == [("managed", True, False)]
+    assert world.calls("Store") == [] and world.calls("backup") == [] and world.calls("restore") == []
+    assert "The engine on this machine answers (native, Java 21)." in said(result)
+    assert "`cairnmind init` opens the store on this machine" in said(result)
+    assert "Storage: ArcadeDB on this machine at" in result.output
+
+
+def test_back_to_local_with_a_backup_runs_backup_switch_engine_restore_in_that_order(tmp_path, world, monkeypatch):
+    connect_only_installation(tmp_path)
+    target = tmp_path / "remote-store.cairnmind.json.gz"
+    original = setup_profiles.save_storage
+
+    def watched(data_dir, fields):
+        world.log.append(("save_storage", world.mode()))
+        original(data_dir, fields)
+    monkeypatch.setattr(setup_profiles, "save_storage", watched)
+    result = invoke(tmp_path, "setup", "local", "--backup", str(target), "--yes")
+    assert result.exit_code == 0, result.output
+    assert world.log == [
+        ("open_readonly", DB), ("inspect", DB), ("open_readonly", DB), ("backup", (str(target), "connect")), ("opened_backup", (str(target), "connect")),
+        ("save_storage", "connect"), ("choose_engine_mode", "managed"),
+        ("start_command", ("managed", True, False)), ("Store", "managed"), ("restore", (str(target), "managed"))]
+    assert target.read_bytes() == b"BACKUP" and config(tmp_path)["arcade_connect_url"] == ""
+    for words in (f"Backup written and checked: {target}.", f"Restored {target} into the store on this machine",
+                  "Next: start Cairnmind as usual."):
+        assert words in said(result), (words, result.output)
+
+
+def test_a_failed_restore_puts_the_configuration_back_and_names_the_backup(tmp_path, world):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    target = tmp_path / "kept.cairnmind.json.gz"
+    world.restore_error = ArcadeError("cut")
+    result = invoke(tmp_path, "setup", "local", "--backup", str(target), "--yes")
+    assert result.exit_code == 1 and isinstance(result.exception, setup_profiles.SetupFailed)
+    message = str(result.exception)
+    assert (f"The change stopped at the restore: cut config.json was put back as it was. The backup {target} is kept. "
+            "The engine on this machine was started and is left running") in message
+    assert config_bytes(tmp_path) == before and target.exists()
+    assert world.calls("take_over") == [] and all(what != "create_user" for what, _ in world.log)
+
+
+def test_a_backup_that_fails_or_fails_its_check_changes_nothing(tmp_path, world):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    first = tmp_path / "first.cairnmind.json.gz"
+    world.backup_error = StoreNotReady("x")
+    failed = invoke(tmp_path, "setup", "local", "--backup", str(first), "--yes")
+    assert isinstance(failed.exception, setup_profiles.SetupFailed)
+    assert f"The backup of the store at {DB} failed: x Nothing was changed." in str(failed.exception)
+    world.backup_error, world.check_error = None, ValueError("Backup checksum mismatch")
+    second = tmp_path / "second.cairnmind.json.gz"
+    checked = invoke(tmp_path, "setup", "local", "--backup", str(second), "--yes")
+    assert (f"The backup {second} did not pass its check: Backup checksum mismatch The file is kept; nothing was "
+            "changed.") in str(checked.exception)
+    assert second.exists() and config_bytes(tmp_path) == before
+    assert world.calls("start_command") == [] and world.calls("restore") == []
+
+
+def test_an_existing_backup_file_is_never_overwritten(tmp_path, world):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    target = tmp_path / "mine.cairnmind.json.gz"
+    target.write_bytes(b"A PERSON'S EARLIER BACKUP")
+    refused(invoke(tmp_path, "setup", "local", "--backup", str(target), "--yes"), f"{target} already exists")
+    refused(invoke(tmp_path, "setup", "local", "--backup", str(tmp_path)), "already exists")
+    assert target.read_bytes() == b"A PERSON'S EARLIER BACKUP" and config_bytes(tmp_path) == before
+    assert world.log == []
+
+
+def test_an_engine_that_cannot_start_puts_the_configuration_back(tmp_path, world):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    world.start_error = ArcadeError("Docker is installed but its daemon does not answer.")
+    result = invoke(tmp_path, "setup", "local", "--empty", "--yes")
+    assert result.exit_code == 1
+    assert ("The change stopped at starting the engine on this machine: Docker is installed but its daemon does not "
+            "answer. config.json was put back as it was.") in str(result.exception)
+    assert config_bytes(tmp_path) == before and "left running" not in str(result.exception)
+
+
+def test_the_dry_run_of_local_starts_and_writes_nothing(tmp_path, world):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+    target = tmp_path / "plan.cairnmind.json.gz"
+    result = invoke(tmp_path, "setup", "local", "--backup", str(target))
+    assert result.exit_code == 1, result.output
+    assert [what for what, _ in world.log] == ["open_readonly", "inspect"]
+    assert not target.exists() and config_bytes(tmp_path) == before
+    for words in (f"Tested: the store at {DB} can be read for the backup.", "The backup: the store at",
+                  "Nothing was changed. To make these changes"):
+        assert words in said(result), (words, result.output)
+
+
+def test_a_model_save_that_fails_after_the_storage_switch_puts_everything_back(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="enabled", memory_chat=dict(REMOTE), chat_model="gpt-x")
+    before = config_bytes(tmp_path)
+    world.second_check_errors["chat"] = ValueError("the server changed its mind")
+    result = invoke(tmp_path, "setup", "local", "--empty", "--yes")
+    assert result.exit_code == 1 and "the server changed its mind" in str(result.exception)
+    assert "stopped at saving the chat model" in str(result.exception) and "left running" in str(result.exception)
+    assert config_bytes(tmp_path) == before
+    assert world.calls("start_command") == [("managed", True, False)]
+
+
+def test_a_store_that_cannot_be_read_for_the_backup_changes_nothing(tmp_path, world, monkeypatch):
+    connect_only_installation(tmp_path)
+    before = config_bytes(tmp_path)
+
+    def unreadable(cls, settings):
+        raise StoreNotReady("The Cairnmind database has no schema yet; create it with `cairnmind init`.")
+    monkeypatch.setattr(Store, "open_readonly", classmethod(unreadable))
+    result = invoke(tmp_path, "setup", "local", "--backup", str(tmp_path / "b.cairnmind.json.gz"))
+    refused(result, f"The store at {DB} cannot be read for the backup:", "has no schema yet")
+    assert config_bytes(tmp_path) == before
 
 
 # Put back, sentences -----------------------------------------------------------------------------------------------

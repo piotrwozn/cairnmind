@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 from . import (database_credentials, database_mode, engine, engine_docker, knowledge_mode, memory_egress,
                memory_models, store_writer, topology)
 from .arcade import ArcadeError
-from .config import Settings, env_names
+from .config import Settings, derived_database, env_names
 from .ollama import OllamaUnavailable
 from .terminal_safe import safe_text
 
@@ -409,6 +409,32 @@ def _put_back(path: Path, data: bytes) -> None:
             Path(name).unlink(missing_ok=True)
 
 
+def local_storage(settings) -> dict:
+    """The settings of the engine this installation manages on this machine, as every managed installation has them.
+
+    No password is named: the managed engine's root signs in with the generated arcade_password that config.json
+    kept, or Settings.load(create=True) generates one after the switch. The database is the name derived from the
+    data directory, so a --database given to remote-db cannot lose the local store."""
+    stored = (settings._origin or {}).get("kept", {}).get("arcade_url", (settings.arcade_url,))[0]
+    default = Settings.__dataclass_fields__["arcade_url"].default
+    return {"arcade_url": stored if isinstance(stored, str) and database_mode.is_managed_url(stored) else default,
+            "arcade_connect_url": "", "arcade_user": "root", "arcade_database": derived_database(settings.data_dir),
+            "arcade_password_file": "", "arcade_ca_file": ""}
+
+
+def _test_readable(settings, result) -> None:
+    """Open the store this installation connects to for reading only (no write, no engine start)."""
+    from .store import Store
+    from .store_readonly import StoreNotReady
+    url = database_mode.address(settings)
+    try:
+        store = Store.open_readonly(settings)
+    except (StoreNotReady, ArcadeError, ValueError) as exc:
+        raise SetupRefused(REMOTE_NOT_READABLE, url=url, error=str(exc)) from None
+    store.client.close()
+    result["tests"].append((TEST_READABLE, {"url": url}))
+
+
 def _storage_plan(settings, request, result) -> dict | None:
     """The storage change, or None when storage stays as it is. Reads and tests; writes nothing."""
     connect = database_mode.connect_only(settings)
@@ -417,7 +443,16 @@ def _storage_plan(settings, request, result) -> dict | None:
             if request.backup or request.empty:
                 raise SetupRefused(ALREADY_LOCAL)
             return None
-        raise NotImplementedError("going back to this machine")
+        if not (request.backup or request.empty):  # never an empty store on this machine unless the person said so
+            raise SetupRefused(BACK_NEEDS_CHOICE, url=database_mode.address(settings))
+        plan = {"fields": local_storage(settings), "target": None}
+        if request.backup:
+            target = Path(request.backup).expanduser().absolute()
+            if target.exists() or target.is_symlink():  # a person's earlier backup is never overwritten
+                raise SetupRefused(BACKUP_EXISTS, path=target)
+            _test_readable(settings, result)
+            plan["target"] = target
+        return plan
     fields, candidate = remote_storage(settings, request)
     if connect and all(getattr(settings, name) == value for name, value in fields.items()):
         return None
@@ -558,6 +593,11 @@ def _at(model: str, url: str) -> tuple[str, dict]:
     return (MODEL_AT, {"model": model, "url": url})
 
 
+def _engine_item(settings) -> tuple[str, dict]:
+    """The stored engine mode as a sentence; an engine_mode that cannot be used is refused (ValueError), not guessed."""
+    return (ENGINE_DOCKER if database_mode.engine_mode(settings) == "docker" else ENGINE_NATIVE, {})
+
+
 def _plan_lines(settings, request, plan, moves, result) -> None:
     changes, left = result["changes"], result["left_behind"]
     was_connect = database_mode.connect_only(settings)
@@ -573,6 +613,19 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             left.append((LEFT_LOCAL_STORE, {"path": settings.data_dir / "arcade"}))
             if engine.local_process_recorded(settings) or engine_docker.container_recorded(settings):
                 left.append((LEFT_ENGINE, {}))
+    if plan and request.profile == "local":
+        fields = plan["fields"]
+        url = database_mode.address(settings)
+        changes.append((CHANGE_STORAGE_LOCAL, {"before": url, "url": fields["arcade_url"],
+                                               "database": fields["arcade_database"]}))
+        how = (ENGINE_CHOSEN, {}) if settings.engine_mode == "" else _engine_item(settings)
+        changes.append((ENGINE_START, {"engine": how}))
+        if plan["target"]:
+            changes.append((BACKUP_PLAN, {"url": url, "path": plan["target"]}))
+        else:
+            data = settings.data_dir / "arcade" / "databases" / fields["arcade_database"]
+            changes.append((LOCAL_DATA_FOUND if data.is_dir() else LOCAL_DATA_NEW,
+                            {"database": fields["arcade_database"], "url": url}))
     if plan and was_connect:
         left.append((LEFT_REMOTE_STORE, {"url": database_mode.address(settings)}))
         if store_writer.inspect(settings).get("role") == "writer":
@@ -604,23 +657,66 @@ def _add_next(result, steps) -> None:
             result["next"].append((VERBATIM, {"text": step}))
 
 
+def _back_to_local(settings, plan, result, say, state) -> Settings:
+    """Back to the engine on this machine, in an order that cannot lose data: the backup is written and checked while
+    config.json is still as it was, then the settings switch, the engine starts, the backup is restored. The remote
+    store is only read."""
+    from .backup_reader import opened_backup
+    from .store import RESTORE_TYPES, Store
+    url, target = database_mode.address(settings), plan["target"]
+    if target:
+        say(render_one((BACKING_UP, {"url": url, "path": target})))
+        try:
+            store = Store.open_readonly(settings)  # a store that cannot write; the backup is `cairnmind backup`'s
+            try:
+                written = Path(store.backup(target))
+            finally:
+                store.client.close()
+        except (ArcadeError, ValueError, OSError) as exc:
+            raise SetupFailed(BACKUP_FAILED, url=url, error=str(exc)) from None
+        state["backup"] = written
+        try:
+            with opened_backup(written, Store._validated_backup, RESTORE_TYPES):  # what restore checks before it writes
+                pass
+        except (ValueError, OSError) as exc:
+            raise SetupFailed(BACKUP_CHECK_FAILED, path=written, error=str(exc)) from None
+        result["done"].append((BACKUP_WRITTEN, {"path": written}))
+    state["step"] = (STEP_STORAGE, {})
+    save_storage(settings.data_dir, plan["fields"])
+    local = Settings.load(settings.data_dir, create=True)  # generates the managed password a connect-only one lacks
+    state["step"] = (STEP_ENGINE, {})
+    chosen = engine_docker.choose_engine_mode(local)  # as `init` chooses; nothing is installed
+    if chosen:
+        say(chosen)
+    say(render_one((ENGINE_STARTING, {})))
+    engine.start_command(local)  # the stored mode; a missing image is downloaded as `engine start` does, saying so
+    state["engine"] = True
+    result["done"].append((ENGINE_STARTED, {"engine": _engine_item(local)}))
+    if target:
+        state["step"] = (STEP_RESTORE, {})
+        say(render_one((RESTORING, {"path": written})))
+        Store(local.data_dir, settings=local).restore(written)  # validation, writer check and safety backup included
+        result["done"].append((RESTORED, {"path": written, "backups": local.data_dir / "backups"}))
+    return local
+
+
 def _apply(settings, request, plan, moves, result, say, state) -> None:
-    if plan and request.profile == "local":
-        raise NotImplementedError("going back to this machine")
+    local = _back_to_local(settings, plan, result, say, state) if plan and request.profile == "local" else settings
     for move in moves:
         state["step"] = (STEP_MODEL, {"role": move["role"]})
-        report = asyncio.run(memory_models.configure_role(settings, move["role"], **move["kwargs"]))
+        report = asyncio.run(memory_models.configure_role(local, move["role"], **move["kwargs"]))
         _add_next(result, report["next"])
     if request.profile == "remote" and moves:
         state["step"] = (STEP_AGENT, {})
         said = knowledge_mode.turn_on(settings)
         if said:
             result["done"].append((VERBATIM, {"text": said}))
-    if plan:
+    if plan and request.profile != "local":
         state["step"] = (STEP_STORAGE, {})
         save_storage(settings.data_dir, plan["fields"])
     result["done"].append((SAVED, {"config": settings.data_dir / "config.json"}))
-    result["next"].append((NEXT_REMOTE, {}) if plan else (NEXT_LOCAL, {}))
+    result["next"].append((NEXT_REMOTE if plan and request.profile != "local" else
+                           NEXT_LOCAL_EMPTY if plan and not plan["target"] else NEXT_LOCAL, {}))
 
 
 def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) -> dict:
@@ -647,6 +743,8 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
     state: dict = {"step": None, "backup": None, "engine": False}
     try:
         _apply(settings, request, plan, moves, result, say, state)
+    except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
+        raise
     except BaseException as exc:  # Ctrl-C too: the configuration is never left half changed
         notes = [item for item in result["done"] if item[0] == USER_CREATED]
         if state["backup"]:
