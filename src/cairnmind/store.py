@@ -1994,6 +1994,10 @@ class Store:
         return len(ids)
 
     def forget_project(self, project_id):
+        from .confirmation import ConfirmationRefused
+        from .person_proof import FORGET_REFUSED, present
+        if not present():
+            raise ConfirmationRefused(FORGET_REFUSED)  # only the workspace's route deletes a project (#347)
         with self.transaction() as tx:
             self._require_project(tx, project_id)
             from .journal import Journal

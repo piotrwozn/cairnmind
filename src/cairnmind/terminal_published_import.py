@@ -8,6 +8,7 @@ import re
 from uuid import UUID
 
 from .terminal_notices import about
+from .terminal_person_act import refused
 
 FULL_PATH = "Enter the full path of the folder."
 TAKE_ENTRY = "Enter record IDs or file names such as fact/<ID>.md, at most 1,000."
@@ -22,6 +23,8 @@ ARCHIVE_HEADING = ("These records were confirmed or disputed on this computer, a
                    "text or status in their place ({count}):")
 COUNTS = ("New: {inserted} · moved on: {advanced} · taken from the published side: {taken} · unchanged: {unchanged} "
           "· plans: {plans}")
+NOT_IMPORTED = "Team memory was not imported."
+IMPORT_UNCLEAR = "The service did not confirm the import, so team memory may have been imported."
 
 MESSAGES = {
     "Team memory": "Pamięć zespołu",
@@ -60,6 +63,8 @@ MESSAGES = {
     "computer. Nothing imported is verified here.":
         "Zaimportowano pamięć zespołu: zapisano rekordów: {written}, w tym {replaced} w miejsce werdyktu wydanego na "
         "tym komputerze. Nic z zaimportowanego nie jest tu zweryfikowane.",
+    NOT_IMPORTED: "Pamięć zespołu nie została zaimportowana.",
+    IMPORT_UNCLEAR: "Usługa nie potwierdziła importu, więc pamięć zespołu mogła zostać zaimportowana.",
 }
 
 
@@ -207,8 +212,15 @@ async def import_published(app) -> None:
     if choice == "commit":
         body = {**body, "revision": result["commit"]}  # the commit the check read, not the name that may have moved
     listed = list((result.get("replaces_confirmed_here") or {}).get("records") or [])
-    done = await app.request("POST", route, json={**body, "dry_run": False, "replace_confirmed": replaces_here(result),
-                                                   "expected_replaced": listed})
+    from .terminal_i18n_messages import broker_error_text
+    try:
+        done = await app.request("POST", route, json={**body, "dry_run": False,
+                                                       "replace_confirmed": replaces_here(result),
+                                                       "expected_replaced": listed})
+    except (OSError, ValueError, RuntimeError) as exc:  # told for the project it belongs to, also after a switch
+        app.notice_for(about(project_id), app.t(NOT_IMPORTED if refused(exc) else IMPORT_UNCLEAR) + " "
+                       + broker_error_text(exc, app.t), "error")
+        return
     if scope == app._scope_version:
         await app.load_memory()
     written = sum(count(done.get(key)) for key in ("inserted", "advanced", "taken"))

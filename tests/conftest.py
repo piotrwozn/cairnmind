@@ -77,7 +77,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
     "test_sessions_dialog", "test_command_menu_popup", "test_mcp_unknown_argument", "test_stop_broker_line",
     "test_ended_pane_text",
-    "test_short_answers", "test_person_acts_consent",
+    "test_short_answers", "test_person_acts_consent", "test_project_forget_workspace",
     "test_server_mode",
 })
 
@@ -112,6 +112,8 @@ LEFT_OUT_ON_A_SERVER = {
         "its evaluation runs create databases of their own name, which a connect-only installation never creates",
     "test_memory_evaluation":
         "its evaluation runs create databases of their own name, which a connect-only installation never creates",
+    "test_injection_evaluation":
+        "its evaluation runs create and drop databases of their own name, which a connect-only installation never does",
     "test_arcade::test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for":
         "expects the unavailable message of a managed engine, which a connect-only installation words otherwise",
     "test_integrations::test_doctor_reports_arcadedb_without_lifecycle_work_or_credentials":

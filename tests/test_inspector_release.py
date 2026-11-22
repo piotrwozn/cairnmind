@@ -9,10 +9,11 @@ from textual.widgets import Button, Select, Static, TextArea
 from cairnmind import memory_published_release, terminal_release
 from cairnmind.memory_published_secrets import MAX_RELEASE_REASON
 from cairnmind.person_proof import PROOF_MISSING
+from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_i18n_messages import BROKER_MESSAGES
 from cairnmind.terminal_inspector import InspectorApp
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 from test_terminal_panels import FakeBroker, setup, settle
 
 RELEASE = "/api/inspector/records/record-a/release"
@@ -29,7 +30,7 @@ class ReleaseBroker(FakeBroker):
         if path == RELEASE:
             self.calls.append((method, path, params or {}, json))
             if self.refuse:
-                raise ValueError(self.refuse)
+                raise self.refuse
             return {"record_id": "record-a", "released": ["fact/record-a.md: aws access key in text"],
                     "reason": json["reason"]}
         return super().request(method, path, params=params, json=json, timeout=timeout)
@@ -69,6 +70,7 @@ async def test_the_inspector_releases_a_record(tmp_path, monkeypatch, language):
         assert tr("Lets this record's current hits of the secrets scan be published. Your reason is published with "
                   "the record. A registered secret is never released.", language) in note
         app.screen.query_one("#field-reason", TextArea).text = "The documented example key."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         assert posts(broker) == []  # the form sent nothing (#332)
@@ -144,10 +146,11 @@ async def test_replace_is_reachable_from_the_proposed_view(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_a_refused_release_says_why_and_is_not_sent_again(tmp_path, monkeypatch):
     app, broker, _ = release_app(tmp_path, monkeypatch, "en")
-    broker.refuse = "Broker 403: " + PROOF_MISSING
+    broker.refuse = BrokerError(403, PROOF_MISSING)
     async with app.run_test(size=(95, 42)) as pilot:
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = "Example."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         await pilot.click("#confirm-yes")
@@ -164,6 +167,7 @@ async def test_a_reason_the_form_refuses_is_not_sent(tmp_path, monkeypatch, reas
     async with app.run_test(size=(95, 42)) as pilot:
         await open_release_form(app, pilot)
         app.screen.query_one("#field-reason", TextArea).text = reason
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await pilot.pause()
         await pilot.pause()

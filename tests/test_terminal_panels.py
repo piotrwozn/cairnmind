@@ -9,11 +9,12 @@ import pytest
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from cairnmind.config import Settings
+from cairnmind.terminal_client import BrokerError
 from cairnmind.terminal_inspector import InspectorApp
 from cairnmind.terminal_panels import SidebarApp
 from cairnmind.terminal_safe import plain, safe_text
 from cairnmind.terminal_ui import wide_dialog
-from consent_steps import consent_drawn
+from consent_steps import consent_drawn, form_ready
 
 
 class FakeWorkspace:
@@ -32,7 +33,10 @@ class FakeWorkspace:
         return self.read()
 
     def select_project(self, project, worktree=None, *, intent="inspect", requested_slot_ids=None):
-        self.selections.append((project["id"], worktree, intent))
+        self.selections.append((project["id"] if project else None, worktree, intent))
+        if project is None:  # as WorkspaceState: no project, nothing selected
+            return self.update({"project_id": None, "project_name": None, "worktree": None, "selected_entity": None,
+                "intent": intent, "requested_slot_ids": [], "slots": []})
         return self.update({"project_id": project["id"], "project_name": project["name"],
             "worktree": worktree or project["root"], "selected_entity": None, "intent": intent,
             "requested_slot_ids": requested_slot_ids or []})
@@ -76,7 +80,7 @@ class FakeBroker:
         if path == "/api/inspector/records/record-a/review":
             if self.review_conflict:
                 self.record["version"] += 1
-                raise ValueError("Broker 409: record version conflict")
+                raise BrokerError(409, "record version conflict")
             self.record.update(version=self.record["version"] + 1, status="confirmed" if json["action"] == "confirm" else "disputed")
             return {"record": deepcopy(self.record)}
         if path == "/api/inspector/plans/plan-a":
@@ -156,11 +160,13 @@ async def test_manual_clone_preflight_preserves_snapshot_identity_and_reports_co
         await pilot.pause()
         app.screen.query_one("#field-name", Input).value = "Clone"
         app.screen.query_one("#field-root", Input).value = "/projects/clone"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
         assert app.screen.query_one("#field-path", Input).value == broker.inspect_memory
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await pilot.pause(.2)
         # The import failure is returned to the still-open parent form.
@@ -202,6 +208,7 @@ async def test_managed_record_review_sends_both_versions_without_changing_task_p
         await pilot.click("#entity-confirm")
         await pilot.pause()
         app.screen.query_one("#field-reason", TextArea).text = "Read the source."
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         assert not any(method == "POST" for method, _, _, _ in broker.calls)
@@ -226,6 +233,7 @@ async def test_review_conflict_refreshes_without_resubmitting_intent(tmp_path, m
         await settle(app, pilot)
         await pilot.click("#entity-confirm")
         await pilot.pause()
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         await pilot.click("#confirm-yes")
@@ -247,6 +255,7 @@ async def test_import_requires_dry_run_then_separate_apply_and_never_starts_clie
         await pilot.pause()
         app.screen.query_one("#field-path", Input).value = "/projects/a/.memory/devbrain"
         app.screen.query_one("#field-root", Input).value = "/projects/a"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await settle(app, pilot)
         assert not app.query_one("#memory-apply", Button).disabled
@@ -314,6 +323,7 @@ async def test_review_cancels_when_project_changes_while_modal_is_open(tmp_path,
         await pilot.pause()
         workspace.update({"project_id": "project-b", "project_name": "B", "worktree": "/projects/b"})
         await app._poll_workspace()
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await consent_drawn(app, pilot)
         await pilot.click("#confirm-yes")  # approved, and still nothing is saved: the project changed
@@ -333,6 +343,7 @@ async def test_native_profile_model_override_is_explicit_and_does_not_start_clie
         await pilot.press("enter")
         await pilot.pause()
         app.screen.query_one("#field-model", Input).value = "native-model-fixture"
+        await form_ready(app, pilot)
         await pilot.click("#form-submit")
         await settle(app, pilot)
         writes = [body for method, path, _, body in broker.calls if method == "PUT" and path == "/api/profiles"]
