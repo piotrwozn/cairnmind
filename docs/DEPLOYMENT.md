@@ -276,6 +276,10 @@ A logical backup of that store took 119 requests and 6 s. Its restore took 297,4
 
 The first row includes the safety copy and the deletion of the rows it replaces inside the restore's one transaction. A large store can now be restored from the laptop over the network; for your network, add the round-trip time times about 1,100 requests for a store of this size.
 
+### The engine tests against this server
+
+The engine tests of Cairnmind (the tests marked `arcade`) can run against a server instead of an engine they start themselves, through connect-only mode: set `CAIRNMIND_TEST_ARCADE_SERVER_URL` to its address (plain http on this machine) and `CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE` to a private file (mode 0600) holding its root password, then run `uv run pytest -m arcade -rs`. The tests install, start and stop no engine; each creates its databases as root and drops them. The job has not yet run against the image, so whether every test passes there, and how long it takes, is not known. The non-required `server-tests` CI job does this on pushes to main and by hand, against the published image at the digest pinned in `src/cairnmind/config.py`, in production mode. Tests that cannot run against a server (they start an engine, read its files, or run a command a connect-only installation refuses) are skipped, each with its reason; the table is `LEFT_OUT_ON_A_SERVER` in `tests/conftest.py`, and the job summary prints it.
+
 ## Backup and restore
 
 There are two kinds of backup. Take the logical one regularly; add a volume snapshot when you want the whole server as it was.
