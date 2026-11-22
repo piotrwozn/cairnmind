@@ -11,7 +11,6 @@ import math
 import re
 import time
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
@@ -98,9 +97,6 @@ def validate_embeddings(embeddings: Any, count: int) -> list[list[float]]:
     return embeddings
 
 
-LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-
-
 class Ollama:
     ENDPOINTS = frozenset({"/api/chat", "/api/embed", "/api/tags"})
     UNKNOWN_ENDPOINT = "/api/unknown"
@@ -117,7 +113,8 @@ class Ollama:
             base_url = local_server(settings)
         self.base_url = base_url
         self.num_ctx = settings.num_ctx if num_ctx is None else num_ctx
-        self.label = "Local Ollama" if urlparse(base_url).hostname in LOOPBACK_HOSTS else "Ollama"
+        from .memory_models import is_loopback
+        self.label = "Local Ollama" if is_loopback(base_url) else "Ollama"
         self._credential = credential
         self._client = client
         self._model_cache: tuple[float, dict] | None = None

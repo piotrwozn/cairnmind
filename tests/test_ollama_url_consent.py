@@ -136,10 +136,14 @@ def test_an_https_address_of_this_computer_works_the_same_everywhere(tmp_path, m
     (data / "config.json").write_text(json.dumps({"port": 1, "knowledge_agent": "enabled", "ollama_url": url}))
     from test_knowledge_mode import FakeStore
     monkeypatch.setattr(cli, "store_for", lambda settings, **kw: FakeStore())
-    for command in (["models", "list"], ["models", "pull"]):
-        out = CliRunner().invoke(cli.app, ["--data-dir", str(data), *command])
-        assert "loopback HTTP" not in out.output + str(out.exception) and "--allow-remote" not in out.output
+    out = CliRunner().invoke(cli.app, ["--data-dir", str(data), "models", "list"])  # models pull never used the client
+    assert out.exit_code == 0, out.output + str(out.exception)
     assert {host for host, _ in seen} <= {"localhost", "127.0.0.1"} and seen
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.2:11434", "http://LOCALHOST:11434", "http://[::1]:11434"])
+def test_every_loopback_form_the_rule_accepts_is_labelled_local(tmp_path, url):
+    assert memory_models.from_settings(Settings(data_dir=tmp_path, ollama_url=url)).label == "Local Ollama"
 
 
 def test_the_installer_summary_prints_the_refusal_once_and_not_a_server_that_does_not_answer(tmp_path):
