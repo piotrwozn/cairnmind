@@ -329,7 +329,7 @@ are exact:
 | The embedding check, every passage without a vector | 32,706 requests; 53 s on `127.0.0.1`; about 12 minutes with 20 ms added (computed from 200 passages measured: 2,201 requests, 49 s), longer than the minute between two checks | 9 requests; 0.1 s on `127.0.0.1`; 10 requests, 0.27 s with 20 ms added |
 | One look for changes, 40 followed transcripts | 172 requests; 4.2 s with 20 ms added | 12 requests; 0.39 s with 20 ms added |
 | Asking for a job while none waits | 4 requests | 4 requests |
-| An idle minute in all, any store size | grows with passages without a vector and with transcripts | about 214 requests (computed from the rounds above: 6 looks of 12, 6 memory checks of 2, 30 asks for a job of 4, one embedding check of 10), about 5.5 s of waiting with 20 ms added |
+| An idle minute in all, at this repository's size | grows with passages without a vector (one request per 500 more, in the embedding check) and with transcripts | about 214 requests (computed from the rounds above: 6 looks of 12, 6 memory checks of 2, 30 asks for a job of 4, one embedding check of 10), about 5.5 s of waiting with 20 ms added |
 | `cairnmind index` with nothing changed, in a service that just started | 14,810 requests; 34 s on `127.0.0.1` | 3,485 requests; 14 s on `127.0.0.1`; 89 s with 20 ms added |
 
 While the check ran, no job of the queue ran. Now it writes nothing when every passage already has its job
@@ -345,13 +345,14 @@ this repository (555 files, 2,973 passages, 82,194 nodes, 102,345 edges):
 
 | Work, on a real network | Before #363 |
 | --- | --- |
-| First indexing (`cairnmind project add`) | 80.4 s |
-| `cairnmind index` with nothing changed, which starts the service | 117.8 s |
+| First indexing (`cairnmind project add`) | 80.4 s; about 9,500 requests in 184 transactions |
+| `cairnmind index` with nothing changed, which starts the service | 117.8 s; about 15,700 requests in 3,560 transactions |
 | `cairnmind backup` | 21.3 s, for a file of 26.2 MB |
 | `cairnmind status` while the service ran with 5,820 jobs waiting (no models) | 0.36 to 0.49 s |
-| Requests of each of these, counted by the server | not counted yet [gap: to be filled from the other machine's counters] |
+| An idle service, 5,820 jobs waiting, no models | about 125 requests a minute (the embedding repair did not run there: that client had no models) |
+| Requests of `backup` and `status` | not counted [gap: the other machine's counters do not hold them] |
 
-The figures after #363 over a real network do not exist yet: no machine has run this change over a connection.
+The request counts above were counted by the server, with the polling of the other client taken off, on a client with its knowledge agent switched off. The figures after #363 over a real network do not exist yet: no machine has run this change over a connection.
 The "Now" column above is the test engine on one machine, and its 20 ms relay is the nearest thing to a
 network that this change was measured on; it is a relay on the same machine, not a network.
 
