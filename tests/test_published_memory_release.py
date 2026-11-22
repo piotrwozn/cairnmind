@@ -99,14 +99,17 @@ def test_a_released_record_is_published_with_its_reason_checked_in_ci_and_carrie
     assert published_bytes(bo["root"]) == before
 
 
-def test_the_release_route_and_command_refuse_a_coding_session(ada, monkeypatch):
+def test_the_release_route_and_command_refuse_a_coding_session(ada, monkeypatch, workspace_person):
     store, pid = ada["store"], ada["project"]
     record = reviewed(store, pid, "fact", f"Example {SHAPES['stripe_key']} from the Stripe guide.", "stripe")
     headers = {"Authorization": f"Bearer {store.settings.token}"}
     with TestClient(create_app(store.settings, start_worker=False)) as client:
         body = {"project": "team", "reason": "The Stripe guide's example."}
         assert client.post(f"/inspector/records/{record['id']}/release", json=body).status_code == 401
-        answer = client.post(f"/inspector/records/{record['id']}/release", headers=headers, json=body)
+        # The token alone is not a person (#306); the open workspace's key is.
+        assert client.post(f"/inspector/records/{record['id']}/release", headers=headers, json=body).status_code == 403
+        answer = client.post(f"/inspector/records/{record['id']}/release", headers={**headers, **workspace_person},
+                             json=body)
         assert answer.status_code == 200 and answer.json()["released"] == [f"fact/{record['id']}.md: stripe key in text"]
     monkeypatch.setenv("CAIRNMIND_SESSION_ID", "session-1")
     refused = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "memory", "release", "team", record["id"],

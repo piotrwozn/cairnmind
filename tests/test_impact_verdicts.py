@@ -228,12 +228,12 @@ def test_the_command_records_a_verdict_and_refuses_inside_a_coding_session(chang
     assert missing.output.startswith("Error: ") and "Usage:" not in missing.output
 
 
-def test_the_inspector_route_takes_a_person_s_verdict_and_no_session(changed):
+def test_the_inspector_route_takes_a_person_s_verdict_with_the_key_and_no_session(changed, workspace_person):
     store, pid, root, records = changed
     service = FastAPI()
     attach_inspector_routes(service, store, store.settings)
     client = TestClient(service)
-    headers = {"Authorization": "Bearer " + store.settings.token}
+    headers = {"Authorization": "Bearer " + store.settings.token, **workspace_person}
     shown = entry(build_impact(store, pid, "HEAD"), records["rule"])
     body = {"project": pid, "worktree": str(root), "since": "HEAD", "record_id": shown["id"],
             "fingerprint": shown["fingerprint"], "verdict": "needs_update", "note": "Mention renewal."}
@@ -242,6 +242,9 @@ def test_the_inspector_route_takes_a_person_s_verdict_and_no_session(changed):
         return client.post("/inspector/impact/verdict", json=payload, headers=headers if auth else {})
 
     assert post(body, auth=False).status_code == 401
+    # The token alone is not a person (#306): refused before the body is read.
+    only_token = {"Authorization": headers["Authorization"]}
+    assert client.post("/inspector/impact/verdict", json=body, headers=only_token).status_code == 403
     assert post({**body, "session_id": "s"}).status_code == 422
     assert post({**body, "note": None}).status_code == 400
     assert post({**body, "fingerprint": "0" * 64}).status_code == 409

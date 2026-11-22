@@ -6,7 +6,7 @@ the saved profiles, and the credential variables that the runtime strips from ch
 come from the project's `.cairnmind/publication.toml`, which CI reads from the same checkout.
 
 A release is a person's act: after reading the record, they let its current hits through with a
-reason. It is a `release://` source with origin `local_user_release`, published in the record's file
+reason, in the inspector, with the open workspace's key (person_proof, #306). It is a `release://` source with origin `local_user_release`, published in the record's file
 beside its sources, cited by no revision, and honoured only for the exact values it names.
 """
 from __future__ import annotations
@@ -142,8 +142,10 @@ def release_sources(tx, project_id):
 
 def release(store, project_id, record_id, reason, worktree=None):
     """Release the current hits of one published record, with a reason that is published with it."""
+    from .confirmation import ConfirmationRefused
     from .memory_acts import act_context
     from .memory_published import Publisher
+    from .person_proof import PROOF_MISSING, present
     if not canonical_uuid(record_id):
         raise ValueError("RECORD must be a record ID")
     if not isinstance(reason, str) or not reason.strip() or len(reason) > MAX_RELEASE_REASON or not clean_text(reason):
@@ -171,6 +173,8 @@ def release(store, project_id, record_id, reason, worktree=None):
     problem = release_problem(passage, record_id)
     if problem:
         raise ValueError(f"The release cannot be written: it {problem}")
+    if not present():
+        raise ConfirmationRefused(PROOF_MISSING)  # a person's act needs the workspace's key (#306)
     source = store.snapshot(project_id, "release://" + str(uuid4()), passage, "manual",
                             {"origin": RELEASE_ORIGIN, "role": "user", "record_id": record_id})
     return {"record_id": record_id, "path": path, "release_source_id": source["id"],

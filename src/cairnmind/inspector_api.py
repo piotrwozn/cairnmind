@@ -247,7 +247,7 @@ def create_inspector_router(store, settings):
         # Read-only, the parameters of `cairnmind impact`, and its --json answer.
         return await impact_call(impact_verdicts.listing, project, worktree, since, pending)
 
-    @router.post("/inspector/impact/verdict")
+    @router.post("/inspector/impact/verdict", dependencies=person)
     async def impact_verdict(body: ImpactVerdictBody):
         return await impact_call(impact_verdicts.resolve, body.project, body.worktree, body.since, body.record_id,
                                  body.fingerprint, body.verdict, body.note)
@@ -265,9 +265,10 @@ def create_inspector_router(store, settings):
         return await call(confirm, inspector, body.project, plan_id, body.expected_plan_version, reason=body.reason,
                           worktree=body.worktree)
 
-    @router.post("/inspector/records/{record_id}/release")
+    @router.post("/inspector/records/{record_id}/release", dependencies=person)
     async def release_record(record_id: str, body: ReleaseBody):
-        # A person lets one record's false alarms of the secrets gate through (#171), with a published reason.
+        # A person lets one record's false alarms of the secrets gate through (#171), with a published reason;
+        # it needs the open workspace's key as a review does (#306).
         from .memory_published_release import release
         project_id = (await call(inspector._project, body.project))["id"]
         return await call(release, store, project_id, record_id, body.reason, body.worktree)
