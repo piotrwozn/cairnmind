@@ -903,11 +903,14 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["projects"] = None  # how many are registered; None when the store cannot be read
     result["restore_unfinished"] = None  # the mark of a restore that did not finish (#362); never None when unknown
     from cairnmind.restore_staged import RestoreUnfinished
+    result["project_folders"] = None  # the folders this machine cannot read, by project (#371); None likewise
     try:
         # What a person accepted as technical, per project, and how to withdraw it (#210).
         store = store_for_read(ctx.obj)
         result["accepted_record_kinds"] = doctor_view(store)
         result["projects"] = len(store.list_projects())
+        from cairnmind.project_folders import unavailable
+        result["project_folders"] = unavailable(store)
     except RestoreUnfinished as exc:
         # A required thing is missing: the store holds part of a backup. The sentence names the way out.
         result["restore_unfinished"] = exc.mark or {"unreadable": True}
@@ -1068,6 +1071,7 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         shown = safe_text(str(root))
         existed = project["id"] in known
         lines = (removal.restored_lines(project, restored, result.get("files", 0)) if restored else
+                 [folder["message"] for folder in result["unavailable"]] if result.get("unavailable") else
                  [(first_start.PROJECT_EXISTED if existed else first_start.PROJECT_ADDED).format(
                      project=quoted, root=shown, files=result.get("files", 0))])
         if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
@@ -1082,6 +1086,8 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg, 
         return lines
     _human_or_json({"project": project, "indexed": result, "history": discovery, "jobs": jobs, **details},
                    as_json, sentences)
+    if result.get("unavailable"):  # a folder of another machine was not indexed: said above, and the exit code says so
+        raise typer.Exit(1)
 
 
 def _jobs_after_add(settings: Settings, store, project_id: str, quoted: str) -> tuple[dict, str | None]:
@@ -1179,15 +1185,21 @@ def project_root(ctx: typer.Context, project: ProjectArg, path: FolderArg):
     root = path.expanduser().resolve(strict=True)
     if not root.is_dir():
         raise typer.BadParameter("The path must be a folder, not a file")
-    store.add_project_root(pid, root)
-    output({"project": pid, "root": str(root)})
+    moved = store.add_project_root(pid, root)  # a folder another machine had is now this machine's (#371)
+    output({"project": pid, "root": str(root), **moved})
 
 
 @app.command()
 @initialized
 def index(ctx: typer.Context, project: ProjectArg):
     """Index the project's files again through the service, which it starts when needed."""
-    output(request(ctx.obj, "POST", "/ingest", json={"project": project}))
+    result = request(ctx.obj, "POST", "/ingest", json={"project": project})
+    output(result)
+    # A folder that is not on this machine is not an index that worked: named, and the exit code says so (#371).
+    if isinstance(result, dict) and result.get("unavailable"):
+        for folder in result["unavailable"]:
+            typer.echo(f"Cairnmind: {folder['message']}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command("import")
@@ -2318,12 +2330,18 @@ _register_record_kinds(app, initialized)
 
 @app.command()
 @initialized
-def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False):
+def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
+            recorder: Annotated[bool, typer.Option("--recorder", help="Turn the Claude Code cairnmind-recorder "
+                                                   "subagent on again for the project and write it.")] = False,
+            no_recorder: Annotated[bool, typer.Option("--no-recorder", help="Remove the cairnmind-recorder subagent "
+                                                      "file Cairnmind wrote and keep it off for the project.")] = False):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
+    if recorder and no_recorder:
+        raise typer.BadParameter("Choose one of --recorder and --no-recorder.")
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
-    result = install_integrations(ctx.obj, selected)
+    result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None)
     import shlex
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text
@@ -2625,7 +2643,13 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         notice = outcome.pop(key, None)
         if notice:
             typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
-    output({"restored": True, **outcome})
+    # A restored folder keeps the machine that registered it: on another machine each is named, with its command.
+    from cairnmind import project_folders
+    away = project_folders.unavailable(store_for(ctx.obj, notice=False))
+    for item in away:
+        if item["state"] == "elsewhere":
+            typer.echo(f"Cairnmind: {item['message']}", err=True)
+    output({"restored": True, **outcome, **({"unavailable_folders": away} if away else {})})
 
 
 @app.command()
