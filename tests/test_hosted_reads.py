@@ -176,7 +176,8 @@ class Writing(Reading):
     async def execute(self, name, arguments):
         result = await super().execute(name, arguments)
         if name in ("remember", "checkpoint"):
-            return {"id": "r-chat", "kind": "decision", "key": "r-chat", "status": "proposed", "version": 3,
+            return {"id": "r-chat", "kind": "decision", "key": "postgres-chosen-in-chat-with-anna",
+                    "active_key": '["p", "decision", "postgres-chosen-in-chat-with-anna"]', "status": "proposed", "version": 3,
                     "content": "Postgres, said in chat.", "metadata": {"note": "private"}, "source_ids": ["doc"]}
         return result
 
@@ -194,8 +195,43 @@ async def test_a_hosted_run_is_not_handed_a_held_records_text_by_updating_it(set
     results, provider, _ = await read(setup, connection, memory, *update_a_held_record(memory), client=client)
     written = results[-1]
     assert written["id"] == "r-chat" and written["version"] == 3 and written["status"] == "proposed"
-    assert "content" not in written and "metadata" not in written
-    assert "said in chat" not in json.dumps(provider.requests) and "private" not in json.dumps(provider.requests)
+    assert not {"content", "metadata", "key", "active_key"} & set(written)
+    sent = json.dumps(provider.requests)
+    assert "said in chat" not in sent and "private" not in sent and "anna" not in sent
+
+
+class Compacting(Reading):
+    """A checkpoint result that, as store.checkpoint does, holds metadata merged in from an earlier checkpoint."""
+
+    async def execute(self, name, arguments):
+        result = await super().execute(name, arguments)
+        if name == "checkpoint":
+            return {"id": "r-cp", "kind": "checkpoint", "key": "postgres-chosen-in-chat-with-anna", "status": "proposed",
+                    "version": 2, "metadata": {"decisions": "we chose Postgres, said in chat", "goal": "Finish"}}
+        return result
+
+
+COMPACT = {"state": {"goal": "Finish", "results": [], "next_step": "Review"}}
+
+
+def compact_calls(memory):
+    return (call("resume_context"), call("ack_resume", memory.ack_arguments()), call("compact_context", COMPACT))
+
+
+@pytest.mark.parametrize("connection, client", [(HOSTED, "api"), ({}, "copilot")])
+async def test_a_hosted_run_that_compacts_its_context_sends_no_checkpoint_metadata_or_key(setup, connection, client):
+    memory = Compacting(SOURCES)
+    results, provider, agent = await read(setup, connection, memory, *compact_calls(memory), client=client)
+    sent = json.dumps(provider.requests) + json.dumps(agent.journal.events())
+    assert "said in chat" not in sent and "anna" not in sent
+    saved = next(row for row in results if "context_reset_pending" in row)
+    assert saved["checkpoint"]["id"] == "r-cp" and "metadata" not in saved["checkpoint"]
+
+
+async def test_a_local_run_that_compacts_keeps_the_whole_checkpoint_result(setup):
+    memory = Compacting(SOURCES)
+    results, _, _ = await read(setup, LOCAL, memory, *compact_calls(memory))
+    assert next(row for row in results if "context_reset_pending" in row)["checkpoint"]["metadata"]["goal"] == "Finish"
 
 
 async def test_a_local_run_is_handed_the_whole_written_record(setup):

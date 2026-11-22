@@ -603,6 +603,8 @@ class AgentEngine:
         state = {**arguments["state"], "worktree": self.run["worktree"],
                  "origin": "agent_context_compaction"}
         checkpoint = await self.memory.execute("checkpoint", {"state": state})
+        if self._held:  # the result carries metadata merged in from earlier checkpoints of other sessions
+            checkpoint = coding_written(checkpoint)
         self._compaction = {"state": state, "checkpoint": checkpoint,
                             "archive": archive, "current_request": self._last_user}
         self._acknowledged = False

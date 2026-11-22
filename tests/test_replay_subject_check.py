@@ -66,6 +66,14 @@ def test_the_replay_counts_only_a_quote_the_report_did_not_cut_as_quoted(tmp_pat
     assert code == 1 and "right answer withheld: tail: Zookeeper" in out
 
 
+def test_the_replay_never_reads_an_answer_the_report_may_have_cut_as_none_withheld(tmp_path):
+    # The name is after character 600, where case_result cuts the answer: the replay cannot see it.
+    answer = ("the service listens on port 8765 as configured " * 13)[:600]
+    repo, report = _repo(tmp_path, [_row("long", "On which port does the service listen?", answer, True)])
+    code, out = _replay("--repo", str(repo), "--commit", "HEAD", str(report))
+    assert code == 2 and "long: the report may have cut the answer at 600 characters" in out
+
+
 def test_the_replay_exits_zero_when_no_right_answer_is_withheld_and_2_when_it_cannot_read_what_it_needs(tmp_path):
     repo, report = _repo(tmp_path, [_row("plain", "On which port does the service listen by default?", "8765", True)])
     assert _replay("--repo", str(repo), str(report))[0] == 0

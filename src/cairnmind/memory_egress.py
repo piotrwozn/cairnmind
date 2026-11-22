@@ -127,9 +127,10 @@ def coding_read(name: str, result, held: frozenset, session_id: str) -> dict:
 
 
 def coding_written(result) -> dict:
-    """What a hosted run is given back of a remember or checkpoint result: the record without its content and
-    metadata. An update that sends no content keeps the old version's, which may be of a held class."""
-    return {key: value for key, value in result.items() if key not in ("content", "metadata")} \
+    """What a hosted run is given back of a remember or checkpoint result: the record without its content,
+    metadata and key (a key is often text written from a conversation, and coding_read hides it for a held
+    record too). An update that sends no content keeps the old version's, which may be of a held class."""
+    return {key: value for key, value in result.items() if key not in ("content", "metadata", "key", "active_key")} \
         if isinstance(result, dict) else {}
 
 
