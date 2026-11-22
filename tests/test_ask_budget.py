@@ -105,7 +105,8 @@ async def test_no_second_look_starts_with_less_time_left_than_the_first_pass_too
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], QUESTION)
     assert result["status"] == "partial" and result["diagnostics"]["code"] == "missing_evidence"
     assert "second_look" not in result["diagnostics"] and len(model.calls) == 2
-    # simulated: 0.7 s + 0.7 s of a 2.0 s budget leave 0.6 s, less than the 0.7 s the last call took
+    # simulated: 0.7 s + 0.7 s of a 2.0 s budget leave 0.6 s, less than the 1.4 s
+    # the first pass took from its last discovery call (the answer and its repair)
     assert result["diagnostics"]["budget"]["elapsed_seconds"] == pytest.approx(1.4), f"clock at {clock.now} s"
 
 
@@ -134,5 +135,4 @@ async def test_slow_tool_steps_of_the_first_pass_do_not_hold_back_a_second_look(
     result = await KnowledgeAgent(store, settings, model).ask(project["id"], QUESTION)
     # simulated: search 1.1 s, answer 0.1 s, repair 0.1 s of a 2.0 s budget leave 0.7 s; the second look takes 0.1 s
     assert result["status"] == "complete", f"clock at {clock.now} s of 2.0: " + json.dumps(result["diagnostics"])
-    assert result["diagnostics"]["second_look"] == "answered" and "_last_call_at" not in result["diagnostics"]
     assert result["diagnostics"]["second_look"] == "answered" and "_last_call_at" not in result["diagnostics"]
