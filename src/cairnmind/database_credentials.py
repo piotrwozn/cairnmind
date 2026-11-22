@@ -340,16 +340,45 @@ def admin_password(path: str) -> str:
     return read_private_file(path, "--admin-password-file")
 
 
-def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[str, Any]:
-    """Create the database and a user with rights on it only, signing in once as root (cairnmind db create-user).
+def plan_user(settings, admin_secret: str) -> dict[str, Any]:
+    """What ``create_user`` would meet, found without creating anything (the dry run of ``setup remote-db``).
 
-    The user is ``arcade_user`` and the password the one resolved for it (environment or file); both
-    must already be configured, so that the password never passes through this command's arguments.
+    Signs in as root once (a refusal is ArcadeError with its status) to read the version and whether the
+    database exists, then once as the user. ArcadeDB cannot list users: it answers 401 both for a user that does
+    not exist and for a wrong password, and 403 for a user it accepts that has no rights on the database (measured
+    on 26.11.1). ``sign_in`` is None when the user signs in, else the status of the refusal.
     """
-    from contextlib import suppress
     from dataclasses import replace
     from .arcade import ArcadeClient, ArcadeError
-    import json
+    from .database_mode import server_version, version_problem
+    _new_user(settings)  # what --yes refuses before it signs in, the dry run refuses too
+    admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
+    try:
+        info = admin.server_info()
+        refused = version_problem(settings, info)
+        if refused:
+            raise ArcadeError(refused)
+        exists = admin.database_exists()
+    except ArcadeError as exc:
+        raise ArcadeError(str(exc).replace(admin_secret, "[redacted]"), status_code=exc.status_code) from None
+    finally:
+        admin.close()
+    user = ArcadeClient(settings)
+    try:
+        user.query("SELECT 1 AS ok")
+        sign_in = None
+    except ArcadeError as exc:
+        # 404 with no database is the answer of a user that has rights on a database that is not there yet
+        if exc.status_code not in (401, 403) and not (exc.status_code == 404 and not exists):
+            raise  # no answer about the user (a timeout, invalid JSON): not "the user signs in"
+        sign_in = exc.status_code
+    finally:
+        user.close()
+    return {"version": server_version(info), "database_exists": exists, "sign_in": sign_in}
+
+
+def _new_user(settings) -> tuple[str, str]:
+    """The name and password ``create_user`` would use, or ValueError: what it refuses before it signs in as root."""
     name, secret = settings.arcade_user, settings.arcade_password
     if name == "root" or not USER_NAME.fullmatch(name or ""):
         raise ValueError("Set arcade_user to the new user's name first (letters, digits, _ and -; not root).")
@@ -360,6 +389,20 @@ def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[st
                                           + PASSWORD_HELP + "."))
     if not valid_password(secret):
         raise ValueError("The new user's password must be one line of printable characters without spaces.")
+    return name, secret
+
+
+def create_user(settings, admin_secret: str, *, group: str = "admin") -> dict[str, Any]:
+    """Create the database and a user with rights on it only, signing in once as root (cairnmind db create-user).
+
+    The user is ``arcade_user`` and the password the one resolved for it (environment or file); both
+    must already be configured, so that the password never passes through this command's arguments.
+    """
+    from contextlib import suppress
+    from dataclasses import replace
+    from .arcade import ArcadeClient, ArcadeError
+    import json
+    name, secret = _new_user(settings)
     admin = ArcadeClient(replace(settings, arcade_user="root", arcade_password=admin_secret), administrator=True)
     payload = {"name": name, "password": secret, "databases": {settings.arcade_database: [group]}}
     created = database_created = False
