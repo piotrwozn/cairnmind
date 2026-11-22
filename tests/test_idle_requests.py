@@ -4,11 +4,15 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
 from cairnmind import embed_jobs, ingest
 from cairnmind.service import schedule_embeddings
 from cairnmind.store import Store
+from cairnmind.store_writer import StoreNotWriter
 
 from test_index_batching import counted, tree
+from test_store_writer import second_installation
 
 NAMESPACE = "embedding-model@idle"
 
@@ -52,6 +56,16 @@ def test_an_idle_repair_writes_nothing(tmp_path, monkeypatch):
     seen = counted(monkeypatch)
     assert schedule_embeddings(store, NAMESPACE) == 30
     assert "begin" not in seen and journal_head(store) == head
+
+
+def test_a_reader_installation_refuses_the_repair_even_when_every_job_exists(tmp_path):
+    first = Store(tmp_path / "first")
+    pid = first.add_project("p", tmp_path)["id"]
+    chunk_rows(first, pid, 3)
+    assert schedule_embeddings(first, NAMESPACE) == 3  # every job exists and is pending
+    reader = Store(second_installation(tmp_path, first))
+    with pytest.raises(StoreNotWriter):
+        schedule_embeddings(reader, NAMESPACE)
 
 
 def test_the_repair_still_queues_resets_and_replaces_jobs_as_before(tmp_path):
@@ -191,18 +205,19 @@ def test_a_file_with_reparse_errors_or_repairs_is_imported_by_every_poll(tmp_pat
 
 def test_a_line_appended_during_the_look_is_reported_once(tmp_path, monkeypatch):
     store, pid, root, history = followed(tmp_path, lambda root: transcript(root, "hello"))
-    real = ingest._at_end
+    real = ingest.import_history
     appended = []
 
-    def race(path, cursor):
-        answer = real(path, cursor)
-        if answer and not appended:
+    def race(*args, **kwargs):
+        item = real(*args, **kwargs)  # the look read nothing; a line arrives right after it
+        if not appended:
             appended.append(1)
             with history.open("a") as handle:
                 handle.write('{"newSchema": true}\n')
-        return answer
-    monkeypatch.setattr(ingest, "_at_end", race)
-    assert len(ingest.poll_imports(store)["errors"]) == 1
+        return item
+    monkeypatch.setattr(ingest, "import_history", race)
+    assert ingest.poll_imports(store)["errors"] == []  # remembered at its end
+    assert len(ingest.poll_imports(store)["errors"]) == 1  # no longer at its end: looked at again
     assert ingest.poll_imports(store)["errors"] == []
 
 

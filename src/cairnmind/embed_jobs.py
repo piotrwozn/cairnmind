@@ -62,6 +62,9 @@ def repair_embed_jobs(store, rows: list[dict], namespace: str) -> None:
     job per namespace; a job that is completed while its chunk still has no vector is pending again.
     Nothing is written when every job exists and none is completed.
     """
+    if store.not_writer:  # a reader refuses even when every job exists, as the per-row reset always did
+        from .store_writer import StoreNotWriter
+        raise StoreNotWriter(store.not_writer)
     first = {_key(r["project_id"], f"embed:{r['id']}"): (r["project_id"], r["id"], f"embed:{r['id']}") for r in rows}
     jobs = _ensure(store, first)
     chosen, second = {}, {}
