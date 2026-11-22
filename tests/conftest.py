@@ -474,14 +474,17 @@ def models_found_at_init():
 
 @pytest.fixture(autouse=True)
 def no_foreign_service():
-    """No test in this process reaches whatever listens on the default service, cockpit or Ollama port (#221).
+    """No test in this process reaches whatever listens on the default service, cockpit, engine or Ollama port (#221).
 
     A test whose data directory names no port of its own would otherwise ask the Cairnmind installed on the
     machine that runs the tests (its own token is refused: "Invalid local service token") or its Ollama. Such a
     connection now fails as it does when nothing listens there. By hand, not monkeypatch, for the reason above.
     """
     defaults = Settings(data_dir=Path("."))
-    foreign = {defaults.port, defaults.cockpit_port, urlparse(defaults.ollama_url).port}
+    # The engine's default port too: a command that reads the store before the service starts met the engine of
+    # the Cairnmind installed on the machine and its refusal of a foreign password (#313).
+    foreign = {defaults.port, defaults.cockpit_port, urlparse(defaults.arcade_url).port,
+               urlparse(defaults.ollama_url).port}
     connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
 
     def refused(original):
