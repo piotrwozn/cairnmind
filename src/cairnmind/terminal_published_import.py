@@ -8,7 +8,7 @@ import re
 from uuid import UUID
 
 from .terminal_notices import about
-from .terminal_person_act import refused
+from .terminal_person_act import refused, tell_saved
 
 FULL_PATH = "Enter the full path of the folder."
 TAKE_ENTRY = "Enter record IDs or file names such as fact/<ID>.md, at most 1,000."
@@ -221,10 +221,8 @@ async def import_published(app) -> None:
         app.notice_for(about(project_id), app.t(NOT_IMPORTED if refused(exc) else IMPORT_UNCLEAR) + " "
                        + broker_error_text(exc, app.t), "error")
         return
-    if scope == app._scope_version:
-        await app.load_memory()
     written = sum(count(done.get(key)) for key in ("inserted", "advanced", "taken"))
-    app.notice_for(about(project_id), app.t(
-        "Team memory imported: {written} records written, {replaced} of them in place of a verdict given on this "
-        "computer. Nothing imported is verified here.", written=written,
-        replaced=count((done.get("replaces_confirmed_here") or {}).get("total"))))
+    await tell_saved(app, scope, project_id,
+                     "Team memory imported: {written} records written, {replaced} of them in place of a verdict "
+                     "given on this computer. Nothing imported is verified here.", app.load_memory, written=written,
+                     replaced=count((done.get("replaces_confirmed_here") or {}).get("total")))
