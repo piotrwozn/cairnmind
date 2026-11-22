@@ -559,7 +559,7 @@ def test_first_native_launch_installs_project_memory_before_client_starts(settin
     monkeypatch.setattr(integrations.subprocess, "call", check_launch)
     assert integrations.run_client(settings, project, "codex") == 0
     assert len(probes) == 1
-    assert "trust must be reviewed" in capsys.readouterr().err
+    assert "Cairnmind answers no trust question for you" in capsys.readouterr().err  # TRUST_NOTE, reworded in #287
 
 
 def test_failed_hook_install_refuses_verified_launch(settings, project, installed, monkeypatch):

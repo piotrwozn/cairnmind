@@ -193,9 +193,10 @@ def test_status_on_a_reader_names_the_role_instead_of_cairnmind_serve(reader):
     said = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(data_dir), "status"]))
     assert "only reads this store" in said and "only the writer runs" in said
     assert "cairnmind serve" not in said and "cairnmind store writer" in said
-    # The writer, whose service is simply stopped, is still told to start it.
+    # The writer, whose service is simply stopped, is told that the next command starts it (#287: not `serve`).
     stopped = no_usage_frame(runner.invoke(cli.app, ["--data-dir", str(first.data_dir), "status"]))
-    assert "Run `cairnmind serve` explicitly" in stopped
+    assert "The next command that needs it starts it" in stopped and "cairnmind doctor" in stopped
+    assert "cairnmind serve" not in stopped
 
 
 def test_store_takeover_without_yes_suggests_what_fits_the_role(reader, tmp_path, monkeypatch):
@@ -481,23 +482,26 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
               "clients": {"codex": {"installed": True, "verified_resume": False}},
               "store_writer": {"role": "reader", "reason": "This installation only reads this store.\x1b[31m"}}
     lines = doctor_attention.attention(broken)
-    assert lines[0] == "CAIRNMIND_X and DEVBRAIN_X are both set and differ."
-    assert any("cockpit: unavailable (tmux 3.4+ not found; too_old)" in line for line in lines)
+    # #287: environment notes and the optional workspace are in the summary's own groups, not among the faults.
+    assert not any("CAIRNMIND_X" in line or "cockpit" in line for line in lines)
     assert any("chat model is not downloaded" in line for line in lines)
     assert any("codex is installed but its contract checks fail" in line for line in lines)
     assert any(line.startswith("Store writer: reader.") and "\x1b" not in line for line in lines)
-    for report, first in ((healthy, "Nothing needs attention."), (broken, "Needs attention:"),
-                          ([1, 2], "The doctor report could not be read."),
-                          ({}, "The doctor report could not be read."),
-                          ({"service": {"available": True}}, "The doctor report could not be read."),
-                          # What `cairnmind init` prints, and a part of a report: not a report that found nothing.
-                          ({"data_dir": "/x", "next": "cairnmind doctor"}, "The doctor report could not be read."),
-                          ({"store_writer": []}, "The doctor report could not be read."),
-                          ({"java": "of another shape"}, "The doctor report could not be read.")):
+    unreadable = "The doctor report could not be read."
+    for report, first, last in ((healthy, "Memory is kept in /home/me/.local/share/cairnmind.", "Next: cairnmind project add"),
+                                (broken, "Memory is kept in /home/me/.local/share/cairnmind.", "Next: fix what is listed"),
+                                ([1, 2], unreadable, "cairnmind doctor --json"),
+                                ({}, unreadable, "cairnmind doctor --json"),
+                                ({"service": {"available": True}}, unreadable, "cairnmind doctor --json"),
+                                # What `cairnmind init` prints, and a part of a report: not a report that found nothing.
+                                ({"data_dir": "/x", "next": "cairnmind doctor"}, unreadable, "cairnmind doctor --json"),
+                                ({"store_writer": []}, unreadable, "cairnmind doctor --json"),
+                                ({"java": "of another shape"}, unreadable, "cairnmind doctor --json")):
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(report)))
         assert doctor_attention.main() == 0
         printed = capsys.readouterr().out.splitlines()
-        assert printed[0].startswith(first) and printed[-1].endswith("cairnmind doctor")
+        assert printed[0].startswith(first) and (printed[-1].startswith(last) if first != unreadable
+                                                 else printed[-1].endswith(last))
     # Ollama down: one line for one cause, not again for each model role at the same address.
     down = {**healthy, "ollama": {"available": False, "url": "http://127.0.0.1:11434"},
             "memory_models": {"chat": {"reachable": False, "base_url": "http://127.0.0.1:11434/"},
@@ -512,7 +516,9 @@ def test_the_installer_prints_only_what_needs_attention(monkeypatch, capsys):
     assert doctor_attention.attention(slow) == [
         "Java did not answer: Java did not answer -version within 4 seconds (a first start can be slow)"]
     old = {**healthy, "java": {"on_path": True, "executable": "/usr/bin/java", "compatible": False, "version": "11"}}
-    assert doctor_attention.attention(old) == ["Java 21 or newer is needed for the engine: 11"]
+    [needed] = doctor_attention.attention(old)
+    assert needed.startswith("Java 21 or newer is needed for the engine: 11. Install Java 21") and needed.endswith(
+        "or run the engine in Docker: cairnmind engine start --docker.")
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"environment_notes": "abc"})))
     assert doctor_attention.main() == 0
     assert capsys.readouterr().out.startswith("The doctor report could not be read.")
