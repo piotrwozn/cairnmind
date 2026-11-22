@@ -24,10 +24,28 @@ raise SystemExit(WorkspaceManager(Settings.load(Path(sys.argv[1])), tmux_binary=
 """
 
 
-def _attached(workspace):
+# The same attach, held at its first claiming tmux call until the test lets it go.
+HELD_SCRIPT = SCRIPT.replace("raise SystemExit", """import time
+import cairnmind.workspace as w
+real, here = w.WorkspaceManager.tmux, Path(sys.argv[3])
+def tmux(self, *args, **kwargs):
+    if args[:1] == ("switch-client",):
+        (here / "held").write_text("1")
+        end = time.monotonic() + 8
+        while not (here / "go").exists() and time.monotonic() < end:
+            time.sleep(.02)
+        if (here / "fail").exists():  # tmux refuses although the server is alive
+            raise w.subprocess.CalledProcessError(1, args)
+    return real(self, *args, **kwargs)
+w.WorkspaceManager.tmux = tmux
+raise SystemExit""")
+
+
+def _attached(workspace, script=SCRIPT):
     master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 180, 0, 0))
-    process = subprocess.Popen([sys.executable, "-I", "-c", SCRIPT, str(workspace.settings.data_dir), workspace.binary],
+    process = subprocess.Popen([sys.executable, "-I", "-c", script, str(workspace.settings.data_dir), workspace.binary,
+                                str(workspace.directory)],
                                stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
                                env={**os.environ, "TERM": "xterm-256color"})
     def drain():  # a terminal nobody reads blocks the tmux client
@@ -65,6 +83,55 @@ def test_a_failed_kill_server_leaves_no_stop_marker(manager, monkeypatch):
         assert not (workspace.directory / module.STOP_ASKED).exists()
     finally:
         monkeypatch.undo()
+        workspace.tmux("kill-server")
+
+
+def test_a_stop_that_comes_while_the_attach_is_claiming_still_ends_it_with_zero(manager):
+    workspace, _, _ = manager
+    workspace.create(start_supervisor=False)
+    process, master, slave = _attached(workspace, HELD_SCRIPT)
+    try:
+        deadline = time.monotonic() + 8
+        while not (workspace.directory / "held").exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert (workspace.directory / "held").exists()  # the attach is inside its claim, the client already there
+        module.stop_workspace(workspace.settings)
+        (workspace.directory / "go").write_text("1")  # the claim's tmux call now meets a server that is gone
+        assert process.wait(timeout=8) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        os.close(master)
+        os.close(slave)
+
+@pytest.mark.parametrize("stop_under_way", [True, False])
+def test_a_claim_refused_by_a_living_server_is_a_stop_only_when_the_stop_marker_is_there(manager, stop_under_way):
+    # The stop writes its marker before it tells the server to exit, so the claim can fail while the server still answers.
+    workspace, _, _ = manager
+    workspace.create(start_supervisor=False)
+    process, master, slave = _attached(workspace, HELD_SCRIPT)
+    try:
+        deadline = time.monotonic() + 8
+        while not (workspace.directory / "held").exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert (workspace.directory / "held").exists()
+        if stop_under_way:
+            (workspace.directory / module.STOP_ASKED).write_text("1")
+        (workspace.directory / "fail").write_text("1")
+        (workspace.directory / "go").write_text("1")
+        code = process.wait(timeout=8)
+        assert (code == 0) is stop_under_way, code
+        deadline = time.monotonic() + 8
+        while workspace.clients() and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert not workspace.clients()  # no unclaimed client stays attached either way
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        os.close(master)
+        os.close(slave)
         workspace.tmux("kill-server")
 
 
