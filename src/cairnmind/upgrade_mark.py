@@ -18,16 +18,18 @@ BLOCKING = frozenset({"running", "unreadable"})
 _SHELLS = frozenset({"bash", "sh", "dash", "zsh"})
 _MARK = re.compile(rb"([0-9]{1,10})\n?")
 
-NOTE_RUNNING = ("An upgrade of Cairnmind is in progress (installer process {pid}), so the knowledge service is not "
-                "started until the installer has finished. If no installer is running, remove "
-                "~/.local/state/cairnmind/upgrade-in-progress.")
+NOTE_RUNNING = ("An upgrade of Cairnmind is in progress (installer process {pid}), or that process cannot be "
+                "identified as the installer, so the knowledge service is not started until it has finished. If no "
+                "installer is running, remove ~/.local/state/cairnmind/upgrade-in-progress.")
 NOTE_STALE = ("An upgrade of Cairnmind did not finish: the installer that began it (process {pid}) no longer runs. "
               "Run the installer again; it removes ~/.local/state/cairnmind/upgrade-in-progress when it finishes.")
 NOTE_UNREADABLE = ("The upgrade mark ~/.local/state/cairnmind/upgrade-in-progress cannot be read, so the knowledge "
                    "service is not started. If no installer is running, remove that file.")
 UPGRADE_STOP_FAILED = ("An upgrade of Cairnmind began while the knowledge service was starting, and the service did "
                        "not stop when asked. Stop it with `{command}`, and try again when the installer has finished.")
-BRIDGE_UPGRADE = "{reason} Call the tool again when the installer has finished."
+UPGRADE_ENDED = ("An upgrade of Cairnmind happened while the knowledge service was starting, so that start was "
+                 "ended. The upgrade has finished: call again.")
+BRIDGE_UPGRADE ="{reason} Call the tool again when the installer has finished."
 CODE_UNREADABLE = ("The installed files of Cairnmind could not be read when this MCP server started, so it cannot tell "
                    "whether they changed. Restart this MCP server in your editor, then call the tool again.")
 CODE_REPLACED = ("The installed Cairnmind changed after this MCP server started (an upgrade or a reinstall), so this "
@@ -35,9 +37,11 @@ CODE_REPLACED = ("The installed Cairnmind changed after this MCP server started 
                  "restart this MCP server in your editor, or the editor, then call the tool again.")
 
 MESSAGES = {
-    NOTE_RUNNING: ("Trwa aktualizacja Cairnmind (proces instalatora {pid}), więc usługa wiedzy nie jest uruchamiana, "
-                   "dopóki instalator nie skończy. Jeśli żaden instalator nie działa, usuń "
-                   "~/.local/state/cairnmind/upgrade-in-progress."),
+    NOTE_RUNNING: ("Trwa aktualizacja Cairnmind (proces instalatora {pid}) albo ten proces nie daje się rozpoznać "
+                   "jako instalator, więc usługa wiedzy nie jest uruchamiana, dopóki się nie skończy. Jeśli żaden "
+                   "instalator nie działa, usuń ~/.local/state/cairnmind/upgrade-in-progress."),
+    UPGRADE_ENDED: ("Aktualizacja Cairnmind odbyła się w trakcie uruchamiania usługi wiedzy, więc to uruchomienie "
+                    "zakończono. Aktualizacja się skończyła: wywołaj ponownie."),
     NOTE_STALE: ("Aktualizacja Cairnmind nie została dokończona: instalator, który ją zaczął (proces {pid}), już nie "
                  "działa. Uruchom instalator ponownie; usunie ~/.local/state/cairnmind/upgrade-in-progress, gdy skończy."),
     NOTE_UNREADABLE: ("Nie można odczytać znacznika aktualizacji ~/.local/state/cairnmind/upgrade-in-progress, więc "

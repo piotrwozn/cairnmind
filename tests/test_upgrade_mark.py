@@ -66,6 +66,9 @@ def test_a_process_that_runs_but_cannot_be_identified_counts_as_the_installer(ma
     monkeypatch.setattr(process_identity, "alive", lambda pid: True)
     monkeypatch.setattr(process_identity, "executable", lambda pid: None)
     assert upgrade_mark.state() == ("running", 4242)
+    # It blocks, and the text does not claim an installer for a process nobody could identify (a reused id, #298).
+    assert "cannot be identified" in upgrade_mark.refusal() and "upgrade-in-progress" in upgrade_mark.refusal()
+    assert "nie daje się rozpoznać" in CATALOG[upgrade_mark.NOTE_RUNNING]
 
 
 @pytest.mark.parametrize(("program", "kind"), [("/sbin/launchd", "stale"), ("/bin/bash", "running")])

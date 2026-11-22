@@ -283,7 +283,7 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         seen = seen or upgrade_mark.refusal()
         if service_alive(settings):
             if seen:
-                _stop_started(settings, seen)
+                _stop_started(settings)
             return
         if getattr(process, "poll", lambda: None)() is not None:
             # It stopped instead of starting, for example on an installation that only reads the store (#70).
@@ -306,24 +306,25 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
                 process.terminate()
             except OSError:
                 pass
-        raise UpgradeInProgress(seen)
+        raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
     raise ServiceDidNotStart(f"The service did not start. Check {log}; port {settings.port} may be in use.")
 
 
-def _stop_started(settings: Settings, reason: str) -> None:
+def _stop_started(settings: Settings) -> None:
     """An installer that began after the check in ensure_service may have found no service to stop yet: the service
     this start brought up is stopped here, so none runs the version being replaced (#298). A start whose starter
-    ends first cannot be closed from here."""
+    ends first cannot be closed from here. The text says what is true now: an installer that has ended is not
+    "in progress"."""
+    from cairnmind import upgrade_mark
     try:
         with httpx.Client(trust_env=False, timeout=5) as client:
             client.post(settings.url + "/shutdown",
                         headers={"Authorization": f"Bearer {settings.token}"}).raise_for_status()
     except httpx.HTTPError:
         import shlex
-        from cairnmind import upgrade_mark
         command = shlex.join(["cairnmind", *_data_dir_arguments(settings.data_dir), "stop"])
         raise UpgradeInProgress(upgrade_mark.UPGRADE_STOP_FAILED.format(command=command)) from None
-    raise UpgradeInProgress(reason)
+    raise UpgradeInProgress(upgrade_mark.refusal() or upgrade_mark.UPGRADE_ENDED)
 
 
 class ServiceDidNotStart(ValueError):

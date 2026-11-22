@@ -95,6 +95,18 @@ def test_an_installer_that_began_and_ended_while_the_service_started_still_stops
     assert seen == [("POST", "/shutdown", f"Bearer {settings.token}")]
 
 
+def test_an_upgrade_whose_mark_is_gone_by_then_is_told_as_one_that_happened_not_one_in_progress(tmp_path, monkeypatch):
+    """A mark seen once during the wait, gone when the service answers: the service is still stopped (no old code
+    survives), and the text is true: call again (#298)."""
+    settings, seen = began_while_starting(tmp_path, monkeypatch, 200)
+    marks = iter([None, upgrade_mark.NOTE_RUNNING.format(pid=4242)])
+    monkeypatch.setattr(upgrade_mark, "refusal", lambda: next(marks, None))
+    with pytest.raises(cli.UpgradeInProgress) as refused:
+        cli.ensure_service(settings)
+    assert str(refused.value) == upgrade_mark.UPGRADE_ENDED and "in progress" not in str(refused.value)
+    assert seen == [("POST", "/shutdown", f"Bearer {settings.token}")]
+
+
 def test_a_start_that_outlasts_the_wait_while_an_upgrade_began_is_ended_and_says_why(tmp_path, monkeypatch):
     settings = Settings.load(tmp_path / "data", create=True)
     calls = []  # none at the gate, an installer from the first pass of the wait
