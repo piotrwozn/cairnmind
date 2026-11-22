@@ -22,7 +22,8 @@ USAGE
 }
 
 if [ "${1:-}" = "--help" ] || [ $# -lt 3 ]; then usage; exit 2; fi
-DATA_DIR=$(realpath -m "$1"); REPORT_DIR=$(realpath -m "$2"); V1_URL=$3; REPOSITORY=$(realpath -m "${4:-.}")
+# No realpath: macOS has none with -m. The paths stay relative to here; the check below resolves DATA_DIR itself.
+DATA_DIR=$1; REPORT_DIR=$2; V1_URL=$3; REPOSITORY=${4:-.}
 MODEL=qwen3.5:9b
 CAIRNMIND=(python3 -m cairnmind --data-dir "$DATA_DIR")
 
