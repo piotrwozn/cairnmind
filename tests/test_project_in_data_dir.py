@@ -42,6 +42,24 @@ def test_a_project_registered_inside_the_data_directory_by_an_earlier_version_is
     assert any('inside the data directory' in error and "'old'" in error and 'project add' in error
                for error in result['errors'])
     assert [row['name'] for row in store.list_projects()] == ['old']  # nothing is removed
+    assert any(str(inside.resolve()) in error and 'cairnmind project add`' in error for error in result['errors'])
+
+
+def test_an_extra_root_inside_the_data_directory_is_named_with_the_command_for_roots(tmp_path):
+    from cairnmind.ingest import index_project
+    from cairnmind.sql import insert_document
+    store = Store(tmp_path / 'data')
+    main = tmp_path / 'main'
+    main.mkdir()
+    (main / 'a.py').write_text('x = 1\n')
+    project = store.add_project('p', main)
+    inside = store.data_dir / 'extra'
+    inside.mkdir()
+    with store.transaction() as tx:
+        insert_document(tx, 'project_roots', {'id': 'r1', 'project_id': project['id'], 'path': str(inside)})
+    result = index_project(store, 'p')
+    assert result['files'] == 1
+    assert any(str(inside.resolve()) in error and 'project root`' in error for error in result['errors'])
 
 
 def test_the_credential_store_refusal_has_a_polish_form(tmp_path):

@@ -719,9 +719,11 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
         if lies_in(root, store.data_dir):
             # Registered by 0.12.0, before #295 refused it: the walk leaves the data directory out, so it
             # would report 0 files. Named, not removed.
+            again = ("`cairnmind project add`" if root == registered_roots[0]
+                     else "`cairnmind project root` for this project")
             counts["errors"].append(
-                f"Project {project['name']!r} has its folder inside the data directory, which Cairnmind never "
-                f"indexes: move the files to a folder outside it and register that with `cairnmind project add`; "
+                f"Project {project['name']!r} has a folder inside the data directory, which Cairnmind never "
+                f"indexes: {root}; move the files to a folder outside it and register that with {again}; "
                 f"this registration is left as it is")
             continue
         commit = _git(root, "rev-parse", "HEAD") or None
