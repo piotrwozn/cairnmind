@@ -500,6 +500,13 @@ class Retriever:
                     ranks.append(semantic)
                 except ArcadeError as exc:
                     self.warnings.append(f"Native vector search unavailable: {type(exc).__name__}")
+                # The registry row comes back with the first embedded chunk, long before the rebuild ends (#187).
+                left = self.store.query(
+                    "SELECT count(*) AS n FROM jobs WHERE project_id=:project AND kind='embed' "
+                    "AND state IN ['pending','running']", {"project": project_id})
+                if left and left[0].get("n"):
+                    self.warnings.append(f"Vectors are still being built ({left[0]['n']} left): "
+                                         "this search may miss matches")
             else:
                 # After a restore, which brings no vectors, this is the state until the rebuild ends (#187).
                 self.warnings.append("Vectors for the current embedding model are not ready (being built or rebuilt, "

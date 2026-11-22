@@ -1961,8 +1961,12 @@ class Store:
             return None
         from .retrieval import json_value  # retrieval imports this module
         current = {row["id"] for row in tx.query("SELECT id FROM chunks WHERE is_current=true")}
-        ids = [row["id"] for row in tx.query("SELECT id, payload FROM jobs WHERE kind='embed' AND state='completed'")
-               if (json_value(row.get("payload"), {}) or {}).get("chunk_id") in current]
+        first = {}  # one job per chunk: a retry can leave two completed jobs of the same chunk
+        for row in tx.query("SELECT id, payload FROM jobs WHERE kind='embed' AND state='completed'"):
+            chunk = (json_value(row.get("payload"), {}) or {}).get("chunk_id")
+            if chunk in current:
+                first.setdefault(chunk, row["id"])
+        ids = list(first.values())
         for start in range(0, len(ids), 500):
             update_document(tx, "jobs", {"state": "pending", "error": None, "worker": None, "lease_until": None,
                                          "updated_at": utc_now()}, "id IN :ids", {"ids": ids[start:start + 500]})

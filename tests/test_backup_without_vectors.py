@@ -74,6 +74,35 @@ def test_restore_sets_the_embed_jobs_back_to_pending_and_the_rebuild_restores_th
     assert found and not fresh.warnings
 
 
+def test_search_warns_for_the_whole_rebuild_not_only_before_the_first_vector(embedded):
+    for number in range(2):  # the fixture has one chunk; the rebuild needs several jobs
+        text = f"note {number} about nightly rotation\n" * 30
+        source = embedded.store.snapshot(embedded.project, f"manual://more{number}", text, "manual")
+        assert _write_chunks(embedded.store, embedded.project, source["id"], text) > 0
+    total = embedded.jobs + rebuild(embedded.store)
+    target = Store(embedded.tmp / "target")
+    target.restore(embedded.store.backup(embedded.tmp / "more.cairnmind.json.gz"))
+    assert total > 1
+    retriever = Retriever(target, target.settings, Vectors())
+    job = target.claim_job("test", kinds=["embed"])
+    asyncio.run(retriever.embed_pending(job))
+    target.finish_job(job["id"], worker=job["worker"], expected_attempts=job["attempts"])
+    # The registry row exists now, yet most vectors are still missing: the search must say so.
+    partial = Retriever(target, target.settings)
+    partial.search(embedded.project, "rotated", query_vector=[0.25, 0.5, 0.75, 1.0], embedding_key=NAMESPACE)
+    assert any(f"{total - 1} left" in warning for warning in partial.warnings)
+
+
+def test_two_completed_jobs_of_one_chunk_are_requeued_and_counted_once(embedded):
+    chunk = embedded.store.query("SELECT id FROM chunks WHERE is_current=true")[0]["id"]
+    with embedded.store.transaction() as tx:
+        extra = embedded.store.enqueue_new(tx, "embed", embedded.project, {"chunk_id": chunk}, "extra:" + chunk)
+        tx.command("UPDATE jobs SET state='completed' WHERE id=:id", {"id": extra})
+    target = Store(embedded.tmp / "target")
+    target.restore(embedded.store.backup(embedded.tmp / "two.cairnmind.json.gz"))
+    assert target.embed_jobs_requeued == embedded.jobs
+
+
 def test_a_job_of_a_replaced_chunk_is_not_counted(embedded):
     # A completed job whose chunk is gone (replaced, #186) has nothing to rebuild.
     embedded.store.snapshot(embedded.project, "manual://note", "A replacement of the note", "manual")

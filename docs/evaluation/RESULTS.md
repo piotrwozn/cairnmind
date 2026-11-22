@@ -326,13 +326,13 @@ After every step it embeds every pending chunk through `Retriever.embed_pending`
 - A revision of a file replaces its chunks and vectors (#186): what stays is a replaced source row with its full text, so the cost of a revision is that row, its job and the new chunks' difference, not a copy of the vectors.
 - One machine, one run, one engine version; no timing is claimed.
 
-| Step | Units | Database bytes | per unit | gzip backup bytes | per unit | Vector bytes | per unit |
-|---|---|---|---|---|---|---|---|
-| Before #187 (backup with vectors): 500 events of 200 B | NOT MEASURED YET | | | | | | |
-| Before #187: 500 events of 1 KB | NOT MEASURED YET | | | | | | |
-| Before #187: 500 events of 8 KB | NOT MEASURED YET | | | | | | |
-| Before #187: first index of 10 files | NOT MEASURED YET | | | | | | |
-| Before #187: 20 revisions of 10 files (average per revision) | NOT MEASURED YET | | | | | | |
-| After #187 (backup without vectors): the same five rows | NOT MEASURED YET | | | | | | |
+| Step | Units | Database bytes | per unit | gzip backup bytes | per unit | Vector bytes | per unit | Chunks per unit |
+|---|---|---|---|---|---|---|---|---|
+| Before #187 (backup with vectors): 500 events of 200 B | NOT MEASURED YET | | | | | | | |
+| Before #187: 500 events of 1 KB | NOT MEASURED YET | | | | | | | |
+| Before #187: 500 events of 8 KB | NOT MEASURED YET | | | | | | | |
+| Before #187: first index of 10 files | NOT MEASURED YET | | | | | | | |
+| Before #187: 20 revisions of 10 files (average per revision) | NOT MEASURED YET | | | | | | | |
+| After #187 (backup without vectors): the same five rows | NOT MEASURED YET | | | | | | | |
 
-Each filled row states the date, the commit and the ArcadeDB version, as the script prints them in the header of its table. The issue #185 closes with the first run, and #187 with the second, which shows the gzip backup column no longer carrying the vector column.
+The "Before #187" rows cannot come from a run on this branch, where `Store.backup` no longer writes vectors: they are the script run against a checkout of origin/main from before #187 (or v0.12.0) with this script copied into it, and the "After" rows are the run on the branch with #187. Each filled row states the date, the commit and the ArcadeDB version, as the script prints them in the header of its table. The issue #185 closes with the first run, and #187 with the second, which shows the gzip backup column no longer carrying the vector column.

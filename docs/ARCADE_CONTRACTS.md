@@ -181,8 +181,10 @@ Additional root-facing methods needed:
   completed `embed` job of a current chunk back to pending and sets `Store.embed_jobs_requeued` to their number
   (None when the backup brought vectors); `restore_claims.checked_restore` adds the number
   (`embed_jobs_requeued`) and one sentence in English and Polish to the output of `cairnmind restore` and
-  `cairnmind setup local --backup`. Until the jobs are done, `Retriever.search` with a query vector finds no
-  index for the namespace and warns that vectors are not ready, and the text ranking answers.
+  `cairnmind setup local --backup` (one job per chunk, so the number is of chunks without a vector, apart from
+  jobs held back from a remote embedding server). Until the jobs are done, `Retriever.search` with a query vector
+  warns: that vectors are not ready while no index exists for the namespace, and, once the first chunk is embedded,
+  that vectors are still being built, with the number of embed jobs left; the text ranking answers.
 - whole-database backup (`Store.backup`, the daily backup and the `before-*` safety copies, `store_backup.py`, #196):
   written as a stream inside one transaction under the writer lock. Each type is read in record id order
   (`WHERE @rid > :rid ORDER BY @rid LIMIT n`, the page size adapting to the row size), each row serialized
