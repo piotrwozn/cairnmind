@@ -305,3 +305,34 @@ In all six runs the five deterministic checks were true and every critical case 
 - After: four confirmed tasks, the proposed task, the confirmed decision and the proposed decision. The record left out is the finished task. Each confirmed record also says who confirmed it (`confirmed_by`, here `seed`, #177), and the state is 158 characters longer (7,550 against 7,392).
 
 **What this shows and does not show.** It shows the order of #213 reaching the model in a real run, and that recall on this fixture did not change with it or with `confirmed_by`. It does not show that an answer became better: the cases passed before as well, because a question names its case key and search finds the card whatever the project state holds, as the section on #181 above explains. The few more model calls per run after the merge (44, 45, 48 against 50, 48, 54) were not traced to a cause. `cairnmind eval repository` shows nothing about #213, because its copy has no records (see the first section). `cairnmind eval memory` was not run.
+
+# Store growth (#185)
+
+**NOT MEASURED YET.** `scripts/store_growth.py` is written and its measuring function is tested with tiny numbers; the run that fills the table below, and the second run after #187, have not been made. No figure here comes from a run.
+
+**How it measures.** `uv run python scripts/store_growth.py` starts its own ArcadeDB engine on a free loopback port in a new temporary data directory (it refuses to run when an environment variable names another database), and needs Java 21 and the pinned engine but no Ollama or other model. It never uses the default data directory, 8765, 2480 or 11434. It writes, through the product's own `import_history` and `index_project`:
+
+- transcript events in Claude's JSONL format, alternating user and assistant, 500 of each of 200 B, 1 KB and 8 KB of text (`--events`, `--event-sizes`), one step for each size;
+- 10 Markdown files of 2 KB, 20 KB and 100 KB in turn (`--files`, `--file-sizes`), indexed once and then revised 20 times (`--revisions`), each revision changing a tenth of the lines of every file, one step for each round.
+
+After every step it embeds every pending chunk through `Retriever.embed_pending` with a fake model that returns seeded pseudo-random vectors of 1,024 numbers (`--dimension`; the repository records the dimension of the default model nowhere, so that number is to be confirmed with `store size --json` on an installation, `vectors.types[].dimension`), and then measures: the rows and bytes of every collection and of every `vector_*` type (`store size`), the vector bytes (`embeddings` plus the `vector_*` types), the size of the database directory, and the size of one gzip backup written by `Store.backup`. The database directory is read with the engine stopped, which the script restarts for the next step, because the engine keeps files it has not written while it runs (about 20 MiB on a nearly empty store in a trial). Bytes per event and per revision are the difference between two steps divided by the events or files written in the second. `--json FILE` keeps the whole report.
+
+**What it does not show.**
+
+- Text is seeded pseudo-random words from one vocabulary of 2,000 words, so its gzip ratio is that of such words, not of real transcripts or code; the transcripts of an installation can compress better or worse.
+- Vectors are random numbers: their size in the store is right, but a real model's vectors are not random, and gzip may do slightly better on them.
+- Extraction is not run, so the jobs `extract` stay pending and no records, nodes or edges are written; the growth of extracted records, and of the code graph (the files are Markdown, not code), is outside this measurement.
+- Bytes of a collection are the length of its rows' JSON form in the engine (`store size`), and above 1,000 rows they are estimated from a sample (marked in the report), not the bytes on disk; the database directory is the bytes on disk, in the engine's own page files, and grows in steps of its page allocation, so a small run shows jumps and even zero or negative figures per unit. Only runs of the default size are to be read.
+- A revision of a file replaces its chunks and vectors (#186): what stays is a replaced source row with its full text, so the cost of a revision is that row, its job and the new chunks' difference, not a copy of the vectors.
+- One machine, one run, one engine version; no timing is claimed.
+
+| Step | Units | Database bytes | per unit | gzip backup bytes | per unit | Vector bytes | per unit |
+|---|---|---|---|---|---|---|---|
+| Before #187 (backup with vectors): 500 events of 200 B | NOT MEASURED YET | | | | | | |
+| Before #187: 500 events of 1 KB | NOT MEASURED YET | | | | | | |
+| Before #187: 500 events of 8 KB | NOT MEASURED YET | | | | | | |
+| Before #187: first index of 10 files | NOT MEASURED YET | | | | | | |
+| Before #187: 20 revisions of 10 files (average per revision) | NOT MEASURED YET | | | | | | |
+| After #187 (backup without vectors): the same five rows | NOT MEASURED YET | | | | | | |
+
+Each filled row states the date, the commit and the ArcadeDB version, as the script prints them in the header of its table. The issue #185 closes with the first run, and #187 with the second, which shows the gzip backup column no longer carrying the vector column.
