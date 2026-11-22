@@ -111,6 +111,18 @@ async def test_only_a_server_on_this_machine_is_called_local(tmp_path, url, word
     assert ("local" in str(caught.value)) == (word == "local"), str(caught.value)
 
 
+@pytest.mark.parametrize("url,word", [("http://127.0.0.1:11434", "local"), ("https://lan.example:11434", None)])
+async def test_a_server_that_answers_without_the_model_is_called_local_only_on_this_machine(tmp_path, url, word):
+    def respond(request):
+        return httpx.Response(200, json={"models": []})
+
+    async with httpx.AsyncClient(base_url=url, transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(OllamaUnavailable) as caught:
+            await Ollama(Settings(data_dir=tmp_path), client, base_url=url).model_identity("qwen3.5:9b")
+    assert "not installed" in str(caught.value)
+    assert ("local" in str(caught.value).lower()) == (word == "local"), str(caught.value)
+
+
 def test_existing_unavailable_exception_constructor_remains_compatible():
     error = OllamaUnavailable("Model is unavailable")
     assert str(error) == "Model is unavailable"

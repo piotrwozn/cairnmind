@@ -621,12 +621,11 @@ def model_moves(settings, request) -> list[dict]:
                 # changes nothing (check_role saves it as no profile too).
                 current = memory_models.profile(settings, role) or {
                     "provider": "ollama", "base_url": memory_models.normalize_base_url(settings.ollama_url)}
-                same = enabled and current == wanted and (
-                    getattr(settings, memory_models.MODEL_FIELDS[role]) == model)
+                same = current == wanted and getattr(settings, memory_models.MODEL_FIELDS[role]) == model
             except ValueError:
                 same = False  # a stored profile that cannot be read is replaced
-            if not same:
-                moves.append(_move(settings, role, kwargs))
+            if not same or not enabled:  # with the agent off the model is still tested, before it is turned on
+                moves.append({**_move(settings, role, kwargs), "same": same})
         return moves
     if not enabled:
         return []  # nothing runs anywhere: the models stay off
@@ -730,8 +729,9 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             left.append((LEFT_WRITER_NOTE, {}))
     sent = False
     for move in moves:
-        changes.append((CHANGE_MODEL, {"role": move["role"], "before": _at(*move["before"]),
-                                       "after": _at(*move["after"])}))
+        if not move.get("same"):
+            changes.append((CHANGE_MODEL, {"role": move["role"], "before": _at(*move["before"]),
+                                           "after": _at(*move["after"])}))
         candidate = move["checked"]["candidate"]
         if not sent and not memory_models.is_loopback(move["checked"]["row"]["base_url"]):
             sent = True
@@ -739,11 +739,11 @@ def _plan_lines(settings, request, plan, moves, result) -> None:
             host = urlsplit(move["checked"]["row"]["base_url"]).hostname
             changes.append((SENDS, {"host": host, "classes": ", ".join(sends)}) if sends
                            else (SENDS_NO_TEXT, {"host": host}))
-        if move["role"] == "embedding" and move["before"] != move["after"]:
+        if move["role"] == "embedding" and not move.get("same") and move["before"] != move["after"]:
             result["rebuild"].append((REBUILD_VECTORS, {"before": _at(*move["before"]), "after": _at(*move["after"])}))
     if moves and not knowledge_mode.enabled(settings):
         changes.append((AGENT_ON, {}))
-    for url in dict.fromkeys(move["before"][1] for move in moves if move["away"]):
+    for url in dict.fromkeys(move["before"][1] for move in moves if move["away"] and not move.get("same")):
         left.append((LEFT_MODEL_SERVER, {"url": url}))
 
 
@@ -815,6 +815,8 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
 def _apply(settings, request, plan, moves, result, say, state) -> None:
     local = _back_to_local(settings, plan, result, say, state) if plan and request.profile == "local" else settings
     for move in moves:
+        if move.get("same"):
+            continue  # already saved so; only the agent is turned on
         state["step"] = (STEP_MODEL, {"role": move["role"]})
         report = asyncio.run(memory_models.configure_role(local, move["role"], **move["kwargs"]))
         _add_next(result, report["next"])

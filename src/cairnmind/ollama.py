@@ -223,7 +223,7 @@ class Ollama:
             payload["tools"] = tools
         data = await self._request("POST", "/api/chat", json=payload)
         if not isinstance(data.get("message"), dict):
-            raise OllamaUnavailable("Local model returned no chat message")
+            raise OllamaUnavailable(f"{self.label} returned no chat message")
         return data
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -238,7 +238,7 @@ class Ollama:
     async def models(self) -> dict:
         data = await self._request("GET", "/api/tags")
         if not isinstance(data.get("models"), list):
-            raise OllamaUnavailable("Local model list is invalid")
+            raise OllamaUnavailable(f"{self.label} model list is invalid")
         self._model_cache = (time.monotonic(), data)
         return data
 
@@ -250,9 +250,9 @@ class Ollama:
             if model.get("name") == name or model.get("model") == name:
                 digest = model.get("digest")
                 if not digest:
-                    raise OllamaUnavailable("Local model has no digest; cannot version its embeddings")
+                    raise OllamaUnavailable(f"{self.label} model has no digest; cannot version its embeddings")
                 return f"{name}@{digest}"
-        raise OllamaUnavailable(f"Required local model {name!r} is not installed")
+        raise OllamaUnavailable(f"Required {self._where}model {name!r} is not installed")
 
     async def model_digest(self, name: str) -> str | None:
         """The digest the model list gives for ``name``, or None: not listed, listed without one (what a

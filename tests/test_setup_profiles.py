@@ -595,6 +595,22 @@ def test_the_release_models_are_not_told_they_are_unevaluated_and_the_topology_a
     assert "labelled unevaluated" in said(other) and "evaluated for this release" not in said(other), other.output
 
 
+def test_with_the_agent_off_models_that_change_nothing_are_tested_but_not_planned_as_a_change(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="disabled")
+    dry = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options())
+    assert "model: from" not in said(dry) and "knowledge agent" in said(dry), dry.output
+    assert len(world.calls("check")) == 2  # both are still tested before the agent is turned on
+    done = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(), "--yes")
+    assert done.exit_code == 0 and config(tmp_path)["knowledge_agent"] == "enabled", done.output
+
+
+def test_the_evaluation_step_is_left_out_when_the_second_saved_role_completes_the_release_pair(tmp_path, world):
+    connect_only_installation(tmp_path, knowledge_agent="enabled", memory_embedding=dict(REMOTE), chat_model="other:4b")
+    result = invoke(tmp_path, "setup", "remote", *db_options(tmp_path), *here_options(), "--yes")
+    assert result.exit_code == 0, result.output
+    assert "labelled unevaluated" not in said(result), result.output
+
+
 def test_going_back_without_a_choice_is_refused_and_names_both(tmp_path, world):
     connect_only_installation(tmp_path)
     before = config_bytes(tmp_path)
