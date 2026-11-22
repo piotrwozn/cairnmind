@@ -202,6 +202,12 @@ async def test_actual_stdio_resume_refresh_keeps_horizon_and_requires_new_explic
                 assert acknowledged["packet_id"] == packet["id"]
                 manager.require_ack(session_id, packet["id"])
                 assert len(store.query("SELECT FROM resume_acks")) == 2
+                # Reading again is short while the acknowledged packet is current (#325); the whole one is asked for.
+                short = tool_result(await client.call_tool("resume_context", {}))
+                assert short["unchanged"] is True and short["packet_id"] == packet["id"] and "packet" not in short
+                assert tool_result(await client.call_tool("resume_context", {"full_packet": True}))["packet"] == packet
+                manager.require_ack(session_id, packet["id"])
+                assert len(store.query("SELECT FROM resume_acks")) == 2
                 saved = tool_result(await client.call_tool("checkpoint", {
                     "project": project["id"], "state": {"goal": "Protocol test client acknowledged"}}))
                 assert saved["source_ids"]

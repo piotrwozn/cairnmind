@@ -826,13 +826,15 @@ class SidebarApp(BasePanel):
                 return
             if choice != "new":
                 return
-        result = await self.request("POST", "/api/projects", json={"name": name, "root": root})
+        result = await self.request("POST", "/api/projects", json={"name": name, "root": root, **({"fresh": True} if snapshot else {})})
         project = result.get("project", result)
         await asyncio.to_thread(self.workspace.select_project, project, root, intent="inspect")
         await self.load_state()
         await self.reconcile()
         self.show_page("project")
-        self.notice("Project opened. Choose Start work when ready.")
+        from .project_removal import workspace_lines
+        said = workspace_lines(self.t, project, root, result)  # brought back, or a removed one kept apart (#327)
+        self.notice(" ".join(said) if said else "Project opened. Choose Start work when ready.")
 
     async def import_memory_form(self, path="", root="", name=""):
         checked = {}

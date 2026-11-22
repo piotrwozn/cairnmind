@@ -61,8 +61,11 @@ class Inspector:
         self.store = store
 
     def _project(self, project):
+        from .project_removal import ProjectRemoved
         try:
             return self.store.resolve_project(project)
+        except ProjectRemoved as exc:
+            raise InspectorNotFound(str(exc)) from None  # it says that the project was removed and the way back (#327)
         except ValueError as exc:
             raise InspectorNotFound("Unknown inspector project") from exc
 
