@@ -16,6 +16,7 @@ database stores only in part, fails the transaction, which leaves the store as i
 """
 from __future__ import annotations
 
+from .graph_transactions import await_vertices
 from .sql import insert_documents, json_text
 from .store import GRAPH_ROWS_PER_REQUEST
 
@@ -85,6 +86,8 @@ class GraphGroups:
         rows = list(self.groups.pop(project).values())
         size = self.sizes.pop(project, 0)
         nodes, edges = (rows, []) if self.kind == "node" else ([], rows)
+        if edges:  # the edges look their vertices up by the index of nodes.id, which may not find them yet (#377)
+            await_vertices(self.store, {row[key] for row in edges for key in ("from_id", "to_id") if isinstance(row.get(key), str)})
         tx = self.batches.tx
         self.store.prefetch_graph(tx, nodes, edges)
         self.store.write_graph(tx, project, nodes, edges)
@@ -122,6 +125,8 @@ def write_restored(store, batches, source, claims=None):
     for _, _, node in source.rows(("nodes",)):
         nodes.add(node)
     nodes.flush()
+    batches.commit()  # the vertices are committed before an edge group waits for the index to find them
+    batches.open()
     edges = GraphGroups(store, batches, "edge")
     for kind, name, row in source.rows(("edges",), vectors=True):
         if kind == "row":

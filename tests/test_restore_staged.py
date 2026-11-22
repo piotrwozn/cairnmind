@@ -340,6 +340,48 @@ def test_a_restore_whose_vertex_lookup_misses_fails_cleanly_and_is_put_back(tmp_
     assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
 
 
+def _hiding_the_index(monkeypatch, hidden):
+    """The engine, compacting its unique index on nodes.id, finds no vertex for a while after a commit (#377): the next
+    `hidden` lookups of vertices by id answer nothing. The sleeps of the wait are counted, not slept."""
+    from cairnmind import graph_transactions
+    real, state = JournalTransaction.query, {"hidden": hidden, "slept": []}
+
+    def query(self, sql, params=None):
+        found = real(self, sql, params)
+        if "SELECT id FROM nodes WHERE id IN" in sql and state["hidden"]:  # the read-back of the wait, not the vertices' own prefetch
+            state["hidden"] -= 1
+            return []
+        return found
+    monkeypatch.setattr(JournalTransaction, "query", query)
+    monkeypatch.setattr(graph_transactions.time, "sleep", state["slept"].append)
+    return state
+
+
+def test_a_restore_waits_for_the_index_to_find_the_vertices_it_committed_before_it_writes_their_edges(tmp_path, monkeypatch):
+    """#377: the edges are written by looking their vertices up in the index of nodes.id, as the indexer's are."""
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    store.restore(path)
+    restored = comparable(store.export())
+    state = _hiding_the_index(monkeypatch, 2)
+    store.restore(path)
+    assert state["hidden"] == 0 and len(state["slept"]) == 2  # it waited, and wrote every edge after
+    monkeypatch.undo()
+    assert comparable(store.export()) == restored and restore_staged.unfinished(store.client) is None
+
+
+def test_a_restore_whose_vertices_the_index_never_finds_fails_by_name_and_is_put_back(tmp_path, monkeypatch):
+    from cairnmind import graph_transactions
+    store, path, before, known = _world(tmp_path, monkeypatch)
+    state = _hiding_the_index(monkeypatch, 1)  # the first wait finds nothing, and with no time to wait it fails
+    monkeypatch.setattr(graph_transactions, "VERTEX_WAIT", 0)
+    with pytest.raises(RestoreFailed, match=r"did not find \d+ graph vertices it had committed.*put back as it was before"):
+        store.restore(path)
+    assert state["hidden"] == 0
+    monkeypatch.undo()
+    assert comparable(store.export()) == before
+    assert restore_staged.unfinished(store.client) is None and not Store(store.data_dir).read_only
+
+
 def test_a_transaction_open_for_the_time_bound_is_committed_and_a_slow_delete_halves_the_next(tmp_path, monkeypatch):
     path = _large(Store(tmp_path / "memory"), tmp_path)
     target = Store(tmp_path / "target")

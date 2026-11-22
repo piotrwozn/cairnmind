@@ -23,10 +23,10 @@ from cairnmind.store import Store
 
 from conftest import prepare_engine
 
-SOURCES, CHUNKS, NODES, EDGES = 550, 2942, 81488, 101428
-# #377: at about 160,000 vertices the unique index lookup on nodes.id misses vertices on this engine, and no store of
-# any restore can be written. This test stays far below that size; do not raise the counts toward it.
-assert NODES < 100_000
+SOURCES, CHUNKS = 550, 2942
+# The trial's size, and (#377) four times this repository's graph: 330,660 vertices and 412,830 edges ran the engine
+# out of memory when indexed in one transaction, and the index of nodes.id misses just-committed vertices on this engine.
+SIZES = [pytest.param(81488, 101428, id="this-repository"), pytest.param(330660, 412830, id="four-times-the-graph")]
 WORDS = "def class return import self value store graph node edge restore backup engine heap memory".split()
 
 
@@ -34,8 +34,8 @@ def _text(rng, length):
     return " ".join(rng.choice(WORDS) for _ in range(length // 6))
 
 
-def _build(store, root):
-    """The trial's counts, written as the product writes them: documents in requests of a few hundred rows, the graph
+def _build(store, root, NODES, EDGES):
+    """The counts, written as the product writes them: documents in requests of a few hundred rows, the graph
     in transactions of 5,000."""
     rng = random.Random(362)
     folder = root / "project-folder"
@@ -88,7 +88,19 @@ def _counts(store):
             for table in ("sources", "chunks", "nodes", "edges")}
 
 
-def _restore_through_a_slow_link(store, backup, engine, monkeypatch):
+def _found_by_the_index(store, project, nodes, edges):
+    """How many vertices and edges the unique indexes on id find, asked for by id: a scan counts rows, this counts what
+    a lookup of the row finds (what an edge's end points and every id lookup of the product rely on)."""
+    found = {}
+    for table, kind, count in (("nodes", "node", nodes), ("edges", "edge", edges)):
+        found[table] = 0
+        for offset in range(0, count, 1000):
+            ids = [f"{project}:{kind}:{i}" for i in range(offset, min(offset + 1000, count))]
+            found[table] += store.query(f"SELECT count(*) AS n FROM {table} WHERE id IN :ids", {"ids": ids})[0]["n"]
+    return found
+
+
+def _restore_through_a_slow_link(store, backup, engine, monkeypatch, NODES, EDGES):
     """The same restore again, as a connect-only installation through a relay that delays each request by 20 ms (the
     trial's network: 18.5 ms). The trial's clients gave up with a read timeout on ONE request that the server was still
     working on; here no request of the restore comes near the client's wait, a commit included."""
@@ -123,7 +135,7 @@ def _restore_through_a_slow_link(store, backup, engine, monkeypatch):
     assert {timeout for path, timeout in waits if not path.startswith("/api/v1/commit/")} == {arcade.REQUEST_TIMEOUT}
 
 
-def _say(engine_pid, seconds):
+def _say(engine_pid, seconds, NODES, EDGES):
     """The restore's seconds and the engine's largest resident memory (VmHWM, Linux; the Java heap itself is held to
     1 GB by -Xmx1024m) go to the job summary of CI, and are printed for a run by hand."""
     try:
@@ -141,8 +153,9 @@ def _say(engine_pid, seconds):
 # Not in a plain run: `python -m pytest -m slow_size tests/test_restore_size.py` runs it (the `restore-size` CI job
 # does, on main and by hand). The ordinary tier keeps the bound of rows in one transaction: tests/test_restore_staged.py.
 @pytest.mark.slow_size
-@pytest.mark.time_limit(1500)
-def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_path, monkeypatch):
+@pytest.mark.time_limit(3000)
+@pytest.mark.parametrize("NODES,EDGES", SIZES)
+def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_path, monkeypatch, NODES, EDGES):
     for name in (key for base in ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE", "ARCADE_DB_PREFIX",
                                   "ARCADE_CONNECT_URL") for key in env_names(base)):
         monkeypatch.delenv(name, raising=False)
@@ -154,19 +167,23 @@ def test_a_store_the_size_of_this_repository_restores_on_the_default_heap(tmp_pa
                             ("CAIRNMIND_ARCADE_DB_PREFIX", "restoresize")):
             monkeypatch.setenv(name, value)
         store = Store(tmp_path / "memory")
-        _build(store, tmp_path)
+        _build(store, tmp_path, NODES, EDGES)
         assert _counts(store) == {"sources": SOURCES, "chunks": CHUNKS, "nodes": NODES, "edges": EDGES}
         backup = store.backup(tmp_path / "trial.cairnmind.json.gz")
         begun = time.monotonic()
         store.restore(backup)  # before the change: ArcadeDB HTTP 500: Java heap space, after 69 to 104 s
-        _say(pid, time.monotonic() - begun)
+        _say(pid, time.monotonic() - begun, NODES, EDGES)
         assert _counts(store) == {"sources": SOURCES, "chunks": CHUNKS, "nodes": NODES, "edges": EDGES}
+        project = store.query("SELECT id FROM projects WHERE name='probe'")[0]["id"]
+        assert _found_by_the_index(store, project, NODES, EDGES) == {"nodes": NODES, "edges": EDGES}
+        assert store.query("SELECT count(*) AS n FROM edges WHERE out IS NULL OR in IS NULL")[0]["n"] == 0
         assert store.embed_jobs_requeued == CHUNKS  # a backup holds no vectors: every completed embed job is pending
         assert len(list((store.data_dir / "backups").glob("before-restore-*"))) == 1
         assert not store.query("SELECT FROM devbrain_meta WHERE name='restore_unfinished'")
         log = Path(engine.data_dir / "arcade" / "engine.log").read_text(errors="replace")
         assert "OutOfMemoryError" not in log and "critically low" not in log
-        _restore_through_a_slow_link(store, backup, engine, monkeypatch)
+        if NODES == SIZES[0].values[0]:  # the slow link is measured at the trial's size only
+            _restore_through_a_slow_link(store, backup, engine, monkeypatch, NODES, EDGES)
     finally:
         stop_engine(engine)
         for _ in range(200):  # the engine ends after the stop is asked for: nothing may outlive the test

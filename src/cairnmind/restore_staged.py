@@ -22,16 +22,15 @@ The English sentences are the source; ``MESSAGES`` holds their Polish.
 """
 from __future__ import annotations
 
-from contextlib import ExitStack
 import hashlib
 from pathlib import Path
 import re
-import sys
 import time
 from typing import NoReturn
 from uuid import uuid4
 
 from .arcade import RESTORE_COMMIT_TIMEOUT
+from .graph_transactions import BoundedTransactions
 from .sql import utc_now
 from .store_readonly import StoreNotReady
 from .terminal_safe import safe_text
@@ -224,49 +223,21 @@ def clear_mark(store) -> None:
         tx.command("DELETE FROM devbrain_meta WHERE name=:name", {"name": MARK})
 
 
-class Batches:
+class Batches(BoundedTransactions):
     """The open transaction of the write phase: ``wrote`` counts what went into it and, at the bound, commits it.
 
     Each transaction resets the journal, as the one transaction of a restore did: that is what lets the graph be
-    written in groups, and what leaves the journal free of single rows."""
+    written in groups, and what leaves the journal free of single rows. The mechanics are the indexer's
+    (graph_transactions.BoundedTransactions); the bounds are the restore's own, because of the client's wait."""
+    timeout = (RESTORE_COMMIT_TIMEOUT,)
 
-    def __init__(self, store):
-        self.store, self._stack, self.tx = store, None, None
-        self._open()
-
-    def _open(self) -> None:
+    def begin(self, tx) -> None:
         from .journal import Journal
-        stack = ExitStack()
-        try:
-            self.tx = stack.enter_context(self.store.transaction(RESTORE_COMMIT_TIMEOUT))
-            Journal.reset(self.tx, reason="restore")
-        except BaseException:
-            stack.close()
-            raise
-        self._stack, self.rows, self.size, self.opened = stack, 0, 0, time.monotonic()
+        Journal.reset(tx, reason="restore")
 
-    def wrote(self, rows: int, size: int = 0) -> None:
-        self.rows += rows
-        self.size += size
-        if (self.rows >= ROWS_PER_TRANSACTION or self.size >= BYTES_PER_TRANSACTION
-                or time.monotonic() - self.opened >= TIME_PER_TRANSACTION):
-            self.commit()
-            self._open()
-
-    def commit(self) -> None:
-        """Commit the open transaction; none is open afterwards."""
-        stack, self._stack = self._stack, None
-        if stack is not None:
-            stack.close()
-
-    def abandon(self) -> None:
-        """Roll the open transaction back, inside the handler of the error that ends the restore. Never raises."""
-        stack, self._stack = self._stack, None
-        if stack is not None:
-            try:
-                stack.__exit__(*sys.exc_info())
-            except Exception:  # noqa: BLE001 - the first error is the one the person needs
-                pass
+    def full(self) -> bool:
+        return (self.rows >= ROWS_PER_TRANSACTION or self.size >= BYTES_PER_TRANSACTION
+                or time.monotonic() - self.opened >= TIME_PER_TRANSACTION)
 
 
 def clear(store, types: list[str]) -> None:

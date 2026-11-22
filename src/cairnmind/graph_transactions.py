@@ -12,10 +12,8 @@ next indexing replaces the whole graph.
 
 The engine's unique index on ``nodes.id`` does not find vertices that were committed a moment ago while the engine
 compacts the index (seen on ArcadeDB 26.11.1; seconds, and not with compaction switched off). ``await_vertices``
-reads the vertices back by that index before the edges that name them are written.
-
-This is the small local counterpart of ``Batches`` in restore_staged.py (#362): when both are on main they are to be
-one helper.
+reads the vertices back by that index before the edges that name them are written; the restore (#362) does the same
+before it writes the edges of a group, and shares ``BoundedTransactions`` with the indexer.
 """
 from __future__ import annotations
 
@@ -27,23 +25,33 @@ ROWS_PER_TRANSACTION = 20000
 VERTEX_WAIT = 60.0  # seconds the engine's index may take to find the vertices that were committed
 
 
-class GraphTransactions:
-    """The open transaction of a graph write; ``wrote`` counts rows into it and, at the bound, commits it."""
+class BoundedTransactions:
+    """The open transaction of a write; ``wrote`` counts what went into it and, at the bound, commits it.
 
-    def __init__(self, store, project_id):
-        self.store, self.project_id, self.commits, self._stack = store, project_id, 0, None
+    The one helper of the indexer's graph write (``GraphTransactions``) and of the restore's (``restore_staged.Batches``,
+    #362): each says in ``begin`` how the journal is reset, in ``full`` when to commit, and in ``timeout`` what the
+    commit waits (the restore's 5,000 rows, 8 MiB or 5 s against 20,000 rows here: the client's wait is the reason)."""
+    timeout = ()  # arguments of Store.transaction
+
+    def __init__(self, store):
+        self.store, self.commits, self._stack = store, 0, None
         self.open()
 
+    def begin(self, tx):
+        raise NotImplementedError
+
+    def full(self):
+        raise NotImplementedError
+
     def open(self):
-        from .journal import Journal
         stack = ExitStack()
         try:
-            self.tx = stack.enter_context(self.store.transaction())
-            Journal.touch(self.tx, self.project_id, "graph", op="reset")
+            self.tx = stack.enter_context(self.store.transaction(*self.timeout))
+            self.begin(self.tx)
         except BaseException:
             stack.close()
             raise
-        self._stack, self.rows = stack, 0
+        self._stack, self.rows, self.size, self.opened = stack, 0, 0, time.monotonic()
 
     def commit(self):
         """Commit the open transaction; none is open afterwards."""
@@ -52,9 +60,10 @@ class GraphTransactions:
             stack.close()
             self.commits += 1
 
-    def wrote(self, rows):
+    def wrote(self, rows, size=0):
         self.rows += rows
-        if self.rows >= ROWS_PER_TRANSACTION:
+        self.size += size
+        if self.full():
             self.commit()
             self.open()
 
@@ -66,6 +75,21 @@ class GraphTransactions:
                 stack.__exit__(*sys.exc_info())
             except Exception:  # noqa: BLE001 - the first error is the one the person needs
                 pass
+
+
+class GraphTransactions(BoundedTransactions):
+    """The graph write of one project's indexing: its journal reset is the project's graph, its bound the rows."""
+
+    def __init__(self, store, project_id):
+        self.project_id = project_id
+        super().__init__(store)
+
+    def begin(self, tx):
+        from .journal import Journal
+        Journal.touch(tx, self.project_id, "graph", op="reset")
+
+    def full(self):
+        return self.rows >= ROWS_PER_TRANSACTION
 
 
 def await_vertices(store, identifiers):
