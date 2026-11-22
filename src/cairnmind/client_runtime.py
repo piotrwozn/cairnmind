@@ -186,6 +186,7 @@ class NativeRuntime:
         if result.returncode == 0 and result.stdout.rstrip("\r\n").endswith("\t1\t"):
             # Dead with no status: tmux 3.4 sometimes misses the SIGCHLD of an exited pane (a zombie, no exit
             # status, no "Session ended" line) until another child of its server ends. A job of its own ends now.
+            # A pane killed by a signal also has no status, so each look at it costs one such job (a few ms).
             self._tmux("run-shell", "true", check=False)
             result = self._tmux(*query, check=False)
         if result.returncode:
