@@ -32,6 +32,10 @@ RESUME_REASONS = {"startup", "resume", "compact", "clear", "fork", "refresh"}
 AGENT_CLIENTS = {"api", "copilot"}
 # Any MCP client whose conversation Cairnmind cannot read (Cursor, Cline, Zed and others).
 EXTERNAL_CLIENT = "external"
+# The answer of resume_context while the session's ACK of its packet still holds (#325).
+UNCHANGED_NOTE = ("Unchanged: this session acknowledged this packet and nothing it promises has changed, so the "
+                  "acknowledgement still holds. This answer is not an acknowledgement and extends none. A client "
+                  "that no longer has the packet asks for the full packet again.")
 EXTERNAL_WARNING = (
     "External client: Cairnmind cannot read or archive this client's own conversation (history: unarchived), "
     "so nothing said in it can be verified (evidence: degraded). What this session records is kept as reported "
@@ -1230,18 +1234,21 @@ class SessionManager:
                 raise ValueError("resume_required: relevant project state or code changed before exact packet read")
             return self._result(session, packet)
 
-    def resume_context(self, session_id: str) -> dict:
+    def resume_context(self, session_id: str, short: bool = False) -> dict:
         session = self._session(session_id)
         packet = self._packet(session)
         if packet and packet.get("status") == "ready":
+            kept = None
             try:
                 if not _current_schema(packet):
                     raise ValueError("A packet made by an earlier version is never current")
                 current = self._state(session)
                 if current["state_hash"] == packet["state_hash"] and not self._own_continuity(session):
-                    return self._result(session, packet)
+                    kept = current
             except (OSError, ValueError):
                 pass
+            if kept is not None:
+                return (self._unchanged(session_id, kept, packet) if short else None) or self._result(session, packet)
             with self.store.transaction() as tx:
                 current_session = one_row(tx, "SELECT FROM sessions WHERE id=:id", {"id": session_id})
                 if current_session["epoch"] == session["epoch"]:
@@ -1252,6 +1259,21 @@ class SessionManager:
                     update_document(tx, "sessions", current_session, "id=:id", {"id": session_id})
         return self.prepare(session["project_id"], session["client"], session["worktree"], session_id,
                             reason="refresh", timeout=0)
+
+    def _unchanged(self, session_id: str, state: dict, packet: dict) -> dict | None:
+        """The short answer when this session's ACK of ``packet`` still holds; None otherwise (#325).
+
+        Read-only: it writes nothing, is no acknowledgement and extends none. The write gate stays require_ack.
+        """
+        session = self._session(session_id)  # read again: a hook may have moved the epoch since
+        if session.get("packet_id") != packet["id"] or self._write_refusal(session, packet["id"]):
+            return None
+        reply = {"session_id": session["id"], "epoch": session["epoch"], "status": "ready", "unchanged": True,
+                 "acknowledged": True, "packet_id": packet["id"], "packet_hash": packet["hash"],
+                 "newer_automatic_proposals": self._newer_count(state, packet), "note": UNCHANGED_NOTE}
+        if session["client"] == EXTERNAL_CLIENT:
+            reply.update(history="unarchived", evidence="degraded")  # an acknowledged external session stays degraded
+        return reply
 
     @staticmethod
     def _refuse_ack(session: dict, packet: dict | None, packet_id: str, packet_hash: str, readback: dict) -> None:

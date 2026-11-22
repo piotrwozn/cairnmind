@@ -123,6 +123,8 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A removed project whose folder lies inside the data directory cannot be brought back by `project add`; the dry run, `project list --removed` and every later refusal say so and name the delete step (#327).
 - The indexing message about a folder inside the data directory now names `cairnmind project remove` instead of registering the files again (#327).
 - Hook events of a folder that is not registered no longer use up the 100-event drain limit, and each is read again only after a project is added or removed, so they cannot delay or slow down the events of registered projects (#327).
+- Through MCP, `resume_context` answers in a few hundred bytes (that the packet is unchanged and still acknowledged, its id and hash, and the count of newer automatic proposals) while the session's acknowledged packet is current; `full_packet: true` returns the whole packet, and a new, changed or unacknowledged packet always comes whole. The acknowledgement gate is unchanged: the short answer acknowledges nothing and extends nothing (#325).
+- Through MCP, `remember` and `checkpoint` answer with the stored record's id, version, status, kind, key, its source ids and what the service set or did not keep (the origin mark, a supersede, possible conflicts, the keys sent that were not stored as sent, and the stored keys the write removed) instead of repeating the whole record; `save_plan` no longer repeats the plan's title. The command line, the hooks and the built-in agent get what they got before (#325).
 
 ### Development and CI
 
