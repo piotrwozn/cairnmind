@@ -77,6 +77,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The inspector replaces a record with a new text: open a decision, fact, constraint, question or preference and choose Replace. The form starts with the current text and asks for an optional reason; a consent dialog shows the current and the new text whole, and only its approval saves the new text as a new record confirmed by you, with an audit note, in one act. The record you opened becomes superseded and stays in its history with its sources; its view says Replaced by and the new record's id. If the record changed since you opened it, nothing is saved and it is read again (#222).
 - POST /inspector/records/{id}/replace needs the key the open workspace keeps; the service token alone is refused and nothing is written. A task, a checkpoint and a record that is already history are not replaced. When the answer of the service is lost or unreadable, the workspace says the replacement may have been saved instead of saying it was not (#222).
 - Replacing an external session's proposal is recorded on both records, as a conflict decision is, so your new text is published even though the proposal never is (#222).
+- The inspector's Replace button sits in the upper row of buttons, beside Details, and is greyed out in a list. In Polish the buttons Dispute and Details are now called Kwestionuj and Detale, so no button label of either row is cut in a Cockpit of 140 columns (#222).
 
 ### Evaluations, measurements and decisions
 
