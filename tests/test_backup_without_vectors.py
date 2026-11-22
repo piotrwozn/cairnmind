@@ -14,7 +14,7 @@ from cairnmind import person_proof
 from cairnmind.cli import app
 from cairnmind.ingest import _write_chunks
 from cairnmind.restore_claims import VECTORS_REBUILT, VECTORS_WAIT, checked_restore
-from cairnmind.retrieval import Retriever
+from cairnmind.retrieval import VECTORS_BUILDING, VECTORS_NOT_READY, Retriever
 from cairnmind.store import Store
 from cairnmind.terminal_i18n import tr
 
@@ -90,7 +90,29 @@ def test_search_warns_for_the_whole_rebuild_not_only_before_the_first_vector(emb
     # The registry row exists now, yet most vectors are still missing: the search must say so.
     partial = Retriever(target, target.settings)
     partial.search(embedded.project, "rotated", query_vector=[0.25, 0.5, 0.75, 1.0], embedding_key=NAMESPACE)
-    assert any(f"{total - 1} left" in warning for warning in partial.warnings)
+    assert f"{VECTORS_BUILDING}{total - 1}" in partial.warnings
+
+
+def test_a_restore_into_the_same_store_rebuilds_into_its_emptied_vector_type(embedded):
+    """The store keeps its emptied vector_* type after the restore; the rebuild registers it again and fills it."""
+    store = embedded.store
+    store.restore(embedded.backup)
+    assert store.embed_jobs_requeued == embedded.jobs
+    assert rebuild(store) == embedded.jobs
+    retriever = Retriever(store, store.settings)
+    found = retriever.search(embedded.project, "unrelated", query_vector=[0.25, 0.5, 0.75, 1.0], embedding_key=NAMESPACE)
+    assert found and not retriever.warnings
+    assert store.query("SELECT count(*) AS n FROM vector_indexes")[0]["n"] == 1
+
+
+def test_the_workspace_shows_both_vector_warnings_in_polish():
+    """The answer view of the workspace says the warnings of a search without its vectors in the person's language."""
+    from cairnmind.terminal_commands import ask_summary
+    answer = {"status": "complete", "answer": "x", "freshness": {"warnings": [VECTORS_NOT_READY, f"{VECTORS_BUILDING}7"]}}
+    shown = ask_summary(answer, lambda text: tr(text, "pl"))
+    assert "- " + tr(VECTORS_NOT_READY, "pl") in shown and tr(VECTORS_NOT_READY, "pl") != VECTORS_NOT_READY
+    assert "pozostałe zadania osadzania: 7" in shown
+    assert f"- {VECTORS_BUILDING}7" in ask_summary(answer, str)  # English stays as the search wrote it
 
 
 def test_two_completed_jobs_of_one_chunk_are_requeued_and_counted_once(embedded):

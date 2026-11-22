@@ -20,6 +20,10 @@ from .memory_egress import ASK, held_back_class
 from .memory_models import from_settings
 from .sql import unregistered_root
 
+# The two warnings of a search whose vectors are missing (#187); Polish in terminal_i18n_messages.
+VECTORS_NOT_READY = ("Vectors for the current embedding model are not ready (being built or rebuilt, or models are "
+                     "off): this search used the text only and may miss matches")
+VECTORS_BUILDING = "Vectors are still being built, so this search may miss matches; embedding jobs left: "  # + the number
 
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "i", "in", "is",
@@ -505,12 +509,10 @@ class Retriever:
                     "SELECT count(*) AS n FROM jobs WHERE project_id=:project AND kind='embed' "
                     "AND state IN ['pending','running']", {"project": project_id})
                 if left and left[0].get("n"):
-                    self.warnings.append(f"Vectors are still being built ({left[0]['n']} left): "
-                                         "this search may miss matches")
+                    self.warnings.append(f"{VECTORS_BUILDING}{left[0]['n']}")
             else:
                 # After a restore, which brings no vectors, this is the state until the rebuild ends (#187).
-                self.warnings.append("Vectors for the current embedding model are not ready (being built or rebuilt, "
-                                     "or models are off): this search used the text only and may miss matches")
+                self.warnings.append(VECTORS_NOT_READY)
         if words:
             # Fetch enough extra rows that a status penalty cannot pull in a record
             # that was cut off before ranking.
