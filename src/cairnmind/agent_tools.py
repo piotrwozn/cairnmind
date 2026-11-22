@@ -449,7 +449,7 @@ class ToolExecutor:
             whole += 1
         return {"ok": True, "path": relative, "content": content, "sha256": hashlib.sha256(raw).hexdigest(),
                 "bytes": len(raw), "start_line": first, "end_line": first - 1 + whole, "total_lines": len(lines),
-                "truncated": first != 1 or first - 1 + limit < len(lines) or len(selected) > MAX_TEXT_CHARS}
+                "truncated": first - 1 + limit < len(lines) or len(selected) > MAX_TEXT_CHARS}  # not: "starts after line 1"
 
     def _search(self, args):
         query = args.get("query")

@@ -30,6 +30,9 @@ KEY_EXISTS_HINT = ("An active record of this kind already has this key. Nothing 
 UNKNOWN_SOURCE_HINT = ("No archived source of this project has this id. Nothing was read. Use a source id that "
                        "resume_context, memory_records or a tool result gave you (full_result_source_id); a "
                        "session, record or packet id is not a source id.")
+# A check_status task_id that names no task of this project, such as the text "None" for no task.
+UNKNOWN_TASK_HINT = ("No task of this project has this id. Nothing was read. Use a task id that next_task or "
+                     "memory_records gave you, or pass null, not the text \"None\", to read the checks of all tasks.")
 # After the store's refusal of a record's shape (store.RecordRefused): what a record it saves looks like.
 RECORD_SHAPE_HINT = ("Nothing was saved. A record has kind (decision, task, fact, constraint, question, preference "
                      "or checkpoint), content (nonempty text), and optionally key (nonempty text), status "
@@ -455,6 +458,8 @@ class AgentMemoryClient:
                     raise MemoryRefusal("key_exists", KEY_EXISTS_HINT)
                 if response.status_code == 404 and path.startswith("/inspector/sources/"):
                     raise MemoryRefusal("unknown_source", UNKNOWN_SOURCE_HINT)
+                if response.status_code == 400 and path == "/checks" and detail == "Task does not exist in this project":
+                    raise MemoryRefusal("unknown_task", UNKNOWN_TASK_HINT)
                 raise RuntimeError(f"Cairnmind service rejected the request ({response.status_code}): {detail[:500]}")
             result = response.json()
             if not isinstance(result, dict):

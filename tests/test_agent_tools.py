@@ -171,6 +171,17 @@ async def test_line_slice_still_returns_hash_of_complete_file(executor):
     assert result["truncated"] and result["total_lines"] == 3
 
 
+async def test_a_slice_that_reaches_the_last_line_is_not_truncated(executor):
+    # #169: start_line 6 to the end of a file was reported as cut, and a small model fell back to 10-line slices.
+    (executor.worktree / "lines").write_text("one\ntwo\nthree\nfour\n")
+    rest = await executor.execute("read_file", {"path": "lines", "start_line": 3, "max_lines": 50})
+    assert rest["content"] == "three\nfour\n" and rest["end_line"] == 4 and not rest["truncated"]
+    exact = await executor.execute("read_file", {"path": "lines", "start_line": 3, "max_lines": 2})
+    assert not exact["truncated"]
+    short = await executor.execute("read_file", {"path": "lines", "start_line": 2, "max_lines": 2})
+    assert short["truncated"]
+
+
 async def test_search_literal_not_regex_and_bounded_results(executor):
     file = executor.worktree / "data.txt"
     file.write_text("[literal]\nLITERAL\n[literal]\n")
