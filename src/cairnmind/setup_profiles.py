@@ -132,9 +132,9 @@ CHANGE_STORAGE_LOCAL = ("Storage: from ArcadeDB at {before} to the engine on thi
 ENGINE_START = ("The engine on this machine will be started ({engine}). Nothing is installed: the native engine needs "
                 "`cairnmind engine install` done before; in Docker a missing engine image is downloaded, which is said "
                 "when it happens.")
-ENGINE_NATIVE = "native, Java 21"
+ENGINE_NATIVE = "native, Java 21 or newer"
 ENGINE_DOCKER = "in Docker"
-ENGINE_CHOSEN = "native with Java 21, or in Docker when Java 21 is not found, as `cairnmind init` chooses"
+ENGINE_CHOSEN = "native with Java 21 or newer, or in Docker when it is not found, as `cairnmind init` chooses"
 LOCAL_DATA_FOUND = ("The store on this machine still holds the database {database} from before; with --empty it is "
                     "used as it was left, with nothing from the store at {url}.")
 LOCAL_DATA_NEW = "The store on this machine has no database {database}; with --empty it starts empty."
@@ -274,9 +274,9 @@ MESSAGES = {
     CONFIRMATIONS: "Odtwarzanie oznaczyło {marked} rekordów jako potwierdzone przez człowieka i zostawiło {left} sprzed reguły; pozostałe potwierdź w inspektorze.",
     CHANGE_STORAGE_LOCAL: "Baza: z ArcadeDB pod adresem {before} na silnik na tym komputerze pod adresem {url}, z bazą {database}.",
     ENGINE_START: "Silnik na tym komputerze zostanie uruchomiony ({engine}). Nic nie jest instalowane: silnik natywny wymaga wcześniejszego `cairnmind engine install`; w Dockerze brakujący obraz silnika jest pobierany, co zostaje wtedy powiedziane.",
-    ENGINE_NATIVE: "natywny, Java 21",
+    ENGINE_NATIVE: "natywny, Java 21 lub nowsza",
     ENGINE_DOCKER: "w Dockerze",
-    ENGINE_CHOSEN: "natywny z Javą 21 albo w Dockerze, gdy Javy 21 nie ma, tak jak wybiera `cairnmind init`",
+    ENGINE_CHOSEN: "natywny z Javą 21 lub nowszą albo w Dockerze, gdy jej nie ma, tak jak wybiera `cairnmind init`",
     LOCAL_DATA_FOUND: "Baza na tym komputerze nadal ma bazę danych {database} sprzed zmiany; z --empty jest używana tak, jak została zostawiona, bez niczego z bazy pod adresem {url}.",
     LOCAL_DATA_NEW: "Baza na tym komputerze nie ma bazy danych {database}; z --empty zaczyna pusta.",
     BACKUP_PLAN: "Kopia zapasowa: baza pod adresem {url} jest czytana do {path}, bez żadnego zapisu do niej; plik jest sprawdzany, a potem odtwarzany w bazie na tym komputerze, której obecna zawartość najpierw trafia do kopii bezpieczeństwa w backups/. Kopia zapasowa nie zawiera wektorów: po odtworzeniu usługa odbudowuje je z tekstu, a do tego czasu wyszukiwanie korzysta tylko z tekstu.",
