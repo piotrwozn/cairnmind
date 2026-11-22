@@ -149,7 +149,7 @@ def stand_ins(tmp_path):
             ["bash", "-c", "set -euo pipefail\n" + installer_functions()
              + f'\nstop_installed "{tools}/{installed}" cairnmind "{tools}/python"\necho continued'],
             env=environment, capture_output=True, text=True, timeout=30)
-        return result, [line for line in log.read_text().splitlines() if not line.startswith("tmux list-sessions")]
+        return result, [line for line in log.read_text().splitlines() if not line.startswith(("tmux list-sessions", "tmux list-panes"))]
 
     yield run, terminal
     shutil.rmtree(sockets, ignore_errors=True)
