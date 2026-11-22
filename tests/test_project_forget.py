@@ -93,8 +93,9 @@ def test_delete_leaves_a_deleted_projects_entry_and_the_history_is_capped(world,
     assert project_forget.history(store) == []
     project_forget.delete(store.settings, store, project["id"])
     (entry,) = project_forget.history(store)
-    assert {key: entry[key] for key in ("project_id", "name", "root", "removed_at", "route")} == {
-        "project_id": project["id"], "name": "app", "root": str(root), "removed_at": None, "route": "workspace"}
+    assert {key: entry[key] for key in ("project_id", "removed_at", "route")} == {
+        "project_id": project["id"], "removed_at": None, "route": "workspace"}
+    assert "app" not in str(entry) and str(root) not in str(entry)  # neither the name nor the folder is kept
     assert entry["deleted_at"] and entry["host"] and set(entry["counts"]) == set(project_forget.KEPT_COUNTS)
     assert entry["counts"]["records"] >= 1
     monkeypatch.setattr(project_forget, "HISTORY_LIMIT", 2)

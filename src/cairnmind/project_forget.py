@@ -76,7 +76,8 @@ def delete(settings, store, project_id: str) -> dict:
         row = named(_row(tx, project_id))
         project_removal._jobs_in_work(tx, {**row, "name": row["name"] or row["id"]})
         store.forget_project(project_id)  # the same transaction
-        _record(tx, {"project_id": project_id, "name": shown["project"]["name"], "root": shown["project"]["root"],
+        # No name and no folder: the person asked for this project to be gone, so the trace does not keep them.
+        _record(tx, {"project_id": project_id,
                      "removed_at": shown["project"]["removed_at"], "deleted_at": utc_now(),
                      "host": store_writer.label(socket.gethostname()),
                      "counts": {key: shown["deletes"][key] for key in KEPT_COUNTS}, "route": "workspace"})
