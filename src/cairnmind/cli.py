@@ -1234,21 +1234,10 @@ def impact_verdict(ctx: typer.Context, project: ProjectArg, record_id: RecordIdA
                    since: Annotated[str, typer.Option(help="The commit the list was made against.")],
                    note: Annotated[str | None, typer.Option(help="Required for needs_update.")] = None,
                    worktree: Path | None = None):
-    """Record your verdict on one record listed by `impact`. Changes no record and no task."""
-    from cairnmind.impact_verdicts import record_verdict
-    # A verdict is a person's judgement, as `retry-jobs` is a person's act: a coding session cannot give one.
-    if session_value("SESSION_ID"):
-        raise typer.BadParameter("A coding session cannot record an impact verdict; only a person can, "
-                                 "outside the session.")
-    store = store_for(ctx.obj)
-    pid = store.resolve_project(project)["id"]
-    try:
-        result = record_verdict(store, pid, record_id, fingerprint, verdict, since,
-                                str(worktree.expanduser().resolve()) if worktree else None, note)
-    except LookupError as exc:
-        # The record is not in that list (it may exist): a refusal of the state, not a usage error (#244).
-        refuse(str(exc))
-    output(result)
+    """Refused since 0.13.0: a person gives a verdict in the Impact view of the inspector."""
+    from cairnmind.impact_verdicts import CLI_REFUSED
+    # A person's act needs the open workspace's key (#306); the options stay so that a script gets this sentence.
+    refuse(CLI_REFUSED)
 
 
 class UsageBy(str, Enum):
@@ -1735,7 +1724,8 @@ def plan_adopt(ctx: typer.Context, project: ProjectArg, group: GroupArg,
     from cairnmind.plans import PlanManager
     store = store_for(ctx.obj)
     pid = store.resolve_project(project)["id"]
-    # Adoption gives each task a plan key: a task a person confirmed is refused, never adopted here (#214).
+    # Adoption gives each task a plan key: a task a person confirmed is refused here; the person adopts that group
+    # in the workspace (#214, #305).
     with actor_write(store, ctx.obj, pid, worktree) as scope:
         result = PlanManager(store).adopt_legacy(pid, group, plan={"title": title} if title else None,
             idempotency_key=idempotency_key, worktree=scope, activate=activate)
@@ -2195,7 +2185,8 @@ def memory_import(ctx: typer.Context, path: SnapshotArg,
                   dry_run: bool = False,
                   replace_confirmed: Annotated[bool, typer.Option(
                       "--replace-confirmed", help="Ask to replace records that were confirmed or disputed on this "
-                      "machine; the service applies it only from the workspace, the dry run lists them.")] = False):
+                      "machine; refused outside the workspace, where Import in the memory view does it. The dry "
+                      "run lists them.")] = False):
     """Import the memory of this project only; --dry-run needs a running service and writes nothing."""
     from cairnmind.memory import inspect_snapshot
     selected = str(path.expanduser().absolute())

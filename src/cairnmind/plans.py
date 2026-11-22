@@ -35,6 +35,44 @@ def _version(value, label):
         raise ValueError(f"{label} must be a positive integer")
 
 
+_ACTIVE_TASKS = "SELECT FROM records WHERE project_id=:project AND kind='task' AND status!='superseded'"
+
+
+def _legacy_order(task):
+    return task["metadata"].get("step_index", 2**63), task["created_at"], task["id"]
+
+
+def _legacy_tasks(tx, project_id, group):
+    """The active tasks of an old `metadata.plan_id` group, as adopt_legacy adopts them."""
+    return [clean_row(row) for row in tx.query(_ACTIVE_TASKS, {"project": project_id})
+            if row["metadata"].get("plan_id") == group]
+
+
+def legacy_groups(store, project_id) -> dict:
+    """The old `metadata.plan_id` groups of a project that can be adopted (#305), each with its tasks in the
+    order the plan will have them. Read-only. A group any task of which already belongs to a plan is managed
+    (adopt_legacy refuses it) and is not listed. `confirmed` counts the tasks only a person may change."""
+    from .confirmation import confirmed_by
+    found = {}
+    with store.transaction() as tx:
+        store._require_project(tx, project_id)
+        for row in tx.query(_ACTIVE_TASKS, {"project": project_id}):
+            task = clean_row(row)
+            group = task["metadata"].get("plan_id")
+            if isinstance(group, str) and group.strip():
+                found.setdefault(group, []).append(task)
+    groups = []
+    for group, tasks in sorted(found.items()):
+        if any(task["metadata"].get("plan_ref") for task in tasks):
+            continue
+        tasks.sort(key=_legacy_order)
+        groups.append({"group": group, "confirmed": sum(bool(kept_verdict(task)) for task in tasks),
+                       "tasks": [{"id": task["id"], "version": task["version"], "content": task["content"],
+                                  "status": task["status"], "state": task["metadata"].get("state", "todo"),
+                                  "confirmed_by": confirmed_by(task)} for task in tasks]})
+    return {"groups": groups}
+
+
 def _tasks(tx, project_id, plan):
     rows = [clean_row(row) for row in tx.query(
         "SELECT FROM records WHERE project_id=:project AND id IN :ids",
@@ -367,9 +405,7 @@ class PlanManager:
             raise ValueError("Legacy group must be nonempty text")
         with self.store.transaction() as tx:
             self.store._require_project(tx, project_id)
-            tasks = [clean_row(row) for row in tx.query(
-                "SELECT FROM records WHERE project_id=:project AND kind='task' AND status!='superseded'",
-                {"project": project_id}) if row["metadata"].get("plan_id") == group]
+            tasks = _legacy_tasks(tx, project_id, group)
             if not tasks or any(task["metadata"].get("plan_ref") for task in tasks):
                 # A repeated adoption request must still replay after membership
                 # changed, rather than fail before its idempotency record is read.
@@ -383,7 +419,7 @@ class PlanManager:
                     if payload.get("adoption") == group and payload["plan"] == expected_plan and payload["task_versions"] == task_versions and payload["worktree"] == (str(worktree) if worktree is not None else None) and payload["activate"] == activate:
                         return {**deepcopy(request["result"]), "replayed": True}
                 raise ValueError("Legacy group is empty or already managed")
-            tasks.sort(key=lambda task: (task["metadata"].get("step_index", 2**63), task["created_at"], task["id"]))
+            tasks.sort(key=_legacy_order)
             by_id = {task["id"]: task for task in tasks}
             keys = {task["id"]: task["key"] for task in tasks}
             steps = []

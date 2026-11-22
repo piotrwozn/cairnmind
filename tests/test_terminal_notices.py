@@ -177,7 +177,7 @@ async def test_escapes_newlines_and_markup_are_shown_literally(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_opened_from_the_more_menu_as_its_last_entry(tmp_path, monkeypatch):
+async def test_opened_from_the_more_menu(tmp_path, monkeypatch):
     settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
     app = SidebarApp(settings, broker=broker, workspace=workspace)
     async with app.run_test(size=(120, 35)) as pilot:
@@ -185,8 +185,7 @@ async def test_opened_from_the_more_menu_as_its_last_entry(tmp_path, monkeypatch
         app.notice(CHECK)
         app.notice(STAGE)
         table = await open_more(app, pilot)
-        assert app.screen.choices[-1] == ("Notices", "notices")
-        last = len(app.screen.choices) - 1
+        last = app.screen.choices.index(("Notices", "notices"))  # later entries are appended after it (#305)
         table.move_cursor(row=last)
         assert table.cursor_row == last
         await pilot.press("enter")
@@ -266,7 +265,7 @@ async def test_the_history_is_polish_and_empty_history_says_so(tmp_path, monkeyp
         app.notice("Drugi")
         assert mark_of(app) == "[Komunikaty: 1]"
         table = await open_more(app, pilot)
-        assert "Komunikaty" in str(table.get_row_at(len(app.screen.choices) - 1))
+        assert "Komunikaty" in str(table.get_row_at(app.screen.choices.index(("Notices", "notices"))))
         await pilot.press("escape")
 
 

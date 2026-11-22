@@ -7,9 +7,10 @@ import sys
 from uuid import uuid4
 
 import pytest
+from conftest import plain_words
 from typer.testing import CliRunner
 
-from cairnmind import confirmation, record_kinds
+from cairnmind import cli, confirmation, impact_verdicts, memory_published_release, record_kinds
 from cairnmind.cli import app
 
 ENVIRONMENT_WITHOUT_A_SESSION = ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID", "CAIRNMIND_PACKET_ID",
@@ -22,7 +23,7 @@ def clean_environment(**extra):
 
 
 def words(text):
-    return " ".join(text.split())
+    return plain_words(text)  # also drops the colour codes a forced-colour run puts inside option names
 
 
 def test_the_documented_pseudo_terminal_sequence_no_longer_confirms(tmp_path):
@@ -58,3 +59,38 @@ def test_confirm_plan_and_record_kind_commands_are_refused_in_a_person_terminal(
                 "record-kind": record_kinds.CLI_REFUSED}[arguments[0]]
     assert result.exit_code == 2 and sentence in words(result.output), result.output
     assert "inspector of the workspace" in words(result.output)
+
+
+@pytest.mark.parametrize("in_a_session", [False, True])
+@pytest.mark.parametrize("arguments, sentence", [
+    (["impact-verdict", "demo", str(uuid4()), "--fingerprint", "0" * 64, "--verdict", "still_valid", "--since", "HEAD"],
+     impact_verdicts.CLI_REFUSED),
+    (["memory", "release", "demo", str(uuid4()), "--reason", "An example key."],
+     memory_published_release.CLI_REFUSED)])
+def test_impact_verdict_and_release_commands_are_refused_in_a_person_terminal(
+        tmp_path, monkeypatch, person_terminal, arguments, sentence, in_a_session):
+    for name in ENVIRONMENT_WITHOUT_A_SESSION:
+        monkeypatch.delenv(name, raising=False)
+    if in_a_session:
+        monkeypatch.setenv("CAIRNMIND_SESSION_ID", "logical-session")
+    def no_store(*_args, **_kwargs):
+        raise AssertionError("the store was opened")
+
+    monkeypatch.setattr(cli, "store_for", no_store)
+    monkeypatch.setattr(cli, "store_for_read", no_store)
+    result = CliRunner().invoke(app, ["--data-dir", str(tmp_path / "memory"), *arguments])
+    assert result.exit_code == 2 and sentence in words(result.output), result.output
+    assert "inspector of the workspace" in words(result.output)
+def test_the_command_line_refusals_name_team_memory():
+    from cairnmind import person_proof
+    for sentence in (confirmation.replaces_refusal(["fact/x.md"]), confirmation.REPLACES_NOTE,
+                     person_proof.IMPORT_REPLACE):
+        assert "Team memory" in sentence and "memory view of the workspace" in sentence, sentence
+        assert "cannot replace" not in sentence and "yet" not in sentence.split(), sentence
+    environment = {"COLUMNS": "200"}
+    for command, named in ((["memory", "import-published"], "Team memory"), (["memory", "import-commit"], "Team memory"),
+                           (["memory", "import"], "Import in the memory view")):
+        output = words(CliRunner().invoke(app, [*command, "--help"], env=environment).output)
+        assert named in output and "cannot" not in output.split("--replace-confirmed")[1][:300], (command, output)
+    assert "Team memory" in words(CliRunner().invoke(app, ["memory", "import-published", "--help"],
+                                                     env=environment).output).split("--take-published")[1][:300]

@@ -806,10 +806,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         if not re.fullmatch(r"[A-Za-z0-9_:/-]+", path) or ".." in path:
             raise HTTPException(404)
         # The person's decisions are the only writes: a review, a conflict decision, an impact verdict, and
-        # accepting or withdrawing an unknown transcript record kind (#210), and confirming a plan (#214).
+        # accepting or withdrawing an unknown transcript record kind (#210), confirming a plan (#214), and
+        # releasing a record's false alarms of the secrets gate (#306), and adopting an old task group (#305).
         if request.method == "POST" and not (path.endswith("/review") or re.fullmatch(r"plans/[^/]+/confirm", path)
+                                             or re.fullmatch(r"records/[^/]+/release", path)
                                              or path in ("conflicts/resolve", "impact/verdict",
-                                                         "record-kinds/accept", "record-kinds/withdraw")):
+                                                         "record-kinds/accept", "record-kinds/withdraw",
+                                                         "legacy-groups/adopt")):
             raise HTTPException(405)
         post = request.method == "POST"
         return forward(await upstream(request.method, "/inspector/" + path, params=request.query_params,
@@ -819,12 +822,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     @app.api_route("/api/memory/{path:path}", methods=["GET", "POST", "PATCH"])
     async def memory_proxy(request: Request, path: str):
         session_for(request)
-        allowed = {"GET": {"status"}, "POST": {"preview", "snapshot", "inspect", "import"}, "PATCH": {"settings"}}
+        imports = {"import", "import-published", "import-commit"}
+        allowed = {"GET": {"status"}, "POST": {"preview", "snapshot", "inspect"} | imports, "PATCH": {"settings"}}
         if path not in allowed[request.method]:
             raise HTTPException(404)
         return forward(await upstream(request.method, "/memory/" + path, params=request.query_params,
                                       data=await body(request) if request.method != "GET" else None,
-                                      person=person_proof.forwardable(request.headers) if path == "import" else None))
+                                      person=person_proof.forwardable(request.headers) if path in imports else None))
 
     @app.get("/api/status")
     async def memory_status(request: Request):

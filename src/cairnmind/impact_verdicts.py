@@ -10,8 +10,8 @@ A verdict holds for the entry as it was listed: the record's content, its links 
 the current worktree content of that code (the linked definition, or the file). Editing either makes the
 entry unreviewed again. The links depend on the commit the list is compared with, so against a base that
 links the record to other changes the entry is unreviewed too: that list asks a different question.
-Only a person writes one: the inspector route takes no session and the command refuses to run inside a
-coding session.
+Only a person writes one: the inspector route needs the open workspace's key (person_proof, #306), and
+``record_verdict`` itself refuses without that proof.
 """
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ import os
 VERDICTS = {"still_valid": "still valid", "needs_update": "needs update", "not_related": "not related"}
 MAX_NOTE_CHARS = 4000
 PREFIX = "review://impact/"
+CLI_REFUSED = ("The command line no longer records an impact verdict. Nothing was saved. The person gives it in the "
+               "inspector of the workspace (`cairnmind`): Impact, open the entry, then Verdict.")
 STALE = "The code or the record changed since this list was shown; read the current list and decide again"
 
 
@@ -158,7 +160,9 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
     nothing; another verdict replaces the current one under the same address and the earlier stays as a
     non-current source.
     """
+    from cairnmind.confirmation import ConfirmationRefused
     from cairnmind.impact import build_impact
+    from cairnmind.person_proof import PROOF_MISSING, present
     from cairnmind.sql import json_text, utc_now
     if verdict not in VERDICTS:
         raise ValueError("The verdict must be still_valid, needs_update or not_related")
@@ -181,6 +185,8 @@ def record_verdict(store, project_id, record_id, fingerprint, verdict, since, wo
                 "commit": report["commit"]}
     metadata = {"origin": "local_user_review", "role": "user", "impact_verdict": True, "record_id": record_id,
                 "fingerprint": fingerprint}
+    if not present():
+        raise ConfirmationRefused(PROOF_MISSING)  # a person's act needs the workspace's key (#306)
     with store.transaction():
         earlier = current_verdicts(store, project_id).get(uri)
         # The time differs on every save, so an unchanged verdict is recognised by what it says.

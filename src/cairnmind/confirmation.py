@@ -172,8 +172,8 @@ def kept_step_refusal(step_key, refusal, adoption=False, title=None) -> str:
         return (f"Task {name!r} (task {refusal.record_id}) was confirmed by a person, or before "
                 "only a person could confirm, and adopting it into a plan gives it a plan key: this command is not "
                 f"a person's act, and it would {would}. Only a person takes a confirmation away. Nothing was saved. "
-                "The person disputes the task in the inspector of the workspace; it can then be adopted, and its step "
-                "is proposed until they confirm the plan.")
+                "The person adopts the group in the workspace (`cairnmind`): More, then Old task groups, choose the "
+                "group, then Adopt; its steps are proposed until they confirm the plan.")
     return (f"Step {str(step_key)[:200]!r} of this plan (task {refusal.record_id}) was confirmed by a person, and "
             f"{NOT_A_PERSON_SAVE}: it would {would}. Only a person takes a confirmation away. Nothing "
             "was saved. Save the plan with that step exactly as `plan show` returns it, every field included (other "
@@ -235,7 +235,8 @@ def kept_verdict(head) -> bool:
 
 
 REPLACES_NOTE = ("these records were confirmed or disputed on this machine and the import puts another text or "
-                 "status in their place; a person applies it in the memory view of the workspace, never the command line")
+                 "status in their place; a person applies it in the memory view of the workspace (Import for an "
+                 "archive, Team memory for a published folder or a commit), never the command line")
 
 
 IMPORT_IN_SESSION = ("A memory import is run only by a person, not inside a coding session: it can bring records "
@@ -243,12 +244,19 @@ IMPORT_IN_SESSION = ("A memory import is run only by a person, not inside a codi
                      "runs the import in their own terminal or in the workspace.")
 
 
+REPLACED_CHANGED = ("What this import replaces of the records confirmed or disputed on this computer changed since the "
+                    "check. Nothing was imported. Check the import again and read the new list.")
+
+GROUP_CHANGED = ("The tasks of this group changed since they were shown. Nothing was adopted. Open More, then Old "
+                 "task groups again and read the new list.")
+
+
 def replaces_refusal(names) -> str:
     return (f"This import would replace {len(names)} record(s) that were confirmed or disputed on this machine: "
             + ", ".join(str(name) for name in names[:50]) + (" and more" if len(names) > 50 else "")
             + ". Nothing was imported. Read them in the dry run. If the imported side is the one "
-              "to keep, a person imports an archive in the memory view of the workspace; a published directory or a "
-              "commit cannot replace them yet.")
+              "to keep, a person imports it in the memory view of the workspace (`cairnmind`): Import for an "
+              "archive, Team memory for a published folder or a commit.")
 
 
 def person_mark(route, source, version, at) -> dict:
@@ -458,8 +466,9 @@ def person_at_terminal(environ=None, stdin=None, stdout=None) -> bool:
 
 
 def person_source(store, project_id, text, *, route="cli", origin=None, action="command_line_confirm",
-                  worktree=None):
+                  worktree=None, context=None):
     """The note a person's command line confirmation leaves: who confirmed, on which branch and commit.
+    `context` is act_context already read, for a caller that must not run Git while it holds the writer lock.
 
     Like a review's audit it says that a person judged the record, never why the record is true: it is
     not evidence, it does not anchor the record and it is not the time of its evidence. Unlike a review
@@ -474,7 +483,7 @@ def person_source(store, project_id, text, *, route="cli", origin=None, action="
                               {"origin": SEED_SOURCE[1]})
     from .memory_acts import act_context
     prefix, source_origin = PERSON_ROUTES[route]
-    context = act_context(store, project_id, worktree)
+    context = context if context is not None else act_context(store, project_id, worktree)
     metadata = {"origin": origin or source_origin, "role": "user", **context}
     audit = {"actor": "local_user", **context, "action": action, "text_chars": len(text)}
     return store.snapshot(project_id, f"{prefix}{uuid4()}", json.dumps(audit, ensure_ascii=False, sort_keys=True),

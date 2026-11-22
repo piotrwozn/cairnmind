@@ -12,7 +12,7 @@ cairnmind export ~/memory.md --project my-app --markdown
 cairnmind backup ~/cairnmind-backup.cairnmind.json.gz
 ```
 
-The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`. To move a single project, use `memory import`; `restore` replaces the entire store.
+The ArcadeDB schema stays at version 4, the profile format at 2, and the administrative backup at 5, with support for the earlier formats 2–4. Old plan groups can be adopted explicitly with `plan adopt`, or in the workspace (More, then Old task groups) when a group holds a task a person confirmed. To move a single project, use `memory import`; `restore` replaces the entire store.
 
 Archiving does not wait for the GPU. Status shows archiving, indexing, model processing and the queue separately. The portable backup contains a consistent export of sources and database state; it does not contain credentials or model weights. Automatic backup runs while the service is running and keeps the seven most recent copies.
 

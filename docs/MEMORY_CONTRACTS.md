@@ -89,10 +89,14 @@ and `/memory/import-commit` refuse a request that names a session, except its dr
 run, which writes nothing. An import that would put another text or status in
 the place of a record that was confirmed or disputed on this machine is refused
 and lists those records (`replaces_confirmed_here` in the dry run); a person
-applies it in the memory view of the workspace (an archive; a published
-directory or a commit cannot replace such records yet, `--take-published`
-included, since 0.13.0). The import dialog states the number before the person
-applies the import.
+applies it in the memory view of the workspace (Import for an archive, Team
+memory for a published directory or a commit, `--take-published` included; since
+0.13.0 not the command line). The import dialog states the number before the
+person applies the import. Team memory lists every such record before the
+person agrees, and sends the list with the import as `expected_replaced`: an
+import that would replace any other set is refused (409, `What this import
+replaces ... changed since the check`) and nothing is imported. A commit is
+imported at the full commit ID the check read.
 
 ## How an extracted record was made
 
@@ -227,11 +231,15 @@ What they can do, and what the refusal tells them:
 - **Adopting old tasks.** `cairnmind plan adopt` gives each adopted task a
   plan key, which changes what was confirmed. On a task a person confirmed, or
   one confirmed before the rule, it is refused whoever runs it (`Task '<key>'
-  (task <id>) ... The person disputes the task in the inspector of the
-  workspace`). The person disputes the task there, after which it can be
-  adopted, and its step is proposed until they confirm the plan. Up to 0.10.0
-  `task add` stored every task as confirmed, so the tasks of an old group all
-  count as confirmed before the rule.
+  (task <id>) ... The person adopts the group in the workspace`). The person
+  adopts such a group in the workspace: More, then Old task groups, choose the
+  group, give the plan a title, read its tasks in the consent dialog, then Adopt. That is one person's act (`POST
+  /inspector/legacy-groups/adopt`, with the open workspace's key): every task of
+  the group becomes a step of a new plan, proposed until the person confirms the
+  plan, with its progress and reported evidence kept. A group that holds nothing
+  a person confirmed is still adopted by `plan adopt`. Up to 0.10.0 `task add`
+  stored every task as confirmed, so the tasks of an old group all count as
+  confirmed before the rule.
 - **The checkpoint record** is the one exception. It is a slot that holds the
   latest reported state, not a statement, and every session writes it. If a
   person confirmed it in the inspector, the next `checkpoint` is still stored:
@@ -241,8 +249,9 @@ What they can do, and what the refusal tells them:
   refused.
 
 A person takes their own confirmation away by disputing the record in the
-inspector, by a conflict decision, or by an import run from the workspace that
-replaces what was confirmed or disputed here (`replace_confirmed`). A disputed record is no longer a
+inspector, by a conflict decision, by adopting an old task group in the
+workspace, or by an import run from the memory view of the
+workspace (Import, Team memory) that replaces what was confirmed or disputed here (`replace_confirmed`). A disputed record is no longer a
 person's confirmation, and any writer may change it, its status included: a
 session can set a record a person disputed back to `proposed`. Only a
 confirmation is kept. The store records who confirmed a record and not who
@@ -266,29 +275,36 @@ audit note included:
 | Conflict decision (`POST /inspector/conflicts/resolve`) | Superseding by a person; the finding chosen to stand becomes confirmed. |
 | Plan confirmation (`POST /inspector/plans/{id}/confirm`) | A confirmed plan and its steps. The person confirms a plan in the inspector (Plans, then Confirm). |
 | Record kind (`POST /inspector/record-kinds/accept` and `/withdraw`) | An accepted or withdrawn transcript record kind. |
+| Old task group (`POST /inspector/legacy-groups/adopt`) | A new plan whose steps are the tasks of an old `--plan` group, each proposed until the person confirms the plan, with one audit note (`review://`, action `adopt_plan_group`). The person adopts a group in the workspace (More, then Old task groups); the body carries the task versions the person was shown, a group that changed since is refused with nothing written, and `adopt_group` itself refuses without the proof. |
+| Impact verdict (`POST /inspector/impact/verdict`) | A person's verdict on one entry of `impact`, an audit note (`review://impact/...`) that changes no record. The person gives it in the inspector (Impact, then Verdict); `record_verdict` itself refuses without the proof. |
+| Release (`POST /inspector/records/{id}/release`) | A release of one record's current hits of the secrets scan (`release://`), published with its reason. The person releases a record in the inspector (open it, then Release); `release` itself refuses without the proof. |
 | Workspace form (`POST /findings` without `session_id`) | The person's own finding, proposed or confirmed. With a `session_id` it is a session's finding, and asking for `confirmed` is refused before anything is stored. |
-| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. |
+| An import that replaces a verdict given here (`POST /memory/import`, `/memory/import-published`, `/memory/import-commit` with `replace_confirmed`, not a dry run) | Records confirmed or disputed here replaced by a package. The refusal is `Replacing what a person confirmed or disputed on this machine needs the person's workspace ...`; the importer itself refuses too when the proof is missing. From the memory view: Import (archive) and Team memory (folder or commit), each after a dry run and the person's consent; Team memory also sends `expected_replaced`, which the two published routes require. |
 
-The command line confirms nothing (since 0.13.0, #214). A program that runs as
-the user can open a pseudo-terminal and unset the session variables, so no test
-of the terminal tells it from a person. `remember --confirmed`, `memory
-confirm-plan`, `record-kind accept` and `record-kind withdraw` are refused with
-exit code 2 and say that the person does it in the inspector of the workspace;
+The command line confirms nothing and makes no person's act (since 0.13.0, #214,
+#306). A program that runs as the user can open a pseudo-terminal and unset the
+session variables, so no test of the terminal tells it from a person. `remember
+--confirmed`, `memory confirm-plan`, `record-kind accept`, `record-kind
+withdraw`, `impact-verdict` and `memory release` are refused with exit code 2 and
+say that the person does it in the inspector of the workspace;
 `remember --confirmed` stores nothing, not even a proposed record. `task add`
 stores a proposed task and says so on standard error. `plan save` and `plan
 adopt` are never a person's act: they are refused when they would change or
-remove a step a person confirmed, and any other save is stored. `memory import`,
+remove a step a person confirmed, and any other save is stored; a group of old
+tasks that holds such a step is adopted in the workspace (More, then Old task
+groups). `memory import`,
 `memory import-published` and `memory import-commit` with `--replace-confirmed`
-are refused by the service. Records that 0.12.0 or earlier confirmed on the
+are refused by the service; the person runs them from the memory view (Import,
+Team memory). Records that 0.12.0 or earlier confirmed on the
 command line keep their mark and say `on the command line`.
 
-Not a person's route, and unchanged: `POST /inspector/impact/verdict` and `POST
-/inspector/records/{id}/release` write a person's note but confirm nothing and
-change no record's status, so they stay reachable with the token (the release
-decides what the secrets gate lets into published memory; #214 does not change
-it). An import that only brings a package's confirmations (`by: import`) is
-reachable with the token too: such a record is "confirmed elsewhere ... not
-verified here" and is never a person's confirmation here.
+Not a person's route, and unchanged: an import that only brings a package's
+claims is reachable with the token. A record it brings as confirmed (`by:
+import`) is "confirmed elsewhere ... not verified here" and is never a person's
+confirmation here; an impact verdict or a release it brings is the package's
+claim too, and counts as written (see below). Reading the impact list, publishing
+and its preview, `memory check-published` and `memory diff` need no key: they
+decide nothing about the gate.
 
 ### What the person's key is
 
@@ -355,12 +371,18 @@ around Cairnmind:
   withdrawn; with a prepared one (its checksum is a plain SHA-256 that any
   program can recompute) any confirmation. Without the workspace a restore
   keeps no person's act (see "A restore without the workspace");
+- import memory that carries a release or an impact verdict: `memory import`,
+  `memory import-published` and `memory import-commit` are reachable with the
+  token, and what the package carries counts as written. An imported release
+  lets its exact values through when this computer publishes the record, and an
+  imported verdict marks the entry checked where its fingerprint matches. `memory
+  check-published` and the pull request's diff list every release in a tree;
 - replace or change the installed program;
 - read the memory of a Cairnmind process where the system lets a process read
   another process of the same user (Linux with `kernel.yama.ptrace_scope` 0, or
   as root).
 
-Except restore, none of these is a documented command, route or tool, and a record confirmed
+Except restore and an import, none of these is a documented command, route or tool, and a record confirmed
 this way carries the confirmation line of the route it imitated; nothing in the
 store tells it from the person's own act. What limits it is the client's
 approval of commands: the built-in agent asks the person to approve each command
@@ -527,11 +549,13 @@ and where, and it never becomes this machine's own confirmation:
   leaves it confirmed and saying the same (progress on a task), the confirmation
   given here is kept. When it brings another text or status, the import is
   refused with the list, and a person applies it in the memory view of the
-  workspace; the record is then confirmed elsewhere, like anything else the
+  workspace (Import for an archive, Team memory for a published directory or a
+  commit); the record is then confirmed elsewhere, like anything else the
   package brings. A record that diverged from a published file refuses the
   import as before, and `--take-published` names it; when that record was
   confirmed or disputed here, taking the published side replaces that verdict
-  and is refused like any other replacement.
+  and is refused like any other replacement, and the take field of Team memory
+  does it from a folder.
 - Only a person runs an import, `--replace-confirmed` and `--take-published`. A
   request that names a session is refused, because an import brings records that
   count as confirmed, and a session can prepare the files it imports.
@@ -840,7 +864,14 @@ contracts, closed references, dependency cycles).
 ## Import
 
 `memory import-published DIR --project P [--dry-run] [--bind] [--take-published ID ...]` checks the
-tree as above, then applies it in one transaction, all or nothing:
+tree as above, then applies it in one transaction, all or nothing. The route takes `path` (a full
+path; a relative one is refused before anything is read), `project`, `dry_run`, `bind`,
+`take_published`, `replace_confirmed` and `expected_replaced`; `memory import-commit` the same
+without `path` and `take_published`, with `revision` and an optional `worktree`. A request with
+`replace_confirmed` that is not a dry run must carry `expected_replaced`, the list the person was shown:
+without it the route refuses (400) after the key check and nothing is imported. For a folder the list
+pins which records are replaced, not their new text (the folder is read again at the import); for a commit
+the full commit ID pins the text as well:
 
 - sources arrive as stubs of kind `published` with their original IDs: the passage or nothing as
   content, the reference in their metadata, never current; a local source with the same ID is kept,
@@ -862,7 +893,11 @@ tree as above, then applies it in one transaction, all or nothing:
 - a record that was confirmed or disputed on this machine (and whose head no import wrote) is not
   fast-forwarded to another text or status without the person's choice: the import is refused with
   the paths, the dry run lists them as `replaces_confirmed_here`, and only a person in the workspace
-  applies it (not the command line, since 0.13.0; `--take-published` on such a record counts the same).
+  applies it (Team memory in the memory view; not the command line, since 0.13.0; `--take-published`
+  on such a record counts the same). A record disputed or confirmed here after the last publication
+  has diverged from the published history; it is taken from a published folder with the take field of
+  Team memory, and a commit has no take: from a commit only a record the published side moved on
+  from is replaced.
   A fast-forward that leaves the record confirmed and saying the same keeps the confirmation
   given here (#177);
 - the import itself, `--replace-confirmed` and `--take-published` are refused inside a coding
@@ -1085,8 +1120,9 @@ Git authorship of a review (`actor_name`) is published by design. The scan reduc
 does not promise that nothing private can.
 
 A person can release one record after reading it, when a hit is a false alarm (an example key from
-a provider's documentation, a test value): `cairnmind memory release PROJECT RECORD --reason TEXT`,
-refused inside a coding session, or `POST /inspector/records/{id}/release`. The release covers the
+a provider's documentation, a test value): in the inspector of the workspace, open the record, then
+Release, and give the reason (`POST /inspector/records/{id}/release`, a person's route: it needs the
+open workspace's key). `cairnmind memory release` is refused since 0.13.0 and says so. The release covers the
 record's current hits only: it is a source of its own, `release://` with origin
 `local_user_release`, holding `{"action":"release","actor","actor_name","at","branch","commit",
 "hits":[{"field","kind","value_sha256"}],"reason","record_id"}`. It is published in the record's

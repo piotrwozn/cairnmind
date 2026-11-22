@@ -2,7 +2,8 @@
 
 The list is read with ``GET /api/inspector/impact``, which answers what ``cairnmind impact --json`` prints. The
 only write is ``POST /api/inspector/impact/verdict``, sent through the same local broker session as a review
-(the panel's ``broker``), with the fingerprint of the entry that was shown. Nothing is retried automatically.
+(the panel's ``broker``) and with the workspace's key (#306), with the fingerprint of the entry that was
+shown. Nothing is retried automatically.
 Everything that comes from stored data or from Git is printed as literal text, one line per value.
 """
 from __future__ import annotations
