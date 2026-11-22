@@ -37,6 +37,8 @@ MINIMUM = (140, 42)
 DEFAULT_SIZE = (180, 55)
 _ROLES = ("sidebar", "client1", "client2", "inspector", "graph")
 STOP_ASKED = "stop-asked"
+# After tmux's own "[server exited unexpectedly]", in the terminal of a workspace the person stopped (#169).
+STOPPED_ON_PURPOSE = "The workspace was stopped with cairnmind workspace stop; run cairnmind to open it again."
 
 
 def reusable_native_run(runs, project_id, worktree, client, slot_id):
@@ -402,6 +404,9 @@ class WorkspaceManager:
             # No lock is held while the interactive client is attached.
             code = process.wait()
             asked = (self.directory / STOP_ASKED).exists()
+            if code and asked:
+                from .terminal_i18n import language_for, tr
+                print(tr(STOPPED_ON_PURPOSE, language_for(self.settings)), flush=True)
             return 0 if code and asked else code
         finally:
             if process is not None and process.poll() is None:

@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 import pytest
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
 
 from cairnmind import cli
 from cairnmind.agent_memory import MEMORY_TOOLS
@@ -125,6 +125,39 @@ async def test_stored_text_is_shown_escaped_and_removal_needs_a_confirmation(tmp
                                                           "expected": [hostile, SERVER | {"id": "second"}],
                                                           "servers": [SERVER | {"id": "second"}]}}]
     assert REMOVED in CATALOG
+
+
+@pytest.mark.asyncio
+async def test_the_remove_confirmation_opens_with_the_keyboard_focus_on_a_button(tmp_path, monkeypatch):
+    # #169, finding 10 b: the trial had no server to remove, so the focus of this dialog was never seen.
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    broker.preferences["project_mcp_servers"] = {"project-keyboard": [SERVER]}
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        app.edit_mcp_servers()
+        await wait_for(app, pilot, ChoiceModal)
+        await pilot.press("enter")
+        await wait_for(app, pilot, ConfirmModal)
+        await pilot.pause(.2)
+        assert isinstance(app.focused, Button) and app.focused.id == "confirm-no"  # Enter cancels, nothing is removed
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert not isinstance(app.screen, ConfirmModal) and saves(broker) == []
+        app.edit_mcp_servers()
+        await wait_for(app, pilot, ChoiceModal)
+        await pilot.press("enter")
+        await wait_for(app, pilot, ConfirmModal)
+        await pilot.pause(.6)  # past the quiet moment, in which a focus move does not count (#318)
+        await pilot.press("shift+tab")  # from Cancel back to Remove
+        assert isinstance(app.focused, Button) and app.focused.id == "confirm-yes"
+        await pilot.press("enter")  # Enter acts on the focused button
+        for _ in range(100):
+            if saves(broker):
+                break
+            await pilot.pause(.05)
+        await settle(app, pilot)
+    assert [body["project_mcp_server_edit"]["servers"] for body in saves(broker)] == [[]]
 
 
 def test_form_parsing_and_every_new_string_has_a_polish_entry():

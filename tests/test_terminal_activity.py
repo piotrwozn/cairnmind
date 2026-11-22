@@ -357,6 +357,16 @@ async def test_polish_labels(tmp_path, monkeypatch):
         assert "Aktywność" in str(app.query_one("#activity-title").render())
 
 
+@pytest.mark.parametrize("folder,title", [("/work/cairnmind", "Activity · cairnmind"),
+                                          ("/work/cairnmind-144", "Activity · cairnmind · cairnmind-144")])
+async def test_the_popup_title_names_the_folder_only_when_it_differs_from_the_project(tmp_path, monkeypatch, folder, title):
+    # #169: the title read "Activity · proba · proba". Platform independent: it renders text only.
+    app, *_ = make(tmp_path, monkeypatch, popup=True, project={**PROJECT, "root": folder})
+    async with app.run_test(size=(120, 34)) as pilot:
+        await until(pilot, loaded(app))
+        assert str(app.query_one("#activity-title").render()).strip() == title
+
+
 @pytest.mark.parametrize("key", ["escape", "q", "a"])
 async def test_the_popup_closes_with_one_key(tmp_path, monkeypatch, key):
     app, *_ = make(tmp_path, monkeypatch, popup=True)

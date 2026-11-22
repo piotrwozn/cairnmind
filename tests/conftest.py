@@ -75,12 +75,14 @@ NO_ARCADE_MODULES = frozenset({
     "test_doc_links", "test_stall_watch", "test_restore_claims_units",
     "test_measure_service_spend", "test_compare_model_paths_script",
     "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
+    "test_sessions_dialog", "test_command_menu_popup", "test_mcp_unknown_argument", "test_stop_broker_line",
+    "test_ended_pane_text",
     "test_short_answers", "test_person_acts_consent",
     "test_server_mode",
 })
 
 TMUX_MODULES = frozenset({
-    "test_api_worker", "test_api_workspace_e2e", "test_client_runtime", "test_terminal_preview",
+    "test_api_worker", "test_api_workspace_e2e", "test_client_runtime", "test_terminal_preview", "test_ended_pane_text",
     "test_terminal_workspace_e2e", "test_workspace", "test_workspace_focus_column",
 })
 

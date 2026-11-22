@@ -1014,6 +1014,9 @@ def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
                  .format(url=ctx.obj.url)]
     if local_process_recorded(ctx.obj) or container_recorded(ctx.obj):
         lines.append(first_start.ENGINE_LEFT_RUNNING)
+    from cairnmind.cockpit import cockpit_status
+    if cockpit_status(ctx.obj)["available"]:  # the interface broker is a process of its own (#169)
+        lines.append(first_start.BROKER_LEFT_RUNNING)
     _human_or_json(result, as_json, lambda: lines)
 
 

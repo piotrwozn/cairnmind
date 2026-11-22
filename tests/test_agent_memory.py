@@ -426,11 +426,13 @@ async def test_only_a_marked_refusal_or_a_known_conflict_becomes_a_refusal_for_t
     ("read_source", 404, {"detail": "Unknown source in requested scope"}, "unknown_source"),
     ("read_source", 503, {"detail": "Unknown source in requested scope"}, None),
     ("memory_records", 404, {"detail": "Unknown source in requested scope"}, None),
+    ("check_status", 400, {"detail": "Task does not exist in this project"}, "unknown_task"),  # #169
+    ("check_status", 503, {"detail": "Task does not exist in this project"}, None),
 ])
 async def test_a_wrong_record_field_or_an_unknown_source_becomes_a_refusal_for_the_model(
         tmp_path, name, status, body, code):
     # #240, second trial: both came back to the model as tool_failed; a service failure still does.
-    from cairnmind.agent_memory import UNKNOWN_SOURCE_HINT, MemoryRefusal
+    from cairnmind.agent_memory import UNKNOWN_SOURCE_HINT, UNKNOWN_TASK_HINT, MemoryRefusal
     from cairnmind.config import Settings
     transport = httpx.MockTransport(lambda request: httpx.Response(status, json=body))
     worktree = tmp_path / "project"
@@ -439,7 +441,8 @@ async def test_a_wrong_record_field_or_an_unknown_source_becomes_a_refusal_for_t
                                transport=transport)
     memory.packet_id = "packet-1"
     arguments = {"remember": {"record": {"kind": "fact", "text": "x"}, "sources": ["s"]},
-                 "read_source": {"source_id": "made-up"}, "memory_records": {}}[name]
+                 "read_source": {"source_id": "made-up"}, "memory_records": {},
+                 "check_status": {"task_id": "None"}}[name]
     with pytest.raises(RuntimeError) as raised:
         await memory.execute(name, arguments)
     if code is None:
@@ -448,6 +451,8 @@ async def test_a_wrong_record_field_or_an_unknown_source_becomes_a_refusal_for_t
     assert isinstance(raised.value, MemoryRefusal) and raised.value.code == code
     if code == "unknown_source":
         assert raised.value.message == UNKNOWN_SOURCE_HINT
+    elif code == "unknown_task":
+        assert raised.value.message == UNKNOWN_TASK_HINT and "null" in UNKNOWN_TASK_HINT
     else:
         assert raised.value.message == "Nothing was saved: 'text' is not a record field\\x1b[2J."
 
