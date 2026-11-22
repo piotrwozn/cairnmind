@@ -6,11 +6,12 @@ New installations follow [INSTALL.md](INSTALL.md). This guide is for an existing
 - [From 0.9.0 to 0.10.0](#from-090-to-0100)
 - [From 0.10.0 to 0.11.0](#from-0100-to-0110)
 - [From 0.11.0 to 0.12.0](#from-0110-to-0120)
+- [From 0.12.0 to 0.13.0](#from-0120-to-0130)
 - [From 0.7.2 to 0.8.0](#from-072-to-080)
 
 A direct upgrade from 0.7.2 to 0.9.0 was not tested. Upgrade a 0.7.2 installation to 0.8.0 first.
 
-Upgrading from 0.11.0 is a backup, the installer and one `cairnmind install` per project; on Linux and WSL it changes no data or configuration. Upgrading from 0.10.0 to 0.11.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Each has its section below.
+Upgrading from 0.12.0 is a backup, the installer and closing external MCP clients first; it changes no schema and no backup format, and on a managed installation the installer's `cairnmind init` adds three settings to `config.json`. Upgrading from 0.11.0 is a backup, the installer and one `cairnmind install` per project; on Linux and WSL it changes no data or configuration. Upgrading from 0.10.0 to 0.11.0 is a backup, the installer and one `cairnmind install` per project; its first start marks the confirmed records that a person's act on this computer covers. Upgrading from 0.9.0 to 0.10.0 is the installer and one `cairnmind install` per project. DevBrain 0.8.0 first goes to 0.9.0, which is a backup, the installer and one `cairnmind install` per project; an existing 0.7.2 installation first goes to 0.8.0 through a guarded updater that requires a passed runtime qualification of the host before it touches existing data. Each has its section below.
 
 ## From DevBrain 0.8.0 to Cairnmind 0.9.0
 
@@ -263,6 +264,82 @@ macOS was not supported before 0.12.0, so most Macs get a new installation from 
 3. Run `cairnmind install <project>` for each project.
 
 The store needs no restore: 0.11.0 reads what 0.12.0 wrote. On Linux and WSL the installation stays the writer. Going back is for Linux and WSL: 0.11.0 does not support macOS.
+
+## From 0.12.0 to 0.13.0
+
+0.13.0 makes the first start lighter: the database engine can run in Docker, tmux is needed only for the workspace, and Cairnmind starts without Ollama. For an existing installation none of this is switched on by itself: it stays on its native engine and its models stay enabled. The schema and the backup format do not change, and on a managed installation `cairnmind init`, which the installer runs, adds three settings to `config.json`.
+
+### 1. Make a backup with 0.12.0
+
+```bash
+cairnmind backup ~/cairnmind-backup-0.12.0.cairnmind.json.gz
+```
+
+### 2. Close the workspace, coding sessions and editors that use Cairnmind
+
+```bash
+cairnmind workspace stop --clients
+cairnmind cockpit stop
+cairnmind stop
+```
+
+Also close every editor that uses `cairnmind mcp --client external` (Cursor, Cline, Zed and others). Since 0.13.0 the next tool call of such an editor starts the knowledge service when none runs, so an editor left open can start the service again between `cairnmind stop` and the installer, from the version being replaced. The installer cannot see these editors.
+
+### 3. Get 0.13.0 and run the installer
+
+```bash
+mkdir -p ~/src && cd ~/src
+curl -LO https://github.com/piotrwozn/cairnmind/releases/download/v0.13.0/cairnmind-0.13.0.tar.gz
+tar -xzf cairnmind-0.13.0.tar.gz
+cd cairnmind-0.13.0
+bash scripts/install-wsl.sh
+```
+
+The installer no longer stops when tmux 3.4+ is missing: it says that the workspace is unavailable and goes on. It also no longer stops when Java 21 is missing and Docker answers; that matters for a new installation, because an installation that has a native engine keeps it (below).
+
+### 4. Reconnect your projects
+
+Nothing that `cairnmind install` writes into a project changed in this release, so an existing project needs no new `cairnmind install`. Start the editors you closed in step 2 again.
+
+### 5. Check
+
+```bash
+cairnmind version
+cairnmind doctor
+```
+
+`cairnmind doctor` and `cairnmind status` now start with a `topology` report, and `doctor` names the engine mode (`arcadedb.engine`). A script that reads their output meets new keys.
+
+### What the upgrade does to a store
+
+- **Schema.** The schema stays at version 4 and the backup file format is unchanged (`cairnmind-arcadedb-backup`, version 1), so 0.13.0 restores a backup of 0.12.0 and 0.12.0 restores one of 0.13.0. No one-time step runs, and no record or source is rewritten.
+- **Writer.** An installation is identified as before, so it stays the writer of its store.
+- **Acknowledgement.** An acknowledgement given before the upgrade is not cancelled, and the packet format is unchanged (`schema_version` 2). But the state an acknowledgement is compared with now leaves out proposals that the extraction worker wrote and nobody has touched (#256). An acknowledgement given under 0.12.0 is therefore refused once, with `resume_required`, if the project held such a proposal when it was given; the session then calls `resume_context` and `ack_resume` for the new packet. If the project held none and nothing else changed, the old acknowledgement still holds. Any record a person or a session writes, the plan, the task and the code make an acknowledgement stale, as before.
+- **Memory snapshots.** A snapshot no longer carries the code graph, which indexing rebuilds from the project's files (#261). The snapshot format number stays 1. A snapshot written by 0.12.0, with graph rows, still imports and shows; its graph rows are ignored, and the import result, `memory status` and `impact` say that the code graph is not built yet until indexing has built it. The first `cairnmind memory snapshot` after the upgrade, for a project whose last snapshot had graph rows, writes a new snapshot instead of reporting no change, because the package holds fewer objects. Its parent is the earlier snapshot, and its state hash is the same as long as nothing in the project's memory changed in between. A repository whose graph made the manifest too big for 0.12.0 can now be snapshotted; `cairnmind memory snapshot --preview` shows the exact figures and warns before anything is written.
+- **Embedding jobs.** Each chunk now has one embedding job (#262). An embedding job that 0.12.0 left in the queue under the old key finishes without doing anything.
+
+### What changes in `config.json`
+
+0.12.0 wrote none of the following settings, and a `config.json` without them keeps working:
+
+- **`engine_mode`.** Absent counts as `native`. The first `cairnmind init` saves `"engine_mode": "native"` (with `"engine_docker_build": false`) for an installation that has an `arcade/` folder in its data directory, and says so; it never switches an existing installation to Docker, even when Java is gone and Docker answers. A connect-only installation (a database address in `arcade_connect_url`) has no engine of its own and gets no mode.
+- **`knowledge_agent`.** Absent counts as `enabled` when a `config.json` exists, so an installation from before 0.13.0 keeps its models, and a configured model server that is down is still reported as a fault. When `init` saves `config.json` for the engine mode it writes `"knowledge_agent": "enabled"` as well. The upgrade never switches an existing installation to deterministic-only mode. To turn the knowledge agent off yourself, set `knowledge_agent` to `disabled` and restart the service; `cairnmind models pull` or `cairnmind models set` turns it on again. What each mode does is in [API.md](API.md#the-knowledge-agents-models).
+
+### What changes for an existing installation
+
+- **The engine in Docker.** To move to Docker: `cairnmind stop`, `cairnmind engine stop`, then `cairnmind engine start --docker`. To move back: the same, ending with `cairnmind engine start --native`. A start refuses while the other engine runs on the data directory and names it, and both engines use the same data directory. Docker must run on this machine and Cairnmind must not run as root; see [INSTALL.md](INSTALL.md#running-the-database-in-a-container-instead).
+- **Ports and the model address from the environment.** `CAIRNMIND_PORT`, `CAIRNMIND_COCKPIT_PORT` and `CAIRNMIND_OLLAMA_URL` (also with the prefix `DEVBRAIN_`) are read like the database address: the process that has the variable uses it, and it is never written to `config.json`. 0.12.0 ignored them, so a shell that already exports one now changes the port or the model address. An empty variable is ignored, and an empty `CAIRNMIND_ARCADE_CONNECT_URL` counts as unset: it no longer turns a connect-only installation into a managed one. See [DEPLOYMENT.md](DEPLOYMENT.md#two-data-directories-on-one-machine).
+- **A model server on another computer.** An `ollama_url` that is not a loopback address (127.0.0.1, localhost or ::1), in `config.json` or in `CAIRNMIND_OLLAMA_URL`, is now refused like a model profile without consent (#288): `doctor`, `init`, `models pull` and `models list` send nothing to it and report the refusal. 0.12.0 already did not start the service with such an address and never sent questions or memory text there; what it did send were the read-only requests of these commands. To keep using such a server, run `cairnmind models set --role chat|embedding --provider ollama --model NAME --base-url URL --allow-remote` for each role, or set `ollama_url` back to `http://127.0.0.1:11434`.
+- **tmux.** Only the terminal workspace needs tmux 3.4+. Without it `cairnmind`, `cairnmind tui` and `cairnmind workspace takeover` print one message and exit with code 1, `doctor` reports `cockpit: unavailable (tmux 3.4+ not found)` and exits 0, and every other command works. With tmux 3.4+ nothing changes.
+- **External MCP clients.** `cairnmind mcp --client external` starts the knowledge service when a tool call finds it not running, so an editor works after a reboot without `cairnmind serve`. On an installation that only reads the store (a reader) nothing is started, and the error gives the reason. See [EXTERNAL_CLIENTS.md](EXTERNAL_CLIENTS.md).
+- **The workspace.** `cairnmind workspace stop` now ends the workspace process with exit code 0; a tmux server killed from outside still gives a non-zero code, so a script that took 1 as the sign of a stop needs updating. The approval dialog of the built-in agent starts with focus on Cancel when the request fits on the screen.
+- **Memory.** `cairnmind memory reextract PROJECT` extracts again the sources whose untouched proposals come from an older extractor version; it needs the models, and `--dry-run` does not. See [MEMORY.md](MEMORY.md#portable-project-memory).
+- **`cairnmind setup`** is new. It shows where storage and the models run, and changes no setting of an initialized installation.
+- **The README is short.** Its detail moved under `docs/`, so a link to a README anchor other than "How it compares", "Quick start", "What it guarantees, and what it does not", "Measured results", "Documentation", "Contributing" and "License" no longer reaches a heading. The text is now in [ARCHITECTURE.md](ARCHITECTURE.md) (how it works, built with, repository layout, development), [EXTERNAL_CLIENTS.md](EXTERNAL_CLIENTS.md) (Cursor, Cline, Zed and other MCP clients), [MEMORY.md](MEMORY.md) (portable project memory, team memory), [STORAGE_AND_MAINTENANCE.md](STORAGE_AND_MAINTENANCE.md) (data and backups), [CONTRACTS.md](CONTRACTS.md#limits) (limits), [TERMINAL.md](TERMINAL.md) (the workspace, your first project) and [WORKFLOW.md](WORKFLOW.md) (plans, tasks and evidence).
+
+### Going back to 0.12.0
+
+Going back was not tried on a real installation. From the code: the schema and the backup format are the same, so the store needs no restore, and 0.12.0 ignores the three new settings in `config.json`. 0.12.0 does not know a container, so if you moved the engine to Docker, run `cairnmind stop`, `cairnmind engine stop` and `cairnmind engine start --native` with 0.13.0 first. Then close the workspace and coding sessions as in step 2, run `bash scripts/install-wsl.sh` from the unpacked 0.12.0 release archive, and run `cairnmind install <project>` for each project.
 
 ## From 0.7.2 to 0.8.0
 
