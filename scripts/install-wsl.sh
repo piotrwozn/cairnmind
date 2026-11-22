@@ -324,6 +324,16 @@ if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     upgraded_from_devbrain=true
 fi
 
+# uv does not list a tool whose receipt is damaged, yet that tool's devbrain command would go on starting 0.8.0 (and
+# its service) on the same data directory: stop here instead of installing beside it.
+refuse_unlisted_devbrain_tool() {
+    if [[ -e "$1" || -L "$1" ]]; then
+        printf 'An earlier DevBrain uv tool is in %s but uv does not list it. Remove it with: uv tool uninstall devbrain (your memory is kept); if that fails, rm -r "%s". Then run this installer again.\n' "$1" "$1" >&2
+        exit 1
+    fi
+}
+refuse_unlisted_devbrain_tool "$(uv tool dir)/devbrain"
+
 # An installed Cairnmind is being replaced: the same care, with the installed version's own command.
 if uv tool list 2>/dev/null | grep '^cairnmind ' >/dev/null; then
     stop_installed "$(uv tool dir --bin)/cairnmind" cairnmind "$(uv tool dir)/cairnmind/bin/python"
