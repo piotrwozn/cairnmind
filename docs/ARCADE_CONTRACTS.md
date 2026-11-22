@@ -166,7 +166,7 @@ Additional root-facing methods needed:
 - `recent_job_errors(project_id=None,limit=10)->list`
 - `retry_jobs()->None`
 - `missing_embeddings(namespace,project_id=None)->list[{id:chunk_id,project_id}]`
-- `reset_missing_embedding_job(job_id,chunk_id,namespace)->None` reset completed only if vector missing
+- `embed_jobs.repair_embed_jobs(store,rows,namespace)->None` resets a completed job only while its chunk has no vector
 - `delete_embeddings(project_id)->None`
 - export/backup restore: portable JSON/zip artifact includes sources/revisions/cursors/jobs,
   native graph reconstructed via helpers on restore, credentials excluded, transactional

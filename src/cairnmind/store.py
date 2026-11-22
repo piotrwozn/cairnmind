@@ -1846,11 +1846,6 @@ class Store:
         existing = {r["chunk_id"] for r in self.query("SELECT chunk_id FROM embeddings WHERE namespace=:namespace", {"namespace": namespace})}
         return [{"id": row["id"], "project_id": row.get("project_id")} for row in chunks if row["id"] not in existing]
 
-    def reset_missing_embedding_job(self, job_id, chunk_id, namespace):
-        with self.transaction() as tx:
-            if not tx.query("SELECT id FROM embeddings WHERE chunk_id=:chunk AND namespace=:namespace", {"chunk": chunk_id, "namespace": namespace}):
-                update_document(tx, "jobs", {"state": "pending", "error": None, "lease_until": None, "updated_at": utc_now()}, "id=:id AND state='completed'", {"id": job_id})
-
     def delete_embeddings(self, project_id):
         with self.transaction() as tx:
             self._delete_old_vectors(tx, [r["id"] for r in tx.query("SELECT id FROM sources WHERE project_id=:project", {"project": project_id})])
