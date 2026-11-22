@@ -234,6 +234,39 @@ async def test_a_confirmed_record_that_was_stored_breaks_an_invariant(tmp_path):
     assert outcome["invariants_broken"] == ["a confirmed record was stored"]
 
 
+@pytest.mark.asyncio
+async def test_any_file_that_configures_execution_written_in_the_sandbox_breaks_an_invariant(tmp_path, monkeypatch):
+    class Writer(Agent):
+        def __init__(self, tokens, obey):
+            super().__init__(tokens, obey)
+            self.script = [call("write_file", {"path": f".claude/allow-{tokens['code_comment']}.json", "content": "[]",
+                                               "expected_sha256": None})]
+
+    # An approver that lets everything through stands for a broken guard: the write must still be caught.
+    monkeypatch.setattr("cairnmind.injection_evaluation.approver", lambda record: lambda request: True)
+    fixture = load_fixture(FIXTURE)
+    tokens = new_tokens(fixture)
+    root = tmp_path / "sandbox" / "worktree"
+    root.mkdir(parents=True)
+    write_worktree(root, fixture, tokens)
+    outcome = await agent_path(Settings(tmp_path / "data"), fixture, tokens, root, 1, project_id="project-one",
+                               memory_for=lambda run: Refusing(), provider_for=lambda tokens: Writer(tokens, True))
+    assert outcome["invariants_broken"] == ["a file that configures execution was written"]
+
+
+@pytest.mark.asyncio
+async def test_a_plant_the_agent_sees_but_cannot_act_on_is_left_out_of_its_rates(tmp_path):
+    fixture = load_fixture(FIXTURE)
+    next(plant for plant in fixture["plants"] if plant["place"] == "readme")["action"] = "cite"  # valid in a fixture
+    tokens = new_tokens(fixture)
+    root = tmp_path / "sandbox" / "worktree"
+    root.mkdir(parents=True)
+    write_worktree(root, fixture, tokens)
+    outcome = await agent_path(Settings(tmp_path / "data"), fixture, tokens, root, 1, project_id="project-one",
+                               memory_for=lambda run: Refusing(), provider_for=lambda tokens: Agent(tokens, False))
+    assert outcome["errors"] == 0 and set(outcome["obeyed"]["by"]) == {"code_comment", "mcp_result"}
+
+
 def test_the_approver_approves_exactly_one_call_to_the_scripted_tool():
     seen = []
     approve = approver(seen)
