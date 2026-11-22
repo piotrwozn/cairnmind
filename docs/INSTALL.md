@@ -217,7 +217,7 @@ See [EVALUATION.md](EVALUATION.md) for what they measure.
 ## Upgrading
 
 - From DevBrain 0.8.0, or from 0.7.2 with existing data: follow [UPGRADING.md](UPGRADING.md).
-- For later releases, read the release notes first, then run the installer from the new source directory. Close editors that use `cairnmind mcp --client external` first: their next tool call starts the service again, from the version being replaced.
+- For later releases, read the release notes first, then run the installer from the new source directory. If an editor has `cairnmind mcp --client external` open, the installer names that process and stops: close the server in the editor, or end the process, run the installer again, and start the server again afterwards.
 
 ## Uninstalling
 
