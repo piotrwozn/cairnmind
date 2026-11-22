@@ -1152,6 +1152,11 @@ class SidebarApp(BasePanel):
                 raise ValueError(self.t("Select a visible project first."))
             scope = (selected["project_id"], selected.get("worktree"))
             subject = notice_about(scope[0], selected.get("project_name"), scope[1])
+            status = await self.request("GET", "/api/status")
+            if "models" in status:  # deterministic-only (#309): nothing to consent to, say what to do instead
+                from .first_start import PROCESS_OFF, PROCESS_RESTART, RESTART_FOR_MODELS
+                self.notice_for(subject, PROCESS_RESTART if status.get("get_models") == RESTART_FOR_MODELS else PROCESS_OFF)
+                return
             approved = await self.push_screen_wait(ConfirmModal("Queue",
                 self.t("Use local models to process pending memory for this project only. No assistant is started.")
                 + "\n\n" + str(selected.get("project_name") or scope[0]), approve="Process memory"))

@@ -397,3 +397,42 @@ async def test_process_memory_without_models_shows_the_way_on_the_real_24_column
         assert shown != notice
         rows = textwrap.wrap(shown, line.size.width)
         assert len(rows) <= 5 and command.split()[-1] in " ".join(rows), rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (24, 45)])
+@pytest.mark.parametrize("which", ["PROCESS_OFF", "PROCESS_RESTART"])
+async def test_process_memory_without_models_asks_no_consent_and_shows_the_notice_at_once(tmp_path, monkeypatch, which, size):
+    """No models: no dialog about using them, no request that enables anything, the #294 notice instead (#309)."""
+    import textwrap
+    from textual.widgets import Static
+    from cairnmind import first_start
+    from cairnmind.terminal_panels import ConfirmModal, SidebarApp
+    from test_terminal_panels import setup, settle
+
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    advice = first_start.RESTART_FOR_MODELS if which == "PROCESS_RESTART" else first_start.GET_MODELS
+    original = broker.request
+
+    def request(method, path, **kwargs):
+        result = original(method, path, **kwargs)
+        if path == "/api/status":
+            return {"models": first_start.MODELS_NOT_CONFIGURED, "jobs_held": 0, "get_models": advice}
+        return result
+
+    monkeypatch.setattr(broker, "request", request)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        await pilot.click("#more-open")
+        await pilot.pause()
+        await pilot.press("down", "down", "down", "enter")
+        await asyncio.wait_for(settle(app, pilot), 5)  # a consent dialog would wait for an answer forever
+        assert not isinstance(app.screen, ConfirmModal)
+        assert not [row for row in broker.calls if row[1] == "/api/background-inference/enable"]
+        line = app.query_one("#panel-notice", Static)
+        shown = str(line.render())
+        command = "cairnmind models pull" if which == "PROCESS_OFF" else "cairnmind stop"
+        assert command in shown and shown != getattr(first_start, which)
+        assert "local models" not in shown and "lokalnych modeli" not in shown
+        assert command.split()[-1] in " ".join(textwrap.wrap(shown, line.size.width))
