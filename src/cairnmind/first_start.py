@@ -89,8 +89,7 @@ NEXT_PROJECTS = ('Next: cairnmind project list names your projects; cairnmind br
 ENGINE_READY = "Database engine: answers at {url}; the memory database can be read."  # its internal name is in --json
 SERVICE_RUNNING = "Local service: running at {url}."
 SERVICE_ON_DEMAND = "Local service: not running now; the next command that needs it starts it."
-READER_ROLE = ("Store: this installation only reads it; installation {writer} on {host} writes it since {since}. No "
-               "service runs here by design; `cairnmind store takeover --yes` makes this installation the writer.")
+READER_ROLE = "Store: this installation only reads it; no service runs here by design."
 ENGINE_ON_DEMAND = ("Database engine: not running now at {url}; the next command that needs it starts it "
                     "(cairnmind engine start starts it now).")
 ENGINE_DOWN = ("The database engine does not answer at {url} ({error}); it may be starting or busy. If it is "
@@ -405,10 +404,8 @@ MESSAGES[OWN_ENGINE_REFUSED] = ("Silnik bazy danych tego katalogu danych pod {ur
                                 "logowaniach ArcadeDB odrzuca każde przez około 30 sekund: poczekaj i uruchom polecenie "
                                 "ponownie. Jeśli dalej odmawia, logowanie z {data_dir}/config.json nie pasuje do tego "
                                 "silnika.")
-MESSAGES[READER_ROLE] = ("Magazyn: ta instalacja tylko go czyta; instalacja {writer} na {host} zapisuje go od {since}. "
-                         "Usługa tu nie działa z założenia; `cairnmind store takeover --yes` czyni tę instalację "
-                         "zapisującą.")
-MESSAGES[PROCESS_OFF] ="Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
+MESSAGES[READER_ROLE] = "Baza: ta instalacja tylko ją czyta; usługa celowo tu nie działa."
+MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."
 MESSAGES[PROCESS_RESTART] = "Modele włączone. Zrestartuj usługę (`cairnmind stop`, potem start), by ich użyła."
 
 

@@ -12,7 +12,7 @@ import socket
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, doctor_attention, first_start, integrations
+from cairnmind import cli, doctor_attention, first_start, integrations, store_writer
 from cairnmind.config import Settings
 from cairnmind.store import Store
 
@@ -62,8 +62,8 @@ def test_a_healthy_reader_exits_0_and_says_it_only_reads_and_who_writes(two):
     assert result.exit_code == 0, result.output
     lines = doctor_attention.summary(report)
     assert first_start.NOTHING_MISSING in lines and lines[-1] != first_start.NEXT_FIX
-    said = [line for line in lines if line.startswith("  - Store: this installation only reads it")]
-    assert len(said) == 1 and writer.installation.id[:8] in said[0] and "cairnmind store takeover --yes" in said[0]
+    assert ["  - " + first_start.READER_ROLE] == [line for line in lines if line.startswith("  - Store: this installation")]
+    assert report["store_writer"]["writer"]["installation"] == writer.installation.id
     assert not any(line.startswith("  - Local service") for line in lines)  # no service runs on a reader, by design
     assert doctor(writer.data_dir, "--json").exit_code == 0
 
@@ -78,6 +78,23 @@ def test_a_reader_with_something_missing_exits_1_and_names_it(two, monkeypatch):
     missing = doctor_attention.required_missing(report)
     assert missing and not any(line.startswith("Store writer") for line in missing)
     assert all(blocker in " ".join(missing) for blocker in report["environment_blockers"])
+
+
+def test_a_moved_copy_of_the_writers_own_directory_is_missing_not_a_designed_reader(tmp_path, monkeypatch):
+    # The same data directory seen from another machine got an identity of its own and cannot write: nobody meant that.
+    monkeypatch.setattr(integrations, "_probe_cli", lambda name: {
+        "installed": False, "version": None, "verified_resume": False, "checks": {}, "notes": []})
+    first = Store(tmp_path / "first")
+    monkeypatch.setattr(store_writer, "machine_identity", lambda: "machine-id:another-machine")
+    assert Store(first.data_dir).read_only
+    quiet(first.data_dir)
+    result = doctor(first.data_dir, "--json")
+    report = json.loads(result.stdout)
+    assert report["store_writer"]["copied_from"] == report["store_writer"]["writer"]["installation"]
+    assert result.exit_code == 1
+    missing = doctor_attention.required_missing(report)
+    assert any(line.startswith("Store writer: reader.") and "is a copy" in line for line in missing)
+    assert not any(line.startswith("  - Store: this installation only reads") for line in doctor_attention.summary(report))
 
 
 @pytest.mark.parametrize("report", [

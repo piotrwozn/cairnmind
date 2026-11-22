@@ -70,6 +70,11 @@ def _cause(error: object) -> str:
     return text.partition("(")[2].partition(")")[0] or text
 
 
+def _copy_of_the_writer(writer: dict) -> bool:
+    """A reader whose identity was made from the writer's own: its data directory was moved or copied (store_writer)."""
+    return bool(writer.get("copied_from")) and writer.get("copied_from") == (writer.get("writer") or {}).get("installation")
+
+
 def required_missing(report: dict) -> list[str]:
     """One plain line per required part of the report that is missing or unusable; cairnmind doctor exits 1 for these."""
     lines = _prerequisites(report)
@@ -99,8 +104,10 @@ def required_missing(report: dict) -> list[str]:
     writer = report.get("store_writer") or {}
     # "unknown" because the engine did not answer is the engine's state, already said above or present on demand.
     unknown_for_the_engine = writer.get("role") == "unknown" and arcade.get("available") is False
-    # A reader is how a second installation is meant to be (#373); a lost role, an unknown one and a mixed store are not.
-    if (writer.get("role") in {"lost", "unknown"} or writer.get("problem")) and not unknown_for_the_engine:
+    # A reader is how a second installation is meant to be (#373); a lost role, an unknown one, a mixed store and a
+    # copy of the writer's own data directory (it cannot write and nobody meant it) are not.
+    if ((writer.get("role") in {"lost", "unknown"} or writer.get("problem") or _copy_of_the_writer(writer))
+            and not unknown_for_the_engine):
         lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''} "
                            f"{writer.get('next') or ''}"))
     # Commands here are refused; whole, so the command that ends a refusal is never cut off (#319).
@@ -178,10 +185,8 @@ def summary(report: dict) -> list[str]:
     missing, broken = required_missing(report), not_working(report)
     present = _engine_present(report)
     writer = report.get("store_writer") or {}
-    if writer.get("role") == "reader" and not writer.get("problem"):
-        who = writer.get("writer") or {}  # already made safe to print by store_writer.describe
-        present.append(_line(READER_ROLE.format(writer=who.get("installation", "unknown"), host=who.get("host", "unknown"),
-                                                since=who.get("since", "unknown")), limit=600))
+    if writer.get("role") == "reader" and not writer.get("problem") and not _copy_of_the_writer(writer):
+        present.append(READER_ROLE)  # who writes is in the topology lines above
     elif report.get("service_running"):
         present.append(SERVICE_RUNNING.format(url=report.get("service_url") or "its address"))
     else:

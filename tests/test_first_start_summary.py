@@ -94,8 +94,7 @@ def test_a_reader_installation_is_present_and_names_who_writes_and_the_takeover(
                                    "writer": {"installation": "abc12345", "host": "mac", "since": "2026-11-22T10:00:00Z"}})
     lines = SUMMARY(reader)
     assert first_start.NOTHING_MISSING in lines and lines[-1] == first_start.NEXT_START
-    assert any(line.startswith("  - Store: this installation only reads it; installation abc12345 on mac writes it")
-               and "cairnmind store takeover --yes" in line for line in lines)
+    assert "  - " + first_start.READER_ROLE in lines
     mixed = healthy(store_writer={"role": "reader", "problem": "The writer row and the journal head differ."})
     assert lines[-1] != SUMMARY(mixed)[-1] and any("Store writer: reader." in line for line in SUMMARY(mixed))
 
