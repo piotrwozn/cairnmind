@@ -96,7 +96,15 @@ person applies the import. Team memory lists every such record before the
 person agrees, and sends the list with the import as `expected_replaced`: an
 import that would replace any other set is refused (409, `What this import
 replaces ... changed since the check`) and nothing is imported. A commit is
-imported at the full commit ID the check read.
+imported at the full commit ID the check read. An archive import (Import in the
+memory view, and the sidebar's) works the same way since 0.13.0: its check lists
+every record it replaces (no cap) in the dialog or detail view, which scrolls;
+the import carries them as `expected_replaced`, `POST /memory/import` requires it
+with `replace_confirmed`, and the importer refuses another set inside its
+transaction with the same sentence and writes nothing, so an archive or a store
+that changed after the check is never imported over verdicts the person did not
+see. The command line's `memory import --replace-confirmed` cannot replace a
+verdict (it has no workspace proof) and is refused as before.
 
 ## How an extracted record was made
 

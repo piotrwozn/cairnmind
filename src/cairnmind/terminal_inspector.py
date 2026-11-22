@@ -18,6 +18,7 @@ from .terminal_impact import COLUMNS, ImpactView
 from .terminal_notices import about
 from .terminal_person_act import agreed, resolve_text, review_text
 from .terminal_proposed import ProposedView
+from .terminal_published_import import archive_replaced, archive_text
 from .terminal_safe import plain, safe_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal, relabel_select, replaces_here,
                           summary_text)
@@ -664,7 +665,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             self.show_detail(result, text=self.t("Snapshots contain complete conversations and sources. Review before sharing.") + "\n\n" +
                              str(result.get("path") or "") + "\n" + summary_text(result, self.language))
         elif shown == "import":
-            self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + summary_text(result, self.language))
+            self.show_detail(result, text=self.t("Import checked. Review the details, then choose Apply.") + "\n" + archive_text(result, self.language))
         else:
             self.show_detail(result)
 
@@ -729,7 +730,9 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     submit=self.t("Check import"), on_submit=check_import))
                 if value and scope == self._scope_version:
                     payload, result = checked["payload"], checked["result"]
-                    self.pending_import = {**payload, "replace_confirmed": replaces_here(result)}
+                    # One check: the dialog shows its list and the import carries the same list (#332, #333).
+                    self.pending_import = {**payload, "replace_confirmed": replaces_here(result),
+                                         "expected_replaced": archive_replaced(result)}
                     self.import_check = result
                     self.query_one("#memory-apply", Button).disabled = False
                     self.show_memory("import", result)
@@ -738,7 +741,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     raise ValueError(self.t("Check the import with its source and destination folders first."))
                 pending = self.pending_import
                 # The check the person read is the consent dialog's text; only its Import memory sends (#332).
-                if not await agreed(self, "Import this project memory?", self.import_check, "Import memory"):
+                if not await agreed(self, "Import this project memory?", archive_text(self.import_check, self.language),
+                                    "Import memory"):
                     return
                 if self.pending_import is not pending:  # memory or the project changed while the dialog was open
                     raise ValueError(self.t("Check the import with its source and destination folders first."))

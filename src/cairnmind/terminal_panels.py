@@ -24,6 +24,7 @@ from .terminal_safe import plain
 from .terminal_connection_hints import NOT_STARTED, connection_hint
 from .terminal_i18n import native_failure_notice
 from .terminal_notices import about as notice_about
+from .terminal_published_import import archive_replaced, archive_text
 from .terminal_i18n_messages import broker_error_text
 from .terminal_ui import (BasePanel, ChoiceModal, Field, FieldError, FormModal,
                           LocalizedModal, MessageModal, remeasure_buttons, replaces_here, summary_text)
@@ -851,12 +852,13 @@ class SidebarApp(BasePanel):
         if value is None:
             return
         payload, preview = checked["payload"], checked["preview"]
-        approve = await self.push_screen_wait(ConfirmModal(self.t("Import this project memory?"), preview, approve=self.t("Import memory"), consent=True))
+        approve = await self.push_screen_wait(ConfirmModal(self.t("Import this project memory?"), archive_text(preview, self.language), approve=self.t("Import memory"), consent=True))
         if not approve:
             return
         # The preview the person just approved listed what the import replaces of this machine's own verdicts.
         result = await self.request("POST", "/api/memory/import", json={
-            **payload, "dry_run": False, "replace_confirmed": replaces_here(preview)})
+            **payload, "dry_run": False, "replace_confirmed": replaces_here(preview),
+            "expected_replaced": archive_replaced(preview)})
         project = result.get("project")
         if project:
             await asyncio.to_thread(self.workspace.select_project, project, payload["root"], intent="inspect")
