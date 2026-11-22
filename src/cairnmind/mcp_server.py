@@ -154,9 +154,11 @@ def refuse_if_code_replaced() -> None:
 
 def start_service(settings: Settings) -> None:
     """Start this installation's knowledge service as `ask`, `run` and `context` do (cli.ensure_service), for an
-    external client, which no launcher started it for (#258). Prints nothing: stdout belongs to MCP."""
+    external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
+    standard error (#287)."""
     import shlex
-    from .cli import UpgradeInProgress, _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service
+    from .cli import (UpgradeInProgress, _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service,
+                      say_service_started)
     from .first_start import SERVICE_NOT_STARTED
     from .store_writer import inspect
     try:
@@ -167,7 +169,8 @@ def start_service(settings: Settings) -> None:
         # A reader never runs the service (#70): nothing is spawned, and it is not told to start one (#244).
         raise RuntimeError(_service_unavailable(settings))
     try:
-        ensure_service(settings)
+        if ensure_service(settings):
+            say_service_started(settings)  # standard error, which the client logs; stdout stays MCP's
     except UpgradeInProgress as exc:
         # Not SERVICE_NOT_STARTED, whose "start it with `cairnmind serve`" would be wrong advice now (#298).
         raise RuntimeError(BRIDGE_UPGRADE.format(reason=str(exc))) from None

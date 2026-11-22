@@ -5,6 +5,7 @@ takeover`. Every other command works without it, and doctor reports the workspac
 Cairnmind as broken. The English sentences are the source; MESSAGES is their Polish for the terminal catalog.
 #274 adds what Cairnmind says without models: the knowledge agent's stored choice (knowledge_mode.py), init's
 choice, the answer without models with its full-text matches and doctor's information line.
+#287 adds the first start's summary, next steps and stops.
 """
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ WORKSPACE_NEEDS = "The terminal workspace needs tmux 3.4 or newer."
 TMUX_NOT_FOUND = "tmux was not found."
 TMUX_FOUND = "Found {version}."
 TMUX_SILENT = "tmux did not report its version."
-WITHOUT_WORKSPACE = ("Without it, these commands work: cairnmind serve, cairnmind run, cairnmind mcp and "
-                     "cairnmind brief.")
+WITHOUT_WORKSPACE = ("Without it, every other command works, for example cairnmind brief, cairnmind remember, "
+                     "cairnmind ask and cairnmind run.")
 COCKPIT_MISSING = "unavailable (tmux 3.4+ not found)"
 COCKPIT_OLD = "unavailable (tmux 3.4+ not found; found {version})"
 COCKPIT_OTHER = "unavailable (tmux 3.4+ not found; {code})"
@@ -57,13 +58,109 @@ MODE_HEADING = "Deterministic-only mode (no models)"
 PROCESS_OFF = "No models configured. Run `cairnmind models pull` to process memory."
 PROCESS_RESTART = "Models are enabled. Restart the service (`cairnmind stop`, then start) to use them."
 
+CLIENT_NAMES = {"codex": "Codex", "claude": "Claude Code"}  # as the first start's sentences call the clients
+
+# The doctor summary (#287): what is required and present, required and missing, optional and off.
+DATA_DIR = "Memory is kept in {data_dir}."
+REQUIRED_PRESENT = "Required and present:"
+REQUIRED_MISSING = "Required and missing:"
+NOTHING_MISSING = "Required and missing: nothing."
+OPTIONAL_OFF = "Optional and off:"
+OPTIONAL_ON = "Optional and on:"
+NOTES = "Notes:"
+FULL_REPORT = "The full report: cairnmind doctor --json"
+REPORT_UNREADABLE = "The doctor report could not be read."
+NEXT_FIX = "Next: fix what is listed under Required and missing, then run cairnmind doctor again."
+NEXT_START = ('Next: cairnmind project add NAME FOLDER registers a project; then cairnmind remember NAME "..." '
+              'stores a first finding and cairnmind brief NAME shows it.')
+ENGINE_READY = "Database engine: answers at {url}; the database {database} can be read."
+SERVICE_RUNNING = "Local service: running at {url}."
+SERVICE_ON_DEMAND = ("Local service: not running now; the next command that needs it starts it "
+                     "(cairnmind stop stops it).")
+ENGINE_ON_DEMAND = ("Database engine: not running now at {url}; the next command that needs it starts it "
+                    "(cairnmind engine start starts it now).")
+ENGINE_DOWN = ("The database engine does not answer at {url} ({error}); it may be starting or busy. If it is "
+               "stopped: cairnmind engine start.")
+ENGINE_RELEASE = ("The database engine at {url} runs release {found}, not the pinned {pinned}, and every command "
+                  "that opens the store refuses it. Stop it (cairnmind stop, then cairnmind engine stop) and run "
+                  "cairnmind engine start; if another program answers at that address, free it or set another "
+                  "arcade_url.")
+SERVER_DOWN_CONNECT = ("The database server at {url} does not answer ({error}). Check that it runs and that this "
+                       "machine reaches it.")
+JAVA_NEEDED = ("Java 21 or newer is needed for the engine: {found}. {hint}; or run the engine in Docker: "
+               "cairnmind engine start --docker.")
+MODELS_OFF = ("Local models: off (deterministic-only mode), so ask lists matching passages and makes no answer. "
+              "To turn them on: cairnmind models pull, with Ollama running (about 7 GB).")
+MODELS_ON = "Memory models: on, and their servers answer."
+WORKSPACE_OFF = "Terminal workspace: {status}. {hint}. Every other command works without it."
+WORKSPACE_ON = "Terminal workspace: ready; open it with cairnmind."
+CLIENT_OFF = "{client}: not installed; needed only for coding sessions (cairnmind run). {note}"
+CLIENT_ON = "{client}: installed and verified; start it with cairnmind run NAME {command}."
+
+# What each command of the first start says it did and what comes next.
+PROJECT_ADDED = ('Registered {project} in {root}; files indexed: {files}. Next: cairnmind remember {project} "..." '
+                 'stores a first finding, and cairnmind brief {project} shows it.')
+NOT_GIT = ("{root} is not a Git repository. Memory works without Git; impact, the commits in brief and coding "
+           "sessions (cairnmind run) need a repository with a first commit (git init, git add, git commit).")
+NO_COMMIT = ("{root} is a Git repository without a commit yet. Memory works; impact, the commits in brief and "
+             "coding sessions (cairnmind run) need a first commit (git add, git commit).")
+REMEMBER_PROPOSED = ("Stored as a proposed {kind}: cairnmind brief {project} lists it as waiting for review, and "
+                     "cairnmind ask {project} finds it. Only a person confirms it, in the memory inspector of the "
+                     "terminal workspace (cairnmind, then Ctrl+B i; needs tmux 3.4+).")
+BRIEF_START = ('Next: nothing is stored for this project yet. cairnmind remember {project} "..." stores a first '
+               'finding; a coding session started with cairnmind run {project} claude (or codex) saves '
+               'checkpoints, plans and tasks here.')
+BRIEF_REVIEW = ("Next: proposed findings stay unconfirmed until a person confirms or disputes them in the memory "
+                "inspector of the terminal workspace (cairnmind, then Ctrl+B i; needs tmux 3.4+).")
+INSTALL_NO_CLIENT = ("Neither Codex nor Claude Code is installed here, so no client was connected. Written in the "
+                     "project: {files}. Memory works without a client (cairnmind remember, brief, ask); after "
+                     "installing one, run cairnmind install {project} again.")
+INSTALL_DONE = ("Connected: {clients}. Written in the project: {files}; review the files before committing. "
+                "Next: cairnmind run {project} {command}.")
+INSTALL_ALSO = ("Not connected: {clients}. cairnmind doctor --contract shows which check fails and what it "
+                "needs.")
+INSTALL_NOT_CONNECTED = "Written in the project: {files}. " + INSTALL_ALSO
+NOTHING_WRITTEN = "nothing new (the files were up to date)"
+CLIENT_SKIPPED = ("{client} is not installed, so only its instruction block was written; after installing it, run "
+                  "cairnmind install again to connect it.")
+TRUST_NOTE = ("Each client asks you to trust this project's MCP server and hooks when it first starts here; "
+              "Cairnmind answers no trust question for you.")
+SERVICE_STARTED = ("Started the Cairnmind service at {url} for {data_dir}. It keeps running in the background and "
+                   "starts the database engine when that is not running; cairnmind stop stops it.")
+ENGINE_STARTING = "Starting the database engine ({mode}) for {data_dir}."
+ENGINE_STARTED = ("The database engine ({mode}) answers and keeps running in the background (cairnmind engine stop "
+                  "stops it, after cairnmind stop).")
+
+# Stops that name the next step.
+UNKNOWN_PROJECT_NEXT = ("cairnmind project list shows the registered projects; cairnmind project add NAME FOLDER "
+                        "registers one.")
+PROJECT_NAME_TAKEN = ("The name {name} is already registered, for {root}. Choose another name; cairnmind project "
+                      "list shows the registered projects.")
+PROJECT_ROOT_TAKEN = "{root} is already registered, as the project {name}. cairnmind project list shows the registered projects."
+RUN_NO_CLIENT = ("Install it and sign in ({url}), then run this command again. Without a coding client these "
+                 "work: cairnmind remember, cairnmind brief and cairnmind ask.")
+LAUNCH_REFUSED = ("Verified {client} launch refused; not in place: {missing}. cairnmind doctor --contract shows "
+                  "which check fails and what it needs.")
+PART_CONTRACT = "the client contract checks"
+PART_MCP = "the MCP entry"
+PART_HOOKS = "the session hooks"
+PART_INSTRUCTIONS = "the instruction block"
+STATUS_NOT_RUNNING = ("The Cairnmind service is not running, and diagnostics do not start it. The next command "
+                      "that needs it starts it (for example cairnmind ask); cairnmind doctor checks the "
+                      "installation without it.")
+ENGINE_NOT_INSTALLED = ("The database engine (ArcadeDB) is not installed for this data directory. Run cairnmind "
+                        "engine install, then cairnmind init; the installer runs both.")
+ENGINE_EXITED = ("ArcadeDB exited during startup. See {log}. A port already in use ({url}) or too little memory "
+                 "are the usual causes; after fixing it, run cairnmind engine start.")
+ENGINE_TIMED_OUT = "ArcadeDB startup timed out. See {log}. After fixing the cause, run cairnmind engine start."
+
 MESSAGES = {
     WORKSPACE_NEEDS: "Środowisko terminalowe wymaga tmux 3.4 lub nowszego.",
     TMUX_NOT_FOUND: "Nie znaleziono tmux.",
     TMUX_FOUND: "Znaleziono {version}.",
     TMUX_SILENT: "tmux nie podał swojej wersji.",
-    WITHOUT_WORKSPACE: ("Bez niego działają polecenia: cairnmind serve, cairnmind run, cairnmind mcp i "
-                        "cairnmind brief."),
+    WITHOUT_WORKSPACE: ("Bez niego działają wszystkie inne polecenia, na przykład cairnmind brief, cairnmind "
+                        "remember, cairnmind ask i cairnmind run."),
     COCKPIT_MISSING: "niedostępny (nie znaleziono tmux 3.4+)",
     COCKPIT_OLD: "niedostępny (nie znaleziono tmux 3.4+; znaleziono {version})",
     COCKPIT_OTHER: "niedostępny (nie znaleziono tmux 3.4+; {code})",
@@ -101,6 +198,101 @@ MESSAGES = {
     RESTART_FOR_MODELS: ("knowledge_agent jest włączony w config.json, ale ta usługa wystartowała bez modeli. "
                          "Uruchom ponownie usługę wiedzy (cairnmind stop, a potem ponownie uruchom Cairnmind), aby "
                          "używała modeli."),
+    DATA_DIR: "Pamięć jest przechowywana w {data_dir}.",
+    REQUIRED_PRESENT: "Wymagane i obecne:",
+    REQUIRED_MISSING: "Wymagane i brakujące:",
+    NOTHING_MISSING: "Wymagane i brakujące: nic.",
+    OPTIONAL_OFF: "Opcjonalne i wyłączone:",
+    OPTIONAL_ON: "Opcjonalne i włączone:",
+    NOTES: "Uwagi:",
+    FULL_REPORT: "Pełny raport: cairnmind doctor --json",
+    REPORT_UNREADABLE: "Nie udało się odczytać raportu doctor.",
+    NEXT_FIX: "Dalej: usuń braki wymienione w części Wymagane i brakujące, a potem uruchom ponownie cairnmind doctor.",
+    NEXT_START: ('Dalej: cairnmind project add NAZWA FOLDER rejestruje projekt; potem cairnmind remember NAZWA "..." '
+                 'zapisuje pierwsze ustalenie, a cairnmind brief NAZWA je pokazuje.'),
+    ENGINE_READY: "Silnik bazy danych: odpowiada pod {url}; bazę {database} można odczytać.",
+    SERVICE_RUNNING: "Usługa lokalna: działa pod {url}.",
+    SERVICE_ON_DEMAND: ("Usługa lokalna: teraz nie działa; uruchomi ją następne polecenie, które jej potrzebuje "
+                        "(cairnmind stop ją zatrzymuje)."),
+    ENGINE_ON_DEMAND: ("Silnik bazy danych: teraz nie działa pod {url}; uruchomi go następne polecenie, które go "
+                       "potrzebuje (cairnmind engine start uruchamia go od razu)."),
+    ENGINE_DOWN: ("Silnik bazy danych nie odpowiada pod {url} ({error}); może się uruchamiać albo być zajęty. Jeśli "
+                  "jest zatrzymany: cairnmind engine start."),
+    ENGINE_RELEASE: ("Silnik bazy danych pod {url} ma wydanie {found}, a nie przypięte {pinned}, i każde polecenie "
+                     "otwierające magazyn go odrzuca. Zatrzymaj go (cairnmind stop, potem cairnmind engine stop) i "
+                     "uruchom cairnmind engine start; jeśli pod tym adresem odpowiada inny program, zwolnij go albo "
+                     "ustaw inny arcade_url."),
+    SERVER_DOWN_CONNECT: ("Serwer bazy danych pod {url} nie odpowiada ({error}). Sprawdź, czy działa i czy ten "
+                          "komputer ma do niego dostęp."),
+    JAVA_NEEDED: ("Silnik wymaga Javy 21 lub nowszej: {found}. {hint}; albo uruchom silnik w Dockerze: "
+                  "cairnmind engine start --docker."),
+    MODELS_OFF: ("Modele lokalne: wyłączone (tryb tylko deterministyczny), więc ask wymienia pasujące fragmenty i "
+                 "nie tworzy odpowiedzi. Aby je włączyć: cairnmind models pull przy działającej Ollamie "
+                 "(około 7 GB)."),
+    MODELS_ON: "Modele pamięci: włączone, a ich serwery odpowiadają.",
+    WORKSPACE_OFF: "Środowisko terminalowe: {status}. {hint}. Wszystkie inne polecenia działają bez niego.",
+    WORKSPACE_ON: "Środowisko terminalowe: gotowe; otwórz je poleceniem cairnmind.",
+    CLIENT_OFF: ("{client}: nie zainstalowano; potrzebny tylko do sesji programistycznych (cairnmind run). "
+                 "{note}"),
+    CLIENT_ON: "{client}: zainstalowany i sprawdzony; uruchom go poleceniem cairnmind run NAZWA {command}.",
+    PROJECT_ADDED: ('Zarejestrowano {project} w {root}; zindeksowane pliki: {files}. Dalej: cairnmind remember '
+                    '{project} "..." zapisuje pierwsze ustalenie, a cairnmind brief {project} je pokazuje.'),
+    NOT_GIT: ("{root} nie jest repozytorium Git. Pamięć działa bez Gita; impact, commity w brief i sesje "
+              "programistyczne (cairnmind run) wymagają repozytorium z pierwszym commitem (git init, git add, "
+              "git commit)."),
+    NO_COMMIT: ("{root} jest repozytorium Git bez żadnego commita. Pamięć działa; impact, commity w brief i sesje "
+                "programistyczne (cairnmind run) wymagają pierwszego commita (git add, git commit)."),
+    REMEMBER_PROPOSED: ("Zapisano jako proponowane ({kind}): cairnmind brief {project} pokazuje je jako czekające "
+                        "na przegląd, a cairnmind ask {project} je znajduje. Potwierdza je tylko człowiek, w "
+                        "inspektorze pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i; wymaga "
+                        "tmux 3.4+)."),
+    BRIEF_START: ('Dalej: dla tego projektu nic jeszcze nie zapisano. cairnmind remember {project} "..." zapisuje '
+                  'pierwsze ustalenie; sesja programistyczna uruchomiona przez cairnmind run {project} claude '
+                  '(lub codex) zapisuje tu punkty kontrolne, plany i zadania.'),
+    BRIEF_REVIEW: ("Dalej: proponowane ustalenia pozostają niepotwierdzone, dopóki człowiek ich nie potwierdzi lub "
+                   "nie zakwestionuje w inspektorze pamięci środowiska terminalowego (cairnmind, potem Ctrl+B i; "
+                   "wymaga tmux 3.4+)."),
+    INSTALL_NO_CLIENT: ("Nie zainstalowano tu ani Codexa, ani Claude Code, więc nie połączono żadnego klienta. "
+                        "Zapisano w projekcie: {files}. Pamięć działa bez klienta (cairnmind remember, brief, "
+                        "ask); po zainstalowaniu jednego z nich uruchom ponownie cairnmind install {project}."),
+    INSTALL_DONE: ("Połączono: {clients}. Zapisano w projekcie: {files}; przejrzyj pliki przed commitem. "
+                   "Dalej: cairnmind run {project} {command}."),
+    INSTALL_NOT_CONNECTED: ("Zapisano w projekcie: {files}. Nie połączono: {clients}. cairnmind doctor --contract "
+                            "pokazuje, który test nie przechodzi i czego wymaga."),
+    INSTALL_ALSO: ("Nie połączono: {clients}. cairnmind doctor --contract pokazuje, który test nie przechodzi "
+                   "i czego wymaga."),
+    NOTHING_WRITTEN: "nic nowego (pliki były aktualne)",
+    CLIENT_SKIPPED: ("{client} nie jest zainstalowany, więc zapisano tylko jego blok instrukcji; po instalacji "
+                     "uruchom ponownie cairnmind install, aby go połączyć."),
+    TRUST_NOTE: ("Każdy klient przy pierwszym uruchomieniu tutaj zapyta, czy ufasz serwerowi MCP i hookom tego "
+                 "projektu; Cairnmind nie odpowiada za Ciebie na takie pytania."),
+    SERVICE_STARTED: ("Uruchomiono usługę Cairnmind pod {url} dla {data_dir}. Działa w tle i uruchamia silnik "
+                      "bazy danych, gdy ten nie działa; cairnmind stop ją zatrzymuje."),
+    ENGINE_STARTING: "Uruchamianie silnika bazy danych ({mode}) dla {data_dir}.",
+    ENGINE_STARTED: ("Silnik bazy danych ({mode}) odpowiada i działa w tle (cairnmind engine stop go zatrzymuje, po "
+                     "cairnmind stop)."),
+    UNKNOWN_PROJECT_NEXT: ("cairnmind project list pokazuje zarejestrowane projekty; cairnmind project add NAZWA "
+                           "FOLDER rejestruje nowy."),
+    PROJECT_NAME_TAKEN: ("Nazwa {name} jest już zarejestrowana, dla {root}. Wybierz inną nazwę; cairnmind project "
+                         "list pokazuje zarejestrowane projekty."),
+    PROJECT_ROOT_TAKEN: ("{root} jest już zarejestrowany jako projekt {name}. cairnmind project list pokazuje "
+                         "zarejestrowane projekty."),
+    RUN_NO_CLIENT: ("Zainstaluj go i zaloguj się ({url}), a potem uruchom to polecenie ponownie. Bez klienta "
+                    "programistycznego działają: cairnmind remember, cairnmind brief i cairnmind ask."),
+    LAUNCH_REFUSED: ("Odmowa zweryfikowanego uruchomienia {client}; brakuje: {missing}. cairnmind doctor --contract "
+                     "pokazuje, który test nie przechodzi i czego wymaga."),
+    PART_CONTRACT: "testy kontraktu klienta",
+    PART_MCP: "wpis MCP",
+    PART_HOOKS: "hooki sesji",
+    PART_INSTRUCTIONS: "blok instrukcji",
+    STATUS_NOT_RUNNING: ("Usługa Cairnmind nie działa, a diagnostyka jej nie uruchamia. Uruchomi ją następne "
+                         "polecenie, które jej potrzebuje (na przykład cairnmind ask); cairnmind doctor sprawdza "
+                         "instalację bez niej."),
+    ENGINE_NOT_INSTALLED: ("Silnik bazy danych (ArcadeDB) nie jest zainstalowany dla tego katalogu danych. Uruchom "
+                           "cairnmind engine install, a potem cairnmind init; instalator uruchamia oba."),
+    ENGINE_EXITED: ("ArcadeDB zakończył działanie podczas startu. Zobacz {log}. Zwykle przyczyną jest zajęty port "
+                    "({url}) albo za mało pamięci; po usunięciu przyczyny uruchom cairnmind engine start."),
+    ENGINE_TIMED_OUT: "Start ArcadeDB przekroczył limit czasu. Zobacz {log}. Po usunięciu przyczyny uruchom cairnmind engine start.",
     MODE_HEADING: "Tryb tylko deterministyczny (brak modeli)",
 }
 MESSAGES[PROCESS_OFF] = "Brak modeli. Uruchom `cairnmind models pull`, aby przetwarzać pamięć."

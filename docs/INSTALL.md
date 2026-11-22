@@ -132,7 +132,7 @@ The installer:
 1. checks Java and tmux versions; without Java 21 it goes on when Docker answers, and without tmux 3.4+ it says the terminal workspace is unavailable and goes on;
 2. installs Cairnmind as a `uv` tool, with dependency versions pinned by `uv.lock`;
 3. downloads and verifies ArcadeDB, starts the engine and initialises your local memory in `~/.local/share/cairnmind` (or keeps using `~/.local/share/devbrain` if an earlier version created it); with Docker, the ArcadeDB archive is not downloaded; `cairnmind init` downloads Cairnmind's engine image instead;
-4. runs `cairnmind doctor` and prints anything that still needs attention.
+4. runs `cairnmind doctor` and prints its summary: what is required and present, required and missing, optional and off, and the next step.
 
 If the installer prints `Add this directory to PATH`, add that directory to your shell profile and open a new terminal.
 
@@ -170,7 +170,7 @@ cairnmind doctor
 
 Models are optional. When `cairnmind init` finds no model server, or not both models, it saves `knowledge_agent: disabled` in `config.json` and says so: plans, tasks, checks, `brief`, `impact`, memory and file indexing work as usual, extraction and embedding jobs wait, `cairnmind status` shows `models: not configured (deterministic-only mode)` and how many jobs wait, and `cairnmind ask` is a full-text search of the project's memory: it makes no answer (`unavailable`) and lists the passages that match words of the question. `cairnmind models pull` (or `cairnmind models set`) turns the knowledge agent on; restart the service afterwards and the waiting jobs run. To turn it off again, set `knowledge_agent` to `disabled` in `config.json` and restart the service. An installation from before 0.13.0 keeps its models.
 
-`cairnmind doctor` reports the Python, Java, tmux, ArcadeDB (and the engine mode), Ollama and coding-client state. It is read-only: no logins, downloads or model sessions. Without tmux 3.4+ it reports `cockpit: unavailable (tmux 3.4+ not found)` and still exits 0. With no models configured it reports `knowledge_agent: disabled (deterministic-only mode)` as information and still exits 0.
+`cairnmind doctor` checks Python, Java, tmux, the engine, Ollama and the coding clients, read-only (no logins, downloads or model sessions), and exits 0. In a terminal it prints a summary: required and present, required and missing, optional and off (without tmux 3.4+ the terminal workspace, without models the local models), and the next step. `cairnmind doctor --json` prints the full report, which is also what a pipe, a file or a script gets; there, without tmux 3.4+ it has `cockpit: unavailable (tmux 3.4+ not found)`, and with no models `knowledge_agent: disabled (deterministic-only mode)`.
 
 `cairnmind setup` shows, in three lines, where storage runs (and whether this installation writes it), where each memory model runs, where memory text goes, whether the models were evaluated, and what runs on this machine; `--json` prints the structured form. It changes no setting of an initialized installation: it ends with the commands that do. Like every command, it first creates a missing `config.json` and saves a database address seen for the first time in `CAIRNMIND_ARCADE_CONNECT_URL`; an empty variable counts as unset. `cairnmind doctor` starts with the same lines as its `topology` key, and `cairnmind status` has it for the running service. A value that comes from a variable (`CAIRNMIND_ARCADE_CONNECT_URL`, `CAIRNMIND_OLLAMA_URL`, `CAIRNMIND_PORT`) names the variable; "config.json" in the report means "not from a variable".
 
@@ -197,9 +197,13 @@ API agents (OpenAI, Anthropic, OpenAI-compatible endpoints, Ollama) and GitHub C
 
 ```bash
 cairnmind project add my-app ~/src/my-app
+cairnmind remember my-app "Accounts lock after five failed logins."
+cairnmind brief my-app
 cairnmind install my-app
 cairnmind
 ```
+
+`cairnmind remember` stores a first finding as proposed, and `cairnmind brief` shows it waiting for review: neither needs models, tmux or a coding assistant.
 
 `cairnmind install` adds the project's MCP server entry, session hooks and agent instructions for the installed clients, keeping your existing configuration. In the project it creates or updates `.mcp.json`, `AGENTS.md`, `CLAUDE.md`, `.claude/` and `.codex/`; review them before committing. `cairnmind` opens the workspace. Choose the project, check the assistant, then select **Start work**. See [TERMINAL.md](TERMINAL.md) for navigation.
 
@@ -230,7 +234,7 @@ uv tool uninstall cairnmind
 
 Close editors that use `cairnmind mcp --client external` before this: their next tool call starts the service again.
 
-This keeps your memory in the data directory that `cairnmind doctor` shows as `data_dir`. To remove it too, first make a backup with `cairnmind backup ~/cairnmind-backup.cairnmind.json.gz`, then delete the directory. Deleting it cannot be undone.
+This keeps your memory in the data directory that `cairnmind doctor` names ("Memory is kept in ..."). To remove it too, first make a backup with `cairnmind backup ~/cairnmind-backup.cairnmind.json.gz`, then delete the directory. Deleting it cannot be undone.
 
 ## Troubleshooting
 

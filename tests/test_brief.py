@@ -296,7 +296,8 @@ def test_cli_brief_reads_the_store_directly_and_starts_no_service(workspace, mon
     as_json = runner.invoke(cli.app, ["--data-dir", str(settings.data_dir), "brief", "demo",
                                       "--worktree", str(root), "--json"])
     payload = json.loads(as_json.output)
-    assert set(payload) == {"project", "worktree", "generated_at", "lines", "text"}
+    assert set(payload) == {"project", "worktree", "generated_at", "lines", "text", "next"}  # #287 adds next
+    assert payload["next"] is None  # a checkpoint is stored, and no finding waits
     assert {"basis": "reported", "text": "Checkpoint summary: from the command line"} in payload["lines"]
 
 

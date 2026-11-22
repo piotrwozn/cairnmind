@@ -8,6 +8,7 @@ import os
 from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
+import shutil
 import subprocess
 import sys
 import time
@@ -28,7 +29,9 @@ from cairnmind.ollama import OllamaUnavailable
 from cairnmind.arcade import ArcadeError
 
 app = typer.Typer(no_args_is_help=False, pretty_exceptions_enable=False,
-                  help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot.")
+                  help="A terminal workspace with memory: Codex, Claude, Ollama, API and GitHub Copilot. Start: "
+                       "cairnmind doctor, then cairnmind project add NAME FOLDER, cairnmind remember NAME TEXT and "
+                       "cairnmind brief NAME.")
 projects_app = typer.Typer(help="The registry of projects and their folders.")
 tasks_app = typer.Typer(help="Shared plan steps, their states and verification evidence.")
 models_app = typer.Typer(help="The knowledge agent's models: the local Ollama, or a server you choose.")
@@ -65,6 +68,17 @@ app.add_typer(answers_app, name="answers")
 
 def output(value) -> None:
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+def _stdout_is_terminal() -> bool:
+    return sys.stdout.isatty()
+
+
+def _tell(message: str) -> None:
+    """What a command did and what comes next, for a person: standard error, and only in a terminal, so JSON on
+    standard output and an agent's shell stay as they are (#287)."""
+    if sys.stderr.isatty():
+        typer.echo(f"Cairnmind: {message}", err=True)
 
 
 def initialized(command):
@@ -258,13 +272,15 @@ def _bind_failed(log: Path, since: int) -> bool:
         return False
 
 
-def ensure_service(settings: Settings, *, background_inference: bool = True) -> None:
+def ensure_service(settings: Settings, *, background_inference: bool = True) -> bool:
+    """True when this call started the service process, False when one already answered."""
     if service_alive(settings):
-        return  # used, and stoppable, during an upgrade too: the mark only stops a start
+        return False  # used, and stoppable, during an upgrade too: the mark only stops a start
     from cairnmind import upgrade_mark
     reason = upgrade_mark.refusal()
     if reason:
         # The installer is replacing this code: a start now would run the version being replaced (#298).
+        # Raised before anything starts, so the caller announces no start.
         raise UpgradeInProgress(reason)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log = settings.data_dir / "service.log"
@@ -283,8 +299,8 @@ def ensure_service(settings: Settings, *, background_inference: bool = True) -> 
         seen = seen or upgrade_mark.refusal()
         if service_alive(settings):
             if seen:
-                _stop_started(settings)
-            return
+                _stop_started(settings)  # raises with the sentence that says the start was ended: never announced
+            return True
         if getattr(process, "poll", lambda: None)() is not None:
             # It stopped instead of starting, for example on an installation that only reads the store (#70).
             # One that met a service starting at the same moment is waited for, as before.
@@ -338,9 +354,17 @@ class UpgradeInProgress(ServiceDidNotStart):
 
 def _ensure_service_or_refuse(settings: Settings) -> None:
     try:
-        ensure_service(settings)
+        started = ensure_service(settings)
     except ServiceDidNotStart as exc:
         refuse(str(exc))
+    if started:
+        say_service_started(settings)
+
+
+def say_service_started(settings: Settings) -> None:
+    """Nothing starts in the background unannounced (#287): said whether or not this is a terminal."""
+    from cairnmind.first_start import SERVICE_STARTED
+    typer.echo(f"Cairnmind: {SERVICE_STARTED.format(url=settings.url, data_dir=settings.data_dir)}", err=True)
 
 
 def refuse(message: str, code: int = 2):
@@ -366,8 +390,8 @@ def _service_unavailable(settings: Settings) -> str:
     reason = upgrade_mark.refusal()
     if reason:
         return reason  # stopped for an upgrade: `cairnmind serve` would start the version being replaced (#298)
-    return ("The existing Cairnmind service is unavailable; diagnostics do not start it. "
-            "Run `cairnmind serve` explicitly.")
+    from cairnmind.first_start import STATUS_NOT_RUNNING
+    return STATUS_NOT_RUNNING
 
 
 class ServiceRefusal(Exception):
@@ -586,7 +610,7 @@ def init(ctx: typer.Context):
     said = choose(ctx.obj)  # the first run chooses whether the knowledge agent has models, and says which (#274)
     if said:
         typer.echo(f"Cairnmind: {said}", err=True)
-    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor; cairnmind models pull"}
+    result = {"data_dir": str(ctx.obj.data_dir), "next": "cairnmind doctor, then cairnmind project add NAME FOLDER"}
     result["knowledge_agent"] = "enabled" if enabled(ctx.obj) else "disabled"
     if not connect_only(ctx.obj):
         result["engine_mode"] = engine_mode(ctx.obj)
@@ -696,8 +720,11 @@ def db_create_user(ctx: typer.Context, admin_password_file: Annotated[Path, type
 def doctor(ctx: typer.Context, contract: bool = typer.Option(
         False, "--contract", help="Show only the client contract: every check with its evidence line."),
            output_format: Annotated[str, typer.Option(
-               "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json"):
-    """Report where storage and the models run, Python, Java, tmux, the engine, Ollama and the coding clients. Read-only."""
+               "--format", help="With --contract: json (default) or text, one line per client and check.")] = "json",
+           as_json: bool = typer.Option(
+               False, "--json", help="Print the full report as JSON; the default when the output is not a terminal.")):
+    """Report where storage and the models run and what Cairnmind needs and what is optional: a short summary in a
+    terminal, the full report as JSON otherwise. Read-only."""
     if output_format not in ("json", "text"):
         raise typer.BadParameter("--format must be json or text.")
     if output_format == "text" and not contract:
@@ -723,16 +750,20 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
     from cairnmind.upgrade_mark import note as upgrade_note
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
-    result["environment_notes"] = [
-        f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
-        for name in env_conflicts()] + [
+    # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
+    blockers = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
-        for name in session_conflicts()] + [note for note in [data_dir_note(), upgrade_note()] if note]
+        for name in session_conflicts()]
+    result["environment_notes"] = [
+        f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
+        for name in env_conflicts()] + blockers + [note for note in [data_dir_note(), upgrade_note()] if note]
+    result["environment_blockers"] = blockers
     for name, variable in (("port", "PORT"), ("cockpit_port", "COCKPIT_PORT"), ("ollama_url", "OLLAMA_URL")):
         if name in ctx.obj._origin.get("kept", {}):
             stored, used = ctx.obj._origin["kept"][name]
             spelling = next(key for key in env_names(variable) if os.environ.get(key))
+            stored = stored if stored not in (None, "") else "not set"
             result["environment_notes"].append(
                 f"{spelling} is used by this process: {name} is {used} here, and {stored} in config.json.")
     from cairnmind.engine import log_settings_problems
@@ -752,7 +783,11 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     from cairnmind.topology import topology
     # From what doctor found above, so it asks nothing more (#74): first, so the JSON reads top-down.
     result = {"topology": topology(ctx.obj, models=result.get("memory_models"), writer=result["store_writer"]), **result}
-    output(result)
+    if as_json or not _stdout_is_terminal():
+        output(result)  # a pipe, a file and a script read this, as before
+    else:
+        from cairnmind.doctor_attention import summary
+        typer.echo("\n".join(summary(result)))
 
 
 @app.command()
@@ -809,6 +844,17 @@ def project_add(ctx: typer.Context, name: ProjectNameArg, root: ProjectRootArg):
     result = index_project(store, project["id"])
     discovery = register_default_histories(store, project["id"], Path(project["root"]))
     output({"project": project, "indexed": result, "history": discovery})
+    import shlex
+    from cairnmind import first_start
+    from cairnmind.brief import _git_out
+    from cairnmind.terminal_safe import safe_text
+    shown = safe_text(str(root))
+    _tell(first_start.PROJECT_ADDED.format(project=shlex.quote(safe_text(name)), root=shown,
+                                           files=result.get("files", 0)))
+    if _git_out(root, "rev-parse", "--is-inside-work-tree") is None:
+        _tell(first_start.NOT_GIT.format(root=shown))
+    elif _git_out(root, "rev-parse", "--verify", "-q", "HEAD") is None:
+        _tell(first_start.NO_COMMIT.format(root=shown))
 
 
 @projects_app.command("list")
@@ -883,6 +929,8 @@ def brief(ctx: typer.Context, project: ProjectArg, worktree: Path | None = None,
         output(result)
     else:
         typer.echo(result["text"])
+        if result.get("next"):
+            typer.echo(result["next"])
 
 
 @app.command()
@@ -1212,6 +1260,13 @@ def remember(ctx: typer.Context, project: ProjectArg,
         refuse(f"Record {exc.record_id} already holds the key {key!r} for a {kind}. Nothing was saved. Use "
                "another key, or dispute or decide that record in the inspector.")
     output(result)
+    # brief lists a proposed record for review, except a task or a checkpoint, which it leaves out.
+    if result.get("status") == "proposed" and kind not in {"task", "checkpoint"}:
+        import shlex
+        from cairnmind import first_start
+        from cairnmind.terminal_safe import safe_text
+        _tell(first_start.REMEMBER_PROPOSED.format(kind=safe_text(kind),
+                                                   project=shlex.quote(safe_text(project))))
 
 
 @app.command()
@@ -1919,7 +1974,32 @@ def install(ctx: typer.Context, project: ProjectArg):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
     store = store_for(ctx.obj)
-    output(install_integrations(ctx.obj, store.resolve_project(project)))
+    selected = store.resolve_project(project)
+    result = install_integrations(ctx.obj, selected)
+    output(result)
+    import shlex
+    from cairnmind import first_start
+    from cairnmind.terminal_safe import safe_text
+    root = Path(selected["root"]).resolve()
+    files = ", ".join(safe_text(os.path.relpath(path, root)) for path in result["changed"]) or first_start.NOTHING_WRITTEN
+    from cairnmind.integrations import missing_parts
+    installed = {client: info for client, info in result["clients"].items() if info.get("installed")}
+    # Connected is the rule a verified launch uses; an installed client that fails it is named with what it lacks.
+    connected = [client for client, info in installed.items() if not missing_parts(info)]
+    unconnected = ", ".join(f"{first_start.CLIENT_NAMES.get(client, client)} (not in place: "
+                            f"{', '.join(missing_parts(info))})" for client, info in installed.items()
+                            if missing_parts(info))
+    name = shlex.quote(safe_text(selected["name"]))
+    if connected:
+        _tell(first_start.INSTALL_DONE.format(
+            clients=", ".join(first_start.CLIENT_NAMES.get(client, client) for client in connected), files=files,
+            project=name, command=connected[0]))
+        if unconnected:
+            _tell(first_start.INSTALL_ALSO.format(clients=unconnected))
+    elif unconnected:
+        _tell(first_start.INSTALL_NOT_CONNECTED.format(files=files, clients=unconnected))
+    else:
+        _tell(first_start.INSTALL_NO_CLIENT.format(files=files, project=name))
 
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1940,7 +2020,17 @@ def run(ctx: typer.Context, project: ProjectArg, client: ClientArg, worktree: Pa
     args = list(ctx.args)
     if args[:1] == ["--"]:
         args = args[1:]
-    raise typer.Exit(run_client(ctx.obj, selected, client, args))
+    try:
+        code = run_client(ctx.obj, selected, client, args)
+    except ValueError as exc:
+        from cairnmind.integrations import CLIENTS
+        if client not in CLIENTS or shutil.which(client) is not None:
+            raise
+        # The client is not here: where to get it, and what works without one (the workspace words this its own way).
+        from cairnmind.first_start import RUN_NO_CLIENT
+        urls = {"codex": "https://developers.openai.com/codex/cli", "claude": "https://code.claude.com/docs/en/setup"}
+        raise ValueError(f"{str(exc).rstrip('.')}. {RUN_NO_CLIENT.format(url=urls.get(client, 'its own instructions'))}") from None
+    raise typer.Exit(code)
 
 
 @app.command()

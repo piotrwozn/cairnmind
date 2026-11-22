@@ -27,6 +27,8 @@ import tomlkit
 from tomlkit.items import Comment, Table
 
 from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
+from .first_start import (CLIENT_SKIPPED, LAUNCH_REFUSED, PART_CONTRACT, PART_HOOKS, PART_INSTRUCTIONS, PART_MCP,
+                          TRUST_NOTE)
 
 # The name of the MCP server in client configuration, and the markers around what install manages.
 # Entries and blocks written under the earlier name are recognised and converted in place.
@@ -680,7 +682,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         except (ValueError, OSError) as exc:
             results["warnings"].append(str(exc))
         if not info["installed"]:
-            results["warnings"].append(f"{client} is not installed; MCP/hooks were not configured.")
+            results["warnings"].append(CLIENT_SKIPPED.format(client=client))
             continue
         operations = []
         if info["mcp"]:
@@ -705,7 +707,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
-    results["warnings"].append("Native project/MCP/hook trust must be reviewed in the clients; no trust is bypassed.")
+    results["warnings"].append(TRUST_NOTE)
     return results
 
 
@@ -767,6 +769,14 @@ def launch_prompt(session_id: str, context_path) -> str:
         + DATA_NOT_INSTRUCTIONS)
 
 
+def missing_parts(info: dict[str, Any]) -> list[str]:
+    """What an installed client still lacks for a verified launch; empty when it is connected. One rule for
+    `install` and for the launch that refuses."""
+    return [label for key, label in (("verified_resume", PART_CONTRACT), ("mcp_configured", PART_MCP),
+                                     ("hooks_configured", PART_HOOKS), ("instructions_configured", PART_INSTRUCTIONS))
+            if not info.get(key)]
+
+
 def prepare_client_launch(settings: Settings, project: dict[str, Any], client: str,
                           args: list[str] | None = None, *, installation: dict | None = None,
                           bootstrap_when_args: bool = False) -> dict[str, Any]:
@@ -794,9 +804,9 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
     for warning in installation["warnings"]:
         print(f"Cairnmind: {warning}", file=sys.stderr)
     info = installation["clients"][client]
-    if not info.get("verified_resume") or not all(info.get(key) for key in
-            ("mcp_configured", "hooks_configured", "instructions_configured")):
-        raise ValueError(f"Verified {client} launch refused: native MCP, hook, packet bootstrap and session binding must be supported and configured; run cairnmind doctor and review integration warnings")
+    parts = missing_parts(info)
+    if parts:
+        raise ValueError(LAUNCH_REFUSED.format(client=client, missing=", ".join(parts)))
     prepared = _prepare_session(settings, project, client, root, args)
     if prepared.get("status") != "ready":
         unknowns = "; ".join(str(value) for value in prepared.get("unknowns", []))
