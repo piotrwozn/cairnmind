@@ -201,6 +201,45 @@ async def test_an_unclear_or_saved_replace_never_says_the_record_was_not_replace
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [503, 502, 500, 200])
+async def test_only_a_4xx_answer_is_a_refusal_every_other_failure_is_unclear(tmp_path, monkeypatch, status):
+    # 503/502: the broker's own call failed or its answer was not JSON; 200: the answer could not be decoded.
+    # The service may have committed in each of them.
+    app, broker, _ = replace_app(tmp_path, monkeypatch, "pl")
+    broker.refuse = BrokerError(status, "Bad answer")
+    async with app.run_test(size=(95, 42)) as pilot:
+        shown = await send_replace(app, broker, pilot)
+        assert plain_words(tr(terminal_replace.UNCLEAR, "pl")) in shown
+        assert plain_words(tr(terminal_replace.FAILED, "pl")) not in shown
+        assert len(posts(broker)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["unclear", "saved but unread"])
+async def test_the_notice_stays_when_the_reload_of_the_old_record_fails(tmp_path, monkeypatch, how):
+    app, broker, _ = replace_app(tmp_path, monkeypatch, "pl")
+    if how == "unclear":
+        broker.refuse = BrokerError(503, "Memory storage is unavailable")
+    plain_request = broker.request
+    state = {"posted": False}
+
+    def request(method, path, **kwargs):
+        if path == REPLACE:
+            state["posted"] = True
+            answer = plain_request(method, path, **kwargs)
+            return {"replaced": {}} if how == "saved but unread" else answer
+        if state["posted"] and path == "/api/inspector/records/record-a":
+            raise BrokerError(503, "Memory storage is unavailable")
+        return plain_request(method, path, **kwargs)
+    broker.request = request
+    async with app.run_test(size=(95, 42)) as pilot:
+        shown = await send_replace(app, broker, pilot)
+        wanted = terminal_replace.UNCLEAR if how == "unclear" else terminal_replace.SAVED_UNREAD
+        assert plain_words(tr(wanted, "pl")) in shown
+        assert len(posts(broker)) == 1
+
+
+@pytest.mark.asyncio
 async def test_the_consent_dialog_itself_holds_the_current_text_and_scrolls_it(tmp_path, monkeypatch):
     old = "\n".join([f"old line {number}" for number in range(1, 40)] + ["old last line"])
     app, broker, _ = replace_app(tmp_path, monkeypatch, "en")

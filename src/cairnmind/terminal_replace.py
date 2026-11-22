@@ -52,6 +52,15 @@ def replace_text(record, content, reason, t) -> str:
                       t(EFFECT), typed(t, "Reason", reason)])
 
 
+async def reload_after(app, record_id, notice):
+    """Say the outcome first, then reload the old record; a failed reload must not take the notice away."""
+    app.notice(notice, "error")
+    try:
+        await app.open_entity(record_id, "records")
+    except (OSError, ValueError, RuntimeError):
+        pass
+
+
 async def replace_record(app):
     # Imported here: the catalog (terminal_i18n) reads MESSAGES from this module, and these import the catalog.
     from .terminal_i18n_messages import broker_error_text
@@ -89,17 +98,18 @@ async def replace_record(app):
         result = await app.request("POST", f"/api/inspector/records/{record['id']}/replace", json=payload)
     except (OSError, ValueError, RuntimeError) as exc:
         if scope == app._scope_version:
-            # Only an answer of the service is a refusal; a lost connection leaves the outcome unknown, so it is said.
-            refused = isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable)
-            await app.open_entity(record["id"], "records")
-            app.notice(app.t(FAILED if refused else UNCLEAR) + " " + broker_error_text(exc, app.t), "error")
+            # Only a 4xx answer is the service's refusal. A 5xx (the broker's own call failed, or its answer was not
+            # JSON), a status-200 answer that could not be decoded and a lost connection may follow a commit.
+            refused = (isinstance(exc, BrokerError) and not isinstance(exc, BrokerUnreachable)
+                       and 400 <= exc.status_code < 500)
+            notice = app.t(FAILED if refused else UNCLEAR) + " " + broker_error_text(exc, app.t)
+            await reload_after(app, record["id"], notice)
         return
     if scope != app._scope_version:
         return
     new = result.get("record") if isinstance(result, dict) else None
     if not isinstance(new, dict) or not isinstance(new.get("id"), str):
-        await app.open_entity(record["id"], "records")  # saved: it now shows the record that replaced it
-        app.notice(app.t(SAVED_UNREAD), "error")
+        await reload_after(app, record["id"], app.t(SAVED_UNREAD))  # saved: it now shows the record that replaced it
         return
     try:
         await app.open_entity(new["id"], "records")  # the new record, confirmed
