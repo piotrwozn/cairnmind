@@ -1,4 +1,4 @@
-﻿"""The devbrain command is gone in 0.13.0; what an upgrade needs stays (#314)."""
+"""The devbrain command is gone in 0.13.0; what an upgrade needs stays (#314)."""
 
 from __future__ import annotations
 
@@ -63,6 +63,57 @@ def test_a_devbrain_left_in_the_tool_folder_is_named_and_not_removed(tmp_path):
     assert leftover.exists()
 
 
+def test_an_unlisted_earlier_uv_tool_stops_the_installer(tmp_path):
+    script = SCRIPT.read_text(encoding="utf-8")
+    start = script.index("refuse_unlisted_devbrain_tool() {")
+    function = script[start:script.index("\n}\n", start) + 3]
+    folder = tmp_path / "tools" / "devbrain"
+
+    def run():
+        return subprocess.run([BASH, "-c", "set -euo pipefail\n" + function + f'\nrefuse_unlisted_devbrain_tool "{folder}"\necho continued'],
+                              env={"PATH": str(tmp_path)}, capture_output=True, text=True, timeout=30)
+
+    assert (run().returncode, run().stdout) == (0, "continued\n")
+    folder.parent.mkdir()
+    folder.symlink_to(tmp_path / "gone")  # damaged: points nowhere
+    result = run()
+    assert (result.returncode, result.stdout) == (1, "")
+    assert str(folder) in result.stderr and "uv tool uninstall devbrain" in result.stderr
+    folder.unlink()
+    folder.mkdir()
+    assert run().returncode == 1
+    # It runs after the listed 0.8.0 tool was removed and before anything is stopped or installed.
+    assert script.index("uv tool uninstall devbrain >") < script.index('refuse_unlisted_devbrain_tool "$(uv tool dir)') \
+        < script.index("uv tool install --python")
+
+
+def test_hand_written_bare_devbrain_entries_are_named_not_rewritten(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(integrations, "_probe_cli", lambda *args, **kwargs: {
+        "installed": True, "version": "9.9.9", "mcp": True, "hooks": True, "packet_passing": True,
+        "session_binding": True, "verified_resume": True, "notes": []})
+    settings = Settings.load(tmp_path / "data", create=True)
+    root = tmp_path / "project"
+    (root / ".claude").mkdir(parents=True)
+    (root / ".codex").mkdir()
+    mcp = {"mcpServers": {"devbrain": {"command": "devbrain", "args": ["mcp", "--client", "external"]},
+                          "fine": {"command": "/usr/bin/tool"}}}
+    hooks = {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "~/.local/bin/devbrain hook --client claude"}]}]}}
+    (root / ".mcp.json").write_text(json.dumps(mcp))
+    (root / ".claude/settings.local.json").write_text(json.dumps(hooks))
+    (root / ".codex/config.toml").write_text('[mcp_servers.old]\ncommand = "devbrain"\nargs = ["mcp"]\n')
+
+    result = integrations.install_integrations(settings, {"id": "p", "name": "P", "root": str(root)})
+
+    named = [w for w in result["warnings"] if "no longer installs" in w]
+    assert len(named) == 3
+    assert any("mcp_servers.old" in w and "config.toml" in w for w in named)
+    assert any("mcpServers.devbrain" in w for w in named) and any("hooks.SessionStart" in w for w in named)
+    kept = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+    assert kept["devbrain"] == mcp["mcpServers"]["devbrain"] and "cairnmind" in kept  # theirs stays, ours is added
+    assert first_start.TRUST_NOTE in result["warnings"]
+
+
 def test_the_installer_looks_for_the_leftover_after_installing_and_still_replaces_devbrain_0_8_0():
     script = SCRIPT.read_text(encoding="utf-8")
     install = script.index("uv tool install --python")
@@ -72,7 +123,10 @@ def test_the_installer_looks_for_the_leftover_after_installing_and_still_replace
     subprocess.run([BASH, "-n", str(SCRIPT)], check=True)
 
 
-def test_an_upgrade_from_0_12_0_leaves_no_client_file_calling_a_missing_command(tmp_path, monkeypatch):
+def test_devbrain_era_client_files_are_rewritten_so_none_calls_a_missing_command(tmp_path, monkeypatch):
+    # The files are the ones DevBrain 0.8.0 wrote (-m devbrain), which an installation upgraded through 0.12.0 may
+    # still carry; files 0.9.0 to 0.12.0 wrote (-m cairnmind) are covered by test_integrations.py. This guards the
+    # rewrite path; it does not run uv's removal of the link.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     for name in (*integrations.SESSION_ENV_VARS, "CAIRNMIND_HOME", "DEVBRAIN_HOME",
                  "CAIRNMIND_CONTEXT_FILE", "DEVBRAIN_CONTEXT_FILE"):
