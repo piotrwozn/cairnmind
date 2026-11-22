@@ -444,8 +444,12 @@ class SessionManager:
 
         Information only: read after the state hash was compared, it decides nothing. The key is never stored.
         """
-        newer = sum(created > packet["created_at"] for created in state["automatic_created"])
+        newer = SessionManager._newer_count(state, packet)
         return {**reply, "newer_automatic_proposals": newer} if newer else reply
+
+    @staticmethod
+    def _newer_count(state: dict, packet: dict) -> int:
+        return sum(created > packet["created_at"] for created in state["automatic_created"])
 
     @staticmethod
     def _target(path: str, client: str, watermark: dict | None = None) -> dict:
@@ -913,7 +917,8 @@ class SessionManager:
         return {"status": "pending" if any(counts.get(key, 0) for key in ("pending", "running"))
                 else "failed" if counts.get("failed") else "complete", "counts": counts}
 
-    def _build(self, session: dict, state: dict, archives: list[dict], unknowns: list[str]) -> dict:
+    def _build(self, session: dict, state: dict, archives: list[dict], unknowns: list[str],
+               created_at: str | None = None) -> dict:
         plan, task = state["plan"], state["task"]
         evidence = state.get("evidence") or {}
         plan_view = ({key: plan.get(key) for key in
@@ -944,7 +949,7 @@ class SessionManager:
                            if row.get("kind") == "agent_journal" else row for row in archives]
         packet = {"id": str(uuid4()), "schema_version": PACKET_SCHEMA_VERSION, "project_id": session["project_id"],
                   "session_id": session["id"], "epoch": session["epoch"], "client": session["client"],
-                  "worktree": session["worktree"], "created_at": utc_now(),
+                  "worktree": session["worktree"], "created_at": created_at or utc_now(),
                   "active_plan": plan_view, "active_task": task_view,
                   "next_action": state["reason"], "blockers": state["blocked"],
                   "records": [{"id": row["id"], "version": row["version"], "kind": row["kind"],
@@ -1118,6 +1123,8 @@ class SessionManager:
                 unknowns.extend(f"{reason} ({archive['path']})" for reason in archive.get("unknowns", []))
         except TimeoutError as exc:
             unknowns.append(str(exc))
+        # Taken before the state is read: a proposal that lands while the packet is built is then counted as newer.
+        state_read_at = utc_now()
         state = self._state(session)
         # Advisory only, and only when a packet is prepared: it is not an unknown and not part
         # of the state identity, so a deleted or edited file neither blocks a resume nor
@@ -1132,7 +1139,7 @@ class SessionManager:
             unknowns.extend(state["code"].get("unknowns", []))
         if limit and time.monotonic() > deadline:
             unknowns.append("Resume preparation exceeded its deadline")
-        packet = self._build(session, state, archives, unknowns)
+        packet = self._build(session, state, archives, unknowns, state_read_at)
         # Keep raw proofs out of the bounded packet; proofs survive source-file loss.
         proved = []
         for index, target in enumerate(targets):
@@ -1225,7 +1232,9 @@ class SessionManager:
                 if not _current_schema(packet):
                     raise ValueError("A packet made by an earlier version is never current")
                 current = self._state(session)
-                if current["state_hash"] == packet["state_hash"] and not self._own_continuity(session):
+                # Automatic proposals written since are not in the hash; asking again is how a client gets them (#299).
+                if (current["state_hash"] == packet["state_hash"] and not self._newer_count(current, packet)
+                        and not self._own_continuity(session)):
                     return self._result(session, packet)
             except (OSError, ValueError):
                 pass
