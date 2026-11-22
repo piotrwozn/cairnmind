@@ -268,7 +268,7 @@ def test_a_log_or_copy_the_owner_cannot_open_or_chmod_is_still_rotated(tmp_path,
 def test_doctor_names_an_invalid_engine_log_setting(tmp_path, monkeypatch, name, value):
     import json
     from typer.testing import CliRunner
-    from cairnmind import cli, integrations
+    from cairnmind import cli, integrations, store_writer
     from cairnmind.config import Settings
     data = tmp_path / "data"
     Settings.load(data, create=True)
@@ -277,6 +277,7 @@ def test_doctor_names_an_invalid_engine_log_setting(tmp_path, monkeypatch, name,
     stored[name] = value
     config.write_text(json.dumps(stored))
     monkeypatch.setattr(integrations, "doctor", lambda settings: {})
+    monkeypatch.setattr(store_writer, "inspect", lambda settings: {"role": "writer"})  # #313: only the notes differ
     result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "doctor"])
     assert result.exit_code == 0, result.output
     notes = json.loads(result.output)["environment_notes"]

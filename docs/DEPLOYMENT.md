@@ -119,7 +119,7 @@ You have followed [Start it on one machine](#start-it-on-one-machine); the serve
    bash scripts/install-wsl.sh
    ```
 
-   The installer says once that it saved the address in `config.json` (see [The setting](#the-setting)), and ends with a note that the database is not ready yet: that is the next step. (Without the installer: `uv tool install --python 3.12 .`, then any command with the variable set saves the address, for example `cairnmind engine status`. At this step it says that it saved the address and then stops with exit status 1, because the password is not set yet; step 2 sets it.)
+   The installer says once that it saved the address in `config.json` (see [The setting](#the-setting)), and ends with a note that the database is not ready yet: that is the next step. The installer then exits with status 1, because its last check, `cairnmind doctor`, finds the database missing; that is expected until step 3, so do not chain later commands to it with `&&`. (Without the installer: `uv tool install --python 3.12 .`, then any command with the variable set saves the address, for example `cairnmind engine status`. At this step it says that it saved the address and then stops with exit status 1, because the password is not set yet; step 2 sets it.)
 
 2. Choose the user's password, in a private file, and describe the connection in `config.json` of the data directory (`~/.local/share/cairnmind/config.json` unless you chose another one). The installer has written `arcade_connect_url` there; add the other three, with the absolute path of the password file:
 

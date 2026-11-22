@@ -25,20 +25,19 @@ Nothing else: no Ollama, no models, no GPU, no tmux and no coding assistant are 
 ```bash
 git clone https://github.com/piotrwozn/cairnmind.git ~/src/cairnmind
 cd ~/src/cairnmind
-bash scripts/install-wsl.sh                    # 1. installs all of the above and ends with the check of step 2
-cairnmind doctor                               # 2. what is required and present, what is missing, what is optional and off
-cairnmind project add my-app ~/src/my-app      # 3. registers your project's folder and indexes its files
-cairnmind remember my-app "Accounts lock after five failed logins."   # 4. stores a first finding, as proposed
-cairnmind brief my-app                         # 5. where work stands: your finding waits for review
-cairnmind ask my-app "When do accounts lock?"  # 6. finds it again, with the matching passages of your files
+bash scripts/install-wsl.sh                    # 1. installs all of the above and ends with a check: what is required, what is missing, what comes next
+cairnmind project add my-app ~/src/my-app      # 2. registers your project's folder and indexes its files
+cairnmind remember my-app "Accounts lock after five failed logins."   # 3. stores a first finding, as proposed
+cairnmind brief my-app                         # 4. where work stands: your finding is listed, marked as unconfirmed
+cairnmind ask my-app "When do accounts lock?"  # 5. finds it again, with the matching passages of your files
 ```
 
-The first-start commands (`doctor`, `project add`, `remember`, `brief`, `install`) say in a terminal what they did and what comes next, and a command that stops says what is missing and what to do. `ask`, `context` and the record commands print JSON, as scripts expect.
+These commands say in a terminal what they did and what comes next, and a command that stops says what is missing and what to do. With `--json`, or in a pipe, a file or a script, `doctor`, `project add`, `project list`, `remember`, `ask`, `install`, `init`, `stop` and `engine stop` print the full JSON, as scripts expect; `context` and the record commands print JSON always. `cairnmind doctor` repeats the installer's check at any time; it exits 1 when something required is missing.
 
 - If the installer prints `Add this directory to PATH`, do what that line says and open a new terminal.
 - `my-app` is any name you choose; `~/src/my-app` stands for the folder of a project you already have. A Git repository with at least one commit is best: `impact`, coding sessions and the commit list of `brief` need Git, and `project add` says when the folder has no repository or no commit.
-- What you and your assistants store is *proposed*: `brief`, `ask` and the assistants use it marked as unconfirmed, and only you confirm or dispute it, in the memory inspector of the terminal workspace (below; it needs tmux 3.4+).
-- Without models, `ask` is a full-text search: it reports `unavailable`, makes no answer, and lists the matching passages as search results, not as evidence. `cairnmind models pull` turns answers on (below).
+- What you and your assistants store is *proposed*, and nothing more is needed to go on: `brief`, `ask` and the assistants already use it, marked as unconfirmed. You can confirm or dispute it later in the memory inspector of the terminal workspace (below; it needs tmux 3.4+).
+- Without models, `ask` makes no answer: in a terminal it says so and lists the passages that match words of the question as search results, not as evidence; its JSON reports `status: unavailable`. `cairnmind models pull` turns answers on (below).
 
 ### Connect Codex or Claude Code
 
@@ -49,7 +48,7 @@ cairnmind install my-app          # connects the installed clients to this proje
 cairnmind run my-app claude       # or codex: starts the client bound to this project's memory
 ```
 
-`cairnmind install` writes into your project, keeping what is there and saying what it changed: a marked Cairnmind block in `AGENTS.md` and `CLAUDE.md` (also for a client you have not installed yet), and, for each installed client, its MCP entry and hooks (`.mcp.json` and `.claude/settings.local.json`; `.codex/config.toml` and `.codex/hooks.json`). Review them before committing. On its first start in the project, each client asks you to trust Cairnmind's MCP server; Cairnmind answers no trust question for you.
+`cairnmind install` writes into your project, keeping what is there and saying what it changed: for each installed client only, a marked Cairnmind block (`AGENTS.md` for Codex, `CLAUDE.md` for Claude Code), its MCP entry and its hooks (`.mcp.json` and `.claude/settings.local.json`; `.codex/config.toml` and `.codex/hooks.json`); a client that is not installed gets nothing. Cairnmind leaves its own block out of the project's index, so it never comes back in `ask`. Review the files before committing. On its first start in the project, each client asks you to trust Cairnmind's MCP server; Cairnmind answers no trust question for you.
 
 Cursor, Cline, Zed and other MCP clients use the same memory through `cairnmind mcp --client external`, in a session that is never counted as verified: see [docs/EXTERNAL_CLIENTS.md](docs/EXTERNAL_CLIENTS.md).
 

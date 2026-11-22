@@ -28,7 +28,8 @@ from tomlkit.items import Comment, Table
 
 from .config import SESSION_NAMES, Settings, drop_env, env_names, session_value, set_env
 from .first_start import (CLIENT_SKIPPED, LAUNCH_REFUSED, PART_CONTRACT, PART_HOOKS, PART_INSTRUCTIONS, PART_MCP,
-                          TRUST_NOTE)
+                          REMOVED_COMMAND, REMOVED_COMMAND_BESIDE, TRUST_NOTE)
+from .removed_command import bare_devbrain_entries
 
 # The name of the MCP server in client configuration, and the markers around what install manages.
 # Entries and blocks written under the earlier name are recognised and converted in place.
@@ -674,6 +675,9 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         info["hooks_configured"] = False
         info["instructions_configured"] = False
         results["clients"][client] = info
+        if not info["installed"]:  # nothing is written for a client that is not here, not even its instruction block (#313)
+            results["warnings"].append(CLIENT_SKIPPED.format(client=client))
+            continue
         instructions = root / ("AGENTS.md" if client == "codex" else "CLAUDE.md")
         try:
             if _merge_instructions(instructions, project, settings):
@@ -681,9 +685,6 @@ def install_integrations(settings: Settings, project: dict[str, Any],
             info["instructions_configured"] = True
         except (ValueError, OSError) as exc:
             results["warnings"].append(str(exc))
-        if not info["installed"]:
-            results["warnings"].append(CLIENT_SKIPPED.format(client=client))
-            continue
         operations = []
         if info["mcp"]:
             operations.append((_merge_toml_mcp if client == "codex" else _merge_json_mcp,
@@ -707,7 +708,15 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
-    results["warnings"].append(TRUST_NOTE)
+    for client in clients:
+        info = results["clients"][client]
+        for path, entry in bare_devbrain_entries(root, client):
+            # Advice to write cairnmind there would duplicate the entry install has just written beside it.
+            written = info["hooks_configured"] if entry.startswith("hooks.") else info["mcp_configured"]
+            results["warnings"].append((REMOVED_COMMAND_BESIDE if written else REMOVED_COMMAND)
+                                       .format(path=path, entry=entry))
+    if any(info["installed"] for info in results["clients"].values()):
+        results["warnings"].append(TRUST_NOTE)  # a trust question is asked only by a client that was connected
     return results
 
 

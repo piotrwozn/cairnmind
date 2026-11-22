@@ -1044,7 +1044,7 @@ class MemoryManager:
                 saved = one_row(tx, "SELECT is_current FROM sources WHERE id=:id", {"id": source["id"]})
                 if saved.get("is_current") is False:
                     continue  # nothing searches a chunk of a source that is not current (#186)
-                for number, (text, first, last) in enumerate(_chunks(source_text(source))):
+                for number, (text, first, last) in enumerate(_chunks(source_text(source), source.get("uri", ""))):
                     insert_document(tx, "chunks", {"id": _identifier(project_id, source["id"], number, first, last, text),
                         "project_id": project_id, "source_id": source["id"], "text": text,
                         "line_start": first, "line_end": last, "is_current": saved["is_current"],

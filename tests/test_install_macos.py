@@ -197,7 +197,7 @@ def test_the_installer_ends_with_the_workspace_lines_only_when_tmux_is_ready_and
     last = script.rstrip().splitlines()[-1]
     assert last == '"$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention'
     assert "Models were not downloaded" not in script
-    assert script.count('engine status >/dev/null') == 2 and 'engine install >/dev/null' in script  # no engine JSON
+    assert script.count('engine status >/dev/null') == 3 and 'engine install >/dev/null' in script  # no engine JSON
 
 
 def test_a_missing_uv_on_linux_is_one_install_line_and_run_again_without_a_second_document(mac):
@@ -448,15 +448,88 @@ def test_linux_output_is_short_and_has_the_old_sentences_with_pull_models(mac, r
         assert result.stderr == ""
 
 
+# What the installer adds when there is no Java and no Docker either: the other way, and to run it again (#313).
+NOTHING_YET = "Nothing has been installed yet. Java is the simpler choice.\n"  # #326
+NO_DOCKER = ("Or install Docker and start it; the engine then runs in a container. Then run this installer "
+             "again.\n" + NOTHING_YET)
+
+
+def test_without_java_and_without_docker_both_ways_and_run_again_are_named(mac):
+    run, state, bin_dir, tmp_path = mac
+    state.update(system="Linux")
+    result = run()
+    assert result.returncode == 1 and "passed" not in result.stdout
+    assert result.stderr == ("Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n"
+                             "Or install Docker and start it; the engine then runs in a container. "
+                             "Then run this installer again.\n" + NOTHING_YET)
+    state.update(system="Darwin")
+    on_a_mac = run()
+    assert on_a_mac.returncode == 1 and "brew install openjdk@21" in on_a_mac.stderr
+    assert on_a_mac.stderr.endswith(NO_DOCKER)
+
+
+def test_the_installer_says_it_stopped_the_service(tmp_path):
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    functions = script[start:script.index("# --- end ---", start)]
+    bin_dir = tmp_path / "bin"  # `id` only: nothing else is on PATH, so the lines are shell builtins
+    bin_dir.mkdir()
+    (bin_dir / "id").symlink_to(shutil.which("id"))
+
+    def stopped(printed: str):
+        installed = tool(tmp_path / "cairnmind", f"case \"$1\" in stop) echo '{printed}' ;; *) exit 0 ;; esac")
+        return subprocess.run([BASH, "-c", f"set -euo pipefail\n{functions}\nstop_installed {installed} cairnmind"],
+                              env={"PATH": str(bin_dir), "TMPDIR": str(tmp_path)}, capture_output=True, text=True,
+                              timeout=30)
+    result = stopped("{\n  \"stopping\": true\n}")  # what the real command prints in a pipe
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ("Stopped the service of the installed cairnmind so that the new version can replace "
+                             "it; the next command that needs it starts it again.\n")
+    result = stopped("{\n  \"stopping\": false,\n  \"reason\": \"The service is not running\"\n}")
+    assert result.returncode == 0 and result.stdout == ""
+
+
+def test_an_unpacked_engine_is_not_announced_as_a_download(tmp_path):
+    script = SCRIPT.read_text()
+    start = script.index("engine_present() {")
+    function = script[start:script.index("\n}\n", start) + 3]
+    tool_dir = tmp_path / "uvtool"
+    tool(tool_dir / "cairnmind" / "bin" / "python", f'exec "{sys.executable}" "$@"')
+    uv = tool(tmp_path / "bin" / "uv", f'echo "{tool_dir}"')
+
+    def present(config: str | None, unpacked: bool) -> str:
+        home = tmp_path / "home"
+        shutil.rmtree(home, ignore_errors=True)
+        home.mkdir()
+        if config is not None:
+            (home / "config.json").write_text(config)
+        if unpacked:
+            from cairnmind.config import Settings
+            from cairnmind.engine import runtime_dir
+            (runtime_dir(Settings.load(home)) / "lib").mkdir(parents=True)
+        result = subprocess.run([BASH, "-c", "set -euo pipefail\n" + function + "\nengine_present"],
+                                env={**os.environ, "PATH": f"{uv.parent}:{os.environ['PATH']}",
+                                     "CAIRNMIND_HOME": str(home)},
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+    assert present(None, unpacked=True) == "yes"
+    assert present(None, unpacked=False) == "no"
+    assert present("{not json", unpacked=False) == ""  # it cannot say: the old download line stays
+    assert "already installed here; nothing is downloaded" in script
+    assert "Installing the pinned ArcadeDB release (about 86 MB" in script
+
+
 def test_linux_keeps_its_apt_hints(mac):
     run, state, bin_dir, tmp_path = mac
     state.update(system="Linux")
     result = run()
     assert result.returncode == 1
-    assert result.stderr == "Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n"
+    assert result.stderr == ("Java not found. Install Java 21+: sudo apt install openjdk-21-jre-headless\n" + NO_DOCKER)
     java(bin_dir / "java", 17)
     result = run()
-    assert result.stderr == "Found Java 17. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n"
+    assert result.stderr == ("Found Java 17. Java 21+ is required: sudo apt install openjdk-21-jre-headless\n"
+                             + NO_DOCKER)
 
 
 def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker_answers(mac):
@@ -489,14 +562,14 @@ def test_the_installer_runs_the_engine_in_docker_when_java_is_missing_and_docker
     assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
                              "Docker is on the path but did not answer (it said: Cannot connect to the Docker daemon). "
                              f"Either start Docker and run the installer again, so the engine runs in Docker, "
-                             f"or install Java 21+: {hint}\n")
+                             f"or install Java 21+: {hint}\n" + NOTHING_YET)
     tool(bin_dir / "docker", "echo; echo 'The command docker could not be found in this WSL 2 distro.'; exit 1")
     result = run()
     assert "(it said: The command docker could not be found in this WSL 2 distro.)" in result.stderr
-    # No docker on the path: exactly the old message.
+    # No docker on the path: the Java message, and that Docker is the other way (#313).
     (bin_dir / "docker").unlink()
     result = run()
-    assert result.returncode == 1 and result.stderr == f"Java not found. Install Java 21+: {hint}\n"
+    assert result.returncode == 1 and result.stderr == f"Java not found. Install Java 21+: {hint}\n" + NO_DOCKER
     # With Docker, the install branch runs init and does not download an engine.
     script = SCRIPT.read_text()
     branch = script.index('elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; then')
@@ -517,7 +590,7 @@ def test_a_docker_that_does_not_answer_does_not_hold_the_installer(mac):
     assert result.stderr == (f"Java not found. Install Java 21+: {hint}\n"
                              "Docker is on the path but did not answer (it said: no answer within 5 seconds). "
                              f"Either start Docker and run the installer again, so the engine runs in Docker, "
-                             f"or install Java 21+: {hint}\n")
+                             f"or install Java 21+: {hint}\n" + NOTHING_YET)
     assert list(tmp_path.glob("cairnmind-docker.*")) == []  # the answer file is removed too
 
 

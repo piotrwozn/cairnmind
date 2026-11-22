@@ -1,6 +1,7 @@
 """A searchable, prefix-only command surface shared by every workspace pane."""
 from __future__ import annotations
 
+import shutil
 import textwrap
 
 from rich.cells import cell_len
@@ -12,7 +13,7 @@ from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from . import terminal_theme
 from .cockpit_state import CockpitState
-from .first_start import GET_MODELS, MATCHES_HEADING, MODE_HEADING
+from .first_start import ASK_NEXT, CLIENT_NAMES, GET_MODELS, MATCHES_HEADING, MODE_STATUS, STORED_FINDING
 from .terminal_i18n_messages import ASK_STATUS, fixed_message
 from .terminal_safe import plain
 
@@ -212,13 +213,20 @@ def help_text(value):
     return terminal_theme.assemble(parts)
 
 
-def _passages(items, text_key) -> list[str]:
-    """One line per source or match: where it is, its lines, and its text on one line (240 characters)."""
+def _passages(items, text_key, translate=str, *, name_notes=False) -> list[str]:
+    """One line per source or match: where it is, its lines, the status of a record that is not confirmed, and
+    its text on one line (240 characters). With name_notes a note saved by remember, whose address is an id that
+    says nothing (manual://), is named a stored finding; it is not called the person's, as an assistant saves them too."""
     lines = []
     for item in items:
         where = str(item.get("uri", item.get("id", "")))
+        if name_notes and where.startswith("manual://"):
+            where = translate(STORED_FINDING)
         if item.get("line_start"):
             where += f" ({item['line_start']}-{item.get('line_end', item['line_start'])})"
+        status = item.get("status")
+        if status and status != "confirmed":  # a proposed finding is used and marked, never passed as confirmed (#313)
+            where += f" ({translate('unconfirmed' if status == 'proposed' else str(status))})"
         text = " ".join(str(item.get(text_key, "")).split())
         lines.append(f"- {where}" + (f': "{text[:240]}"' if text else ""))
     return lines
@@ -234,19 +242,27 @@ def ask_summary(result, translate) -> str:
         # Not a verified answer: the agent wrote one of its fixed sentences (or kept the model's text,
         # which fixed_message leaves exactly as it is).
         answer = fixed_message(answer, translate)
-    lines = [translate("Status") + ": " + translate(ASK_STATUS.get(status, status)), "", answer]
+    raw = result.get("unknowns", [])
+    # Without models "unavailable" is the mode, not a failure: the status line says so; the JSON keeps unavailable (#313).
+    label = MODE_STATUS if GET_MODELS in raw else ASK_STATUS.get(status, status)
+    lines = [translate("Status") + ": " + translate(label), "", answer]
     sources = [source for source in result.get("sources", []) if isinstance(source, dict)][:8]
     if sources:
-        lines += ["", translate("Sources") + ":", *_passages(sources, "quote")]
+        lines += ["", translate("Sources") + ":", *_passages(sources, "quote", translate)]
     matches = [match for match in result.get("full_text_matches", []) if isinstance(match, dict)][:8]
     if matches:  # search results without models (#274): their own heading, never "Sources"
-        lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt")]
-    raw = result.get("unknowns", [])
-    if GET_MODELS in raw:  # the way to get models is not missing evidence: the mode's own heading (#294)
-        lines += ["", translate(MODE_HEADING) + ":", translate(GET_MODELS)]
+        lines += ["", translate(MATCHES_HEADING) + ":", *_passages(matches, "excerpt", translate, name_notes=True)]
+    if GET_MODELS in raw:  # the way to get models is not missing evidence; then the one next step (#294, #326)
+        # The assistant to install is the next step only when none is on PATH (the check of first_start.workspace_refusal).
+        no_client = not any(shutil.which(name) for name in CLIENT_NAMES)
+        lines += ["", translate(GET_MODELS), *([translate(ASK_NEXT)] if no_client else [])]
     unknowns = [fixed_message(item, translate) for item in raw if item != GET_MODELS][:8]
     if unknowns:
         lines += ["", translate("Missing evidence") + ":"] + [f"- {item}" for item in unknowns]
+    freshness = result.get("freshness")
+    warnings = [str(w) for w in (freshness.get("warnings") or [])][:8] if isinstance(freshness, dict) else []
+    if warnings:  # a source that changed since it was indexed, an index error: said, not only in the JSON (#313)
+        lines += ["", translate("Warnings") + ":"] + [f"- {item}" for item in warnings]
     coverage = result.get("coverage")
     if isinstance(coverage, dict) and coverage.get("answer_terms"):
         lines += ["", translate("Answer words found in quotes")
