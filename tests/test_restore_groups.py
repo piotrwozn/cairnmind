@@ -12,7 +12,7 @@ import pytest
 from cairnmind import arcade
 from cairnmind.journal import JournalTransaction
 from cairnmind.restore_groups import DOCUMENT_BYTES_PER_REQUEST, GRAPH_BYTES_HELD, GraphGroups
-from cairnmind.sql import insert_document, json_text, quote_name
+from cairnmind.sql import clean_row, insert_document, json_text, quote_name
 from cairnmind.store import DOCUMENT_TYPES, Store
 
 from test_backup_restore_stream import FIXTURE_0_10_0, _backup_payload, _variants, comparable
@@ -84,12 +84,26 @@ def _large(store, tmp_path):
     store.client.command("INSERT INTO chunks CONTENT :rows", {"rows": [
         {"id": f"bulk-{n}", "project_id": first, "source_id": "bulk", "text": f"{n} " + "tekst " * 40,
          "is_current": n % 2 == 0, "metadata": {"start": n, "score": 0.1 * n}} for n in range(CHUNKS)]})
-    vector = store.export()["vector_indexes"][0]["type_name"]
+    vector = store.query("SELECT type_name FROM vector_indexes")[0]["type_name"]
     store.client.command(f"INSERT INTO {quote_name(vector)} CONTENT :rows", {"rows": [
         {"id": f"vector-{n}", "chunk_id": f"bulk-{n}", "dimension": 3, "is_current": True, "model": "fixture-embedding",
          "namespace": "fixture-embedding@digest", "project_id": first, "source_id": "bulk",
          "vector": [1.0, n / VECTORS, 0.25]} for n in range(VECTORS)]})
-    return store.backup(tmp_path / "large.cairnmind.json.gz")
+    return _with_vectors(store, store.backup(tmp_path / "large.cairnmind.json.gz"))
+
+
+def _with_vectors(store, path):
+    """The file as a version before 0.13.0 wrote it, with the embeddings, the registry and the vectors (#187): this
+    version writes none, and restore still loads them from an older file."""
+    envelope = json.loads(gzip.decompress(path.read_bytes()))
+    payload = envelope["payload"]
+    payload["embeddings"] = [clean_row(row) for row in store.query("SELECT FROM embeddings")]
+    payload["vector_indexes"] = [clean_row(row) for row in store.query("SELECT FROM vector_indexes")]
+    payload["vector_data"] = {row["type_name"]: [clean_row(vector) for vector in store.query(
+        f"SELECT FROM {quote_name(row['type_name'])}")] for row in payload["vector_indexes"]}
+    envelope["sha256"] = hashlib.sha256(json_text(payload).encode()).hexdigest()
+    path.write_bytes(gzip.compress(json_text(envelope).encode()))
+    return path
 
 
 def _counting(monkeypatch):
