@@ -74,6 +74,14 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The workspace adopts a group of old tasks into a plan: More, then Old task groups lists each group with its tasks in plan order; after the plan title, a consent dialog shows the tasks and what adopting does, and Adopt makes the group a new plan in one person's act, its steps proposed until the plan is confirmed (#305).
 - POST /inspector/legacy-groups/adopt needs the key the open workspace keeps; the service token alone is refused and nothing is written. GET /inspector/legacy-groups lists the groups (#305).
 - `cairnmind plan adopt` still adopts a group that holds nothing a person confirmed; for the other case its refusal names More, then Old task groups (#305).
+
+### Backups without vectors
+
+- Backups and `cairnmind export` no longer carry vectors, so they are smaller: every kind of backup (the daily one, `cairnmind backup`, and the `before-schema-*` and `before-restore-*` safety copies) writes `embeddings` and `vector_indexes` empty and `vector_data` as an empty object, in the same format 5. A restore of such a file sets the completed embedding jobs of the current chunks back to pending in its one transaction, one job per chunk, says how many (`embed_jobs_requeued`), and the service rebuilds the vectors in the background, while text search works at once (#187).
+- Until the rebuild ends, a search that wants vectors says so: before the first vector exists, that the vectors are not ready and the search used the text only, and after it, that the vectors are still being built, with the number of embedding jobs left, so an answer does not read as if the project had no such text. The second warning also appears whenever embedding jobs of the project are pending, for example while a new project is indexed. The workspace shows both warnings in Polish too (#187).
+- A backup written by 0.12.0 or earlier still restores with its vectors and nothing is requeued. `cairnmind restore` and `cairnmind setup local --backup` print how many embedding jobs wait again, and that they wait for the models in deterministic-only mode; the plan of `cairnmind setup local --backup` says before `--yes` that the backup carries no vectors and that they are rebuilt (#187).
+- A new script, `scripts/store_growth.py`, measures how many bytes a transcript event and a file revision add to the database and to a gzip backup, with its own engine in a temporary directory and a fake embedding model, without any real model; the table in docs/evaluation/RESULTS.md is not filled in yet (#185).
+
 ### Fixes
 
 - Two installations that first open one store at the same moment now end as one writer and one reader also when the database server runs in production mode, as the image of `deploy/arcadedb` does; before, the second one's command failed with the server's bare error (#277).
