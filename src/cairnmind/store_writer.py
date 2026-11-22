@@ -61,6 +61,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from uuid import UUID, uuid4
 
 from .sql import clean_row, insert_document, update_document, utc_now
@@ -81,6 +82,8 @@ IOREG = ("/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
 IOREG_TIMEOUT = 5.0
 _IOREG_UUID = re.compile(r'^[ \t|]*"IOPlatformUUID" = "([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
                          r'[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})"[ \t]*$', re.MULTILINE)
+_ioreg_failed_at = float("-inf")
+IOREG_RETRY_SECONDS = 60
 _known_platform_uuid: str | None = None  # read once per process: a later failed run does not change it
 
 
@@ -110,14 +113,19 @@ def platform_uuid(output: str) -> str | None:
 
 def _darwin_identity() -> str | None:
     """IOPlatformUUID of this Mac: unlike its host name, it does not change with the network (#234)."""
-    global _known_platform_uuid
+    global _known_platform_uuid, _ioreg_failed_at
     if _known_platform_uuid is None:
+        if time.monotonic() - _ioreg_failed_at < IOREG_RETRY_SECONDS:
+            return None  # folder checks ask often; a failing ioreg is asked again only after a while
         try:
             done = subprocess.run(IOREG, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   stdin=subprocess.DEVNULL, timeout=IOREG_TIMEOUT, check=False)
         except (OSError, subprocess.SubprocessError):
+            _ioreg_failed_at = time.monotonic()
             return None
         _known_platform_uuid = platform_uuid(done.stdout) if done.returncode == 0 else None
+        if _known_platform_uuid is None:
+            _ioreg_failed_at = time.monotonic()
     return _known_platform_uuid
 
 

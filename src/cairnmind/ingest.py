@@ -650,7 +650,7 @@ def index_project(store, project_id: str) -> dict:
         if _INVALIDATIONS.get(key[0], 0) == invalidations:
             _REMEMBERED[key] = state
             # A folder that is not here is no reason to index again: its sentence is only repeated (#371).
-            if (len(result.get("errors", [])) == len(result.get("unavailable", [])) and complete
+            if (len(result.get("errors", [])) == len(result.get("unavailable", [])) + bool(state.get("graph_kept")) and complete
                     and newest < started - RACY_WINDOW_NS):
                 _INDEXED[key] = signature
         return result
@@ -674,6 +674,9 @@ def index_project_if_changed(store, project_id: str) -> dict:
                 project = store.resolve_project(project_id)
                 skipped["errors"] = [project_folders.message(project, folder) for folder in away]
                 skipped["unavailable"] = [project_folders.entry(project, folder) for folder in away]
+                kept = (_REMEMBERED.get((str(store.data_dir), project_id)) or {}).get("graph_kept")
+                if kept:
+                    skipped["errors"].append(kept)
             return skipped
     return index_project(store, project_id)
 
@@ -906,8 +909,12 @@ def _index_project_locked(store, project_id: str, previous: dict | None = None, 
     if any(analyses[row["id"]] is None for row in kept):
         # A file that was not read here and whose stored analysis is of another parser version cannot be
         # analysed again: rebuilding would drop it, so the graph stays as it is and the result says so.
-        counts["errors"].append(project_folders.GRAPH_KEPT.format(
-            project=safe_text(project["name"]), count=sum(analyses[row["id"]] is None for row in kept)))
+        stuck = [row for row in kept if analyses[row["id"]] is None]
+        counts["errors"].append(project_folders.GRAPH_KEPT.format(project=safe_text(project["name"]), count=len(stuck)))
+        if state is not None and all(str(Path(row.get("root") or project["root"]).resolve()) in away for row in stuck):
+            # Only folders that are away hold them: nothing changes until the signature does (a folder comes
+            # back or this machine's parser changes), so the next idle round may skip and repeat the sentence.
+            state["graph_kept"] = counts["errors"][-1]
         counts.update(_graph_markers(store, project_id))
     else:
         for row in kept:

@@ -220,7 +220,8 @@ def test_a_graph_with_files_of_an_older_parser_that_cannot_be_read_here_is_kept(
     assert any(error.startswith("The code graph of project cairnmind is kept as it was") and "files of it" in error
                and error.endswith("rebuilds it.") and ": 1." in error for error in result["errors"])
     assert counts(store, pid, [record]) == before
-    assert not index_project_if_changed(store, pid).get("skipped")  # not recorded: named until rebuilt
+    again = index_project_if_changed(store, pid)  # only the folder that is away holds it: nothing can change, so the round skips
+    assert again["skipped"] is True and any(error.startswith("The code graph of project cairnmind is kept") for error in again["errors"])
 
 
 @pytest.mark.parametrize("failure", [ValueError("the index of this project broke"),
@@ -468,6 +469,36 @@ def test_a_backup_restored_on_another_machine_keeps_the_old_machines_folders(tmp
     target.add_project_root(pid, root)  # the person moves it, by name
     result = index_project(target, pid)
     assert "unavailable" not in result and result["changed"] == 1
+def test_restore_on_another_machine_names_the_folders_it_leaves_with_the_old_one(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from cairnmind import person_proof
+    from cairnmind.cli import app
+    store, pid, root, record = indexed(tmp_path)
+    backup = store.backup(tmp_path / "old.cairnmind.json.gz")
+    machine(monkeypatch, "b")
+    target = Store(tmp_path / "target")
+    monkeypatch.setattr("cairnmind.cli.service_alive", lambda settings: False)
+    monkeypatch.setattr(person_proof, "restore_proof", lambda settings: "key")
+    result = CliRunner().invoke(app, ["--data-dir", str(target.data_dir), "restore", str(backup)])
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert [item["state"] for item in json.loads(result.stdout)["unavailable_folders"]] == ["elsewhere"]
+    assert "cairnmind project root" in result.stderr
+
+
+def test_a_mac_whose_ioreg_fails_is_not_asked_by_every_folder_check(monkeypatch):
+    from cairnmind import store_writer
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(1)
+        raise OSError("no ioreg")
+    monkeypatch.undo()  # the module's fixture stands in for the identity here
+    monkeypatch.setattr(store_writer.sys, "platform", "darwin")
+    monkeypatch.setattr(store_writer, "_known_platform_uuid", None)
+    monkeypatch.setattr(store_writer, "_ioreg_failed_at", float("-inf"))
+    monkeypatch.setattr(store_writer.subprocess, "run", fail)
+    assert project_folders.this_machine() is None and project_folders.this_machine() is None
+    assert len(calls) == 1
 
 
 def test_the_machine_of_a_folder_is_not_in_a_snapshot_or_its_state_hash(tmp_path, monkeypatch):

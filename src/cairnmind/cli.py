@@ -2607,7 +2607,13 @@ def restore(ctx: typer.Context, source: Annotated[Path, typer.Argument(
         notice = outcome.pop(key, None)
         if notice:
             typer.echo(f"Cairnmind: {notice[0].format(**notice[1])}", err=True)
-    output({"restored": True, **outcome})
+    # A restored folder keeps the machine that registered it: on another machine each is named, with its command.
+    from cairnmind import project_folders
+    away = project_folders.unavailable(store_for(ctx.obj, notice=False))
+    for item in away:
+        if item["state"] == "elsewhere":
+            typer.echo(f"Cairnmind: {item['message']}", err=True)
+    output({"restored": True, **outcome, **({"unavailable_folders": away} if away else {})})
 
 
 @app.command()
