@@ -646,8 +646,12 @@ def test_a_retry_after_a_failed_restore_starts_the_engine_with_the_same_password
 
 
 @pytest.mark.parametrize("failure", [OSError("disk full"), ValueError("Expecting value: line 1 column 1 (char 0)")])
-def test_a_password_that_cannot_be_kept_is_said_and_the_original_error_stays(tmp_path, world, monkeypatch, failure):
+@pytest.mark.parametrize("earlier_store", [False, True])
+def test_a_password_that_cannot_be_kept_is_said_and_the_original_error_stays(tmp_path, world, monkeypatch, failure,
+                                                                             earlier_store):
     connect_only_installation(tmp_path)
+    if earlier_store:
+        (tmp_path / "data" / "arcade").mkdir()
     before = config_bytes(tmp_path)
     world.restore_error = ArcadeError("cut")
 
@@ -659,10 +663,13 @@ def test_a_password_that_cannot_be_kept_is_said_and_the_original_error_stays(tmp
     message = str(result.exception)
     assert "The change stopped at the restore: cut config.json was put back as it was." in message
     assert "could NOT be put back" not in message and "could not be kept in config.json (arcade_password)" in message
-    assert str(failure) in message and "cannot sign in to that engine again" in message
-    assert config_bytes(tmp_path) == before
-    polish = setup_profiles.render_one((setup_profiles.PASSWORD_NOT_KEPT, {"reason": "x"}), "pl")
-    assert "nie udało się zachować" in polish
+    assert str(failure) in message and config_bytes(tmp_path) == before
+    if earlier_store:
+        assert "remove nothing" in message and "just created" not in message
+    else:
+        assert "just created its `arcade` folder" in message and "remove nothing" not in message
+    template = setup_profiles.PASSWORD_NOT_KEPT_OLD if earlier_store else setup_profiles.PASSWORD_NOT_KEPT_NEW
+    assert "nie udało się zachować" in setup_profiles.render_one((template, {"reason": "x"}), "pl")
 
 
 def test_a_retry_after_an_engine_start_that_failed_late_uses_the_same_password(tmp_path, world):

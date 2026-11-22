@@ -183,9 +183,15 @@ KEPT_PASSWORD = ("The password that engine now uses stays in config.json (arcade
 KEPT_PASSWORD_START = ("The engine did not finish starting, and ArcadeDB may already have taken the password this "
                        "change generated for it, so that password stays in config.json (arcade_password) and "
                        "`cairnmind setup local` can be run again.")
-PASSWORD_NOT_KEPT = ("The password generated for the engine on this machine could not be kept in config.json "
-                     "(arcade_password): {reason}. If the engine already uses it, `cairnmind setup local` cannot sign "
-                     "in to that engine again: stop the engine, remove its data directory and run it again.")
+PASSWORD_NOT_KEPT_NEW = ("The password generated for the engine on this machine could not be kept in config.json "
+                         "(arcade_password): {reason}. The engine may now hold a password nobody knows. This command "
+                         "just created its `arcade` folder in the data directory, so stopping the engine "
+                         "(`cairnmind engine stop`) and removing that `arcade` folder lets `cairnmind setup local` "
+                         "run again.")
+PASSWORD_NOT_KEPT_OLD = ("The password generated for the engine on this machine could not be kept in config.json "
+                         "(arcade_password): {reason}. The `arcade` folder in the data directory held a store before "
+                         "this command, so remove nothing: the arcade_password from your own earlier copy of "
+                         "config.json is what signs in to that engine.")
 RESTORE_DONE = ("The restore had already finished: the store on this machine holds the data of {path}, and its earlier "
                 "contents are in a safety backup in {backups}.")
 CONFIRMATIONS = ("The restore marked {marked} records as confirmed by a person and left {left} before the rule; confirm "
@@ -229,7 +235,8 @@ MESSAGES = {
     LOCAL_NAME_DIFFERS: "Baza tam ma bazę danych {database}, a nie {derived}, czyli nazwę, której `cairnmind setup local` używa na tym komputerze; jej dane zostają na dysku pod nazwą {database}.",
     KEPT_PASSWORD: "Hasło, którego ten silnik teraz używa, zostaje w config.json (arcade_password), aby można było ponownie uruchomić `cairnmind setup local`.",
     KEPT_PASSWORD_START: "Silnik nie dokończył uruchamiania, a ArcadeDB mogła już przyjąć hasło wygenerowane dla niego przez tę zmianę, więc to hasło zostaje w config.json (arcade_password), aby można było ponownie uruchomić `cairnmind setup local`.",
-    PASSWORD_NOT_KEPT: "Hasła wygenerowanego dla silnika na tym komputerze nie udało się zachować w config.json (arcade_password): {reason}. Jeśli silnik już go używa, `cairnmind setup local` nie zaloguje się do niego ponownie: zatrzymaj silnik, usuń jego katalog danych i uruchom polecenie jeszcze raz.",
+    PASSWORD_NOT_KEPT_NEW: "Hasła wygenerowanego dla silnika na tym komputerze nie udało się zachować w config.json (arcade_password): {reason}. Silnik może teraz mieć hasło, którego nikt nie zna. To polecenie dopiero co utworzyło jego folder `arcade` w katalogu danych, więc zatrzymanie silnika (`cairnmind engine stop`) i usunięcie tego folderu `arcade` pozwala uruchomić `cairnmind setup local` ponownie.",
+    PASSWORD_NOT_KEPT_OLD: "Hasła wygenerowanego dla silnika na tym komputerze nie udało się zachować w config.json (arcade_password): {reason}. Folder `arcade` w katalogu danych zawierał bazę jeszcze przed tym poleceniem, więc niczego nie usuwaj: do tego silnika loguje arcade_password z Twojej własnej wcześniejszej kopii config.json.",
     RESTORE_DONE: "Odtwarzanie już się zakończyło: baza na tym komputerze ma dane z {path}, a jej wcześniejsza zawartość jest w kopii bezpieczeństwa w {backups}.",
     CONFIRMATIONS: "Odtwarzanie oznaczyło {marked} rekordów jako potwierdzone przez człowieka i zostawiło {left} sprzed reguły; pozostałe potwierdź w inspektorze.",
     CHANGE_STORAGE_LOCAL: "Baza: z ArcadeDB pod adresem {before} na silnik na tym komputerze pod adresem {url}, z bazą {database}.",
@@ -753,6 +760,7 @@ def _back_to_local(settings, plan, result, say, state) -> Settings:
     save_storage(settings.data_dir, plan["fields"])
     local = Settings.load(settings.data_dir, create=True)  # generates the managed password a connect-only one lacks
     state["step"] = (STEP_ENGINE, {})
+    state["arcade_is_new"] = not (settings.data_dir / "arcade").exists()  # what a failed password keep may say to remove
     state["engine_tried"] = True  # from here ArcadeDB may hold the password Settings.load generated
     chosen = engine_docker.choose_engine_mode(local)  # as `init` chooses; nothing is installed
     if chosen:
@@ -816,7 +824,8 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
         return result
     path = settings.data_dir / "config.json"
     snapshot = path.read_bytes()
-    state: dict = {"step": None, "backup": None, "engine": False, "engine_tried": False, "restored": None}
+    state: dict = {"step": None, "backup": None, "engine": False, "engine_tried": False, "arcade_is_new": False,
+                    "restored": None}
     try:
         _apply(settings, request, plan, moves, result, say, state)
     except SetupFailed:  # the backup failed or did not pass its check: config.json was not touched yet
@@ -841,7 +850,8 @@ def run(settings, request: Request, *, yes: bool, say: Callable[[str], None]) ->
                 _keep_password(path, kept)
                 notes.append((KEPT_PASSWORD if state["engine"] else KEPT_PASSWORD_START, {}))
             except (OSError, ValueError) as failure:  # the put-back worked; the original error is still raised below
-                notes.append((PASSWORD_NOT_KEPT, {"reason": str(failure)}))
+                notes.append((PASSWORD_NOT_KEPT_NEW if state["arcade_is_new"] else PASSWORD_NOT_KEPT_OLD,
+                              {"reason": str(failure)}))
         if not isinstance(exc, Exception):
             say(render_one((PUT_BACK, {"step": state["step"], "error": str(exc) or type(exc).__name__,
                                        "notes": notes})))
