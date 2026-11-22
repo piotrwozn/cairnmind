@@ -95,7 +95,7 @@ async def open_view(app):
 
     values = await app.push_screen_wait(FormModal(
         app.t("Adopt a task group into a plan"),
-        [Field("title", app.t("Plan title"), value=safe_text(group["group"], limit=TITLE), required=True,
+        [Field("title", app.t("Plan title"), value=safe_text(group["group"], limit=TITLE)[:TITLE], required=True,
                validator=lambda value: TOO_LONG if len(value) > TITLE else None)],
         note=describe(group, app.t), submit=app.t("Adopt"), on_submit=save))
     if values:

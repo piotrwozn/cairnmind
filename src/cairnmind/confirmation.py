@@ -466,8 +466,9 @@ def person_at_terminal(environ=None, stdin=None, stdout=None) -> bool:
 
 
 def person_source(store, project_id, text, *, route="cli", origin=None, action="command_line_confirm",
-                  worktree=None):
+                  worktree=None, context=None):
     """The note a person's command line confirmation leaves: who confirmed, on which branch and commit.
+    `context` is act_context already read, for a caller that must not run Git while it holds the writer lock.
 
     Like a review's audit it says that a person judged the record, never why the record is true: it is
     not evidence, it does not anchor the record and it is not the time of its evidence. Unlike a review
@@ -482,7 +483,7 @@ def person_source(store, project_id, text, *, route="cli", origin=None, action="
                               {"origin": SEED_SOURCE[1]})
     from .memory_acts import act_context
     prefix, source_origin = PERSON_ROUTES[route]
-    context = act_context(store, project_id, worktree)
+    context = context if context is not None else act_context(store, project_id, worktree)
     metadata = {"origin": origin or source_origin, "role": "user", **context}
     audit = {"actor": "local_user", **context, "action": action, "text_chars": len(text)}
     return store.snapshot(project_id, f"{prefix}{uuid4()}", json.dumps(audit, ensure_ascii=False, sort_keys=True),

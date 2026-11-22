@@ -135,11 +135,12 @@ def adopt_group(store, project_id, group, task_versions, *, title=None, worktree
         raise ValueError("Legacy group must be nonempty text")
     if not isinstance(task_versions, dict) or not task_versions:
         raise ValueError("task_versions must map the tasks shown to their versions")
+    context = act_context(store, project_id, worktree)  # Git runs before the writer lock is taken, as in confirm_plan.
     with store.transaction() as tx:
         if {task["id"]: task["version"] for task in _legacy_tasks(tx, project_id, group)} != task_versions:
             raise ValueError(GROUP_CHANGED)
         note = person_source(store, project_id, group, route="inspector_review", action="adopt_plan_group",
-                             worktree=worktree)
+                             context=context)
         with store.person_act("inspector_review", note["id"]):
             result = PlanManager(store).adopt_legacy(
                 project_id, group, plan={"title": title} if title else None,

@@ -10,6 +10,7 @@ import pytest
 
 from cairnmind import person_proof
 from cairnmind.confirmation import GROUP_CHANGED, ConfirmationRefused, confirmation_of, confirmed_by
+from cairnmind.inspector import Inspector
 from cairnmind.memory_acts import adopt_group
 from cairnmind.plans import PlanManager, legacy_groups
 
@@ -111,6 +112,25 @@ def test_the_routes_list_with_the_token_and_adopt_only_with_the_key(fixture):  #
     assert {task["status"] for task in done.json()["tasks"]} == {"proposed"}
     again = fixture.client.post("/inspector/legacy-groups/adopt", json=body, headers=fixture.person)
     assert again.status_code == 400 and again.json()["detail"] == GROUP_CHANGED
+
+
+def test_a_disputed_task_stays_disputed_when_its_group_is_adopted(fixture):  # noqa: F811
+    first, second, third = old_group(fixture)
+    Inspector(fixture.store).review(fixture.pid, first["id"], "dispute", fixture.record(first["id"])["version"],
+                                    reason="Not any more")
+    result = adopt_group(fixture.store, fixture.pid, "old-group", shown(fixture))
+    [step] = [step for step in result["tasks"] if step["id"] == first["id"]]
+    assert step["status"] == "disputed" and confirmation_of(step) is None
+
+
+def test_a_failure_after_the_note_is_written_rolls_the_note_back(fixture):  # noqa: F811
+    outside = old_task(fixture, "x", "Other group", group="other")
+    old_task(fixture, "y", "Depends outside", index=2, depends_on=[outside["id"]])
+    notes, records = len(audits(fixture)), fixture.count()
+    with pytest.raises(ValueError, match="dependency tasks in the same group"):
+        adopt_group(fixture.store, fixture.pid, "old-group", shown(fixture))
+    assert PlanManager(fixture.store).list(fixture.pid) == []
+    assert len(audits(fixture)) == notes and fixture.count() == records
 
 
 def test_a_group_that_changed_since_it_was_shown_adopts_nothing(fixture):  # noqa: F811
