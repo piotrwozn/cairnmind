@@ -82,7 +82,8 @@ def client_and_calls(settings, monkeypatch):
 
 PERSON_POSTS = ("/api/inspector/records/r1/review", "/api/inspector/conflicts/resolve",
                 "/api/inspector/plans/p1/confirm", "/api/inspector/record-kinds/accept",
-                "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import")
+                "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import",
+                "/api/inspector/records/r1/release", "/api/inspector/impact/verdict")
 
 
 def test_broker_client_adds_the_key_only_for_a_persons_post_inside_the_workspace(
@@ -96,7 +97,7 @@ def test_broker_client_adds_the_key_only_for_a_persons_post_inside_the_workspace
         sent = calls[-1][2]
         assert sent["x-cairnmind-person"] == KEY and sent["x-cairnmind-workspace"] == SOCKET, path
     for method, path in (("GET", "/api/inspector/records"), ("POST", "/api/ask"), ("POST", "/api/client-runs"),
-                         ("GET", "/api/findings"), ("POST", "/api/inspector/records/r1/release")):
+                         ("GET", "/api/findings"), ("GET", "/api/inspector/impact")):
         client.request(method, path, json=None if method == "GET" else {})
         assert "x-cairnmind-person" not in calls[-1][2] and "x-cairnmind-workspace" not in calls[-1][2], path
     # A coding session's shell: another server's socket, or none.
@@ -133,8 +134,9 @@ def test_the_broker_passes_the_key_on_person_routes_only(broker_app):
     plan = {"project": "p", "expected_plan_version": 1}
     for path, body in (("/api/inspector/records/r1/review", {"project": "p", "action": "confirm"}),
                        ("/api/inspector/conflicts/resolve", {}), ("/api/inspector/plans/p1/confirm", plan),
-                       ("/api/inspector/record-kinds/accept", {}),
-                       ("/api/memory/import", {})):
+                       ("/api/inspector/record-kinds/accept", {}), ("/api/memory/import", {}),
+                       ("/api/inspector/records/r1/release", {"project": "p", "reason": "Example."}),
+                       ("/api/inspector/impact/verdict", {"project": "p"})):
         assert client.post(path, json=body, headers={**headers, **proof}).status_code == 200, path
         sent = seen[-1][2]
         assert sent["x-cairnmind-person"] == KEY and sent["x-cairnmind-workspace"] == SOCKET, path
@@ -157,3 +159,4 @@ def test_the_broker_passes_the_key_on_person_routes_only(broker_app):
     assert "x-cairnmind-person" not in seen[-1][2] and "x-cairnmind-workspace" not in seen[-1][2]
     # A plan can be confirmed through the broker; a path that merely looks like it cannot.
     assert client.post("/api/inspector/plans/p1/confirm/extra", json={}, headers=headers).status_code == 405
+    assert client.post("/api/inspector/records/r1/release/extra", json={}, headers=headers).status_code == 405

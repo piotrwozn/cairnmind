@@ -806,8 +806,10 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
         if not re.fullmatch(r"[A-Za-z0-9_:/-]+", path) or ".." in path:
             raise HTTPException(404)
         # The person's decisions are the only writes: a review, a conflict decision, an impact verdict, and
-        # accepting or withdrawing an unknown transcript record kind (#210), and confirming a plan (#214).
+        # accepting or withdrawing an unknown transcript record kind (#210), confirming a plan (#214), and
+        # releasing a record's false alarms of the secrets gate (#306).
         if request.method == "POST" and not (path.endswith("/review") or re.fullmatch(r"plans/[^/]+/confirm", path)
+                                             or re.fullmatch(r"records/[^/]+/release", path)
                                              or path in ("conflicts/resolve", "impact/verdict",
                                                          "record-kinds/accept", "record-kinds/withdraw")):
             raise HTTPException(405)

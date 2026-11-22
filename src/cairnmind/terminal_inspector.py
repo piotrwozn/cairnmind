@@ -109,6 +109,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                 yield Button(self.t("Dispute"), id="entity-dispute")
                 yield Button(self.t("History"), id="entity-history")
                 yield Button(self.t("Sources"), id="entity-sources")
+                yield Button(self.t("Release"), id="entity-release")
             with Horizontal(id="conflict-actions"):
                 yield Button(self.t("Resolve"), id="conflict-resolve")
             with Horizontal(id="impact-actions"):
@@ -153,7 +154,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                   "entity-technical": "Details", "entity-confirm": "Confirm", "entity-dispute": "Dispute",
                   "entity-history": "History", "entity-sources": "Sources", "memory-preview": "Preview",
                   "memory-save": "Save", "memory-auto": "Automatic", "memory-import": self.t("Import"),
-                  "memory-apply": "Apply", "memory-refresh": "Status", "conflict-resolve": "Resolve"}
+                  "memory-apply": "Apply", "memory-refresh": "Status", "conflict-resolve": "Resolve",
+                  "entity-release": "Release"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.refresh_impact_language()
@@ -369,6 +371,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         self.query_one("#impact-actions").display = kind == "impact"
         self.query_one("#entity-confirm", Button).disabled = kind not in {"records", "plans"}
         self.query_one("#entity-dispute", Button).disabled = kind != "records"
+        self.query_one("#entity-release", Button).disabled = kind != "records"
         self.query_one("#entity-history", Button).disabled = kind not in {"records", "plans"}
         self.query_one("#entity-sources", Button).label = self.t("View") if kind in {"sources", "inbox"} else self.t("Sources")
         self.query_one("#entity-more", Button).disabled = not bool(self.source_next)
@@ -480,6 +483,10 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
         if action == "confirm" and self.entity_kind == "plans" and self.entity:
             from .terminal_plan_confirm import confirm_plan  # a person confirms a plan here (#214)
             await confirm_plan(self)
+            return
+        if action == "release":
+            from .terminal_release import release_record  # a person releases a record here (#306)
+            await release_record(self)
             return
         if self.entity_kind != "records" or not self.entity:
             self.notice(self.t("Open a record first."))
@@ -777,6 +784,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             self.review("confirm")
         elif button == "entity-dispute":
             self.review("dispute")
+        elif button == "entity-release":
+            self.review("release")
         elif button == "conflict-resolve":
             self.resolve_conflict()
         elif button == "impact-verdict":

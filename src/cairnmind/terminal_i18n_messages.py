@@ -255,6 +255,11 @@ BROKER_MESSAGES = {
         "Tylko osoba może zapisać ustalenie jako potwierdzone, a czynność osoby wymaga jej środowiska: ta z niego "
         "nie pochodzi. Niczego nie zapisano. Zapisz ustalenie jako proponowane; osoba potwierdzi je w inspektorze "
         "środowiska.",
+    # What the release route answers that the inspector's Release can show (memory_published_release; #306).
+    "Nothing in this record needs a release": "Nic w tym ustaleniu nie wymaga przepuszczenia",
+    "The record is not published": "To ustalenie nie jest publikowane",
+    "The reason itself holds a secret or personal data; write it without one":
+        "Samo uzasadnienie zawiera sekret lub dane osobowe; napisz je bez nich",
     "Invalid graph projection format.": "Niepoprawny format projekcji grafu.",
     "The project of the chosen entry is unknown.": "Nieznany projekt wskazanego wpisu.",
     "Too many pending cockpit openings.": "Zbyt wiele oczekujących otwarć kokpitu.",
