@@ -1056,7 +1056,7 @@ async def test_mcp_tools_forward_project_scope_and_source_ids(settings):
     assert bridge.calls[3][0] == "/plans/save"
     assert bridge.calls[3][1]["idempotency_key"] == "request-a"
     assert bridge.calls[4] == ("/plans/next", {"project": "demo", "plan_id": None, "worktree": "/repo"})
-    assert bridge.calls[5] == ("/sessions/context", {})
+    assert bridge.calls[5] == ("/sessions/context", {"short": True})
     assert bridge.calls[6][0] == "/sessions/ack"
     assert bridge.calls[7] == ("/checks", {"project": "demo", "task_id": "task-a", "worktree": "/repo"})
     schema = {"type": "object", "properties": {"version": {"type": "integer"}},
