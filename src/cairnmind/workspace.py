@@ -470,6 +470,9 @@ class WorkspaceManager:
                       "#{?client_readonly, READ ONLY · C-b d: detach , C-b Space: commands · C-b ?: help · C-b Tab: next · C-b d: detach }")
             self.tmux("set-option", "-g", "status", "2")
             self.tmux("set-option", "-g", "status-interval", "1")
+            # Every binding blocks in run-shell, so typed keys queue and arrive in one burst; with the default
+            # paste detection (1 ms) a prefix that is the third fast key would reach the pane as text (#356).
+            self.tmux("set-option", "-g", "assume-paste-time", "0")
             self._update_status(self.state.read())
             if start_supervisor:
                 self._start_supervisor()
