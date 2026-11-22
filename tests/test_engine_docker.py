@@ -105,8 +105,8 @@ class FakeDocker:
             info["State"] = {"Status": "exited", "Running": False}
             return done(0)
         if verb == "rm":
-            return done(0) if self.containers.pop(self.find(arguments[1]), None) else done(
-                1, err="Error: No such container")
+            found = [name for name, info in self.containers.items() if arguments[-1] in (name, info["Id"])]
+            return done(0) if found and self.containers.pop(found[0]) else done(1, err="Error: No such container")
         raise AssertionError(f"unexpected docker call {arguments}")
 
 
@@ -351,6 +351,59 @@ def test_a_foreign_or_exited_container_at_start(docker, tmp_path):
     docker.calls.clear()
     assert start_docker_engine(settings)["available"] and docker.verbs("run", "rm", "stop") == []
 
+
+@pytest.mark.parametrize("fault", ["inspect_fails_once", "docker_down", "foreign", "other_id", "gone", "unknown_id"])
+def test_a_failed_check_after_run_removes_only_the_container_this_start_created(docker, tmp_path, monkeypatch, fault):
+    settings = started(docker, tmp_path)
+    name, other, created = container_name(settings), identity("another"), identity(container_name(settings))
+    real, state = docker.__call__, {"run": False}
+
+    def faulty(arguments, *, timeout=15, show=False):
+        if fault == "inspect_fails_once" and arguments[0] == "container" and state["run"]:
+            state["run"] = False  # one timeout or bad reply, then Docker answers again
+            docker.calls.append((arguments, show))
+            return done(1, err="Error: request timed out")
+        result = real(arguments, timeout=timeout, show=show)
+        if arguments[0] != "run":
+            return result
+        state["run"] = True
+        if fault == "docker_down":
+            docker.up = False
+        elif fault == "foreign":
+            docker.containers[name]["Config"]["Labels"] = {}
+        elif fault == "gone":
+            docker.containers.pop(name)
+        elif fault == "other_id":  # run printed the Id of a container that is not the one inspected by name
+            docker.containers["another"] = {"Id": other, "Name": "/another", "Config": {"Labels": {}},
+                                            "State": {"Running": True}}
+            return done(0, other + "\n")
+        elif fault == "unknown_id":
+            return done(0, "not an id\n")
+        return result
+
+    monkeypatch.setattr(engine_docker, "run_docker", faulty)
+    with pytest.raises(ArcadeError) as failed:
+        start_docker_engine(settings)
+    message = str(failed.value)
+    assert "Nothing was started" not in message and "does not touch it" not in message
+    if fault == "gone":
+        assert docker.verbs("stop", "rm") == [] and message == EXITED.format(name=name)
+    elif fault == "unknown_id":
+        assert docker.verbs("stop", "rm") == [] and name in docker.containers
+        assert "did not print a container id" in message and "removed nothing" in message
+    elif fault == "other_id":
+        assert docker.verbs("stop", "rm") == [["stop", "--time", "60", other], ["rm", other]]
+        assert name in docker.containers and "another" not in docker.containers
+        assert f"removed the container this start created ({other})" in message
+    elif fault == "docker_down":  # the container cannot be removed: the message says so and how to do it
+        assert name in docker.containers
+        assert f"could not remove the container this start created ({created})" in message
+        assert f"docker rm --force {created}" in message and "Cannot connect to the Docker daemon" in message
+    else:
+        assert docker.verbs("stop", "rm") == [["stop", "--time", "60", created], ["rm", created]]
+        assert name not in docker.containers
+        assert f"stopped and removed the container this start created ({created})" in message
+        assert "request timed out" in message if fault == "inspect_fails_once" else "labels" in message
 
 def test_a_container_that_stops_or_never_answers_during_startup(docker, tmp_path, monkeypatch):
     settings = started(docker, tmp_path)
@@ -623,7 +676,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
         '  version) echo 27.3.1 ;;\n'
         '  container) if [ -e "$FAKE_DOCKER/ran" ]; then cat "$FAKE_DOCKER/inspect.json";'
         ' else echo "Error: No such container: $3" >&2; exit 1; fi ;;\n'
-        '  image) exit 0 ;;\n  run) touch "$FAKE_DOCKER/ran" ;;\n  stop) ;;\n  rm) rm -f "$FAKE_DOCKER/ran" ;;\n'
+        '  image) exit 0 ;;\n  run) touch "$FAKE_DOCKER/ran"; cat "$FAKE_DOCKER/id" ;;\n  stop) ;;\n  rm) rm -f "$FAKE_DOCKER/ran" ;;\n'
         '  *) echo "unexpected $*" >&2; exit 9 ;;\nesac\n')
     (bin_dir / "docker").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
@@ -640,6 +693,7 @@ def test_engine_start_docker_through_a_docker_stand_in_on_path(tmp_path, monkeyp
     monkeypatch.setattr(ArcadeClient, "server_info", server_info)
     settings = settings_with(tmp_path)
     name = container_name(settings)
+    (work / "id").write_text(identity(name) + "\n")
     (work / "inspect.json").write_text(json.dumps([{
         "Id": identity(name), "Name": "/" + name, "Config": {"Labels": labels(settings), "Image": PUBLISHED},
         "State": {"Status": "running", "Running": True}}]))

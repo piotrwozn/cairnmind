@@ -468,3 +468,19 @@ def test_rebuild_vectors_refuses_without_models(monkeypatch, tmp_path):
     assert result.exit_code == 2, result.output
     assert " ".join(result.stderr.split()) == "Error: " + first_start.NEEDS_MODELS.format(
         command="cairnmind rebuild-vectors") + " " + first_start.GET_MODELS
+
+
+def test_the_ask_panel_names_the_mode_apart_from_missing_evidence():
+    from cairnmind.terminal_commands import ask_summary
+    for language, heading, missing in (("en", "Deterministic-only mode (no models)", "Missing evidence"),
+                                       ("pl", "Tryb tylko deterministyczny (brak modeli)", "Brakujące dowody")):
+        def say(text, language=language):
+            return tr(text, language)
+        shown = ask_summary(knowledge_mode.unavailable_answer(NOTHING_FOUND), say)
+        assert heading + ":\n" + say(first_start.GET_MODELS) in shown and missing not in shown
+        held = ask_summary(knowledge_mode.unavailable_answer({**NOTHING_FOUND, "held_back": {"chunks": 1}}), say)
+        assert heading + ":\n" + say(first_start.GET_MODELS) in held
+        assert missing + ":\n- " + say(first_start.MATCHES_HELD_BACK) in held
+        assert "- " + say(first_start.GET_MODELS) not in held
+    configured = {"status": "unverified", "answer": "x", "unknowns": ["No decision explains it."]}
+    assert "Deterministic-only" not in ask_summary(configured, lambda text: text)

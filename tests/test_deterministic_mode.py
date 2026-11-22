@@ -459,3 +459,21 @@ def test_each_deterministic_command_works_without_models(workspace):
     hits = Retriever(store, settings, model).search(project["id"], "authenticate")
     assert hits and "authenticate" in json.dumps(hits)
     assert model.touched == []
+
+
+def test_process_memory_without_models_says_why_and_with_models_is_unchanged(workspace):
+    """The /background-inference/enable response carries the sentence the Process memory panel shows (#294)."""
+    settings, store, project, root = workspace
+    body = {"project": project["id"], "worktree": str(root)}
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    with TestClient(create_app(settings, ollama=Untouched())) as client:  # disabled
+        off = client.post("/background-inference/enable", json=body, headers=headers).json()
+        # models pull ran after the start: the advice is the restart, not the command that already ran
+        (settings.data_dir / "config.json").write_text(json.dumps({"knowledge_agent": "enabled"}), encoding="utf-8")
+        restart = client.post("/background-inference/enable", json=body, headers=headers).json()
+    assert off["worker_running"] is False and off["notice"] == first_start.PROCESS_OFF
+    assert "cairnmind models pull" in off["notice"] and "cairnmind models pull" in first_start.MESSAGES[first_start.PROCESS_OFF]
+    assert restart["notice"] == first_start.PROCESS_RESTART and "models pull" not in restart["notice"]
+    with TestClient(create_app(replace(settings, knowledge_agent="enabled"), ollama=Down())) as client:
+        on = client.post("/background-inference/enable", json=body, headers=headers).json()
+    assert "notice" not in on

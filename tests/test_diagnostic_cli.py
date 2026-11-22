@@ -117,7 +117,9 @@ def test_diagnostic_http_reads_are_authenticated_scoped_and_do_not_write_config(
     transport(monkeypatch, handler)
     result = CliRunner().invoke(cli.app, ["--data-dir", str(settings.data_dir), *arguments])
     assert result.exit_code == 0, result.output or repr(result.exception)
-    assert json.loads(result.output) == {"diagnostic": True}
+    # `status` also names the address it asked (#291)
+    expected = {"service_url": settings.url, "diagnostic": True} if path == "/status" else {"diagnostic": True}
+    assert json.loads(result.output) == expected
     assert len(requests) == 1
     assert files(settings.data_dir) == before
 
