@@ -410,7 +410,8 @@ def test_missing_cli_does_not_install_unverified_hooks(settings, project, monkey
         "installed": False, "mcp": False, "hooks": False, "notes": []})
     result = integrations.install_integrations(settings, project)
     assert not (Path(project["root"]) / ".codex").exists()
-    assert len(result["changed"]) == 2  # Managed instructions remain useful after a later client install.
+    assert result["changed"] == []  # nothing is written for a client that is not installed (#313)
+    assert not (Path(project["root"]) / "AGENTS.md").exists() and not (Path(project["root"]) / "CLAUDE.md").exists()
     assert any("not installed" in warning for warning in result["warnings"])
 
 

@@ -19,12 +19,15 @@ def test_every_cairnmind_command_in_the_readme_exists():
     assert unknown_commands(README, cli_commands()) == []
 
 
-def test_the_quick_start_checks_remembers_and_reads_back_before_it_connects_a_client():
+def test_the_quick_start_remembers_and_reads_back_before_it_connects_a_client():
     section = quick_start()
     block = section[section.index("```bash"):section.index("```", section.index("```bash") + 3)]
-    order = [block.index(command) for command in ("cairnmind doctor", "cairnmind project add", "cairnmind remember",
-                                                   "cairnmind brief", "cairnmind ask")]
-    assert order == sorted(order) and "cairnmind install" not in block and "cairnmind run" not in block
+    order = [block.index(command) for command in ("cairnmind project add", "cairnmind remember", "cairnmind brief",
+                                                   "cairnmind ask")]
+    # The installer ends with the check, so the block has no doctor step of its own (#313); the text below names it.
+    assert order == sorted(order) and "cairnmind doctor" not in block
+    assert "cairnmind install" not in block and "cairnmind run" not in block
+    assert "`cairnmind doctor` repeats the installer's check" in section
     assert block.index("install-wsl.sh") < order[0]
     assert section.index("### Connect Codex or Claude Code") > section.index("cairnmind ask")
 

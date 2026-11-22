@@ -3,7 +3,8 @@
 Run as ``cairnmind doctor | python -I -m cairnmind.doctor_attention``. It reads the doctor report as JSON on
 standard input and prints the summary: where memory is kept, what is required and present, what is required and
 missing, what is optional, and the next step. The installer prints the same summary as `cairnmind doctor` in a
-terminal; the full report is `cairnmind doctor --json`.
+terminal; the full report is `cairnmind doctor --json`. The exit code of `cairnmind doctor` is 1 exactly when
+required_missing is not empty (#313).
 """
 from __future__ import annotations
 
@@ -14,8 +15,8 @@ from . import platform_hints
 from .engine_docker import DOCKER_ATTENTION
 from .first_start import (
     CLIENT_NAMES, CLIENT_OFF, CLIENT_ON, DATA_DIR, ENGINE_DOWN, ENGINE_NOT_INSTALLED, ENGINE_ON_DEMAND, ENGINE_READY,
-    ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE,
-    REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WORKSPACE_OFF,
+    ENGINE_RELEASE, FULL_REPORT, JAVA_NEEDED, KNOWLEDGE_DISABLED, MODELS_OFF, MODELS_ON, NEXT_FIX, NEXT_PROJECTS,
+    NEXT_START, NOTES, NOTHING_MISSING, OPTIONAL_BROKEN, OPTIONAL_OFF, OPTIONAL_ON, REPORT_UNREADABLE, REQUIRED_MISSING, REQUIRED_PRESENT, SERVER_DOWN_CONNECT, SERVICE_ON_DEMAND, SERVICE_RUNNING, WORKSPACE_OFF,
     WORKSPACE_ON, cockpit_status)
 from .terminal_safe import safe_text
 
@@ -68,11 +69,13 @@ def _cause(error: object) -> str:
     return text.partition("(")[2].partition(")")[0] or text
 
 
-def attention(report: dict) -> list[str]:
-    """One plain line per part of the report that is required and missing or unusable."""
+def required_missing(report: dict) -> list[str]:
+    """One plain line per required part of the report that is missing or unusable; cairnmind doctor exits 1 for these."""
     lines = _prerequisites(report)
     arcade = report.get("arcadedb") or {}
-    if arcade.get("available") is False:
+    if arcade.get("sign_in_refused"):  # another data directory's engine answers here: the text names the way out
+        lines.append(_line(arcade.get("error") or "", limit=900))
+    elif arcade.get("available") is False:
         if arcade.get("mode") == "connect":
             lines.append(_line(SERVER_DOWN_CONNECT.format(url=arcade.get("url") or "its address",
                                                           error=arcade.get("error") or arcade.get("reason") or "no answer")))
@@ -88,10 +91,26 @@ def attention(report: dict) -> list[str]:
                                                  found=arcade.get("version") or "unknown",
                                                  pinned=arcade.get("configured_version") or "release")))
     elif arcade.get("database_available") is False:
-        lines.append(_line(f"The database {arcade.get('database') or ''} cannot be read; see cairnmind doctor --json."))
+        lines.append(_line("The memory database cannot be read; see cairnmind doctor --json."))
     knowledge = report.get("knowledge_agent")
     if knowledge and knowledge != KNOWLEDGE_DISABLED:
         lines.append(_line(knowledge))  # a stored value that is neither enabled nor disabled
+    writer = report.get("store_writer") or {}
+    # "unknown" because the engine did not answer is the engine's state, already said above or present on demand.
+    unknown_for_the_engine = writer.get("role") == "unknown" and arcade.get("available") is False
+    if (writer.get("role") in {"reader", "lost", "unknown"} or writer.get("problem")) and not unknown_for_the_engine:
+        lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''} "
+                           f"{writer.get('next') or ''}"))
+    # Commands here are refused; whole, so the command that ends a refusal is never cut off (#319).
+    lines += [_line(note, limit=600) for note in report.get("environment_blockers") or []]
+    return lines
+
+
+def not_working(report: dict) -> list[str]:
+    """Optional parts that are set up and do not work: configured models and their servers, an installed client whose
+    contract fails. They never change the exit code (#313)."""
+    lines = []
+    knowledge = report.get("knowledge_agent")
     ollama = report.get("ollama") or {}
     ollama_down = ollama.get("available") is False and not ollama.get("refused")  # refused: nothing was asked
     if knowledge == KNOWLEDGE_DISABLED:
@@ -118,15 +137,12 @@ def attention(report: dict) -> list[str]:
     for name, client in sorted((report.get("clients") or {}).items()):
         if isinstance(client, dict) and client.get("installed") and not client.get("verified_resume"):
             lines.append(_line(f"{name} is installed but its contract checks fail; see cairnmind doctor --contract."))
-    writer = report.get("store_writer") or {}
-    # "unknown" because the engine did not answer is the engine's state, already said above or present on demand.
-    unknown_for_the_engine = writer.get("role") == "unknown" and arcade.get("available") is False
-    if (writer.get("role") in {"reader", "lost", "unknown"} or writer.get("problem")) and not unknown_for_the_engine:
-        lines.append(_line(f"Store writer: {writer.get('role')}. {writer.get('problem') or writer.get('reason') or ''} "
-                           f"{writer.get('next') or ''}"))
-    # Commands here are refused; whole, so the command that ends a refusal is never cut off (#319).
-    lines += [_line(note, limit=600) for note in report.get("environment_blockers") or []]
     return lines
+
+
+def attention(report: dict) -> list[str]:
+    """Everything the report lists as missing or not working: required_missing, then not_working."""
+    return required_missing(report) + not_working(report)
 
 
 def _engine_present(report: dict) -> list[str]:
@@ -137,7 +153,7 @@ def _engine_present(report: dict) -> list[str]:
             "engine_problem") or arcade.get("version_matches") is False:
         return []
     # Where it runs is said once, by the topology lines at the top (#300).
-    return [ENGINE_READY.format(url=arcade.get("url") or "its address", database=arcade.get("database") or "")]
+    return [ENGINE_READY.format(url=arcade.get("url") or "its address")]
 
 
 def _models_on(report: dict) -> bool:
@@ -157,7 +173,7 @@ def summary(report: dict) -> list[str]:
     notes = report.get("environment_notes") or []
     if not isinstance(notes, list):  # a string would be read one character at a time
         raise ValueError("environment_notes is not a list")
-    missing = attention(report)
+    missing, broken = required_missing(report), not_working(report)
     present = _engine_present(report)
     present.append(SERVICE_RUNNING.format(url=report.get("service_url") or "its address")
                    if report.get("service_running") else SERVICE_ON_DEMAND)
@@ -194,11 +210,11 @@ def summary(report: dict) -> list[str]:
     else:
         lines.append(NOTHING_MISSING)
     blockers = report.get("environment_blockers") or []  # listed above as missing
-    for heading, items in ((OPTIONAL_OFF, off), (OPTIONAL_ON, on), (NOTES, [n for n in notes if n not in blockers])):
+    for heading, items in ((OPTIONAL_BROKEN, broken), (OPTIONAL_OFF, off), (OPTIONAL_ON, on), (NOTES, [n for n in notes if n not in blockers])):
         if items:
             lines.append(heading)
             lines += [f"  - {_line(item)}" for item in items]
-    lines += [FULL_REPORT, NEXT_FIX if missing else NEXT_START]
+    lines += [FULL_REPORT, NEXT_FIX if missing else NEXT_PROJECTS if report.get("projects") else NEXT_START]
     return lines
 
 

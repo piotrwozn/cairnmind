@@ -506,3 +506,28 @@ def test_a_deeply_nested_toml_file_does_not_stop_indexing(workspace):
     assert index_project(store, project["id"])["changed"] == 2
     labels = {row["label"] for row in rows(store, "SELECT label FROM nodes WHERE kind='symbol'")}
     assert {"app", "value"} <= labels
+
+def test_an_indexed_managed_block_leaves_the_index_on_the_next_index(workspace, monkeypatch):
+    """A block indexed before #313 is cut from the chunks when the project is indexed again, source unchanged."""
+    from cairnmind import ingest
+    from cairnmind.integrations import BEGIN, END
+
+    store, project, root = workspace
+    guide = root / "AGENTS.md"
+    guide.write_text(f"My rules\n\n{BEGIN}\nCall resume_context first.\n{END}\n\nAfter the block\n")
+    current_chunks = "SELECT FROM chunks WHERE source_id=:source AND is_current=true"
+    with monkeypatch.context() as earlier:
+        real = ingest._chunks
+        earlier.setattr(ingest, "_chunks", lambda text, uri="": real(text))  # what 0.12 indexed: every line
+        index_project(store, project["id"])
+    source = rows(store, "SELECT FROM sources WHERE uri=:uri AND is_current=true", {"uri": str(guide)})[0]
+    assert any("resume_context" in row["text"] for row in rows(store, current_chunks, {"source": source["id"]}))
+    ingest._REMEMBERED.clear()
+    ingest._INDEXED.clear()
+    index_project(store, project["id"])
+    after = rows(store, "SELECT FROM sources WHERE uri=:uri AND is_current=true", {"uri": str(guide)})[0]
+    assert after["id"] == source["id"]  # the source, its text and its hash are not touched
+    kept = rows(store, current_chunks, {"source": source["id"]})
+    assert kept and not any("BEGIN CAIRNMIND" in row["text"] or "resume_context" in row["text"] for row in kept)
+    assert any("After the block" in row["text"] for row in kept)
+    assert "resume_context" in store.get_source(source["id"])["content"]

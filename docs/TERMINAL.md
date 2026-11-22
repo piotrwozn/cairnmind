@@ -222,7 +222,7 @@ cairnmind context my-app
 cairnmind status --project my-app
 ```
 
-`ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer. In deterministic-only mode, with no models configured, it is a full-text search of the project's memory: it reports `unavailable`, makes no answer and lists the matching passages as search results ([API.md](API.md#the-knowledge-agents-models)).
+`ask` returns an answer, its sources, knowledge gaps and freshness. When the model is unavailable it reports `unavailable`; it does not pretend that raw search results are an agent answer. In deterministic-only mode, with no models configured, it is a full-text search of the project's memory: it reports `unavailable`, makes no answer and lists the matching passages as search results ([API.md](API.md#the-knowledge-agents-models)). In that mode the Ask memory view's status line reads `No answer without models; full-text matches only`; the result's status is still `unavailable`.
 
 `run`, `ask` and `context` start the knowledge service (and the engine) when needed. `status`, `jobs list`, `jobs show` and `memory status` ask the running service and start nothing: start it first with `cairnmind serve`, or open the workspace. `project list`, `store size` and the other commands that only read the store need the running engine and start nothing either ([Data and backups](STORAGE_AND_MAINTENANCE.md#data-and-backups)). An installation that only reads a store another installation writes never runs the service; there `cairnmind store writer` shows its role.
 

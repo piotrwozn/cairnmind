@@ -149,6 +149,8 @@ if [[ -z "$connect_url" ]]; then
 
     if ! check_java; then
         if ! command -v docker >/dev/null 2>&1; then
+            printf 'Or install Docker and start it; the engine then runs in a container. Then run this installer again.\n' >&2
+            printf 'Nothing has been installed yet. Java is the simpler choice.\n' >&2
             exit 1
         fi
         if docker_asked; then
@@ -161,6 +163,7 @@ if [[ -z "$connect_url" ]]; then
             docker_said="${docker_said//[^[:print:]]/}"
             docker_said="${docker_said:0:200}"
             printf 'Docker is on the path but did not answer (it said: %s). Either start Docker and run the installer again, so the engine runs in Docker, or install Java 21+: %s\n' "${docker_said:-nothing}" "$java_hint" >&2
+            printf 'Nothing has been installed yet. Java is the simpler choice.\n' >&2
             exit 1
         fi
     fi
@@ -299,14 +302,23 @@ live_services() {
 # Runs the installed command with the arguments after $3 and says so when it fails, with the last line it printed,
 # instead of going on in silence (#319); returns 1 then, and the caller decides what follows.
 # $1: the installed command, $2: the name a user types for it, $3: what follows from the failure, a whole clause.
+# What it printed on standard output is left in stop_printed for the caller.
 stop_or_say() {
-    local installed="$1" name="$2" after="$3" said
+    local installed="$1" name="$2" after="$3" both line said="" status=0
     shift 3
-    if said="$("$installed" "$@" 2>&1 >/dev/null)"; then
-        return 0
-    fi
-    said="${said%"${said##*[![:space:]]}"}"  # without trailing blank lines
-    said="${said##*$'\n'}"                    # its last line
+    stop_printed=""
+    # Both streams in one read, without a temporary file: each line of standard error comes back marked with \036.
+    both="$( { "$installed" "$@" 2>&1 >&4 4>&- | while IFS= read -r line || [[ -n "$line" ]]; do
+        printf '\036%s\n' "$line"; done; exit "${PIPESTATUS[0]}"; } 4>&1 )" || status=$?
+    while IFS= read -r line; do
+        if [[ "$line" == $'\036'* ]]; then
+            line="${line#?}"
+            [[ "$line" == *[![:space:]]* ]] && said="$line"  # its last line that is not blank
+        else
+            stop_printed="$stop_printed$line"$'\n'
+        fi
+    done <<< "$both"
+    ((status != 0)) || return 0
     said="${said//[^[:print:]]/}"
     said="${said:0:200}"
     printf 'Note: %s %s failed (it said: %s), so %s\n' "$name" "$*" "${said:-nothing}" "$after" >&2
@@ -472,9 +484,13 @@ stop_installed() {
     stop_or_say "$installed" "$name" \
         "the interface broker may still run the version being replaced. \`$name cockpit stop\` stops it later." \
         cockpit stop || true
-    if ! stop_or_say "$installed" "$name" \
+    local asked=""
+    if stop_or_say "$installed" "$name" \
         'the knowledge service may still run the version being replaced. The new version is asked to stop it once it is installed.' \
         stop; then
+        # In a pipe the installed version's `stop` prints its JSON (#313); said below only once the process has ended.
+        [[ "$stop_printed" == *'"stopping": true'* ]] && asked=1
+    else
         service_stop_failed=1 failed_python="$python" failed_name="$name"  # read by the main flow
     fi
     [[ -n "$python" ]] || return 0  # said above: without the Python nothing of the installed version can be looked for
@@ -496,6 +512,8 @@ stop_installed() {
             "This installer stops only the default data directory's service, so they belong to other data directories (or one is the default one, if it is still ending or its stop failed above)." \
             'Each keeps running the version being replaced, and the new version does not use it until it is stopped:' \
             '  cairnmind --data-dir <its data directory> stop    (ps -o args= -p <process> shows the directory)' >&2
+    elif [[ -n "$asked" ]]; then  # said, not silent (#313), and true: the stop worked and no service of it is left
+        printf 'Stopped the service of the installed %s so that the new version can replace it; the next command that needs it starts it again.\n' "$name"
     fi
 }
 # --- end ---
@@ -504,8 +522,8 @@ stop_installed() {
 trap 'rm -f -- "$constraints_file"; end_upgrade' EXIT
 begin_upgrade
 
-# An earlier release was installed as the uv tool "devbrain", which owns the devbrain
-# executable that this package also provides as an alias. Remove the tool, not the data.
+# DevBrain 0.8.0 was installed as the uv tool "devbrain". Its tool is removed, never the data: its own devbrain
+# command would still start 0.8.0 against the same data directory.
 upgraded_from_devbrain=false
 if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     printf 'Removing the earlier DevBrain uv tool; your memory in %s is kept.\n' \
@@ -516,13 +534,33 @@ if uv tool list 2>/dev/null | grep '^devbrain ' >/dev/null; then
     upgraded_from_devbrain=true
 fi
 
+# uv does not list a tool whose receipt is damaged, yet that tool's devbrain command would go on starting 0.8.0 (and
+# its service) on the same data directory: stop here instead of installing beside it.
+refuse_unlisted_devbrain_tool() {
+    if [[ -e "$1" || -L "$1" ]]; then
+        # What it started is stopped first, while its own command still exists: afterwards nothing could stop it.
+        printf 'An earlier DevBrain uv tool is in %s but uv does not list it. First stop what it may still run: "%s/bin/devbrain" workspace stop, then "%s/bin/devbrain" cockpit stop, then "%s/bin/devbrain" stop. Then remove it with: uv tool uninstall devbrain (your memory is kept); if that fails, rm -r "%s". Then run this installer again.\n' "$1" "$1" "$1" "$1" "$1" >&2
+        exit 1
+    fi
+}
+refuse_unlisted_devbrain_tool "$(uv tool dir)/devbrain"
+
 # An installed Cairnmind is being replaced: the same care, with the installed version's own command.
 if uv tool list 2>/dev/null | grep '^cairnmind ' >/dev/null; then
     stop_installed "$(uv tool dir --bin)/cairnmind" cairnmind "$(uv tool dir)/cairnmind/bin/python"
 fi
 
 printf 'Installing Cairnmind from %s...\n' "$package_dir"
-uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir"
+# uv's list of every package is shown only when the install fails (#326): then it is uv's own error.
+install_log="$(mktemp "${TMPDIR:-/tmp}/cairnmind-install.XXXXXXXX")"
+trap 'rm -f -- "$constraints_file" "$install_log"' EXIT
+install_status=0
+uv tool install --python "${CAIRNMIND_INSTALL_PYTHON:-${DEVBRAIN_INSTALL_PYTHON:-3.12}}" --reinstall --constraints "$constraints_file" "$package_dir" >"$install_log" 2>&1 || install_status=$?
+if ((install_status != 0)); then
+    while IFS= read -r install_line || [[ -n "$install_line" ]]; do printf '%s\n' "$install_line" >&2; done <"$install_log"
+    exit "$install_status"
+fi
+printf 'Installed Cairnmind and its dependencies.\n'
 
 tool_bin_dir="$(uv tool dir --bin)"
 cairnmind_bin="$tool_bin_dir/cairnmind"
@@ -539,6 +577,16 @@ print(Settings.load().data_dir)' 2>/dev/null || true)"
     stop_failed_service "$cairnmind_bin" "${failed_python:-}" "${failed_name:-}" "$data_dir" || exit 1
 fi
 
+# Cairnmind up to 0.12.0 also installed the command devbrain (#314). uv removes it on --reinstall; one still there is
+# named, never removed: nothing here can tell whose it is.
+leftover_devbrain() {
+    local leftover="$1/devbrain"
+    if [[ -e "$leftover" || -L "$leftover" ]]; then
+        printf 'Cairnmind no longer installs the devbrain command, but %s is still there. Use cairnmind instead; if nothing else uses that file, remove it: rm "%s"\n' "$leftover" "$leftover" >&2
+    fi
+}
+leftover_devbrain "$tool_bin_dir"
+
 # The engine mode this data directory stores (cairnmind init saves it), read by the installed version itself;
 # empty when it cannot say: the native engine is then installed as before, and init names what is wrong.
 stored_engine_mode() {
@@ -546,6 +594,29 @@ stored_engine_mode() {
 from cairnmind.config import Settings
 from cairnmind.database_mode import engine_mode
 print(engine_mode(Settings.load()))' 2>/dev/null || true
+}
+
+# Whether the pinned engine is already unpacked in the data directory (engine install then downloads nothing), read
+# by the installed version itself; empty when it cannot say, and the download line is printed as before.
+engine_present() {
+    "$(uv tool dir)/cairnmind/bin/python" -I -c '
+from cairnmind.config import Settings
+from cairnmind.engine import runtime_dir
+print("yes" if (runtime_dir(Settings.load()) / "lib").is_dir() else "no")' 2>/dev/null || true
+}
+
+# What `init` prints in a terminal ends with a next step that the check at the end of this installer says again, so
+# only what the check does not say is shown: the one-time marks of confirmations (#326). Its JSON is read, not shown.
+show_init_marks() {
+    printf '%s' "$1" | "$(uv tool dir)/cairnmind/bin/python" -I -c '
+import json, sys
+from cairnmind.first_start import INIT_MARKED
+marks = json.load(sys.stdin).get("confirmations_before_rule")
+if marks:
+    print(INIT_MARKED.format(marked=marks["marked_as_a_persons"], left=marks["still_before_the_rule"]))' || {
+        # The marks are said only once, by the init that made them: never lose them without a word.
+        printf 'The result of init could not be read; it said:\n%s\n' "$1" >&2
+    }
 }
 
 if [[ -n "$connect_url" ]]; then
@@ -556,23 +627,31 @@ if [[ -n "$connect_url" ]]; then
     # without the variable stays connect-only instead of starting a local engine.
     # The database and its user are created once, by a person (cairnmind db create-user): until then
     # these two commands say what is missing, and the installation itself is complete.
-    if ! "$cairnmind_bin" engine status || ! "$cairnmind_bin" init; then
+    if "$cairnmind_bin" engine status >/dev/null && init_said="$("$cairnmind_bin" init --json)"; then
+        show_init_marks "$init_said"
+    else
         printf '\nThe database is not ready for this installation yet. Follow docs/DEPLOYMENT.md,\n' >&2
         printf '"Connect-only installations", then run: cairnmind init\n' >&2
     fi
 elif [[ "$engine_in_docker" == true || "$(stored_engine_mode)" == docker ]]; then
     printf '\nThe engine runs in Docker: no ArcadeDB is downloaded here; cairnmind init downloads its image.\n'
-    "$cairnmind_bin" init
+    init_said="$("$cairnmind_bin" init --json)"
+    show_init_marks "$init_said"
     "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 else
-    printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
+    if [[ "$(engine_present)" == yes ]]; then
+        printf '\nThe pinned ArcadeDB release is already installed here; nothing is downloaded.\n'
+    else
+        printf '\nInstalling the pinned ArcadeDB release (about 86 MB, verified with SHA-256).\n'
+    fi
     arcade_dist="${CAIRNMIND_ARCADE_DIST:-${DEVBRAIN_ARCADE_DIST:-}}"
     if [[ -n "$arcade_dist" ]]; then
         "$cairnmind_bin" engine install --distribution "$arcade_dist" >/dev/null
     else
         "$cairnmind_bin" engine install >/dev/null
     fi
-    "$cairnmind_bin" init
+    init_said="$("$cairnmind_bin" init --json)"
+    show_init_marks "$init_said"
     "$cairnmind_bin" engine status >/dev/null  # the summary at the end reports the engine
 fi
 
@@ -610,5 +689,6 @@ if [[ "$workspace_ready" == true ]]; then
 fi
 
 # The same summary as `cairnmind doctor` in a terminal: required, optional, the next step (#244, #287).
+# Under pipefail the installer ends with doctor's exit code: 1 when something required is missing (#313).
 printf '\nChecking the installation...\n'
 "$cairnmind_bin" doctor | "$(uv tool dir)/cairnmind/bin/python" -I -m cairnmind.doctor_attention

@@ -79,8 +79,7 @@ def test_empty_project_brief_says_what_is_missing(workspace):
     brief = build_brief(store, project["id"])
     text = brief["text"].splitlines()
     assert text[0] == f"Brief for demo in {root}"
-    assert text[1] == ("machine = measured now by Cairnmind; reported = stored claim, not verified; "
-                       "text after | is a stored title")
+    assert text[1] == "[machine] = measured now by Cairnmind"  # #326: only the parts the printed lines use
     assert lines(brief) == ["No checkpoint has been saved for this project.",
                             "No plan is active in this worktree.",
                             "No task is in progress, waiting for a test or waiting for a review.",

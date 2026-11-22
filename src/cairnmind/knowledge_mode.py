@@ -102,6 +102,15 @@ MATCH_LIMIT = 8  # as many as an answer lists sources (agent._result)
 MATCH_EXCERPT_CHARS = 400  # the excerpt of an answer's source (agent._result)
 
 
+def _without_copies(matches: list[dict]) -> list[dict]:
+    """A record and the note it was made from, with the same words, are one passage: the record is kept, since it
+    carries the status (#313). Other passages with equal text in other sources stay: each is a place."""
+    def text(match):
+        return " ".join(str(match.get("excerpt", "")).split())
+    records = {(match["source_id"], text(match)) for match in matches if match.get("status")}
+    return [match for match in matches if match.get("status") or (match["source_id"], text(match)) not in records]
+
+
 async def text_matches(agent, project_id: str, question: str, worktree=None) -> dict:
     """The passages a full-text search finds for the question's words, through exactly the filters of the first,
     lexical search of `ask` (KnowledgeAgent._ask_impl): Retriever.search without a query vector, then agent._hits,
@@ -136,8 +145,7 @@ async def text_matches(agent, project_id: str, question: str, worktree=None) -> 
         match["excerpt"] = item["text"]
         match.update({key: item[key] for key in ("status", "confirmed_by", "confirmation", "metadata") if key in item})
         matches.append(match)
-        if len(matches) == MATCH_LIMIT:
-            break
+    matches = _without_copies(matches)[:MATCH_LIMIT]
     held_back = gate.summary() if gate else None
     # Found but not shown: held by the gate, unverifiable on disk (_hits drops it) or changed since indexing.
     left_out = bool(held_back) or len(shown) < len(hits) or refreshed > 0

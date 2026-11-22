@@ -843,9 +843,12 @@ def doctor_cli(docker, monkeypatch):
     monkeypatch.setattr(cli, "store_for_read", lambda settings: (_ for _ in ()).throw(ArcadeError("no store")))
 
     def report(settings):
+        from cairnmind.doctor_attention import required_missing
         result = cli_(settings)
-        assert result.exit_code == 0, result.output
-        return json.loads(result.stdout)
+        found = json.loads(result.stdout)
+        # #313: doctor exits 1 exactly when something required is missing; an engine nobody started is one here.
+        assert result.exit_code == (1 if required_missing(found) else 0), result.output
+        return found
 
     def cli_(settings):
         return runner.invoke(app, ["--data-dir", str(settings.data_dir), "doctor"])
@@ -853,7 +856,7 @@ def doctor_cli(docker, monkeypatch):
     return report
 
 
-def test_doctor_in_docker_mode_needs_no_java_names_the_mode_and_exits_0(docker, doctor_cli, tmp_path, monkeypatch):
+def test_doctor_in_docker_mode_needs_no_java_and_names_the_mode(docker, doctor_cli, tmp_path, monkeypatch):
     from cairnmind.doctor_attention import attention
     native = doctor_cli(quiet_settings(tmp_path, "native"))
     assert native["arcadedb"]["engine"] == "native" and "docker" not in native
@@ -872,7 +875,7 @@ def test_doctor_in_docker_mode_needs_no_java_names_the_mode_and_exits_0(docker, 
     assert engine_docker.DOCKER_ATTENTION.format(error=report["docker"]["error"]) in attention(report)
 
 
-def test_doctor_names_a_wrong_engine_mode_and_still_exits_0(docker, doctor_cli, tmp_path):
+def test_doctor_names_a_wrong_engine_mode_and_exits_1_for_it(docker, doctor_cli, tmp_path):
     from cairnmind.doctor_attention import attention
     report = doctor_cli(quiet_settings(tmp_path, engine_mode="dokker"))
     assert report["arcadedb"]["engine"] == "unknown"

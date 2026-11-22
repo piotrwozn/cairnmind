@@ -223,7 +223,9 @@ def test_a_missing_client_and_a_missing_java_ask_for_the_system_they_run_on(sett
         monkeypatch.setattr(platform_hints, "host_system", lambda *a, _n=name, **k: _n)
         with pytest.raises(engine.ArcadeError) as caught:
             engine.start_engine(settings)
-        assert str(caught.value) == platform_hints.hint("java", name)
+        # The system's own hint, inside the sentence that also names Docker (#313).
+        assert platform_hints.hint("java", name) in str(caught.value)
+        assert "cairnmind engine start --docker" in str(caught.value)
         with pytest.raises(ValueError) as caught:
             NativeRuntime(settings).start({"root": str(tmp_path)}, "codex")
         assert str(caught.value) == platform_hints.hint("client_missing", name)

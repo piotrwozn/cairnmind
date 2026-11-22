@@ -28,7 +28,7 @@ def test_a_healthy_deterministic_report_lists_required_then_optional_then_the_ne
     lines = SUMMARY(healthy())
     assert lines[0] == "Memory is kept in /home/me/.local/share/cairnmind."
     assert lines[1] == first_start.REQUIRED_PRESENT
-    assert lines[2] == "  - Database engine: answers at http://127.0.0.1:2480; the database cairnmind can be read."
+    assert lines[2] == "  - Database engine: answers at http://127.0.0.1:2480; the memory database can be read."  # #326: no internal name
     assert lines[3] == "  - " + first_start.SERVICE_ON_DEMAND
     assert lines[4] == first_start.NOTHING_MISSING
     assert lines[5] == first_start.OPTIONAL_OFF
@@ -56,10 +56,12 @@ def test_a_missing_java_is_required_and_missing_and_the_next_step_is_to_fix_it()
     assert not any(line.startswith("  - Database engine: answers") for line in lines)
 
 
-def test_models_that_are_on_but_unreachable_are_required_and_missing_not_optional():
+def test_models_that_are_on_but_unreachable_are_optional_and_not_working():
     report = healthy(ollama={"available": False, "url": "http://127.0.0.1:11434"})
     del report["knowledge_agent"]
     lines = SUMMARY(report)
+    # Not a reason to exit 1 (#313): under its own heading, after "Required and missing: nothing."
+    assert lines[lines.index(first_start.OPTIONAL_BROKEN) - 1] == first_start.NOTHING_MISSING
     assert "  - Ollama does not answer; local models need `ollama serve`." in lines
     assert not any(line.startswith("  - Local models") for line in lines)
     reachable = healthy(ollama={"available": True, "chat_model_installed": True, "embedding_model_installed": True})
@@ -105,7 +107,7 @@ def test_where_things_run_is_the_topology_lines_and_a_server_that_is_down_names_
                                 "url": "https://db.example:2480", "database": "team"})
     lines = SUMMARY(connect)
     assert lines[1:4] == place["lines"] and lines[4] == first_start.REQUIRED_PRESENT
-    assert lines[5] == "  - Database engine: answers at https://db.example:2480; the database team can be read."
+    assert lines[5] == "  - Database engine: answers at https://db.example:2480; the memory database can be read."
     down = healthy(java={"needed": False}, arcadedb={"mode": "connect", "available": False,
                                                       "url": "https://db.example:2480", "error": "ConnectError"})
     assert ("  - The database server at https://db.example:2480 does not answer (ConnectError). Check that it "
@@ -215,7 +217,7 @@ def run_doctor(directory, *arguments):
 def test_doctor_prints_the_summary_in_a_terminal_and_json_otherwise(monkeypatch, quiet):
     monkeypatch.setattr(cli, "_stdout_is_terminal", lambda: True)
     summary = run_doctor(quiet)
-    assert summary.exit_code == 0
+    assert summary.exit_code == 1  # its engine is missing: something required (#313)
     assert summary.output.startswith(f"Memory is kept in {quiet}.")
     assert summary.output.splitlines()[1].startswith("Storage: ArcadeDB")  # the report's topology lines
     assert first_start.REQUIRED_MISSING in summary.output and first_start.FULL_REPORT in summary.output

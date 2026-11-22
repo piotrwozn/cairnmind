@@ -401,13 +401,14 @@ def _store_choice(tmp_path, value):
     return data
 
 
-def test_doctor_says_disabled_as_information_and_exits_0(monkeypatch, tmp_path):
+def test_doctor_says_disabled_as_information_and_exits_0_unless_the_value_is_invalid(monkeypatch, tmp_path):
     _quiet_doctor(monkeypatch)
     reports = {}
     for value in ("disabled", "enabled", "", None, "maybe"):
         data = _store_choice(tmp_path, value)
         result = CliRunner().invoke(cli.app, ["--data-dir", str(data), "doctor"])
-        assert result.exit_code == 0, result.output
+        # An invalid value stops the service, so it is required and missing (#313); every other choice exits 0.
+        assert result.exit_code == (1 if value == "maybe" else 0), result.output
         reports[value] = json.loads(result.stdout)
     assert reports["disabled"]["knowledge_agent"] == "disabled (deterministic-only mode)"
     assert reports["disabled"]["get_models"] == first_start.GET_MODELS
@@ -470,16 +471,18 @@ def test_rebuild_vectors_refuses_without_models(monkeypatch, tmp_path):
         command="cairnmind rebuild-vectors") + " " + first_start.GET_MODELS
 
 
-def test_the_ask_panel_names_the_mode_apart_from_missing_evidence():
+def test_the_ask_panel_names_the_mode_apart_from_missing_evidence(monkeypatch):
     from cairnmind.terminal_commands import ask_summary
-    for language, heading, missing in (("en", "Deterministic-only mode (no models)", "Missing evidence"),
-                                       ("pl", "Tryb tylko deterministyczny (brak modeli)", "Brakujące dowody")):
+    monkeypatch.setattr("shutil.which", lambda name, *a, **k: None)  # no coding assistant: ASK_NEXT is shown
+    # #326: no heading of its own above the one line; the way to get models, then the next step.
+    for language, missing in (("en", "Missing evidence"), ("pl", "Brakujące dowody")):
         def say(text, language=language):
             return tr(text, language)
         shown = ask_summary(knowledge_mode.unavailable_answer(NOTHING_FOUND), say)
-        assert heading + ":\n" + say(first_start.GET_MODELS) in shown and missing not in shown
+        assert say(first_start.GET_MODELS) + "\n" + say(first_start.ASK_NEXT) in shown and missing not in shown
+        assert "Deterministic-only" not in shown and "Tryb tylko deterministyczny (brak" not in shown
         held = ask_summary(knowledge_mode.unavailable_answer({**NOTHING_FOUND, "held_back": {"chunks": 1}}), say)
-        assert heading + ":\n" + say(first_start.GET_MODELS) in held
+        assert say(first_start.GET_MODELS) + "\n" + say(first_start.ASK_NEXT) in held
         assert missing + ":\n- " + say(first_start.MATCHES_HELD_BACK) in held
         assert "- " + say(first_start.GET_MODELS) not in held
     configured = {"status": "unverified", "answer": "x", "unknowns": ["No decision explains it."]}
