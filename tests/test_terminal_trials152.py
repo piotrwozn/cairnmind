@@ -280,7 +280,7 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
         assert results == [False]
         app.push_screen(ConfirmModal("Run a paid model test?", "A real request.", approve="Run", consent=True),
                         results.append)
-        await wait_until(pilot, lambda: getattr(app.screen, "drawn_at", float("inf")) < float("inf"))  # an Enter typed before the draw is no answer
+        await wait_until(pilot, lambda: app.screen.drawn_at < float("inf"))  # an Enter typed before the draw is no answer
         # A consent request starts on Cancel too (#268): a stray Enter refuses, approving needs a deliberate key.
         assert isinstance(app.focused, Button) and app.focused.id == "confirm-no"
         assert "Tab: switch" in str(app.screen.query_one(".cm-hint").render())
@@ -289,7 +289,7 @@ async def test_confirmation_and_consent_both_start_on_cancel(tmp_path, monkeypat
         assert results == [False, False] and not isinstance(app.screen, ConfirmModal)
         app.push_screen(ConfirmModal("Run a paid model test?", "A real request.", approve="Run", consent=True),
                         results.append)
-        await wait_until(pilot, lambda: getattr(app.screen, "drawn_at", float("inf")) < float("inf"))
+        await wait_until(pilot, lambda: app.screen.drawn_at < float("inf"))
         await pilot.pause(ConfirmModal.QUIET + .1)  # past the quiet moment of a consent dialog (#292)
         await pilot.press("shift+tab", "enter")
         await pilot.pause()
@@ -333,6 +333,7 @@ async def test_keys_typed_before_the_first_refresh_never_approve_a_consent_dialo
         assert results == []  # neither approved nor refused: they were typed before the question was shown
         body = modal.query_one(".cm-dialog-body")
         fits = body.virtual_size.height <= body.scrollable_content_region.height
+        assert fits == (text == "A real request.")  # the long text really scrolls, so the focus-on-text path is tested
         assert app.focused is (modal.query_one("#confirm-no") if fits else body)  # no early focus move acted
         await wait_until(pilot, lambda: key_of(app, "x").time >= modal.drawn_at + modal.QUIET)
         for _ in range(3):  # a deliberate Tab and Enter, typed later, approve as before
@@ -447,6 +448,78 @@ async def test_escape_refuses_a_consent_dialog_at_once_even_before_it_is_drawn(t
         await wait_until(pilot, lambda: results)
         assert results == [False]
     assert ConfirmModal("Remove?", "x").admits(key_of(app, "enter"))  # a plain confirmation takes every key
+
+
+@pytest.mark.asyncio
+async def test_input_reaching_a_consent_dialog_before_it_is_mounted_is_refused_without_a_crash(tmp_path, monkeypatch):
+    from textual import events
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        base = app.query_one("#project-rows")
+        modal = ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True)
+        app.push_screen(modal, results.append)  # on top at once, mounted later
+        assert not modal.is_mounted
+        app.post_message(events.MouseDown(None, 5, 5, 0, 0, 1, False, False, False, screen_x=5, screen_y=5))
+        base._forward_event(key_of(app, "shift+tab"))
+        await shown(pilot, modal)
+        await pilot.pause()
+        assert app.is_running and results == [] and app.focused.id == "confirm-no"
+
+
+@pytest.mark.asyncio
+async def test_a_click_on_cancel_refuses_at_once_but_a_click_on_approve_waits(tmp_path, monkeypatch):
+    from textual import events
+    from cairnmind.terminal_panels import ConfirmModal
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    results = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        modal = ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True)
+        app.push_screen(modal, results.append)
+        await shown(pilot, modal)
+        await wait_until(pilot, lambda: modal.drawn_at < float("inf"))
+
+        def press(button, kind):
+            x, y = button.region.x + button.region.width // 2, button.region.y + button.region.height // 2
+            event = kind(None, x, y, 0, 0, 1, False, False, False, screen_x=x, screen_y=y)
+            event.time = modal.drawn_at + .1  # inside the quiet moment
+            modal._forward_event(event)
+
+        press(modal.query_one("#confirm-yes"), events.MouseDown)
+        await pilot.pause()
+        assert results == [] and app.focused.id == "confirm-no"
+        press(modal.query_one("#confirm-no"), events.MouseDown)
+        press(modal.query_one("#confirm-no"), events.Click)
+        await pilot.pause()
+        assert results == [False]
+
+
+@pytest.mark.asyncio
+async def test_the_dialogs_own_key_guard_holds_in_an_app_without_the_app_hook(tmp_path):
+    from textual.app import App
+    from cairnmind.terminal_panels import ConfirmModal
+    results = []
+
+    class Host(App):
+        pass
+
+    app = Host()
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = ConfirmModal("Run a command?", "A real request.", approve="Run", consent=True)
+        app.push_screen(modal, results.append)
+        early = [key_of(app, "shift+tab"), key_of(app, "enter")]
+        await shown(pilot, modal)
+        await pilot.pause(HELD)
+        for key in early:
+            app.post_message(key)
+        await pilot.pause()
+        assert results == [] and app.focused.id == "confirm-no"
+
 
 @pytest.mark.asyncio
 async def test_a_stall_before_the_first_refresh_does_not_let_queued_keys_approve(tmp_path, monkeypatch):

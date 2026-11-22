@@ -36,6 +36,7 @@ class ConfirmModal(MessageModal):
         super().__init__(title, value)
         self.approve = approve
         self.consent = consent
+        self.drawn_at = float("inf") if consent else 0  # set before any input can reach a dialog that is not mounted yet
         self.SCROLL_HINT, self.CLOSE_HINT = ("PgUp/PgDn: scroll · Tab: switch · Esc: cancel", "Tab: switch · Esc: cancel") if consent else (self.SCROLL_HINT, self.CLOSE_HINT)
 
     def compose(self):
@@ -74,9 +75,8 @@ class ConfirmModal(MessageModal):
             body.styles.max_height = rows + 1
 
     def on_mount(self):
-        # At once, before any queued key is handled (#292). drawn_at is the first refresh (start_on_cancel), on the clock
+        # At once, before any queued key is handled (#292). drawn_at, the first refresh (start_on_cancel), is on the clock
         # Textual stamps every input event with when it reads it (#318).
-        self.drawn_at = float("inf") if self.consent else 0
         if self.consent:
             self.set_focus(self.query_one("#confirm-no", Button))
 
@@ -102,6 +102,12 @@ class ConfirmModal(MessageModal):
             return True
         return event.time >= self.drawn_at + self.QUIET or (key == "enter" and event.time >= self.drawn_at)
 
+    def presses_cancel(self, event):
+        # Cancel only refuses, so a press on it made after the dialog was drawn needs no quiet moment (#318).
+        with suppress(Exception):
+            return event.time >= self.drawn_at and self.get_widget_at(event.screen_x, event.screen_y)[0].id == "confirm-no"
+        return False
+
     def on_key(self, event):
         # A key typed while this dialog is on top passes here before any binding; drop_unseen_key in the App
         # also catches a key queued on the screen below, which never passes here.
@@ -112,7 +118,7 @@ class ConfirmModal(MessageModal):
     def _forward_event(self, event):
         # Textual hands every mouse event to the top screen here before any widget sees it: a press the dialog
         # does not admit neither focuses nor clicks, and the click of its release is cancelled.
-        if isinstance(event, (MouseDown, Click)) and not self.admits(event):
+        if isinstance(event, (MouseDown, Click)) and not self.admits(event) and not self.presses_cancel(event):
             self.suppress_click()
             return
         super()._forward_event(event)
