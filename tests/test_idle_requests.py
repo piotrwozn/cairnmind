@@ -114,18 +114,61 @@ def test_an_appended_transcript_line_is_archived_by_the_next_poll(tmp_path, monk
     assert [error for error in ingest.poll_imports(store)["errors"] if str(history) in error]
 
 
-def test_a_skipped_transcript_reports_what_a_full_poll_reports(tmp_path, monkeypatch):
+def reparse_stub(monkeypatch, answers):
+    calls = []
+
+    def stub(*args, **kwargs):
+        calls.append(1)
+        return answers[min(len(calls), len(answers)) - 1]
+    monkeypatch.setattr(ingest, "_reparse_history_sources_locked", stub)
+    return calls
+
+
+def test_a_file_with_reparse_errors_or_repairs_is_imported_by_every_poll(tmp_path, monkeypatch):
     store, pid, root, history = followed(tmp_path, lambda root: transcript(root, "hello"))
-    monkeypatch.setattr(ingest, "_reparse_history_sources_locked", lambda *a, **k: {
-        "repaired": 0, "unchanged": 1, "errors": ["Transcript source s: original provenance or raw hash does not match"]})
+    error = "Transcript source s: working directory conflicts with its project"
+    calls = reparse_stub(monkeypatch, [{"repaired": 0, "unchanged": 1, "errors": [error]}] * 2
+                         + [{"repaired": 1, "unchanged": 0, "errors": []}] * 2
+                         + [{"repaired": 0, "unchanged": 0, "errors": []}])
+    assert [ingest.poll_imports(store)["errors"] for _ in range(5)] == [[error], [error], [], [], []]
+    assert len(calls) == 5  # an error that stops being true is not repeated; a repair continues while it repairs
     ingest.poll_imports(store)
-    skipped = ingest.poll_imports(store)["errors"]
-    ingest._POLLED.clear()
-    assert skipped and skipped == ingest.poll_imports(store)["errors"]
-    monkeypatch.undo()
-    # The errors of a line are reported in the round that reads it, and not again.
+    assert len(calls) == 5  # at last nothing to do: the file is skipped
+
+
+def test_a_line_appended_during_the_look_is_reported_once(tmp_path, monkeypatch):
+    store, pid, root, history = followed(tmp_path, lambda root: transcript(root, "hello"))
+    real = ingest._at_end
+    appended = []
+
+    def race(path, cursor):
+        answer = real(path, cursor)
+        if answer and not appended:
+            appended.append(1)
+            with history.open("a") as handle:
+                handle.write('{"newSchema": true}\n')
+        return answer
+    monkeypatch.setattr(ingest, "_at_end", race)
+    assert len(ingest.poll_imports(store)["errors"]) == 1
+    assert ingest.poll_imports(store)["errors"] == []
+
+
+def test_an_unreadable_secret_registry_is_still_reported_by_every_poll(tmp_path, monkeypatch):
+    store, pid, root, history = followed(tmp_path, lambda root: transcript(root, "hello"))
+    ingest.poll_imports(store)
+    ingest.poll_imports(store)  # remembered
+    def refuse(settings):
+        raise ValueError("the saved connection profiles cannot be read")
+    monkeypatch.setattr(ingest, "ingest_masker", refuse)
+    for _ in range(2):
+        errors = ingest.poll_imports(store)["errors"]
+        assert len(errors) == 1 and "Transcript import refused" in errors[0] and str(history) in errors[0]
+
+
+def test_a_skipped_transcript_reports_what_a_full_poll_reports(tmp_path, monkeypatch):
     other = tmp_path / "other"
     other.mkdir()
+    # The errors of a line are reported in the round that reads it, and not again.
     store, pid, root, history = followed(other, "")
     history.write_text('{"newSchema": true}\ninvalid-json\n')
     assert len(ingest.poll_imports(store)["errors"]) == 2
@@ -157,7 +200,7 @@ def warm(store, pid):
 def idle_round(store, pid):
     """What the service does in an idle round: the repair, the claims, the transcripts, the signature check."""
     schedule_embeddings(store, NAMESPACE)
-    store.claim_job("archive", 120, ["none"])
+    store.claim_job("archive", 120, ["import"])
     ingest.poll_imports(store)
     ingest.index_project_if_changed(store, pid)
     ingest.index_pending_sources(store)

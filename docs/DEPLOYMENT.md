@@ -318,9 +318,11 @@ vector has an embedding job. Until #363 that check cost 11 requests for every pa
 and every passage lacks one after a first indexing, after `cairnmind restore` (backups carry no vectors),
 after `rebuild-vectors` and while the embedding model is slow; transcripts cost 4 requests each per look.
 Measured on 22 November 2026 with the test engine of the test suite on one machine, for a store of
-Cairnmind's own repository (557 files, 2,978 passages, 82,353 graph nodes, 102,547 edges), on `127.0.0.1`
-and through the test relay `tests/database_relay.py` with 20 ms added to every request. The seconds are
-from a machine shared with other work; the request counts are exact:
+Cairnmind's own repository, on `127.0.0.1` and through the test relay `tests/database_relay.py` with
+20 ms added to every request. The "Now" column was measured on 557 files, 2,978 passages, 82,353 graph
+nodes and 102,547 edges; the "Before #363" column was measured on the same repository before the change,
+at 555 files and 2,973 passages. The seconds are from a machine shared with other work; the request counts
+are exact:
 
 | Work | Before #363 | Now |
 | --- | --- | --- |
@@ -332,8 +334,8 @@ from a machine shared with other work; the request counts are exact:
 
 While the check ran, no job of the queue ran. Now it writes nothing when every passage already has its job
 (a check that finds 1,313 finished jobs without a vector and 171 failed ones takes 251 requests, once, and
-leaves every passage with a pending job), and the requests of an idle service do not grow with the size of
-the store. What is left of `index` in a new process is about 6 requests per file, once per start of the
+leaves every passage with a pending job), and the requests of an idle service grow by at most one request
+per 500 passages without a vector (the jobs are read in groups of 500), not by a request per row. What is left of `index` in a new process is about 6 requests per file, once per start of the
 service. Not measured: a real network (another measurement does that), and the requests of an open
 workspace, which asks the service for its status on its own.
 

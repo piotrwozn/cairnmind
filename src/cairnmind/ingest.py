@@ -1413,7 +1413,8 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
         project_id = store.resolve_project(project_id)["id"]
     if client not in {"auto", "codex", "claude"}:
         raise ValueError("client must be auto, codex, or claude")
-    counts: dict[str, Any] = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
+    counts: dict[str, Any] = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "repaired": 0,
+                              "errors": []}
     if path.is_dir():
         for candidate in sorted(path.rglob("*.jsonl")):
             if candidate.is_symlink():
@@ -1437,6 +1438,7 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     # known metadata compatibility gap independently of append ingestion.
     reparsed = _reparse_history_sources_locked(store, path, project_id, client)
     counts["errors"].extend(reparsed["errors"])
+    counts["repaired"] = reparsed["repaired"]
     cursors = store.query("SELECT FROM import_cursors WHERE path=:path", {"path": str(path)})
     row = cursors[0] if cursors else None
     offset = int(row["offset"]) if row else 0
@@ -1552,11 +1554,11 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
     return counts
 
 
-# Per store and path, the errors of the last import of a transcript file in this process that read no line
-# (#363): what importing it again would report while nothing was appended (the reparse of old records, which
-# depends only on the code and the stored rows). While its cursor in the database stands at the end of the
-# file and the file is the one the cursor describes, the poll skips it and reports those errors again.
-_POLLED: dict[tuple[str, str], list[str]] = {}
+# Per store and path, the transcript files whose last import in this process read no line, repaired no record
+# and reported no error (#363). While the cursor in the database stands at the end of the file and the file is
+# the one the cursor describes, importing it again would do nothing, so the poll skips it. A file that read,
+# repaired or reported anything is imported again by every poll, as before.
+_POLLED: set[tuple[str, str]] = set()
 
 
 def _at_end(path: Path, cursor: dict) -> bool:
@@ -1573,12 +1575,16 @@ def poll_imports(store) -> dict:
     rows = store.query("SELECT path,project_id,client,`offset`,fingerprint FROM import_cursors")
     result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
     removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
+    try:  # local files only; when the secrets cannot be read no file is skipped, so each import refuses and says so
+        ingest_masker(store.settings)
+        secrets_readable = True
+    except ValueError:
+        secrets_readable = False
     for row in rows:
         if row["project_id"] in removed:
             continue
         key = (str(store.data_dir), row["path"])
-        if key in _POLLED and _at_end(Path(row["path"]), row):
-            result["errors"].extend(_POLLED[key])
+        if secrets_readable and key in _POLLED and _at_end(Path(row["path"]), row):
             continue
         try:
             was_at_end = _at_end(Path(row["path"]), row)
@@ -1586,17 +1592,17 @@ def poll_imports(store) -> dict:
             for name, value in item.items():
                 if name == "errors":
                     result[name].extend(value)
-                else:
+                elif name in result:
                     result[name] += value
-            # Only an import that had nothing to read is remembered: a line's errors are reported once, in
-            # the round that reads it; the next round imports the file at its new end and remembers that.
-            if was_at_end:
-                _POLLED[key] = list(item.get("errors", []))
+            # Remembered only when the file stood at its end before the import and the import changed and
+            # reported nothing: a line appended meanwhile is archived (or errors) and so is not remembered.
+            if was_at_end and not (item["archived"] or item["inbox"] or item["repaired"] or item["errors"]):
+                _POLLED.add(key)
             else:
-                _POLLED.pop(key, None)
+                _POLLED.discard(key)
         except (OSError, ValueError) as exc:
             result["errors"].append(f"{row['path']}: {exc}")
-            _POLLED.pop(key, None)
+            _POLLED.discard(key)
     return result
 
 
