@@ -5,7 +5,7 @@ acted (`git config user.name` of the project, read when the act happens, never a
 branch and the commit, and hashes exactly what was judged: the text, the kind, key and replaced record,
 the quoted passage (#172), and for a task what it asks for.
 A published revision is covered only by such an audit, so an agent's later edit is never published as
-something a person confirmed.
+something a person confirmed. The adoption of an old task group (#305) writes a note of its own.
 """
 from __future__ import annotations
 
@@ -116,6 +116,35 @@ def confirm(inspector, project, plan_id, expected_plan_version, *, reason=None, 
                             worktree)
     except LookupError as exc:
         raise InspectorNotFound(str(exc)) from None
+
+
+def adopt_group(store, project_id, group, task_versions, *, title=None, worktree=None):
+    """A person adopts an old task group into a plan (#305): one act with one audit note.
+
+    Only the inspector route calls it, with the open workspace's key, and it refuses without that proof, so no
+    other caller writes a note saying a person adopted a group. `task_versions` are the tasks the person was
+    shown, at the versions shown: another set or another version adopts nothing. Every step is proposed until
+    the person confirms the plan (the store's rule for a person's act that changes what was confirmed).
+    """
+    from .confirmation import GROUP_CHANGED, ConfirmationRefused, person_source
+    from .person_proof import PROOF_MISSING, present
+    from .plans import PlanManager, _legacy_tasks
+    if not present():
+        raise ConfirmationRefused(PROOF_MISSING)  # a person's act needs the workspace's key (#305)
+    if not isinstance(group, str) or not group.strip():
+        raise ValueError("Legacy group must be nonempty text")
+    if not isinstance(task_versions, dict) or not task_versions:
+        raise ValueError("task_versions must map the tasks shown to their versions")
+    with store.transaction() as tx:
+        if {task["id"]: task["version"] for task in _legacy_tasks(tx, project_id, group)} != task_versions:
+            raise ValueError(GROUP_CHANGED)
+        note = person_source(store, project_id, group, route="inspector_review", action="adopt_plan_group",
+                             worktree=worktree)
+        with store.person_act("inspector_review", note["id"]):
+            result = PlanManager(store).adopt_legacy(
+                project_id, group, plan={"title": title} if title else None,
+                idempotency_key=f"workspace-adopt-{uuid4()}", task_versions=task_versions, worktree=worktree)
+    return {**result, "audit_source_id": note["id"]}
 
 
 def confirm_plan(store, project_id, plan_id, expected_plan_version, reason=None, worktree=None):

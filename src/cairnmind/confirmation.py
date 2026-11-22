@@ -247,6 +247,9 @@ IMPORT_IN_SESSION = ("A memory import is run only by a person, not inside a codi
 REPLACED_CHANGED = ("What this import replaces of the records confirmed or disputed on this computer changed since the "
                     "check. Nothing was imported. Check the import again and read the new list.")
 
+GROUP_CHANGED = ("The tasks of this group changed since they were shown. Nothing was adopted. Open More, then Old "
+                 "task groups again and read the new list.")
+
 
 def replaces_refusal(names) -> str:
     return (f"This import would replace {len(names)} record(s) that were confirmed or disputed on this machine: "
