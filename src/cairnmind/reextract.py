@@ -6,11 +6,14 @@ or edited. The extractor version is the stamp of #192 (metadata.extractor.versio
 """
 from __future__ import annotations
 
+from .extraction_input import extraction_request
+from .retrieval import json_value
 from .sessions import _automatic_proposal
 from .sql import clean_row, json_text
 
 PAGE = 1000
 CHUNK = 200
+UNEXTRACTED_REASON = "The source is no longer extracted: the current extractor skips it."
 
 
 def stamp_version(record: dict) -> int:
@@ -27,9 +30,27 @@ def replaceable(store, project_id: str, source: dict, below: int) -> list[dict]:
     return [row for row in rows if _automatic_proposal(row, {source["id"]: source}) and stamp_version(row) < below]
 
 
+def supersede_unextracted(store, project_id: str, source: dict, below: int, check=lambda: None) -> int:
+    """Supersede the untouched proposals of a source the current extractor skips (a job of ``queue`` only); the
+    caller's transaction makes it all or nothing. The reason is stored on each superseded version."""
+    gone = replaceable(store, project_id, source, below)
+    for old in gone:
+        check()
+        store.remember(project_id, {"id": old["id"], "expected_version": old["version"], "status": "superseded",
+                                    "metadata": {"superseded_reason": UNEXTRACTED_REASON}}, old["source_ids"])
+    return len(gone)
+
+
+def _skipped(source: dict) -> bool:
+    # shortcut: a masked source needs the secrets to decide, so the dry run counts it as read; the job decides.
+    metadata = json_value(source.get("metadata"), {})
+    return not (isinstance(metadata, dict) and metadata.get("masked")) and extraction_request(source) is None
+
+
 def plan(store, project_id: str, below: int, version: int) -> dict:
     """What a re-extraction with extractor ``version`` of the records below ``below`` would queue, per source."""
     found: dict[str, list[int]] = {}
+    skipped: set[str] = set()
     after = ""
     while True:
         rows = [clean_row(row) for row in store.query(
@@ -46,6 +67,7 @@ def plan(store, project_id: str, below: int, version: int) -> dict:
         for row in rows:
             if _automatic_proposal(row, sources) and stamp_version(row) < below:
                 found.setdefault(row["metadata"]["extraction_source_id"], []).append(stamp_version(row))
+        skipped |= {s for s in found if s in sources and _skipped(sources[s])}
         if len(rows) < PAGE:
             break
         after = rows[-1]["id"]
@@ -59,7 +81,8 @@ def plan(store, project_id: str, below: int, version: int) -> dict:
             row["sources"].add(source)
     return {"project_id": project_id, "below_version": below, "extractor_version": version,
             "versions": [{**row, "sources": len(row["sources"])} for _, row in sorted(per_version.items())],
-            "sources": sorted(found), "already_queued": sorted(queued),
+            "sources": sorted(found), "skipped_sources": sorted(skipped),
+            "skipped_records": sum(len(found[s]) for s in skipped), "already_queued": sorted(queued),
             "would_queue": sorted(set(found) - queued)}
 
 
@@ -71,5 +94,5 @@ def queue(store, project_id: str, below: int, version: int) -> dict:
     """Queue one extract job per source of ``plan``; a source that has the job for this version gets none again."""
     result = plan(store, project_id, below, version)
     for source in result["would_queue"]:
-        store.enqueue("extract", project_id, {"source_id": source}, _key(source, version))
+        store.enqueue("extract", project_id, {"source_id": source, "reextract": True}, _key(source, version))
     return {**result, "queued": len(result["would_queue"])}
