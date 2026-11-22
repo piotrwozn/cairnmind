@@ -385,9 +385,13 @@ class WorkspaceManager:
                         claimed = self._claim_attached(process.pid, terminal, takeover=takeover)
                     except subprocess.CalledProcessError:
                         # The server went away under the claim (a stop): the client ends with it, and the code is
-                        # judged below. A tmux that failed with the server alive is a real failure and raises.
+                        # judged below. A tmux that failed with the server alive is a real failure and raises,
+                        # unless a stop is under way: its marker is written before the server is told to exit,
+                        # so the server may still answer. An unclaimed client must not stay, so it is ended here.
                         if self.exists():
-                            raise
+                            if not (self.directory / STOP_ASKED).exists():
+                                raise
+                            process.terminate()
                         break
                     if claimed is not None:
                         break

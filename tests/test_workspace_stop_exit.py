@@ -34,6 +34,8 @@ def tmux(self, *args, **kwargs):
         end = time.monotonic() + 8
         while not (here / "go").exists() and time.monotonic() < end:
             time.sleep(.02)
+        if (here / "fail").exists():  # tmux refuses although the server is alive
+            raise w.subprocess.CalledProcessError(1, args)
     return real(self, *args, **kwargs)
 w.WorkspaceManager.tmux = tmux
 raise SystemExit""")
@@ -99,6 +101,35 @@ def test_a_stop_that_comes_while_the_attach_is_claiming_still_ends_it_with_zero(
             process.wait(timeout=3)
         os.close(master)
         os.close(slave)
+
+@pytest.mark.parametrize("stop_under_way", [True, False])
+def test_a_claim_refused_by_a_living_server_is_a_stop_only_when_the_stop_marker_is_there(manager, stop_under_way):
+    # The stop writes its marker before it tells the server to exit, so the claim can fail while the server still answers.
+    workspace, _, _ = manager
+    workspace.create(start_supervisor=False)
+    process, master, slave = _attached(workspace, HELD_SCRIPT)
+    try:
+        deadline = time.monotonic() + 8
+        while not (workspace.directory / "held").exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert (workspace.directory / "held").exists()
+        if stop_under_way:
+            (workspace.directory / module.STOP_ASKED).write_text("1")
+        (workspace.directory / "fail").write_text("1")
+        (workspace.directory / "go").write_text("1")
+        code = process.wait(timeout=8)
+        assert (code == 0) is stop_under_way, code
+        deadline = time.monotonic() + 8
+        while workspace.clients() and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert not workspace.clients()  # no unclaimed client stays attached either way
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        os.close(master)
+        os.close(slave)
+        workspace.tmux("kill-server")
 
 
 @pytest.mark.parametrize("by_person, expected, stale", [(True, 0, False), (False, 1, False), (False, 1, True)])
