@@ -336,8 +336,24 @@ While the check ran, no job of the queue ran. Now it writes nothing when every p
 (a check that finds 1,313 finished jobs without a vector and 171 failed ones takes 251 requests, once, and
 leaves every passage with a pending job), and the requests of an idle service grow by at most one request
 per 500 passages without a vector (the jobs are read in groups of 500), not by a request per row. What is left of `index` in a new process is about 6 requests per file, once per start of the
-service. Not measured: a real network (another measurement does that), and the requests of an open
-workspace, which asks the service for its status on its own.
+service. The requests of an open workspace, which asks the service for its status on its own, are not
+measured.
+
+Between two machines, before this change. Measured on 22 November 2026 on `main` at 62ec46f, between two
+machines over Wi-Fi (latency 18.5 ms on average, 2.5 to 70 ms), by a connect-only client holding a copy of
+this repository (555 files, 2,973 passages, 82,194 nodes, 102,345 edges):
+
+| Work, on a real network | Before #363 |
+| --- | --- |
+| First indexing (`cairnmind project add`) | 80.4 s |
+| `cairnmind index` with nothing changed, which starts the service | 117.8 s |
+| `cairnmind backup` | 21.3 s, for a file of 26.2 MB |
+| `cairnmind status` while the service ran with 5,820 jobs waiting (no models) | 0.36 to 0.49 s |
+| Requests of each of these, counted by the server | not counted yet [gap: to be filled from the other machine's counters] |
+
+The figures after #363 over a real network do not exist yet: no machine has run this change over a connection.
+The "Now" column above is the test engine on one machine, and its 20 ms relay is the nearest thing to a
+network that this change was measured on; it is a relay on the same machine, not a network.
 
 ### The engine tests against this server
 

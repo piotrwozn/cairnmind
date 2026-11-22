@@ -174,6 +174,10 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The upgrade check reads a process's command line again before calling an upgrade mark stale, so a living process that cannot be read once is not called finished (#348).
 - A workspace stop that arrives while the terminal is still attaching ends the attached terminal with exit code 0, instead of sometimes 1 (#343).
 - A session that ended cleanly is no longer recorded as failed, and its pane no longer misses the Session ended line, when tmux 3.4 misses the exit of its client (#349).
+- A running knowledge service no longer sends a burst of requests to the database every minute and a half: the check that every passage without a vector has an embedding job reads jobs in groups of 500 and writes only those that need a change, so for this repository's 2,978 passages it costs 9 requests instead of 32,706 on the test engine, and grows by one request per 500 passages (#363).
+- Following transcripts no longer costs 4 database requests per file every 10 seconds: a file whose cursor stands at its end, and whose last look read, repaired and reported nothing, is not read again until it grows or changes; a file with errors or records to repair is looked at every time, as before. A secret registry that cannot be opened is still reported for every followed file (#363).
+- `cairnmind index` with nothing changed, in a service that just started, sends about a quarter of the requests it sent (3,485 instead of 14,810 on the test engine for this repository): the embedding jobs of an unchanged file are checked in one request per file instead of four requests per passage (#363).
+- `docs/DEPLOYMENT.md` gives what a running service costs over a connection: measured on the test engine over loopback and through a relay adding 20 ms per request, with the idle figures between two machines before this change; the figures after it over a real network are not measured yet (#363).
 
 ### Development and CI
 
