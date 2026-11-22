@@ -297,6 +297,8 @@ def test_changing_only_a_proposed_command_keeps_reported_evidence_and_the_defini
     relinked = store.remember(pid, {"id": task["id"], "expected_version": changed["version"], "metadata": {
         "acceptance_criteria": [{"text": "A", "check": "lint"}]}}, [note["id"]])
     assert "acceptance_passed" not in relinked["metadata"] and task_definition_hash(relinked) != before
+    assert {"acceptance_passed", "acceptance_source_ids", "check_proposals"} <= set(relinked["metadata_dropped"])
+    assert "metadata_dropped" not in changed
 
 
 def test_profiles_written_in_a_form_text_cannot_be_added_to_are_left_alone(workspace):

@@ -169,7 +169,7 @@ GET /sessions/{id}; GET /checks?project=...&task_id=...
 Existing /context enhanced current plan/scope/verification, old public tools retained.
 MCP new save_plan,next_task,resume_context,ack_resume,check_status (read-only checks).
 MCP resume_context(full_packet=false) sends short; remember/checkpoint answer {id,version,status,kind,key,
-source_ids, origin_*, supersedes?, possible_conflicts?, supersede_warning?, metadata_not_stored_as_sent?};
+source_ids, origin_*, supersedes?, possible_conflicts?, supersede_warning?, metadata_not_stored_as_sent?, metadata_dropped?, omitted_source_ids?};
 save_plan's plan header has no title (#325).
 ServiceClient autoadds bound sessionid for writes and scoped ask/context/next/check reads;
 rejects request session mismatch. Direct CLI workflow reads inherit the same worktree.

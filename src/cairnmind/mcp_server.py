@@ -66,6 +66,10 @@ def _saved_record_view(result: dict[str, Any], sent: Any) -> dict[str, Any]:
     view = {"id": result["id"], "version": result["version"], "status": result["status"],
             "kind": result.get("kind"), "key": str(result.get("key", ""))[:300],
             "source_ids": list(result.get("source_ids") or [])[-8:]}
+    if len(result.get("source_ids") or []) > 8:
+        view["omitted_source_ids"] = len(result["source_ids"]) - 8
+    if result.get("metadata_dropped"):
+        view["metadata_dropped"] = [str(name)[:100] for name in result["metadata_dropped"][:50]]
     if result.get("supersedes"):
         view["supersedes"] = result["supersedes"]
     for name in (*ORIGIN_KEYS, "supersede_warning", "supersede_replaced_evidence_latest"):
@@ -446,8 +450,9 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
 
         Answers with the stored record's id, version, status, kind, key and source_ids and, only where they
         apply, the origin mark the service set, supersedes, possible_conflicts, a supersede warning, and
-        metadata_not_stored_as_sent naming the metadata fields the service did not keep as sent. The content
-        you sent is not repeated.
+        metadata_not_stored_as_sent naming the metadata fields the service did not keep as sent,
+        metadata_dropped naming stored fields this write removed, and omitted_source_ids (how many source ids
+        beyond the last eight are not listed). The content you sent is not repeated.
         """
         saved = await bridge.post("/remember", {"project": project, "record": record, "sources": sources})
         return _saved_record_view(saved, record.get("metadata"))

@@ -1387,6 +1387,12 @@ class Store:
                 from .scope import note_progress
                 worktree = record.get("worktree")
                 self._after_commit(lambda: note_progress(self, result, worktree, change))
+        # Not stored: names what this write removed from the old metadata (reported proof, criteria links), so
+        # a caller that no longer gets the echo still learns it (#325).
+        dropped = sorted(name for name in (old.get("metadata") or {} if old and not replace_metadata else {})
+                         if name not in metadata)
+        if dropped:
+            result["metadata_dropped"] = dropped
         return result
 
     def _after_commit(self, call):

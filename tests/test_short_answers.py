@@ -73,6 +73,7 @@ def client_over(monkeypatch, settings, answer):
         return httpx.Response(200, json=answer if request.url.path == "/sessions/context" else {"ok": True})
 
     monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(mcp_server, "other_version", lambda settings: None)  # its own health probe is a real socket
     return ServiceClient(settings, session_id="s", packet_id="packet-one"), seen
 
 
@@ -111,7 +112,11 @@ def test_write_answers_name_what_the_service_decided_not_what_was_sent():
     assert "SECRET" not in json.dumps(view) and "content" not in view and "metadata" not in view
     assert "metadata_not_stored_as_sent" not in _saved_record_view(STORED, {"topic": "storage"})
     assert _saved_record_view({"ok": True}, sent) == {"ok": True}
-    assert len(_saved_record_view({**STORED, "source_ids": [str(n) for n in range(20)]}, None)["source_ids"]) == 8
+    many = _saved_record_view({**STORED, "source_ids": [str(n) for n in range(20)]}, None)
+    assert len(many["source_ids"]) == 8 and many["omitted_source_ids"] == 12
+    assert "omitted_source_ids" not in view and "metadata_dropped" not in view
+    dropped = _saved_record_view({**STORED, "metadata_dropped": ["acceptance_passed", "test_passed"]}, None)
+    assert dropped["metadata_dropped"] == ["acceptance_passed", "test_passed"]
 
 
 @pytest.mark.asyncio

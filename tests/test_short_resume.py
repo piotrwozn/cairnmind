@@ -135,7 +135,7 @@ def test_a_native_short_answer_has_no_degraded_marks(fixture):  # noqa: F811
 
 def test_a_short_answer_after_the_epoch_moved_is_the_whole_packet(fixture):  # noqa: F811
     native = fixture.session("codex")
-    fixture.manager.note_event({"devbrain_session_id": native["session_id"], "session_id": "native-1",
+    fixture.manager.note_event({"cairnmind_session_id": native["session_id"], "session_id": "native-1",
                                 "hook_event_name": "PreCompact", "resume_reason": "compact",
                                 "cwd": str(fixture.root), "event_id": "compact-1"}, "codex")
     answer = read(fixture, native, short=True)
