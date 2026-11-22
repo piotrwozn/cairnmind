@@ -714,14 +714,17 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
                     "client_key_table": manager.tmux("list-clients", "-F", "#{client_key_table}", check=False).stdout.split(),
                     "focus": manager.state.read()["focus"], "panes": panes,
                     "input": [row.get("text") for row in stack.trace("input")][-6:],
-                    "messages": manager.tmux("show-messages", check=False).stdout[-1500:]}
+                    # A focus process still running is a slow focus, not a lost key.
+                    "focus_processes": [line for line in subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout.splitlines()
+                                        if "cairnmind.workspace" in line and "--focus" in line],
+                    "client1_tail": manager.tmux("capture-pane", "-p", "-t", panes["client1"], check=False).stdout.rstrip()[-300:]}
 
         def root_table():
             return manager.tmux("list-clients", "-F", "#{client_key_table}").stdout.split() == ["root"]
 
         async def key(data, predicate):
-            """Write one key as a person's terminal delivers it: only when tmux is back in its root table,
-            then wait, bounded, for what the key does."""
+            """Write keys, wait (bounded) for what they do. The root-table wait only tells that the previous
+            binding was dispatched; a burst written in one write is what the product must survive itself."""
             await wait_async(root_table, seen=seen)
             os.write(master, data)
             await wait_async(predicate, seen=seen)
@@ -732,11 +735,13 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
         async def select(number, role):
             await key(b"\x02" + number.encode(), lambda: active(role))
 
+        # Keys typed while a binding runs reach tmux in one burst; a prefix among them must still be a prefix.
+        await key(b"\x021ls\r\x022", lambda: active("client2"))
         await select("1", "client1")
         os.write(master, "OUTER_UTF8_zażółć λ\r".encode())
         wait_pane(manager, panes["client1"], 'ECHO "OUTER_UTF8_zażółć λ"')
-        await key(b"\x02\x02\r", lambda: any(row.get("text") == "\x02" for row in stack.trace("input")))
-        await select("2", "client2")
+        # The prefix is the third fast key: with tmux's paste detection on, it would reach the pane as text.
+        await key(b"\x02\x02\r\x022", lambda: active("client2") and any(row.get("text") == "\x02" for row in stack.trace("input")))
         os.write(master, "\x1b[200~OUTER_PASTE_你好\x1b[201~\r".encode())
         await wait_async(lambda: any("OUTER_PASTE_你好" in row.get("text", "") for row in stack.trace("input")), seen=seen)
         os.write(master, b"\x03")
