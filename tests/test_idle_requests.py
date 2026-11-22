@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from cairnmind import embed_jobs, ingest
 from cairnmind.service import schedule_embeddings
@@ -132,6 +133,60 @@ def test_a_skipped_transcript_reports_what_a_full_poll_reports(tmp_path, monkeyp
     assert ingest.poll_imports(store)["errors"] == []  # skipped
     ingest._POLLED.clear()
     assert ingest.poll_imports(store)["errors"] == []  # forced
+
+
+def settled_store(tmp_path, name, files, histories):
+    """An indexed tree with followed transcripts, written now; ``warm`` finishes it once its files are old enough."""
+    root = tmp_path / name
+    tree(root, files=files)
+    store = Store(tmp_path / f"{name}-memory")
+    pid = store.add_project("p", root)["id"]
+    for number in range(histories):
+        path = tmp_path / f"{name}-history{number}.jsonl"
+        path.write_text(transcript(root, f"hello {number}"))
+        ingest.import_history(store, path, pid, "claude")
+    return store, pid, root
+
+
+def warm(store, pid):
+    """Index with every file past the racy window, so that the signature is recorded, and poll once."""
+    ingest.index_project_if_changed(store, pid)
+    ingest.poll_imports(store)
+
+
+def idle_round(store, pid):
+    """What the service does in an idle round: the repair, the claims, the transcripts, the signature check."""
+    schedule_embeddings(store, NAMESPACE)
+    store.claim_job("archive", 120, ["none"])
+    ingest.poll_imports(store)
+    ingest.index_project_if_changed(store, pid)
+    ingest.index_pending_sources(store)
+    store.claim_job("inference", 60, ["none"])
+
+
+def test_an_idle_round_costs_the_same_on_a_store_four_times_larger(tmp_path, monkeypatch):
+    small = settled_store(tmp_path, "small", 30, 10)
+    large = settled_store(tmp_path, "large", 120, 40)
+    time.sleep(2.1)  # past RACY_WINDOW_NS, so the signature of the tree can be recorded
+    costs = []
+    for store, pid, _ in (small, large):
+        warm(store, pid)
+        warm(store, pid)
+        seen = counted(monkeypatch)
+        idle_round(store, pid)
+        costs.append(len(seen))
+        monkeypatch.undo()
+    assert costs[0] == costs[1] and costs[1] < 40, costs
+
+
+def test_a_changed_file_is_indexed_in_the_next_idle_round(tmp_path):
+    store, pid, root = settled_store(tmp_path, "tree", 20, 3)
+    time.sleep(2.1)
+    warm(store, pid)
+    assert ingest.index_project_if_changed(store, pid).get("skipped")
+    (root / "pkg1" / "module_001.py").write_text("VALUE_1 = 100\n")
+    result = ingest.index_project_if_changed(store, pid)
+    assert not result.get("skipped") and result["changed"] == 1
 
 
 def test_a_new_process_reindexing_nothing_reads_the_jobs_of_a_file_at_once(tmp_path, monkeypatch):
