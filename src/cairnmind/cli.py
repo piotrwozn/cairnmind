@@ -317,6 +317,12 @@ def _bind_failed(log: Path, since: int) -> bool:
 def ensure_service(settings: Settings, *, background_inference: bool = True) -> bool:
     """True when this call started the service process, False when one already answered."""
     if service_alive(settings):
+        from cairnmind.service_version import refusal as other_version
+        reason = other_version(settings)
+        if reason:
+            # It holds the rules of another version: nothing is sent to it, read or write (#319). Raised before
+            # anything starts and with started never True, so the caller announces no start.
+            raise ServiceOfOtherVersion(reason)
         return False  # used, and stoppable, during an upgrade too: the mark only stops a start
     from cairnmind import upgrade_mark
     reason = upgrade_mark.refusal()
@@ -394,6 +400,26 @@ class UpgradeInProgress(ServiceDidNotStart):
     """An installer is replacing Cairnmind (upgrade_mark.py): nothing starts the service until it has finished (#298)."""
 
 
+class ServiceOfOtherVersion(ServiceDidNotStart):
+    """This data directory's service runs another version (service_version.py): nothing is sent to it (#319)."""
+
+
+def ensure_no_upgrade() -> None:
+    """A coding session starts nothing of the version being replaced, even beside a running service, whose stop the
+    installer may be about to make (#319). ensure_service itself reads the mark only when it has to start."""
+    from cairnmind import upgrade_mark
+    reason = upgrade_mark.refusal()
+    if reason:
+        raise UpgradeInProgress(reason)
+
+
+def _refuse_during_upgrade() -> None:
+    try:
+        ensure_no_upgrade()
+    except UpgradeInProgress as exc:
+        refuse(str(exc))
+
+
 def _ensure_service_or_refuse(settings: Settings) -> None:
     try:
         started = ensure_service(settings)
@@ -426,6 +452,13 @@ def say_service_started(settings: Settings) -> None:
     """Nothing starts in the background unannounced (#287): said whether or not this is a terminal."""
     from cairnmind.first_start import SERVICE_STARTED
     typer.echo(f"Cairnmind: {SERVICE_STARTED.format(url=settings.url, data_dir=settings.data_dir)}", err=True)
+
+
+def _refuse_other_version(settings: Settings) -> None:
+    from cairnmind.service_version import refusal
+    reason = refusal(settings)
+    if reason:
+        refuse(reason)
 
 
 def refuse(message: str, code: int = 2):
@@ -490,13 +523,17 @@ def registered_projects(client, settings: Settings) -> frozenset[str] | None:
 
 
 def request(settings: Settings, method: str, path: str, *, start_service: bool = True, session: bool = True,
-            raise_refusal: bool = False, **kwargs):
+            raise_refusal: bool = False, matched: bool = False, **kwargs):
     # session=False sends no session of the launched agent (a replay asks for the logged scope, #15);
-    # raise_refusal=True raises ServiceRefusal instead of ending the command.
+    # raise_refusal=True raises ServiceRefusal instead of ending the command; matched=True: the caller matched the
+    # service by instance id and it is reached whatever its version (stop, #319).
     if start_service:
-        _ensure_service_or_refuse(settings)
+        if not matched:
+            _ensure_service_or_refuse(settings)
     elif not (settings.data_dir / "config.json").is_file() or not settings.token:
         refuse("No existing Cairnmind configuration; run `cairnmind init` explicitly.")
+    else:
+        _refuse_other_version(settings)  # a diagnostic starts nothing and sends nothing to another version (#319)
     retry_job = path.startswith("/jobs/") and path.endswith("/retry")
     if not session:
         pass
@@ -826,6 +863,7 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
     result["data_dir"] = str(ctx.obj.data_dir)
     result["service_url"] = ctx.obj.url  # the address every command here talks to, so a collision is visible
     from cairnmind.config import ENV_PREFIXES, data_dir_note, env_conflicts, env_names, session_conflicts
+    from cairnmind.service_version import refusal as other_version
     from cairnmind.upgrade_mark import note as upgrade_note
     # Shown here and nowhere else: a hook or an MCP server must not print notes of its own.
     # The notes of a shell whose commands are refused are also listed as blockers: the summary counts them as missing.
@@ -833,6 +871,9 @@ def doctor(ctx: typer.Context, contract: bool = typer.Option(
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} name different sessions; neither is used: commands in "
         "this shell are refused and hooks and the MCP server stay unbound. Start the client again through the launcher."
         for name in session_conflicts()]
+    # A service of another version answers, but every command that needs it is refused: required and not working,
+    # so it is a blocker too, not only a note (#319). Asked only of this data directory's service.
+    blockers += [note for note in [other_version(ctx.obj) if result["service_running"] else None] if note]
     result["environment_notes"] = [
         f"{ENV_PREFIXES[0]}{name} and {ENV_PREFIXES[1]}{name} are both set and differ; {ENV_PREFIXES[0]}{name} is used."
         for name in env_conflicts()] + blockers + [note for note in [data_dir_note(), upgrade_note()] if note]
@@ -967,7 +1008,8 @@ def stop(ctx: typer.Context, as_json: JSON_FLAG = False):
         result = {"stopping": False, "reason": "The service is not running"}
         lines = [first_start.STOP_NOT_RUNNING.format(url=ctx.obj.url)]
     else:
-        result = request(ctx.obj, "POST", "/shutdown")
+        # Reached whatever version it runs: the way out of a refusal (#319).
+        result = request(ctx.obj, "POST", "/shutdown", matched=True)
         lines = [(first_start.STOP_STOPPING if result.get("stopping") else first_start.STOP_REFUSED)
                  .format(url=ctx.obj.url)]
     if local_process_recorded(ctx.obj) or container_recorded(ctx.obj):
@@ -2188,6 +2230,7 @@ def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False)
 def run(ctx: typer.Context, project: ProjectArg, client: ClientArg, worktree: Path | None = None):
     """Start Codex or Claude Code in the project, bound to its memory. Arguments after -- go to the client."""
     from cairnmind.integrations import run_client
+    _refuse_during_upgrade()
     _ensure_service_or_refuse(ctx.obj)
     selected = store_for(ctx.obj).resolve_project(project)
     if worktree:

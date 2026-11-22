@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 
 from conftest import plain_words
 
-from cairnmind import cli
+from cairnmind import __version__, cli
 from cairnmind.config import Settings
 from cairnmind.store import Store
 
@@ -287,6 +287,10 @@ def test_an_unknown_id_is_refused_alike_for_a_task_a_plan_a_source_and_a_session
 
     def client(**kwargs):
         def answer(request):
+            if request.url.path == "/health":  # the version check that precedes every request (#319)
+                from cairnmind.service_version import instance_id
+                return httpx.Response(200, json={"service": "cairnmind", "version": __version__,
+                                                 "instance": instance_id(Settings.load(Path(data)))})
             status, detail = answers[request.url.path]
             return httpx.Response(status, json={"detail": detail})
         return real_client(transport=httpx.MockTransport(answer), **kwargs)

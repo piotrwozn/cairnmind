@@ -111,10 +111,19 @@ def stand_ins(tmp_path):
     (tools / "cairnmind").write_text(
         "#!/bin/sh\necho \"$*\" >> " + str(log) + "\n"
         "if [ \"$1 $2\" = 'workspace status' ]; then [ \"$STATUS\" = fail ] && exit 3; "
-        "printf '{\\n  \"available\": %s\\n}\\n' \"$STATUS\"; fi\n")
+        "printf '{\\n  \"available\": %s\\n}\\n' \"$STATUS\"; fi\n"
+        # $STOP_FAILS and $COCKPIT_STOP_FAILS make that stop fail, saying two lines (#319)
+        "if [ \"$*\" = stop ] && [ -n \"$STOP_FAILS\" ]; then echo 'first line' >&2; echo 'Error: refused' >&2; exit 2; fi\n"
+        "if [ \"$*\" = 'cockpit stop' ] && [ -n \"$COCKPIT_STOP_FAILS\" ]; then echo 'first line' >&2; "
+        "echo 'Error: refused' >&2; exit 2; fi\n"
+        "if [ \"$*\" = 'workspace stop --clients' ] && [ -n \"$WORKSPACE_STOP_FAILS\" ]; then "
+        "echo 'Error: refused' >&2; exit 2; fi\n")
     # `ps -A -ww -o pid= -o args=`: prints the file $PS_LINES (nothing by default) and ends with $PS_STATUS (0).
+    # With $PS_TIMES it prints them only for that many calls (a process that ends meanwhile).
     (tools / "ps").write_text(
         "#!/bin/sh\n[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
+        "if [ -n \"$PS_TIMES\" ]; then n=$(cat \"$PS_LINES.n\" 2>/dev/null || echo 0); n=$((n + 1)); "
+        "echo $n > \"$PS_LINES.n\"; [ \"$n\" -le \"$PS_TIMES\" ] || exit 0; fi\n"
         "[ -n \"$PS_LINES\" ] && cat \"$PS_LINES\"\nexit \"${PS_STATUS:-0}\"\n")
     for tool in tools.iterdir():
         tool.chmod(0o755)
@@ -224,6 +233,125 @@ def test_open_mcp_servers_are_named_even_when_the_installed_command_is_missing(s
     assert result.returncode == 1 and "processes: 101" in result.stderr and calls == []
 
 
+@pytest.mark.parametrize(("variable", "command", "after"), [
+    ("STOP_FAILS", "stop", "The new version is asked to stop it once it is installed."),
+    ("COCKPIT_STOP_FAILS", "cockpit stop", "`cairnmind cockpit stop` stops it later.")])
+def test_a_failed_stop_is_said_with_its_last_line_and_the_installer_goes_on(stand_ins, variable, command, after):
+    run, terminal = stand_ins
+    result, calls = run(**{variable: "1"})
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert f"Note: cairnmind {command} failed (it said: Error: refused)" in result.stderr
+    assert after in result.stderr
+    assert "first line" not in result.stderr
+    assert calls == ["workspace status", "cockpit stop", "stop"]  # the other stop was still tried
+
+
+def test_a_failed_stop_of_the_workspace_is_said_before_the_terminal_servers_are_ended(stand_ins):
+    run, terminal = stand_ins
+    server, socket_path = terminal("devbrain-native")
+    result, calls = run(status="true", CAIRNMIND_INSTALL_STOP_WORKSPACE="1", WORKSPACE_STOP_FAILS="1")
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert ("Note: cairnmind workspace stop --clients failed (it said: Error: refused), so the workspace and its "
+            "coding sessions are ended at their terminal servers instead.") in result.stderr
+    assert "stops it later" not in result.stderr  # nothing is left for later on this path (#319 recheck)
+    assert "tmux kill-server" in calls  # what then closes them
+    server.close()
+
+
+def after_install(tmp_path, fails, ps_times=None, known=True):
+    """stop_failed_service with a stand-in for the new command, which fails or succeeds at `stop`, and a stand-in
+    `ps` that shows the replaced version's service of the data directory /d (for $ps_times looks, or always)."""
+    command, tools = tmp_path / "cairnmind", tmp_path / "bin"
+    tools.mkdir(exist_ok=True)
+    command.write_text("#!/bin/sh\n" + ("echo first >&2; echo 'Error: refused' >&2; exit 2\n" if fails else "exit 0\n"))
+    lines = tmp_path / "ps.txt"
+    lines.write_text("501 /t/python -m cairnmind --data-dir /d serve\n502 /t/python -m cairnmind --data-dir /e serve\n"
+                     "503 /t/python -m cairnmind --data-dir /d/x serve\n")
+    count = tmp_path / "ps.n"
+    count.unlink(missing_ok=True)
+    limit = "" if ps_times is None else f'n=$(cat {count} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > {count}; ' \
+                                        f'[ "$n" -le {ps_times} ] || {{ grep -v " /d serve" {lines}; exit 0; }}\n'
+    (tools / "ps").write_text(f"#!/bin/sh\n[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n{limit}cat {lines}\n")
+    for tool in (command, tools / "ps"):
+        tool.chmod(0o755)
+    arguments = '/t/python cairnmind /d' if known else '"" cairnmind ""'
+    return subprocess.run(["bash", "-c", "set -euo pipefail\n" + installer_functions()
+                           + f'\nstop_failed_service "{command}" {arguments} && echo written || echo refused'],
+                          env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}"},
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_a_service_that_still_answers_the_new_stop_ends_the_installer_before_the_store_is_written(tmp_path):
+    refused = after_install(tmp_path, fails=True)
+    assert refused.stdout.strip() == "refused" and "the installer stops here" in refused.stderr
+    assert "first" not in refused.stderr and "(its stop said: Error: refused)" in refused.stderr
+    # The process of that data directory is named, not the services of /e or /d/x; the way out is a rerun (#319 recheck).
+    assert "processes: 501" in refused.stderr and "kill 501)" in refused.stderr and "run this installer again" in refused.stderr
+    assert "502" not in refused.stderr and "503" not in refused.stderr and "cairnmind init" not in refused.stderr
+    stopped = after_install(tmp_path, fails=False, ps_times=2)  # it ends while the installer looks
+    assert stopped.stdout.strip() == "written" and stopped.stderr == ""
+
+
+def test_a_stop_that_reports_success_while_the_old_service_still_runs_ends_the_installer(tmp_path):
+    """A stop that was only asked, or a service that did not answer within 0.7 s ("not running", exit 0): its
+    process still runs after ten seconds, so nothing writes the store (#319 recheck)."""
+    result = after_install(tmp_path, fails=False)
+    assert result.stdout.strip() == "refused" and "processes: 501" in result.stderr and "its stop said" not in result.stderr
+    unknown = after_install(tmp_path, fails=False, known=False)  # without the data directory: said, and trusted
+    assert unknown.stdout.strip() == "written" and "could not be confirmed" in unknown.stderr
+
+
+def test_nothing_writes_the_store_between_the_new_install_and_the_guard_on_a_failed_stop():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh").read_text()
+    guard = script.index('stop_failed_service "$cairnmind_bin"')
+    assert script.index("end_upgrade  # the new version") < guard
+    assert guard < script.index('"$cairnmind_bin" engine install') and guard < script.index('"$cairnmind_bin" init')
+    assert "service_stop_failed=1" in script
+
+
+def test_services_of_other_data_directories_are_named_and_none_is_stopped(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(ps=[
+        "201 {tools}/python -m cairnmind --data-dir /d serve",
+        "202 {tools}/python -m cairnmind --data-dir /e f serve --defer-background-inference",
+        "203 {tools}/python -I -m cairnmind --data-dir /d cockpit serve",
+        "204 {tools}/python {tools}/cairnmind ask p how to serve",
+        "205 /usr/bin/python3 -m cairnmind --data-dir /d serve"])
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert "Knowledge services of the installed version still run, processes: 201 202" in result.stderr
+    assert not any(number in result.stderr for number in ("203", "204", "205"))
+    assert "/d" not in result.stderr.replace("/default", "") and "/e" not in result.stderr
+    assert calls == ["workspace status", "cockpit stop", "stop"]  # nothing was stopped by process or by directory
+
+
+def test_a_service_that_ends_after_its_stop_is_not_named(stand_ins):
+    run, terminal = stand_ins
+    # ps is read for bridges, for run sessions and for the first look: the service has ended by the second.
+    result, calls = run(ps=["201 {tools}/python -m cairnmind --data-dir /d serve"], PS_TIMES="3")
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert "still run" not in result.stderr
+
+
+def test_coding_sessions_started_with_run_are_named_and_the_installer_stops(stand_ins):
+    run, terminal = stand_ins
+    result, calls = run(ps=[
+        "301 {tools}/python {tools}/cairnmind run demo claude",
+        "302 {tools}/python {tools}/cairnmind check run unit",
+        "303 {tools}/python {tools}/cairnmind --data-dir /d run demo codex"])
+    assert result.returncode == 1 and "continued" not in result.stdout
+    assert "of the installed version are open, processes: 301" in result.stderr
+    assert "302" not in result.stderr and "303" not in result.stderr
+    assert calls == []
+
+
+def test_the_new_installer_pieces_are_in_the_section_the_tests_cut():
+    functions = installer_functions()
+    assert "the knowledge service may still run the version being replaced" in functions
+    assert 'service_stop_failed=1 failed_python="$python" failed_name="$name"' in functions
+    assert "stop >/dev/null 2>&1 || true" not in functions.replace("cockpit stop --clients >/dev/null 2>&1 || true", "")
+    assert "live_runs()" in functions and "live_services()" in functions
+
+
 def mark_script(tmp_path, body):
     return subprocess.run(["bash", "-c", "set -euo pipefail\n" + installer_functions() + "\n" + body],
                           env={**os.environ, "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=30)
@@ -274,6 +402,9 @@ def test_the_installer_marks_the_upgrade_around_the_replacement():
     finished = script.index("end_upgrade  #", first_stop)
     assert script.index("Installation did not provide the executable") < finished < script.index('if [[ -n "$connect_url" ]]', first_stop)
     assert script.index("uv tool install --python") < finished
+    # The trap set for the install log still ends the upgrade: a failed install leaves no mark behind.
+    log_trap = script.index("trap 'rm -f -- \"$constraints_file\" \"$install_log\"; end_upgrade' EXIT")
+    assert begin < log_trap < script.index("uv tool install --python")
 
 
 def test_scheduled_backups_of_both_suffixes_are_ordered_by_the_time_in_their_name(tmp_path):

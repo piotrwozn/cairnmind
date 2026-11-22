@@ -32,7 +32,7 @@ Zed takes the same command and arguments as a custom context server in its setti
 
 ## Upgrading
 
-The installer stops when it finds such a server open and names its process: close the server in the editor, or end the process, then run the installer again. While an installer runs, a tool call does not start the service; the error says that an upgrade is in progress. A server that was open while Cairnmind was upgraded or reinstalled still runs the code it started with, so every tool call then asks you to restart it in the editor.
+The installer stops when it finds such a server open and names its process: close the server in the editor, or end the process, then run the installer again. While an installer runs, a tool call does not start the service; the error says that an upgrade is in progress. A server that was open while Cairnmind was upgraded or reinstalled still runs the code it started with, so every tool call then asks you to restart it in the editor. A server that finds this data directory's knowledge service running another version of Cairnmind sends it nothing: every tool call names both versions and the command that stops that service, and the next call after the stop starts it in the new version.
 
 ## Limits
 

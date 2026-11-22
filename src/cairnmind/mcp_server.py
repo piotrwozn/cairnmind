@@ -20,6 +20,7 @@ from .config import Settings, env_names, session_value
 from . import upgrade_mark
 from .upgrade_mark import BRIDGE_UPGRADE, CODE_REPLACED, CODE_UNREADABLE
 from .service_token import foreign_service_text, refused_token
+from .service_version import refusal as other_version
 
 # store.ORIGIN_METADATA, repeated so the stdio bridge does not import the store: an external session's mark.
 ORIGIN_KEYS = ("origin_client", "origin_session_id", "origin_history", "origin_evidence")
@@ -157,8 +158,8 @@ def start_service(settings: Settings) -> None:
     external client, which no launcher started it for (#258). Stdout belongs to MCP; a start it makes is said on
     standard error (#287)."""
     import shlex
-    from .cli import (UpgradeInProgress, _data_dir_arguments, _os_error_text, _service_unavailable, ensure_service,
-                      say_service_started)
+    from .cli import (ServiceOfOtherVersion, UpgradeInProgress, _data_dir_arguments, _os_error_text,
+                      _service_unavailable, ensure_service, say_service_started)
     from .first_start import SERVICE_NOT_STARTED
     from .store_writer import inspect
     try:
@@ -171,6 +172,8 @@ def start_service(settings: Settings) -> None:
     try:
         if ensure_service(settings):
             say_service_started(settings)  # standard error, which the client logs; stdout stays MCP's
+    except ServiceOfOtherVersion as exc:
+        raise RuntimeError(str(exc)) from None  # its own command, not SERVICE_NOT_STARTED's `cairnmind serve` (#319)
     except UpgradeInProgress as exc:
         # Not SERVICE_NOT_STARTED, whose "start it with `cairnmind serve`" would be wrong advice now (#298).
         raise RuntimeError(BRIDGE_UPGRADE.format(reason=str(exc))) from None
@@ -280,6 +283,9 @@ class ServiceClient:
     async def request(self, method: str, endpoint: str, *, payload: dict[str, Any] | None = None,
                       params: dict[str, Any] | None = None) -> dict[str, Any]:
         refuse_if_code_replaced()
+        reason = await asyncio.to_thread(other_version, self.settings)
+        if reason:
+            raise RuntimeError(reason)  # another version's service gets nothing, read or write (#319)
         body = dict(payload or {})
         query = dict(params or {})
         if "session_id" in body and body["session_id"] != self.session_id:

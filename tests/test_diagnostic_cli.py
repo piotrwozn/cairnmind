@@ -10,8 +10,9 @@ from typer.testing import CliRunner
 
 from conftest import plain_words
 
-from cairnmind import cli
+from cairnmind import __version__, cli
 from cairnmind.config import Settings
+from cairnmind.service_version import instance_id
 
 
 def no_start(monkeypatch):
@@ -107,6 +108,9 @@ def test_diagnostic_http_reads_are_authenticated_scoped_and_do_not_write_config(
     requests = []
 
     def handler(request):
+        if request.url.path == "/health":  # the version check that precedes every request (#319)
+            return httpx.Response(200, json={"service": "cairnmind", "version": __version__,
+                                             "instance": instance_id(settings)})
         requests.append(request)
         assert request.method == "GET"
         assert request.url.path == path

@@ -722,10 +722,11 @@ def install_integrations(settings: Settings, project: dict[str, Any],
 
 def _prepare_session(settings: Settings, project: dict[str, Any], client: str,
                      root: Path, args: list[str] | None) -> dict[str, Any]:
-    from .cli import ensure_service
+    from .cli import ensure_no_upgrade, ensure_service
     from .sessions import SessionManager
     from .store import Store
 
+    ensure_no_upgrade()
     ensure_service(settings)
     reason = "resume" if args and (args[0] == "resume" or "--resume" in args or "--continue" in args) else "startup"
     return SessionManager(Store(settings.data_dir), settings).prepare(
