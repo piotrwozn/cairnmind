@@ -13,6 +13,7 @@ first is refused, never used.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -29,6 +30,11 @@ MAX_SOCKET_PATH = 100
 
 def _darwin(platform: str | None) -> bool:
     return (platform or sys.platform) == "darwin"
+
+
+def workspace_namespace(data_dir: Path, workspace_id: str = "default") -> str:
+    """The name part of a workspace's socket directory: one per data directory and workspace."""
+    return hashlib.sha256((str(data_dir.resolve()) + ":" + workspace_id).encode()).hexdigest()[:16]
 
 
 def socket_base(*, platform: str | None = None, uid: int | None = None, system_temp: str | None = None) -> Path:

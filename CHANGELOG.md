@@ -32,6 +32,14 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - Opening the workspace without tmux 3.4+ names `brief`, `remember`, `ask` and `run` as the commands that work without it (#287).
 - `cairnmind setup`, `status` and `doctor` no longer say that a model server on another computer "receives questions and memory text" when that address is the refused `ollama_url`: they show the refusal (#287, #301).
 
+### A person's acts need the open workspace
+
+- A person's acts (a review, a conflict decision, a plan confirmation, accepting or withdrawing a record kind, the workspace form, and an import or `--take-published` that replaces records confirmed or disputed here) need a key that the open workspace keeps in its tmux server; the service token alone is refused and nothing is written (#214).
+- The command line no longer confirms: `remember --confirmed`, `memory confirm-plan` and `record-kind accept` or `withdraw` are refused with exit code 2 and say where a person does it, `task add` stores a proposed task, and `plan save` or `plan adopt` can no longer change what a person confirmed (#214).
+- `--replace-confirmed` and `--take-published` from the command line can no longer replace a record you confirmed or disputed; an archive is imported over them from the memory view of the workspace. A published directory or a commit cannot replace such records yet (#304).
+- The inspector confirms a plan: open it in Plans and choose Confirm (#214).
+- The workspace refuses to open when its tmux server cannot give a key for a person's acts, and says to run `cairnmind workspace stop`. `cairnmind workspace status` reports whether the workspace holds the key (`person_key`: present, absent or unavailable), never the key itself (#214).
+- `docs/MEMORY_CONTRACTS.md` says what a program of the same user can still do, `cairnmind restore` included, and `docs/UPGRADING.md` says to stop and reopen the workspace after upgrading from 0.12.0 (#214).
 ### Fixes
 
 - Two installations that first open one store at the same moment now end as one writer and one reader also when the database server runs in production mode, as the image of `deploy/arcadedb` does; before, the second one's command failed with the server's bare error (#277).
