@@ -219,6 +219,7 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - The tests of the installer no longer read the tmux sockets in the machine's own /private/tmp folder, so a Mac that holds sockets of an earlier workspace no longer fails them; a test that cuts the installer's functions out itself, passes the machine's socket folder, or leaves TMPDIR unset now fails with a sentence (#364).
 - The activity panel's throttle test opens its window itself and lists the requests made, with their times, when it fails, so a slow first load no longer fails it; a new test checks that a trigger during a refresh gets one more refresh, not one per trigger (#378).
 - The tests of the question budget run on a simulated clock instead of real sleeps, so a slow or loaded machine can no longer make a second-look test fail (#383).
+- A test holds the second look of an answer inside the time the question has left: it fails when the second look is given no time limit (#397).
 
 ## 0.12.0
 
