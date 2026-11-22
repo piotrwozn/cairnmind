@@ -152,6 +152,9 @@ class SessionContextBody(BaseModel):
     # Compatibility with startup hooks from 0.3.4 and earlier. Both spellings
     # request an exact read; they must never silently initiate a refresh.
     expected_packet_id: str | None = None
+    # The short answer of #325. Only the MCP bridge sends it; the command line, the built-in agent and the
+    # start hook send nothing and get the packet as before.
+    short: bool = Field(default=False, strict=True)
 
 
 class SessionAckBody(BaseModel):
@@ -1036,8 +1039,11 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             raise ValueError("resume_required: conflicting requested packet identities")
         expected = body.packet_id if body.packet_id is not None else body.expected_packet_id
         if expected is not None:
+            if body.short:
+                raise ValueError("short is only for a read of the current packet; an exact packet read "
+                                 "always returns the whole packet")
             return await asyncio.to_thread(sessions.exact_context, body.session_id, expected)
-        return await asyncio.to_thread(sessions.resume_context, body.session_id)
+        return await asyncio.to_thread(sessions.resume_context, body.session_id, body.short)
 
     @app.post("/sessions/ack", dependencies=auth)
     async def acknowledge_resume(body: SessionAckBody):
