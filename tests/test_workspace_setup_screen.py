@@ -389,8 +389,9 @@ async def test_a_service_that_does_not_answer_is_said_and_nothing_is_shown(tmp_p
         await settle(app, pilot)
         broker.refuse = BrokerError(503, "The client service is unavailable; running sessions are kept.")
         await choose_the_entry(app, pilot)
-        await wait_until(pilot, lambda: "running sessions are kept" in notice_of(app) or "sesje" in notice_of(app))
-        assert not is_screen(app)
+        detail = "sesje" if language == "pl" else "running sessions are kept"  # the broker's fixed detail, translated
+        await wait_until(pilot, lambda: detail in notice_of(app))
+        assert not is_screen(app) and (language == "en" or "running sessions" not in notice_of(app))
         assert tr(NO_ANSWER, language)[:30] in notice_of(app)  # and where to look instead
         broker.refuse = None  # an answer of another shape
         await choose_the_entry(app, pilot)

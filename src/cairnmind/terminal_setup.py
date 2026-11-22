@@ -65,7 +65,7 @@ OPTIONAL_DB = (
 REMOTE_HEAD = ("A database this installation only connects to, and the memory models on another computer "
                "(remote):")
 REMOTE = (
-    "Storage moves as with remote-db, with the same tests. Both memory models move to the model server at "
+    "This installation switches as with remote-db, with the same tests. Both memory models move to the model server at "
     "MODELS_URL (HTTPS on another computer); PROVIDER is ollama or openai_compatible, and CHAT_MODEL and "
     "EMBEDDING_MODEL are the models' names there. --allow-remote is your consent that this server receives your "
     "questions and the memory text of the classes in memory_remote_classes. Each model is tested before anything is "
@@ -128,7 +128,7 @@ MESSAGES = {
                  "sprawia, że --yes najpierw tworzy użytkownika i bazę, tak jak `cairnmind db create-user`, i "
                  "nigdy nie jest zapisywany.",
     REMOTE_HEAD: "Baza, z którą ta instalacja tylko się łączy, i modele pamięci na innym komputerze (remote):",
-    REMOTE: "Baza przenosi się tak jak przy remote-db, z tymi samymi testami. Oba modele pamięci przenoszą się na "
+    REMOTE: "Instalacja przełącza się tak jak przy remote-db, z tymi samymi testami. Oba modele pamięci przenoszą się na "
             "serwer modeli pod adresem MODELS_URL (HTTPS na innym komputerze); PROVIDER to ollama albo "
             "openai_compatible, a CHAT_MODEL i EMBEDDING_MODEL to nazwy modeli na tym serwerze. --allow-remote to "
             "twoja zgoda, by ten serwer otrzymywał twoje pytania i tekst pamięci z klas w "
@@ -257,12 +257,14 @@ async def open_view(app) -> None:
     the screen is not shown again by itself: opening it reads the new place."""
     from .terminal_client import BrokerError
     from .terminal_i18n import tr
+    from .terminal_i18n_messages import broker_error_text
     from .terminal_setup_change import change_setup
     language = getattr(app, "language", "en")
     try:
         status = await app.request("GET", "/api/status")
-    except BrokerError as exc:  # /status reads the store too: when it fails, the service's reason is named, not replaced
-        raise BrokerError(exc.status_code, f"{exc.detail} {tr(NO_ANSWER, language)}") from exc
+    except BrokerError as exc:  # /status reads the store too: its reason is named as the panels name it, then where to look
+        app.notice(broker_error_text(exc, app.t) + " " + app.t(NO_ANSWER))
+        return
     profile = await app.push_screen_wait(_screen_class()(describe(status, language)))
     if profile is not None:
         await change_setup(app, profile)
