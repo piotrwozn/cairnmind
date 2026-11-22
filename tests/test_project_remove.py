@@ -12,7 +12,7 @@ from cairnmind.sessions import SessionManager
 from cairnmind.sql import insert_document
 from cairnmind.store import EXPORT_TYPES, Store
 
-from conftest import as_person
+from conftest import as_person, plain_words
 
 NOT_COUNTED = {"projects", "project_roots", "journal_state", "journal_events"}
 
@@ -205,3 +205,31 @@ def test_the_workspace_and_doctor_list_registered_projects_only(world):
     remove(store, project)
     assert doctor_view(store) == []
     assert store.list_projects() == []
+
+
+def test_cli_remove_and_add_again_end_to_end(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from cairnmind import cli, ingest
+    monkeypatch.setattr(ingest, "register_default_histories", lambda *a: {})
+    monkeypatch.setattr(cli, "_stdout_is_terminal", lambda: True)
+    folder = tmp_path / "mistake"
+    folder.mkdir()
+    (folder / "a.py").write_text("x = 1\n")
+
+    def invoke(*arguments):
+        return CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "data"), *arguments])
+    assert invoke("project", "add", "mistake", str(folder)).exit_code == 0
+    dry = invoke("project", "remove", "mistake")
+    assert dry.exit_code == 1 and "Nothing was changed; this is what cairnmind project remove mistake --yes" in dry.stdout
+    assert "Nothing in the folder is changed." in dry.stdout and "1 sources" in dry.stdout
+    assert "mistake" in invoke("project", "list").stdout
+    done = invoke("project", "remove", "mistake", "--yes")
+    assert done.exit_code == 0 and done.stdout.startswith("Removed mistake from the registry")
+    listed = invoke("project", "list").stdout
+    assert "mistake:" not in listed and "Removed projects whose memory is kept: 1" in listed
+    assert "- mistake: " + str(folder) in invoke("project", "list", "--removed").stdout
+    named = invoke("brief", "mistake")
+    assert named.exit_code != 0 and "was removed from the registry" in plain_words(named.output + str(named.exception))
+    back = invoke("project", "add", "mistake", str(folder))
+    assert back.exit_code == 0 and back.stdout.startswith(f"Brought back mistake in {folder.resolve()} with its memory")
