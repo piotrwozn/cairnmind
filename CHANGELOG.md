@@ -50,6 +50,10 @@ All notable changes are listed here, newest first. Releases up to 0.8.0 were pub
 - A folder inside Cairnmind's data directory is refused as a project, with the reason; before, it was registered and indexed no files. A registration of that kind made by an earlier version stays as it is (#295).
 - `cairnmind run` for a partial packet prints its sentence without the code `resume_partial:` in front; the workspace keeps the code (#296).
 - `cairnmind memory reextract` also replaces the untouched proposals of a source that the newer extraction skips, and its dry run counts such sources and records apart (#297).
+- The installer no longer says it is closing the running workspace when tmux is missing and it could close nothing; with `CAIRNMIND_INSTALL_STOP_WORKSPACE=1` it stops with the same message as without it, which says the sockets could not be checked or closed (#307).
+- The workspace's project list, stage panel and sidebar name a Cairnmind service of another data directory, in English and Polish, instead of saying the projects could not be read; a refused token no longer opens a new broker session on every poll (#308).
+- In deterministic-only mode, More, Queue, Process memory no longer asks for consent to use local models that are not configured; it shows the notice about getting models, or restarting the service, at once (#309).
+- Indexing names a project that 0.12.0 registered with a folder inside the data directory, says to move the files out and register them again, and leaves the registration untouched; it shows in `cairnmind ingest`, in `status` and in the warnings of `ask`. The refusal "Project root cannot contain Cairnmind's private credential store" has a Polish form in the workspace (#310).
 
 ### Development and CI
 
