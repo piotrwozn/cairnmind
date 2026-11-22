@@ -16,7 +16,7 @@ from cairnmind.config import Settings
 from cairnmind.ingest import forget_index_signature
 from cairnmind.service import create_app
 from cairnmind.store import Store
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 class LocalModel:
@@ -34,6 +34,8 @@ class LocalModel:
     async def chat(self, messages, tools=None, **kwargs):
         if messages[0].get("content") == SUPPORT_SYSTEM:
             return {"message": {"content": json.dumps({"supported": True, "reason": "Stated."})}}
+        if messages[0].get("content") == NAMES_SYSTEM:  # the names call: nothing unstated
+            return {"message": {"content": json.dumps({"names": []})}}
         evidence = json.loads(messages[1]["content"])["initial_evidence"][0]
         return {"message": {"content": json.dumps({
             "answer": "The authenticate function handles login.",

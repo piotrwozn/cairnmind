@@ -17,7 +17,7 @@ from cairnmind.evaluation import (
 )
 from cairnmind.ollama import OllamaUnavailable
 from cairnmind.store import Store
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 class FixtureOllama:
@@ -33,6 +33,8 @@ class FixtureOllama:
 
     async def chat(self, messages, **kwargs):
         prompt = json.loads(messages[1]["content"])
+        if messages[0]["content"] == NAMES_SYSTEM:  # the names call (#245): nothing unstated
+            return {"message": {"content": json.dumps({"names": []})}, "done_reason": "stop"}
         if messages[0]["content"] == SUPPORT_SYSTEM:
             # The support check of a complete answer; this fixture always agrees, so a wrong
             # value is left for the evaluation's own grading to catch.

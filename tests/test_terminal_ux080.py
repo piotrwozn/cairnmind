@@ -14,7 +14,7 @@ from textual.widgets import Button, DataTable, Input, Static
 from cairnmind.config import Settings
 from cairnmind.terminal_i18n import language_for, tr
 from cairnmind.terminal_inspector import InspectorApp
-from cairnmind.terminal_panels import SidebarApp
+from cairnmind.terminal_panels import ConfirmModal, SidebarApp
 from cairnmind.terminal_ui import BasePanel, ChoiceModal, Field, FieldError, FolderPicker, FormModal, MessageModal
 from test_terminal_panels import FakeBroker, FakeWorkspace, settle
 from test_client_runtime import native as native
@@ -520,11 +520,13 @@ async def test_inspector_lists_a_conflict_and_sends_the_chosen_decision(tmp_path
         body = str(app.query_one("#entity-body", Static).render())
         assert "A (new finding)" in body and "B (existing finding)" in body and "\x1b" not in body
         assert app.query_one("#conflict-actions").display and not app.query_one("#review-actions").display
-        answers, offered = iter([choice, {"reason": reason}]), []
+        answers, offered = iter([choice, {"reason": reason}, True]), []
 
         async def scripted(screen):
             if isinstance(screen, ChoiceModal):
                 offered.extend(value for _, value in screen.choices)
+            if isinstance(screen, ConfirmModal):  # the decision is sent only after this consent dialog (#332)
+                assert screen.consent and posted == []
             return next(answers)
 
         monkeypatch.setattr(app, "push_screen_wait", scripted)
@@ -560,7 +562,7 @@ async def test_a_refused_decision_reloads_the_list_and_a_mixed_pair_is_not_offer
         app.set_view("conflicts")
         await app.load_page()
         await app.open_entity("new-1:old-1", "conflicts")
-        answers = iter(["dismiss", {"reason": ""}])
+        answers = iter(["dismiss", {"reason": ""}, True])
 
         async def scripted(screen):
             if isinstance(screen, ChoiceModal):
