@@ -115,6 +115,8 @@ def stand_ins(tmp_path):
         # $STOP_FAILS and $COCKPIT_STOP_FAILS make that stop fail, saying two lines (#319)
         "if [ \"$*\" = stop ] && [ -n \"$STOP_FAILS\" ]; then echo 'first line' >&2; echo 'Error: refused' >&2; exit 2; fi\n"
         "if [ \"$*\" = 'cockpit stop' ] && [ -n \"$COCKPIT_STOP_FAILS\" ]; then echo 'first line' >&2; "
+        "echo 'Error: refused' >&2; exit 2; fi\n"
+        "if [ \"$*\" = 'workspace stop --clients' ] && [ -n \"$WORKSPACE_STOP_FAILS\" ]; then "
         "echo 'Error: refused' >&2; exit 2; fi\n")
     # `ps -A -ww -o pid= -o args=`: prints the file $PS_LINES (nothing by default) and ends with $PS_STATUS (0).
     # With $PS_TIMES it prints them only for that many calls (a process that ends meanwhile).
@@ -237,9 +239,46 @@ def test_a_failed_stop_is_said_with_its_last_line_and_the_installer_goes_on(stan
     result, calls = run(**{variable: "1"})
     assert result.returncode == 0 and "continued" in result.stdout
     assert f"Note: cairnmind {command} failed (it said: Error: refused)" in result.stderr
-    assert f"cairnmind {command} stops it" in result.stderr
+    assert f"`cairnmind {command}` stops it later" in result.stderr
     assert "first line" not in result.stderr
     assert calls == ["workspace status", "cockpit stop", "stop"]  # the other stop was still tried
+
+
+def test_a_failed_stop_of_the_workspace_is_said_before_the_terminal_servers_are_ended(stand_ins):
+    run, terminal = stand_ins
+    server, socket_path = terminal("devbrain-native")
+    result, calls = run(status="true", CAIRNMIND_INSTALL_STOP_WORKSPACE="1", WORKSPACE_STOP_FAILS="1")
+    assert result.returncode == 0 and "continued" in result.stdout
+    assert ("Note: cairnmind workspace stop --clients failed (it said: Error: refused), so the workspace and its "
+            "coding sessions may still run") in result.stderr
+    assert "tmux kill-server" in calls  # what then closes them
+    server.close()
+
+
+def after_install(tmp_path, fails):
+    """stop_failed_service with a stand-in for the new command, which fails or succeeds at `stop`."""
+    command = tmp_path / "cairnmind"
+    command.write_text("#!/bin/sh\n" + ("echo first >&2; echo 'Error: refused' >&2; exit 2\n" if fails else "exit 0\n"))
+    command.chmod(0o755)
+    return subprocess.run(["bash", "-c", "set -euo pipefail\n" + installer_functions()
+                           + f'\nstop_failed_service "{command}" && echo written || echo refused'],
+                          capture_output=True, text=True, timeout=30)
+
+
+def test_a_service_that_still_answers_the_new_stop_ends_the_installer_before_the_store_is_written(tmp_path):
+    refused = after_install(tmp_path, fails=True)
+    assert refused.stdout.strip() == "refused" and "the installer stops here" in refused.stderr
+    assert "first" not in refused.stderr and "(it said: Error: refused)" in refused.stderr
+    stopped = after_install(tmp_path, fails=False)
+    assert stopped.stdout.strip() == "written" and stopped.stderr == ""
+
+
+def test_nothing_writes_the_store_between_the_new_install_and_the_guard_on_a_failed_stop():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "install-wsl.sh").read_text()
+    guard = script.index('stop_failed_service "$cairnmind_bin" || exit 1')
+    assert script.index("end_upgrade  # the new version") < guard
+    assert guard < script.index('"$cairnmind_bin" engine install') and guard < script.index('"$cairnmind_bin" init')
+    assert "service_stop_failed=1" in script
 
 
 def test_services_of_other_data_directories_are_named_and_none_is_stopped(stand_ins):
