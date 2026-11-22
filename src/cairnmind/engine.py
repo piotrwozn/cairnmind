@@ -463,8 +463,16 @@ def own_engine_recorded(settings: Settings) -> bool:
     that address, or the recorded container in Docker mode. Anything that cannot be established is False, so a
     refusal is never blamed on this directory's own engine without proof (#313)."""
     if engine_mode(settings) == "docker":
-        from .engine_docker import container_recorded
-        return container_recorded(settings)
+        from .engine_docker import _running, container_recorded, inspect_container, is_ours
+        if not container_recorded(settings):
+            return False
+        try:  # a record outlives its container: only a running container of ours counts, and Docker must say so
+            info = inspect_container(settings)
+        except ArcadeError:
+            return False
+        # shortcut: the container's published port is not compared with arcade_url; compare it if a container of
+        # ours can ever publish another port than the one this data directory names.
+        return info is not None and is_ours(info, settings) and _running(info)
     try:
         recorded = json.loads((settings.data_dir / "arcade" / "process.json").read_text())
         return recorded.get("url") == settings.arcade_url and native_engine_pid(settings) is not None

@@ -441,6 +441,33 @@ def test_the_engine_of_this_data_directory_is_not_called_foreign(monkeypatch, tm
     assert first_start.MESSAGES[first_start.OWN_ENGINE_REFUSED] != first_start.OWN_ENGINE_REFUSED
 
 
+def test_in_docker_mode_only_a_running_container_of_ours_is_the_own_engine(monkeypatch, tmp_path):
+    from cairnmind import engine_docker
+    settings = Settings.load(tmp_path / "new", create=True)
+    monkeypatch.setattr(engine, "engine_mode", lambda settings: "docker")
+    asked = []
+
+    def inspect(answer):
+        def fake(settings, **_):
+            asked.append(True)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        return fake
+    ours = {"Name": "/" + engine_docker.container_name(settings),
+            "Config": {"Labels": engine_docker.labels(settings)}, "State": {"Running": True}}
+    monkeypatch.setattr(engine_docker, "inspect_container", inspect(ours))
+    assert engine.own_engine_recorded(settings) is False and asked == []  # no record, no Docker call
+    state = settings.data_dir / "arcade"
+    state.mkdir(parents=True)
+    (state / "container.json").write_text(json.dumps({"name": engine_docker.container_name(settings)}))
+    assert engine.own_engine_recorded(settings) is True
+    for stale in (None, {**ours, "State": {"Running": False}}, {**ours, "Config": {"Labels": {}}},
+                  ArcadeError("Docker does not answer")):  # gone, stopped, not ours, cannot be asked
+        monkeypatch.setattr(engine_docker, "inspect_container", inspect(stale))
+        assert engine.own_engine_recorded(settings) is False
+
+
 def test_ask_names_a_proposed_finding_and_the_warnings_of_the_json():
     from cairnmind.terminal_commands import ask_summary
     from cairnmind.terminal_i18n import tr
