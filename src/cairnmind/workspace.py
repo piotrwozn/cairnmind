@@ -381,7 +381,13 @@ class WorkspaceManager:
                                             "-f", "ignore-size", "-t", SESSION], env=_clean_env())
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline and process.poll() is None:
-                    claimed = self._claim_attached(process.pid, terminal, takeover=takeover)
+                    try:
+                        claimed = self._claim_attached(process.pid, terminal, takeover=takeover)
+                    except subprocess.CalledProcessError:
+                        # The server went away under the claim (a stop): the client ends with it, and the code is
+                        # judged below. A tmux that failed with the client still attached raises as before.
+                        process.wait(timeout=3)
+                        break
                     if claimed is not None:
                         break
                     time.sleep(.025)
