@@ -8,6 +8,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from textual import _time as textual_time, events
 from textual.widgets import Button, Input, Static, TextArea
 
 from cairnmind import person_proof
@@ -19,6 +20,7 @@ from cairnmind.terminal_inspector import InspectorApp
 from cairnmind import terminal_published_import as published
 from cairnmind.terminal_published_import import MESSAGES, folder_error, taken_ids, take_error
 from test_terminal_panels import FakeBroker, setup, settle
+from test_trial011_workspace import wait_until
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
@@ -80,6 +82,8 @@ async def checked(app, pilot):
     for _ in range(300):
         await pilot.pause(.02)
         if app.screen.query("#message-body"):
+            modal = app.screen  # a consent dialog takes only input made after its draw and its quiet moment (#328)
+            await wait_until(pilot, lambda: modal.drawn_at + modal.QUIET <= textual_time.get_time())
             return
     raise AssertionError("no consent dialog")
 
@@ -157,6 +161,23 @@ async def test_cancel_writes_nothing(tmp_path, monkeypatch):
         await settle(app, pilot)
         assert len(broker.writes()) == 1 and app.screen is app.screen_stack[0]
 
+
+@pytest.mark.asyncio
+async def test_the_consent_dialog_is_a_consent_dialog_and_the_app_drops_a_key_queued_below_it(tmp_path, monkeypatch):
+    app, broker, _ = published_app(tmp_path, monkeypatch, "en")
+    async with app.run_test(size=(95, 42)) as pilot:
+        await settle(app, pilot)
+        await open_choice(app, pilot)
+        await checked(app, pilot)
+        modal = app.screen
+        assert modal.consent
+        early = events.Key("shift+tab", None)
+        early.time = modal.drawn_at - 1  # made before the draw, handled late
+        app.on_key(early)
+        assert early._no_default_action and early._stop_propagation
+        await pilot.click("#confirm-no")
+        await settle(app, pilot)
+        assert [body["dry_run"] for _, body in broker.writes()] == [True]
 
 @pytest.mark.asyncio
 async def test_a_commit_is_imported_at_the_commit_the_check_read(tmp_path, monkeypatch):
