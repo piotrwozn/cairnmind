@@ -828,7 +828,13 @@ def prepare_client_launch(settings: Settings, project: dict[str, Any], client: s
 
 def run_client(settings: Settings, project: dict[str, Any], client: str,
                args: list[str] | None = None) -> int:
-    launch = prepare_client_launch(settings, project, client, args)
+    try:
+        launch = prepare_client_launch(settings, project, client, args)
+    except ValueError as exc:
+        if not str(exc).startswith("resume_partial: "):
+            raise  # keeps subclasses such as StoreNotWriter, which the CLI tells apart
+        # The stable code is for the workspace (client_runtime); a person at the command line reads the sentence.
+        raise ValueError(str(exc).removeprefix("resume_partial: ")) from None
     root = Path(launch["cwd"])
     try:
         return subprocess.call(launch["command"], cwd=root, env=launch["env"])
