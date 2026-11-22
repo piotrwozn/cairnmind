@@ -215,7 +215,7 @@ CATALOG = {
     "This folder does not exist or cannot be read.": "Ten folder nie istnieje lub nie można go odczytać.",
     "No subfolders. You can use this folder.": "Brak podfolderów. Możesz wybrać ten folder.",
     "Cancel": "Anuluj", "Close": "Zamknij", "Save": "Zapisz", "Continue": "Dalej",
-    "Confirm": "Potwierdź", "Refresh": "Odśwież", "Details": "Szczegóły",
+    "Confirm": "Potwierdź", "Refresh": "Odśwież", "Details": "Detale",
     "Technical details": "Szczegóły techniczne", "Hide technical details": "Ukryj szczegóły techniczne",
     # One key line at the bottom of each dialog, and the command menu's empty state.
     "Enter: select · Esc: back": "Enter: wybierz · Esc: wstecz",
@@ -264,7 +264,7 @@ CATALOG = {
     "The superseded finding had newer evidence": "Zastąpione ustalenie miało nowsze dowody",
     "Checks": "Testy", "Queue": "Kolejka", "Unassigned": "Nieprzypisane", "Snapshot": "Snapshot",
     "Filter loaded page…": "Filtruj załadowaną stronę…", "List": "Lista", "Filters": "Filtry",
-    "Dispute": "Zakwestionuj", "History": "Historia", "Preview": "Podgląd", "Automatic": "Automat",
+    "Dispute": "Kwestionuj", "History": "Historia", "Preview": "Podgląd", "Automatic": "Automat",
     "Import": "Import", "Apply": "Wczytaj", "Type / state": "Typ / stan",
     "Content / source": "Treść / źródło", "Version / attempt": "Wersja / próba",
     "Version": "Wersja", "Graph": "Graf", "Groups": "Grupy", "Pause": "Pauza",

@@ -109,10 +109,10 @@ def cut_labels(app, width):
     return cut
 
 
-# Measured on the drawn screen: Polish "Zakwestionuj" and "Szczegóły" are still cut below a 76-column pane, which is
-# a Cockpit of about 153 columns; English is whole from 66. The narrower Polish panes are an open question (#222).
+# The drawn screen is what counts: Textual's Button loses 2 columns to its line padding. 68 columns is the inspector pane of a
+# Cockpit of 140 columns in Polish, 66 the narrowest one measured to be whole before.
 @pytest.mark.asyncio
-@pytest.mark.parametrize("language, width", [("en", 66), ("en", 70), ("pl", 76), ("pl", 80)])
+@pytest.mark.parametrize("language, width", [("en", 66), ("en", 68), ("pl", 66), ("pl", 68), ("pl", 70), ("pl", 76)])
 async def test_no_button_of_either_row_is_cut_on_the_drawn_screen(tmp_path, monkeypatch, language, width):
     app, _, _ = release_app(tmp_path, monkeypatch, language)
     async with app.run_test(size=(width, 42)) as pilot:
