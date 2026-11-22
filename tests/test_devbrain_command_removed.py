@@ -112,6 +112,19 @@ def test_hand_written_bare_devbrain_entries_are_named_not_rewritten(tmp_path, mo
     kept = json.loads((root / ".mcp.json").read_text())["mcpServers"]
     assert kept["devbrain"] == mcp["mcpServers"]["devbrain"] and "cairnmind" in kept  # theirs stays, ours is added
     assert first_start.TRUST_NOTE in result["warnings"]
+    # install wrote its own entry beside each one, so the advice is to remove it, not to add a second cairnmind
+    assert all("remove this one" in w for w in named)
+    assert first_start.REMOVED_COMMAND_BESIDE.format(path=root / ".mcp.json", entry="mcpServers.devbrain") in named
+
+    # A client that is not installed gets nothing written (#313): then writing cairnmind there is the fix.
+    monkeypatch.setattr(integrations, "_probe_cli", lambda *args, **kwargs: {
+        "installed": False, "version": None, "mcp": False, "hooks": False, "packet_passing": False,
+        "session_binding": False, "verified_resume": False, "notes": []})
+    absent = integrations.install_integrations(settings, {"id": "p", "name": "P", "root": str(root)})
+    assert first_start.REMOVED_COMMAND.format(path=root / ".codex/config.toml", entry="mcp_servers.old") in (
+        absent["warnings"])
+    assert not any("remove this one" in w for w in absent["warnings"])
+    assert first_start.MESSAGES[first_start.REMOVED_COMMAND_BESIDE] != first_start.REMOVED_COMMAND_BESIDE
 
 
 def test_the_installer_looks_for_the_leftover_after_installing_and_still_replaces_devbrain_0_8_0():

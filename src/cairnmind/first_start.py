@@ -136,6 +136,10 @@ CLIENT_SKIPPED = ("{client} is not installed, so nothing was written for it; aft
                   "install again to connect it.")
 REMOVED_COMMAND = ("{path} ({entry}) starts the devbrain command, which Cairnmind no longer installs; it is left "
                    "unchanged and fails to start. Write cairnmind there with the same arguments.")
+REMOVED_COMMAND_BESIDE = ("{path} ({entry}) starts the devbrain command, which Cairnmind no longer installs; it is "
+                          "left unchanged and fails to start. cairnmind install has just written its own entry there, "
+                          "so remove this one; write cairnmind in it with the same arguments only if it does "
+                          "something else.")
 TRUST_NOTE = ("Each client asks you to trust this project's MCP server and hooks when it first starts here; "
               "Cairnmind answers no trust question for you.")
 SERVICE_STARTED = ("Started the Cairnmind service at {url} for {data_dir}. It keeps running in the background and "
@@ -306,6 +310,10 @@ MESSAGES = {
                      "ponownie cairnmind install, aby go połączyć."),
     REMOVED_COMMAND: ("{path} ({entry}) uruchamia polecenie devbrain, którego Cairnmind już nie instaluje; wpis "
                       "pozostaje bez zmian i nie uruchomi się. Wpisz tam cairnmind z tymi samymi argumentami."),
+    REMOVED_COMMAND_BESIDE: ("{path} ({entry}) uruchamia polecenie devbrain, którego Cairnmind już nie instaluje; "
+                             "wpis pozostaje bez zmian i nie uruchomi się. cairnmind install właśnie zapisał tam "
+                             "własny wpis, więc usuń ten; wpisz w nim cairnmind z tymi samymi argumentami tylko "
+                             "wtedy, gdy robi coś innego."),
     TRUST_NOTE: ("Każdy klient przy pierwszym uruchomieniu tutaj zapyta, czy ufasz serwerowi MCP i hookom tego "
                  "projektu; Cairnmind nie odpowiada za Ciebie na takie pytania."),
     SERVICE_STARTED: ("Uruchomiono usługę Cairnmind pod {url} dla {data_dir}. Działa w tle i uruchamia silnik "
