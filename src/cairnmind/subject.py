@@ -33,6 +33,10 @@ support check alone. So does a question written in headline case, where a capita
 and one asked with an answer schema, which is a caller's instruction full of field names (the
 caller of ``unnamed_subject`` leaves those out).
 
+The names an answer introduces are read by the same shapes and must occur in a quote or the path
+of its source (``unnamed_answer_names``); a lower-case name has no shape in an answer either, which
+is why a separate model call (support.py, ``names_messages``) asks about the names of an answer.
+
 A name matches without regard to case, across ``_``, ``-``, ``.`` and spaces where the name itself
 has a seam (``num_ctx`` in "num ctx", ``ArcadeDB`` in "arcade_db"), split once where it has none
 (``Zookeeper`` in "zoo_keeper"), as a part of an identifier (``Consul`` in ``consulPort`` or
@@ -58,6 +62,13 @@ from .support import support_citations
 # What an answer refused by this check says is missing: this fixed prefix, then the names as the
 # question wrote them (a person's text, kept as it is).
 SUBJECT_GAP = "The quoted sources do not name what the question asks about: "
+# The same for a name the answer itself introduces (unnamed_answer_names, and the model's names call).
+NAMES_GAP = "The quoted sources do not state the names the answer gives: "
+# The deterministic check of those names reads a name in an answer by its written shape and is
+# stricter than the subject check (quote and path only), so it is built but not in the answer path
+# until scripts/replay_subject_check.py shows over the kept reports that it refuses no right answer
+# (the owner's rule of 15 and 22 November 2026). Then this becomes True. The names call is not gated.
+CHECK_ANSWER_NAMES = False
 
 # Words of the language that can be capitalised inside a sentence without naming anything.
 STOP = frozenset("""
@@ -294,7 +305,42 @@ def unnamed_subject(store, project_id: str, question: str, sources: list[dict], 
     passages += [source_text(whole[source["id"]]) for source in sources if source.get("id") in whole]
     spreads = [_spread(passage) for passage in passages if passage]
     inflected = inflecting(question)
-    absent = _absent(terms, spreads, set(), inflected)
+    return _not_own(store, project_id, _absent(terms, spreads, set(), inflected), spreads, inflected)
+
+
+def unnamed_answer_names(store, project_id: str, question: str, answer: str, sources: list[dict]) -> list[str]:
+    """The names ``answer`` introduces that no source it quotes has; empty lets it pass.
+
+    A name is read from the answer by the same written shape as the question's (``subject_terms``),
+    and one the question already has is not introduced by the answer. Each must occur in a verified
+    quote or in the path of its source, nowhere else: the rest of the source does not count, because
+    the answer asserts the name and the quote has to show it. The project's own names are never
+    missing. Not in the answer path while ``CHECK_ANSWER_NAMES`` is False.
+    """
+    terms = _introduced(question, answer)
+    if not terms:
+        return []
+    spreads = [_spread(text) for cite in support_citations(sources) for text in (cite["quote"], cite["path"]) if text]
+    inflected = inflecting(answer)
+    return _not_own(store, project_id, _absent(terms, spreads, set(), inflected), spreads, inflected)
+
+
+def _introduced(question: str, answer: str, own_names: Iterable[str] = ()) -> list[str]:
+    asked = inflecting(question)
+    return [term for term in subject_terms(answer, own_names) if not mentions(term, question, asked)]
+
+
+def missing_answer_names(question: str, answer: str, passages: Iterable[str], own_names: Iterable[str] = ()) -> list[str]:
+    """The names ``answer`` introduces that none of ``passages`` (the quotes and paths) mentions, without
+    a store: the project's own names are passed. What the replay script (scripts/replay_subject_check.py) runs."""
+    own = {_key(name) for name in own_names if name}
+    spreads = [_spread(passage) for passage in passages if passage]
+    return _absent(_introduced(question, answer, own_names), spreads, own, inflecting(answer))
+
+
+def _not_own(store, project_id: str, absent: list[str], spreads: list[str], inflected: bool) -> list[str]:
+    """Of the ``absent`` names, those that are not the project's own (its name, the name of its root
+    or of a directory that holds current sources, or an identifier whose prefix is the project's)."""
     if not absent:
         return []
     project = store.query("SELECT name, root FROM projects WHERE id=:id", {"id": project_id})

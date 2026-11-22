@@ -28,8 +28,10 @@ from .ollama import OllamaUnavailable
 from .retrieval import (Retriever, json_value, public_metadata, public_record, public_source_metadata, terms,
                         with_source_origin)
 from .store import validate_task_state
-from .subject import SUBJECT_GAP, unnamed_subject
-from .support import SUPPORT_SCHEMA, SUPPORT_TOKENS, support_messages, support_verdict
+from . import subject as _subject
+from .subject import NAMES_GAP, SUBJECT_GAP, unnamed_answer_names, unnamed_subject
+from .support import (NAMES_SCHEMA, NAMES_TOKENS, SUPPORT_SCHEMA, SUPPORT_TOKENS, names_messages, names_verdict,
+                      support_messages, support_verdict)
 
 
 SYSTEM = """You are the local evidence-grounded knowledge agent for a programming workspace.
@@ -1042,8 +1044,10 @@ class KnowledgeAgent:
 
     async def _support_gate(self, project_id: str, question: str, result: dict, evidence: dict, started: float,
                             diagnostics: dict, *, plain: bool = True) -> dict:
-        """Keep a complete answer complete only if its sources name the question's subject and one
-        judge call finds that its quotes state the answer.
+        """Keep a complete answer complete only if its sources name the question's subject, one
+        judge call finds that its quotes state the answer and a names call finds every name the
+        answer asserts stated by the quotes (a plain question only; the third call is made only for an
+        answer the judge accepted, so there is one more call per complete answer).
 
         Anything else (not complete, so no call) passes unchanged. The subject check (subject.py)
         comes first and asks no model: a name of the question's subject that no quoted source has
@@ -1059,10 +1063,15 @@ class KnowledgeAgent:
             return result
         unnamed = await asyncio.to_thread(unnamed_subject, self.store, project_id, question,
                                           result["sources"], evidence) if plain else []
+        prefix = SUBJECT_GAP
+        if plain and not unnamed and _subject.CHECK_ANSWER_NAMES:
+            unnamed = await asyncio.to_thread(unnamed_answer_names, self.store, project_id, question,
+                                              result["answer"], result["sources"])
+            prefix = NAMES_GAP
         if unnamed:
-            diagnostics["support_check"] = "subject_missing"
+            diagnostics["support_check"] = "subject_missing" if prefix == SUBJECT_GAP else "names_missing"
             return self._result("partial", "The model's answer could not be verified in the sources.",
-                                evidence, [*result.get("unknowns", []), SUBJECT_GAP + ", ".join(unnamed)],
+                                evidence, [*result.get("unknowns", []), prefix + ", ".join(unnamed)],
                                 started, result["sources"], code="answer_unsupported")
         try:
             response = await self.ollama.chat(
@@ -1077,10 +1086,30 @@ class KnowledgeAgent:
             supported, reason = support_verdict(response)
             diagnostics["support_check"] = ("supported" if supported else
                                             "unsupported" if reason else "failed")
+        gap = None  # the sentence for a names call that withholds the answer; None: the judge's own gap
+        if supported and plain:
+            # One more call (#245): the names the answer asserts, each stated by the quotes or not. A lower-case
+            # name has no shape for the subject check; this is how it is read. Fail closed, like the judge.
+            try:
+                response = await self.ollama.chat(
+                    names_messages(result["answer"], result["sources"]), tools=None,
+                    format=deepcopy(NAMES_SCHEMA), options={"num_predict": NAMES_TOKENS})
+            except OllamaUnavailable:
+                unstated = None
+            else:
+                diagnostics["model_calls"] = [*diagnostics["model_calls"][-2:], _model_diagnostics(response, "names")]
+                unstated = names_verdict(response)
+            if unstated is None:
+                diagnostics["support_check"] = "names_failed"
+                supported, reason, gap = False, None, "Could not check the names the answer gives."
+            elif unstated:
+                diagnostics["support_check"] = "names_unstated"
+                supported, reason, gap = False, "names", NAMES_GAP + ", ".join(unstated)
         if supported:
             return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
-        gap = ("The quotes do not support the answer: " + reason if reason else
-               "Could not check whether the quotes support the answer.")
+        if gap is None:  # the judge's own gap
+            gap = ("The quotes do not support the answer: " + reason if reason else
+                   "Could not check whether the quotes support the answer.")
         return self._result("partial", "The model's answer could not be verified in the sources.",
                             evidence, [*result.get("unknowns", []), gap], started, result["sources"],
                             code="answer_unsupported" if reason else "support_unverified")

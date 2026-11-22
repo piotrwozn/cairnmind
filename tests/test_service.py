@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from cairnmind.config import Settings
 from cairnmind.service import InferenceQueue, create_app
 from cairnmind.store import Store
-from cairnmind.support import SUPPORT_SYSTEM
+from cairnmind.support import NAMES_SYSTEM, SUPPORT_SYSTEM
 
 
 class LocalModelFixture:
@@ -29,6 +29,8 @@ class LocalModelFixture:
         return [[1.0, 0.0] for _ in texts]
 
     def support(self, messages):
+        if messages[0].get("content") == NAMES_SYSTEM:  # the names call of a complete answer: nothing unstated
+            return {"message": {"content": json.dumps({"names": []})}, "done_reason": "stop"}
         if messages[0].get("content") != SUPPORT_SYSTEM:
             return None
         self.support_calls.append(json.loads(messages[1]["content"]))
