@@ -71,6 +71,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_engine_docker", "test_tmux_optional", "test_external_mcp_start", "test_knowledge_mode",
     "test_person_proof", "test_person_key_workspace", "test_inspector_plan_confirm",
     "test_inspector_release",
+    "test_inspector_published_import",
     "test_command_line_confirms_nothing",
     "test_doc_links",
 })

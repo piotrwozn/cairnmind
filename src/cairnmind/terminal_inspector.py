@@ -122,6 +122,7 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
             with Horizontal(id="memory-extra"):
                 yield Button(self.t("Apply"), id="memory-apply", disabled=True)
                 yield Button(self.t("Status"), id="memory-refresh")
+                yield Button(self.t("Team memory"), id="memory-published")
             yield Static("", id="panel-notice", markup=False)
         yield Footer()
 
@@ -154,8 +155,8 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                   "entity-technical": "Details", "entity-confirm": "Confirm", "entity-dispute": "Dispute",
                   "entity-history": "History", "entity-sources": "Sources", "memory-preview": "Preview",
                   "memory-save": "Save", "memory-auto": "Automatic", "memory-import": self.t("Import"),
-                  "memory-apply": "Apply", "memory-refresh": "Status", "conflict-resolve": "Resolve",
-                  "entity-release": "Release"}
+                  "memory-apply": "Apply", "memory-refresh": "Status", "memory-published": "Team memory",
+                  "conflict-resolve": "Resolve", "entity-release": "Release"}
         for identifier, label in labels.items():
             self.query_one("#" + identifier, Button).label = self.t(label)
         self.refresh_impact_language()
@@ -738,6 +739,9 @@ class InspectorApp(ProposedView, ImpactView, BasePanel):
                     await self._poll_workspace()
                 self.show_memory("applied", result)
                 self.notice(self.t("Memory imported. No client was started automatically."))
+            elif action == "published":
+                from .terminal_published_import import import_published  # team memory (#304)
+                await import_published(self)
             else:
                 await self.load_memory()
         except (OSError, ValueError, RuntimeError) as exc:

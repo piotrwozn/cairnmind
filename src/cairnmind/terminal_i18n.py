@@ -10,6 +10,7 @@ from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_release import MESSAGES as RELEASE_MESSAGES
+from .terminal_published_import import MESSAGES as PUBLISHED_IMPORT_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .topology import MESSAGES as TOPOLOGY_MESSAGES
 from .terminal_i18n_messages import MESSAGES
@@ -642,6 +643,7 @@ CATALOG.update(CHECK_PROFILE_MESSAGES)  # a check profile the worktree does not 
 CATALOG.update(RECORD_KIND_MESSAGES)  # an unknown transcript record kind a person accepts (#210)
 CATALOG.update(PLAN_CONFIRM_MESSAGES)  # a person confirms a plan in the inspector (#214)
 CATALOG.update(RELEASE_MESSAGES)  # a person releases a record in the inspector (#306)
+CATALOG.update(PUBLISHED_IMPORT_MESSAGES)  # team memory in the memory view (#304)
 CATALOG.update(ENGINE_DOCKER_MESSAGES)  # the engine in Docker (#272)
 CATALOG.update(FIRST_START_MESSAGES)  # tmux only for the workspace; the service started for MCP (#273, #258)
 CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#288)
