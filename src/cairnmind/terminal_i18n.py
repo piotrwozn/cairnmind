@@ -20,6 +20,7 @@ from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
 from .setup_change import MESSAGES as SETUP_CHANGE_MESSAGES
 from .setup_mark import MESSAGES as SETUP_MARK_MESSAGES
 from .setup_profiles import MESSAGES as SETUP_PROFILE_MESSAGES
+from .terminal_setup_change import MESSAGES as SETUP_CHANGE_UI_MESSAGES
 from .topology import MESSAGES as TOPOLOGY_MESSAGES
 from .upgrade_mark import MESSAGES as UPGRADE_MARK_MESSAGES
 from .terminal_i18n_messages import MESSAGES
@@ -667,6 +668,7 @@ CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not 
 CATALOG.update(PROJECT_REMOVAL_MESSAGES)  # removing a project from the registry (#327)
 CATALOG.update(SETUP_MARK_MESSAGES)  # a change of where storage and models run is in progress (#339)
 CATALOG.update(SETUP_CHANGE_MESSAGES)  # the workspace carries that change out (#339)
+CATALOG.update(SETUP_CHANGE_UI_MESSAGES)  # and its dialogs (#339)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 
