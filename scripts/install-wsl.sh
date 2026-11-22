@@ -240,6 +240,7 @@ live_terminals() {
 # $1: that Python, "<uv tool dir>/<tool>/bin/python". Prints their process ids, one per line; fails when ps does.
 live_bridges() {
     local python="$1" pid args
+    command -v ps >/dev/null 2>&1 || return 1  # not found must not read as "none open", pipefail or not
     ps -A -ww -o pid= -o args= | while read -r pid args; do
         case "$args" in
             "$python"*" mcp "*"--client external"*|"$python"*" mcp "*"--client=external"*) printf '%s\n' "$pid" ;;
@@ -274,13 +275,17 @@ end_upgrade() {
     fi
 }
 
-# $1: the executable of the installed version, $2: the name a user types for it, $3: its Python (live_bridges).
+# $1: the executable of the installed version, $2: the name a user types for it, $3: its Python (live_bridges), may be absent.
 # The workspace and coding sessions hold interactive work: the installer stops here unless it is
 # told to close them. The interface broker and the knowledge service hold none and are stopped.
 stop_installed() {
-    local installed="$1" name="$2" python="$3" terminals status socket bridges
-    # First, and also when the installed command is broken: nothing has been stopped yet.
-    if ! bridges="$(live_bridges "$python")"; then
+    local installed="$1" name="$2" python="${3:-}" terminals status socket bridges=""
+    # First, and also when the installed command is broken: nothing has been stopped yet. Before the terminals:
+    # it is a cheap read that ends the run with nothing asked of the installed command, and a refusal about
+    # terminals (#290) then never hides an open MCP server that would restart the service.
+    if [[ -z "$python" ]]; then
+        printf 'Note: the Python of the installed version is not known, so an open MCP server of it could not be ruled out.\n' >&2
+    elif ! bridges="$(live_bridges "$python")"; then
         printf 'Note: ps failed, so an open MCP server of the installed version could not be ruled out.\n' >&2
     elif [[ -n "$bridges" ]]; then
         bridges="${bridges//$'\n'/ }"

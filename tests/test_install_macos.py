@@ -304,6 +304,23 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+@pytest.mark.parametrize("arguments", ["", " /u/tools/cairnmind/bin/python"])
+def test_stop_installed_says_it_could_not_look_for_mcp_servers_without_a_python_or_a_ps(tmp_path, arguments):
+    """No third argument, or no ps on the PATH: one note, never a claim that none is open, and the stop goes on (#298)."""
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    functions = script[start:script.index("# --- end ---", start)]
+    bin_dir = tmp_path / "bin"  # `id` only: no tmux, no ps
+    bin_dir.mkdir()
+    (bin_dir / "id").symlink_to(shutil.which("id"))
+    installed = tool(tmp_path / "cairnmind", "exit 1")
+    result = subprocess.run(
+        [BASH, "-c", f"set -euo pipefail\n{functions}\nstop_installed {installed} cairnmind{arguments}\necho went on"],
+        env={"PATH": str(bin_dir), "TMPDIR": str(tmp_path / "none")}, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0 and "went on" in result.stdout, result.stderr
+    assert "could not be ruled out" in result.stderr and "unbound" not in result.stderr
+
+
 # --- Linux: what it printed before stays as it was -----------------------------------------------------------------
 
 @pytest.mark.parametrize("release,line", [
