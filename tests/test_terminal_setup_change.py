@@ -397,6 +397,28 @@ def inside(app, *identifiers, width=80, height=24):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_no_label_of_the_form_is_cut_at_80_by_24(ui, language):
+    rig = ui(language)
+    app = rig.app
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+        app.change(None)
+        await until(pilot, on_screen(app, ChoiceModal))
+        await pilot.press("down", "down", "enter")
+        await until(pilot, on_screen(app, FormModal))
+        await pilot.pause()
+        fields = app.screen.query_one("#form-fields")
+        shown = set()
+        for _ in range(12):  # scroll through the form: each label must be whole where it is drawn
+            shown.update(line.strip() for line in screen_text(app).splitlines())
+            fields.scroll_page_down(animate=False)
+            await pilot.pause()
+        label = tr(terminal_setup_change.F_ADMIN_FILE, language)
+        assert any(label in line for line in shown), label
+
+
+@pytest.mark.asyncio
 async def test_the_flow_fits_at_80_by_24(ui):
     rig = ui()
     app, tmp = rig.app, rig.tmp

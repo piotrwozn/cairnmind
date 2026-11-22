@@ -86,6 +86,8 @@ SERVICE_DOWN = ("The knowledge service could not be started again: {reason} Noth
                 "workspace stop`) and open it again (`cairnmind`).")
 INTERRUPTED = ("The change was interrupted (signal {signal}); the lines above say what was done and what was put "
                "back. The knowledge service was not started by the change; the next command that needs it starts it.")
+INTERRUPTED_KEPT = ("The change was interrupted (signal {signal}) where config.json could not be put back. Nothing "
+                    "starts the knowledge service until config.json is checked and the copy is removed.")
 REQUEST_INVALID = "The request for the change could not be read ({reason}); nothing was changed."
 STILL_ON_NEW = "a knowledge service started on the new settings is still running and could not be ended"
 
@@ -141,6 +143,8 @@ MESSAGES = {
                    "(`cairnmind workspace stop`) i otwórz je ponownie (`cairnmind`)."),
     INTERRUPTED: ("Zmianę przerwano (sygnał {signal}); powyższe wiersze mówią, co zrobiono i co przywrócono. Zmiana "
                   "nie uruchomiła usługi wiedzy; następne polecenie, które jej potrzebuje, ją uruchomi."),
+    INTERRUPTED_KEPT: ("Zmianę przerwano (sygnał {signal}) w miejscu, w którym nie dało się przywrócić config.json. "
+                       "Nic nie uruchamia usługi wiedzy, dopóki config.json nie zostanie sprawdzony, a kopia usunięta."),
     REQUEST_INVALID: "Nie udało się odczytać prośby o zmianę ({reason}); nic nie zostało zmienione.",
     STILL_ON_NEW: "usługa wiedzy uruchomiona z nowymi ustawieniami nadal działa i nie dała się zakończyć",
 }
@@ -490,6 +494,7 @@ def _new_settings_start(data_dir: Path, path: Path, snapshot: bytes, result: dic
                                                   "notes": notes}), (COPY_KEPT, {"copy": data_dir / setup_mark.BEFORE}))
         return out.finish("service_down"), True
     out.add((START_FAILED_PUT_BACK, {"reason": reason, "notes": notes}))
+    (data_dir / setup_mark.BEFORE).unlink(missing_ok=True)  # config.json is the old one again: no copy may block the start
     if interrupted:
         out.add((INTERRUPTED, {"signal": _signal_number()}))
         return out.finish("interrupted"), False
@@ -533,6 +538,7 @@ def _change(data_dir: Path, request, expected: dict, out) -> str:
             keep = True
             out.add((COPY_KEPT, {"copy": copy}))
             return out.finish("service_down")
+        copy.unlink(missing_ok=True)  # refused or failed: setup put config.json back, so no copy may block the start
         return _restart(data_dir, out, kind)
     except BaseException:
         keep = True  # an end nobody planned for: config.json is unchecked, and the copy blocks every start until it is
@@ -555,7 +561,10 @@ def carry_out(data_dir: Path, request, expected: dict, language: str, report) ->
         return out.finish("refused")
     except KeyboardInterrupt:  # one that came where nothing could be put back: the copy, if there, is named
         copy = data_dir / setup_mark.BEFORE
-        out.add((INTERRUPTED, {"signal": _signal_number()}), *([(COPY_KEPT, {"copy": copy})] if copy.exists() else []))
+        if copy.exists():
+            out.add((INTERRUPTED_KEPT, {"signal": _signal_number()}), (COPY_KEPT, {"copy": copy}))
+        else:
+            out.add((INTERRUPTED, {"signal": _signal_number()}))
         return out.finish("interrupted")
 
 

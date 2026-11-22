@@ -33,7 +33,7 @@ F_USER = "Database user"
 F_DATABASE = "Database name"
 F_PASSWORD_FILE = "Password file (a private file you created, mode 0600)"
 F_CA_FILE = "Certificate authority file (optional)"
-F_ADMIN_FILE = "Root password file, only to create the user and database (optional, never saved)"
+F_ADMIN_FILE = "Root password file (optional, never saved)"
 F_MODELS_URL = "Model server address (https://...)"
 F_PROVIDER = "Provider (ollama or openai_compatible)"
 F_CHAT = "Chat model"
@@ -63,7 +63,8 @@ KEEP_OPEN = ("Keep the workspace open until the change has finished: the restore
              "while the workspace answers with its key.")
 GOES_ON = ("Once started, the change cannot be stopped halfway; it goes on if the workspace is closed. `cairnmind "
            "status` shows where storage and models run afterwards, and `cairnmind doctor` names a change that did "
-           "not finish.")
+           "not finish. How it ended, including a restore that kept confirmations only as claims, is in "
+           "setup-change.json in the data directory.")
 PLAN = "The plan, as `cairnmind setup` gives it:"
 PROGRESS_TITLE = "Changing where storage and models run"
 PROGRESS_HINT = "Wait: the change cannot be stopped halfway."
@@ -82,7 +83,7 @@ MESSAGES = {
     F_DATABASE: "Nazwa bazy",
     F_PASSWORD_FILE: "Plik z hasłem (prywatny plik, który utworzono, tryb 0600)",
     F_CA_FILE: "Plik urzędu certyfikacji (opcjonalnie)",
-    F_ADMIN_FILE: "Plik z hasłem roota, tylko do utworzenia użytkownika i bazy (opcjonalnie, nigdy nie zapisywany)",
+    F_ADMIN_FILE: "Plik z hasłem roota (opcjonalnie, nigdy nie zapisywany)",
     F_MODELS_URL: "Adres serwera modeli (https://...)",
     F_PROVIDER: "Dostawca (ollama albo openai_compatible)",
     F_CHAT: "Model chat",
@@ -113,7 +114,8 @@ MESSAGES = {
                 "wtedy, gdy środowisko odpowiada swoim kluczem."),
     GOES_ON: ("Raz zaczętej zmiany nie można zatrzymać w połowie; trwa dalej także po zamknięciu środowiska. "
               "`cairnmind status` pokazuje potem, gdzie działają baza i modele, a `cairnmind doctor` wskazuje zmianę, "
-              "która się nie skończyła."),
+              "która się nie skończyła. Jak się skończyła, także odtworzenie, które zachowało potwierdzenia tylko jako "
+              "twierdzenia, jest w setup-change.json w katalogu danych."),
     PLAN: "Plan, jaki podaje `cairnmind setup`:",
     PROGRESS_TITLE: "Zmiana miejsca działania bazy i modeli",
     PROGRESS_HINT: "Czekaj: zmiany nie można zatrzymać w połowie.",

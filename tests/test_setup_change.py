@@ -47,7 +47,8 @@ class Rig:
         self.alive = True                     # the fake service
         self.shutdowns, self.starts = [], []
         self.stop_answer, self.ignores_stop = {"stopping": True}, False
-        self.start_error = None               # a function of the config.json bytes at the start, or None
+        self.restart_signal = False
+        self.start_error = None             # a function of the config.json bytes at the start, or None
         self.start_signal = None              # "gone": a signal ends the start and the process it spawned; "stays": not
         self.start_late = None                # "gone"/"stays": the start on the new settings times out, its process lives
         self.jobs, self.projects = [], []
@@ -94,6 +95,8 @@ class Rig:
             raise cli.ServiceDidNotStart("The service did not start. Check service.log; port 1 may be in use.")
         if self.start_error and self.start_error(bytes_now):
             raise cli.ServiceDidNotStart("The service stopped at start: it did not like it.")
+        if self.restart_signal and len(self.starts) > 1:
+            raise KeyboardInterrupt  # a signal while the service starts again on the old settings
         self.alive = True
         return True
 
@@ -425,8 +428,24 @@ def test_an_interrupt_that_comes_where_nothing_can_be_put_back_keeps_the_copy_an
     state, text = rig.go(request, expected=expected)
     copy = rig.data / setup_mark.BEFORE
     assert state == "interrupted" and f"kept in {copy}" in said(text)
+    assert "next command that needs it starts it" not in said(text) and "Nothing starts the knowledge service" in said(text)
     assert copy.read_bytes() == before and not (rig.data / setup_mark.MARK).exists()
     assert setup_mark.refusal(rig.data) is not None  # config.json is new and unchecked: nothing starts the service
+
+
+def test_an_interrupt_while_the_service_starts_on_the_old_settings_keeps_no_copy_and_blocks_nothing(rig, monkeypatch):
+    make(rig.tmp)
+    before = config_bytes(rig.tmp)
+    request = rig.request()
+    rig.start_error = lambda data: json.loads(data).get("arcade_connect_url") == DB
+    rig.restart_signal = True
+    expected = rig.agreed(request)
+    state, text = rig.go(request, expected=expected)
+    # config.json already holds the old settings, so the sentence "the next command starts it" is true and no copy blocks it
+    assert state == "interrupted" and "config.json was put back as it was" in said(text)
+    assert "next command that needs it starts it" in said(text) and "kept in" not in said(text)
+    assert config_bytes(rig.tmp) == before and not (rig.data / setup_mark.BEFORE).exists()
+    assert setup_mark.refusal(rig.data) is None and setup_mark.unchecked(rig.data) is None
 
 
 def test_an_error_after_the_apply_is_put_back_and_said_as_what_it_is(rig, monkeypatch):
