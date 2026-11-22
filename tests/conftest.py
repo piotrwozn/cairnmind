@@ -73,6 +73,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_command_line_confirms_nothing",
     "test_doc_links", "test_stall_watch", "test_restore_claims_units",
     "test_upgrade_mark", "test_upgrade_start", "test_service_version", "test_other_version",
+    "test_server_mode",
 })
 
 TMUX_MODULES = frozenset({
@@ -86,6 +87,50 @@ EXCLUSIVE_MODULES = frozenset({"test_terminal_latency080"})
 
 # The directory, under the run's temporary root, of the engine that parallel workers share.
 SHARED_ENGINE = "arcade-engine-shared"
+
+# Server mode (#218): with CAIRNMIND_TEST_ARCADE_SERVER_URL (http://127.0.0.1:PORT of a running ArcadeDB) and
+# CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE (a private file with its root password), the engine tests install, start
+# and stop nothing and run against that server through connect-only mode; the `server-tests` CI job does it with the
+# published image. Without them nothing here changes. Tests that cannot run against a server this run does not own are
+# skipped with the reason below: a module (`test_x`) or one test (`test_x::test_name`). Each reason names what needs
+# the local engine; it is a first list, settled by the runs of that job. tests/test_server_mode.py keeps it true.
+LEFT_OUT_ON_A_SERVER = {
+    "test_store_prune": "starts its own engine and reads its log and folders under the data directory",
+    "test_store_size": "counts the files it makes under the installation's own arcade/databases folder",
+    "test_trial011_store": "starts its own engine and reads its engine.log",
+    "test_first_start_stops": "starts its own engine and reads its engine.log",
+    "test_connect_only": "builds connect-only installations from the port and the password of the managed engine",
+    "test_connect_only_network": "puts a relay in front of the managed engine's port and reads its password",
+    "test_database_user": "names its own database address, and reads the first command's output as JSON, which "
+                          "starts with the notice that a connect-only installation saved its address",
+    "test_store_readonly::test_a_stopped_engine_is_refused_without_starting_it":
+        "names its own database address, which conflicts with the connect address of server mode",
+    "test_store_readonly::test_a_missing_database_is_refused_and_not_created":
+        "expects the message of a managed installation for a missing database, which a connect-only one words otherwise",
+    "test_memory_cli_service::test_cli_memory_operations_forward_current_actor_without_stale_environment_packet":
+        "reads the first command's output as JSON, which starts with the notice that a connect-only installation "
+        "saved its address",
+    "test_cli::test_cli_evaluation_skip_claude_is_explicit_and_remains_not_run":
+        "`cairnmind eval run` is refused on a connect-only installation",
+    "test_memory_cli_service::test_memory_evaluation_cli_preserves_exit_contract":
+        "`cairnmind eval memory` is refused on a connect-only installation",
+}
+
+
+def server_under_test():
+    """(address, root password) of the server of server mode, or None when the tests start their own engine."""
+    address, password_file = env_value("TEST_ARCADE_SERVER_URL"), env_value("TEST_ARCADE_SERVER_PASSWORD_FILE")
+    if not address and not password_file:
+        return None
+    if not (address and password_file):
+        raise pytest.UsageError("Server mode needs both CAIRNMIND_TEST_ARCADE_SERVER_URL and "
+                                "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE.")
+    from cairnmind.database_credentials import read_private_file
+    return address, read_private_file(password_file, "CAIRNMIND_TEST_ARCADE_SERVER_PASSWORD_FILE")
+
+
+def left_out_reason(module: str, name: str) -> str | None:
+    return LEFT_OUT_ON_A_SERVER.get(module) or LEFT_OUT_ON_A_SERVER.get(f"{module}::{name}")
 
 
 def measuring_coverage() -> bool:
@@ -298,8 +343,12 @@ def in_shard(nodeid: str, index: int, count: int) -> bool:
 
 
 def pytest_collection_modifyitems(config, items):
+    server = server_under_test()
     for item in items:
         module = Path(str(item.fspath)).stem
+        reason = server and left_out_reason(module, getattr(item, "originalname", item.name))
+        if reason:
+            item.add_marker(pytest.mark.skip(reason=f"left out on a server: {reason}"))
         if module not in NO_ARCADE_MODULES:
             item.add_marker(pytest.mark.arcade)
         if module in TMUX_MODULES:
@@ -638,6 +687,16 @@ class SchemaTemplate:
             shutil.rmtree(self.databases / self.name, ignore_errors=True)
 
 
+def created_as_root(original, prefix: str):
+    """Server mode: a connect-only installation creates no database (#68), so the run's own are created here as root."""
+    def ensure_database(client):
+        if not client.database.startswith(prefix + "_"):
+            return original(client)
+        if not client.database_exists():
+            client.server_command(f"create database {client.database}")
+    return ensure_database
+
+
 def explained_when_unavailable(settings: Settings, original):
     """A request the test engine does not answer says, in the failing test's captured stderr, what it waited for (#221).
 
@@ -680,12 +739,22 @@ def arcade_test_engine(tmp_path_factory, request):
     # Both spellings: a developer's exported earlier name must not reach the test engine either.
     runtime_names = tuple(key for name in ("ARCADE_URL", "ARCADE_USER", "ARCADE_PASSWORD", "ARCADE_DATABASE",
                                            "ARCADE_DB_PREFIX") for key in env_names(name))
+    server = server_under_test()
+    if server:  # a developer's own connect address must not reach the run either
+        runtime_names += tuple(env_names("ARCADE_CONNECT_URL"))
     original = {name: os.environ.pop(name, None) for name in runtime_names}
     existing = env_value("TEST_ARCADE_HOME")
     worker = is_xdist_worker(request.config)
     # A serial run owns and stops its engine; parallel workers share one that the controller stops.
-    owns = not existing and not worker
-    if existing:
+    owns = not existing and not worker and not server
+    prefix = "devbrain_test_" + uuid.uuid4().hex[:8]
+    if server:
+        # Nothing is installed, started or stopped; the installation of the tests only connects (#68).
+        changes = {"CAIRNMIND_ARCADE_CONNECT_URL": server[0], "CAIRNMIND_ARCADE_USER": "root",
+                   "CAIRNMIND_ARCADE_PASSWORD": server[1], "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
+        os.environ.update(changes)
+        settings = Settings.load(tmp_path_factory.mktemp("server-installation"), create=True)
+    elif existing:
         settings = Settings.load(Path(existing), create=True)
         start_test_engine(settings)
     else:
@@ -701,19 +770,20 @@ def arcade_test_engine(tmp_path_factory, request):
                 settings = prepare_engine(root, os.getppid())
         else:
             settings = prepare_engine(tmp_path_factory.mktemp("arcade-engine"), os.getpid())
-    prefix = "devbrain_test_" + uuid.uuid4().hex[:8]
-    changes = {"CAIRNMIND_ARCADE_URL": settings.arcade_url,
-               "CAIRNMIND_ARCADE_USER": settings.arcade_user,
-               "CAIRNMIND_ARCADE_PASSWORD": settings.arcade_password,
-               "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
-    os.environ.update(changes)
+    if not server:
+        changes = {"CAIRNMIND_ARCADE_URL": settings.arcade_url,
+                   "CAIRNMIND_ARCADE_USER": settings.arcade_user,
+                   "CAIRNMIND_ARCADE_PASSWORD": settings.arcade_password,
+                   "CAIRNMIND_ARCADE_DB_PREFIX": prefix}
+        os.environ.update(changes)
     original_ensure, original_request = ArcadeClient.ensure_database, ArcadeClient._request
     ArcadeClient._request = explained_when_unavailable(settings, original_request)
     template = None
     try:
         # Built inside the try: a schema that fails to initialise must still stop the engine and restore the environment.
         template = SchemaTemplate(settings, prefix, tmp_path_factory.mktemp("schema-template"))
-        ArcadeClient.ensure_database = template.ensure_database(original_ensure)
+        ArcadeClient.ensure_database = (created_as_root(original_ensure, prefix) if server
+                                        else template.ensure_database(original_ensure))
         yield settings, prefix, template
     finally:
         ArcadeClient.ensure_database, ArcadeClient._request = original_ensure, original_request

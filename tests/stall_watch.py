@@ -39,6 +39,8 @@ def engine_threads(log: Path, wait: float = 1.5) -> str:
     SIGQUIT makes a JVM print its threads to its output, which is engine.log, and go on running. It is sent only
     to a process whose command line is the ArcadeDB server: for anything else SIGQUIT would be the end.
     """
+    if not log.parent.is_dir():  # server mode (#218): a server this run did not start has no folder, log or pid here
+        raise FileNotFoundError("the engine is a server this run did not start: no engine folder, log or pid here")
     pid = int(json.loads((log.parent / "process.json").read_text())["pid"])
     if not any("arcadedb" in part.lower() for part in process_identity.command_line(pid) or []):
         return f"(none taken: process {pid} is not the engine)"
@@ -52,6 +54,8 @@ def engine_threads(log: Path, wait: float = 1.5) -> str:
 
 def thread_dump(log: Path) -> str:
     """The engine's threads, taken once per DUMP_EVERY seconds across the workers (a file lock and a time stamp)."""
+    if not log.parent.is_dir():
+        engine_threads(log)  # raises, naming why
     with (log.parent / "stall-dump.stamp").open("a+") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
