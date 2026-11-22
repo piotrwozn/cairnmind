@@ -113,8 +113,10 @@ def names_verdict(response: dict) -> list[str] | None:
             isinstance(item, dict) and isinstance(item.get("name"), str) and type(item.get("stated")) is bool
             for item in names):
         return None
-    unstated = (" ".join(_CONTROL.sub(" ", item["name"]).split())[:80] for item in names if not item["stated"])
-    return [name for name in dict.fromkeys(unstated) if name]
+    unstated = [" ".join(_CONTROL.sub(" ", item["name"]).split())[:80] for item in names if not item["stated"]]
+    if not all(unstated):  # an unstated name that is blank is still a "not stated": unreadable, so withheld
+        return None
+    return list(dict.fromkeys(unstated))
 
 
 def support_verdict(response: dict) -> tuple[bool, str | None]:

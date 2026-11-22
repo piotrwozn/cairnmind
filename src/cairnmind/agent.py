@@ -1061,7 +1061,7 @@ class KnowledgeAgent:
                                               result["answer"], result["sources"])
             prefix = NAMES_GAP
         if unnamed:
-            diagnostics["support_check"] = "subject_missing"
+            diagnostics["support_check"] = "subject_missing" if prefix == SUBJECT_GAP else "names_missing"
             return self._result("partial", "The model's answer could not be verified in the sources.",
                                 evidence, [*result.get("unknowns", []), prefix + ", ".join(unnamed)],
                                 started, result["sources"], code="answer_unsupported")

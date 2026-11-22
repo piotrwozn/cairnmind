@@ -375,6 +375,8 @@ async def test_a_right_answer_whose_names_the_quotes_state_stays_complete_and_th
     {"content": "no names"},
     {"content": json.dumps({"names": "nginx"})},
     {"content": json.dumps({"names": [{"name": "nginx"}]})},
+    {"content": json.dumps({"names": [{"name": "", "stated": False}]})},
+    {"content": json.dumps({"names": [{"name": " \u0000 ", "stated": False}]})},
     {"content": json.dumps({"names": []}), "tool_calls": [{"function": {"name": "x", "arguments": {}}}]},
 ])
 async def test_a_failed_or_unreadable_names_call_withholds_the_answer_and_says_why(workspace, names):  # noqa: F811
@@ -417,7 +419,7 @@ async def test_the_names_an_answer_introduces_must_be_in_a_quote_or_a_path_once_
         assert result["status"] == status
         if status == "partial":
             assert result["unknowns"][-1] == NAMES_GAP + "Zookeeper" and not model.support_calls
-            assert result["diagnostics"]["support_check"] == "subject_missing" and "8765" not in result["answer"]
+            assert result["diagnostics"]["support_check"] == "names_missing" and "8765" not in result["answer"]
     # The same answer with the check off (the default until the replay) is left to the two model calls.
     monkeypatch.setattr("cairnmind.subject.CHECK_ANSWER_NAMES", False)
     result, _ = await _asked(store, project, settings, "On which port does the local service listen by default?",

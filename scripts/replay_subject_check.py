@@ -32,6 +32,7 @@ import sys
 from cairnmind.agent import EXCERPT_CHARS
 from cairnmind.subject import missing_answer_names, missing_subject
 
+REPORT_QUOTE_CHARS = 300  # where repository_evaluation.case_result cuts a quote
 PROJECT_NAMES = ("repository", "evaluation")  # what the evaluation calls the copy it indexes
 
 
@@ -48,7 +49,9 @@ def directories(repo: Path, commit: str) -> set[str] | None:
 
 
 def quote_in(text: str, quote: str) -> str:
-    """The quote as the agent kept it: the cut text of the report, extended in the file to its cap."""
+    """The quote as the agent kept it: the text of the report, extended in the file only if the report cut it."""
+    if len(quote) < REPORT_QUOTE_CHARS:  # an uncut quote is the whole quote; the file text after it was not quoted
+        return quote
     at = text.find(quote) if quote else -1
     return text[at:at + EXCERPT_CHARS] if at >= 0 else quote
 

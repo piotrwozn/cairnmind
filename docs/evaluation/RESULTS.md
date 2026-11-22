@@ -77,7 +77,7 @@ The first try of the 22 on the merged tree died with a segmentation fault of the
 | the 21 absent questions, refused (nginx included) | 20 of 21 (release gate of 0.11.0) | NOT MEASURED YET | needs the models |
 | the 22 further questions, complete and right | NOT MEASURED YET | NOT MEASURED YET | needs the models |
 | `subject-questions.json`, three runs, right answers withheld | NOT MEASURED YET | NOT MEASURED YET | needs the models |
-| replay of the introduced-names check over the kept reports, right answers withheld | none | NOT MEASURED YET | needs the kept reports |
+| replay of the introduced-names check over the kept reports, right answers withheld | not applicable (check absent) | NOT MEASURED YET | needs the kept reports |
 
 The replay is `python scripts/replay_subject_check.py --repo . --commit 478535d` followed by the kept `repository-*.json` files; it reads the cited files from Git and prints, per report, what each check would withhold among right answers and which wrong answers it would stop.
 

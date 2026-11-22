@@ -56,6 +56,16 @@ def test_the_replay_names_the_right_answers_each_check_would_withhold_and_the_wr
     assert "right answer withheld: introduced: Zookeeper" in out
 
 
+def test_the_replay_counts_only_a_quote_the_report_did_not_cut_as_quoted(tmp_path):
+    # The file has "Zookeeper" after the short quote; the agent never kept that text, so the names check withholds.
+    repo, report = _repo(tmp_path, [_row("tail", "On which port does the service listen?", "Zookeeper uses 8765.", True)])
+    (repo / "src" / "example" / "config.py").write_text(
+        "class Settings:\n    port: int = 8765\n    # Zookeeper mirrors this port\n", encoding="utf-8")
+    _git(repo, "commit", "--quiet", "-am", "tail")
+    code, out = _replay("--repo", str(repo), "--commit", "HEAD", str(report))
+    assert code == 1 and "right answer withheld: tail: Zookeeper" in out
+
+
 def test_the_replay_exits_zero_when_no_right_answer_is_withheld_and_2_when_it_cannot_read_what_it_needs(tmp_path):
     repo, report = _repo(tmp_path, [_row("plain", "On which port does the service listen by default?", "8765", True)])
     assert _replay("--repo", str(repo), str(report))[0] == 0
