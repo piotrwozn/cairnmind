@@ -357,3 +357,43 @@ async def test_queue_button_is_explicit_scoped_localized_and_never_starts_an_ass
             assert enabled[0][3] == {"project": "project-a", "worktree": broker.project["root"]}
             assert "Włączono przetwarzanie pamięci" in str(app.query_one("#panel-notice", Static).render())
             assert workspace.read()["launch_errors"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("which", ["PROCESS_OFF", "PROCESS_RESTART"])
+async def test_process_memory_without_models_shows_the_way_on_the_real_24_column_sidebar(tmp_path, monkeypatch, which):
+    """The notice sits on a line of at most 5 rows in a 24-column pane: all of it, the command too, must be visible (#294)."""
+    import textwrap
+    from textual.widgets import Static
+    from cairnmind import first_start
+    from cairnmind.terminal_panels import SidebarApp
+    from test_terminal_panels import setup, settle
+
+    notice = getattr(first_start, which)
+    command = "cairnmind models pull" if which == "PROCESS_OFF" else "cairnmind stop"
+
+    settings, broker, workspace = setup(tmp_path, monkeypatch)
+    original = broker.request
+
+    def request(method, path, **kwargs):
+        result = original(method, path, **kwargs)
+        if path == "/api/background-inference/enable":
+            return {"accepted": True, "project_id": kwargs["json"]["project"], "worker_running": False, "notice": notice}
+        return result
+
+    monkeypatch.setattr(broker, "request", request)
+    app = SidebarApp(settings, broker=broker, workspace=workspace)
+    async with app.run_test(size=(24, 45)) as pilot:
+        await settle(app, pilot)
+        await pilot.click("#more-open")
+        await pilot.pause()
+        await pilot.press("down", "down", "down", "enter")
+        await pilot.pause()
+        await pilot.click("#confirm-yes")
+        await settle(app, pilot)
+        line = app.query_one("#panel-notice", Static)
+        shown = str(line.render())
+        assert command in shown  # translated (the test language is Polish), still the same command
+        assert shown != notice
+        rows = textwrap.wrap(shown, line.size.width)
+        assert len(rows) <= 5 and command.split()[-1] in " ".join(rows), rows
