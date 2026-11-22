@@ -341,7 +341,7 @@ around Cairnmind:
   directory from the workspace's on Linux and WSL);
 - use Cairnmind's library code, or the database engine with the password the
   user can read, and write any row, marks and audit notes included;
-- restore a backup while the workspace is open: `cairnmind restore` keeps the
+- restore a backup while a key answers at this installation's workspace socket: `cairnmind restore` keeps the
   confirmations and accepted record kinds of a backup when it reads a key from
   the tmux server at this installation's workspace socket, and it reads the key
   itself, so whoever runs `cairnmind stop` and `cairnmind restore` at that moment
