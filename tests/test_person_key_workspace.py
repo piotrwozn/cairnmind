@@ -83,7 +83,8 @@ def client_and_calls(settings, monkeypatch):
 PERSON_POSTS = ("/api/inspector/records/r1/review", "/api/inspector/conflicts/resolve",
                 "/api/inspector/plans/p1/confirm", "/api/inspector/record-kinds/accept",
                 "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import",
-                "/api/inspector/records/r1/release", "/api/inspector/impact/verdict")
+                "/api/inspector/records/r1/release", "/api/inspector/impact/verdict",
+                "/api/memory/import-published", "/api/memory/import-commit")
 
 
 def test_broker_client_adds_the_key_only_for_a_persons_post_inside_the_workspace(
@@ -134,7 +135,9 @@ def test_the_broker_passes_the_key_on_person_routes_only(broker_app):
     plan = {"project": "p", "expected_plan_version": 1}
     for path, body in (("/api/inspector/records/r1/review", {"project": "p", "action": "confirm"}),
                        ("/api/inspector/conflicts/resolve", {}), ("/api/inspector/plans/p1/confirm", plan),
-                       ("/api/inspector/record-kinds/accept", {}), ("/api/memory/import", {}),
+                       ("/api/inspector/record-kinds/accept", {}),
+                       ("/api/memory/import", {}), ("/api/memory/import-published", {}),
+                       ("/api/memory/import-commit", {}),
                        ("/api/inspector/records/r1/release", {"project": "p", "reason": "Example."}),
                        ("/api/inspector/impact/verdict", {"project": "p"})):
         assert client.post(path, json=body, headers={**headers, **proof}).status_code == 200, path

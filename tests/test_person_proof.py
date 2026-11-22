@@ -203,11 +203,12 @@ def test_only_a_persons_post_paths_carry_the_proof():
     for path in ("/api/inspector/records/r1/review", "/api/inspector/conflicts/resolve",
                  "/api/inspector/plans/p1/confirm", "/api/inspector/record-kinds/accept",
                  "/api/inspector/record-kinds/withdraw", "/api/findings", "/api/memory/import",
-                 "/api/inspector/records/r1/release", "/api/inspector/impact/verdict"):
+                 "/api/inspector/records/r1/release", "/api/inspector/impact/verdict",
+                 "/api/memory/import-published", "/api/memory/import-commit"):
         assert person_proof.PERSON_BROKER_PATH.fullmatch(path), path
     for path in ("/api/ask", "/api/client-runs", "/api/inspector/records", "/api/inspector/records/r1/release/x",
-                 "/api/inspector/impact", "/api/inspector/impact/verdicts", "/api/memory/import-published",
-                 "/api/memory/import/x", "/api/inspector/records/a/b/review"):
+                 "/api/inspector/impact", "/api/inspector/impact/verdicts", "/api/memory/import-publishedx",
+                 "/api/memory/import/x", "/api/memory/import-commit/x", "/api/inspector/records/a/b/review"):
         assert not person_proof.PERSON_BROKER_PATH.fullmatch(path), path
 
 

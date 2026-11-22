@@ -30,7 +30,7 @@ KEY_HEADER, SOCKET_HEADER = "X-Cairnmind-Person", "X-Cairnmind-Workspace"
 # The paths a panel sends to the broker for a person's act (BrokerClient adds the proof to these POSTs only).
 PERSON_BROKER_PATH = re.compile(r"/api/(inspector/(records/[^/]+/(review|release)|conflicts/resolve"
                                 r"|plans/[^/]+/confirm|impact/verdict|record-kinds/(accept|withdraw))"
-                                r"|findings|memory/import)")
+                                r"|findings|memory/import(-published|-commit)?)")
 _KEY = re.compile(r"[0-9a-f]{64}")
 _HEADER_VALUE = re.compile(r"[\x20-\x7e]+")
 # Set by `require` only, in the task of the request that passed the check.

@@ -821,12 +821,13 @@ def create_cockpit_app(settings, *, runtime=None, proxy_transport=None, public_u
     @app.api_route("/api/memory/{path:path}", methods=["GET", "POST", "PATCH"])
     async def memory_proxy(request: Request, path: str):
         session_for(request)
-        allowed = {"GET": {"status"}, "POST": {"preview", "snapshot", "inspect", "import"}, "PATCH": {"settings"}}
+        imports = {"import", "import-published", "import-commit"}
+        allowed = {"GET": {"status"}, "POST": {"preview", "snapshot", "inspect"} | imports, "PATCH": {"settings"}}
         if path not in allowed[request.method]:
             raise HTTPException(404)
         return forward(await upstream(request.method, "/memory/" + path, params=request.query_params,
                                       data=await body(request) if request.method != "GET" else None,
-                                      person=person_proof.forwardable(request.headers) if path == "import" else None))
+                                      person=person_proof.forwardable(request.headers) if path in imports else None))
 
     @app.get("/api/status")
     async def memory_status(request: Request):
