@@ -188,9 +188,10 @@ async def _run_once(agent, transcripts: list[dict]) -> tuple[list[dict], list[di
             diagnostics = _diagnostics()
             try:
                 records = await agent.propose(item["source"], diagnostics)
-            except ValueError:
+            except (ValueError, TimeoutError) as exc:
                 records = []
-                failures.append({"transcript": transcript["id"], "event": item["index"], "code": diagnostics["code"]})
+                code = "timeout" if isinstance(exc, TimeoutError) else diagnostics["code"]  # a call cut by the budget (#266)
+                failures.append({"transcript": transcript["id"], "event": item["index"], "code": code})
             proposals[item["index"]] = records or []
         results.append(score_transcript(transcript, proposals))
     return results, failures
