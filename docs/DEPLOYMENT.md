@@ -294,6 +294,8 @@ To restore it into a server, for example a new empty one:
 
 `restore` replaces everything in the database with the backup. Before it does, it writes a backup of the current contents to `backups/` in the data directory.
 
+A restore keeps the person's confirmations in the backup only when this installation's workspace is open on the machine that runs `restore` and holds its key ([MEMORY_CONTRACTS.md](MEMORY_CONTRACTS.md#a-restore-without-the-workspace)). On a server, in CI or with no workspace, every row is still restored, each confirmation becomes the backup's claim, not verified here, and accepted transcript record kinds are withdrawn; the output says which (`person_confirmations`) and how many, and the exit code is 0 either way.
+
 What the logical backup does not contain: the files of the data directory (`config.json` with the local token and the database password, client credentials and API keys, the terminal workspace state, the hook spool, logs), ArcadeDB's own server configuration and users, and model weights.
 
 ### Volume snapshot

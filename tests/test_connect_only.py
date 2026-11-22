@@ -566,6 +566,8 @@ def test_an_installation_that_only_connects_indexes_backs_up_and_restores(tmp_pa
         changed = store.query("SELECT count(*) AS n FROM sources")[0]["n"]
         restored = cli(data, "restore", backup)
         assert restored.exit_code == 0, (restored.output, restored.exception)
+        # No workspace of this installation is open: the real proof finds none and the restore says so (#214).
+        assert json.loads(restored.stdout)["person_confirmations"] == "claims_of_the_backup"
         assert Store(data).query("SELECT count(*) AS n FROM sources")[0]["n"] == changed - 1
         # The safety copy made before the restore is a file of this installation too.
         assert len(list((data / "backups").glob("before-restore-*"))) == 1
