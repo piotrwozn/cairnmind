@@ -79,6 +79,9 @@ def test_an_unlisted_earlier_uv_tool_stops_the_installer(tmp_path):
     result = run()
     assert (result.returncode, result.stdout) == (1, "")
     assert str(folder) in result.stderr and "uv tool uninstall devbrain" in result.stderr
+    # What the tool started is stopped with its own command before it is removed, as for a listed tool.
+    stop = f'"{folder}/bin/devbrain" stop'
+    assert stop in result.stderr and result.stderr.index(stop) < result.stderr.index("uv tool uninstall devbrain")
     folder.unlink()
     folder.mkdir()
     assert run().returncode == 1

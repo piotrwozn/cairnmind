@@ -332,7 +332,8 @@ fi
 # its service) on the same data directory: stop here instead of installing beside it.
 refuse_unlisted_devbrain_tool() {
     if [[ -e "$1" || -L "$1" ]]; then
-        printf 'An earlier DevBrain uv tool is in %s but uv does not list it. Remove it with: uv tool uninstall devbrain (your memory is kept); if that fails, rm -r "%s". Then run this installer again.\n' "$1" "$1" >&2
+        # What it started is stopped first, while its own command still exists: afterwards nothing could stop it.
+        printf 'An earlier DevBrain uv tool is in %s but uv does not list it. First stop what it may still run: "%s/bin/devbrain" workspace stop, then "%s/bin/devbrain" cockpit stop, then "%s/bin/devbrain" stop. Then remove it with: uv tool uninstall devbrain (your memory is kept); if that fails, rm -r "%s". Then run this installer again.\n' "$1" "$1" "$1" "$1" "$1" >&2
         exit 1
     fi
 }
