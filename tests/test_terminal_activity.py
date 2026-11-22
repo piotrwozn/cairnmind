@@ -315,6 +315,7 @@ async def test_triggers_are_throttled_and_merged(tmp_path, monkeypatch):
         assert len(broker.calls) - start == 3, shown()
         # A trigger after the window has its own refresh, at once.
         app.request_refresh()
+        assert app._in_flight is not None and app._refresh_timer is None  # started in the same tick
         await until(pilot, lambda: len(broker.calls) - start == 6, timeout=3, what=shown)
 
 
@@ -330,9 +331,11 @@ async def test_a_trigger_during_a_refresh_is_not_lost_and_not_repeated(tmp_path,
         broker.hold = threading.Event()  # the broker holds its answer
         app.request_refresh()
         await until(pilot, lambda: len(broker.calls) > start, what=lambda: f"{requests(broker, start)}")
+        await pilot.pause(terminal_activity.THROTTLE + .3)  # the window is over, the answer still held
         for _ in range(3):  # triggers while the refresh is in flight
             app.request_refresh()
-        assert len(broker.calls) - start == 1 and app._in_flight is not None
+        await pilot.pause(.1)
+        assert len(broker.calls) - start == 1 and app._in_flight is not None, f"{requests(broker, start)}"
         broker.hold.set()
         shown = lambda: f"{requests(broker, start)}"  # noqa: E731
         await until(pilot, lambda: len(broker.calls) - start == 6, timeout=3, what=shown)  # one more, not three
