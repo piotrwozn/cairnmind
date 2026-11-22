@@ -1547,9 +1547,13 @@ def _import_history_locked(store, path: Path, project_id: str | None, client: st
 
 
 def poll_imports(store) -> dict:
+    from .project_removal import removed_ids
     rows = store.query("SELECT path,project_id,client FROM import_cursors")
     result = {"files": 0, "archived": 0, "chunks": 0, "inbox": 0, "unknown": 0, "errors": []}
+    removed = removed_ids(store)  # a removed project's conversations are not archived until it is back (#327)
     for row in rows:
+        if row["project_id"] in removed:
+            continue
         try:
             item = import_history(store, Path(row["path"]), row["project_id"], row["client"])
             for key, value in item.items():

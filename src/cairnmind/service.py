@@ -294,6 +294,9 @@ def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=Non
     """
     rows = (store.missing_embeddings(namespace) if project_ids is None else
             [row for pid in project_ids for row in store.missing_embeddings(namespace, pid)])
+    from .project_removal import removed_ids
+    removed = removed_ids(store)  # no embedding job is queued for a removed project (#327)
+    rows = [row for row in rows if row["project_id"] not in removed]
     if settings is not None:
         from cairnmind.memory_egress import held_chunk_ids
         held = held_chunk_ids(store, settings, rows, known_held)

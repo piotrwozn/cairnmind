@@ -1,8 +1,13 @@
 """A project is removed from the registry and keeps its memory; the same name and folder bring it back (#327)."""
+import subprocess
+
 import pytest
 
 from cairnmind import project_removal as removal
-from cairnmind.ingest import index_project
+from cairnmind.ingest import index_project, poll_imports
+from cairnmind.memory import MemoryConflict, MemoryManager
+from cairnmind.record_kinds import doctor_view
+from cairnmind.service import schedule_embeddings
 from cairnmind.sessions import SessionManager
 from cairnmind.sql import insert_document
 from cairnmind.store import EXPORT_TYPES, Store
@@ -154,3 +159,49 @@ def test_the_status_counts_registered_and_removed_projects(world):
     assert (store.status()["projects"], store.status()["removed_projects"]) == (1, 0)
     remove(store, project)
     assert (store.status()["projects"], store.status()["removed_projects"]) == (0, 1)
+
+
+def test_transcripts_and_snapshots_of_a_removed_project_are_not_polled(world):
+    store, project, root, extra, confirmed = world
+    pid = project["id"]
+    with store.transaction() as tx:
+        insert_document(tx, "memory_settings", {"id": pid, "project_id": pid, "enabled": True, "interval_minutes": 1,
+                                                "worktree": str(root), "updated_at": "2026-11-22T10:00:00+00:00"})
+    remove(store, project)
+    assert poll_imports(store)["errors"] == []  # the cursor of its transcript is kept, not read
+    ticked = MemoryManager(store).tick()
+    assert ticked["projects"] == [] and ticked["errors"] == []
+    assert "last_checked_at" not in store.query("SELECT FROM memory_settings WHERE id=:id", {"id": pid})[0]
+    store.add_project("app", root)
+    assert poll_imports(store)["errors"]  # back: the cursor is read again (its file is not there)
+
+
+def test_no_embedding_job_is_queued_for_a_removed_project(world):
+    store, project, root, extra, confirmed = world
+    assert schedule_embeddings(store, "test-namespace") > 0
+    for job in store.query("SELECT id FROM jobs WHERE kind='embed'"):
+        store.command("DELETE FROM jobs WHERE id=:id", {"id": job["id"]})
+    remove(store, project)
+    assert schedule_embeddings(store, "test-namespace") == 0
+
+
+def test_a_memory_package_of_a_removed_project_is_refused(world, tmp_path):
+    store, project, root, extra, confirmed = world
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    for command in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "first"]):
+        subprocess.run([*git, *command], cwd=root, check=True, capture_output=True)
+    snapshot = MemoryManager(store).snapshot(project["id"], worktree=str(root))
+    remove(store, project)
+    destination = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(root), str(destination)], check=True, capture_output=True)
+    with pytest.raises(MemoryConflict, match=r"removed from the registry on .*cairnmind project add app .* Nothing was "
+                                             r"imported"):
+        MemoryManager(store).import_snapshot(snapshot["manifest_path"], destination)
+    assert store.list_projects() == []
+
+
+def test_the_workspace_and_doctor_list_registered_projects_only(world):
+    store, project, root, extra, confirmed = world
+    remove(store, project)
+    assert doctor_view(store) == []
+    assert store.list_projects() == []
