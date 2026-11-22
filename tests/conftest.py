@@ -114,6 +114,8 @@ LEFT_OUT_ON_A_SERVER = {
         "its evaluation runs create databases of their own name, which a connect-only installation never creates",
     "test_injection_evaluation":
         "its evaluation runs create and drop databases of their own name, which a connect-only installation never does",
+    "test_restore_size":
+        "starts an engine of its own with the default heap, which a run against a server does not own",
     "test_arcade::test_a_request_the_test_engine_does_not_answer_says_what_it_waited_for":
         "expects the unavailable message of a managed engine, which a connect-only installation words otherwise",
     "test_integrations::test_doctor_reports_arcadedb_without_lifecycle_work_or_credentials":
