@@ -17,7 +17,7 @@ import pytest
 
 from installer_script import installer_functions
 
-ROOT =Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-wsl.sh"
 JAVA_HOME_TOOL = "/usr/libexec/java_home"
 # macOS's own /bin/bash is 3.2; prefer it there, as a person running the documented command gets it.
@@ -236,9 +236,8 @@ def test_no_test_takes_the_installers_socket_rules_without_a_folder_of_its_own()
     own = Path(__file__).with_name("installer_script.py")
     for path in sorted(Path(__file__).parent.glob("test_*.py")):
         text = path.read_text()
-        for marker in ('"# --- what an installed version left running', "'# --- what an installed version left running"):
-            # this file names the marker in this very check
-            assert path == Path(__file__) or marker not in text, (
+        for quote in ("\"", "'"):
+            assert quote + "# --- what an installed " + "version left running" not in text, (
                 f"{path.name} cuts the installer's functions out itself: take them from installer_script.installer_functions, "
                 f"which moves the macOS socket folder under a directory of the test's own ({own.name}).")
     with pytest.raises(AssertionError, match="no longer names"):  # a rule that moved is not redirected in silence
@@ -249,6 +248,15 @@ def test_no_test_takes_the_installers_socket_rules_without_a_folder_of_its_own()
             installer_script.installer_functions(Path("/x"))
         finally:
             installer_script.MACOS_SOCKET_ROOT = original
+
+
+def test_the_installers_functions_are_refused_the_machines_own_socket_folder_and_need_a_tmpdir(tmp_path):
+    import installer_script
+    for real in ("/tmp", "/private/tmp"):
+        with pytest.raises(AssertionError, match="own socket folder"):
+            installer_script.installer_functions(Path(real))
+    text = installer_script.installer_functions(tmp_path)
+    assert "${TMPDIR:-/tmp}" not in text and "${TMPDIR:?" in text
 
 
 def test_an_upgrade_finds_a_workspace_in_the_macos_socket_folder(tmp_path):
@@ -397,7 +405,7 @@ def test_the_refusal_names_the_data_directory_of_each_socket_it_can_ask(tmp_path
     system_temp = Path(tempfile.mkdtemp(prefix="cm-", dir="/tmp"))
     try:
         functions = installer_functions(system_temp)
-        panes =tmp_path / "panes"
+        panes = tmp_path / "panes"
         panes.mkdir()
         starts = {  # the first pane's start command of each server; tmux prints a shell string in double quotes
             "ui-0000000000000001": "\"'/usr/bin/python3' -I -m cairnmind.terminal_panels --kind sidebar --workspace-id default "
