@@ -1907,20 +1907,27 @@ class Store:
         except (OSError, EOFError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Invalid or corrupt Cairnmind backup") from exc
 
-    def restore(self, backup):
-        """Restore validated data atomically. Stop Cairnmind workers before calling."""
+    def restore(self, backup, *, claims=None):
+        """Restore validated data atomically. Stop Cairnmind workers before calling.
+
+        With `claims` (restore_claims.BackupClaims) the restore keeps no person's act of the backup: each
+        confirmation becomes the backup's claim and accepted record kinds are withdrawn (#214). Without it the
+        rows are written as they are; `cairnmind restore` decides by the open workspace's key."""
         # The file is validated in two passes over it before anything changes, and read a third time for
         # the inserts; it is never held in memory whole (#196, backup_reader).
         from .store_writer import require_writer
         with opened_backup(Path(backup).expanduser().resolve(), self._validated_backup, RESTORE_TYPES) as source:
             require_writer(self)  # only the writer restores, and the restored data keeps naming it (#70)
             self.backup(self.data_dir / "backups" / f"before-restore-{uuid4().hex}{BACKUP_SUFFIXES[0]}")
-            self._restore_from(source)
+            self._restore_from(source, claims)
+        if claims is not None:
+            self.confirmations_before_rule = None  # nothing restored is a person's, so nothing is marked as one
+            return
         # A backup of a store before 0.11.0 brings records confirmed before the rule back (#215).
         from .confirmation_upgrade import mark_confirmed_before_rule
         self.confirmations_before_rule = mark_confirmed_before_rule(self, force=True)
 
-    def _restore_from(self, source):
+    def _restore_from(self, source, claims=None):
         # DDL is deliberately outside the data transaction; no live data has been removed.
         for registry in source.vector_indexes:
             name, dimension = registry.get("type_name"), registry.get("dimension")
@@ -1944,7 +1951,7 @@ class Store:
                 tx.command(f"DELETE FROM {quote_name(collection)}")
             # The rows go in groups of a few hundred per request, with the checks of row by row (#219).
             from .restore_groups import write_restored
-            write_restored(self, tx, source)
+            write_restored(self, tx, source, claims)
 
     def forget_project(self, project_id):
         with self.transaction() as tx:
