@@ -297,8 +297,30 @@ def test_changing_only_a_proposed_command_keeps_reported_evidence_and_the_defini
     relinked = store.remember(pid, {"id": task["id"], "expected_version": changed["version"], "metadata": {
         "acceptance_criteria": [{"text": "A", "check": "lint"}]}}, [note["id"]])
     assert "acceptance_passed" not in relinked["metadata"] and task_definition_hash(relinked) != before
-    assert {"acceptance_passed", "acceptance_source_ids", "check_proposals"} <= set(relinked["metadata_dropped"])
-    assert "metadata_dropped" not in changed
+    # The store's result is the stored version and nothing else (#325): no answer-only key rides on it.
+    assert relinked == store.record_history(task["id"])[-1]
+
+
+def test_a_plan_whose_resave_drops_criteria_links_still_previews_and_snapshots(workspace):
+    """Plan revisions hold the store's results: a key added to them breaks every later capture (#325)."""
+    from cairnmind.memory import MemoryManager
+    store, pid, root, settings = workspace
+    saved, task = plan(store, pid, root)
+    assert task["metadata"]["check_proposals"]
+    manager = PlanManager(store)
+    current = manager.get(pid, saved["id"])
+    resaved = manager.save(pid, {"id": saved["id"], "title": "Ship login", "goal": "Login works"}, [
+        {"key": "implement", "content": "Implement login", "metadata": {"acceptance_criteria": ["Unit tests pass."]}},
+        {"key": "document", "content": "Document login"}], "contract-2", worktree=str(root),
+        expected_version=current["plan"]["version"],
+        task_versions={row["id"]: row["version"] for row in current["tasks"]})
+    implement = next(row for row in resaved["tasks"] if row["metadata"]["step_key"] == "implement")
+    assert "check_proposals" not in implement["metadata"]
+    MemoryManager(store).preview(pid, str(root))
+    MemoryManager(store).snapshot(pid, str(root))
+    for row in store.query("SELECT snapshot FROM plan_revisions WHERE plan_id=:id", {"id": saved["id"]}):
+        for stored in row["snapshot"]["tasks"]:
+            assert clean_row(stored) == store.record_history(stored["id"])[stored["version"] - 1]
 
 
 def test_profiles_written_in_a_form_text_cannot_be_added_to_are_left_alone(workspace):

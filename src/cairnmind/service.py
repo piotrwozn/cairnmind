@@ -85,6 +85,9 @@ class RememberBody(BaseModel):
     sources: list[str] = Field(default_factory=list)
     session_id: str | None = None
     packet_id: str | None = None
+    # Only the MCP bridge sends it (#325): the answer then names the metadata keys this write removed. The
+    # command line and the built-in agent send nothing and get the stored record exactly as before.
+    name_dropped: bool = Field(default=False, strict=True)
 
 
 class FindingBody(BaseModel):
@@ -103,6 +106,7 @@ class CheckpointBody(BaseModel):
     state: dict
     session_id: str | None = None
     packet_id: str | None = None
+    name_dropped: bool = Field(default=False, strict=True)  # as in RememberBody (#325)
 
 
 class RegisterProjectBody(BaseModel):
@@ -641,6 +645,18 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             # A write that names a session is never a person's act (#177), whatever the session's client.
             with store.write_origin(mark), store.session_write(session_id):
                 return operation(scope)
+
+    def with_dropped(result: dict) -> dict:
+        """A copy of a write's result for the answer only (#325): the metadata keys the version before it held
+        and this one does not (reported proof, criteria links, an external checkpoint's fields). Read from the
+        immutable revision before, so the store's result, and everything stored from it, stays as it was."""
+        if result.get("version", 1) < 2:
+            return result
+        rows = store.query("SELECT snapshot FROM record_revisions WHERE id=:id",
+                           {"id": f"{result['id']}:{result['version'] - 1}"})
+        held = ((rows[0].get("snapshot") or {}).get("metadata") or {}) if rows else {}
+        dropped = sorted(name for name in held if name not in (result.get("metadata") or {}))
+        return {**result, "metadata_dropped": dropped} if dropped else result
 
     def read_scope(pid: str, requested: str | None, session_id: str | None = None) -> str | None:
         scope = str(Path(requested).expanduser().resolve()) if requested else None
@@ -1219,7 +1235,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             return store.remember(pid, record, sources)
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id, save)
         cache.clear()
-        return result
+        return await asyncio.to_thread(with_dropped, result) if body.name_dropped else result
 
     @app.post("/findings", dependencies=auth)
     async def finding(body: FindingBody, request: Request):
@@ -1259,7 +1275,7 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
         result = await asyncio.to_thread(write_scoped, pid, body.session_id, body.packet_id,
                                          lambda scope: store.checkpoint(pid, body.state))
         cache.clear()
-        return result
+        return await asyncio.to_thread(with_dropped, result) if body.name_dropped else result
 
     @app.post("/ingest", dependencies=auth)
     async def ingest(body: ProjectBody):

@@ -145,6 +145,39 @@ def test_a_short_answer_after_the_epoch_moved_is_the_whole_packet(fixture):  # n
     assert readback(answer["packet"]) is not None
 
 
+STORED_RECORD_KEYS = {"id", "project_id", "kind", "key", "content", "status", "source_ids", "version", "supersedes",
+                      "metadata", "created_at", "updated_at", "active_key"}
+
+
+def test_only_the_bridges_answer_names_the_metadata_a_write_removed(fixture):  # noqa: F811
+    """The service computes it for that answer alone; the stored record and every other answer stay as on main."""
+    pid, note = fixture.project["id"], fixture.note["id"]
+
+    def write(record, **extra):
+        return post(fixture, "/remember", {"project": pid, "sources": [note], "record": record, **extra})
+
+    task = write({"kind": "task", "content": "T", "metadata": {
+        "acceptance_criteria": [{"text": "A", "check": "unit", "argv": ["first"]}]}}, name_dropped=True)
+    assert set(task) == STORED_RECORD_KEYS  # a new record removed nothing
+    plain = write({"id": task["id"], "expected_version": 1, "metadata": {
+        "acceptance_criteria": [{"text": "A", "check": "lint"}]}})
+    assert set(plain) == STORED_RECORD_KEYS and "check_proposals" not in plain["metadata"]
+    sent = {"acceptance_criteria": ["A"]}
+    asked = write({"id": task["id"], "expected_version": 2, "metadata": sent}, name_dropped=True)
+    assert asked["metadata_dropped"] == ["criterion_checks"]
+    history = fixture.store.record_history(task["id"])
+    assert [plain, {key: value for key, value in asked.items() if key != "metadata_dropped"}] == history[1:]
+    assert all("metadata_dropped" not in json.dumps(row) for row in history)
+    view = _saved_record_view(asked, sent)
+    assert view["metadata_dropped"] == ["criterion_checks"] and "metadata_not_stored_as_sent" not in view
+    refused = fixture.client.post("/remember", json={"project": pid, "sources": [note], "name_dropped": "yes",
+                                                     "record": {"kind": "fact", "content": "F"}})
+    assert refused.status_code == 422
+    for state in ({"summary": "one", "next": "x"}, {"summary": "two"}):
+        checkpoint = post(fixture, "/checkpoint", {"project": pid, "state": state, "name_dropped": True})
+        assert set(checkpoint) == STORED_RECORD_KEYS  # a checkpoint's metadata accumulates: nothing removed
+
+
 SAMPLE = Path(__file__).resolve().parents[1] / "examples" / "sample-project"
 
 

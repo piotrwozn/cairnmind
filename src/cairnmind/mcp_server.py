@@ -68,7 +68,8 @@ def _saved_record_view(result: dict[str, Any], sent: Any) -> dict[str, Any]:
             "source_ids": list(result.get("source_ids") or [])[-8:]}
     if len(result.get("source_ids") or []) > 8:
         view["omitted_source_ids"] = len(result["source_ids"]) - 8
-    if result.get("metadata_dropped"):
+    if isinstance(result.get("metadata_dropped"), list) and result["metadata_dropped"]:
+        # Only in the service's answer to this bridge (name_dropped), never in the store's result (#325).
         view["metadata_dropped"] = [str(name)[:100] for name in result["metadata_dropped"][:50]]
     if result.get("supersedes"):
         view["supersedes"] = result["supersedes"]
@@ -450,11 +451,14 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
 
         Answers with the stored record's id, version, status, kind, key and source_ids and, only where they
         apply, the origin mark the service set, supersedes, possible_conflicts, a supersede warning, and
-        metadata_not_stored_as_sent naming the metadata fields the service did not keep as sent,
-        metadata_dropped naming stored fields this write removed, and omitted_source_ids (how many source ids
-        beyond the last eight are not listed). The content you sent is not repeated.
+        metadata_not_stored_as_sent naming the metadata keys you sent that the stored version does not hold
+        with the value you sent, metadata_dropped naming the keys the version before held that this version
+        no longer holds (the service removes some by itself, such as reported proof or criteria links when a
+        task's definition changes), and omitted_source_ids (how many source ids beyond the last eight are not
+        listed). The content you sent is not repeated.
         """
-        saved = await bridge.post("/remember", {"project": project, "record": record, "sources": sources})
+        saved = await bridge.post("/remember", {"project": project, "record": record, "sources": sources,
+                                                "name_dropped": True})
         return _saved_record_view(saved, record.get("metadata"))
 
     @server.tool()
@@ -466,9 +470,9 @@ def create_server(settings: Settings, service: ServiceClient | None = None, *,
         immutable check_runs; reference those using metadata.check_run_ids.
 
         Answers like remember: the checkpoint record's id, version, status and source_ids, not the state
-        you sent.
+        you sent, with metadata_not_stored_as_sent and metadata_dropped where they apply.
         """
-        saved = await bridge.post("/checkpoint", {"project": project, "state": state})
+        saved = await bridge.post("/checkpoint", {"project": project, "state": state, "name_dropped": True})
         return _saved_record_view(saved, state)
 
     @server.tool()

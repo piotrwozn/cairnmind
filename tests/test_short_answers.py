@@ -115,6 +115,7 @@ def test_write_answers_name_what_the_service_decided_not_what_was_sent():
     many = _saved_record_view({**STORED, "source_ids": [str(n) for n in range(20)]}, None)
     assert len(many["source_ids"]) == 8 and many["omitted_source_ids"] == 12
     assert "omitted_source_ids" not in view and "metadata_dropped" not in view
+    # The service's answer to this bridge (name_dropped) names keys the version before held; the store never does.
     dropped = _saved_record_view({**STORED, "metadata_dropped": ["acceptance_passed", "test_passed"]}, None)
     assert dropped["metadata_dropped"] == ["acceptance_passed", "test_passed"]
 
@@ -135,6 +136,8 @@ async def test_remember_and_checkpoint_tools_answer_short(settings):
         assert "SECRET" not in json.dumps(answer) and "SENT" not in json.dumps(answer)
     assert "metadata_not_stored_as_sent" not in remembered
     assert checkpointed["metadata_not_stored_as_sent"] == ["evidence_basis"]  # derived by the store, never as sent
+    # Only this bridge asks the service to name removed keys; the command line and the built-in agent do not.
+    assert [payload.get("name_dropped") for _, payload in bridge.calls] == [True, True]
 
 
 def test_the_saved_plan_answer_has_no_title_and_names_each_task_status():
