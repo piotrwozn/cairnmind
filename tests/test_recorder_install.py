@@ -162,6 +162,76 @@ def test_an_older_claude_code_gets_no_recorder_and_loses_the_one_install_wrote(s
     assert len(list(path.parent.glob("*.cairnmind-backup-*"))) == backups + 1
 
 
+def test_no_recorder_removes_the_file_with_a_backup_and_a_plain_install_keeps_it_off_until_recorder(
+        settings, project, probe):
+    root = Path(project["root"])
+    path = root / PATH
+    integrations.install_integrations(settings, project)
+    assert path.is_file()
+    off = integrations.install_integrations(settings, project, recorder=False)
+    assert not path.exists() and str(path) not in off["changed"] and off["clients"]["claude"]["recorder_off"] is True
+    assert recorder_agent.RECORDER_OFF_REMOVED.format(path=PATH) in off["warnings"]
+    assert len(list(path.parent.glob("*.cairnmind-backup-*"))) == 1
+    assert off["clients"]["claude"]["recorder_configured"] is False and off["clients"]["codex"]["recorder_off"] is False
+    plain = integrations.install_integrations(settings, project)  # the choice is remembered
+    assert not path.exists() and recorder_agent.RECORDER_OFF in plain["warnings"]
+    assert len(list(path.parent.glob("*.cairnmind-backup-*"))) == 1
+    on = integrations.install_integrations(settings, project, recorder=True)
+    assert path.read_text(encoding="utf-8") == recorder_agent.agent_file(settings, project)
+    assert str(path) in on["changed"] and recorder_agent.RECORDER_ON.format(path=PATH) in on["warnings"]
+    assert on["clients"]["claude"]["recorder_off"] is False and on["clients"]["claude"]["recorder_configured"] is True
+    assert integrations.install_integrations(settings, project)["changed"] == []  # and that is remembered too
+    assert path.is_file()
+    for sentence in (recorder_agent.RECORDER_OFF, recorder_agent.RECORDER_OFF_REMOVED, recorder_agent.RECORDER_ON):
+        assert terminal_i18n.CATALOG[sentence]
+
+
+def test_the_choice_stays_off_for_an_older_claude_and_where_mcp_is_unverified(settings, project, probe):
+    root = Path(project["root"])
+    path = root / PATH
+    integrations.install_integrations(settings, project)
+    probe["mcp"] = False  # the file is still removed: off does not wait for a verified capability
+    result = integrations.install_integrations(settings, project, recorder=False)
+    assert not path.exists() and recorder_agent.RECORDER_OFF_REMOVED.format(path=PATH) in result["warnings"]
+    probe["mcp"], probe["version"] = True, "2.1.237"
+    result = integrations.install_integrations(settings, project, recorder=True)  # on, but an older Claude Code
+    assert not path.exists() and recorder_agent.RECORDER_ON.format(path=PATH) not in result["warnings"]
+    assert recorder_agent.RECORDER_NOT_WRITTEN.format(version="2.1.237") in result["warnings"]
+    assert not recorder_agent.is_off(settings, project)
+
+
+def test_a_file_that_is_not_ours_is_untouched_with_either_flag(settings, project, probe):
+    root = Path(project["root"])
+    path = root / PATH
+    path.parent.mkdir(parents=True)
+    path.write_text("---\nname: cairnmind-recorder\n---\nMine.\n", encoding="utf-8")
+    for choice in (False, True):
+        result = integrations.install_integrations(settings, project, recorder=choice)
+        assert path.read_text(encoding="utf-8") == "---\nname: cairnmind-recorder\n---\nMine.\n"
+        assert recorder_agent.RECORDER_KEPT.format(path=PATH) in result["warnings"]
+        assert not list(path.parent.glob("*.cairnmind-backup-*"))
+    target = root / "elsewhere.md"
+    target.write_text(recorder_agent.agent_file(settings, project), encoding="utf-8")
+    path.unlink()
+    try:
+        path.symlink_to(target)
+    except OSError:
+        return
+    for choice in (False, True):
+        integrations.install_integrations(settings, project, recorder=choice)
+        assert path.is_symlink() and target.is_file()
+
+
+def test_both_flags_together_are_an_argument_error(tmp_path):
+    from typer.testing import CliRunner
+
+    from cairnmind import cli
+    result = CliRunner().invoke(cli.app, ["--data-dir", str(tmp_path / "memory"), "install", "x", "--recorder", "--no-recorder"])
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)  # FORCE_COLOR puts styles inside the option names
+    assert result.exit_code == 2 and "Choose one of --recorder and --no-recorder" in plain, result.output
+    assert not (tmp_path / "memory" / "recorder-off").exists()
+
+
 def test_no_recorder_without_claude_or_without_its_mcp_capability(settings, project, probe):
     root = Path(project["root"])
     probe["installed"] = False

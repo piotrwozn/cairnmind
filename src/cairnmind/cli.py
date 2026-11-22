@@ -2288,12 +2288,18 @@ _register_record_kinds(app, initialized)
 
 @app.command()
 @initialized
-def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False):
+def install(ctx: typer.Context, project: ProjectArg, as_json: JSON_FLAG = False,
+            recorder: Annotated[bool, typer.Option("--recorder", help="Turn the Claude Code cairnmind-recorder "
+                                                   "subagent on again for the project and write it.")] = False,
+            no_recorder: Annotated[bool, typer.Option("--no-recorder", help="Remove the cairnmind-recorder subagent "
+                                                      "file Cairnmind wrote and keep it off for the project.")] = False):
     """Add the project's MCP server, hooks and instructions, keeping the existing configuration."""
     from cairnmind.integrations import install_integrations
+    if recorder and no_recorder:
+        raise typer.BadParameter("Choose one of --recorder and --no-recorder.")
     store = store_for(ctx.obj)
     selected = store.resolve_project(project)
-    result = install_integrations(ctx.obj, selected)
+    result = install_integrations(ctx.obj, selected, recorder=True if recorder else False if no_recorder else None)
     import shlex
     from cairnmind import first_start
     from cairnmind.terminal_safe import safe_text

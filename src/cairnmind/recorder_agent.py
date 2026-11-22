@@ -54,6 +54,11 @@ RECORDER_KEPT = ("{path} is not a regular file of this project holding Cairnmind
                  "and the cairnmind-recorder subagent was not set up.")
 RECORDER_LEFT = ("{path} was written by an earlier install and was left in place: Claude Code's MCP capability could not "
                  "be verified this time.")
+RECORDER_OFF = ("The cairnmind-recorder subagent is off for this project, so it was not written "
+                "(`cairnmind install --recorder` turns it on again).")
+RECORDER_OFF_REMOVED = ("The cairnmind-recorder subagent is off for this project: {path} was removed (a backup is beside it; "
+                        "`cairnmind install --recorder` turns it on again).")
+RECORDER_ON = "The cairnmind-recorder subagent is on for this project ({path})."
 
 MESSAGES = {
     RECORDER_NOT_WRITTEN: ("Claude Code {version} jest starszy niż 2.1.238, więc nie zapisano subagenta cairnmind-recorder: "
@@ -71,7 +76,31 @@ MESSAGES = {
                     "i nie skonfigurowano subagenta cairnmind-recorder."),
     RECORDER_LEFT: ("{path} zapisał wcześniejszy install i zostawiono go na miejscu: tym razem nie udało się zweryfikować "
                     "obsługi MCP w Claude Code."),
+    RECORDER_OFF: ("Subagent cairnmind-recorder jest wyłączony dla tego projektu, więc go nie zapisano "
+                   "(`cairnmind install --recorder` włącza go z powrotem)."),
+    RECORDER_OFF_REMOVED: ("Subagent cairnmind-recorder jest wyłączony dla tego projektu: usunięto {path} (kopia leży obok; "
+                           "`cairnmind install --recorder` włącza go z powrotem)."),
+    RECORDER_ON: "Subagent cairnmind-recorder jest włączony dla tego projektu ({path}).",
 }
+
+
+def _marker(settings, project: dict[str, Any]) -> Path:
+    # The choice is a setting of this installation for the project, kept beside the data and outside the store, so no
+    # snapshot, state hash, backup record or published memory carries it, and no checkout file has to be committed or ignored.
+    return settings.data_dir / "recorder-off" / project["id"]
+
+
+def is_off(settings, project: dict[str, Any]) -> bool:
+    return _marker(settings, project).exists()
+
+
+def remember(settings, project: dict[str, Any], on: bool) -> None:
+    marker = _marker(settings, project)
+    if on:
+        marker.unlink(missing_ok=True)
+    else:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
 
 
 def agent_file(settings, project: dict[str, Any]) -> str:
@@ -117,6 +146,8 @@ def merge_recorder(root: Path, settings, project: dict[str, Any], version: str |
     path, inside, ours = _inspect(root)
     if not inside or ((path.exists() or path.is_symlink()) and not ours):
         return False, RECORDER_KEPT.format(path=RECORDER_PATH)
+    if is_off(settings, project):  # the person's choice comes before any version rule
+        return _remove(path, RECORDER_OFF_REMOVED, {}) if ours else (False, RECORDER_OFF)
     semver = _version_tuple(version or "")
     if semver is None or semver < MINIMUM_CLAUDE:
         if semver is None:

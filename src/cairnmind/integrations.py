@@ -661,11 +661,17 @@ def _merge_instructions(path: Path, project: dict[str, Any], settings: Settings)
 
 
 def install_integrations(settings: Settings, project: dict[str, Any],
-                         clients: tuple[str, ...] = CLIENTS) -> dict[str, Any]:
-    """Merge only project-local files; report unsupported capabilities explicitly."""
+                         clients: tuple[str, ...] = CLIENTS, recorder: bool | None = None) -> dict[str, Any]:
+    """Merge only project-local files; report unsupported capabilities explicitly.
+
+    `recorder` False or True turns the Claude Code recorder subagent off or on for the project and is remembered;
+    None keeps the remembered choice (#389)."""
     root = Path(project["root"]).resolve()
     if not root.is_dir():
         raise ValueError(f"Project directory does not exist: {root}")
+    if recorder is not None:
+        from .recorder_agent import remember
+        remember(settings, project, recorder)
     results: dict[str, Any] = {"project": project["id"], "clients": {}, "changed": [], "warnings": []}
     for client in clients:
         if client not in CLIENTS:
@@ -674,7 +680,7 @@ def install_integrations(settings: Settings, project: dict[str, Any],
         info["mcp_configured"] = False
         info["hooks_configured"] = False
         info["instructions_configured"] = False
-        info["recorder_configured"] = False
+        info["recorder_configured"] = info["recorder_off"] = False
         results["clients"][client] = info
         if not info["installed"]:  # nothing is written for a client that is not here, not even its instruction block (#313)
             results["warnings"].append(CLIENT_SKIPPED.format(client=client))
@@ -713,14 +719,18 @@ def install_integrations(settings: Settings, project: dict[str, Any],
                 results["warnings"].append(str(exc))
         else:
             results["warnings"].append(f"{client}: hooks unavailable/unverified; verified native launch is not supported.")
-        if client == "claude" and info["mcp"]:  # a subagent with its own session; Codex subagents share the parent's (#376)
-            from .recorder_agent import RECORDER_PATH, merge_recorder
+        from .recorder_agent import RECORDER_ON, RECORDER_PATH, is_off, merge_recorder
+        info["recorder_off"] = client == "claude" and is_off(settings, project)  # the person's choice (#389)
+        # A subagent with its own session; Codex subagents share the parent's (#376). Off removes the file even where MCP is unverified.
+        if client == "claude" and (info["mcp"] or info["recorder_off"]):
             try:
                 changed, note = merge_recorder(root, settings, project, info.get("version"))
                 if changed and note is None:  # a removal is named by its own sentence, not as written
                     results["changed"].append(str(root / RECORDER_PATH))
                 if note:
                     results["warnings"].append(note)
+                elif recorder is True:
+                    results["warnings"].append(RECORDER_ON.format(path=RECORDER_PATH))
                 info["recorder_configured"] = note is None
             except (ValueError, OSError) as exc:
                 results["warnings"].append(str(exc))
