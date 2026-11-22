@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from cairnmind.cli import app
 from cairnmind.evidence import _is_audit, evidence_states
 from cairnmind.impact import build_impact
-from cairnmind.impact_verdicts import record_verdict
+from cairnmind.impact_verdicts import CLI_REFUSED, record_verdict
 from cairnmind.inspector_api import attach_inspector_routes
 from cairnmind.sql import clean_row
 
@@ -208,24 +208,20 @@ def test_pending_lists_only_entries_without_a_current_verdict(changed):
     assert [row["id"] for row in as_json["records"]] == [records["task"]["id"]]
 
 
-def test_the_command_records_a_verdict_and_refuses_inside_a_coding_session(changed, monkeypatch):
+def test_the_command_gives_no_verdict_inside_or_outside_a_session(changed, monkeypatch):
     store, pid, root, records = changed
     shown = entry(build_impact(store, pid, "HEAD"), records["rule"])
     command = ["--data-dir", str(store.data_dir), "impact-verdict", "impact", records["rule"]["id"],
                "--fingerprint", shown["fingerprint"], "--verdict", "still_valid", "--since", "HEAD"]
-    for name in ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID"):
-        monkeypatch.setenv(name, "logical-session")
+    for name in (None, "CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID"):
+        if name:
+            monkeypatch.setenv(name, "logical-session")
         refused = CliRunner().invoke(app, command)
-        assert refused.exit_code == 2 and "coding session cannot record" in refused.output
-        monkeypatch.delenv(name)
+        assert refused.exit_code == 2 and CLI_REFUSED in " ".join(refused.output.split()), refused.output
+        assert refused.output.startswith("Error: ") and "Usage:" not in refused.output
+        if name:
+            monkeypatch.delenv(name)
     assert verdicts(store, pid) == []
-    saved = CliRunner().invoke(app, command)
-    assert saved.exit_code == 0, saved.output
-    assert json.loads(saved.output)["verdict"]["verdict"] == "still_valid" and len(verdicts(store, pid)) == 1
-    missing = CliRunner().invoke(app, [*command[:4], records["revoke"]["id"], *command[5:]])
-    assert missing.exit_code == 2 and "not in the impact list" in missing.output
-    # A refusal of the state, not of the command line: no usage block (#244).
-    assert missing.output.startswith("Error: ") and "Usage:" not in missing.output
 
 
 def test_the_inspector_route_takes_a_person_s_verdict_with_the_key_and_no_session(changed, workspace_person):

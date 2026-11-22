@@ -12,7 +12,7 @@ from cairnmind.memory_published import Publisher
 from cairnmind.memory_published_check import check_directory
 from cairnmind.memory_published_import import PublishedImporter
 from cairnmind.memory_published_release import (
-    SecretsRefused, checkout_rules, import_rules, registered_secrets, release,
+    CLI_REFUSED, SecretsRefused, checkout_rules, import_rules, registered_secrets, release,
 )
 from cairnmind.service import create_app
 from cairnmind.store import Store
@@ -99,7 +99,7 @@ def test_a_released_record_is_published_with_its_reason_checked_in_ci_and_carrie
     assert published_bytes(bo["root"]) == before
 
 
-def test_the_release_route_and_command_refuse_a_coding_session(ada, monkeypatch, workspace_person):
+def test_the_release_route_needs_the_key_and_the_command_releases_nothing(ada, monkeypatch, workspace_person):
     store, pid = ada["store"], ada["project"]
     record = reviewed(store, pid, "fact", f"Example {SHAPES['stripe_key']} from the Stripe guide.", "stripe")
     headers = {"Authorization": f"Bearer {store.settings.token}"}
@@ -111,10 +111,13 @@ def test_the_release_route_and_command_refuse_a_coding_session(ada, monkeypatch,
         answer = client.post(f"/inspector/records/{record['id']}/release", headers={**headers, **workspace_person},
                              json=body)
         assert answer.status_code == 200 and answer.json()["released"] == [f"fact/{record['id']}.md: stripe key in text"]
-    monkeypatch.setenv("CAIRNMIND_SESSION_ID", "session-1")
-    refused = CliRunner().invoke(cli.app, ["--data-dir", str(store.data_dir), "memory", "release", "team", record["id"],
-                                           "--reason", "Anything."])
-    assert refused.exit_code != 0 and "A coding session cannot release a record" in refused.output
+    command = ["--data-dir", str(store.data_dir), "memory", "release", "team", record["id"], "--reason", "Anything."]
+    for session in (False, True):  # the command releases nothing, in a session or outside it (#306)
+        if session:
+            monkeypatch.setenv("CAIRNMIND_SESSION_ID", "session-1")
+        refused = CliRunner().invoke(cli.app, command)
+        assert refused.exit_code == 2 and CLI_REFUSED in " ".join(refused.output.split()), refused.output
+    assert len(store.query("SELECT id FROM sources WHERE uri LIKE 'release://%'")) == 1  # the route's, no other
 
 
 def test_a_rule_turned_on_after_publishing_never_deadlocks_and_a_teammates_file_is_reported_not_blocking(ada):

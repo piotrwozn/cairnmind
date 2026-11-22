@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import confirmation, record_kinds
+from cairnmind import confirmation, impact_verdicts, memory_published_release, record_kinds
 from cairnmind.cli import app
 
 ENVIRONMENT_WITHOUT_A_SESSION = ("CAIRNMIND_SESSION_ID", "DEVBRAIN_SESSION_ID", "CAIRNMIND_PACKET_ID",
@@ -58,3 +58,21 @@ def test_confirm_plan_and_record_kind_commands_are_refused_in_a_person_terminal(
                 "record-kind": record_kinds.CLI_REFUSED}[arguments[0]]
     assert result.exit_code == 2 and sentence in words(result.output), result.output
     assert "inspector of the workspace" in words(result.output)
+
+
+@pytest.mark.parametrize("in_a_session", [False, True])
+@pytest.mark.parametrize("arguments, sentence", [
+    (["impact-verdict", "demo", str(uuid4()), "--fingerprint", "0" * 64, "--verdict", "still_valid", "--since", "HEAD"],
+     impact_verdicts.CLI_REFUSED),
+    (["memory", "release", "demo", str(uuid4()), "--reason", "An example key."],
+     memory_published_release.CLI_REFUSED)])
+def test_impact_verdict_and_release_commands_are_refused_in_a_person_terminal(
+        tmp_path, monkeypatch, person_terminal, arguments, sentence, in_a_session):
+    for name in ENVIRONMENT_WITHOUT_A_SESSION:
+        monkeypatch.delenv(name, raising=False)
+    if in_a_session:
+        monkeypatch.setenv("CAIRNMIND_SESSION_ID", "logical-session")
+    result = CliRunner().invoke(app, ["--data-dir", str(tmp_path / "memory"), *arguments])
+    assert result.exit_code == 2 and sentence in words(result.output), result.output
+    assert "inspector of the workspace" in words(result.output)
+    assert not any((tmp_path / "memory").glob("**/*.db")), "nothing was stored: the store was never opened"

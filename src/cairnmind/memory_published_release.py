@@ -30,7 +30,9 @@ REGISTERED_WHY = ("Every version a person confirmed is published, so changing th
                   "out, and the record keeps publishing refused until the value is no longer registered here (for a "
                   "credential: rotate it, then remove the old value from Cairnmind's saved keys and from the "
                   "environment the Cairnmind service runs in).")
-REGISTERED_ADVICE = "A registered secret is never released. " + REGISTERED_WHY
+CLI_REFUSED = ("The command line no longer releases a record. Nothing was released. The person reads the record in "
+               "the inspector of the workspace (`cairnmind`) and chooses Release.")
+REGISTERED_ADVICE ="A registered secret is never released. " + REGISTERED_WHY
 
 
 class SecretsRefused(MemoryConflict):

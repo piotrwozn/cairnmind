@@ -159,20 +159,11 @@ def register(memory_app, initialized):
     def memory_release(ctx: typer.Context, project: ProjectArg, record: RecordArg,
                        reason: Annotated[str, typer.Option("--reason", help="Why the hits are not secrets; published.")],
                        worktree: Path | None = None):
-        """Let a record's false alarms of the secrets scan be published, after reading the record.
-
-        The release names each field and kind of hit and is published in the record's file with the reason. A registered secret is never released.
-        """
-        from cairnmind.cli import output, refuse, request
-        from cairnmind.config import session_value
-        if session_value("SESSION_ID"):
-            refuse("A coding session cannot release a record; a person releases it outside the session.")
-        from cairnmind.memory_published_format import canonical_uuid
-        if not canonical_uuid(record):
-            raise typer.BadParameter("RECORD must be a record ID")
-        output(request(ctx.obj, "POST", f"/inspector/records/{record}/release",
-                       json={"project": project, "reason": reason,
-                             "worktree": str(worktree.expanduser().resolve()) if worktree else None}))
+        """Refused since 0.13.0: a person releases a record in the inspector of the workspace."""
+        from cairnmind.cli import refuse
+        from cairnmind.memory_published_release import CLI_REFUSED
+        # A person's act needs the open workspace's key (#306); the options stay so that a script gets this sentence.
+        refuse(CLI_REFUSED)
 
     @memory_app.command("diff")
     def memory_diff(ctx: typer.Context, base: BaseArg, head: HeadArg,

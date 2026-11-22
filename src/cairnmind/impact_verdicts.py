@@ -22,6 +22,8 @@ import os
 VERDICTS = {"still_valid": "still valid", "needs_update": "needs update", "not_related": "not related"}
 MAX_NOTE_CHARS = 4000
 PREFIX = "review://impact/"
+CLI_REFUSED = ("The command line no longer records an impact verdict. Nothing was saved. The person gives it in the "
+               "inspector of the workspace (`cairnmind`): Impact, open the entry, then Verdict.")
 STALE = "The code or the record changed since this list was shown; read the current list and decide again"
 
 
