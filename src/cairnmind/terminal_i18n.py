@@ -8,6 +8,7 @@ from .first_start import MESSAGES as FIRST_START_MESSAGES
 from .memory_models import MESSAGES as MEMORY_MODELS_MESSAGES
 from .platform_hints import MESSAGES as PLATFORM_HINT_MESSAGES
 from .restore_claims import MESSAGES as RESTORE_CLAIM_MESSAGES
+from .service_version import MESSAGES as SERVICE_VERSION_MESSAGES
 from .terminal_connection_hints import MESSAGES as CONNECTION_HINT_MESSAGES
 from .terminal_plan_confirm import MESSAGES as PLAN_CONFIRM_MESSAGES
 from .terminal_record_kinds import MESSAGES as RECORD_KIND_MESSAGES
@@ -648,6 +649,7 @@ CATALOG.update(MEMORY_MODELS_MESSAGES)  # an ollama_url on another computer (#28
 CATALOG.update(TOPOLOGY_MESSAGES)  # where storage and models run (#74)
 CATALOG.update(UPGRADE_MARK_MESSAGES)  # an upgrade in progress; an MCP server older than the installation (#298)
 CATALOG.update(RESTORE_CLAIM_MESSAGES)  # a restore without the person's workspace (#214)
+CATALOG.update(SERVICE_VERSION_MESSAGES)  # a service of another version is not used (#319)
 for _en, _pl in CATALOG.items():
     LEGACY.setdefault(_pl, _en)
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import hmac
 import itertools
 import json
@@ -18,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from cairnmind import __version__, person_proof
 from cairnmind.config import BACKUP_SUFFIXES, SERVICE_NAMES, Settings
+from cairnmind.service_version import instance_id  # noqa: F401 - moved there (#319); cli and tests use it from here
 from cairnmind.store_backup import stale_temporaries
 
 log = logging.getLogger(__name__)
@@ -282,10 +282,6 @@ def daily_backups(backup_dir) -> list[Path]:
             if written.isdigit():
                 found.append((int(written), path.name, path))
     return [path for _, _, path in sorted(found)]
-
-
-def instance_id(settings: Settings) -> str:
-    return hashlib.sha256(str(settings.data_dir).encode()).hexdigest()[:16]
 
 
 def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=None, report=None,
