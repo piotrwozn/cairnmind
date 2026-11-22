@@ -278,6 +278,32 @@ def test_an_upgrade_without_tmux_counts_a_server_it_cannot_ask_as_live(tmp_path)
         shutil.rmtree(system_temp, ignore_errors=True)
 
 
+def test_the_mcp_server_check_and_the_upgrade_mark_run_on_the_bash_of_macos(tmp_path):
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    functions = script[start:script.index("# --- end ---", start)]
+    tool(tmp_path / "bin" / "ps", "[ \"$*\" = '-A -ww -o pid= -o args=' ] || exit 64\n"
+         "echo '  501 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp --client external --project /p'\n"
+         "echo '  502 /usr/bin/python3 other mcp --client external'\n"
+         "echo '  503 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp'\n"
+         "echo '  504 /u/tools/cairnmind/bin/python /u/bin/cairnmind mcp --client=external'")
+    mark = tmp_path / ".local" / "state" / "cairnmind" / "upgrade-in-progress"
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "HOME": str(tmp_path)}
+    result = subprocess.run(
+        [BASH, "-c", "set -euo pipefail\n" + functions + "\nlive_bridges /u/tools/cairnmind/bin/python\n"
+         'begin_upgrade\ncat "$upgrade_mark"\necho "pid=$$"\nend_upgrade\n'],
+        env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    first, second, held, shown = result.stdout.splitlines()
+    assert (first, second) == ("501", "504") and shown == f"pid={held}" and not mark.exists()
+    # The refusal joins the ids with the bash 3.2 pattern substitution and ends the installer.
+    refused = subprocess.run([BASH, "-c", "set -euo pipefail\n" + functions +
+                              "\nstop_installed /u/bin/cairnmind cairnmind /u/tools/cairnmind/bin/python\necho went on"],
+                             env=env, capture_output=True, text=True, timeout=30)
+    assert refused.returncode == 1 and "went on" not in refused.stdout
+    assert "processes: 501 504" in refused.stderr and "kill 501 504" in refused.stderr
+
+
 def test_an_upgrade_without_tmux_does_not_count_a_socket_nothing_listens_on(tmp_path):
     """#287: with the installed version's Python a leftover socket is told from a live server by a connect."""
     import socket
@@ -334,8 +360,11 @@ def test_the_refusal_to_replace_a_running_workspace_shows_a_count_and_five_paths
             server = socket.socket(socket.AF_UNIX)
             server.bind(str(folder / "tmux.sock"))
             servers.append(server)
+        # The third argument as the installer passes it: without it the MCP server note (#298) comes first.
+        python = tmp_path / "tools" / "cairnmind" / "bin" / "python"  # no process runs it: no MCP server is open
         result = subprocess.run(
-            [BASH, "-c", "set -euo pipefail\n" + functions + f'\nstop_installed "{bin_dir}/cairnmind" cairnmind'],
+            [BASH, "-c", "set -euo pipefail\n" + functions +
+             f'\nstop_installed "{bin_dir}/cairnmind" cairnmind "{python}"'],
             env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TMPDIR": str(system_temp)},
             capture_output=True, text=True, timeout=30)
         for server in servers:
@@ -380,6 +409,23 @@ def test_a_socket_without_tmux_is_named_with_both_ways_out_and_nothing_is_remove
         assert "Closing" not in result.stdout and (folder / "tmux.sock").exists()
     finally:
         shutil.rmtree(system_temp, ignore_errors=True)
+
+
+@pytest.mark.parametrize("arguments", ["", " /u/tools/cairnmind/bin/python"])
+def test_stop_installed_says_it_could_not_look_for_mcp_servers_without_a_python_or_a_ps(tmp_path, arguments):
+    """No third argument, or no ps on the PATH: one note, never a claim that none is open, and the stop goes on (#298)."""
+    script = SCRIPT.read_text()
+    start = script.index("# --- what an installed version left running")
+    functions = script[start:script.index("# --- end ---", start)]
+    bin_dir = tmp_path / "bin"  # `id` only: no tmux, no ps
+    bin_dir.mkdir()
+    (bin_dir / "id").symlink_to(shutil.which("id"))
+    installed = tool(tmp_path / "cairnmind", "exit 1")
+    result = subprocess.run(
+        [BASH, "-c", f"set -euo pipefail\n{functions}\nstop_installed {installed} cairnmind{arguments}\necho went on"],
+        env={"PATH": str(bin_dir), "TMPDIR": str(tmp_path / "none")}, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0 and "went on" in result.stdout, result.stderr
+    assert "could not be ruled out" in result.stderr and "unbound" not in result.stderr
 
 
 # --- Linux: what it printed before stays as it was -----------------------------------------------------------------

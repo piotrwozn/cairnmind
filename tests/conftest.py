@@ -71,7 +71,7 @@ NO_ARCADE_MODULES = frozenset({
     "test_engine_docker", "test_tmux_optional", "test_external_mcp_start", "test_knowledge_mode",
     "test_person_proof", "test_person_key_workspace", "test_inspector_plan_confirm",
     "test_command_line_confirms_nothing",
-    "test_doc_links", "test_restore_claims_units",
+    "test_doc_links", "test_upgrade_mark", "test_upgrade_start", "test_restore_claims_units",
 })
 
 TMUX_MODULES = frozenset({
@@ -443,6 +443,18 @@ def no_inherited_session():
         removed["JAVA_HOME"] = os.environ.pop("JAVA_HOME")
     yield
     os.environ.update(removed)
+
+
+@pytest.fixture(autouse=True)
+def no_upgrade_mark(tmp_path_factory):
+    """No test sees an upgrade the person who runs the tests may have in progress (#298); a test that wants a mark
+    points mark_path elsewhere. By hand, not monkeypatch, for the reason given at no_inherited_session."""
+    from cairnmind import upgrade_mark
+    original = upgrade_mark.mark_path
+    missing = tmp_path_factory.getbasetemp() / "no-upgrade-mark" / "upgrade-in-progress"
+    upgrade_mark.mark_path = lambda: missing
+    yield
+    upgrade_mark.mark_path = original
 
 
 @pytest.fixture(autouse=True)
