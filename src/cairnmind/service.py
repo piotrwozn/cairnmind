@@ -469,7 +469,15 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
                 projects = await asyncio.to_thread(store.list_projects)
                 forget_missing_projects(store, [project["id"] for project in projects])
                 for project in projects:
-                    indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
+                    # One project that fails does not stop the round for the projects after it (#371).
+                    try:
+                        indexed = await asyncio.to_thread(index_project_if_changed, store, project["id"])
+                    except (asyncio.CancelledError, StoreNotWriter):
+                        raise
+                    except Exception as exc:
+                        scan_errors.append(f"{project['name']}: {exc}")
+                        log.exception("Indexing project %s failed", project["name"])
+                        continue
                     scan_errors.extend(f"{project['name']}: {err}" for err in indexed.get("errors", []))
                 pending = await asyncio.to_thread(index_pending_sources, store)
                 scan_errors.extend(f"memory index: {err}" for err in pending.get("errors", []))

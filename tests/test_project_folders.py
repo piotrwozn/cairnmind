@@ -211,6 +211,34 @@ def test_a_graph_with_files_of_an_older_parser_that_cannot_be_read_here_is_kept(
     assert not index_project_if_changed(store, pid).get("skipped")  # not recorded: named until rebuilt
 
 
+def test_one_project_that_fails_does_not_stop_the_round(tmp_path, monkeypatch):
+    from cairnmind import ingest
+    store = Store(tmp_path / "data")
+    for name in ("aaa-fails", "bbb-works"):
+        make_repo(tmp_path / name)
+        store.add_project(name, tmp_path / name)
+    failing = store.resolve_project("aaa-fails")["id"]
+    working = store.resolve_project("bbb-works")["id"]
+    real = ingest.index_project_if_changed
+
+    def scan(scanned, project_id):
+        if project_id == failing:
+            raise ValueError("the index of this project broke")
+        return real(scanned, project_id)
+    monkeypatch.setattr(ingest, "index_project_if_changed", scan)
+    settings = Settings.load(store.data_dir)
+    settings.poll_seconds = 0.05
+    headers = {"Authorization": f"Bearer {settings.token}"}
+    with TestClient(create_app(settings, ollama=LocalModelFixture())) as client:
+        for _ in range(400):
+            background = client.get("/status", headers=headers).json()["background"]
+            if background.get("last_scan_at"):
+                break
+            time.sleep(0.05)
+    assert "aaa-fails: the index of this project broke" in background["scan_errors"]
+    assert counts(store, working)["graph_nodes"] > 0 and counts(store, failing)["graph_nodes"] == 0
+
+
 def test_two_projects_from_the_same_files_share_no_rows(tmp_path):
     store, pid, root, record = indexed(tmp_path)
     before = counts(store, pid, [record])
