@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 
 from cairnmind import person_proof, record_kinds, restore_claims
-from cairnmind.config import Settings
 from cairnmind.confirmation import (FALLBACK_WORDS, confirmation_of, confirmation_text, confirmed_by, import_mark,
                                     kept_verdict, local_verdict)
 from cairnmind.restore_claims import BackupClaims
 from cairnmind.runtime_sockets import socket_directory, workspace_namespace
 from cairnmind.terminal_i18n import CATALOG, tr
+from test_person_proof import KEY, fake_tmux, settings, workspace_socket  # noqa: F401 (fixtures)
 
 AT = "2026-11-22T10:20:31+00:00"
 FILE = "cairnmind-20261122T101500-1a2b3c4d.cairnmind.json.gz"
@@ -113,8 +113,7 @@ def test_a_restored_claim_reads_as_the_backups_in_english_and_polish():
     assert confirmation_of(person)["package"] == "backup"
 
 
-def test_the_restore_asks_this_installations_workspace_socket(tmp_path, monkeypatch):
-    settings = Settings.load(tmp_path / "data", create=True)
+def test_the_restore_asks_this_installations_workspace_socket(settings, monkeypatch):  # noqa: F811
     expected = str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock")
     asked = []
     monkeypatch.setenv("TMUX", "/tmp/other,1,0")
@@ -136,6 +135,24 @@ def test_the_restore_asks_this_installations_workspace_socket(tmp_path, monkeypa
     assert person_proof.restore_proof(settings) == "unavailable"
 
 
+def test_restore_proof_with_a_real_socket_and_a_fake_tmux(tmp_path, settings, workspace_socket):  # noqa: F811
+    binary, calls = fake_tmux(tmp_path, KEY)
+    settings.tmux_executable = binary
+    assert person_proof.restore_proof(settings) == "key"
+    assert calls()[-1]["argv"][:2] == ["-S", str(workspace_socket)]
+    (tmp_path / "fake_key").write_text("")
+    assert person_proof.restore_proof(settings) == "no_key"
+    (tmp_path / "fake_key").write_text(KEY)
+    settings.tmux_executable = "/nonexistent/tmux"
+    assert person_proof.restore_proof(settings) == "unavailable"
+    settings.tmux_executable = binary
+    workspace_socket.parent.chmod(0o755)  # a socket the checks refuse fails closed
+    asked = len(calls())
+    assert person_proof.restore_proof(settings) == "unavailable" and len(calls()) == asked
+    workspace_socket.parent.chmod(0o700)
+    assert person_proof.restore_proof(settings) == "key"
+
+
 def test_the_restore_sentences_have_polish():
     claims = BackupClaims(FILE, AT)
     claims.confirmations, claims.record_kinds = 2, 1
@@ -143,6 +160,9 @@ def test_the_restore_sentences_have_polish():
         assert sentence in restore_claims.MESSAGES and CATALOG[sentence] == restore_claims.MESSAGES[sentence]
         polish = tr(sentence, "pl", confirmations=2, kinds=1)
         assert polish != tr(sentence, "en", confirmations=2, kinds=1) and "{" not in polish
+    # The second way names the setting that may be wrong, in both languages (#214 review).
+    assert "tmux_executable" in restore_claims.RESTORED_WITHOUT_WORKSPACE
+    assert "tmux_executable" in restore_claims.MESSAGES[restore_claims.RESTORED_WITHOUT_WORKSPACE]
     old = restore_claims.restore_notice("no_key", claims)
     assert "cairnmind workspace stop" in old and "2 confirmed" in old and "1 accepted" in old
     for proof in ("unavailable", "key"):

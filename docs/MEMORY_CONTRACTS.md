@@ -342,10 +342,15 @@ around Cairnmind:
 - use Cairnmind's library code, or the database engine with the password the
   user can read, and write any row, marks and audit notes included;
 - restore a backup while the workspace is open: `cairnmind restore` keeps the
-  confirmations and accepted record kinds of a backup only when this
-  installation's workspace is open and holds its key, and it reads the key
+  confirmations and accepted record kinds of a backup when it reads a key from
+  the tmux server at this installation's workspace socket, and it reads the key
   itself, so whoever runs `cairnmind stop` and `cairnmind restore` at that moment
-  needs no tmux command of its own. With an older genuine backup this brings
+  needs no tmux command of its own. Unlike a route, which the service checks in
+  its own environment, restore checks in the environment of the program that runs
+  it: on Linux and WSL `TMPDIR` decides where it looks, so a tmux server of that
+  program's own in a directory named like the workspace's socket directory (the
+  bullet above) makes restore keep the marks with no workspace open, and
+  nothing compares the key with anything. With an older genuine backup this brings
   back a confirmation a person has since disputed and record kinds since
   withdrawn; with a prepared one (its checksum is a plain SHA-256 that any
   program can recompute) any confirmation. Without the workspace a restore
@@ -371,7 +376,9 @@ review them in the inspector.
 
 `cairnmind restore` asks this installation's workspace for its key once, before
 it changes anything (`cairnmind workspace status` shows `"person_key":
-"present"` when it would answer). It adds no secret, file, variable or option.
+"present"` when it would answer, after the same socket checks; run it in the
+same terminal environment, since `TMPDIR` can move the socket on Linux and WSL).
+It adds no secret, file or option of its own.
 Only an answer with the key keeps a person's acts: with the workspace open,
 `cairnmind stop`, then `cairnmind restore FILE`, then `cairnmind` to start the
 service again. Anything else (no workspace, a closed one, one an earlier version
@@ -398,7 +405,11 @@ The output says which way it went. Standard output has `person_confirmations`:
 `kept`, or `claims_of_the_backup` with `confirmations_turned_into_claims` and
 `record_kinds_withdrawn`; the second way also prints one sentence on standard
 error, with a different one when the open workspace is an earlier version's with
-no key. Because the mark is an `import` mark, every rule treats it as a claim: a
+no key. The sentence for "no answer" names the three causes (closed, a socket
+the checks refuse, tmux that cannot be run: check `tmux_executable`). In the
+impact view and the extraction statistics a backup's claim is counted with every
+other import mark, as "confirmed elsewhere"; the confirmation line says "as the
+backup says". Because the mark is an `import` mark, every rule treats it as a claim: a
 session's write may change the record (it lapses), a plan's context may change,
 and an import replaces it without `replace_confirmed`. The person confirms again
 what still holds in the inspector: a record with Confirm, a plan under Plans with

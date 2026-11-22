@@ -133,8 +133,9 @@ def restore_proof(settings) -> str:
 
     The socket is the one the workspace makes for this data directory, checked as the socket of a person's
     request is (workspace_socket), and its tmux server is asked as the service asks it (read_key). Only "key"
-    lets a restore keep a person's confirmations; nothing a caller passes (an option, a file, a variable)
-    decides it.
+    lets a restore keep a person's confirmations; nothing a caller passes (an option, a file) decides it. The
+    environment does: on Linux and WSL TMPDIR decides where the socket directory is, and any tmux server of the
+    user's own at that place that holds a well-formed key answers "key" (docs/MEMORY_CONTRACTS.md).
     """
     value = str(socket_directory("ui", workspace_namespace(settings.data_dir)) / "tmux.sock")
     socket = workspace_socket(settings, value)

@@ -952,8 +952,10 @@ class WorkspaceManager:
         return {"closed": closed}
 
     def status(self):
-        held = {"key": "present", "no_key": "absent"}.get(
-            person_proof.read_key(self.settings, self.socket, self.binary)[0], "unavailable")
+        # The same socket checks as a restore and a person's request make: a socket they refuse is not present.
+        checked = person_proof.workspace_socket(self.settings, str(self.socket))
+        held = "unavailable" if checked is None else {"key": "present", "no_key": "absent"}.get(
+            person_proof.read_key(self.settings, checked, self.binary)[0], "unavailable")
         return {"available": self.exists(), "workspace_id": self.workspace_id, "socket": str(self.socket),
                 "person_key": held, "state": self.state.read()}
 

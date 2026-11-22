@@ -22,7 +22,8 @@ ROUTE = "restore"
 WITHDRAW_NOTE = "restored without the person's workspace"
 RESTORED_WITHOUT_WORKSPACE = (
     "Restored without the person's workspace: no open workspace of this installation answered with its key (it is "
-    "closed, or tmux could not be run to ask it). Nothing in the backup counts as a person's act here: "
+    "closed, the socket there is not this installation's private socket, or tmux could not be run: check "
+    "tmux_executable). Nothing in the backup counts as a person's act here: "
     "{confirmations} confirmed record(s) are kept as confirmed only by the backup's claim, not verified here, and "
     "{kinds} accepted transcript record kind(s) were withdrawn. The person confirms again in the inspector of the "
     "workspace what still holds. To keep the person's confirmations instead, open the workspace (`cairnmind`), "
@@ -37,7 +38,8 @@ RESTORED_WITH_AN_OLD_WORKSPACE = (
 MESSAGES = {
     RESTORED_WITHOUT_WORKSPACE: (
         "Przywrócono bez środowiska osoby: żadne otwarte środowisko tej instalacji nie odpowiedziało swoim kluczem "
-        "(jest zamknięte albo nie udało się uruchomić tmux, aby o nie zapytać). Nic z kopii zapasowej nie liczy się "
+        "(jest zamknięte, gniazdo w tym miejscu nie jest prywatnym gniazdem tej instalacji albo nie udało się "
+        "uruchomić tmux: sprawdź tmux_executable). Nic z kopii zapasowej nie liczy się "
         "tutaj jako czynność osoby. Ustalenia, które pozostają potwierdzone tylko według kopii zapasowej i nie są "
         "tutaj zweryfikowane: {confirmations}. Wycofane zaakceptowane rodzaje rekordów transkrypcji: {kinds}. Osoba "
         "ponownie potwierdza w inspektorze środowiska to, co nadal obowiązuje. Aby zamiast tego zachować "
