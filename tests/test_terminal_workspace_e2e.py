@@ -541,10 +541,12 @@ def test_real_outer_operational_login_destroys_only_its_secret_history(terminal_
     assert len(manager.panes()) == 5
 
 
-async def wait_async(predicate, timeout=10):
+async def wait_async(predicate, timeout=10, seen=None):
+    """Wait for a state; `seen` returns what the state was at the end, so a timeout says what it found (#356)."""
     deadline = asyncio.get_running_loop().time() + time_budget(timeout)
     while not predicate():
-        assert asyncio.get_running_loop().time() < deadline, "Actual terminal projection did not refresh"
+        assert asyncio.get_running_loop().time() < deadline, \
+            "Actual terminal projection did not refresh: " + (repr(seen()) if seen else "nothing was recorded")
         await asyncio.sleep(.04)
 
 
@@ -561,14 +563,16 @@ async def test_actual_textual_graph_live_source_selection_opens_exact_inspector_
     graph = GraphApp(stack.settings, workspace=state, motion=False)
     async with graph.run_test(size=(100, 35)):
         try:
-            await wait_async(lambda: any(node.get("source_id") == project["source"]["id"] for node in graph.model.nodes))
+            await wait_async(lambda: any(node.get("source_id") == project["source"]["id"] for node in graph.model.nodes),
+                seen=lambda: {"scope": graph.model.scope, "nodes": graph.model.nodes})
         except AssertionError as error:
             raise AssertionError({"scope": graph.model.scope, "workspace": graph.workspace_data,
                 "nodes": graph.model.nodes, "visible": graph._visible(),
                 "notice": str(graph.query_one("#panel-notice").render())}) from error
         created = await asyncio.to_thread(stack.store.snapshot, project["id"], "manual://live-node",
             "Live graph source: zażółć & <script>literal</script>.", "manual")
-        await wait_async(lambda: any(node.get("source_id") == created["id"] for node in graph.model.nodes))
+        await wait_async(lambda: any(node.get("source_id") == created["id"] for node in graph.model.nodes),
+            seen=lambda: {"scope": graph.model.scope, "nodes": graph.model.nodes})
         node = next(node for node in graph.model.nodes if node.get("source_id") == created["id"])
         await graph.open_node(node).wait()
         selection = state.read()["selected_entity"]
@@ -576,7 +580,8 @@ async def test_actual_textual_graph_live_source_selection_opens_exact_inspector_
         assert state.read()["focus"] == "inspector"
     inspector = InspectorApp(stack.settings, workspace=state)
     async with inspector.run_test(size=(105, 40)):
-        await wait_async(lambda: inspector.source_content == created["content"])
+        await wait_async(lambda: inspector.source_content == created["content"],
+            seen=lambda: {"kind": inspector.entity_kind, "content": inspector.source_content})
         assert inspector.entity_kind == "sources"
         assert inspector.detail_data["source"]["id"] == created["id"]
         assert inspector.source_content == created["content"]
@@ -643,7 +648,7 @@ async def test_actual_sidebar_clone_snapshot_preflight_requires_confirmation_and
             sidebar.request = request
             sidebar.push_screen_wait = choose
             async with sidebar.run_test(size=(90, 40)):
-                await wait_async(lambda: len(sidebar.projects) == 2)
+                await wait_async(lambda: len(sidebar.projects) == 2, seen=lambda: sidebar.projects)
                 await sidebar.register_project("cloned-alpha", str(clone))
                 assert len(target.store.list_projects()) == 2, "Preflight/cancel must not register a new project"
                 assert not target.store.query("SELECT id FROM memory_imports")
@@ -701,18 +706,39 @@ async def test_attached_outer_terminal_prefix_unicode_paste_compact_resize_and_d
         for role, client in (("client1", "codex"), ("client2", "claude")):
             wait_pane(manager, panes[role], "NATIVE_READY " + client)
 
-        async def select(key, role):
-            os.write(master, b"\x02" + key.encode())
-            await wait_async(lambda: manager.tmux("display-message", "-p", "-t", panes[role], "#{pane_active}").stdout.strip() == "1")
+        def seen():
+            """What a timeout reports: the panes, the client's key table, the focus and the last input (#356)."""
+            def fields(target, form):
+                return manager.tmux("display-message", "-p", "-t", target, form, check=False).stdout.strip()
+            return {"active": {role: fields(pane, "#{pane_active} mode=#{pane_in_mode}") for role, pane in panes.items()},
+                    "client_key_table": manager.tmux("list-clients", "-F", "#{client_key_table}", check=False).stdout.split(),
+                    "focus": manager.state.read()["focus"], "panes": panes,
+                    "input": [row.get("text") for row in stack.trace("input")][-6:],
+                    "messages": manager.tmux("show-messages", check=False).stdout[-1500:]}
+
+        def root_table():
+            return manager.tmux("list-clients", "-F", "#{client_key_table}").stdout.split() == ["root"]
+
+        async def key(data, predicate):
+            """Write one key as a person's terminal delivers it: only when tmux is back in its root table,
+            then wait, bounded, for what the key does."""
+            await wait_async(root_table, seen=seen)
+            os.write(master, data)
+            await wait_async(predicate, seen=seen)
+
+        def active(role):
+            return manager.tmux("display-message", "-p", "-t", panes[role], "#{pane_active}").stdout.strip() == "1"
+
+        async def select(number, role):
+            await key(b"\x02" + number.encode(), lambda: active(role))
 
         await select("1", "client1")
         os.write(master, "OUTER_UTF8_zażółć λ\r".encode())
         wait_pane(manager, panes["client1"], 'ECHO "OUTER_UTF8_zażółć λ"')
-        os.write(master, b"\x02\x02\r")
-        await wait_async(lambda: any(row.get("text") == "\x02" for row in stack.trace("input")))
+        await key(b"\x02\x02\r", lambda: any(row.get("text") == "\x02" for row in stack.trace("input")))
         await select("2", "client2")
         os.write(master, "\x1b[200~OUTER_PASTE_你好\x1b[201~\r".encode())
-        await wait_async(lambda: any("OUTER_PASTE_你好" in row.get("text", "") for row in stack.trace("input")))
+        await wait_async(lambda: any("OUTER_PASTE_你好" in row.get("text", "") for row in stack.trace("input")), seen=seen)
         os.write(master, b"\x03")
         wait_pane(manager, panes["client2"], "INTERRUPTED claude")
         before = {row["id"]: (row["pid"], row["session_id"]) for row in stack.runtime.list_runs()}
