@@ -12,15 +12,22 @@ from pathlib import Path
 
 import pytest
 import typer.main
+from textual.widgets import Button, Static
 
 from cairnmind import cli, setup_profiles, terminal_setup, topology as topology_module
 from cairnmind.terminal_i18n import CATALOG, tr
 from cairnmind.terminal_setup import (
-    CHIP_PROBLEM, CHIPS, HOW, KEEP_OPEN, LOADED, LOCAL_BACK, MESSAGES, PLACEHOLDERS_OF, UNREADABLE,
+    CHIP_PROBLEM, CHIPS, HOW, KEEP_OPEN, LOADED, LOCAL_BACK, MESSAGES, OPTIONAL_KEY, PLACEHOLDERS_OF, UNREADABLE,
     commands, describe, shown)
 from cairnmind.terminal_safe import safe_text
 from cairnmind.topology import lines, topology
 from conftest import plain_words
+from cairnmind.terminal_client import BrokerError
+from cairnmind.terminal_panels import SidebarApp
+from cairnmind.terminal_ui import ChoiceModal, MessageModal
+from test_terminal_panels import settle
+from test_terminal_ux080 import UIBroker, screen_text, setup_ui
+from test_workspace_stage_scope import wait_until
 from test_topology import REMOTE, WRITER, clean_environment, make, remote_store  # noqa: F401 - clean_environment is an autouse fixture
 
 
@@ -242,3 +249,88 @@ def test_the_module_sends_nothing_that_writes():
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
              and getattr(node.func, "attr", getattr(node.func, "id", "")) == "request"]
     assert [[arg.value for arg in call.args[:2]] for call in calls] == [["GET", "/api/status"]]
+
+
+class StatusBroker(UIBroker):
+    """Answers /api/status with `status`, or raises `refuse`; records every request."""
+
+    def __init__(self, project, status):
+        super().__init__(project)
+        self.status, self.refuse, self.seen = status, None, []
+
+    def request(self, method, path, *, params=None, json=None, timeout=20):
+        self.seen.append((method, path, params, json))
+        if path == "/api/status":
+            if self.refuse:
+                raise self.refuse
+            return self.status
+        return super().request(method, path, params=params, json=json, timeout=timeout)
+
+
+def ui(tmp_path, monkeypatch, status, language="en"):
+    settings, broker, workspace = setup_ui(tmp_path, monkeypatch, language)
+    broker = StatusBroker(broker.projects[0], status)
+    return SidebarApp(settings, broker=broker, workspace=workspace), broker
+
+
+async def choose_the_entry(app, pilot):
+    app.action_settings()
+    await wait_until(pilot, lambda: isinstance(app.screen, ChoiceModal))
+    assert app.screen.choices[-1][1] == "topology" and len(app.screen.choices) == 5
+    await pilot.press("down", "down", "down", "down", "enter")
+
+
+def notice_of(app):
+    return str(app.query_one("#panel-notice", Static).render())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language,size", [("en", (80, 24)), ("en", (120, 35)), ("pl", (80, 24))])
+async def test_settings_opens_the_screen_with_one_read(tmp_path, monkeypatch, language, size):
+    status = served(make(sub(tmp_path, "service")))
+    app, broker = ui(tmp_path, monkeypatch, status, language)
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        before = len(broker.seen)
+        await choose_the_entry(app, pilot)
+        await wait_until(pilot, lambda: isinstance(app.screen, MessageModal))
+        assert app.screen.heading == "Storage and models"
+        await pilot.pause()
+        assert plain_words(lines(status["topology"], language)[0])[:30] in plain_words(screen_text(app))
+        await pilot.press("escape")
+        await wait_until(pilot, lambda: not isinstance(app.screen, MessageModal))
+    assert broker.seen[before:] == [("GET", "/api/status", None, None)]
+
+
+@pytest.mark.asyncio
+async def test_the_screen_fits_and_scrolls_at_80_by_24(tmp_path, monkeypatch):
+    app, _ = ui(tmp_path, monkeypatch, served(make(sub(tmp_path, "service"))))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+        await choose_the_entry(app, pilot)
+        await wait_until(pilot, lambda: isinstance(app.screen, MessageModal))
+        await pilot.pause()
+        region = app.screen.query_one("#message-close", Button).region
+        assert region.width > 0 and region.x >= 0 and region.right <= 80 and region.bottom <= 24
+        body = app.screen.query_one(".cm-dialog-body")
+        assert body.max_scroll_y > 0
+        body.scroll_end(animate=False)
+        await pilot.pause()
+        assert body.scroll_y == body.max_scroll_y and plain_words(OPTIONAL_KEY).endswith("or saved.")
+        assert "or saved." in screen_text(app)  # the last words of the last paragraph; the rows are wrapped inside the frame
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "pl"])
+async def test_a_service_that_does_not_answer_is_said_and_nothing_is_shown(tmp_path, monkeypatch, language):
+    app, broker = ui(tmp_path, monkeypatch, {"topology": "no"}, language)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settle(app, pilot)
+        broker.refuse = BrokerError(503, "The client service is unavailable; running sessions are kept.")
+        await choose_the_entry(app, pilot)
+        await wait_until(pilot, lambda: "running sessions are kept" in notice_of(app) or "sesje" in notice_of(app))
+        assert not isinstance(app.screen, MessageModal)
+        broker.refuse = None  # an answer of another shape
+        await choose_the_entry(app, pilot)
+        await wait_until(pilot, lambda: tr(UNREADABLE, language)[:40] in notice_of(app))
+        assert not isinstance(app.screen, MessageModal)
