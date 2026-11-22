@@ -440,6 +440,7 @@ class GroupPicker(ModalScreen[dict | None]):
         self.cursor = None
         self.history = []
         self.next_cursor = None
+        self.notice_rows = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="cm-dialog"):
@@ -461,7 +462,7 @@ class GroupPicker(ModalScreen[dict | None]):
 
     def fit_dialog(self):
         with suppress(Exception):
-            terminal_theme.fit_body(self, self.query_one(OptionList))
+            terminal_theme.fit_body(self, self.query_one(OptionList), 10 + self.notice_rows)
 
     @work(group="graph-group-page", exclusive=True)
     async def load_page(self):
@@ -487,8 +488,10 @@ class GroupPicker(ModalScreen[dict | None]):
             choices.add_options([Option(plain(f"{label(item.get('label', item['id']))} · {item.get('count', '')}"), id=str(i))
                                  for i, item in enumerate(self.items)])
             choices.highlighted = 0 if self.items else None
-            not_built = " · " + self.graph_app.t(CODE_GRAPH_NOT_BUILT) if CODE_GRAPH_NOT_BUILT in (data.get("warnings") or []) else ""
-            self.query_one("#group-notice", Static).update(plain(f"{len(self.items)} " + self.graph_app.t("groups") + (" · " + self.graph_app.t("n: next page") if self.next_cursor else "") + not_built))
+            not_built = CODE_GRAPH_NOT_BUILT in (data.get("warnings") or [])
+            self.notice_rows = 3 if not_built else 0  # the sentence is on its own lines: keep them inside the dialog
+            self.query_one("#group-notice", Static).update(plain(f"{len(self.items)} " + self.graph_app.t("groups") + (" · " + self.graph_app.t("n: next page") if self.next_cursor else "") + ("\n" + self.graph_app.t(CODE_GRAPH_NOT_BUILT) if not_built else "")))
+            self.fit_dialog()
         except (OSError, ValueError, RuntimeError) as exc:
             self.query_one("#group-notice", Static).update(plain(exc, limit=250))
 
