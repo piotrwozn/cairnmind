@@ -6,7 +6,8 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from cairnmind import cli, doctor_attention, engine, first_start, integrations, knowledge_mode, store_writer
+from cairnmind import (cli, doctor_attention, engine, first_start, integrations, knowledge_mode, project_removal,
+                       store_writer)
 from cairnmind.arcade import ArcadeClient, ArcadeError
 from cairnmind.config import Settings
 from cairnmind.platform_hints import hint
@@ -183,6 +184,7 @@ def run(monkeypatch, tmp_path):
 def test_project_list_stop_and_engine_stop_speak_in_a_terminal_and_keep_their_json(monkeypatch, run):
     rows = []
     monkeypatch.setattr(cli, "store_for_read", lambda settings: type("S", (), {"list_projects": lambda self: rows})())
+    monkeypatch.setattr(project_removal, "removed_rows", lambda reader: [])  # this fake store has no query (#327)
     assert run("project", "list").stdout.strip() == first_start.PROJECTS_NONE
     assert json.loads(run("project", "list", terminal=False).stdout) == []
     rows.extend([{"id": "a", "name": "alpha", "root": "/w/alpha"}, {"id": "b", "name": "beta", "root": "/w/beta"}])

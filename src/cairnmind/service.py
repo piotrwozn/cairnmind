@@ -112,6 +112,7 @@ class CheckpointBody(BaseModel):
 class RegisterProjectBody(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     root: str = Field(min_length=1, max_length=4096)
+    fresh: bool = False  # a separate identity: a removed project of that name and folder is not brought back
 
 
 class PlanSaveBody(BaseModel):
@@ -304,6 +305,9 @@ def schedule_embeddings(store, namespace: str, *, project_ids=None, settings=Non
     """
     rows = (store.missing_embeddings(namespace) if project_ids is None else
             [row for pid in project_ids for row in store.missing_embeddings(namespace, pid)])
+    from .project_removal import removed_ids
+    removed = removed_ids(store)  # no embedding job is queued for a removed project (#327)
+    rows = [row for row in rows if row["project_id"] not in removed]
     if settings is not None:
         from cairnmind.memory_egress import held_chunk_ids
         held = held_chunk_ids(store, settings, rows, known_held)
@@ -710,9 +714,14 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True,
             raise ValueError("Project root is unavailable") from exc
         if not root.is_dir():
             raise ValueError("Project root must be an existing directory")
-        created = await asyncio.to_thread(store.add_project, body.name, root)
+        from .project_removal import add_outcome, removed_rows
+        known = {row["id"] for row in await asyncio.to_thread(store.list_projects)}
+        removed = await asyncio.to_thread(removed_rows, store)
+        created = await asyncio.to_thread(store.add_project, body.name, root, not body.fresh)
         cache.clear()
-        return {"project": created}
+        # Said, never silent (#327): a removed project that came back is not a new one, and one that keeps its
+        # memory under this name or folder was not brought back.
+        return {"project": created, **add_outcome(removed, known, created)[2]}
 
     @app.get("/project-roots", dependencies=auth)
     async def project_roots(project: str):

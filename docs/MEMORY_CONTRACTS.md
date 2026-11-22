@@ -459,6 +459,31 @@ Confirm, a record kind under More, then Transcript record kinds. To undo a
 restore made without the workspace, restore the `before-restore-*` copy it wrote
 (in `backups/` of the data directory) with the workspace open.
 
+### Removing a project from the registry
+
+`cairnmind project remove PROJECT --yes` unregisters a project and deletes nothing.
+It is not a person's act: it changes no record and takes no confirmation away, and
+`cairnmind project add` with the same name and folder brings the same project back
+with every record, confirmation, plan, source, session and acknowledgement as it
+was. Any other name or folder is a new, empty project, and `project add` says which
+happened; the workspace's Add folder says the same, and its choice "New project,
+separate identity" is refused for that name and folder rather than answered with the
+old project. A folder inside the data directory is the exception: `project add`
+refuses it, so such a project's memory stays in the store and only the delete step
+below reaches it; the dry run and every later sentence say so. The command is
+refused inside a coding session, while the project has a session in the workspace or
+a job in work, and on an installation that only reads the store. It reads the
+workspace's run registry without rewriting it, even in a dry run, and when a run is
+recorded as live and tmux cannot be asked it refuses instead of assuming the run
+ended. A coding client outside the workspace leaves no sign that it is running, so
+the command cannot see it; after the removal every call of its session (context,
+acknowledgement, writes) is refused with a sentence that names the removal and the
+way back. The events the hooks in the folder keep recording wait in the data
+directory until the project is back, and do not delay other projects' events. A
+removed project's rows stay in backups and in a restore, still removed. Deleting a removed project's memory is
+`cairnmind forget ID --delete-project`, after a backup; it is unchanged by this
+command and is not checked as a person's act.
+
 ### How a confirmation is recorded and shown
 
 The store keeps `metadata.confirmation` on the record. It is derived: a client

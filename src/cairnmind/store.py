@@ -745,7 +745,7 @@ class Store:
             raise ValueError("Project root cannot contain Cairnmind's private credential store")
         return path
 
-    def add_project(self, name, root):
+    def add_project(self, name, root, restore=True):
         name, path = name.strip(), self.require_safe_project_root(root)
         if not name:
             raise ValueError("Project name must not be empty")
@@ -760,6 +760,10 @@ class Store:
                         raise ValueError(PROJECT_NAME_TAKEN.format(name=safe_text(name), root=safe_text(existing["root"])))
                     raise ValueError(PROJECT_ROOT_TAKEN.format(name=safe_text(existing["name"]), root=safe_text(path)))
                 return existing
+            from .project_removal import restore_in
+            restored = restore_in(tx, name, path, restore)  # the same name and folder as a removed project (#327)
+            if restored:
+                return restored
             project = {"id": str(uuid4()), "name": name, "root": path, "created_at": utc_now()}
             insert_document(tx, "projects", project)
             insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project["id"], "path": path})
@@ -776,7 +780,7 @@ class Store:
                 insert_document(tx, "project_roots", {"id": str(uuid4()), "project_id": project_id, "path": root})
 
     def list_projects(self):
-        return [clean_row(row) for row in self.query("SELECT FROM projects ORDER BY name")]
+        return [clean_row(row) for row in self.query("SELECT FROM projects WHERE removed_at IS NULL ORDER BY name")]
 
     def resolve_project(self, identifier, *, recorded: bool = False):
         """The project of an id, a name, or a path inside one of its registered folders (#238).
@@ -789,10 +793,16 @@ class Store:
         transcript or a hook event): it names a place, typed by nobody, that may since have been removed.
         """
         value = str(identifier)
-        project = one_row(self, "SELECT FROM projects WHERE id=:value OR name=:value", {"value": value}, False)
+        from .project_removal import find_removed, unknown_removed
+        project = one_row(self, "SELECT FROM projects WHERE removed_at IS NULL AND (id=:value OR name=:value)",
+                          {"value": value}, False)
         if project:
             return project
         if not value.startswith((".", "~")) and "/" not in value and os.sep not in value:
+            # A removed project is named, with the way back, never reported as unknown (#327).
+            removed = find_removed(self, value)
+            if removed:
+                raise unknown_removed(value, removed, self.data_dir)
             raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
         written = Path(value).expanduser()
         if not written.is_absolute() and (recorded or not self.relative_paths):
@@ -805,6 +815,9 @@ class Store:
         if candidates:
             selected = max(candidates, key=lambda row: len(row["path"]))
             return one_row(self, "SELECT FROM projects WHERE id=:id", {"id": selected["project_id"]})
+        removed = find_removed(self, value, path)
+        if removed:
+            raise unknown_removed(value, removed, self.data_dir)
         raise ValueError(f"Unknown project: {value}. {UNKNOWN_PROJECT_NEXT}")
 
     def _delete_old_vectors(self, tx, source_ids):
@@ -1457,11 +1470,14 @@ class Store:
             from .store_writer import StoreNotWriter
             raise StoreNotWriter(self.not_writer)
         with self.transaction() as tx:
+            # The jobs of a removed project wait until it is back (#327).
+            removed = [r["id"] for r in tx.query("SELECT id FROM projects WHERE removed_at IS NOT NULL")]
             job = one_row(tx, "SELECT FROM jobs WHERE (state='pending' OR (state='running' AND lease_until<:now))" +
                        (" AND kind IN :kinds" if kinds is not None else "") +
                        (" AND project_id IN :projects" if project_ids is not None else "") +
+                       (" AND (project_id IS NULL OR project_id NOT IN :removed)" if removed else "") +
                        " ORDER BY created_at,id LIMIT 1",
-                       {"now": time.time(), "kinds": kinds, "projects": project_ids}, False)
+                       {"now": time.time(), "kinds": kinds, "projects": project_ids, "removed": removed}, False)
             if not job:
                 return None
             if job["state"] == "running":
@@ -1709,7 +1725,8 @@ class Store:
     def status(self, project_id=None):
         self._require_project(self, project_id)
         counts = {key: self._count(key, project_id) for key in ("sources", "chunks", "records", "nodes", "edges", "embeddings")}
-        counts["projects"] = 1 if project_id else self._count("projects")
+        counts["projects"] = 1 if project_id else self._count("projects", extra="removed_at IS NULL")
+        counts["removed_projects"] = 0 if project_id else self._count("projects", extra="removed_at IS NOT NULL")
         counts["jobs"] = {state: self._count("jobs", project_id, f"state='{state}'") for state in ("pending", "running", "completed", "failed")}
         counts["archived"] = counts["sources"]
         counts["indexed"] = len(self.query("SELECT DISTINCT source_id FROM chunks" + (" WHERE project_id=:project" if project_id else ""), {"project": project_id}))
