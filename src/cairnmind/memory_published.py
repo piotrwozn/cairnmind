@@ -472,15 +472,16 @@ def _writable(model):
 
 
 def _secret_advice(kinds):
-    """What a person can do about the hits: `memory release` never takes a registered secret (#239)."""
+    """What a person can do about the hits: a release never takes a registered secret (#239)."""
     advice = ""
     if REGISTERED in kinds:
         # Every version a person confirmed is published, so a later text without the value does not help.
         advice += (" " + REGISTERED_ADVICE)
     if kinds - {REGISTERED}:
-        advice += (" For the other values: remove the value, or read the record and release it with"
-                   " `cairnmind memory release`." if REGISTERED in kinds else
-                   " Remove the value, or read the record and release it with `cairnmind memory release`.")
+        advice += (" For the other values: remove the value, or read the record in the inspector of the workspace"
+                   " (`cairnmind`) and choose Release." if REGISTERED in kinds else
+                   " Remove the value, or read the record in the inspector of the workspace (`cairnmind`) and choose"
+                   " Release.")
     return advice
 
 
