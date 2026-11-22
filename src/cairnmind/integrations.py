@@ -1025,7 +1025,10 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
     directory = settings.data_dir / "hook-events"
     if not directory.exists():
         return counts
-    for path in sorted(directory.glob("*.json"))[:limit]:
+    handled = 0  # events left waiting for an unregistered folder (a removed project's, #327) do not use up the limit
+    for path in sorted(directory.glob("*.json")):
+        if handled >= limit:
+            break
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict) or payload.get("client") not in CLIENTS:
@@ -1035,6 +1038,7 @@ def drain_hook_spool(settings: Settings, store, limit: int = 100) -> dict[str, A
             except ValueError:
                 counts["unassigned"] += 1
                 continue
+            handled += 1
             # Receipt first invalidates compact/resume ACKs even if its source
             # file is not yet available. Readiness separately waits for its
             # captured archive range; no model inference is performed here.
